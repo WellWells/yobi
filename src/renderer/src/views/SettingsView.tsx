@@ -54,10 +54,20 @@ export const SettingsView: React.FC = () => {
   }, [hotkey, prefs, system, telegram, setTheme, setLocale]);
 
   // ── Locale label helper ───────────────────────────────────────────────────
+  const localeKeyMap: Record<string, string> = {
+    'en-US': 'language.name.enUS',
+    'zh-TW': 'language.name.zhTW',
+    'zh-CN': 'language.name.zhCN',
+    'es':    'language.name.es',
+    'ja':    'language.name.ja',
+    'pt-BR': 'language.name.ptBR',
+    'de':    'language.name.de',
+    'fr':    'language.name.fr',
+    'ko':    'language.name.ko',
+  };
   const getLocaleLabel = useCallback((localeCode: string): string => {
-    if (localeCode === 'zh-TW') return t('language.name.zhTW');
-    if (localeCode === 'en-US') return t('language.name.enUS');
-    return localeCode;
+    const key = localeKeyMap[localeCode];
+    return key ? t(key) : localeCode;
   }, [t]);
 
   // ── Danger actions ────────────────────────────────────────────────────────
