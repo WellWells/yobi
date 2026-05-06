@@ -1,0 +1,198 @@
+name: Build & Draft Release
+
+on:
+  push:
+    branches:
+      - release
+    tags:
+      - 'v*'
+
+# Requires write permission to create a Release
+permissions:
+  contents: write
+
+# Force GitHub Actions to use Node.js 24
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  # ─────────────────────────────────────────────────────────────
+  # 1. Cross-platform Build
+  # ─────────────────────────────────────────────────────────────
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            build_script: build:mac
+            artifact_name: dist-mac
+            artifact_path: |
+              dist/*.dmg
+              dist/*.zip
+              dist/*.yml
+
+          - os: windows-latest
+            build_script: build:win
+            artifact_name: dist-win
+            artifact_path: |
+              dist/*.exe
+              dist/*.yml
+
+    steps:
+      # ── Checkout ──────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Node.js 24 + npm cache ──────────────────────────────────
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      # ── Electron binaries cache (macOS) ────────────────────────────
+      - name: Cache Electron binaries (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+          key: electron-macos-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-macos-
+
+      # ── Electron binaries cache (Windows) ──────────────────────────
+      - name: Cache Electron binaries (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.LOCALAPPDATA }}\electron\Cache
+            ${{ env.LOCALAPPDATA }}\electron-builder\Cache
+          key: electron-windows-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-windows-
+
+      # ── Install dependencies ───────────────────────────────────────
+      - name: Install dependencies
+        run: npm ci
+
+      # ── Build + Package ────────────────────────────────────────────
+      - name: Build
+        run: npm run ${{ matrix.build_script }} -- --publish=never
+        env:
+          # Disable macOS automatic code signing identity discovery (no certificates in CI)
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Upload artifacts for the Release Job ──────────────────────
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # ─────────────────────────────────────────────────────────────
+  # 2. Gather artifacts and create a Draft Release
+  # ─────────────────────────────────────────────────────────────
+  release:
+    name: Create Draft Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── Get version from package.json ───────────────────────────────
+      - name: Checkout (for package.json)
+        uses: actions/checkout@v4
+
+      - name: Read version from package.json
+        id: pkg
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      # ── Download artifacts from all platforms ───────────────────────
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: find artifacts -type f | sort
+
+      # ── Generate Release Table with SHA256 ───────────────────────
+      - name: Generate Release Table
+        id: hash
+        run: |
+          cd artifacts
+          echo "release_table<<EOF" >> $GITHUB_OUTPUT
+          echo "| Description | Filename | sha256 hash |" >> $GITHUB_OUTPUT
+          echo "|-------------|----------|-------------|" >> $GITHUB_OUTPUT
+          
+          for file in *; do
+            if [ -f "$file" ]; then
+              if [[ "$file" == *.yml ]]; then
+                continue
+              fi
+              # Get SHA256 and convert to uppercase
+              hash=$(sha256sum "$file" | awk '{print toupper($1)}')
+              
+              # Determine Description based on file extension and architecture
+              desc="Unknown Format"
+              if [[ "$file" == *.exe ]]; then
+                desc="Windows x64 (Portable)"
+              elif [[ "$file" == *arm64*.dmg || "$file" == *-aarch64*.dmg ]]; then
+                desc="macOS arm64 (Apple Silicon)"
+              elif [[ "$file" == *.dmg ]]; then
+                desc="macOS x64 (Intel)"
+              elif [[ "$file" == *.zip ]]; then
+                desc="macOS (Zip Archive)"
+              fi
+              
+              echo "| $desc | \`$file\` | \`$hash\` |" >> $GITHUB_OUTPUT
+            fi
+          done
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      # ── Create Draft Release ─────────────────────────────────────
+      - name: Create Draft Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          tag_name: v${{ steps.pkg.outputs.version }}-build.${{ github.run_number }}
+          name: "Desktop Agent Center v${{ steps.pkg.outputs.version }} (Build #${{ github.run_number }})"
+          body: |
+            ## Release Notes
+
+            * **Commit:** `${{ github.sha }}`
+            * **Build Workflow:** [Run #${{ github.run_number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            ---
+
+            ### 📦 Downloads & Checksums
+
+            ${{ steps.hash.outputs.release_table }}
+
+            ---
+
+            ### ⚠️ macOS Unsigned Build Instructions
+
+            This is an unsigned build. macOS Gatekeeper will automatically add a "quarantine" attribute to downloaded files, which prevents the app from launching and may show an "app is damaged or cannot be opened" warning.
+
+            **Method 1: Terminal (Recommended)**
+
+            This is the most precise method to bypass the restriction for this specific file without lowering your overall system security.
+            Run the following command after copying the app to your Applications folder:
+
+            ```bash
+            sudo xattr -rd com.apple.quarantine "/Applications/Desktop Agent Center.app"
+            ```
+
+            **Method 2: System Settings**
+            After attempting to open the app for the first time, navigate to **System Settings → Privacy & Security** and manually click **Open Anyway**.
+          files: artifacts/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
