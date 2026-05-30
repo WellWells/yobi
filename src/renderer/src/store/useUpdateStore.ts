@@ -14,6 +14,7 @@ interface UpdateState {
 }
 
 let listenersInitialized = false;
+let listenerCleanups: Array<() => void> = [];
 
 function normalizePayload(payload: UpdateAvailablePayload): UpdateAvailablePayload {
   return {
@@ -33,33 +34,36 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     if (listenersInitialized) return;
     listenersInitialized = true;
 
-    updateApi.onUpdateAvailable((rawPayload) => {
-      const payload = normalizePayload(rawPayload);
-      set({
-        isChecking: false,
-        hasUpdate: true,
-        checkFailed: false,
-        newVersion: payload.version,
-        releaseUrl: payload.releaseUrl,
-      });
-    });
+    // Store cleanup functions to prevent IPC listener leaks during HMR
+    listenerCleanups = [
+      updateApi.onUpdateAvailable((rawPayload) => {
+        const payload = normalizePayload(rawPayload);
+        set({
+          isChecking: false,
+          hasUpdate: true,
+          checkFailed: false,
+          newVersion: payload.version,
+          releaseUrl: payload.releaseUrl,
+        });
+      }),
 
-    updateApi.onUpdateNotAvailable(() => {
-      set({
-        isChecking: false,
-        hasUpdate: false,
-        checkFailed: false,
-        newVersion: null,
-        releaseUrl: null,
-      });
-    });
+      updateApi.onUpdateNotAvailable(() => {
+        set({
+          isChecking: false,
+          hasUpdate: false,
+          checkFailed: false,
+          newVersion: null,
+          releaseUrl: null,
+        });
+      }),
 
-    updateApi.onUpdateError(() => {
-      set({
-        isChecking: false,
-        checkFailed: true,
-      });
-    });
+      updateApi.onUpdateError(() => {
+        set({
+          isChecking: false,
+          checkFailed: true,
+        });
+      }),
+    ];
 
     void get().checkForUpdates();
   },
@@ -81,3 +85,12 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     return updateApi.openExternal(releaseUrl);
   },
 }));
+
+// HMR cleanup: unsubscribe stale listeners so re-initialization works correctly.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    listenerCleanups.forEach((fn) => fn());
+    listenerCleanups = [];
+    listenersInitialized = false;
+  });
+}

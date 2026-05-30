@@ -3,6 +3,11 @@
 // so UI components do not depend directly on the underlying transport.
 import type {
   CaptureSettings,
+  DuckaiModelInfo,
+  FlowDefinition,
+  FlowExecutionEvent,
+  FlowExecutionLog,
+  FlowExecutionResult,
   MarkdownCaptureRequest,
   OutputFile,
   PromptPreferences,
@@ -60,6 +65,7 @@ export const settingsApi = {
   updateMarkdownZoom: (zoom: number): Promise<boolean> => window.electronAPI.updateMarkdownZoom(zoom),
   getCaptureSettings: (): Promise<CaptureSettings> => window.electronAPI.getCaptureSettings(),
   updateCaptureSettings: (settings: CaptureSettings): Promise<boolean> => window.electronAPI.updateCaptureSettings(settings),
+  fetchDuckaiModels: (): Promise<DuckaiModelInfo[]> => window.electronAPI.fetchDuckaiModels(),
 };
 
 export const telegramApi = {
@@ -134,4 +140,32 @@ export const ipcEvents = {
     window.electronAPI.onLaunchAtStartupChanged(cb),
   onCloseToTrayChanged: (cb: (enabled: boolean) => void) =>
     window.electronAPI.onCloseToTrayChanged(cb),
+  onFlowExecutionLog: (cb: (log: FlowExecutionLog) => void) =>
+    window.electronAPI.onFlowExecutionLog(cb),
+  onFlowExecutionStarted: (cb: (event: FlowExecutionEvent) => void) =>
+    window.electronAPI.onFlowExecutionStarted(cb),
+  onFlowExecutionEnded: (cb: (event: FlowExecutionEvent) => void) =>
+    window.electronAPI.onFlowExecutionEnded(cb),
 };
+
+export const flowApi = {
+  getAll: (): Promise<FlowDefinition[]> => window.electronAPI.getFlows(),
+  save: (flow: FlowDefinition): Promise<FlowDefinition | null> => window.electronAPI.saveFlow(flow),
+  deleteFlow: (flowId: string): Promise<boolean> => window.electronAPI.deleteFlow(flowId),
+  duplicateFlow: (flowId: string): Promise<FlowDefinition | null> => window.electronAPI.duplicateFlow(flowId),
+  moveFlow: (flowId: string, direction: 'up' | 'down'): Promise<FlowDefinition[]> =>
+    window.electronAPI.moveFlow(flowId, direction),
+  execute: (flowId: string): Promise<FlowExecutionResult> => window.electronAPI.executeFlow(flowId),
+  exportFlow: (flow: FlowDefinition): Promise<boolean> => window.electronAPI.exportFlow(flow),
+};
+
+export const rssApi = {
+  hasCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.rssHasCheckpoint(stepId),
+  clearCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.rssClearCheckpoint(stepId),
+};
+
+export const scraperApi = {
+  hasCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.scraperHasCheckpoint(stepId),
+  clearCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.scraperClearCheckpoint(stepId),
+};
+

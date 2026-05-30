@@ -84,8 +84,25 @@ export const useI18nStore = create<I18nState>((set, get) => ({
 
   loadLocales: async () => {
     const list = await window.electronAPI.getLanguageList();
+    const { locale: persistedLocale, setByUser } = await window.electronAPI.getCurrentLocale();
+
+    let resolvedLocale: string;
+    if (setByUser) {
+      // Respect the user's explicit choice — never override it
+      resolvedLocale = findBestLocaleMatch(list, persistedLocale) ?? FALLBACK_LOCALE;
+    } else {
+      // Auto-detect from the OS/browser language preferences
+      resolvedLocale = resolveUiLocale(list, []);
+      // Persist the auto-detected locale so config reflects reality
+      if (resolvedLocale !== persistedLocale) {
+        void window.electronAPI.setLocaleAuto(resolvedLocale);
+      }
+    }
+
+    // Only preload the active locale + en-US fallback (not all 9 locales)
+    const localesToLoad = [...new Set([FALLBACK_LOCALE, resolvedLocale])];
     const localeEntries = await Promise.all(
-      list.map(async (locale) => {
+      localesToLoad.map(async (locale) => {
         const content = await window.electronAPI.getLanguageContent(locale);
         return [locale, content as Translations | null] as const;
       }),
@@ -99,9 +116,7 @@ export const useI18nStore = create<I18nState>((set, get) => ({
       localeTranslations,
       enTranslations: localeTranslations[FALLBACK_LOCALE] ?? {},
     });
-    const persistedLocale = await window.electronAPI.getCurrentLocale();
-    const preferredLocale = findBestLocaleMatch(list, persistedLocale);
-    await get().setLocale(resolveUiLocale(list, preferredLocale ? [preferredLocale] : []), { persist: false });
+    await get().setLocale(resolvedLocale, { persist: false });
     set({ isReady: true });
   },
 

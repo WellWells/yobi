@@ -1,9 +1,12 @@
 // src/renderer/src/components/LogPanel.tsx
 import React, { useCallback, useEffect, useRef } from 'react';
 import { Box, Button, Flex, Group, ScrollArea, Stack, Text } from '@mantine/core';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
+import { PanelHeader } from './PanelHeader';
 import { AlertCircle, AlertTriangle, CheckCircle2, Download, Info, ScrollText, Trash2, Zap } from 'lucide-react';
+import styles from './LogPanel.module.css';
 
 type LogLevel = 'error' | 'success' | 'warning' | 'active' | 'info';
 
@@ -39,12 +42,11 @@ const LogEntry = React.memo<{ log: string; index: number }>(({ log, index }) => 
   const level = classifyLog(log);
   return (
     <Flex
+      className={`${styles.logEntry} ${index % 2 !== 0 ? styles.odd : styles.even}`}
       align="flex-start"
       gap={7}
       px={6}
       py={3}
-      bg={index % 2 !== 0 ? 'rgba(255,255,255,0.02)' : undefined}
-      style={{ borderRadius: 'var(--mantine-radius-sm)' }}
     >
       <LevelIcon level={level} />
       <Text
@@ -52,7 +54,7 @@ const LogEntry = React.memo<{ log: string; index: number }>(({ log, index }) => 
         size="sm"
         c={levelColorMap[level]}
         lh={1.6}
-        style={{ wordBreak: 'break-word', whiteSpace: 'pre-wrap', flex: 1 }}
+        className={styles.logText}
       >
         {log}
       </Text>
@@ -63,7 +65,8 @@ const LogEntry = React.memo<{ log: string; index: number }>(({ log, index }) => 
 export const LogPanel: React.FC = () => {
   const { logs, clearLogs } = useAppStore();
   const { t } = useI18nStore();
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const isNearBottomRef = useRef(true);
   const handleClear = useCallback(() => clearLogs(), [clearLogs]);
 
   const handleExport = useCallback(() => {
@@ -78,38 +81,61 @@ export const LogPanel: React.FC = () => {
     URL.revokeObjectURL(url);
   }, [logs]);
 
+  const rowVirtualizer = useVirtualizer({
+    count: logs.length,
+    getScrollElement: () => viewportRef.current,
+    estimateSize: () => 26,
+    overscan: 15,
+  });
+
+  const handleScroll = useCallback(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const { scrollTop, scrollHeight, clientHeight } = viewport;
+    isNearBottomRef.current = scrollHeight - scrollTop - clientHeight <= 100;
+  }, []);
+
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [logs]);
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    viewport.addEventListener('scroll', handleScroll, { passive: true });
+    return () => viewport.removeEventListener('scroll', handleScroll);
+  }, [handleScroll]);
+
+  useEffect(() => {
+    if (!isNearBottomRef.current || logs.length === 0) return;
+    rowVirtualizer.scrollToIndex(logs.length - 1, { align: 'end' });
+  }, [logs.length, rowVirtualizer]);
 
   return (
     <Stack gap={0} h="100%" style={{ overflow: 'hidden' }}>
-      <Group
-        gap={8}
+      <PanelHeader
+        label={t('nav.logs')}
+        icon={<ScrollText size={13} />}
         px={16}
         py={8}
-        bg="var(--mantine-color-default)"
-        style={{ borderBottom: '1px solid var(--mantine-color-default-border)', flexShrink: 0 }}
-      >
-        <ScrollText size={13} color="var(--mantine-color-dimmed)" style={{ flexShrink: 0 }} />
-        <Text fz="var(--font-size-base)" fw={700} c="var(--mantine-color-text)" lts="-0.01em" flex={1}>{t('log.title')}</Text>
-        <Text fz="var(--font-size-sm)" c="dimmed">{logs.length} {t('log.entries')}</Text>
-        <Button variant="default" size="compact-xs" onClick={handleClear} leftSection={<Trash2 size={11} />}>
-          {t('log.clear')}
-        </Button>
-        <Button
-          variant="default"
-          size="compact-xs"
-          onClick={handleExport}
-          disabled={logs.length === 0}
-          leftSection={<Download size={11} />}
-        >
-          {t('log.export')}
-        </Button>
-      </Group>
+        rightSection={(
+          <Group gap={8} wrap="nowrap">
+            <Text fz="var(--font-size-sm)" c="dimmed">{logs.length} {t('log.entries')}</Text>
+            <Button variant="default" size="compact-xs" onClick={handleClear} leftSection={<Trash2 size={11} />}>
+              {t('log.clear')}
+            </Button>
+            <Button
+              variant="default"
+              size="compact-xs"
+              onClick={handleExport}
+              disabled={logs.length === 0}
+              leftSection={<Download size={11} />}
+            >
+              {t('log.export')}
+            </Button>
+          </Group>
+        )}
+      />
 
       <ScrollArea
         flex={1}
+        viewportRef={viewportRef}
         bg="var(--mantine-color-body)"
         px={14}
         py={10}
@@ -122,16 +148,27 @@ export const LogPanel: React.FC = () => {
             <Text fz="var(--font-size-base)">{t('log.empty')}</Text>
           </Stack>
         ) : (
-          <Stack gap={2}>
-            {logs.map((log, i) => (
-              <LogEntry key={i} log={log} index={i} />
+          <Box style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>
+            {rowVirtualizer.getVirtualItems().map((virtualRow) => (
+              <Box
+                key={virtualRow.key}
+                ref={rowVirtualizer.measureElement}
+                data-index={virtualRow.index}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+              >
+                <LogEntry log={logs[virtualRow.index]} index={virtualRow.index} />
+              </Box>
             ))}
-            <Box ref={bottomRef} />
-          </Stack>
+          </Box>
         )}
       </ScrollArea>
     </Stack>
   );
 };
-
 

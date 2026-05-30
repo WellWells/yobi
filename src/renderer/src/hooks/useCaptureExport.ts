@@ -72,9 +72,11 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
   const [captureFormat, setCaptureFormat] = useState<CaptureFormat>('png');
   const [capturePaletteKey, setCapturePaletteKey] = useState<string>(CAPTURE_PALETTES[0].key);
   const [captureDirection, setCaptureDirection] = useState<CaptureDirection>('se');
-  const [captureShowPrompt, setCaptureShowPrompt] = useState(true);
+  const [captureShowPrompt, setCaptureShowPrompt] = useState(false);
   const [captureShowProvider, setCaptureShowProvider] = useState(true);
   const [captureShowTimestamp, setCaptureShowTimestamp] = useState(true);
+  const [captureTitle, setCaptureTitle] = useState('');
+  const [captureFileName, setCaptureFileName] = useState('');
   const [captureBusy, setCaptureBusy] = useState(false);
   const [captureBusyMode, setCaptureBusyMode] = useState<'copy' | 'save' | null>(null);
 
@@ -87,11 +89,19 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
       setCaptureFormat(s.format);
       setCapturePaletteKey(s.palette);
       setCaptureDirection(s.direction as CaptureDirection);
-      setCaptureShowPrompt(s.showPrompt);
+      setCaptureShowPrompt(Boolean(s.showPrompt));
       setCaptureShowProvider(s.showProvider);
       setCaptureShowTimestamp(s.showTimestamp);
     }).catch(() => { settingsLoadedRef.current = true; });
   }, []);
+
+  useEffect(() => {
+    if (!selectedFile || !parsedBlocks) return;
+    const defaultTitle = parsedBlocks.title || selectedFile.name.replace(/\.md$/i, '');
+    const defaultFileName = selectedFile.name.replace(/\.md$/i, '');
+    setCaptureTitle(defaultTitle);
+    setCaptureFileName(defaultFileName);
+  }, [selectedFile?.path, selectedFile?.name, parsedBlocks?.title, parsedBlocks?.provider, parsedBlocks?.time]);
 
   // ── Persist settings to config whenever they change ──────────────────────
   useEffect(() => {
@@ -113,7 +123,7 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
 
   const capturePreview = useMemo<MarkdownCapturePayload | null>(() => {
     if (!fileContent || !selectedFile || !parsedBlocks) return null;
-    const title = parsedBlocks.title || selectedFile.name.replace(/\.md$/i, '');
+    const title = captureTitle.trim() || parsedBlocks.title || selectedFile.name.replace(/\.md$/i, '');
     const contentToCapture = parsedBlocks.response || fileContent;
     const preResponse = stripAfterResponseHeading(fileContent);
     return {
@@ -124,7 +134,7 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
       provider: parsedBlocks.provider || '',
       timestamp: parsedBlocks.time || '',
     };
-  }, [fileContent, selectedFile, parsedBlocks]);
+  }, [fileContent, selectedFile, parsedBlocks, captureTitle]);
 
   const handleCaptureImage = useCallback(async (mode: 'save' | 'copy') => {
     if (!capturePreview) return;
@@ -141,6 +151,7 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
           showContent: true,
           showProvider: captureShowProvider,
           showTimestamp: captureShowTimestamp,
+          fileName: captureFileName.trim(),
           width: 1200,
           background: captureBackground,
         },
@@ -169,7 +180,7 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
       setCaptureBusy(false);
       setCaptureBusyMode(null);
     }
-  }, [capturePreview, captureFormat, captureShowPrompt, captureShowProvider, captureShowTimestamp, captureBackground, t, setExportToast]);
+  }, [capturePreview, captureFormat, captureShowPrompt, captureShowProvider, captureShowTimestamp, captureFileName, captureBackground, t, setExportToast]);
 
   return {
     captureDialogOpen, setCaptureDialogOpen,
@@ -179,6 +190,8 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
     captureShowPrompt, setCaptureShowPrompt,
     captureShowProvider, setCaptureShowProvider,
     captureShowTimestamp, setCaptureShowTimestamp,
+    captureTitle, setCaptureTitle,
+    captureFileName, setCaptureFileName,
     captureBusy, captureBusyMode,
     captureBackground, capturePreview,
     handleCaptureImage,

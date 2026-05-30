@@ -5,10 +5,18 @@
 // To add a new provider: add an entry here, then create a provider module
 // under src/main/providers/ and register it in providers/index.ts.
 
+// Duck AI model entry returned by fetchDuckaiModels (main) and DUCKAI_FETCH_MODELS IPC.
+export interface DuckaiModelInfo {
+  id: string;
+  label: string;
+  isActive: boolean;
+}
+
 export const PROVIDER_URLS = {
   gemini: 'https://gemini.google.com/',
   perplexity: 'https://www.perplexity.ai/',
   chatgpt: 'https://chatgpt.com/',
+  duckai: 'https://duck.ai/',
 } as const;
 
 export type Provider = keyof typeof PROVIDER_URLS;
@@ -17,6 +25,7 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
   gemini: 'Gemini',
   perplexity: 'Perplexity',
   chatgpt: 'ChatGPT',
+  duckai: 'Duck AI',
 } as const;
 
 // ── IPC Channel Names ────────────────────────────────────────────────────────
@@ -54,6 +63,7 @@ export const IPC = {
   GET_LANGUAGE_CONTENT: 'language:get-content',
   GET_CURRENT_LOCALE: 'language:get-current',
   SET_CURRENT_LOCALE: 'language:set-current',
+  SET_LOCALE_AUTO: 'language:set-auto',
   GET_LICENSE: 'license:get',
   OPEN_EXTERNAL_URL: 'url:open-external',
   TRIGGER_PROMPT: 'prompt:trigger',
@@ -96,6 +106,7 @@ export const IPC = {
   LAUNCH_AT_STARTUP_CHANGED: 'startup:launch-changed',  // main → renderer push
   // Notify-state push (main → renderer, e.g. toggled via tray menu)
   NOTIFY_ON_COMPLETE_CHANGED: 'notify:on-complete-changed',
+  DUCKAI_FETCH_MODELS: 'duckai:fetch-models',
   // Navigate (main → renderer)
   NAVIGATE_SETTINGS: 'navigate:settings',
   // Close dialog (main ↔ renderer)
@@ -118,7 +129,29 @@ export const IPC = {
   OPEN_CONFIG_DIR: 'config:open-dir',
   EXPORT_CONFIG: 'config:export',
   IMPORT_CONFIG: 'config:import',
+  // AgentFlow (Flow Automation)
+  FLOW_GET_ALL: 'flow:get-all',
+  FLOW_SAVE: 'flow:save',
+  FLOW_DELETE: 'flow:delete',
+  FLOW_DUPLICATE: 'flow:duplicate',
+  FLOW_MOVE: 'flow:move',
+  FLOW_EXECUTE: 'flow:execute',
+  FLOW_EXECUTION_LOG: 'flow:execution-log',
+  FLOW_EXECUTION_STARTED: 'flow:execution-started',
+  FLOW_EXECUTION_ENDED: 'flow:execution-ended',
+  FLOW_EXPORT: 'flow:export',
+  // RSS Checkpoint
+  RSS_HAS_CHECKPOINT: 'rss:has-checkpoint',
+  RSS_CLEAR_CHECKPOINT: 'rss:clear-checkpoint',
+  // Scraper Checkpoint
+  SCRAPER_HAS_CHECKPOINT: 'scraper:has-checkpoint',
+  SCRAPER_CLEAR_CHECKPOINT: 'scraper:clear-checkpoint',
 } as const;
+
+export interface FlowExecutionEvent {
+  flowId: string;
+  name: string;
+}
 
 // ── Status ───────────────────────────────────────────────────────────────────
 export type AppStatus = 'idle' | 'processing';
@@ -250,6 +283,7 @@ export interface MarkdownCapturePayload {
 export interface MarkdownCaptureOptions {
   mode: CaptureMode;
   format: CaptureFormat;
+  fileName?: string;
   showPrompt: boolean;
   showContent: boolean;
   showProvider: boolean;
@@ -267,6 +301,76 @@ export interface MarkdownCaptureResult {
   ok: boolean;
   filePath?: string;
   error?: string;
+}
+
+// ── AgentFlow (Flow Automation) ──────────────────────────────────────────────
+
+export type SkillType = 'shell' | 'browser' | 'llm' | 'clipboard' | 'utility' | 'bot' | 'rss' | 'stop' | 'comment' | 'scraper' | 'loop' | 'end_loop';
+
+export interface SkillInstance {
+  id: string;
+  type: SkillType;
+  label: string;
+  config: Record<string, string>;
+  outputKey: string;
+}
+
+export type TriggerType = 'hotkey' | 'cron' | 'manual' | 'bot';
+export type ScheduleMode = 'interval' | 'weekly';
+
+export interface TriggerConfig {
+  type: TriggerType;
+  keys?: string;
+  cronExpression?: string;
+  // Human-friendly schedule builder fields (auto-computed into cronExpression)
+  scheduleMode?: ScheduleMode;
+  intervalValue?: number;
+  intervalUnit?: 'minutes' | 'hours';
+  weekdays?: number[];      // 0=Sun, 1=Mon, ..., 6=Sat
+  scheduleHour?: number;
+  scheduleMinute?: number;
+  repeatWithinDay?: boolean;
+  repeatEveryValue?: number;
+  repeatEveryUnit?: 'minutes' | 'hours';
+  endHour?: number;
+  endMinute?: number;
+  // Bot trigger fields (type === 'bot')
+  botCommand?: string;             // command name without slash, e.g. "my_cmd"
+  botCommandDescription?: string;  // displayed in Telegram help
+  botInputVariable?: string;       // context variable seeded from argument text, e.g. "input"
+}
+
+export interface FlowDefinition {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  trigger: TriggerConfig;
+  steps: SkillInstance[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type FlowStepStatus = 'pending' | 'running' | 'completed' | 'error' | 'skipped';
+
+export interface FlowExecutionLog {
+  flowId: string;
+  stepId: string;
+  stepIndex: number;
+  status: FlowStepStatus;
+  output?: string;
+  error?: string;
+  timestamp: string;
+}
+
+export interface FlowExecutionResult {
+  flowId: string;
+  success: boolean;
+  outputs: Record<string, string>;
+  error?: string;
+  completedSteps: number;
+  totalSteps: number;
+  completedAt: string;
 }
 
 // ── Prompt Preferences ───────────────────────────────────────────────────────

@@ -6,7 +6,7 @@ import {
   type ConversationFlavor,
 } from '@grammyjs/conversations';
 import type { PairingUserProfile } from './dmPolicy';
-import type { TelegramReplyMode, TelegramReplyTarget } from '../../shared/types';
+import type { FlowExecutionResult, TelegramReplyMode, TelegramReplyTarget } from '../../shared/types';
 import { PROVIDER_URLS } from '../../shared/types';
 import { t } from '../i18n';
 
@@ -34,6 +34,16 @@ export interface TelegramCommandOptions {
   onUpdateOutputMode: (mode: TelegramReplyMode) => boolean;
   onLog: (message: string) => void;
   getStrings: () => Record<string, string>;
+  /** Returns current list of enabled bot-triggered flows (called on each message). */
+  getFlowCommands?: () => Array<{ flowId: string; command: string; description: string; inputVariable: string }>;
+  /** Executes a flow triggered by a bot command; returns task ID and result promise. */
+  onFlowCommand?: (
+    flowId: string,
+    inputVariable: string,
+    input: string,
+    userId: number,
+    chatId: number,
+  ) => Promise<{ taskId: string; result: Promise<FlowExecutionResult> }>;
 }
 
 const PROVIDER_URL: Record<TelegramTaskRequest['command'], string> = {
@@ -94,14 +104,26 @@ export function attachTelegramHandlers(bot: Bot<TelegramContext>, options: Teleg
   bot.command('output', async (ctx) => {
     await handleOutputCommand(ctx, options);
   });
+
+  // Register bot.command() for each bot-trigger flow (snapshot taken at bot creation time)
+  if (options.getFlowCommands && options.onFlowCommand) {
+    for (const fc of options.getFlowCommands()) {
+      if (!/^[a-z][a-z0-9_]*$/.test(fc.command)) continue;
+      const cmd = fc.command;
+      bot.command(cmd, async (ctx) => {
+        await handleFlowCommand(ctx, options, cmd);
+      });
+    }
+  }
 }
 
 export async function syncPrivateCommands(
   bot: Bot<TelegramContext>,
   allowGroupCommands: boolean,
   strings: Record<string, string> = {},
+  flowCommands: Array<{ command: string; description: string }> = [],
 ): Promise<void> {
-  const commands = [
+  const staticCommands = [
     { command: 'start', description: t(strings, 'telegram.commands.start') },
     { command: 'init', description: t(strings, 'telegram.commands.init') },
     { command: 'output', description: t(strings, 'telegram.commands.output') },
@@ -109,6 +131,12 @@ export async function syncPrivateCommands(
     { command: 'gpt', description: t(strings, 'telegram.commands.gpt') },
     { command: 'gemini', description: t(strings, 'telegram.commands.gemini') },
     { command: 'pplx', description: t(strings, 'telegram.commands.pplx') },
+  ];
+  const commands = [
+    ...staticCommands,
+    ...flowCommands
+      .filter((fc) => /^[a-z0-9_]+$/.test(fc.command))
+      .map((fc) => ({ command: fc.command, description: fc.description || fc.command })),
   ];
   await bot.api.setMyCommands(commands, { scope: { type: 'all_private_chats' } });
   if (allowGroupCommands) {
@@ -244,6 +272,82 @@ async function handleOutputCommand(ctx: TelegramContext, options: TelegramComman
   await ctx.reply(t(options.getStrings(), 'telegram.cmd.outputUpdated', {
     mode: nextMode.toUpperCase(),
   }));
+}
+
+async function handleFlowCommand(
+  ctx: TelegramContext,
+  options: TelegramCommandOptions,
+  commandName: string,
+): Promise<void> {
+  if (!isProviderChatAllowed(ctx, options)) {
+    await ctx.reply(t(options.getStrings(), 'telegram.cmd.providerPrivateOnly'));
+    return;
+  }
+  if (!ctx.from || !options.isPairedUser(ctx.from.id)) {
+    await ctx.reply(t(options.getStrings(), 'telegram.cmd.accessDenied'));
+    return;
+  }
+  if (!ctx.chat) return;
+  const chatId = ctx.chat.id;
+
+  // Re-validate against live command list — flow may have been disabled/deleted since bot last started
+  const liveCmds = options.getFlowCommands?.() ?? [];
+  const match = liveCmds.find((fc) => fc.command === commandName);
+  if (!match) return;
+
+  const input = extractCommandPrompt(ctx.message?.text ?? '');
+  const s = options.getStrings();
+
+  let queuedMsgId: number | undefined;
+  try {
+    const queuedMsg = await ctx.reply(t(s, 'telegram.cmd.queued'));
+    queuedMsgId = queuedMsg.message_id;
+    const { taskId, result } = await options.onFlowCommand!(
+      match.flowId,
+      match.inputVariable,
+      input,
+      ctx.from.id,
+      chatId,
+    );
+    await ctx.api.editMessageText(chatId, queuedMsg.message_id, t(s, 'telegram.cmd.queuedWithId', { taskId }));
+
+    void result.then(async (flowResult) => {
+      if (!queuedMsgId) return;
+      if (!flowResult.success) {
+        try {
+          await ctx.api.editMessageText(chatId, queuedMsgId, t(s, 'telegram.cmd.flowFailed'));
+        } catch {
+          // ignore update failures
+        }
+        return;
+      }
+      try {
+        await ctx.api.deleteMessage(chatId, queuedMsgId);
+      } catch {
+        // ignore delete failures
+      }
+    }).catch(async (err: unknown) => {
+      options.onLog(`[telegram] flow result failed: ${String(err)}`);
+      if (queuedMsgId) {
+        try {
+          await ctx.api.editMessageText(chatId, queuedMsgId, t(s, 'telegram.cmd.flowFailed'));
+        } catch {
+          // ignore
+        }
+      }
+    });
+  } catch (err: unknown) {
+    options.onLog(`[telegram] flow command /${commandName} failed: ${(err as Error).message}`);
+    if (queuedMsgId) {
+      try {
+        await ctx.api.editMessageText(ctx.chat.id, queuedMsgId, t(s, 'telegram.cmd.flowFailed'));
+        return;
+      } catch {
+        // fallback to new reply
+      }
+    }
+    await ctx.reply(t(s, 'telegram.cmd.flowFailed'));
+  }
 }
 
 function extractCommandPrompt(text: string): string {

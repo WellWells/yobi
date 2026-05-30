@@ -8,13 +8,7 @@ const SRC_DIR = path.join(ROOT, 'src');
 
 // --- Configuration ---
 
-const DYNAMIC_KEY_PREFIXES = [
-  'settings.prompt.built.tone.',
-  'settings.prompt.built.length.',
-  'main.error.',
-];
-
-// Exclude this script itself.
+// Excluded scripts that should not be scanned for i18n key usage.
 const EXCLUDED_SCRIPTS = new Set(['i18n-check.ts', 'strip-i18n-fallbacks.ts']);
 
 // --- Helpers ---
@@ -64,6 +58,25 @@ function extractKeysFromSource(src: string): string[] {
   return keys;
 }
 
+/**
+ * Auto-detects dynamic key prefixes from template literal t() calls.
+ * e.g. t(`prefix.sub.${variable}`) → prefix 'prefix.sub.'
+ * This eliminates the need for a manually maintained whitelist.
+ */
+function extractDynamicPrefixes(sources: string[]): Set<string> {
+  const prefixes = new Set<string>();
+  // Match t(`staticPart${...}`) and capture the static prefix before ${}
+  const re = /\bt(?:g)?\(\s*`([a-z][a-zA-Z0-9._-]*)\$\{/g;
+  for (const src of sources) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(src)) !== null) {
+      prefixes.add(m[1]);
+    }
+  }
+  return prefixes;
+}
+
 function writeSortedJson(filePath: string, data: Record<string, string>) {
   const sorted: Record<string, string> = {};
   Object.keys(data)
@@ -86,11 +99,13 @@ const sourceFiles = walkDir(SRC_DIR, ['.ts', '.tsx']);
 const scriptFiles = walkDir(path.join(ROOT, 'scripts'), ['.ts'])
   .filter((f) => !EXCLUDED_SCRIPTS.has(path.basename(f)));
 
+const allSources = [...sourceFiles, ...scriptFiles].map((f) => fs.readFileSync(f, 'utf-8'));
+
 const usedKeys = new Set<string>();
-[...sourceFiles, ...scriptFiles].forEach((file) => {
-  const src = fs.readFileSync(file, 'utf-8');
-  extractKeysFromSource(src).forEach((k) => usedKeys.add(k));
-});
+allSources.forEach((src) => extractKeysFromSource(src).forEach((k) => usedKeys.add(k)));
+
+// Auto-detect dynamic key prefixes (e.g. t(`prefix.${var}`) → 'prefix.')
+const dynamicPrefixes = extractDynamicPrefixes(allSources);
 
 // Process en-US.json.
 const cleanedEnJson: Record<string, string> = {};
@@ -98,7 +113,7 @@ let removedFromEnCount = 0;
 
 for (const key of Object.keys(enJson)) {
   const isUsed = usedKeys.has(key);
-  const isDynamic = DYNAMIC_KEY_PREFIXES.some((p) => key.startsWith(p));
+  const isDynamic = [...dynamicPrefixes].some((p) => key.startsWith(p));
   if (isUsed || isDynamic) {
     cleanedEnJson[key] = enJson[key];
   } else {

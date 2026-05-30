@@ -4,8 +4,9 @@ import type { OutputFile, QueueState } from '../../../shared/types';
 import { parseMarkdownBlocks } from '../utils/parseMarkdownBlocks';
 import type { MarkdownBlocks } from '../utils/parseMarkdownBlocks';
 import { DEFAULT_MODEL_URL } from '../config/models';
+import type { ModelOption } from '../config/models';
 
-export type View = 'chat' | 'settings' | 'about' | 'logs';
+export type View = 'chat' | 'settings' | 'about' | 'logs' | 'agentflow';
 export type LayoutMode = 'stacked' | 'side-by-side';
 type FileUpdateOptions = { markUnread?: boolean };
 const MD_ZOOM_STEP = 10;
@@ -48,6 +49,7 @@ interface AppState {
   // Configuration
   hotkey: string;
   aiUrl: string;
+  duckaiModels: ModelOption[];
 
   // Actions
   setStatus: (status: 'idle' | 'processing') => void;
@@ -66,6 +68,7 @@ interface AppState {
   resetMarkdownZoom: () => void;
   setHotkey: (hotkey: string) => void;
   setAiUrl: (url: string) => void;
+  setDuckaiModels: (models: ModelOption[]) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -80,6 +83,7 @@ export const useAppStore = create<AppState>((set) => ({
   currentView: 'chat',
   hotkey: 'Alt+G',
   aiUrl: DEFAULT_MODEL_URL,
+  duckaiModels: [],
   layoutMode: 'stacked',
   markdownZoom: 100,
 
@@ -87,9 +91,16 @@ export const useAppStore = create<AppState>((set) => ({
   setStatus: (status) => set({ status }),
   setQueue: (queue) => set({ queue }),
   appendLog: (msg) =>
-    set((state) => ({
-      logs: [...state.logs.slice(-499), msg],
-    })),
+    set((state) => {
+      // Avoid creating a full copy when under the cap
+      if (state.logs.length < 500) {
+        return { logs: [...state.logs, msg] };
+      }
+      // Only slice when exceeding the cap
+      const logs = state.logs.slice(-499);
+      logs.push(msg);
+      return { logs };
+    }),
   clearLogs: () => set({ logs: [] }),
   setFiles: (files, options) => set((state) => {
     const existingPaths = new Set(state.files.map((file) => file.path));
@@ -136,4 +147,5 @@ export const useAppStore = create<AppState>((set) => ({
   resetMarkdownZoom: () => set(createMarkdownZoomUpdate(100)),
   setHotkey: (hotkey) => set({ hotkey }),
   setAiUrl: (aiUrl) => set({ aiUrl }),
+  setDuckaiModels: (duckaiModels) => set({ duckaiModels }),
 }));

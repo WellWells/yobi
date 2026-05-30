@@ -1,0 +1,115 @@
+/* AboutView.module.css */
+
+/* ── Keyframes ─────────────────────────────────────────────────────────── */
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes floatIcon {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-8px); }
+}
+
+@keyframes glowPulse {
+  0%, 100% { opacity: 0.2; transform: scale(0.8); }
+  50%       { opacity: 0.55; transform: scale(1.2); }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* ── Hero ──────────────────────────────────────────────────────────────── */
+
+.hero {
+  text-align: center;
+  padding: 48px 24px 36px;
+  margin-bottom: 20px;
+  border-radius: 16px;
+  border: 1px solid var(--mantine-color-default-border);
+  background: radial-gradient(ellipse 90% 70% at 50% -5%, var(--mantine-color-accent-dim) 0%, transparent 65%);
+  animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.heroIconWrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+  animation: floatIcon 4s ease-in-out infinite;
+}
+
+.heroIconGlow {
+  position: absolute;
+  inset: -16px;
+  border-radius: 50%;
+  background: var(--mantine-color-accent-dim);
+  animation: glowPulse 4s ease-in-out infinite;
+  filter: blur(18px);
+  z-index: 0;
+  pointer-events: none;
+}
+
+.heroIconImg {
+  position: relative;
+  z-index: 1;
+  width: 88px;
+  height: 88px;
+  border-radius: 22px;
+  object-fit: contain;
+  display: block;
+}
+
+.heroTitle {
+  font-size: var(--font-size-3xl);
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  line-height: 1.2;
+  color: var(--mantine-color-text);
+  margin: 0 0 6px;
+}
+
+.heroVersion {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--mantine-color-dimmed);
+  margin-bottom: 20px;
+  display: block;
+}
+
+/* ── Section stagger ───────────────────────────────────────────────────── */
+
+.section0 { animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.08s both; }
+.section1 { animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.16s both; }
+.section2 { animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.26s both; }
+.section3 { animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.34s both; }
+
+/* ── Tech stack row hover ──────────────────────────────────────────────── */
+
+.techRow {
+  border-radius: 6px;
+  transition: background 0.15s ease, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  padding: 2px 8px;
+  margin: 0 -8px;
+}
+
+.techRow:hover {
+  background: var(--mantine-color-default-hover);
+  transform: translateX(4px);
+}
+
+/* ── Update check button spinning ──────────────────────────────────────── */
+
+.spinning {
+  animation: spin 1s linear infinite;
+}

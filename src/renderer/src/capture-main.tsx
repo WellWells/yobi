@@ -44,6 +44,13 @@ window.renderCaptureCard = async (request) => {
   );
   await waitForRenderedLayout();
   const logicalRoot = document.getElementById('capture-logical-root');
-  const logicalHeight = Math.max(1, Math.ceil(logicalRoot?.scrollHeight ?? document.documentElement.scrollHeight));
+  // Use getBoundingClientRect on the scene element for a more accurate fractional height
+  // measurement, avoiding the integer scrollHeight over-counting by 1px in edge cases.
+  const captureScene = logicalRoot?.querySelector('.capture-scene') as HTMLElement | null;
+  const measuredHeight =
+    captureScene?.getBoundingClientRect().height ??
+    logicalRoot?.scrollHeight ??
+    document.documentElement.scrollHeight;
+  const logicalHeight = Math.max(1, Math.ceil(measuredHeight));
   return { logicalHeight };
 };

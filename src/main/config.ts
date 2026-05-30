@@ -33,10 +33,14 @@ function encryptToken(token: string): string {
 function decryptToken(stored: string): string {
   if (!stored) return '';
   if (stored.startsWith(ENCRYPTED_PREFIX)) {
-    if (!safeStorage.isEncryptionAvailable()) return '';
+    if (!safeStorage.isEncryptionAvailable()) {
+      console.warn('[config] safeStorage unavailable — cannot decrypt stored token. Install libsecret on Linux or check OS keychain access.');
+      return '';
+    }
     try {
       return safeStorage.decryptString(Buffer.from(stored.slice(ENCRYPTED_PREFIX.length), 'base64'));
     } catch {
+      console.warn('[config] Failed to decrypt token — OS keychain may have changed. Token will be inaccessible until re-entered.');
       return '';
     }
   }
@@ -52,6 +56,7 @@ interface Config {
   debounceMs: number;
   responseTimeout: number;
   locale: string;
+  localeSetByUser: boolean;
   theme: string;
   syncSystemLanguageToModel: boolean;
   notifyOnComplete: boolean;
@@ -118,7 +123,8 @@ const defaultStored: StoredConfig = {
   hotkey: process.platform === 'darwin' ? 'Command+G' : 'Alt+G',
   debounceMs: 1000,
   responseTimeout: 60_000,
-  locale: 'zh-TW',
+  locale: 'en-US',
+  localeSetByUser: false,
   theme: 'auto',
   syncSystemLanguageToModel: true,
   notifyOnComplete: true,
@@ -131,7 +137,7 @@ const defaultStored: StoredConfig = {
   captureSettings: {
     palette: 'aurora',
     direction: 'se',
-    showPrompt: true,
+    showPrompt: false,
     showProvider: true,
     showTimestamp: true,
     format: 'png' as CaptureFormat,
@@ -281,9 +287,18 @@ function normalizeConfig(raw: unknown): Config {
   const clampedZoom = Number.isFinite(rawZoom) && rawZoom >= 70 && rawZoom <= 200
     ? Math.round(rawZoom / 10) * 10
     : 100;
+
+  // Migration heuristic for localeSetByUser:
+  // Old configs lack this field — infer from the stored locale.
+  // A non-default locale value means the user changed it intentionally.
+  const inferredLocaleSetByUser = typeof obj.localeSetByUser === 'boolean'
+    ? obj.localeSetByUser
+    : (typeof obj.locale === 'string' && obj.locale !== 'zh-TW' && obj.locale !== 'en-US');
+
   return {
     ...defaultStored,
     ...obj,
+    localeSetByUser: inferredLocaleSetByUser,
     theme: typeof obj.theme === 'string' && obj.theme ? obj.theme : defaultStored.theme,
     layoutMode: obj.layoutMode === 'side-by-side' ? 'side-by-side' : 'stacked',
     markdownZoom: clampedZoom,
@@ -299,7 +314,7 @@ function normalizeCaptureSettings(raw: unknown): CaptureSettings {
   return {
     palette: typeof obj.palette === 'string' && obj.palette ? obj.palette : 'aurora',
     direction: typeof obj.direction === 'string' && obj.direction ? obj.direction : 'se',
-    showPrompt: obj.showPrompt !== false,
+    showPrompt: obj.showPrompt === true,
     showProvider: obj.showProvider !== false,
     showTimestamp: obj.showTimestamp !== false,
     format: validFormats.includes(obj.format as CaptureFormat) ? (obj.format as CaptureFormat) : 'png',

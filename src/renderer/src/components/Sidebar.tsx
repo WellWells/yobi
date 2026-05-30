@@ -1,13 +1,18 @@
 // src/renderer/src/components/Sidebar.tsx
 import React, { startTransition, useCallback, useEffect, useRef, useState } from 'react';
-import { Badge, Box, Flex, Menu as MMenu, Stack, Text, TextInput, UnstyledButton } from '@mantine/core';
+import { Badge, Box, Flex, Menu as MMenu, Stack, Text } from '@mantine/core';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import type { OutputFile } from '../../../shared/types';
+import { AppTextInput } from './AppTextInput';
+import { PanelHeader } from './PanelHeader';
 import { WebDialog } from './WebDialog';
-import { Circle, Edit3, FolderOpen, Search, Trash2 } from 'lucide-react';
+import { ContextMenuPortal } from './ContextMenuPortal';
+import { Circle, Edit3, FolderOpen, MessageSquare, Search, Trash2 } from 'lucide-react';
 import { isTypingTarget } from '../utils/domUtils';
 import { fileApi } from '../api/electronApi';
+import styles from './Sidebar.module.css';
 
 type EditMode = 'filename' | 'h1' | null;
 
@@ -24,6 +29,7 @@ export const Sidebar: React.FC = () => {
   const searchSeqRef = useRef(0);
   const fileItemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const prevDeleteDialogOpenRef = useRef(false);
+  const sidebarViewportRef = useRef<HTMLDivElement>(null);
 
   const loadFiles = useCallback(async () => {
     const latest = await fileApi.getList();
@@ -56,23 +62,19 @@ export const Sidebar: React.FC = () => {
     return () => clearTimeout(timer);
   }, [query, files]);
 
-  useEffect(() => {
-    const close = () => setContextMenu(null);
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
-    };
-    window.addEventListener('mousedown', close);
-    window.addEventListener('scroll', close, true);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('mousedown', close);
-      window.removeEventListener('scroll', close, true);
-      window.removeEventListener('keydown', onKey);
-    };
-  }, []);
-
   const visibleFiles = searchResults ?? files;
-  const historyCountLabel = query.trim() ? `${visibleFiles.length}/${files.length}` : `${files.length}`;
+  const isSearching = query.trim().length > 0;
+  const countLabel = isSearching
+    ? `${visibleFiles.length} / ${files.length}`
+    : `${files.length}`;
+
+  const rowVirtualizer = useVirtualizer({
+    count: visibleFiles.length,
+    getScrollElement: () => sidebarViewportRef.current,
+    estimateSize: () => 72,
+    measureElement: (el) => el.getBoundingClientRect().height,
+    overscan: 5,
+  });
 
   const getFocusedFile = useCallback((): OutputFile | null => {
     const active = document.activeElement;
@@ -105,9 +107,16 @@ export const Sidebar: React.FC = () => {
 
   useEffect(() => {
     if (!selectedFile?.path || pendingDeleteFile || editingPath) return;
+    const idx = visibleFiles.findIndex((f) => f.path === selectedFile.path);
+    if (idx >= 0) rowVirtualizer.scrollToIndex(idx, { align: 'auto' });
     const activeItem = fileItemRefs.current.get(selectedFile.path);
     if (!activeItem || document.activeElement === activeItem) return;
-    window.requestAnimationFrame(() => activeItem.focus());
+    window.requestAnimationFrame(() => {
+      fileItemRefs.current.get(selectedFile.path ?? '')?.focus();
+    });
+    // visibleFiles and rowVirtualizer are used but intentionally omitted from deps
+    // to avoid re-triggering on every file list update
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedFile?.path, pendingDeleteFile, editingPath]);
 
   useEffect(() => {
@@ -115,9 +124,12 @@ export const Sidebar: React.FC = () => {
     const isOpen = Boolean(pendingDeleteFile);
     prevDeleteDialogOpenRef.current = isOpen;
     if (!wasOpen || isOpen || !selectedFile?.path || editingPath) return;
+    const idx = visibleFiles.findIndex((f) => f.path === selectedFile.path);
+    if (idx >= 0) rowVirtualizer.scrollToIndex(idx, { align: 'auto' });
     const activeItem = fileItemRefs.current.get(selectedFile.path);
     if (!activeItem) return;
     window.requestAnimationFrame(() => activeItem.focus());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingDeleteFile, selectedFile?.path, editingPath]);
 
   const openContextMenu = (e: React.MouseEvent<HTMLElement>, file: OutputFile) => {
@@ -288,40 +300,63 @@ export const Sidebar: React.FC = () => {
       bg="var(--mantine-color-default)"
       style={{ borderRight: '1px solid var(--mantine-color-default-border)', overflow: 'hidden', position: 'relative' }}
     >
-      <Box p="8px 10px" style={{ borderBottom: '1px solid var(--mantine-color-default-border)', flexShrink: 0 }}>
-        <TextInput
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder={t('sidebar.searchPlaceholder')}
-          leftSection={<Search size={13} />}
-          rightSection={<Text c="dimmed" fz={11}>{historyCountLabel}</Text>}
-          rightSectionWidth={64}
-          variant="default"
-          styles={{
-            input: {
-              background: 'var(--mantine-color-bg-tertiary)',
-              borderColor: 'var(--mantine-color-default-border)',
-              color: 'var(--mantine-color-text)',
-            },
-            section: {
-              color: 'var(--mantine-color-dimmed)',
-            },
-          }}
-          size="xs"
-          radius="sm"
+      <Box style={{ flexShrink: 0 }}>
+        <PanelHeader
+          label={t('nav.chat')}
+          icon={<MessageSquare size={13} />}
+          rightSection={(
+            <Badge
+              variant="default"
+              size="xs"
+              radius="sm"
+              ff="var(--font-mono)"
+              style={{
+                color: 'var(--mantine-color-dimmed)',
+                background: 'var(--mantine-color-default-hover)',
+                border: '1px solid var(--mantine-color-default-border)',
+                fontWeight: 400,
+                padding: '1px 6px',
+              }}
+            >
+              {countLabel}
+            </Badge>
+          )}
         />
+        <Box px="10px" pt="6px" pb="8px">
+          <AppTextInput
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t('sidebar.searchPlaceholder')}
+            tone="tertiary"
+            leftSection={<Search size={13} />}
+            variant="default"
+            size="xs"
+            radius="sm"
+          />
+        </Box>
       </Box>
 
-      <Box flex={1} style={{ overflowY: 'auto', padding: '4px 0' }} onKeyDown={(e) => {
+      <Box ref={sidebarViewportRef} flex={1} style={{ overflowY: 'auto', padding: '6px 0' }} onKeyDown={(e) => {
         if (editingPath || pendingDeleteFile || isTypingTarget(e.target)) return;
 
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-          const items = Array.from(fileItemRefs.current.values());
-          const idx = items.indexOf(document.activeElement as HTMLDivElement);
-          if (idx < 0) return;
           e.preventDefault();
-          const next = e.key === 'ArrowDown' ? items[idx + 1] : items[idx - 1];
-          next?.focus();
+          let currentIdx = -1;
+          for (const [path, node] of fileItemRefs.current.entries()) {
+            if (node === document.activeElement) {
+              currentIdx = visibleFiles.findIndex((f) => f.path === path);
+              break;
+            }
+          }
+          if (currentIdx < 0) return;
+          const delta = e.key === 'ArrowDown' ? 1 : -1;
+          const nextIdx = Math.max(0, Math.min(visibleFiles.length - 1, currentIdx + delta));
+          if (nextIdx === currentIdx) return;
+          rowVirtualizer.scrollToIndex(nextIdx, { align: 'auto' });
+          window.requestAnimationFrame(() => {
+            const next = fileItemRefs.current.get(visibleFiles[nextIdx]?.path ?? '');
+            next?.focus();
+          });
           return;
         }
 
@@ -329,7 +364,7 @@ export const Sidebar: React.FC = () => {
         if (!focusedFile) return;
         const key = e.key.toLowerCase();
 
-        if (e.ctrlKey && !e.shiftKey && !e.altKey && key === '1') {
+        if (!e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'F2') {
           e.preventDefault();
           void startEditH1(focusedFile);
           return;
@@ -379,81 +414,79 @@ export const Sidebar: React.FC = () => {
               : t('sidebar.empty')}
           </Text>
         ) : (
-          visibleFiles.map((file) => (
-            <FileItem
-              key={file.path}
-              file={file}
-              selected={selectedFile?.path === file.path}
-              unread={Boolean(unreadFilePaths[file.path])}
-              unreadLabel={unreadLabel}
-              isEditing={editingPath === file.path}
-              editingMode={editingMode}
-              editingText={editingText}
-              setEditingText={setEditingText}
-              onSelect={handleSelect}
-              onOpenMenu={openContextMenu}
-              onCommitEdit={handleCommitEdit}
-              onCancelEdit={handleCancelEdit}
-              formatTime={formatTime}
-              registerItemRef={registerItemRef}
-            />
-          ))
+          <Box style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>
+            {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+              const file = visibleFiles[virtualRow.index];
+              return (
+                <Box
+                  key={virtualRow.key}
+                  ref={rowVirtualizer.measureElement}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    transform: `translateY(${virtualRow.start}px)`,
+                    padding: '2px 8px',
+                  }}
+                >
+                  <FileItem
+                    file={file}
+                    selected={selectedFile?.path === file.path}
+                    unread={Boolean(unreadFilePaths[file.path])}
+                    unreadLabel={unreadLabel}
+                    isEditing={editingPath === file.path}
+                    editingMode={editingMode}
+                    editingText={editingText}
+                    setEditingText={setEditingText}
+                    onSelect={handleSelect}
+                    onOpenMenu={openContextMenu}
+                    onCommitEdit={handleCommitEdit}
+                    onCancelEdit={handleCancelEdit}
+                    formatTime={formatTime}
+                    registerItemRef={registerItemRef}
+                  />
+                </Box>
+              );
+            })}
+          </Box>
         )}
       </Box>
 
-      {contextMenu && (
-        <Box
-          pos="fixed"
-          top={contextMenu.y}
-          left={contextMenu.x}
-          style={{ zIndex: 2000 }}
-          onMouseDown={(e) => e.stopPropagation()}
+      <ContextMenuPortal
+        position={contextMenu ? { x: contextMenu.x, y: contextMenu.y } : null}
+        onClose={() => setContextMenu(null)}
+      >
+        <MMenu.Item
+          leftSection={<Edit3 size={13} />}
+          rightSection={<Text component="span" fz="var(--font-size-xs)" c="var(--text-muted)" ff="var(--font-mono)">{t('context.shortcut.editH1')}</Text>}
+          onClick={() => { void startEditH1(contextMenu!.file); }}
         >
-          <MMenu opened withinPortal={false} position="bottom-start" offset={0} zIndex={2000}
-            styles={{
-              dropdown: {
-                background: 'var(--bg-secondary)',
-                borderColor: 'var(--border)',
-              },
-            }}
-          >
-            <MMenu.Target>
-              <Box w={0} h={0} />
-            </MMenu.Target>
-            <MMenu.Dropdown>
-              <MMenu.Item
-                leftSection={<Edit3 size={13} />}
-                rightSection={<Text component="span" fz="var(--font-size-xs)" c="var(--text-muted)" ff="var(--font-mono)">{t('context.shortcut.editH1')}</Text>}
-                onClick={() => { void startEditH1(contextMenu.file); }}
-              >
-                {t('context.editH1')}
-              </MMenu.Item>
-              <MMenu.Item
-                leftSection={<FolderOpen size={13} />}
-                rightSection={<Text component="span" fz="var(--font-size-xs)" c="var(--text-muted)" ff="var(--font-mono)">{t('context.shortcut.showInFolder')}</Text>}
-                onClick={() => { void window.electronAPI.showInFolder(contextMenu.file.path); setContextMenu(null); }}
-              >
-                {t('context.showInFolder')}
-              </MMenu.Item>
-              <MMenu.Divider />
-              <MMenu.Item
-                leftSection={<Trash2 size={13} />}
-                color="red"
-                rightSection={<Text component="span" fz="var(--font-size-xs)" c="var(--text-muted)" ff="var(--font-mono)">{t('context.shortcut.delete')}</Text>}
-                onClick={() => startDelete(contextMenu.file)}
-              >
-                {t('context.delete')}
-              </MMenu.Item>
-            </MMenu.Dropdown>
-          </MMenu>
-        </Box>
-      )}
+          {t('context.editH1')}
+        </MMenu.Item>
+        <MMenu.Item
+          leftSection={<FolderOpen size={13} />}
+          rightSection={<Text component="span" fz="var(--font-size-xs)" c="var(--text-muted)" ff="var(--font-mono)">{t('context.shortcut.showInFolder')}</Text>}
+          onClick={() => { void window.electronAPI.showInFolder(contextMenu!.file.path); setContextMenu(null); }}
+        >
+          {t('context.showInFolder')}
+        </MMenu.Item>
+        <MMenu.Divider />
+        <MMenu.Item
+          leftSection={<Trash2 size={13} />}
+          color="red"
+          rightSection={<Text component="span" fz="var(--font-size-xs)" c="var(--text-muted)" ff="var(--font-mono)">{t('context.shortcut.delete')}</Text>}
+          onClick={() => startDelete(contextMenu!.file)}
+        >
+          {t('common.delete')}
+        </MMenu.Item>
+      </ContextMenuPortal>
 
       <WebDialog
         open={Boolean(pendingDeleteFile)}
         title={t('dialog.deleteFile.message')}
         description={t('dialog.deleteFile.detail').replace('{{file}}', pendingDeleteFile?.name || '')}
-        confirmText={t('dialog.delete')}
+        confirmText={t('common.delete')}
         cancelText={t('dialog.cancel')}
         danger
         onConfirm={handleConfirmDelete}
@@ -484,36 +517,17 @@ const FileItem: React.FC<FileItemProps> = React.memo(({
   file, selected, unread, unreadLabel, isEditing, editingMode, editingText,
   setEditingText, onSelect, onOpenMenu, onCommitEdit, onCancelEdit, formatTime, registerItemRef,
 }) => {
-  const [hovered, setHovered] = useState(false);
-  const [focused, setFocused] = useState(false);
-  const bg = selected
-    ? 'var(--mantine-color-accent-dim)'
-    : hovered ? 'var(--mantine-color-default-hover)' : 'transparent';
   return (
     <Stack
-      gap={6}
+      gap={3}
       ref={(node) => registerItemRef(file.path, node as HTMLDivElement | null)}
       tabIndex={0}
       onClick={() => { if (!isEditing) void onSelect(file); }}
       onContextMenu={(e) => onOpenMenu(e, file)}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      onFocus={() => setFocused(true)}
-      onBlur={() => setFocused(false)}
       aria-selected={selected}
       data-selected={String(selected)}
       data-editing={String(isEditing)}
-      style={{
-        padding: '6px 10px',
-        borderRadius: 8,
-        margin: '2px 8px',
-        background: bg,
-        borderLeft: `2px solid ${selected ? 'var(--mantine-color-accent)' : 'transparent'}`,
-        cursor: 'pointer',
-        outline: 'none',
-        boxShadow: focused ? '0 0 0 2px var(--mantine-color-accent-dim)' : 'none',
-        transition: 'background 0.1s ease',
-      }}
+      className={styles.fileItem}
     >
       <Flex align="center" gap={6}>
         {file.provider && (
@@ -522,15 +536,9 @@ const FileItem: React.FC<FileItemProps> = React.memo(({
             size="s"
             radius="xl"
             tt="none"
-            fw={500} fz="var(--font-size-sm)" lh={1.6} px={6} py={1} opacity={selected ? 1 : 0.75} style={{
-              borderColor: selected
-                ? 'var(--mantine-color-accent)'
-                : 'var(--mantine-color-default-border)',
-              color: selected
-                ? 'var(--mantine-color-accent)'
-                : 'var(--mantine-color-dimmed)',
-              background: 'transparent',
-            }}
+            fw={500} fz="var(--font-size-sm)" lh={1.6} px={6} py={1}
+            data-selected={String(selected)}
+            className={styles.providerBadge}
           >
             {file.provider}
           </Badge>
@@ -538,10 +546,8 @@ const FileItem: React.FC<FileItemProps> = React.memo(({
         <Text
           component="span"
           fz="var(--font-size-xs)"
-          ff="var(--font-mono)"
-          style={{ whiteSpace: 'nowrap' }}
-          c={selected ? 'dimmed' : undefined}
-          opacity={selected ? 1 : 0.65}
+          data-selected={String(selected)}
+          className={styles.timestamp}
         >
           {formatTime(file.timestamp)}
         </Text>
@@ -553,7 +559,7 @@ const FileItem: React.FC<FileItemProps> = React.memo(({
       </Flex>
 
       {isEditing && editingMode === 'h1' ? (
-        <TextInput
+        <AppTextInput
           autoFocus
           value={editingText}
           onChange={(e) => setEditingText(e.target.value)}
@@ -563,21 +569,14 @@ const FileItem: React.FC<FileItemProps> = React.memo(({
             if (e.key === 'Enter') { e.preventDefault(); void onCommitEdit(); }
             else if (e.key === 'Escape') { e.preventDefault(); onCancelEdit(); }
           }}
+          tone="accent"
           size="xs"
-          styles={{ input: { background: 'var(--mantine-color-body)', border: '1px solid var(--mantine-color-accent)' } }}
         />
       ) : (
         <Text
           fz="var(--font-size-xs)"
           title={file.name}
-          c="dimmed"
-          style={{
-            overflow: 'hidden',
-            display: '-webkit-box',
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: 'vertical',
-            lineHeight: 1.4,
-          }}
+          className={styles.preview}
         >
           {file.preview || '...'}
         </Text>
@@ -585,4 +584,3 @@ const FileItem: React.FC<FileItemProps> = React.memo(({
     </Stack>
   );
 });
-

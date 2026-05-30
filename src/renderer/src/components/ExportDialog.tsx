@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { REHYPE_PLUGINS } from '../utils/shikiPlugins';
 import { SharedCodeBlock, SharedPreBlock, remarkPlugins } from '../utils/markdownConfig';
+import { AppTextInput } from './AppTextInput';
 
 interface ExportDialogProps {
   open: boolean;
@@ -32,6 +33,10 @@ interface ExportDialogProps {
   setShowProvider: (value: boolean) => void;
   showTimestamp: boolean;
   setShowTimestamp: (value: boolean) => void;
+  title: string;
+  setTitle: (value: string) => void;
+  fileName: string;
+  setFileName: (value: string) => void;
   format: CaptureFormat;
   setFormat: (value: CaptureFormat) => void;
   preview: MarkdownCapturePayload | null;
@@ -53,7 +58,7 @@ const ToggleChip: React.FC<{
     onChange={(e) => onChange(e.currentTarget.checked)}
     label={label}
     size="sm"
-    thumbIcon={<></>}
+    withThumbIndicator={false}
   />
 );
 
@@ -101,6 +106,10 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
   setShowProvider,
   showTimestamp,
   setShowTimestamp,
+  title,
+  setTitle,
+  fileName,
+  setFileName,
   format,
   setFormat,
   preview,
@@ -203,6 +212,24 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
               </Stack>
             </Box>
 
+            <Box>
+              <SectionLabel>{t('agentflow.skill.utility.export.title')}</SectionLabel>
+              <AppTextInput
+                value={title}
+                onChange={(e) => setTitle(e.currentTarget.value)}
+                size="sm"
+              />
+            </Box>
+
+            <Box>
+              <SectionLabel>{t('capture.fileName')}</SectionLabel>
+              <AppTextInput
+                value={fileName}
+                onChange={(e) => setFileName(e.currentTarget.value)}
+                size="sm"
+              />
+            </Box>
+
             {/* Show/hide toggles */}
             <Box>
               <SectionLabel>{t('capture.visible')}</SectionLabel>
@@ -215,7 +242,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
 
             {/* Background palette — bicolor half-circle pills */}
             <Box>
-              <SectionLabel>{t('capture.background')}</SectionLabel>
+              <SectionLabel>{t('common.background')}</SectionLabel>
               <Group gap={6} wrap="wrap">
                 {palettes.map((item) => {
                   const active = selectedPalette === item.key;

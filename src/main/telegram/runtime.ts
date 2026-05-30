@@ -1,6 +1,7 @@
 import { Bot, InputFile } from 'grammy';
 import { marked, Renderer } from 'marked';
 import type {
+  FlowExecutionResult,
   TelegramPairingState,
   TelegramReplyMode,
   TelegramReplyTarget,
@@ -19,7 +20,7 @@ import {
   type TelegramContext,
   type TelegramTaskRequest,
 } from './commands';
-import { t } from '../i18n';
+import { getLangCache, t } from '../i18n';
 
 const TELEGRAM_MSG_LIMIT = 4096;
 const TELEGRAM_RESULT_MAX = 2600;
@@ -49,10 +50,33 @@ type TelegramExportRecord = TelegramExportContext & {
 class ExportTokenRegistry {
   private readonly records = new Map<string, TelegramExportRecord>();
   private readonly TTL_MS = TELEGRAM_EXPORT_TTL_MS;
+  private readonly MAX_RECORDS = 200;
   private readonly ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  private pruneTimer: ReturnType<typeof setInterval> | null = null;
+  private static readonly PRUNE_INTERVAL_MS = 10 * 60_000;
+
+  /** Starts a background interval that periodically removes expired records. */
+  startPeriodicPrune(): void {
+    if (this.pruneTimer) return;
+    this.pruneTimer = setInterval(() => this.prune(), ExportTokenRegistry.PRUNE_INTERVAL_MS);
+  }
+
+  /** Stops the periodic prune interval. */
+  stopPeriodicPrune(): void {
+    if (this.pruneTimer) {
+      clearInterval(this.pruneTimer);
+      this.pruneTimer = null;
+    }
+  }
 
   issue(data: Omit<TelegramExportRecord, 'token' | 'createdAt'>): string {
     this.prune();
+    // Hard cap: evict oldest entries if registry exceeds limit
+    if (this.records.size >= this.MAX_RECORDS) {
+      const entries = [...this.records.entries()].sort((a, b) => a[1].createdAt - b[1].createdAt);
+      const toRemove = entries.slice(0, this.records.size - this.MAX_RECORDS + 1);
+      for (const [key] of toRemove) this.records.delete(key);
+    }
     for (let attempt = 0; attempt < 24; attempt += 1) {
       let token = '';
       for (let i = 0; i < 10; i += 1) {
@@ -86,6 +110,7 @@ class ExportTokenRegistry {
   }
 
   clear(): void {
+    this.stopPeriodicPrune();
     this.records.clear();
   }
 }
@@ -107,6 +132,16 @@ export interface TelegramRuntimeDeps {
   onLog: (message: string) => void;
   onRuntime: (snapshot: TelegramRuntimeSnapshot) => void;
   getStrings: () => Record<string, string>;
+  /** Returns current bot-triggered flow commands for dynamic routing. */
+  getFlowCommands?: () => Array<{ flowId: string; command: string; description: string; inputVariable: string }>;
+  /** Called when a matched flow command is received; resolves once queued. */
+  onFlowCommand?: (
+    flowId: string,
+    inputVariable: string,
+    input: string,
+    userId: number,
+    chatId: number,
+  ) => Promise<{ taskId: string; result: Promise<FlowExecutionResult> }>;
 }
 
 export class TelegramRuntime {
@@ -133,6 +168,57 @@ export class TelegramRuntime {
     };
   }
 
+  async sendProactive(chatId: number, text: string): Promise<void> {
+    if (!this.bot || !this.pollerActive) {
+      throw new Error('Telegram bot is not running');
+    }
+    try {
+      const s = this.deps.getStrings();
+      const responseSection = extractResponseSection(text, s);
+      const responseText = truncateText(responseSection.trim(), TELEGRAM_RESULT_MAX);
+      const body = formatResponseForTelegramHtml(responseText);
+      const fallbackBody = `<i>${escapeTelegramHtml(t(s, 'telegram.msg.emptyResponse'))}</i>`;
+      const message = body || fallbackBody;
+
+      if (message.length > TELEGRAM_MSG_LIMIT) {
+        const buffer = Buffer.from(responseSection || text, 'utf8');
+        await this.bot.api.sendDocument(chatId, new InputFile(buffer, 'output.md'), {
+          caption: t(getLangCache(), 'telegram.flowOutputTooLong', {}),
+        });
+      } else {
+        await this.bot.api.sendMessage(chatId, message, {
+          parse_mode: 'HTML',
+          link_preview_options: { is_disabled: true },
+        });
+      }
+    } catch (err: unknown) {
+      this.deps.onLog(`[telegram] sendProactive failed for chat ${chatId}: ${String(err)}`);
+      throw err;
+    }
+  }
+
+  async sendProactiveFile(
+    chatId: number,
+    filePath: string,
+    sendAs: 'photo' | 'document',
+    caption?: string,
+  ): Promise<void> {
+    if (!this.bot || !this.pollerActive) {
+      throw new Error('Telegram bot is not running');
+    }
+    const captionOpts = caption ? { caption } : {};
+    try {
+      if (sendAs === 'photo') {
+        await this.bot.api.sendPhoto(chatId, new InputFile(filePath), captionOpts);
+      } else {
+        await this.bot.api.sendDocument(chatId, new InputFile(filePath), captionOpts);
+      }
+    } catch (err: unknown) {
+      this.deps.onLog(`[telegram] sendProactiveFile failed for chat ${chatId}: ${String(err)}`);
+      throw err;
+    }
+  }
+
   async syncWithConfig(): Promise<void> {
     await this.runLocked(async () => {
       const enabled = this.deps.getEnabled();
@@ -150,7 +236,7 @@ export class TelegramRuntime {
       if (this.pollerActive && this.currentToken === token && this.currentAllowGroupCommands === allowGroupCommands) {
         if (this.bot) {
           try {
-            await syncPrivateCommands(this.bot, allowGroupCommands, s);
+            await syncPrivateCommands(this.bot, allowGroupCommands, s, this.deps.getFlowCommands?.());
           } catch (err: unknown) {
             this.deps.onLog(`[telegram] failed to refresh localized commands: ${getErrorMessage(err)}`);
           }
@@ -165,6 +251,15 @@ export class TelegramRuntime {
     await this.runLocked(async () => {
       await this.stopInternal();
       this.updateStatus('idle');
+    });
+  }
+
+  async refreshBotCommands(): Promise<void> {
+    await this.runLocked(async () => {
+      if (!this.pollerActive || !this.currentToken) return;
+      const token = this.currentToken;
+      this.deps.onLog('[telegram] restarting bot to register updated flow commands...');
+      await this.startOrReplaceBot(token);
     });
   }
 
@@ -279,7 +374,7 @@ export class TelegramRuntime {
     }
 
     try {
-      await syncPrivateCommands(candidate, this.deps.getAllowGroupCommands(), s);
+      await syncPrivateCommands(candidate, this.deps.getAllowGroupCommands(), s, this.deps.getFlowCommands?.());
     } catch (err: unknown) {
       this.deps.onLog(`[telegram] failed to sync command scope: ${getErrorMessage(err)}`);
     }
@@ -290,6 +385,7 @@ export class TelegramRuntime {
     this.currentAllowGroupCommands = this.deps.getAllowGroupCommands();
     this.botUsername = me.username || '';
     this.pollerActive = true;
+    this.registry.startPeriodicPrune();
 
     candidate.start().catch((err: unknown) => {
       if (this.bot !== candidate) return;
@@ -328,6 +424,8 @@ export class TelegramRuntime {
       onUpdateOutputMode: (mode) => this.deps.onUpdateDefaultReplyMode(mode),
       onLog: this.deps.onLog,
       getStrings: () => this.deps.getStrings(),
+      getFlowCommands: this.deps.getFlowCommands,
+      onFlowCommand: this.deps.onFlowCommand,
     });
     bot.on('callback_query:data', async (ctx) => {
       await this.handleExportCallback(ctx);
@@ -371,8 +469,10 @@ export class TelegramRuntime {
     this.botUsername = '';
     this.registry.clear();
     try {
-      current.stop();
-      await delay(150);
+      await Promise.race([
+        Promise.resolve(current.stop()),
+        delay(3_000),
+      ]);
       this.deps.onLog('[telegram] bot stopped');
     } catch (err: unknown) {
       this.deps.onLog(`[telegram] failed to stop bot: ${getErrorMessage(err)}`);
@@ -527,14 +627,18 @@ function telegramFetchCompat(
   };
   const controller = new AbortController();
 
-  const relayAbort = () => {
+  const relayAbort = (): void => {
     controller.abort();
     source.removeEventListener?.('abort', relayAbort);
   };
   if (source.aborted) relayAbort();
   else source.addEventListener?.('abort', relayAbort);
 
-  return fetch(input, { ...patchedInit, signal: controller.signal });
+  const result = fetch(input, { ...patchedInit, signal: controller.signal });
+  result.finally(() => {
+    source.removeEventListener?.('abort', relayAbort);
+  });
+  return result;
 }
 
 function isNativeAbortSignal(value: unknown): value is AbortSignal {
@@ -674,7 +778,10 @@ function formatResponseForTelegramHtml(input: string): string {
   };
   renderer.br = () => '\n';
   renderer.html = ({ text }) => escapeTelegramHtml(text);
-  renderer.text = ({ text }) => escapeTelegramHtml(text);
+  renderer.text = (token) => {
+    if (token.type === 'text' && token.tokens?.length) return renderInline(token.tokens);
+    return escapeTelegramHtml(token.text);
+  };
   renderer.table = ({ header, rows }) => {
     const lines = [header.map((cell) => renderInline(cell.tokens).trim()).join(' | ')];
     for (const row of rows) {

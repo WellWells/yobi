@@ -27,6 +27,7 @@ export const CapturePage: React.FC<CapturePageProps> = ({ request }) => {
       id="capture-logical-root"
       style={{
         width: options.width,
+        background: options.background,
       }}
     >
       <div

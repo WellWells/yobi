@@ -15,9 +15,11 @@
 
 import { app, session, powerSaveBlocker, nativeImage } from 'electron';
 import * as path from 'node:path';
+import * as fs from 'node:fs/promises';
 import {
   runAutomation,
   getProviderLabel,
+  preparePromptForProvider,
   isLoginRequiredError,
   getProviderLoginUrl,
 } from './providers';
@@ -27,7 +29,7 @@ import { config, saveConfig, initSensitiveConfig } from './config';
 import { QueueManager } from './queueManager';
 import { TelegramRuntime, normalizePairingState } from './telegram';
 import { IPC } from '../shared/types';
-import type { Task } from '../shared/types';
+import type { Task, QueueState } from '../shared/types';
 
 // Module imports
 import {
@@ -42,8 +44,8 @@ import {
   getAssetPath,
 } from './helpers';
 import { captureSelectedText, backupClipboard, restoreClipboard, checkMacosAccessibility, promptMacosAccessibility } from './clipboard';
-import { listOutputFiles, getOutputDir } from './files';
-import { isSingleUrl, fetchAndParse, buildUrlAnalysisPrompt } from './urlParser';
+import { listOutputFiles, getOutputDir, buildSafeFileNameFromTitle, buildSnapshotFileName, getUniquePath } from './files';
+import { isSingleUrl, fetchAndParse, buildUrlAnalysisPrompt, resolveUrlPrompt } from './urlParser';
 import {
   loadLanguageData,
   getLangCache,
@@ -76,6 +78,7 @@ import {
   exportTelegramResultDocument,
 } from './telegramBridge';
 import { setupIpcHandlers } from './ipcHandlers';
+import { FlowManager } from './flowManager';
 import { checkForUpdates, initializeUpdater } from './updater';
 import {
   createTray,
@@ -119,18 +122,35 @@ const TELEGRAM_SESSION_ID = `${app.getName().toLowerCase()}-desktop`;
 // Track powerSaveBlocker ID for cleanup
 let powerSaveBlockerId: number | null = null;
 
+// ── AgentFlow (Flow Automation) ──────────────────────────────────────────────
+let flowManager: FlowManager | null = null;
+
 // ── Queue Manager ─────────────────────────────────────────────────────────────
 const queue = new QueueManager(async (task: Task) => {
   await processTask(task);
 });
 
 queue.onUpdate((state) => {
-  sendToRenderer(IPC.QUEUE_UPDATE, state);
-  sendToRenderer(IPC.STATUS, state.status);
+  const flowItems = flowManager?.getPendingQueueItems() ?? [];
+  if (flowItems.length === 0) {
+    sendToRenderer(IPC.QUEUE_UPDATE, state);
+    sendToRenderer(IPC.STATUS, state.status);
+    return;
+  }
+  const allItems = [...state.items, ...flowItems];
+  const anyRunning = allItems.some((i) => i.status === 'running');
+  const merged: QueueState = {
+    total: allItems.length,
+    current: anyRunning ? 1 : 0,
+    status: anyRunning ? 'processing' : 'idle',
+    items: allItems,
+  };
+  sendToRenderer(IPC.QUEUE_UPDATE, merged);
+  sendToRenderer(IPC.STATUS, merged.status);
 });
 
 // ── Telegram Runtime ──────────────────────────────────────────────────────────
-const telegramRuntime = new TelegramRuntime({
+  const telegramRuntime = new TelegramRuntime({
   getEnabled: () => config.telegram.enabled,
   getToken: () => config.telegram.botToken,
   getAllowGroupCommands: () => config.telegram.allowGroupCommands,
@@ -169,7 +189,32 @@ const telegramRuntime = new TelegramRuntime({
     sendToRenderer(IPC.TELEGRAM_RUNTIME, snapshot);
   },
   getStrings: () => getLangCache(),
-});
+  getFlowCommands: () => flowManager?.getBotCommands() ?? [],
+    onFlowCommand: async (flowId, inputVariable, input, userId, chatId) => {
+      const extraContext: Record<string, string> = {
+        [inputVariable]: input,
+        'bot.triggerChatId': String(chatId),
+        'bot.triggerUserId': String(userId),
+      };
+      if (!flowManager) {
+        return {
+          taskId: createTaskId(),
+          result: Promise.resolve({
+            flowId,
+            success: false,
+            outputs: {},
+            error: 'FlowManager not available',
+            completedSteps: 0,
+            totalSteps: 0,
+            completedAt: new Date().toISOString(),
+          }),
+        };
+      }
+      const execution = flowManager.queueExecutionWithId(flowId, extraContext, 'bot');
+      sendLog(`[AgentFlow] Bot command triggered flow ${flowId} for user ${userId} with input: ${input}`);
+      return execution;
+    },
+  });
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 app.on('ready', () => {
@@ -223,6 +268,95 @@ app.whenReady().then(async () => {
   initializeUpdater({ sendLog, sendToRenderer });
 
   createWorkerWindow(config.targetUrl);
+
+  // ── AgentFlow (Flow Automation) ────────────────────────────────────────
+  flowManager = new FlowManager({
+    getWorkerWin,
+    getTargetUrl: () => config.targetUrl,
+    getResponseTimeoutMs: () => config.responseTimeout,
+    sendTelegramMessage: async (chatId, text) => {
+      await telegramRuntime.sendProactive(chatId, text);
+    },
+    sendTelegramFile: async (chatId, filePath, sendAs, caption) => {
+      await telegramRuntime.sendProactiveFile(chatId, filePath, sendAs, caption);
+    },
+    captureMarkdown: async (payload, format, background, options) => {
+      const resultDoc = await captureMarkdownDocument({
+        payload,
+        options: {
+          mode: 'save',
+          format,
+          fileName: options?.fileName ?? '',
+          showPrompt: options?.showPrompt ?? false,
+          showContent: options?.showContent ?? true,
+          showProvider: options?.showProvider ?? false,
+          showTimestamp: options?.showTimestamp ?? false,
+          width: 1_200,
+          background,
+        },
+      });
+      const outputDir = await getOutputDir();
+      const requestedFileName = (options?.fileName ?? '').trim();
+      const fileStem = requestedFileName ? buildSafeFileNameFromTitle(requestedFileName) : buildSnapshotFileName();
+      const filePath = await getUniquePath(
+        path.join(outputDir, `${fileStem}.${resultDoc.ext}`),
+        '',
+      );
+      await fs.writeFile(filePath, resultDoc.buffer);
+      return filePath;
+    },
+    getPairedUsers: () => config.telegram.pairing.pairedUsers,
+    onSaveHistory: async ({ prompt, response, providerLabel }) => {
+      const outputDir = await getOutputDir();
+      const langData = await loadLanguageData(config.locale);
+      const providerHeaderLabel = langData?.['md.provider'] ?? 'Provider';
+      const promptLabel = langData?.['md.prompt'] ?? 'Prompt';
+      const responseLabel = langData?.['md.response'] ?? 'Response';
+      const timestampLabel = langData?.['md.timestamp'] ?? 'Time';
+      const fallbackTitle = prompt.trim().replace(/\s+/g, ' ').slice(0, 70);
+      await saveOutput({
+        prompt,
+        response,
+        outputDir,
+        title: fallbackTitle || 'AgentFlow',
+        provider: providerLabel,
+        promptLabel,
+        responseLabel,
+        timestampLabel,
+        providerLabel: providerHeaderLabel,
+      });
+      const files = await listOutputFiles();
+      sendToRenderer(IPC.FILE_LIST, files);
+    },
+  });
+
+  // Wire the FlowManager queue into the TitleBar queue display
+  flowManager.setQueueChangeCallback(() => {
+    const promptState = queue.getState();
+    const flowItems = flowManager!.getPendingQueueItems();
+    const allItems = [...promptState.items, ...flowItems];
+    const anyRunning = allItems.some((i) => i.status === 'running');
+    const merged: QueueState = {
+      total: allItems.length,
+      current: anyRunning ? 1 : 0,
+      status: anyRunning ? 'processing' : 'idle',
+      items: allItems,
+    };
+    sendToRenderer(IPC.QUEUE_UPDATE, merged);
+    sendToRenderer(IPC.STATUS, merged.status);
+  });
+
+  // Re-sync Telegram bot commands whenever a bot-trigger flow is saved or deleted
+  flowManager.setOnBotCommandsChanged(() => {
+    void telegramRuntime.refreshBotCommands();
+  });
+
+  void flowManager.init().then(() => {
+    // After flows are loaded, restart bot if there are active bot-trigger commands to register
+    if ((flowManager?.getBotCommands().length ?? 0) > 0) {
+      void telegramRuntime.refreshBotCommands();
+    }
+  });
 
   if (process.platform === 'darwin') {
     getMainWin()?.focus();
@@ -305,6 +439,7 @@ app.whenReady().then(async () => {
     getMainWin,
     bindHotkey,
     checkForUpdates,
+    flowManager: flowManager!,
     onTraySettingsChanged: () => {
       // Create or destroy tray based on updated settings
       if (config.autoShowTray || config.closeToTray) {
@@ -337,6 +472,7 @@ app.on('before-quit', () => {
   sendLog('🔄 App closing — shutting down services...');
   setAppQuitting(true);
   destroyTray();
+  flowManager?.shutdown();
   void telegramRuntime.shutdown();
 });
 
@@ -399,31 +535,11 @@ function bindHotkey(): void {
     }
 
     const langData = getLangCache();
-    let prompt = rawText;
-
-    if (isSingleUrl(rawText)) {
-      const logFetching = langData['urlParser.log.fetching'] ?? '🔗 URL detected — fetching page content...';
-      const notifyTitle = langData['urlParser.notify.title'] ?? 'Desktop Agent Center';
-      const notifyBody = (langData['urlParser.notify.body'] ?? 'Fetching: {{url}}').replace('{{url}}', rawText);
-      sendLog(logFetching);
-      sendWebNotification(notifyTitle, notifyBody, 'info');
-
-      try {
-        const parsed = await fetchAndParse(rawText);
-        const promptTemplate = langData['urlParser.prompt'] ?? '';
-        const truncatedLabel = langData['urlParser.truncated'] ?? '(Content truncated — too long)';
-        prompt = buildUrlAnalysisPrompt(parsed, promptTemplate, truncatedLabel);
-        const logDone = (langData['urlParser.log.done'] ?? '🔗 Fetched {{chars}} chars — wrapping analysis prompt...')
-          .replace('{{chars}}', String(parsed.cleanedText.length));
-        sendLog(logDone);
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        const logError = (langData['urlParser.log.error'] ?? '❌ URL fetch failed: {{error}} (sending raw URL instead)')
-          .replace('{{error}}', errMsg);
-        sendLog(logError);
-        // Fall through with raw URL as prompt
-      }
-    }
+    const prompt = await resolveUrlPrompt(rawText, {
+      langData,
+      onLog: sendLog,
+      onNotify: (title, body) => sendWebNotification(title, body, 'info'),
+    });
 
     const id = createTaskId();
     queue.enqueue({
@@ -471,16 +587,28 @@ async function processTask(task: Task): Promise<void> {
       await new Promise((r) => setTimeout(r, 3_000));
     }
 
+    const activeWorker = getWorkerWin();
+    if (!activeWorker || activeWorker.isDestroyed()) {
+      throw new Error('Worker window unavailable after relaunch attempt');
+    }
+
     const t0 = Date.now();
     sendLog(`[${id}] ⏳ Sending to ${providerLabel}...`);
 
     const dynamicInstruction = buildCombinedPromptFromPrefs(config.promptPreferences, getLangCache());
     const instruction = buildTaskInstruction(dynamicInstruction, config.syncSystemLanguageToModel, config.locale);
     const fullPrompt = instruction ? `${instruction}\n\n${prompt}` : prompt;
+    const preparedPrompt = preparePromptForProvider(fullPrompt, targetUrl);
+    if (preparedPrompt.removedBlankLines) {
+      sendLog(`[${id}] ✂️ Removed blank lines before sending to ${providerLabel}`);
+    }
+    if (preparedPrompt.truncated) {
+      sendLog(`[${id}] ✂️ Prompt truncated to ${preparedPrompt.maxChars} chars for ${providerLabel}`);
+    }
 
     const { response, title } = await runAutomation(
-      getWorkerWin()!,
-      fullPrompt,
+      activeWorker,
+      preparedPrompt.prompt,
       config.responseTimeout,
       targetUrl,
     );

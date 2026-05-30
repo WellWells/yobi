@@ -1,6 +1,7 @@
 import React, { useCallback, useImperativeHandle, useRef, useState } from 'react';
-import { ActionIcon, Box, Flex, Paper, Stack, Textarea } from '@mantine/core';
+import { ActionIcon, Box, Flex, Paper, Stack } from '@mantine/core';
 import { ArrowUp } from 'lucide-react';
+import { AppTextarea } from '../AppTextarea';
 import { ModelDropdown } from './ModelDropdown';
 
 interface PromptInputAreaProps {
@@ -42,22 +43,25 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
       p="10px 12px"
       style={{ borderTop: '1px solid var(--mantine-color-default-border)', flexShrink: 0 }}
     >
-      <Paper
+    <Paper
         shadow="none"
         radius="var(--radius-lg)"
         bg="var(--mantine-color-default)"
         withBorder
         onFocusCapture={() => setInputFocused(true)}
         onBlurCapture={() => setInputFocused(false)}
+        onClick={() => promptInputRef.current?.focus()}
         style={{
           borderColor: inputFocused ? 'var(--mantine-color-accent)' : 'var(--mantine-color-default-border)',
           boxShadow: inputFocused ? '0 0 0 2px var(--mantine-color-accent-dim)' : 'none',
           transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
+          cursor: 'text',
         }}
       >
         <Box p="8px 12px 2px">
-          <Textarea
+          <AppTextarea
             ref={promptInputRef}
+            tone="prompt"
             value={promptInput}
             onChange={(event) => setPromptInput(event.target.value)}
             onKeyDown={(event) => {
@@ -67,28 +71,9 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
               }
             }}
             placeholder={t('input.placeholder.short')}
-            autosize
-            minRows={3}
-            maxRows={3}
-            styles={{
-              input: {
-                background: 'transparent',
-                border: 'none',
-                outline: 'none',
-                boxShadow: 'none',
-                color: 'var(--mantine-color-text)',
-                fontSize: 'var(--font-size-xl)',
-                fontFamily: 'var(--font-sans)',
-                lineHeight: 1.55,
-                userSelect: 'none',
-                resize: 'none',
-                padding: '2px 0',
-              },
-            }}
+            minRows={2}
           />
         </Box>
-
-        <Box h={1} bg="var(--mantine-color-default-border)" opacity={0.65} />
 
         <Flex align="center" justify="flex-end" gap={8} p="8px 10px">
           <ModelDropdown value={activeModelUrl} onChange={onChangeModel} />

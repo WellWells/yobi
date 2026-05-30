@@ -28,3 +28,5 @@ Thumbs.db
 .idea/
 
 config.json
+
+flow-checkpoints

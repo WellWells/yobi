@@ -1,9 +1,10 @@
 import React from 'react';
-import { ActionIcon, Box, Group, PasswordInput, Stack, Text, Button as MButton } from '@mantine/core';
+import { ActionIcon, Box, Group, Stack, Text, Button as MButton } from '@mantine/core';
 import {
   Bot, Copy, ExternalLink, KeyRound, Link, ShieldAlert, Unlink, Users,
 } from 'lucide-react';
 import dayjs from 'dayjs';
+import { AppPasswordInput } from '../../../components/AppPasswordInput';
 import { SectionCard, SettingRow, SelectDropdown, ToggleSwitch, GroupHeader, SectionTitle } from '../components';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import type { useTelegramSettings } from '../hooks/useTelegramSettings';
@@ -95,12 +96,13 @@ export const TelegramSection: React.FC<Props> = ({
 
         {/* Bot token input */}
         <Group gap={8} align="center">
-          <PasswordInput
+          <AppPasswordInput
             flex={1}
+            tone="body"
+            mono
             value={telegram.telegramTokenInput}
             onChange={(e) => telegram.setTelegramTokenInput(e.target.value)}
             placeholder={t('settings.telegram.tokenPlaceholder')}
-            styles={{ input: { background: 'var(--mantine-color-body)', fontFamily: 'var(--font-mono)' } }}
           />
           <MButton
             variant="default"
@@ -222,7 +224,11 @@ export const TelegramSection: React.FC<Props> = ({
                   style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 'var(--radius-sm)' }}
                 >
                   <Text fz="var(--font-size-sm)" c="var(--mantine-color-default-color)">
-                    {user.username ? `@${user.username}` : `ID ${user.userId}`}
+                    {user.firstName || user.lastName ? (
+                      `${[user.firstName, user.lastName].filter(Boolean).join(' ')}${user.username ? ` (@${user.username})` : ''}`
+                    ) : (
+                      user.username ? `@${user.username}` : `ID ${user.userId}`
+                    )}
                     {isAdmin ? ` · ${t('settings.telegram.admin.badge')}` : ''}
                   </Text>
                   <Group gap={4}>

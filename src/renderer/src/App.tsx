@@ -7,6 +7,7 @@ import { ChatView } from './views/ChatView';
 import { SettingsView } from './views/SettingsView';
 import { AboutView } from './views/AboutView';
 import { LogView } from './views/LogView';
+import { AgentFlowView } from './views/AgentFlowView';
 import { useAppStore } from './store/appStore';
 import { useThemeStore } from './store/themeStore';
 import { useI18nStore } from './store/i18nStore';
@@ -61,6 +62,9 @@ export const App: React.FC = () => {
         </Box>
         <Box display={currentView === 'about' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
           <AboutView />
+        </Box>
+        <Box display={currentView === 'agentflow' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
+          <AgentFlowView />
         </Box>
       </Flex>
 

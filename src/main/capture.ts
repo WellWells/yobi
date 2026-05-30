@@ -4,6 +4,9 @@ import * as path from 'node:path';
 import type { MarkdownCaptureRequest, MarkdownCaptureResult, CaptureFormat, CaptureMode } from '../shared/types';
 import { sendLog } from './helpers';
 
+/** Overall timeout for the entire capture operation (ms). */
+const CAPTURE_TIMEOUT_MS = 30_000;
+
 interface CaptureDocumentResult {
   buffer: Buffer;
   ext: 'png' | 'webp' | 'pdf';
@@ -44,6 +47,7 @@ export function normalizeCaptureRequest(request: MarkdownCaptureRequest): Markdo
     options: {
       mode,
       format,
+      fileName: (request?.options?.fileName ?? '').trim(),
       showPrompt: Boolean(request?.options?.showPrompt),
       showContent: Boolean(request?.options?.showContent),
       showProvider: Boolean(request?.options?.showProvider),
@@ -102,66 +106,89 @@ export async function captureMarkdownDocument(
   });
   attachCaptureConsoleForwarder(captureWin);
 
+  // Overall timeout guard — prevents the window from living forever if
+  // loadCapturePage or executeJavaScript hangs indefinitely.
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`Capture timed out after ${CAPTURE_TIMEOUT_MS / 1_000}s`));
+    }, CAPTURE_TIMEOUT_MS);
+  });
+
   try {
-    await loadCapturePage(captureWin);
-
-    const hasRenderFunction = await captureWin.webContents.executeJavaScript(
-      `typeof window.renderCaptureCard === 'function'`,
-      true,
-    );
-    if (!hasRenderFunction) throw new Error('capture renderer not ready');
-
-    const serializedRequest = JSON.stringify(request);
-    const serializedRequestLiteral = JSON.stringify(serializedRequest);
-    const renderResult = (await captureWin.webContents.executeJavaScript(
-      `window.renderCaptureCard(JSON.parse(${serializedRequestLiteral}))`,
-      true,
-    )) as { logicalHeight?: number } | null;
-
-    // logicalHeight is in CSS pixels, always.
-    const logicalHeight = Math.max(1, Math.ceil(renderResult?.logicalHeight ?? 1));
-    const pdfHeight = logicalHeight - 1;
-
-    if (request.options.format !== 'pdf' && logicalHeight > 20_000) {
-      throw new Error('Image height exceeds limits. Please use PDF format.');
-    }
-
-    if (request.options.format === 'pdf') {
-      // PDF: resize window to full height, inject @page CSS, then print.
-      captureWin.setContentSize(logicalWidth, logicalHeight);
-      const cssKey = await captureWin.webContents.insertCSS(
-        `@page { size: ${logicalWidth}px ${pdfHeight}px; margin: 0; }` +
-        `html, body { margin: 0 !important; padding: 0 !important; width: ${logicalWidth}px !important; height: ${pdfHeight}px !important; overflow: hidden !important; box-sizing: border-box !important; }`,
-      );
-      await captureWin.webContents.executeJavaScript(
-        `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 100))))`,
-        true,
-      );
-      try {
-        const pdf = await captureWin.webContents.printToPDF({
-          printBackground: true,
-          margins: { top: 0, bottom: 0, left: 0, right: 0 },
-          preferCSSPageSize: true,
-        });
-        return { buffer: Buffer.from(pdf), ext: 'pdf', mode: request.options.mode };
-      } finally {
-        await captureWin.webContents.removeInsertedCSS(cssKey).catch(() => undefined);
-      }
-    }
-
-    // PNG / WEBP: use CDP to force-render the full logical height and capture.
-    // Do NOT call setContentSize here — OS window size limits would cap the height
-    // and leave transparent rows at the bottom of the screenshot.
-    // Instead, Emulation.setDeviceMetricsOverride tells Chromium's renderer to lay
-    // out the page at the full logicalWidth × logicalHeight, regardless of the
-    // physical window, before we call Page.captureScreenshot.
-    const imageBuffer = await captureScreenshotCdp(
-      captureWin, logicalWidth, logicalHeight, request.options.format,
-    );
-    return { buffer: imageBuffer, ext: request.options.format, mode: request.options.mode };
+    const result = await Promise.race([
+      captureMarkdownDocumentCore(captureWin, request, logicalWidth),
+      timeoutPromise,
+    ]);
+    return result;
   } finally {
+    if (timeoutId) clearTimeout(timeoutId);
     if (!captureWin.isDestroyed()) captureWin.destroy();
   }
+}
+
+async function captureMarkdownDocumentCore(
+  captureWin: BrowserWindow,
+  request: ReturnType<typeof normalizeCaptureRequest>,
+  logicalWidth: number,
+): Promise<CaptureDocumentResult> {
+  await loadCapturePage(captureWin);
+
+  const hasRenderFunction = await captureWin.webContents.executeJavaScript(
+    `typeof window.renderCaptureCard === 'function'`,
+    true,
+  );
+  if (!hasRenderFunction) throw new Error('capture renderer not ready');
+
+  const serializedRequest = JSON.stringify(request);
+  const serializedRequestLiteral = JSON.stringify(serializedRequest);
+  const renderResult = (await captureWin.webContents.executeJavaScript(
+    `window.renderCaptureCard(JSON.parse(${serializedRequestLiteral}))`,
+    true,
+  )) as { logicalHeight?: number } | null;
+
+  // logicalHeight is in CSS pixels, always.
+  const logicalHeight = Math.max(1, Math.ceil(renderResult?.logicalHeight ?? 1));
+  const imageLogicalHeight = logicalHeight;
+  const pdfHeight = logicalHeight - 1;
+
+  if (request.options.format !== 'pdf' && logicalHeight > 20_000) {
+    throw new Error('Image height exceeds limits. Please use PDF format.');
+  }
+
+  if (request.options.format === 'pdf') {
+    // PDF: resize window to full height, inject @page CSS, then print.
+    captureWin.setContentSize(logicalWidth, logicalHeight);
+    const cssKey = await captureWin.webContents.insertCSS(
+      `@page { size: ${logicalWidth}px ${pdfHeight}px; margin: 0; }` +
+      `html, body { margin: 0 !important; padding: 0 !important; width: ${logicalWidth}px !important; height: ${pdfHeight}px !important; overflow: hidden !important; box-sizing: border-box !important; }`,
+    );
+    await captureWin.webContents.executeJavaScript(
+      `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 100))))`,
+      true,
+    );
+    try {
+      const pdf = await captureWin.webContents.printToPDF({
+        printBackground: true,
+        margins: { top: 0, bottom: 0, left: 0, right: 0 },
+        preferCSSPageSize: true,
+      });
+      return { buffer: Buffer.from(pdf), ext: 'pdf', mode: request.options.mode };
+    } finally {
+      await captureWin.webContents.removeInsertedCSS(cssKey).catch(() => undefined);
+    }
+  }
+
+  // PNG / WEBP: use CDP to force-render the full logical height and capture.
+  // Do NOT call setContentSize here — OS window size limits would cap the height
+  // and leave transparent rows at the bottom of the screenshot.
+  // Instead, Emulation.setDeviceMetricsOverride tells Chromium's renderer to lay
+  // out the page at the full logicalWidth × logicalHeight, regardless of the
+  // physical window, before we call Page.captureScreenshot.
+  const imageBuffer = await captureScreenshotCdp(
+    captureWin, logicalWidth, imageLogicalHeight, request.options.format,
+  );
+  return { buffer: imageBuffer, ext: request.options.format, mode: request.options.mode };
 }
 
 async function captureScreenshotCdp(

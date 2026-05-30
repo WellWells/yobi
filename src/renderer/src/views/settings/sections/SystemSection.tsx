@@ -56,7 +56,6 @@ export const SystemSection: React.FC<Props> = ({
           </Text>
           <MButton
             variant="default"
-            size="md"
             leftSection={<LogIn size={14} />}
             onClick={() => systemApi.showWorker()}
           >
@@ -156,7 +155,7 @@ export const SystemSection: React.FC<Props> = ({
               miw={96}
               onClick={() => setDangerAction('clear-history')}
             >
-              {t('dialog.delete')}
+              {t('common.delete')}
             </MButton>
           </Group>
 

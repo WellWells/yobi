@@ -1,5 +1,5 @@
 import React, { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActionIcon, Box, Button, Flex, Group, Paper, Stack, Text } from '@mantine/core';
+import { ActionIcon, Box, Button, Flex, Group, Stack, Text } from '@mantine/core';
 import { RefreshCw, X } from 'lucide-react';
 import type { CaptureFormat } from '../../../shared/types';
 import { Sidebar } from '../components/Sidebar';
@@ -10,7 +10,7 @@ import { ModelDropdown } from '../components/chat/ModelDropdown';
 import { PromptInputArea, type PromptInputAreaHandle } from '../components/chat/PromptInputArea';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
-import { getModelOptionByUrl } from '../config/models';
+import { findModelOption } from '../config/models';
 import { useGlobalHotkeys } from '../hooks/useGlobalHotkeys';
 import {
   useCaptureExport,
@@ -19,7 +19,8 @@ import {
   type CaptureDirection,
 } from '../hooks/useCaptureExport';
 import { useRewriteTask } from '../hooks/useRewriteTask';
-import { fileApi, settingsApi, clipboardApi } from '../api/electronApi';
+import { fileApi, settingsApi, clipboardApi, promptApi } from '../api/electronApi';
+import styles from './ChatView.module.css';
 
 const RewriteTriggerButton = React.memo<{
   onStart: (url: string) => void;
@@ -57,6 +58,7 @@ export const ChatView: React.FC = () => {
     zoomInMarkdown,
     zoomOutMarkdown,
     resetMarkdownZoom,
+    setAiUrl,
   } = useAppStore();
   const { t, locale } = useI18nStore();
 
@@ -112,12 +114,19 @@ export const ChatView: React.FC = () => {
     }
   }, [headerEditing]);
 
-  const handleSendPrompt = useCallback((text: string) => {
-    window.electronAPI.triggerPrompt(text);
-  }, []);
+  const handleSendPrompt = useCallback(async (text: string): Promise<void> => {
+    // Persist the selected provider and navigate the worker window only on send,
+    // not when the user just opens the dropdown and picks a model.
+    const currentModelUrl = useAppStore.getState().aiUrl;
+    if (activeModelUrl !== currentModelUrl) {
+      await settingsApi.updateAiUrl(activeModelUrl);
+      setAiUrl(activeModelUrl);
+    }
+    promptApi.triggerWithOptions({ prompt: text, targetUrl: activeModelUrl });
+  }, [activeModelUrl, setAiUrl]);
 
-  const handleAiUrlChange = useCallback(async (nextUrl: string): Promise<void> => {
-    await settingsApi.updateAiUrl(nextUrl);
+  const handleAiUrlChange = useCallback((nextUrl: string): void => {
+    // Only update local UI state; do NOT navigate or persist yet.
     setActiveModelUrl(nextUrl);
   }, []);
 
@@ -207,8 +216,8 @@ export const ChatView: React.FC = () => {
           ref={promptAreaRef}
           t={t}
           activeModelUrl={activeModelUrl}
-          onChangeModel={(url) => { void handleAiUrlChange(url); }}
-          onSend={handleSendPrompt}
+          onChangeModel={handleAiUrlChange}
+          onSend={(text) => { void handleSendPrompt(text); }}
         />
       </Stack>
 
@@ -226,6 +235,10 @@ export const ChatView: React.FC = () => {
         setShowProvider={captureExport.setCaptureShowProvider}
         showTimestamp={captureExport.captureShowTimestamp}
         setShowTimestamp={captureExport.setCaptureShowTimestamp}
+        title={captureExport.captureTitle}
+        setTitle={captureExport.setCaptureTitle}
+        fileName={captureExport.captureFileName}
+        setFileName={captureExport.setCaptureFileName}
         format={captureExport.captureFormat}
         setFormat={captureExport.setCaptureFormat}
         preview={captureExport.capturePreview}
@@ -286,36 +299,14 @@ export const ChatView: React.FC = () => {
   );
 };
 
-const WelcomeStepCard: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [hovered, setHovered] = useState(false);
-  return (
-    <Paper
-      withBorder
-      radius="var(--radius-lg)"
-      p="10px 14px"
-      bg="var(--mantine-color-default)"
-      fz="var(--font-size-base)"
-      c="var(--mantine-color-default-color)"
-      shadow="sm"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease',
-        borderColor: hovered ? 'var(--mantine-color-border-hover)' : undefined,
-        background: hovered ? 'var(--mantine-color-default-hover)' : undefined,
-        color: hovered ? 'var(--mantine-color-text)' : undefined,
-        boxShadow: hovered ? '0 2px 8px rgba(0,0,0,0.12)' : undefined,
-      }}
-    >
-      {children}
-    </Paper>
-  );
-};
+const WelcomeStepCard: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <Box className={styles.stepCard}>{children}</Box>
+);
 
 const WelcomeScreen: React.FC<{ activeModelUrl: string }> = ({ activeModelUrl }) => {
-  const { hotkey } = useAppStore();
+  const { hotkey, duckaiModels } = useAppStore();
   const { t } = useI18nStore();
-  const providerLabel = getModelOptionByUrl(activeModelUrl).label;
+  const providerLabel = findModelOption(activeModelUrl, duckaiModels).label;
   const welcomeHint = t('welcome.hint').replace('{{provider}}', providerLabel);
 
   return (

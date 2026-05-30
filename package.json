@@ -1,7 +1,7 @@
 {
   "name": "desktop-agent-center",
-  "version": "1.0.0",
-  "description": "Desktop Agent Center (DAC) — Multi-AI integration via global hotkey, Electron + React UI, clipboard automation & local markdown storage",
+  "version": "1.1.0",
+  "description": "Desktop Agent Center (DAC) — Free, no-API-key AI automation desktop app. Integrates ChatGPT/Gemini via global hotkeys, features AgentFlow visual workflows, and supports Telegram bot control. Built with Electron & React.",
   "author": "WellsTsai",
   "repository": {
     "type": "git",
@@ -36,43 +36,47 @@
   "license": "MIT",
   "dependencies": {
     "@grammyjs/conversations": "^2.1.1",
-    "@mantine/core": "^9.1.1",
-    "@mantine/hooks": "^9.1.1",
-    "@mantine/modals": "^9.1.1",
-    "@mantine/notifications": "^9.1.1",
+    "@mantine/core": "^9.2.1",
+    "@mantine/hooks": "^9.2.1",
+    "@mantine/modals": "^9.2.1",
+    "@mantine/notifications": "^9.2.1",
+    "@tanstack/react-virtual": "^3.13.25",
     "cheerio": "^1.2.0",
     "dayjs": "^1.11.20",
     "electron-store": "^11.0.2",
     "electron-updater": "^6.8.3",
     "fdir": "^6.5.0",
-    "grammy": "^1.42.0",
-    "katex": "^0.16.45",
-    "lucide-react": "^1.14.0",
-    "marked": "^18.0.3",
-    "postcss": "^8.5.13",
+    "grammy": "^1.43.0",
+    "katex": "^0.17.0",
+    "lucide-react": "^1.16.0",
+    "marked": "^18.0.4",
+    "node-cron": "^4.2.1",
+    "postcss": "^8.5.15",
     "postcss-preset-mantine": "^1.18.0",
     "postcss-simple-vars": "^7.0.1",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "react-dropzone": "^15.0.0",
     "react-markdown": "^10.1.0",
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
-    "shiki": "^4.0.2",
-    "zustand": "^5.0.12"
+    "shiki": "^4.1.0",
+    "zustand": "^5.0.13"
   },
   "devDependencies": {
-    "@types/node": "^25.6.0",
-    "@types/react": "^19.2.14",
+    "@types/node": "^25.9.1",
+    "@types/node-cron": "^3.0.11",
+    "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
-    "electron": "^41.5.0",
+    "@vitejs/plugin-react": "^6.0.2",
+    "electron": "^42.2.0",
     "electron-builder": "^26.8.1",
     "png-to-ico": "^3.0.1",
     "png2icons": "^2.0.1",
-    "tsx": "^4.0.0",
-    "typescript": "^6.0.2",
-    "vite": "^8.0.10"
+    "tsx": "^4.22.3",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.14"
   },
   "build": {
     "appId": "com.wellstsai.dac",
@@ -111,31 +115,18 @@
     "win": {
       "icon": "assets/icon-win.ico",
       "target": [
-        "nsis",
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        }
+        "nsis"
       ],
       "requestedExecutionLevel": "asInvoker"
     },
-    "portable": {
-      "artifactName": "DesktopAgentCenter-${version}-win-x64.exe"
+    "nsis": {
+      "artifactName": "DesktopAgentCenter-${version}-win-x64-Setup.exe"
     },
     "mac": {
       "icon": "assets/icon-mac.icns",
       "target": [
         {
           "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        },
-        {
-          "target": "zip",
           "arch": [
             "x64",
             "arm64"
@@ -148,5 +139,8 @@
     "dmg": {
       "artifactName": "DesktopAgentCenter-${version}-mac-${arch}.dmg"
     }
+  },
+  "overrides": {
+    "yauzl": "^3.3.1"
   }
 }

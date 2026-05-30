@@ -63,6 +63,7 @@ export const WebDialog: React.FC<WebDialogProps> = ({
         color={danger ? 'red' : undefined}
         onClick={onConfirm}
         data-dialog-action="confirm"
+        data-autofocus
         autoFocus
       >
         {confirmText}

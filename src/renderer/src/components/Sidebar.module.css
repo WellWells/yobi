@@ -47,12 +47,13 @@
 .fileItem {
   padding: 6px 10px;
   border-radius: 8px;
-  margin: 2px 8px;
+  margin: 0;
   background: transparent;
   border-left: 2px solid transparent;
   transition: background 0.15s ease, border-color 0.15s ease;
   cursor: pointer;
   outline: none;
+  user-select: none;
 }
 
 .fileItem:hover {
@@ -75,15 +76,26 @@
 .timestamp {
   font-family: var(--font-mono);
   white-space: nowrap;
-}
-
-.timestamp[data-selected='true'] {
   color: var(--mantine-color-dimmed);
 }
 
 .timestamp[data-selected='false'] {
-  color: var(--mantine-color-dimmed);
   opacity: 0.65;
+}
+
+/* ── ProviderBadge ───────────────────────────────────────────────────────── */
+
+.providerBadge {
+  background: transparent;
+  border-color: var(--mantine-color-default-border);
+  color: var(--mantine-color-dimmed);
+  opacity: 0.75;
+}
+
+.providerBadge[data-selected='true'] {
+  border-color: var(--mantine-color-accent);
+  color: var(--mantine-color-accent);
+  opacity: 1;
 }
 
 .preview {
@@ -106,5 +118,4 @@
   font-size: var(--font-size-base);
   padding: 4px 6px;
   outline: none;
-  user-select: text;
 }

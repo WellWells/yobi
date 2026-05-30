@@ -1,0 +1,8 @@
+/* ModelDropdown.module.css */
+/* Hover + expanded state for the pill trigger button */
+
+.trigger:hover:not([data-disabled]),
+.trigger[data-expanded] {
+  background: var(--mantine-color-bg-tertiary) !important;
+  border-color: var(--mantine-color-border-hover) !important;
+}

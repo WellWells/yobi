@@ -47,6 +47,23 @@ const baseTheme: MantineThemeOverride = {
   defaultRadius: 'md',
   cursorType: 'pointer',
   respectReducedMotion: true,
+  components: {
+    Button: {
+      styles: {
+        root: {
+          '&:disabled': {
+            opacity: 0.6,
+          },
+        },
+      },
+    },
+    ScrollArea: {
+      defaultProps: {
+        scrollbarSize: 6,
+        type: 'auto',
+      },
+    },
+  },
 };
 
 // ── Per-theme overrides ───────────────────────────────────────────────────────

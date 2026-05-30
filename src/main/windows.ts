@@ -49,7 +49,7 @@ export function setAppQuitting(value: boolean): void {
 
 export function isAllWindowsClosed(): boolean {
   return (mainWin === null || mainWin.isDestroyed()) &&
-         (workerWin === null || workerWin.isDestroyed());
+    (workerWin === null || workerWin.isDestroyed());
 }
 
 export async function closeAllWindows(): Promise<void> {
@@ -181,6 +181,7 @@ export function revealWorkerWindow(): void {
   workerWin.setOpacity(1);  // restore if previously hidden with opacity trick
   workerWin.show();          // no-op if already shown; reveals if was show:false
   workerWin.focus();
+  if (!app.isPackaged) workerWin.webContents.openDevTools({ mode: 'detach' });
   rememberWorkerVisibleBounds();
 }
 

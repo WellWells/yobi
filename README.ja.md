@@ -1,0 +1,311 @@
+<div align="center">
+
+# 🤖 Desktop Agent Center
+
+**無料・APIキー不要の AI 自動化デスクトップアプリ**
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-blue)](#-クイックスタート)
+[![Electron](https://img.shields.io/badge/Electron-42-47848F?logo=electron)](https://www.electronjs.org/)
+[![No API Key](https://img.shields.io/badge/APIキー-不要-brightgreen)](#-主な機能)
+[![PRs Welcome](https://img.shields.io/badge/PR-歓迎-brightgreen.svg)](https://github.com/WellWells/desktop-agent-center/pulls)
+
+**[English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md)**
+
+</div>
+
+---
+
+**Desktop Agent Center（DAC）** は、デスクトップ上でローカルに動作するオープンソースの AI 自動化ツールです。クリップボードとグローバルホットキーを主要な AI サービス——**ChatGPT、Gemini、Perplexity、Duck.ai**——に直接つなぎます。APIキー不要、サブスクリプション不要、クレジットカード不要。
+
+OpenClaw、Zapier AI、n8n クラウド版などの有料自動化プラットフォームが初日から課金するのとは異なり、DAC は**完全無料**です。すでにブラウザで開いている AI の Web インターフェースをそのまま活用します。インストールしたら、ホットキーを押すだけでクリップボードの内容が即座に AI によって処理されます。
+
+---
+
+## 目次
+
+- [主な機能](#-主な機能)
+- [クイックスタート](#-クイックスタート)
+- [スクリーンショット](#-スクリーンショット)
+- [ビルド済みダウンロード](#-ビルド済みダウンロード)
+- [AgentFlow](#-agentflow--ビジュアルワークフロー自動化)
+- [Telegram Bot](#-telegram-bot-連携)
+- [設定とカスタマイズ](#%EF%B8%8F-設定とカスタマイズ)
+- [DAC vs. 有料ツール](#%EF%B8%8F-dac-vs-有料ツール)
+- [セキュリティとプライバシー](#-セキュリティとプライバシー)
+- [開発ガイド](#%EF%B8%8F-開発ガイド)
+- [コントリビューション](#-コントリビューション)
+- [ライセンス](#-ライセンス)
+
+---
+
+## ✨ 主な機能
+
+| | 機能 | 詳細 |
+|---|---|---|
+| 🆓 | **完全無料** | APIキー・クレジットカード・サブスクリプション一切不要 |
+| ⌨️ | **グローバルホットキー** | `Alt+G`（Windows）/ `Command+G`（macOS）で選択テキストまたはクリップボードを即座に AI へ送信 |
+| 🤖 | **マルチプロバイダー** | ChatGPT · Gemini · Perplexity · Duck.ai |
+| 🔁 | **AgentFlow** | ビジュアルノーコードワークフロービルダー（12 種のスキル搭載） |
+| 📱 | **Telegram 連携** | Telegram Bot でスマートフォンから AI エージェントを遠隔操作 |
+| 💾 | **自動保存** | タイムスタンプ付きで Markdown 形式としてローカルに保存 |
+| 🎨 | **キャプチャ & エクスポート** | AI の回答をスタイリッシュな PNG・WebP・PDF としてエクスポート |
+| 🔒 | **ローカルファースト** | すべての処理をローカルで実行。テレメトリ・追跡なし |
+| 🌍 | **9言語対応 UI** | English、繁中、简中、日本語、한국어、Deutsch、Español、Français、Português |
+
+---
+
+## 🚀 クイックスタート
+
+### 前提条件
+
+- **Node.js 20+**（[ダウンロード](https://nodejs.org/)）
+
+### インストールと起動
+
+```bash
+git clone https://github.com/WellWells/desktop-agent-center.git
+cd desktop-agent-center
+npm install
+npm run dev
+```
+
+### 初回セットアップ（4ステップ）
+
+1. **ログイン**（任意）——内蔵ブラウザウィンドウで ChatGPT / Gemini / Perplexity にサインインする。
+2. **トレイを有効化**——**設定 → 一般 → システムトレイ** でトレイへの最小化を有効にし、DAC をバックグラウンドで動作させる。
+3. **テキストを選択**——任意のアプリケーションでテキストをハイライト選択する。
+4. **`Alt+G` を押す**——DAC が AI へ送信し、結果をクリップボードに書き戻して自動保存する。
+
+> **ヒント：** ホットキーは **設定 → 一般 → ホットキー** でカスタマイズできます。macOS のデフォルトは `Command+G` です。
+
+---
+
+## 📸 スクリーンショット
+
+| メインチャット画面 | モデル選択メニュー |
+|:---:|:---:|
+| ![メインチャット画面](docs/assets/main-chat-interface.png) | ![モデル選択メニュー](docs/assets/model-selection-menu.png) |
+| AI とチャット — API キー不要 | ChatGPT · Gemini · Perplexity · Duck.ai を切り替え |
+
+| チャット履歴と要約 | エクスポートオプション |
+|:---:|:---:|
+| ![チャット履歴サマリー](docs/assets/chat-history-summary-result.png) | ![エクスポートオプションプレビュー](docs/assets/export-options-preview.png) |
+| タイムスタンプ付きで自動保存 | PNG・WebP・PDF としてエクスポート |
+
+| カスタム回答設定 | Telegram Bot 設定 |
+|:---:|:---:|
+| ![カスタム回答設定](docs/assets/settings-custom-your-own-response.png) | ![Telegram Bot 設定](docs/assets/settings-telegram-bot-config.png) |
+| トーン・長さ・カスタム指示を設定 | 数秒で Bot を接続 |
+
+<div align="center">
+
+![AgentFlow エディタ（RSS ステップ）](docs/assets/agentflow-editor-rss-step.png)
+
+**AgentFlow** — 各 URL のコンテンツを取得し、LLM で個別に要約して Telegram へ送信 — コーディング不要
+
+</div>
+
+---
+
+## 📦 ビルド済みダウンロード
+
+[**Releases**](https://github.com/WellWells/desktop-agent-center/releases) ページから最新版をダウンロード：
+
+| プラットフォーム | 形式 |
+|----------------|------|
+| Windows | NSIS インストーラー · ポータブル `.exe`（x64） |
+| macOS | DMG · ZIP（x64 & Apple Silicon arm64） |
+
+---
+
+## 🔗 AgentFlow — ビジュアルワークフロー自動化
+
+AgentFlow は DAC のビジュアル自動化エンジンです。**LLM 呼び出し・データソース・Telegram 出力**を組み合わせた全自動パイプラインをコーディング不要で構築できます。ホットキー・スケジュール・Telegram コマンドで起動できます。
+
+### トリガー
+
+| トリガー | 説明 |
+|---------|------|
+| ⌨️ **ホットキー** | 専用のグローバルキーボードショートカット |
+| ⏰ **スケジュール実行** | 毎日 / 毎週 Cron スケジュール（柔軟な繰り返し設定に対応） |
+| 🤖 **Bot コマンド** | カスタム Telegram Bot コマンド（例：`/my_cmd <input>`） |
+| ▶️ **手動実行** | AgentFlow UI からオンデマンドで実行 |
+
+### スキル
+
+| スキル | 説明 |
+|-------|------|
+| 🧠 **LLM** | ChatGPT、Gemini、Perplexity、Duck.ai へプロンプトを送信；回答を PNG / WebP / PDF としてエクスポートも可能 |
+| 🌐 **ブラウザ** | 任意の URL からテキストコンテンツを取得・抽出 |
+| 📡 **RSS** | RSS/Atom フィードを監視——前回実行以降の新着記事のみを返す |
+| 🕵️ **Web スクレイパー** | CSS セレクターで任意の Web ページからリンクとタイトルを抽出し、JSON で出力 |
+| 🐚 **シェル** | シェルコマンドを実行（Windows: cmd / PowerShell；macOS: bash / zsh） |
+| 📋 **クリップボード** | システムクリップボードのテキストを読み取り・書き込み |
+| 📨 **Bot** | Telegram チャットにメッセージまたはファイルを送信 |
+| 🔁 **ループ / ループ終了** | リスト項目を1行ずつ繰り返し処理 |
+| 🛠️ **ユーティリティ** | 遅延の追加、またはレンダリングスナップショット（PNG / WebP / PDF）のエクスポート |
+| ⏹ **停止** | 変数が空のときにフローを条件付きで中止 |
+| 💬 **コメント** | ステップにドキュメントメモを追加（実行されない） |
+
+### 変数システム
+
+各ステップの結果は名前付き変数に書き込まれ、後続ステップで `{{変数名}}` として参照できます：
+
+```
+RSS フィード     → 出力: rss_1
+LLM プロンプト   → "要約してください：{{rss_1}}"   → 出力: llm_1
+Telegram Bot    → メッセージ: "{{llm_1}}"
+```
+
+### 組み込みテンプレート
+
+| テンプレート | 説明 |
+|------------|------|
+| 📰 **RSS → Telegram** | RSS フィードを取得し、LLM で要約して Telegram へ送信 |
+| 🕵️ **Web Monitor → Telegram** | Web サイトの新着を LLM で分析して Telegram へ配信 |
+
+フローは `.json` ファイルとして**エクスポート・共有**でき、ファイルや URL から**インポート**することも可能です。
+
+---
+
+## 📱 Telegram Bot 連携
+
+DAC を Telegram に接続して、どこからでも AI エージェントを操作できます：
+
+1. **Bot を作成**——Telegram で [@BotFather](https://t.me/BotFather) にメッセージを送り、Bot Token を取得する。
+2. **Token を入力**——**設定 → Telegram** に Token を貼り付ける。
+3. **アカウントをペアリング**——Bot に `/start` を送信してペアリングを完了する。
+
+### 組み込み Bot コマンド
+
+| コマンド | 説明 |
+|---------|------|
+| `/gpt <プロンプト>` | ChatGPT へプロンプトを送信 |
+| `/gemini <プロンプト>` | Gemini へプロンプトを送信 |
+| `/pplx <プロンプト>` | Perplexity へプロンプトを送信 |
+| `/status` | エージェントのステータスを確認 |
+
+AgentFlow の **Bot コマンドトリガー** を使えば、Telegram メッセージで起動する完全カスタムのワークフローも作成できます。
+
+---
+
+## ⚙️ 設定とカスタマイズ
+
+### プロンプトの設定
+
+AI へのプロンプトの送り方をカスタマイズできます：
+
+| オプション | 選択肢 |
+|----------|--------|
+| **トーン** | デフォルト · プロフェッショナル · カジュアル · ダイレクト |
+| **長さ** | 自動 · 簡潔 · 詳細 |
+| **カスタム指示** | すべてのプロンプトに追加される自由形式のシステムレベルガイダンス |
+| **テンプレート** | 独自のプロンプトテンプレートを保存して再利用 |
+
+### キャプチャ & エクスポート
+
+AI の回答をスタイリッシュな画像または PDF としてエクスポートできます：
+
+- **フォーマット**：PNG · WebP · PDF
+- **オプション**：グラデーションパレット、レイアウト方向、プロンプトテキスト・プロバイダー名・タイムスタンプの表示/非表示
+
+### 一般設定
+
+| 設定 | 説明 |
+|-----|------|
+| **テーマ** | ライト · ダーク · 自動（OS に追従） |
+| **レイアウト** | 縦並び · 横並び |
+| **応答タイムアウト** | AI 応答の最大待機時間 |
+| **スタートアップ起動** | コンピューター起動時に DAC を自動起動 |
+| **トレイへ最小化** | 閉じるボタンでシステムトレイに格納（終了しない） |
+| **Markdown ズーム** | 回答テキストのサイズ調整（70%–200%） |
+
+### 設定のバックアップ
+
+**設定 → 詳細設定** から設定全体を JSON ファイルとしてエクスポート・インポートできます。
+
+---
+
+## ⚖️ DAC vs. 有料ツール
+
+| | Desktop Agent Center | OpenClaw / n8n Cloud / Zapier AI |
+|---|---|---|
+| 価格 | **永久無料** | 有料サブスクリプション / 従量課金 |
+| API キー | **不要** | 通常必要 |
+| AI プロバイダー | ChatGPT、Gemini、PPLX、Duck.ai | プランによる |
+| ワークフロー自動化 | ✅ AgentFlow（ビジュアル） | ✅（有料） |
+| Telegram 連携 | ✅ 組み込み | 場合による |
+| データプライバシー | **ローカルファースト** | クラウド処理 |
+| オープンソース | ✅ MIT | 場合による |
+
+---
+
+## 🔒 セキュリティとプライバシー
+
+- **テレメトリなし** — 分析・トラッキングスクリプト・ユーザー行動データの収集は一切なし。
+- **ローカル実行** — すべての自動化はローカルマシン上で動作。データは選択した AI プロバイダーに直接送信されます。
+- **認証情報の暗号化** — Telegram Bot Token は Electron の `safeStorage`（OS レベルのキーチェーン）で暗号化されてからディスクに書き込まれます。
+- **サードパーティポリシー** — ChatGPT / Gemini / Perplexity が処理するクエリは各プラットフォームのプライバシーポリシーに従います。作者はこれらのプラットフォームを管理していません。
+- **オープンソースで監査可能** — すべての自動化ロジックは `src/main/` ディレクトリで確認できます。
+
+---
+
+## 🛠️ 開発ガイド
+
+```bash
+# 開発サーバー起動（Electron ホットリロード付き）
+npm run dev
+
+# TypeScript 型チェック
+npm run typecheck
+
+# i18n キー監査
+npm run i18n:check
+
+# Windows ビルド（NSIS + ポータブル）
+npm run build:win
+
+# macOS ビルド（DMG + ZIP）
+npm run build:mac
+```
+
+### 技術スタック
+
+| レイヤー | 技術 |
+|---------|------|
+| ランタイム | Electron 42 + Node.js 20 |
+| フロントエンド | React 19 + TypeScript |
+| UI コンポーネント | Mantine 9 |
+| 状態管理 | Zustand 5 |
+| ビルドツール | Vite 8 + electron-builder |
+| Telegram | GrammY |
+| スケジューラー | node-cron |
+
+---
+
+## 🤝 コントリビューション
+
+Issue、Feature Request、Pull Request を歓迎します！
+
+1. リポジトリを **Fork** してフィーチャーブランチを作成（`git checkout -b feat/my-feature`）。
+2. 変更を実施——`npm run typecheck` がエラーなく通過することを確認する。
+3. 明確な説明を添えて **Pull Request** を提出する。
+
+大きな変更を加える場合は、事前に **Issue** を開いてアプローチを議論してください。
+
+---
+
+## 📜 ライセンス
+
+このプロジェクトは **[MIT ライセンス](LICENSE)** のもとで公開されています——自由に使用・修正・配布できます。
+
+---
+
+<div align="center">
+
+DAC があなたの時間やコストを節約できたなら、ぜひ ⭐ **Star** をつけてください——より多くの人に発見してもらえます！
+
+**[バグ報告](https://github.com/WellWells/desktop-agent-center/issues) · [機能リクエスト](https://github.com/WellWells/desktop-agent-center/issues) · [ディスカッション](https://github.com/WellWells/desktop-agent-center/discussions)**
+
+</div>

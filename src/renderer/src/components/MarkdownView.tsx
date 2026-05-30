@@ -123,7 +123,7 @@ function MarkdownViewInner({ content, blocks, headerAction }: MarkdownViewProps)
           label={t('markdown.prompt.label')}
           expandText={t('markdown.prompt.expand')}
           collapseText={t('markdown.prompt.collapse')}
-          MarkdownRenderer={MD}
+          truncatedHint={t('markdown.prompt.truncated')}
         />
       )}
 

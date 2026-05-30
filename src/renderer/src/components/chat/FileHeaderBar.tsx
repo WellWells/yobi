@@ -1,7 +1,8 @@
 import React from 'react';
-import { ActionIcon, Box, Button, Flex, Group, Menu as MMenu, Stack, Text, TextInput } from '@mantine/core';
+import { ActionIcon, Box, Button, Flex, Group, Menu as MMenu, Stack, Text } from '@mantine/core';
 import { ChevronDown, Columns2, Copy, Download, FileText, FolderOpen, Menu, Minus, Pencil, Plus, Rows2, ZoomIn } from 'lucide-react';
 import type { LayoutMode } from '../../store/appStore';
+import { AppTextInput } from '../AppTextInput';
 import { AppSegmentedControl } from '../AppSegmentedControl';
 
 interface FileHeaderBarProps {
@@ -68,7 +69,7 @@ export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
       style={{ borderBottom: '1px solid var(--mantine-color-default-border)', flexShrink: 0, minWidth: 0 }}
     >
       {headerEditing ? (
-        <TextInput
+        <AppTextInput
           ref={headerInputRef}
           value={headerEditValue}
           onChange={(event) => setHeaderEditValue(event.target.value)}
@@ -141,89 +142,95 @@ export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
           </MMenu.Target>
 
           <MMenu.Dropdown>
-            <Group justify="space-between" gap={10} mb={10}>
-              <Group gap={6} fw={700} fz="var(--font-size-base)" c="var(--mantine-color-default-color)" align="center">
-                <ZoomIn size={14} />
-                {t('zoom.label')}
+            <Stack gap={10}>
+              <Group justify="space-between" gap={10}>
+                <Group gap={6} fw={700} fz="var(--font-size-base)" c="var(--mantine-color-default-color)" align="center">
+                  <ZoomIn size={14} />
+                  {t('zoom.label')}
+                </Group>
+                <Group gap={6}>
+                  <ActionIcon variant="default" size={28} radius={6} onClick={onZoomOut} title={t('zoom.out')}>
+                    <Minus size={14} />
+                  </ActionIcon>
+                  <Button variant="subtle" size="compact-xs" radius={6} onClick={onZoomReset} title={t('zoom.reset')} miw={56} fw={700}>
+                    {zoomPercentText}
+                  </Button>
+                  <ActionIcon variant="default" size={28} radius={6} onClick={onZoomIn} title={t('zoom.in')}>
+                    <Plus size={14} />
+                  </ActionIcon>
+                </Group>
               </Group>
-              <Group gap={5}>
-                <ActionIcon variant="default" size={28} radius={6} onClick={onZoomOut} title={t('zoom.out')}>
-                  <Minus size={14} />
-                </ActionIcon>
-                <Button variant="subtle" size="compact-xs" radius={6} onClick={onZoomReset} title={t('zoom.reset')} miw={56} fw={700}>
-                  {zoomPercentText}
+
+              {fileContentExists && (
+                <AppSegmentedControl
+                  value={layoutMode}
+                  onChange={(value) => {
+                    onSetLayoutMode(value as LayoutMode);
+                    onCloseViewMenu();
+                  }}
+                  options={[
+                    { label: t('layout.stacked'), value: 'stacked' },
+                    { label: t('layout.sideBySide'), value: 'side-by-side' },
+                  ]}
+                  size="xs"
+                  fullWidth
+                />
+              )}
+            </Stack>
+
+            <MMenu.Divider my={10} />
+
+            <Stack gap={8}>
+              {fileContentExists && (
+                <Button
+                  variant="default"
+                  size="sm"
+                  fullWidth
+                  justify="flex-start"
+                  py={8}
+                  leftSection={<Copy size={14} />}
+                  onClick={() => {
+                    onCopyFullText();
+                    onCloseViewMenu();
+                  }}
+                >
+                  {t('header.copyFull')}
                 </Button>
-                <ActionIcon variant="default" size={28} radius={6} onClick={onZoomIn} title={t('zoom.in')}>
-                  <Plus size={14} />
-                </ActionIcon>
-              </Group>
-            </Group>
+              )}
 
-            {fileContentExists && (
-              <>
-                <MMenu.Divider />
-                <Box my={10}>
-                  <AppSegmentedControl
-                    value={layoutMode}
-                    onChange={(value) => {
-                      onSetLayoutMode(value as LayoutMode);
-                      onCloseViewMenu();
-                    }}
-                    options={[
-                      { label: t('layout.stacked'), value: 'stacked' },
-                      { label: t('layout.sideBySide'), value: 'side-by-side' },
-                    ]}
-                    size="xs"
-                    fullWidth
-                  />
-                </Box>
-                <Stack gap={6}>
-                  <Button
-                    variant="default"
-                    size="compact-sm"
-                    fullWidth
-                    justify="flex-start"
-                    leftSection={<Copy size={14} />}
-                    onClick={() => {
-                      onCopyFullText();
-                      onCloseViewMenu();
-                    }}
-                  >
-                    {t('header.copyFull')}
-                  </Button>
-                  <Button
-                    variant="default"
-                    size="compact-sm"
-                    fullWidth
-                    justify="flex-start"
-                    leftSection={<Download size={14} />}
-                    disabled={captureBusy}
-                    onClick={() => {
-                      onOpenCaptureDialog();
-                      onCloseViewMenu();
-                    }}
-                  >
-                    {captureBusy ? t('capture.exporting') : t('capture.export.open')}
-                  </Button>
-                </Stack>
-              </>
-            )}
+              {fileContentExists && (
+                <Button
+                  variant="default"
+                  size="sm"
+                  fullWidth
+                  justify="flex-start"
+                  py={8}
+                  leftSection={<Download size={14} />}
+                  disabled={captureBusy}
+                  onClick={() => {
+                    onOpenCaptureDialog();
+                    onCloseViewMenu();
+                  }}
+                >
+                  {captureBusy ? t('capture.exporting') : t('capture.export.open')}
+                </Button>
+              )}
 
-            <MMenu.Divider />
-            <Button
-              variant="default"
-              size="compact-sm"
-              fullWidth
-              justify="flex-start"
-              leftSection={<FolderOpen size={14} />}
-              mt={6}
-              onClick={() => {
-                onShowInFolder();
-                onCloseViewMenu();
-              }}
-            >
-              {t('header.showInFolder')}
-            </Button>
+              <Button
+                variant="default"
+                size="sm"
+                fullWidth
+                justify="flex-start"
+                py={8}
+                leftSection={<FolderOpen size={14} />}
+                onClick={() => {
+                  onShowInFolder();
+                  onCloseViewMenu();
+                }}
+              >
+                {t('header.showInFolder')}
+              </Button>
+            </Stack>
           </MMenu.Dropdown>
         </MMenu>
       </Box>

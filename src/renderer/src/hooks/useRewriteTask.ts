@@ -4,7 +4,7 @@ import { startTransition, useCallback, useEffect, useState } from 'react';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import { fileApi, promptApi } from '../api/electronApi';
-import { getModelOptionByUrl } from '../config/models';
+import { findModelOption } from '../config/models';
 import type { ExportToast } from './useCaptureExport';
 
 function parseOutputTimestamp(name: string): number {
@@ -16,7 +16,16 @@ function parseOutputTimestamp(name: string): number {
 }
 
 export function useRewriteTask(setExportToast: (toast: ExportToast) => void) {
-  const { selectedFile, fileContent, parsedBlocks, setFiles, selectFile, setFileContent, queue } = useAppStore();
+  const {
+    selectedFile,
+    fileContent,
+    parsedBlocks,
+    setFiles,
+    selectFile,
+    setFileContent,
+    queue,
+    duckaiModels,
+  } = useAppStore();
   const { t } = useI18nStore();
 
   const [rewriteTaskId, setRewriteTaskId] = useState<string | null>(null);
@@ -65,7 +74,7 @@ export function useRewriteTask(setExportToast: (toast: ExportToast) => void) {
   const startRewrite = useCallback(async (nextUrl: string) => {
     if (!selectedFile || !fileContent) return;
     const prompt = parsedBlocks?.prompt?.trim() || fileContent.trim();
-    const modelLabel = getModelOptionByUrl(nextUrl).label;
+    const modelLabel = findModelOption(nextUrl, duckaiModels).label;
     const taskId = await promptApi.triggerWithOptions({ prompt, targetUrl: nextUrl });
     if (!taskId) {
       setExportToast({ id: Date.now(), message: t('rewrite.enqueueFailed') });
@@ -78,7 +87,7 @@ export function useRewriteTask(setExportToast: (toast: ExportToast) => void) {
       id: Date.now(),
       message: t('rewrite.queued').replace('{{model}}', modelLabel),
     });
-  }, [selectedFile, fileContent, parsedBlocks, t, setExportToast]);
+  }, [selectedFile, fileContent, parsedBlocks, t, setExportToast, duckaiModels]);
 
   return { startRewrite };
 }

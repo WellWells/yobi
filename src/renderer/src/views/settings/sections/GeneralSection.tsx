@@ -1,12 +1,10 @@
 // src/renderer/src/views/settings/sections/GeneralSection.tsx
 import React from 'react';
-import {
-  ActionIcon, Box, Group, Stack, Text,
-  Button as MButton, TextInput,
-} from '@mantine/core';
+import { ActionIcon, Box, Group, Stack, Text, Button as MButton } from '@mantine/core';
 import {
   AppWindow, Bell, Keyboard, Languages, Palette, RotateCcw, X,
 } from 'lucide-react';
+import { AppTextInput } from '../../../components/AppTextInput';
 import { SectionCard, SettingRow, SelectDropdown, ToggleSwitch, GroupHeader, SectionTitle } from '../components';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import type { useHotkeyRecorder } from '../hooks/useHotkeyRecorder';
@@ -47,23 +45,17 @@ export const GeneralSection: React.FC<Props> = ({
       <SectionTitle icon={<Keyboard size={15} />} label={t('settings.hotkey')} />
       <Group gap={8} align="center">
         <Box flex={1} pos="relative">
-          <TextInput
+          <AppTextInput
             readOnly
             value={hotkey.recording ? '' : hotkey.hotkeyInput}
+            tone={hotkey.recording ? 'recording' : 'tertiary'}
+            mono
             onKeyDown={hotkey.handleHotkeyKeyDown}
             onFocus={() => hotkey.setRecording(true)}
             onBlur={() => hotkey.setRecording(false)}
             placeholder={hotkey.recording
               ? t('settings.hotkey.recording')
               : t('settings.hotkey.placeholder')}
-            styles={{
-              input: {
-                background: hotkey.recording ? 'var(--mantine-color-accent-dim)' : 'var(--mantine-color-bg-tertiary)',
-                borderColor: hotkey.recording ? 'var(--mantine-color-accent)' : 'var(--mantine-color-default-border)',
-                fontFamily: 'var(--font-mono)',
-                fontSize: 'var(--font-size-md)',
-              },
-            }}
             rightSection={hotkey.recording ? (
               <Box
                 style={{
@@ -129,7 +121,7 @@ export const GeneralSection: React.FC<Props> = ({
               <SettingRow
                 icon={<AppWindow size={13} />}
                 label={t('settings.tray.launchAtStartup')}
-                hint={isMac ? t('settings.tray.launchAtStartup.hint.mac') : t('settings.tray.launchAtStartup.hint')}
+                hint={t('settings.tray.launchAtStartup.hint')}
                 control={<ToggleSwitch checked={system.launchAtStartup} onChange={() => { void system.handleToggleLaunchAtStartup(); }} />}
               />
             </Stack>
@@ -140,11 +132,16 @@ export const GeneralSection: React.FC<Props> = ({
 
     {/* ─ Language ─ */}
     <SectionCard style={{ marginBottom: sectionGap, display: showSection(TAG_SETS.language, 'general') ? 'block' : 'none' }}>
-      <SectionTitle icon={<Languages size={15} />} label={t('settings.language')} />
-      <SelectDropdown
-        value={locale}
-        options={availableLocales.map((l) => ({ value: l, label: getLocaleLabel(l) }))}
-        onChange={(nextLocale) => { void onSetLocale(nextLocale); }}
+      <SettingRow
+        icon={<Languages size={13} />}
+        label={t('settings.language')}
+        control={(
+          <SelectDropdown
+            value={locale}
+            options={availableLocales.map((l) => ({ value: l, label: getLocaleLabel(l) }))}
+            onChange={(nextLocale) => { void onSetLocale(nextLocale); }}
+          />
+        )}
       />
     </SectionCard>
 

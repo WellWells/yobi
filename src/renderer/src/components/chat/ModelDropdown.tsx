@@ -2,7 +2,9 @@ import React, { useState } from 'react';
 import { Menu, UnstyledButton } from '@mantine/core';
 import { Check, ChevronDown } from 'lucide-react';
 import type { ModelOption } from '../../config/models';
-import { MODELS, getModelIconByUrl, getModelOptionByUrl } from '../../config/models';
+import { MODELS, findModelOption, getModelIconByUrl } from '../../config/models';
+import { useAppStore } from '../../store/appStore';
+import styles from './ModelDropdown.module.css';
 
 interface ModelDropdownProps {
   value: string;
@@ -25,8 +27,9 @@ export const ModelDropdown: React.FC<ModelDropdownProps> = ({
   renderTrigger,
 }) => {
   const [open, setOpen] = useState(false);
-  const [hovered, setHovered] = useState(false);
-  const current = getModelOptionByUrl(value);
+  const duckaiModels = useAppStore((state) => state.duckaiModels);
+  const allModels = [...MODELS, ...duckaiModels];
+  const current = findModelOption(value, duckaiModels);
   const CurrentIcon = getModelIconByUrl(current.url);
   const toggle = () => {
     if (disabled) return;
@@ -57,14 +60,13 @@ export const ModelDropdown: React.FC<ModelDropdownProps> = ({
           <UnstyledButton
             onClick={toggle}
             disabled={disabled}
-            onMouseEnter={() => { if (!disabled) setHovered(true); }}
-            onMouseLeave={() => setHovered(false)}
+            className={styles.trigger}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
               gap: 6,
-              border: `1px solid ${(open || hovered) ? 'var(--mantine-color-border-hover)' : 'var(--mantine-color-default-border)'}`,
-              background: (open || hovered) ? 'var(--mantine-color-bg-tertiary)' : 'var(--mantine-color-default)',
+              border: '1px solid var(--mantine-color-default-border)',
+              background: 'var(--mantine-color-default)',
               color: 'var(--mantine-color-text)',
               borderRadius: 999,
               padding: '5px 10px',
@@ -84,7 +86,7 @@ export const ModelDropdown: React.FC<ModelDropdownProps> = ({
       </Menu.Target>
 
       <Menu.Dropdown>
-        {MODELS.map((model) => {
+        {allModels.map((model) => {
           const Icon = getModelIconByUrl(model.url);
           const isSelected = value === model.url;
 

@@ -3,6 +3,11 @@ import { contextBridge, ipcRenderer } from 'electron';
 import { IPC } from '../shared/types';
 import type {
   CaptureSettings,
+  DuckaiModelInfo,
+  FlowDefinition,
+  FlowExecutionEvent,
+  FlowExecutionLog,
+  FlowExecutionResult,
   MarkdownCaptureRequest,
   MarkdownCaptureResult,
   OutputFile,
@@ -51,7 +56,8 @@ export type ElectronAPI = {
   // Language / i18n
   getLanguageList: () => Promise<string[]>;
   getLanguageContent: (lang: string) => Promise<Record<string, unknown> | null>;
-  getCurrentLocale: () => Promise<string>;
+  getCurrentLocale: () => Promise<{ locale: string; setByUser: boolean }>;
+  setLocaleAuto: (lang: string) => Promise<boolean>;
 
   // License
   getLicense: () => Promise<string>;
@@ -138,6 +144,29 @@ export type ElectronAPI = {
   // Capture / export settings
   getCaptureSettings: () => Promise<CaptureSettings>;
   updateCaptureSettings: (settings: CaptureSettings) => Promise<boolean>;
+
+  // Duck AI
+  fetchDuckaiModels: () => Promise<DuckaiModelInfo[]>;
+
+  // AgentFlow (Flow Automation)
+  getFlows: () => Promise<FlowDefinition[]>;
+  saveFlow: (flow: FlowDefinition) => Promise<FlowDefinition | null>;
+  deleteFlow: (flowId: string) => Promise<boolean>;
+  duplicateFlow: (flowId: string) => Promise<FlowDefinition | null>;
+  moveFlow: (flowId: string, direction: 'up' | 'down') => Promise<FlowDefinition[]>;
+  executeFlow: (flowId: string) => Promise<FlowExecutionResult>;
+  exportFlow: (flow: FlowDefinition) => Promise<boolean>;
+  onFlowExecutionLog: (cb: (log: FlowExecutionLog) => void) => () => void;
+  onFlowExecutionStarted: (cb: (event: FlowExecutionEvent) => void) => () => void;
+  onFlowExecutionEnded: (cb: (event: FlowExecutionEvent) => void) => () => void;
+
+  // RSS Checkpoint
+  rssHasCheckpoint: (stepId: string) => Promise<boolean>;
+  rssClearCheckpoint: (stepId: string) => Promise<boolean>;
+
+  // Scraper Checkpoint
+  scraperHasCheckpoint: (stepId: string) => Promise<boolean>;
+  scraperClearCheckpoint: (stepId: string) => Promise<boolean>;
 };
 
 const api: ElectronAPI = {
@@ -195,6 +224,7 @@ const api: ElectronAPI = {
   getLanguageList: () => ipcRenderer.invoke(IPC.GET_LANGUAGE_LIST),
   getLanguageContent: (lang) => ipcRenderer.invoke(IPC.GET_LANGUAGE_CONTENT, lang),
   getCurrentLocale: () => ipcRenderer.invoke(IPC.GET_CURRENT_LOCALE),
+  setLocaleAuto: (lang) => ipcRenderer.invoke(IPC.SET_LOCALE_AUTO, lang),
 
   getLicense: () => ipcRenderer.invoke(IPC.GET_LICENSE),
   checkForUpdates: () => ipcRenderer.invoke(IPC.UPDATE_CHECK),
@@ -302,6 +332,40 @@ const api: ElectronAPI = {
 
   getCaptureSettings: () => ipcRenderer.invoke(IPC.GET_CAPTURE_SETTINGS),
   updateCaptureSettings: (settings) => ipcRenderer.invoke(IPC.UPDATE_CAPTURE_SETTINGS, settings),
+
+  fetchDuckaiModels: () => ipcRenderer.invoke(IPC.DUCKAI_FETCH_MODELS),
+
+  // AgentFlow (Flow Automation)
+  getFlows: () => ipcRenderer.invoke(IPC.FLOW_GET_ALL),
+  saveFlow: (flow) => ipcRenderer.invoke(IPC.FLOW_SAVE, flow),
+  deleteFlow: (flowId) => ipcRenderer.invoke(IPC.FLOW_DELETE, flowId),
+  duplicateFlow: (flowId) => ipcRenderer.invoke(IPC.FLOW_DUPLICATE, flowId),
+  moveFlow: (flowId, direction) => ipcRenderer.invoke(IPC.FLOW_MOVE, flowId, direction),
+  executeFlow: (flowId) => ipcRenderer.invoke(IPC.FLOW_EXECUTE, flowId),
+  exportFlow: (flow) => ipcRenderer.invoke(IPC.FLOW_EXPORT, flow),
+  onFlowExecutionLog: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, log: FlowExecutionLog) => cb(log);
+    ipcRenderer.on(IPC.FLOW_EXECUTION_LOG, handler);
+    return () => ipcRenderer.removeListener(IPC.FLOW_EXECUTION_LOG, handler);
+  },
+  onFlowExecutionStarted: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, event: FlowExecutionEvent) => cb(event);
+    ipcRenderer.on(IPC.FLOW_EXECUTION_STARTED, handler);
+    return () => ipcRenderer.removeListener(IPC.FLOW_EXECUTION_STARTED, handler);
+  },
+  onFlowExecutionEnded: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, event: FlowExecutionEvent) => cb(event);
+    ipcRenderer.on(IPC.FLOW_EXECUTION_ENDED, handler);
+    return () => ipcRenderer.removeListener(IPC.FLOW_EXECUTION_ENDED, handler);
+  },
+
+  // RSS Checkpoint
+  rssHasCheckpoint: (stepId) => ipcRenderer.invoke(IPC.RSS_HAS_CHECKPOINT, stepId),
+  rssClearCheckpoint: (stepId) => ipcRenderer.invoke(IPC.RSS_CLEAR_CHECKPOINT, stepId),
+
+  // Scraper Checkpoint
+  scraperHasCheckpoint: (stepId) => ipcRenderer.invoke(IPC.SCRAPER_HAS_CHECKPOINT, stepId),
+  scraperClearCheckpoint: (stepId) => ipcRenderer.invoke(IPC.SCRAPER_CLEAR_CHECKPOINT, stepId),
 };
 
 contextBridge.exposeInMainWorld('electronAPI', api);

@@ -78,6 +78,7 @@ export function isHttpUrl(rawUrl: string): boolean {
 export function normalizeAiUrl(url: string): string {
   const trimmed = url.trim();
   if (!trimmed) return PROVIDER_URLS.gemini;
+  if (trimmed.includes('?')) return trimmed;
   return trimmed.endsWith('/') ? trimmed : `${trimmed}/`;
 }
 

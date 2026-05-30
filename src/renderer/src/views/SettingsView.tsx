@@ -1,15 +1,17 @@
 // src/renderer/src/views/SettingsView.tsx
 // Skeleton: only composes sub-modules. All business logic lives in hooks; all rendering lives in sections.
 import React, { useCallback, useState } from 'react';
-import { ActionIcon, Box, Flex, Group, Stack, Text, TextInput, Title } from '@mantine/core';
+import { ActionIcon, Box, Flex, Group, Stack, Text, Title } from '@mantine/core';
 
 import { Search, SlidersHorizontal, X } from 'lucide-react';
+import { AppTextInput } from '../components/AppTextInput';
 import { useI18nStore } from '../store/i18nStore';
 import { useAppStore } from '../store/appStore';
 import { useThemeStore } from '../store/themeStore';
 import type { Theme } from '../store/themeStore';
 import { settingsApi, fileApi, systemApi } from '../api/electronApi';
 import type { SettingsSnapshot } from '../../../shared/types';
+import { PanelHeader } from '../components/PanelHeader';
 
 import { NavItem } from './settings/components';
 import { useHotkeyRecorder } from './settings/hooks/useHotkeyRecorder';
@@ -122,11 +124,12 @@ export const SettingsView: React.FC = () => {
         bg="var(--mantine-color-default)"
         style={{ borderRight: '1px solid var(--mantine-color-default-border)', overflowY: 'auto', flexShrink: 0 }}
       >
-        <Box p="10px 12px 8px" style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}>
-          <Text tt="uppercase" lts="0.1em" c="dimmed">
-            {t('settings.title')}
-          </Text>
-        </Box>
+        <PanelHeader
+          label={t('nav.settings')}
+          icon={<SlidersHorizontal size={13} />}
+          px="12px"
+          py="9px"
+        />
         <Box p="8px">
           <Stack gap={4}>
             {nav.navCategoryDefs.map((cat) => (
@@ -158,13 +161,13 @@ export const SettingsView: React.FC = () => {
           >
             <Group gap={8} align="center">
               <SlidersHorizontal size={17} color="var(--mantine-color-accent)" style={{ flexShrink: 0 }} />
-              {t('settings.title')}
+              {t('nav.settings')}
             </Group>
           </Title>
 
           {/* Search bar */}
           <Box pos="relative" mb={20}>
-            <TextInput
+            <AppTextInput
               value={nav.searchQuery}
               onChange={(e) => nav.setSearchQuery(e.target.value)}
               placeholder={t('settings.search.placeholder')}

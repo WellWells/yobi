@@ -1,79 +1,311 @@
-# 🤖 Desktop Agent Center — The Unified Gateway for Local AI Automation
+<div align="center">
 
-**Desktop Agent Center** is a *personal AI assistant tool* you run on your own devices.
-It monitors your clipboard and uses global hotkeys to automatically send content to mainstream AI tools. The Gateway handles the automation—the product is the seamless intelligence.
+# 🤖 Desktop Agent Center
 
-If you want a personal, single-user assistant that feels local, fast, and works without the burden of expensive API costs, this is it.
+**The free, no-API-key AI automation desktop app**
 
-Supported providers include: **ChatGPT, Gemini, and Perplexity (PPLX).**
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-blue)](#-quick-start)
+[![Electron](https://img.shields.io/badge/Electron-42-47848F?logo=electron)](https://www.electronjs.org/)
+[![No API Key](https://img.shields.io/badge/API%20Key-Not%20Required-brightgreen)](#-highlights)
+[![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen.svg)](https://github.com/WellWells/desktop-agent-center/pulls)
 
-## Install
+**[English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md)**
 
-Runtime: **Node 20+**.
+</div>
 
-### 1. Prerequisites (C++ Build Tools)
+---
 
-Since this project uses `uiohook-napi` for global hotkeys, your system needs:
+**Desktop Agent Center (DAC)** is a local-first, open-source AI automation tool that runs on your desktop. It bridges your clipboard and global hotkeys directly to leading AI providers — **ChatGPT, Gemini, Perplexity, and Duck.ai** — with no API keys, no subscription fees, and no credit card required.
 
-- **Windows:** Visual Studio Build Tools (with "Desktop development with C++").
-- **macOS:** Xcode Command Line Tools.
-- **Linux:** `build-essential`, `libx11-dev`, etc.
+Unlike paid automation platforms (e.g., OpenClaw, Zapier AI, n8n cloud) that charge from day one, DAC is **completely free** and uses the same AI web interfaces you already have open in your browser. Just install, press a hotkey, and your clipboard content is already being processed by AI.
 
-### 2. Setup
+---
 
-```
+## Table of Contents
+
+- [Highlights](#-highlights)
+- [Quick Start](#-quick-start)
+- [Screenshots](#-screenshots)
+- [Pre-built Downloads](#-pre-built-downloads)
+- [AgentFlow](#-agentflow--visual-workflow-automation)
+- [Telegram Bot](#-telegram-bot-integration)
+- [Settings & Customization](#%EF%B8%8F-settings--customization)
+- [Why DAC vs Paid Tools](#%EF%B8%8F-why-dac-vs-paid-tools)
+- [Security & Privacy](#-security--privacy)
+- [Development](#%EF%B8%8F-development)
+- [Contributing](#-contributing)
+- [License](#-license)
+
+---
+
+## ✨ Highlights
+
+| | Feature | Details |
+|---|---|---|
+| 🆓 | **Zero Cost** | No API key, no credit card, no subscription — ever |
+| ⌨️ | **Global Hotkey** | `Alt+G` (Windows) / `Command+G` (macOS) captures selected text or clipboard, sends to AI instantly |
+| 🤖 | **Multi-Provider** | ChatGPT · Gemini · Perplexity · Duck.ai |
+| 🔁 | **AgentFlow** | Visual no-code workflow builder with 12 automation skills |
+| 📱 | **Telegram Bridge** | Control your AI agent from your phone via Telegram Bot |
+| 💾 | **Auto-save** | Results saved as Markdown files with timestamps |
+| 🎨 | **Capture & Export** | Export AI responses as styled PNG, WebP, or PDF |
+| 🔒 | **Local-first** | All logic runs on your machine — no telemetry, no tracking |
+| 🌍 | **9 UI Languages** | English, 繁中, 简中, 日本語, 한국어, Deutsch, Español, Français, Português |
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- **Node.js 20+** ([download](https://nodejs.org/))
+
+### Install & Run
+
+```bash
 git clone https://github.com/WellWells/desktop-agent-center.git
 cd desktop-agent-center
-
 npm install
 npm run dev
 ```
 
-## Quick start (TL;DR)
+### First Use (4 Steps)
 
-1. **First Launch**: Run `npm run dev`. A browser window will open automatically.
-2. **Login (Optional)**: Log into your preferred AI accounts (ChatGPT / Gemini / PPLX) if required by the provider or to save history.
-3. **Run in Background**: In **Settings → General → System Tray**, enable hide-to-tray behavior so the app keeps running after closing the window.
-4. **The Workflow**:
-    - **Select Text**: Highlight any text on your computer.
-    - **Press Hotkey**: Press `Alt+G` (default).
-    - **Result**: Content is sent to the provider, analyzed, and the result is written back to your clipboard and auto-saved.
+1. **Login** (optional) — Open the in-app browser and sign in to ChatGPT / Gemini / Perplexity.
+2. **Enable tray** — Go to **Settings → General → System Tray** to keep DAC running in the background.
+3. **Select text** — Highlight any text in any application.
+4. **Press `Alt+G`** — DAC sends it to your chosen AI, writes the result back to your clipboard, and auto-saves the response.
 
-## ✨ Highlights
+> **Tip:** The hotkey is fully customizable in **Settings → General → Hotkey**. On macOS the default is `Command+G`.
 
-- **Local-first Core** — All hotkey processing and automation flows are executed locally.
-- **Seamless Clipboard** — Automatic reading and writing back for a frictionless experience.
-- **Multi-Provider Integration** — One-click access to ChatGPT, Gemini, and Perplexity.
-- **No API Keys** — Zero API costs. Ready to use out of the box with your existing accounts.
-- **Auto-save** — Responses saved as Markdown or JSON with precise timestamps.
-- **Telegram Bridge** — Talk to your desktop AI assistant via Telegram. Supports WebP/PDF exports.
-- **Modern UI** — Powered by Electron, React, and Tailwind CSS.
+---
+
+## 📸 Screenshots
+
+| Main Chat Interface | Model Selection |
+|:---:|:---:|
+| ![Main chat interface](docs/assets/main-chat-interface.png) | ![Model selection menu](docs/assets/model-selection-menu.png) |
+| Chat with AI — no API key required | Switch between ChatGPT · Gemini · Perplexity · Duck.ai |
+
+| Chat History & Summary | Export Options |
+|:---:|:---:|
+| ![Chat history summary](docs/assets/chat-history-summary-result.png) | ![Export options preview](docs/assets/export-options-preview.png) |
+| Auto-saved responses with timestamps | Export as PNG, WebP, or PDF with custom styles |
+
+| Custom Prompt Settings | Telegram Bot Configuration |
+|:---:|:---:|
+| ![Custom response settings](docs/assets/settings-custom-your-own-response.png) | ![Telegram bot configuration](docs/assets/settings-telegram-bot-config.png) |
+| Set tone, length & custom instructions | Connect your Telegram Bot in seconds |
+
+<div align="center">
+
+![AgentFlow editor with RSS step](docs/assets/agentflow-editor-rss-step.png)
+
+**AgentFlow** — Fetch URLs, summarize each with LLM, and send results to Telegram — no code required
+
+</div>
+
+---
+
+## 📦 Pre-built Downloads
+
+Download the latest release from the [**Releases**](https://github.com/WellWells/desktop-agent-center/releases) page:
+
+| Platform | Format |
+|----------|--------|
+| Windows | NSIS Installer · Portable `.exe` (x64) |
+| macOS | DMG · ZIP (x64 & Apple Silicon arm64) |
+
+---
+
+## 🔗 AgentFlow — Visual Workflow Automation
+
+AgentFlow is DAC's visual automation engine. Chain **LLM calls, data sources, and Telegram output** into fully automated pipelines — no coding required. Trigger by hotkey, schedule, or Telegram command.
+
+### Triggers
+
+| Trigger | Description |
+|---------|-------------|
+| ⌨️ **Hotkey** | A dedicated global keyboard shortcut |
+| ⏰ **Scheduled** | Daily / weekly cron schedule with flexible repeat options |
+| 🤖 **Bot Command** | A custom Telegram bot command (e.g. `/my_cmd <input>`) |
+| ▶️ **Manual** | Run on demand from the AgentFlow UI |
+
+### Skills
+
+| Skill | Description |
+|-------|-------------|
+| 🧠 **LLM** | Send prompts to ChatGPT, Gemini, Perplexity, or Duck.ai; optionally export the response as PNG / WebP / PDF |
+| 🌐 **Browser** | Fetch and extract text content from any URL |
+| 📡 **RSS** | Monitor RSS/Atom feeds — only new items since the last run are returned |
+| 🕵️ **Web Scraper** | Scrape links and titles from any webpage via CSS selectors, output as JSON |
+| 🐚 **Shell** | Run shell commands (cmd / PowerShell on Windows; bash / zsh on macOS) |
+| 📋 **Clipboard** | Read from or write text to the system clipboard |
+| 📨 **Bot** | Send a message or file to a Telegram chat |
+| 🔁 **Loop / End Loop** | Iterate over a list of items line by line |
+| 🛠️ **Utility** | Add a timed delay or export a rendered snapshot (PNG / WebP / PDF) |
+| ⏹ **Stop** | Conditionally halt the flow when a variable is empty |
+| 💬 **Comment** | Add documentation notes to a step (not executed) |
+
+### Variable System
+
+Every step writes its result to a named variable. Reference it in any later step with `{{variable_name}}`:
+
+```
+RSS Feed        → output: rss_1
+LLM Prompt      → "Summarize: {{rss_1}}"   → output: llm_1
+Telegram Bot    → message: "{{llm_1}}"
+```
+
+### Ready-to-use Templates
+
+| Template | Description |
+|----------|-------------|
+| 📰 **RSS → Telegram** | Fetch RSS feed, summarize with LLM, send to Telegram |
+| 🕵️ **Web Monitor → Telegram** | Scrape new items from any website, analyze with LLM, push to Telegram |
+
+Flows can be **exported and shared** as `.json` files, or imported via file or URL.
+
+---
+
+## 📱 Telegram Bot Integration
+
+Connect DAC to Telegram to control your AI agent from anywhere:
+
+1. **Create a bot** — Message [@BotFather](https://t.me/BotFather) on Telegram and get your bot token.
+2. **Add token** — Enter it in **Settings → Telegram**.
+3. **Pair your account** — Send `/start` to your bot and follow the pairing flow.
+
+### Built-in Bot Commands
+
+| Command | Description |
+|---------|-------------|
+| `/gpt <prompt>` | Send a prompt to ChatGPT |
+| `/gemini <prompt>` | Send a prompt to Gemini |
+| `/pplx <prompt>` | Send a prompt to Perplexity |
+| `/status` | Check agent status |
+
+Create **custom bot commands** in AgentFlow using the **Bot Command trigger** to build fully custom workflows triggered by Telegram messages.
+
+---
+
+## ⚙️ Settings & Customization
+
+### Prompt Preferences
+
+Tailor how every prompt is delivered to AI:
+
+| Option | Choices |
+|--------|---------|
+| **Tone** | Default · Professional · Casual · Direct |
+| **Length** | Auto · Concise · Detailed |
+| **Custom Instructions** | Free-form guidance prepended to every prompt |
+| **Templates** | Save and reuse your own prompt templates |
+
+### Capture & Export
+
+Export any AI response as a beautifully styled image or PDF:
+
+- **Formats**: PNG · WebP · PDF
+- **Options**: gradient palette, layout direction, show/hide prompt text, provider name, and timestamp
+
+### General Settings
+
+| Setting | Description |
+|---------|-------------|
+| **Theme** | Light · Dark · Auto (follows OS) |
+| **Layout** | Stacked · Side-by-side |
+| **Response Timeout** | Maximum wait time for an AI response |
+| **Launch at Startup** | Auto-start DAC when your computer boots |
+| **Close to Tray** | Minimize to system tray instead of quitting |
+| **Markdown Zoom** | Adjust response text size (70%–200%) |
+
+### Config Backup
+
+Export and import your full settings as a JSON file via **Settings → Advanced**.
+
+---
+
+## ⚖️ Why DAC vs. Paid Tools?
+
+| | Desktop Agent Center | OpenClaw / n8n Cloud / Zapier AI |
+|---|---|---|
+| Price | **Free forever** | Paid subscription / credits |
+| API Key | **Not required** | Usually required |
+| AI Providers | ChatGPT, Gemini, PPLX, Duck.ai | Depends on plan |
+| Workflow automation | ✅ AgentFlow (visual) | ✅ (paid) |
+| Telegram integration | ✅ Built-in | Varies |
+| Data privacy | **Local-first** | Cloud-processed |
+| Open source | ✅ MIT | Varies |
+
+---
 
 ## 🔒 Security & Privacy
 
-- **Third-party Providers**: Your queries are processed by providers like **ChatGPT, Gemini, or Perplexity**. Their respective privacy policies apply to the data they receive. The author does not control these platforms.
-- **Local Execution**: The gateway runs on your host. Your data is sent directly to the AI providers you choose; no other third-party servers are involved.
-- **No Tracking**: No user telemetry, data collection, or tracking scripts are included.
-- **Transparency**: All automation logic is open-source and available for audit in the `src/main/` directory.
+- **No telemetry** — Zero analytics, tracking scripts, or usage data collection.
+- **Local execution** — All automation runs on your machine. Data is sent directly to the AI providers you choose.
+- **Encrypted credentials** — Telegram bot tokens are encrypted with Electron's `safeStorage` (OS-level keychain) before being written to disk.
+- **Third-party provider policies** — Queries processed by ChatGPT/Gemini/Perplexity are subject to their respective privacy policies. The author has no control over those platforms.
+- **Open source** — All automation logic is auditable in `src/main/`.
 
-## Operator quick refs
+---
 
-- **Global Hotkey**: `Alt+G` (Customizable in **Settings → General**)
-- **Telegram Commands**: `/gpt <prompt>`, `/gemini <prompt>`, `/pplx <prompt>`, `/status`
-- **Output Path**: `outputs/` folder in the project root.
+## 🛠️ Development
 
-## 🛠️ From source (development)
+```bash
+# Start dev server with Electron hot-reload
+npm run dev
 
-We welcome the community to **Star**, **Fork**, or open **Issues** for bug reports and feature suggestions!
-
-```
-# Type checking
+# TypeScript type checking
 npm run typecheck
 
-# Build Windows Portable executable
-npm run build
+# i18n key audit
+npm run i18n:check
+
+# Build Windows (NSIS + Portable)
+npm run build:win
+
+# Build macOS (DMG + ZIP)
+npm run build:mac
 ```
+
+### Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Runtime | Electron 42 + Node.js 20 |
+| Frontend | React 19 + TypeScript |
+| UI | Mantine 9 |
+| State | Zustand 5 |
+| Build | Vite 8 + electron-builder |
+| Telegram | GrammY |
+| Scheduling | node-cron |
+
+---
+
+## 🤝 Contributing
+
+Contributions, issues, and feature requests are welcome!
+
+1. **Fork** the repository and create a feature branch (`git checkout -b feat/my-feature`).
+2. Make your changes — ensure `npm run typecheck` passes with no errors.
+3. Open a **Pull Request** with a clear description.
+
+For major changes, please open an **Issue** first to discuss the approach.
+
+---
 
 ## 📜 License
 
-This project is licensed under the **MIT License**.
+This project is licensed under the **[MIT License](LICENSE)** — free to use, modify, and distribute.
+
+---
+
+<div align="center">
+
+If DAC saves you time or money, please ⭐ **Star** this repository — it helps others discover it!
+
+**[Report a Bug](https://github.com/WellWells/desktop-agent-center/issues) · [Request a Feature](https://github.com/WellWells/desktop-agent-center/issues) · [Discussions](https://github.com/WellWells/desktop-agent-center/discussions)**
+
+</div>

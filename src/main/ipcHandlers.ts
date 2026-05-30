@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import { execFile } from 'node:child_process';
-import { IPC } from '../shared/types';
+import { IPC, PROVIDER_URLS } from '../shared/types';
 import type { MarkdownCaptureRequest, MarkdownCaptureResult, PromptTriggerOptions, CaptureSettings, SettingsSnapshot } from '../shared/types';
 import {
   config,
@@ -16,6 +16,7 @@ import {
   normalizeCaptureSettings,
 } from './config';
 import { getProviderLabel } from './providers';
+import { fetchDuckaiModels } from './providers/duckai';
 import {
   sendLog,
   sendToRenderer,
@@ -36,7 +37,7 @@ import {
   getUniquePath,
 } from './files';
 import { loadLanguageData, setLangCache, setEnCache } from './i18n';
-import { isSingleUrl, fetchAndParse, buildUrlAnalysisPrompt } from './urlParser';
+import { isSingleUrl, fetchAndParse, buildUrlAnalysisPrompt, resolveUrlPrompt } from './urlParser';
 import {
   getWorkerWin,
   revealWorkerWindow,
@@ -57,6 +58,17 @@ import {
 } from './telegram';
 import type { QueueManager } from './queueManager';
 import { setHotkeyPaused } from './hotkey';
+import type { DuckaiModelInfo } from './providers/duckai';
+import type { FlowManager } from './flowManager';
+import type { FlowDefinition } from '../shared/types';
+
+// Session-scoped cache: duck.ai model list changes rarely so we fetch once per
+// process lifetime and serve subsequent calls from memory, avoiding extra page
+// navigations that trigger rate-limit (429) responses from duck.ai.
+let duckaiModelsCache: DuckaiModelInfo[] | null = null;
+
+// Idempotent guard — prevents accidental double-registration of ipcMain.on() listeners
+let _ipcInitialized = false;
 
 interface SetupDeps {
   queue: QueueManager;
@@ -69,9 +81,16 @@ interface SetupDeps {
   onTrayMenuRebuild?: () => void;
   onHideToTray?: () => void;
   onQuitApp?: () => void;
+  flowManager?: FlowManager;
 }
 
 export function setupIpcHandlers(deps: SetupDeps): void {
+  if (_ipcInitialized) {
+    console.warn('[ipcHandlers] setupIpcHandlers called multiple times — skipping duplicate registration');
+    return;
+  }
+  _ipcInitialized = true;
+
   const {
     queue,
     telegramRuntime,
@@ -92,32 +111,12 @@ export function setupIpcHandlers(deps: SetupDeps): void {
       ? normalizeAiUrl(targetUrl)
       : config.targetUrl;
 
-    let prompt = text;
-
-    if (isSingleUrl(text)) {
-      const langData = await loadLanguageData(config.locale);
-      const logFetching = langData?.['urlParser.log.fetching'] ?? '🔗 URL detected — fetching page content...';
-      const notifyTitle = langData?.['urlParser.notify.title'] ?? 'Desktop Agent Center';
-      const notifyBody = (langData?.['urlParser.notify.body'] ?? 'Fetching: {{url}}').replace('{{url}}', text);
-      sendLog(logFetching);
-      sendWebNotification(notifyTitle, notifyBody, 'info');
-
-      try {
-        const parsed = await fetchAndParse(text);
-        const promptTemplate = langData?.['urlParser.prompt'] ?? '';
-        const truncatedLabel = langData?.['urlParser.truncated'] ?? '(Content truncated — too long)';
-        prompt = buildUrlAnalysisPrompt(parsed, promptTemplate, truncatedLabel);
-        const logDone = (langData?.['urlParser.log.done'] ?? '🔗 Fetched {{chars}} chars — wrapping analysis prompt...')
-          .replace('{{chars}}', String(parsed.cleanedText.length));
-        sendLog(logDone);
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        const logError = (langData?.['urlParser.log.error'] ?? '❌ URL fetch failed: {{error}} (sending raw URL instead)')
-          .replace('{{error}}', errMsg);
-        sendLog(logError);
-        // Fall through with raw URL as prompt
-      }
-    }
+    const langData = await loadLanguageData(config.locale) ?? {};
+    const prompt = await resolveUrlPrompt(text, {
+      langData: langData as Record<string, string>,
+      onLog: sendLog,
+      onNotify: (title, body) => sendWebNotification(title, body, 'info'),
+    });
 
     const id = createTaskId();
     queue.enqueue({
@@ -166,8 +165,18 @@ export function setupIpcHandlers(deps: SetupDeps): void {
   ipcMain.handle(IPC.GET_FILE_LIST, () => listOutputFiles());
   ipcMain.handle(IPC.SEARCH_FILE_LIST, (_event, query: string) => searchOutputFiles(query));
 
+  // Path validation — restricts file operations to the output directory.
+  // Prevents path traversal attacks from malicious IPC messages.
+  async function isAllowedFilePath(filePath: string): Promise<boolean> {
+    if (!filePath || typeof filePath !== 'string') return false;
+    const resolved = path.resolve(filePath);
+    const outputDir = await getOutputDir();
+    return resolved.startsWith(outputDir + path.sep) || resolved === outputDir;
+  }
+
   // File content
   ipcMain.handle(IPC.GET_FILE_CONTENT, async (_event, filePath: string) => {
+    if (!await isAllowedFilePath(filePath)) return null;
     try {
       return await fs.readFile(filePath, 'utf-8');
     } catch {
@@ -176,6 +185,7 @@ export function setupIpcHandlers(deps: SetupDeps): void {
   });
 
   ipcMain.handle(IPC.UPDATE_FILE_TITLE, async (_event, filePath: string, newTitle: string) => {
+    if (!await isAllowedFilePath(filePath)) return { ok: false, updatedPath: filePath };
     const title = newTitle.trim();
     if (!title) return { ok: false, updatedPath: filePath };
     try {
@@ -192,6 +202,7 @@ export function setupIpcHandlers(deps: SetupDeps): void {
   });
 
   ipcMain.handle(IPC.UPDATE_FILE_H1, async (_event, filePath: string, newTitle: string) => {
+    if (!await isAllowedFilePath(filePath)) return false;
     const title = newTitle.trim();
     if (!title) return false;
     try {
@@ -213,6 +224,7 @@ export function setupIpcHandlers(deps: SetupDeps): void {
 
   // Delete file
   ipcMain.handle(IPC.DELETE_FILE, async (_event, filePath: string) => {
+    if (!await isAllowedFilePath(filePath)) return false;
     try {
       await fs.unlink(filePath);
       sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
@@ -362,14 +374,35 @@ export function setupIpcHandlers(deps: SetupDeps): void {
       const files = await fs.readdir(langDir);
       return files.filter((f) => f.endsWith('.json')).map((f) => f.replace('.json', ''));
     } catch {
-      return ['zh-TW', 'en-US'];
+      return ['en-US', 'zh-TW'];
     }
   });
 
   // Language content
-  ipcMain.handle(IPC.GET_CURRENT_LOCALE, () => config.locale);
+  ipcMain.handle(IPC.GET_CURRENT_LOCALE, () => ({
+    locale: config.locale,
+    setByUser: config.localeSetByUser,
+  }));
   ipcMain.handle(IPC.GET_LANGUAGE_CONTENT, (_event, lang: string) => loadLanguageData(lang));
+
+  // User-initiated locale change — marks locale as explicitly chosen by user
   ipcMain.handle(IPC.SET_CURRENT_LOCALE, async (_event, lang: string) => {
+    const nextLocale = (lang ?? '').trim();
+    if (!nextLocale) return false;
+    config.locale = nextLocale;
+    config.localeSetByUser = true;
+    saveConfig({ locale: nextLocale, localeSetByUser: true });
+    void loadLanguageData(nextLocale).then((data) => {
+      if (!data) return;
+      setLangCache(data);
+      deps.onTrayMenuRebuild?.();
+      void telegramRuntime.syncWithConfig();
+    });
+    return true;
+  });
+
+  // Auto-detected locale save — stores detected locale without marking as user-set
+  ipcMain.handle(IPC.SET_LOCALE_AUTO, async (_event, lang: string) => {
     const nextLocale = (lang ?? '').trim();
     if (!nextLocale) return false;
     config.locale = nextLocale;
@@ -576,10 +609,12 @@ export function setupIpcHandlers(deps: SetupDeps): void {
   ipcMain.handle(IPC.CAPTURE_MARKDOWN_IMAGE, async (_event, request: MarkdownCaptureRequest) => {
     try {
       const resultDoc = await captureMarkdownDocument(request);
+      const requestedFileName = (request?.options?.fileName ?? '').trim();
+      const fileStem = requestedFileName ? buildSafeFileNameFromTitle(requestedFileName) : buildSnapshotFileName();
       if (resultDoc.mode === 'copy') {
         if (resultDoc.ext === 'pdf' || resultDoc.ext === 'webp') {
           const tmpDir = os.tmpdir();
-          const tmpPath = path.join(tmpDir, `${buildSnapshotFileName()}.${resultDoc.ext}`);
+          const tmpPath = path.join(tmpDir, `${fileStem}.${resultDoc.ext}`);
           await fs.writeFile(tmpPath, resultDoc.buffer);
 
           if (process.platform === 'win32') {
@@ -608,7 +643,7 @@ export function setupIpcHandlers(deps: SetupDeps): void {
       const outputDir = await getOutputDir();
       await fs.mkdir(outputDir, { recursive: true });
       const filePath = await getUniquePath(
-        path.join(outputDir, `${buildSnapshotFileName()}.${resultDoc.ext}`),
+        path.join(outputDir, `${fileStem}.${resultDoc.ext}`),
         '',
       );
       await fs.writeFile(filePath, resultDoc.buffer);
@@ -687,4 +722,124 @@ export function setupIpcHandlers(deps: SetupDeps): void {
       deps.onQuitApp?.();
     }
   });
+
+  // Duck AI — dynamic model list fetch (cached per process lifetime)
+  ipcMain.handle(IPC.DUCKAI_FETCH_MODELS, async () => {
+    if (duckaiModelsCache !== null) return duckaiModelsCache;
+    try {
+      const win = await ensureWorkerWindow(PROVIDER_URLS.duckai);
+      if (!win) return [];
+      duckaiModelsCache = await fetchDuckaiModels(win);
+      return duckaiModelsCache;
+    } catch (err: unknown) {
+      sendLog(`⚠️ Duck AI model fetch failed: ${(err as Error).message}`);
+      return [];
+    }
+  });
+
+  // ── AgentFlow (Flow Automation) ───────────────────────────────────────────
+  const { flowManager } = deps;
+
+  ipcMain.handle(IPC.FLOW_GET_ALL, () => {
+    return flowManager?.getAll() ?? [];
+  });
+
+  ipcMain.handle(IPC.FLOW_SAVE, async (_event, flow: FlowDefinition) => {
+    if (!flowManager) return null;
+    return flowManager.save(flow);
+  });
+
+  ipcMain.handle(IPC.FLOW_DELETE, async (_event, flowId: string) => {
+    if (!flowManager) return false;
+    return flowManager.delete(flowId);
+  });
+
+  ipcMain.handle(IPC.FLOW_DUPLICATE, async (_event, flowId: string) => {
+    if (!flowManager) return null;
+    return flowManager.duplicate(flowId);
+  });
+
+  ipcMain.handle(IPC.FLOW_MOVE, async (_event, flowId: string, direction: 'up' | 'down') => {
+    if (!flowManager) return [];
+    return flowManager.move(flowId, direction);
+  });
+
+  ipcMain.handle(IPC.FLOW_EXECUTE, async (_event, flowId: string) => {
+    if (!flowManager) return { flowId, success: false, outputs: {}, error: 'FlowManager not available', completedSteps: 0, totalSteps: 0, completedAt: new Date().toISOString() };
+    return flowManager.queueExecution(flowId);
+  });
+
+  ipcMain.handle(IPC.FLOW_EXPORT, async (_event, flow: FlowDefinition) => {
+    try {
+      const safeName = (flow.name ?? 'flow').replace(/[^\w\-. ]/g, '_').trim() || 'flow';
+      const defaultPath = path.join(app.getPath('documents'), `${safeName}.json`);
+      const win = getMainWin();
+      const result = win && !win.isDestroyed()
+        ? await dialog.showSaveDialog(win, {
+          defaultPath,
+          filters: [{ name: 'JSON', extensions: ['json'] }],
+        })
+        : await dialog.showSaveDialog({
+          defaultPath,
+          filters: [{ name: 'JSON', extensions: ['json'] }],
+        });
+      if (result.canceled || !result.filePath) return false;
+      const payload = { type: 'agentflow-export', version: 1, flow };
+      await fs.writeFile(result.filePath, JSON.stringify(payload, null, 2), 'utf-8');
+      return true;
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'unknown export error';
+      sendLog(`⚠️ Failed to export flow: ${message}`);
+      return false;
+    }
+  });
+
+  // ── RSS Checkpoint ─────────────────────────────────────────────────────────
+  ipcMain.handle(IPC.RSS_HAS_CHECKPOINT, async (_event, stepId: string) => {
+    const dir = app.isPackaged ? app.getPath('userData') : path.resolve('.');
+    const filePath = path.join(dir, 'flow-checkpoints', `rss-${stepId}.json`);
+    try {
+      await fs.access(filePath);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
+  ipcMain.handle(IPC.RSS_CLEAR_CHECKPOINT, async (_event, stepId: string) => {
+    const dir = app.isPackaged ? app.getPath('userData') : path.resolve('.');
+    const filePath = path.join(dir, 'flow-checkpoints', `rss-${stepId}.json`);
+    try {
+      await fs.unlink(filePath);
+      sendLog(`📡 [AgentFlow] RSS checkpoint cleared for step: ${stepId}`);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
+  // ── Scraper Checkpoint ─────────────────────────────────────────────────────
+  ipcMain.handle(IPC.SCRAPER_HAS_CHECKPOINT, async (_event, stepId: string) => {
+    const dir = app.isPackaged ? app.getPath('userData') : path.resolve('.');
+    const filePath = path.join(dir, 'flow-checkpoints', `scraper-${stepId}.json`);
+    try {
+      await fs.access(filePath);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
+  ipcMain.handle(IPC.SCRAPER_CLEAR_CHECKPOINT, async (_event, stepId: string) => {
+    const dir = app.isPackaged ? app.getPath('userData') : path.resolve('.');
+    const filePath = path.join(dir, 'flow-checkpoints', `scraper-${stepId}.json`);
+    try {
+      await fs.unlink(filePath);
+      sendLog(`📡 [AgentFlow] Scraper checkpoint cleared for step: ${stepId}`);
+      return true;
+    } catch {
+      return false;
+    }
+  });
 }
+

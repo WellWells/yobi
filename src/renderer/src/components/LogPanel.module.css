@@ -36,9 +36,8 @@
 .logEntry {
   display: flex;
   align-items: flex-start;
-  gap: 7;
+  gap: 7px;
   padding: 3px 6px;
-  border-radius: var(--radius-sm);
   border-radius: var(--mantine-radius-sm);
   transition: background 0.15s ease;
 }

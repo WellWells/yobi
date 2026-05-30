@@ -14,6 +14,7 @@
   --text-primary: #e6edf3;
   --text-secondary: #c9d1d9;
   --text-muted: #8b949e;
+  --text-disabled: #6e7681;
   --accent: #58a6ff;
   --accent-dim: rgba(88, 166, 255, 0.15);
   --success: #3fb950;
@@ -67,10 +68,22 @@ body {
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  /* user-select intentionally NOT set globally — content must remain selectable by default.
+     Apply user-select: none only to specific interactive chrome elements below. */
+}
+
+/* Prevent interactive chrome elements from triggering text selection on click. */
+button,
+[role="button"],
+[role="tab"],
+[role="menuitem"],
+[role="option"],
+nav,
+label {
   user-select: none;
 }
 
-/* Prevent all images, SVGs and media from being dragged */
+/* Prevent all images, SVGs and media from being dragged (Electron: mimic native app) */
 img, svg, video, canvas {
   -webkit-user-drag: none;
   user-drag: none;
@@ -88,13 +101,30 @@ button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: none;
+  /* Keep outline for assistive tech and Windows High Contrast Mode.
+     Use transparent colour so the visual ring comes from box-shadow,
+     but AT and forced-colour themes can still detect it. */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
   box-shadow: 0 0 0 3px var(--accent-dim);
 }
 
-input:focus,
-textarea:focus {
-  outline: none;
+/* Disabled state styling for better contrast */
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* Use :focus-visible (not :focus) to preserve the focus ring for keyboard users
+   while suppressing it for pointer interactions. */
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
   border-color: var(--accent);
 }
 
@@ -109,9 +139,12 @@ textarea:focus {
 }
 
 /* ── Scrollbar ───────────────────────────────────────────────────────────── */
-::-webkit-scrollbar { width: 4px; height: 4px; }
+/* Single source of truth: update --scrollbar-width to resize all native scrollbars */
+:root { --scrollbar-width: 6px; }
+* { scrollbar-width: thin; scrollbar-color: rgba(128, 128, 128, 0.3) transparent; }
+::-webkit-scrollbar { width: var(--scrollbar-width); height: var(--scrollbar-width); }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(128, 128, 128, 0.28); border-radius: 2px; }
+::-webkit-scrollbar-thumb { background: rgba(128, 128, 128, 0.28); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(128, 128, 128, 0.46); }
 
 /* ── Highlight.js overrides (use theme variables) ───────────────────────── */
@@ -149,7 +182,6 @@ textarea:focus {
 
 /* ── Markdown content ────────────────────────────────────────────────────── */
 .md-content {
-  user-select: text;
   line-height: 1.75;
   color: var(--text-secondary);
   font-size: 14px;
@@ -269,3 +301,38 @@ textarea:focus {
 
 /* ── Template chip buttons (prompt section) ─────────────────────────────── */
 /* (Removed — now handled by Mantine Button/ActionIcon) */
+
+/* ── Mantine Menu & Combobox & Select custom theme overrides ─────────────── */
+.mantine-Menu-dropdown,
+.mantine-Combobox-dropdown,
+.mantine-Select-dropdown {
+  background-color: var(--bg-secondary) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: var(--shadow-md) !important;
+}
+
+.mantine-Menu-item,
+.mantine-Combobox-option,
+.mantine-Select-option {
+  color: var(--text-secondary) !important;
+  background-color: transparent !important;
+}
+
+.mantine-Menu-item:hover,
+.mantine-Menu-item[data-hovered],
+.mantine-Combobox-option:hover,
+.mantine-Combobox-option[data-hovered],
+.mantine-Select-option:hover,
+.mantine-Select-option[data-hovered] {
+  background-color: var(--bg-hover) !important;
+  color: var(--text-primary) !important;
+}
+
+.mantine-Menu-label {
+  color: var(--text-muted) !important;
+  font-weight: 600 !important;
+  font-size: var(--font-size-xs) !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.5px !important;
+}
+

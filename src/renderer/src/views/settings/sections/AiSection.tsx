@@ -1,9 +1,11 @@
 import React from 'react';
-import { ActionIcon, Box, Group, Stack, Text, TextInput, Textarea } from '@mantine/core';
+import { ActionIcon, Box, Group, Stack, Text } from '@mantine/core';
 import {
   AlignJustify, AlignLeft, Eye, FileText, MessageSquare, Minus, Plus,
   SlidersHorizontal, Timer, User2,
 } from 'lucide-react';
+import { AppTextarea } from '../../../components/AppTextarea';
+import { AppTextInput } from '../../../components/AppTextInput';
 import {
   SectionCard, SettingRow, SegmentedControl, ToggleSwitch, GroupHeader, SectionTitle,
 } from '../components';
@@ -51,9 +53,11 @@ export const AiSection: React.FC<Props> = ({
         </ActionIcon>
 
         <Box pos="relative" w={120}>
-          <TextInput
+          <AppTextInput
             type="text"
             inputMode="numeric"
+            tone="body"
+            numeric
             value={system.responseTimeoutInput}
             onChange={(e) => system.setResponseTimeoutInput(e.target.value.replace(/[^\d]/g, ''))}
             onBlur={() => {
@@ -67,15 +71,6 @@ export const AiSection: React.FC<Props> = ({
               </Text>
             }
             rightSectionWidth={30}
-            styles={{
-              input: {
-                fontVariantNumeric: 'tabular-nums',
-                textAlign: 'right',
-                paddingRight: 36,
-                background: 'var(--mantine-color-body)',
-                borderColor: system.timeoutInvalid ? 'var(--mantine-color-error)' : undefined,
-              },
-            }}
           />
         </Box>
 
@@ -140,8 +135,9 @@ export const AiSection: React.FC<Props> = ({
               </Text>
             </Group>
           </Stack>
-          <TextInput
+          <AppTextInput
             value={prefs.promptPrefs.nickname ?? ''}
+            tone="body"
             onChange={(e) => prefs.setPromptPrefs({ ...prefs.promptPrefs, nickname: e.target.value })}
             onBlur={(e) => {
               const next = { ...prefs.promptPrefs, nickname: e.target.value };
@@ -149,7 +145,6 @@ export const AiSection: React.FC<Props> = ({
               void prefs.savePromptPrefs(next);
             }}
             placeholder={t('settings.prompt.nickname.placeholder')}
-            styles={{ input: { background: 'var(--mantine-color-body)' } }}
           />
           <Text fz="var(--font-size-sm)" mt={4} c="dimmed">{t('settings.prompt.nickname.hint')}</Text>
         </Box>
@@ -197,7 +192,7 @@ export const AiSection: React.FC<Props> = ({
 
         {/* Custom Instructions */}
         <SectionTitle icon={<FileText size={15} />} label={t('settings.prompt.templates.title')} mb={10} />
-        <Textarea
+        <AppTextarea
           value={prefs.promptPrefs.customInstructions}
           onChange={(e) => prefs.setPromptPrefs({ ...prefs.promptPrefs, customInstructions: e.target.value })}
           onBlur={(e) => {

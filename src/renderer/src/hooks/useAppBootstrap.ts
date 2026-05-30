@@ -1,6 +1,6 @@
 // src/renderer/src/hooks/useAppBootstrap.ts
 // Extracted from App.tsx so that App can focus purely on layout/view rendering.
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import { useUpdateStore } from '../store/useUpdateStore';
@@ -9,6 +9,7 @@ import type { LayoutMode } from '../store/appStore';
 import { ipcEvents, settingsApi } from '../api/electronApi';
 import { isTypingTarget } from '../utils/domUtils';
 import type { View } from '../store/appStore';
+import { makeDuckaiModelOption } from '../config/models';
 
 const VIEW_BY_SHORTCUT: Record<string, View> = {
   '1': 'chat',
@@ -18,9 +19,10 @@ const VIEW_BY_SHORTCUT: Record<string, View> = {
 };
 
 export function useAppBootstrap() {
-  const { appendLog, setStatus, setQueue, setHotkey, setView, setAiUrl } = useAppStore();
+  const { appendLog, setStatus, setQueue, setHotkey, setView, setAiUrl, setDuckaiModels } = useAppStore();
   const { loadLocales } = useI18nStore();
   const { initializeListeners } = useUpdateStore();
+  const duckaiModelsFetched = useRef(false);
 
   // One-time init: i18n, theme, and preference loading.
   useEffect(() => {
@@ -40,7 +42,16 @@ export function useAppBootstrap() {
         useAppStore.setState({ markdownZoom: zoom });
       }
     });
-  }, [initializeListeners, loadLocales, setHotkey, setAiUrl]);
+    // Fetch duck.ai models once per app session; skip if already fetched.
+    if (!duckaiModelsFetched.current) {
+      duckaiModelsFetched.current = true;
+      void settingsApi.fetchDuckaiModels().then((models) => {
+        if (models && models.length > 0) {
+          setDuckaiModels(models.map(makeDuckaiModelOption));
+        }
+      });
+    }
+  }, [initializeListeners, loadLocales, setHotkey, setAiUrl, setDuckaiModels]);
 
   // IPC event subscriptions.
   useEffect(() => {
