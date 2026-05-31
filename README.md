@@ -24,34 +24,49 @@ Unlike paid automation platforms (e.g., OpenClaw, Zapier AI, n8n cloud) that cha
 
 ## Table of Contents
 
-- [Highlights](#-highlights)
-- [Quick Start](#-quick-start)
-- [Screenshots](#-screenshots)
-- [Pre-built Downloads](#-pre-built-downloads)
-- [AgentFlow](#-agentflow--visual-workflow-automation)
-- [Telegram Bot](#-telegram-bot-integration)
-- [Settings & Customization](#%EF%B8%8F-settings--customization)
-- [Why DAC vs Paid Tools](#%EF%B8%8F-why-dac-vs-paid-tools)
-- [Security & Privacy](#-security--privacy)
-- [Development](#%EF%B8%8F-development)
-- [Contributing](#-contributing)
-- [License](#-license)
+- [🤖 Desktop Agent Center](#-desktop-agent-center)
+  - [Table of Contents](#table-of-contents)
+  - [✨ Highlights](#-highlights)
+  - [🚀 Quick Start](#-quick-start)
+    - [Prerequisites](#prerequisites)
+    - [Install \& Run](#install--run)
+    - [First Use (4 Steps)](#first-use-4-steps)
+  - [📸 Screenshots](#-screenshots)
+  - [📦 Pre-built Downloads](#-pre-built-downloads)
+  - [🔗 AgentFlow — Visual Workflow Automation](#-agentflow--visual-workflow-automation)
+    - [Triggers](#triggers)
+    - [Skills](#skills)
+    - [Variable System](#variable-system)
+    - [Ready-to-use Templates](#ready-to-use-templates)
+  - [📱 Telegram Bot Integration](#-telegram-bot-integration)
+    - [Built-in Bot Commands](#built-in-bot-commands)
+  - [⚙️ Settings \& Customization](#️-settings--customization)
+    - [Prompt Preferences](#prompt-preferences)
+    - [Capture \& Export](#capture--export)
+    - [General Settings](#general-settings)
+    - [Config Backup](#config-backup)
+  - [⚖️ Why DAC vs. Paid Tools?](#️-why-dac-vs-paid-tools)
+  - [🔒 Security \& Privacy](#-security--privacy)
+  - [🛠️ Development](#️-development)
+    - [Tech Stack](#tech-stack)
+  - [🤝 Contributing](#-contributing)
+  - [📜 License](#-license)
 
 ---
 
 ## ✨ Highlights
 
-| | Feature | Details |
-|---|---|---|
-| 🆓 | **Zero Cost** | No API key, no credit card, no subscription — ever |
-| ⌨️ | **Global Hotkey** | `Alt+G` (Windows) / `Command+G` (macOS) captures selected text or clipboard, sends to AI instantly |
-| 🤖 | **Multi-Provider** | ChatGPT · Gemini · Perplexity · Duck.ai |
-| 🔁 | **AgentFlow** | Visual no-code workflow builder with 12 automation skills |
-| 📱 | **Telegram Bridge** | Control your AI agent from your phone via Telegram Bot |
-| 💾 | **Auto-save** | Results saved as Markdown files with timestamps |
-| 🎨 | **Capture & Export** | Export AI responses as styled PNG, WebP, or PDF |
-| 🔒 | **Local-first** | All logic runs on your machine — no telemetry, no tracking |
-| 🌍 | **9 UI Languages** | English, 繁中, 简中, 日本語, 한국어, Deutsch, Español, Français, Português |
+|     | Feature              | Details                                                                                            |
+| --- | -------------------- | -------------------------------------------------------------------------------------------------- |
+| 🆓   | **Zero Cost**        | No API key, no credit card, no subscription — ever                                                 |
+| ⌨️   | **Global Hotkey**    | `Alt+G` (Windows) / `Command+G` (macOS) captures selected text or clipboard, sends to AI instantly |
+| 🤖   | **Multi-Provider**   | ChatGPT · Gemini · Perplexity · Duck.ai                                                            |
+| 🔁   | **AgentFlow**        | Visual no-code workflow builder with 12 automation skills                                          |
+| 📱   | **Telegram Bridge**  | Control your AI agent from your phone via Telegram Bot                                             |
+| 💾   | **Auto-save**        | Results saved as Markdown files with timestamps                                                    |
+| 🎨   | **Capture & Export** | Export AI responses as styled PNG, WebP, or PDF                                                    |
+| 🔒   | **Local-first**      | All logic runs on your machine — no telemetry, no tracking                                         |
+| 🌍   | **9 UI Languages**   | English, 繁中, 简中, 日本語, 한국어, Deutsch, Español, Français, Português                         |
 
 ---
 
@@ -83,20 +98,20 @@ npm run dev
 
 ## 📸 Screenshots
 
-| Main Chat Interface | Model Selection |
-|:---:|:---:|
-| ![Main chat interface](docs/assets/main-chat-interface.png) | ![Model selection menu](docs/assets/model-selection-menu.png) |
-| Chat with AI — no API key required | Switch between ChatGPT · Gemini · Perplexity · Duck.ai |
+|                      Main Chat Interface                      |                        Model Selection                         |
+| :-----------------------------------------------------------: | :------------------------------------------------------------: |
+| <img src="docs/assets/main-chat-interface.png" width="400" /> | <img src="docs/assets/model-selection-menu.png" width="400" /> |
+|              Chat with AI — no API key required               |     Switch between ChatGPT · Gemini · Perplexity · Duck.ai     |
 
-| Chat History & Summary | Export Options |
-|:---:|:---:|
-| ![Chat history summary](docs/assets/chat-history-summary-result.png) | ![Export options preview](docs/assets/export-options-preview.png) |
-| Auto-saved responses with timestamps | Export as PNG, WebP, or PDF with custom styles |
+|                        Chat History & Summary                         |                          Export Options                          |
+| :-------------------------------------------------------------------: | :--------------------------------------------------------------: |
+| <img src="docs/assets/chat-history-summary-result.png" width="400" /> | <img src="docs/assets/export-options-preview.png" width="400" /> |
+|                 Auto-saved responses with timestamps                  |          Export as PNG, WebP, or PDF with custom styles          |
 
-| Custom Prompt Settings | Telegram Bot Configuration |
-|:---:|:---:|
-| ![Custom response settings](docs/assets/settings-custom-your-own-response.png) | ![Telegram bot configuration](docs/assets/settings-telegram-bot-config.png) |
-| Set tone, length & custom instructions | Connect your Telegram Bot in seconds |
+|                           Custom Prompt Settings                            |                       Telegram Bot Configuration                       |
+| :-------------------------------------------------------------------------: | :--------------------------------------------------------------------: |
+| <img src="docs/assets/settings-custom-your-own-response.png" width="400" /> | <img src="docs/assets/settings-telegram-bot-config.png" width="400" /> |
+|                   Set tone, length & custom instructions                    |                  Connect your Telegram Bot in seconds                  |
 
 <div align="center">
 
@@ -112,10 +127,10 @@ npm run dev
 
 Download the latest release from the [**Releases**](https://github.com/WellWells/desktop-agent-center/releases) page:
 
-| Platform | Format |
-|----------|--------|
-| Windows | NSIS Installer · Portable `.exe` (x64) |
-| macOS | DMG · ZIP (x64 & Apple Silicon arm64) |
+| Platform | Format                                 |
+| -------- | -------------------------------------- |
+| Windows  | NSIS Installer · Portable `.exe` (x64) |
+| macOS    | DMG · ZIP (x64 & Apple Silicon arm64)  |
 
 ---
 
@@ -125,28 +140,28 @@ AgentFlow is DAC's visual automation engine. Chain **LLM calls, data sources, an
 
 ### Triggers
 
-| Trigger | Description |
-|---------|-------------|
-| ⌨️ **Hotkey** | A dedicated global keyboard shortcut |
-| ⏰ **Scheduled** | Daily / weekly cron schedule with flexible repeat options |
-| 🤖 **Bot Command** | A custom Telegram bot command (e.g. `/my_cmd <input>`) |
-| ▶️ **Manual** | Run on demand from the AgentFlow UI |
+| Trigger           | Description                                               |
+| ----------------- | --------------------------------------------------------- |
+| ⌨️ **Hotkey**      | A dedicated global keyboard shortcut                      |
+| ⏰ **Scheduled**   | Daily / weekly cron schedule with flexible repeat options |
+| 🤖 **Bot Command** | A custom Telegram bot command (e.g. `/my_cmd <input>`)    |
+| ▶️ **Manual**      | Run on demand from the AgentFlow UI                       |
 
 ### Skills
 
-| Skill | Description |
-|-------|-------------|
-| 🧠 **LLM** | Send prompts to ChatGPT, Gemini, Perplexity, or Duck.ai; optionally export the response as PNG / WebP / PDF |
-| 🌐 **Browser** | Fetch and extract text content from any URL |
-| 📡 **RSS** | Monitor RSS/Atom feeds — only new items since the last run are returned |
-| 🕵️ **Web Scraper** | Scrape links and titles from any webpage via CSS selectors, output as JSON |
-| 🐚 **Shell** | Run shell commands (cmd / PowerShell on Windows; bash / zsh on macOS) |
-| 📋 **Clipboard** | Read from or write text to the system clipboard |
-| 📨 **Bot** | Send a message or file to a Telegram chat |
-| 🔁 **Loop / End Loop** | Iterate over a list of items line by line |
-| 🛠️ **Utility** | Add a timed delay or export a rendered snapshot (PNG / WebP / PDF) |
-| ⏹ **Stop** | Conditionally halt the flow when a variable is empty |
-| 💬 **Comment** | Add documentation notes to a step (not executed) |
+| Skill                 | Description                                                                                                 |
+| --------------------- | ----------------------------------------------------------------------------------------------------------- |
+| 🧠 **LLM**             | Send prompts to ChatGPT, Gemini, Perplexity, or Duck.ai; optionally export the response as PNG / WebP / PDF |
+| 🌐 **Browser**         | Fetch and extract text content from any URL                                                                 |
+| 📡 **RSS**             | Monitor RSS/Atom feeds — only new items since the last run are returned                                     |
+| 🕵️ **Web Scraper**     | Scrape links and titles from any webpage via CSS selectors, output as JSON                                  |
+| 🐚 **Shell**           | Run shell commands (cmd / PowerShell on Windows; bash / zsh on macOS)                                       |
+| 📋 **Clipboard**       | Read from or write text to the system clipboard                                                             |
+| 📨 **Bot**             | Send a message or file to a Telegram chat                                                                   |
+| 🔁 **Loop / End Loop** | Iterate over a list of items line by line                                                                   |
+| 🛠️ **Utility**         | Add a timed delay or export a rendered snapshot (PNG / WebP / PDF)                                          |
+| ⏹ **Stop**            | Conditionally halt the flow when a variable is empty                                                        |
+| 💬 **Comment**         | Add documentation notes to a step (not executed)                                                            |
 
 ### Variable System
 
@@ -160,9 +175,9 @@ Telegram Bot    → message: "{{llm_1}}"
 
 ### Ready-to-use Templates
 
-| Template | Description |
-|----------|-------------|
-| 📰 **RSS → Telegram** | Fetch RSS feed, summarize with LLM, send to Telegram |
+| Template                     | Description                                                           |
+| ---------------------------- | --------------------------------------------------------------------- |
+| 📰 **RSS → Telegram**         | Fetch RSS feed, summarize with LLM, send to Telegram                  |
 | 🕵️ **Web Monitor → Telegram** | Scrape new items from any website, analyze with LLM, push to Telegram |
 
 Flows can be **exported and shared** as `.json` files, or imported via file or URL.
@@ -179,12 +194,12 @@ Connect DAC to Telegram to control your AI agent from anywhere:
 
 ### Built-in Bot Commands
 
-| Command | Description |
-|---------|-------------|
-| `/gpt <prompt>` | Send a prompt to ChatGPT |
-| `/gemini <prompt>` | Send a prompt to Gemini |
-| `/pplx <prompt>` | Send a prompt to Perplexity |
-| `/status` | Check agent status |
+| Command            | Description                 |
+| ------------------ | --------------------------- |
+| `/gpt <prompt>`    | Send a prompt to ChatGPT    |
+| `/gemini <prompt>` | Send a prompt to Gemini     |
+| `/pplx <prompt>`   | Send a prompt to Perplexity |
+| `/status`          | Check agent status          |
 
 Create **custom bot commands** in AgentFlow using the **Bot Command trigger** to build fully custom workflows triggered by Telegram messages.
 
@@ -196,12 +211,12 @@ Create **custom bot commands** in AgentFlow using the **Bot Command trigger** to
 
 Tailor how every prompt is delivered to AI:
 
-| Option | Choices |
-|--------|---------|
-| **Tone** | Default · Professional · Casual · Direct |
-| **Length** | Auto · Concise · Detailed |
+| Option                  | Choices                                      |
+| ----------------------- | -------------------------------------------- |
+| **Tone**                | Default · Professional · Casual · Direct     |
+| **Length**              | Auto · Concise · Detailed                    |
 | **Custom Instructions** | Free-form guidance prepended to every prompt |
-| **Templates** | Save and reuse your own prompt templates |
+| **Templates**           | Save and reuse your own prompt templates     |
 
 ### Capture & Export
 
@@ -212,14 +227,14 @@ Export any AI response as a beautifully styled image or PDF:
 
 ### General Settings
 
-| Setting | Description |
-|---------|-------------|
-| **Theme** | Light · Dark · Auto (follows OS) |
-| **Layout** | Stacked · Side-by-side |
-| **Response Timeout** | Maximum wait time for an AI response |
-| **Launch at Startup** | Auto-start DAC when your computer boots |
-| **Close to Tray** | Minimize to system tray instead of quitting |
-| **Markdown Zoom** | Adjust response text size (70%–200%) |
+| Setting               | Description                                 |
+| --------------------- | ------------------------------------------- |
+| **Theme**             | Light · Dark · Auto (follows OS)            |
+| **Layout**            | Stacked · Side-by-side                      |
+| **Response Timeout**  | Maximum wait time for an AI response        |
+| **Launch at Startup** | Auto-start DAC when your computer boots     |
+| **Close to Tray**     | Minimize to system tray instead of quitting |
+| **Markdown Zoom**     | Adjust response text size (70%–200%)        |
 
 ### Config Backup
 
@@ -229,15 +244,15 @@ Export and import your full settings as a JSON file via **Settings → Advanced*
 
 ## ⚖️ Why DAC vs. Paid Tools?
 
-| | Desktop Agent Center | OpenClaw / n8n Cloud / Zapier AI |
-|---|---|---|
-| Price | **Free forever** | Paid subscription / credits |
-| API Key | **Not required** | Usually required |
-| AI Providers | ChatGPT, Gemini, PPLX, Duck.ai | Depends on plan |
-| Workflow automation | ✅ AgentFlow (visual) | ✅ (paid) |
-| Telegram integration | ✅ Built-in | Varies |
-| Data privacy | **Local-first** | Cloud-processed |
-| Open source | ✅ MIT | Varies |
+|                      | Desktop Agent Center           | OpenClaw / n8n Cloud / Zapier AI |
+| -------------------- | ------------------------------ | -------------------------------- |
+| Price                | **Free forever**               | Paid subscription / credits      |
+| API Key              | **Not required**               | Usually required                 |
+| AI Providers         | ChatGPT, Gemini, PPLX, Duck.ai | Depends on plan                  |
+| Workflow automation  | ✅ AgentFlow (visual)           | ✅ (paid)                         |
+| Telegram integration | ✅ Built-in                     | Varies                           |
+| Data privacy         | **Local-first**                | Cloud-processed                  |
+| Open source          | ✅ MIT                          | Varies                           |
 
 ---
 
@@ -272,15 +287,15 @@ npm run build:mac
 
 ### Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Runtime | Electron 42 + Node.js 20 |
-| Frontend | React 19 + TypeScript |
-| UI | Mantine 9 |
-| State | Zustand 5 |
-| Build | Vite 8 + electron-builder |
-| Telegram | GrammY |
-| Scheduling | node-cron |
+| Layer      | Technology                |
+| ---------- | ------------------------- |
+| Runtime    | Electron 42 + Node.js 20  |
+| Frontend   | React 19 + TypeScript     |
+| UI         | Mantine 9                 |
+| State      | Zustand 5                 |
+| Build      | Vite 8 + electron-builder |
+| Telegram   | GrammY                    |
+| Scheduling | node-cron                 |
 
 ---
 

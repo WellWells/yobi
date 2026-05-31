@@ -13,7 +13,7 @@
   };
 }
 
-import { app, session, powerSaveBlocker, nativeImage } from 'electron';
+import { app, powerSaveBlocker, nativeImage, session } from 'electron';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import {
@@ -22,6 +22,7 @@ import {
   preparePromptForProvider,
   isLoginRequiredError,
   getProviderLoginUrl,
+  detectProvider,
 } from './providers';
 import { saveOutput } from './output';
 import { registerHotkey, unregisterAll } from './hotkey';
@@ -38,6 +39,7 @@ import {
   sendWebNotification,
   setMainWindow,
   setNotifyEnabled,
+  setWorkerReveal,
   applyLaunchAtStartup,
   createTaskId,
   clearPerplexitySiteDataIfNeeded,
@@ -62,14 +64,16 @@ import {
   createWorkerWindow,
   getMainWin,
   getWorkerWin,
+  revealWorkerWindow,
   setAppQuitting,
   setMainWindowCloseHandler,
   showLoginWindowIfNeeded,
+  showInteractiveWorkerWindow,
   closeAllWindows,
   isAllWindowsClosed,
-  CLEAN_UA,
 } from './windows';
 import { captureMarkdownDocument, buildCaptureSummary } from './capture';
+import { CLEAN_UA } from './userAgent';
 import {
   isTelegramAdminUser,
   buildTelegramStatusText,
@@ -86,12 +90,13 @@ import {
   isTrayCreated,
   updateTrayMenu,
 } from './tray';
+import { PERPLEXITY_CLOUDFLARE_ERROR_NAME } from './providers/perplexity';
 
 // ── Chromium flags — must be called before app.on('ready') ──────────────────
-app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.userAgentFallback = CLEAN_UA;
 
 // Prevent multiple app instances on Windows/Linux (optional, but recommended)
 // Prevent multiple app instances on Windows/Linux (optional, but recommended)
@@ -216,30 +221,11 @@ queue.onUpdate((state) => {
     },
   });
 
-// ── App lifecycle ─────────────────────────────────────────────────────────────
-app.on('ready', () => {
-  const workerSession = session.fromPartition('persist:gemini');
-  workerSession.setUserAgent(CLEAN_UA);
-  app.userAgentFallback = CLEAN_UA;
-
-  workerSession.webRequest.onBeforeSendHeaders((details, callback) => {
-    const headers = { ...details.requestHeaders };
-    headers['User-Agent'] = CLEAN_UA;
-    for (const key of [
-      'sec-ch-ua', 'Sec-CH-UA',
-      'sec-ch-ua-mobile', 'Sec-CH-UA-Mobile',
-      'sec-ch-ua-platform', 'Sec-CH-UA-Platform',
-      'sec-ch-ua-platform-version', 'sec-ch-ua-full-version-list',
-    ]) {
-      delete headers[key];
-    }
-    callback({ requestHeaders: headers });
-  });
-});
-
 app.whenReady().then(async () => {
   app.setAppUserModelId('com.wellstsai.dac');
   powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+  session.fromPartition('persist:gemini').setUserAgent(CLEAN_UA);
+  session.fromPartition('persist:url-parser').setUserAgent(CLEAN_UA);
 
   // Decrypt sensitive config fields (requires app.ready for safeStorage)
   initSensitiveConfig();
@@ -264,6 +250,13 @@ app.whenReady().then(async () => {
 
   createMainWindow();
   setMainWindow(getMainWin());
+  setWorkerReveal(() => {
+    if (detectProvider(config.targetUrl) === 'perplexity') {
+      void showInteractiveWorkerWindow(config.targetUrl);
+      return;
+    }
+    revealWorkerWindow();
+  });
   setNotifyEnabled(config.notifyOnComplete);
   initializeUpdater({ sendLog, sendToRenderer });
 
@@ -578,6 +571,7 @@ async function processTask(task: Task): Promise<void> {
 
   // Backup clipboard before provider automation (copy-button clicks write to system clipboard)
   const clipboardSnapshot = backupClipboard();
+  let preservePerplexitySiteData = false;
 
   try {
     const workerWin = getWorkerWin();
@@ -678,7 +672,11 @@ async function processTask(task: Task): Promise<void> {
       }
       return;
     }
-    const rawMessage = (err as Error).message;
+    const error = err as Error;
+    if (error.name === PERPLEXITY_CLOUDFLARE_ERROR_NAME) {
+      preservePerplexitySiteData = true;
+    }
+    const rawMessage = error.message;
     sendLog(`[${id}] ❌ ${rawMessage}`);
     if (task.replyTarget) {
       await telegramRuntime.sendTaskError(task.replyTarget, {
@@ -689,6 +687,8 @@ async function processTask(task: Task): Promise<void> {
   } finally {
     // Restore clipboard to its original state before provider automation
     restoreClipboard(clipboardSnapshot);
-    await clearPerplexitySiteDataIfNeeded(targetUrl);
+    if (!preservePerplexitySiteData) {
+      await clearPerplexitySiteDataIfNeeded(targetUrl);
+    }
   }
 }

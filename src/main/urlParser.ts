@@ -1,15 +1,14 @@
 // src/main/urlParser.ts — URL detection, HTML fetch & prompt construction
 //
-// Uses a hidden Electron BrowserWindow (real Chromium) to load pages so that
-// anti-bot 403 responses, Cloudflare checks and JS-rendered content are handled
-// exactly like a real user browsing — no custom http/https wrangling needed.
+// Uses a hidden Electron BrowserWindow (real Chromium) to load JS-rendered pages.
+// Auth and bot challenges are not bypassed; challenge pages may be returned as-is.
 //
 // For RSS/Atom feeds, uses Electron's net.request() directly — Chromium's
 // innerHTML serialization collapses <link> into a void element and drops its
 // text content (the article URL), so BrowserWindow is unsuitable for RSS.
 import { BrowserWindow, net } from 'electron';
 import { load } from 'cheerio';
-import { CLEAN_UA } from './windows';
+import { CLEAN_UA } from './userAgent';
 
 /** Max body characters sent to AI (avoid context overflow). */
 const MAX_CONTENT_CHARS = 80_000;
@@ -25,6 +24,7 @@ const RAW_FETCH_TIMEOUT_MS = 15_000;
  * Gives JS-rendered pages (React/Vue SPAs) time to mount content.
  */
 const JS_SETTLE_MS = 1_500;
+const URL_PARSER_PARTITION = 'persist:url-parser';
 
 /**
  * Fetches a URL via Electron's net.request() and returns the raw response body.
@@ -162,8 +162,8 @@ export function isSingleUrl(text: string): boolean {
 }
 
 /**
- * Opens a hidden Electron BrowserWindow, loads `url` as a real Chromium
- * browser (reusing the `persist:gemini` session/cookies), waits for the page
+ * Opens a hidden Electron BrowserWindow, loads `url` in an isolated parser
+ * session, waits for the page
  * to finish rendering, then extracts and cleans the page content.
  *
  * When `options.rawHtml` is true, returns the full HTML source in `cleanedText`.
@@ -437,8 +437,8 @@ function applyMaxItems<T>(arr: T[], maxItems: number | undefined): T[] {
 }
 
 /**
- * Spins up a hidden BrowserWindow, loads the URL with the shared
- * `persist:gemini` Chromium session, waits for load + JS settle,
+ * Spins up a hidden BrowserWindow, loads the URL with the parser Chromium
+ * session, waits for load + JS settle,
  * then returns the full `innerHTML` of `<html>`.
  */
 function loadPageHtml(url: string): Promise<string> {
@@ -456,8 +456,7 @@ function loadPageHtml(url: string): Promise<string> {
       skipTaskbar: true,
       focusable: false,
       webPreferences: {
-        // Share cookies/login state with the AI worker window
-        partition: 'persist:gemini',
+        partition: URL_PARSER_PARTITION,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: false,
@@ -607,5 +606,3 @@ export async function resolveUrlPrompt(text: string, ctx: UrlPromptContext): Pro
     return text;
   }
 }
-
-

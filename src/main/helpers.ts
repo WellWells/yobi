@@ -8,9 +8,14 @@ import { detectProvider, getProviderLabel } from './providers';
 
 let _mainWin: BrowserWindow | null = null;
 let _notifyEnabled = true;
+let _workerReveal: (() => void) | null = null;
 
 export function setMainWindow(win: BrowserWindow | null): void {
   _mainWin = win;
+}
+
+export function setWorkerReveal(fn: () => void): void {
+  _workerReveal = fn;
 }
 
 export function setNotifyEnabled(enabled: boolean): void {
@@ -57,12 +62,16 @@ export function sendWebNotification(
   if (!_notifyEnabled) return;
   sendToRenderer(IPC.UI_NOTIFICATION, { title, body, level, action });
   if (!Notification.isSupported()) return;
-  new Notification({
+  const notification = new Notification({
     title,
     body,
     urgency: level === 'error' ? 'critical' : 'normal',
     silent: false,
-  }).show();
+  });
+  if (action?.id === 'open-worker-window' && _workerReveal) {
+    notification.on('click', _workerReveal);
+  }
+  notification.show();
 }
 
 export function isHttpUrl(rawUrl: string): boolean {
@@ -91,12 +100,12 @@ export function isExpiredCookie(expirationDate?: number): boolean {
   return expirationDate * 1000 <= Date.now();
 }
 
-export async function hasPerplexitySessionCookie(): Promise<boolean> {
+export async function hasPerplexityReusableSiteCookie(): Promise<boolean> {
   const workerSession = session.fromPartition('persist:gemini');
   const cookies = await workerSession.cookies.get({ url: PROVIDER_URLS.perplexity });
   return cookies.some(
     (cookie) =>
-      cookie.name.startsWith('__Secure-next-auth.session-token') &&
+      (cookie.name.startsWith('__Secure-next-auth.session-token') || cookie.name === 'cf_clearance') &&
       !isExpiredCookie(cookie.expirationDate),
   );
 }
@@ -108,8 +117,8 @@ export async function clearPerplexitySiteDataIfNeeded(
   if (detectProvider(targetUrl) !== 'perplexity') return;
   const providerLabel = getProviderLabel(targetUrl);
   try {
-    if (await hasPerplexitySessionCookie()) {
-      log(`🔐 ${providerLabel} login detected — keep cookies/storage`);
+    if (await hasPerplexityReusableSiteCookie()) {
+      log(`🔐 ${providerLabel} session or security clearance detected — keep cookies/storage`);
       return;
     }
     const workerSession = session.fromPartition('persist:gemini');

@@ -2,8 +2,11 @@
 import type { BrowserWindow } from 'electron';
 import { navigateAndWait, isCloudflareChallengeActive, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
 import { sendLog, sendWebNotification } from '../helpers';
+import { showInteractiveWorkerWindow } from '../windows';
 import { getLangCache, t } from '../i18n';
 import { PROVIDER_URLS } from '../../shared/types';
+
+export const PERPLEXITY_CLOUDFLARE_ERROR_NAME = 'PerplexityCloudflareChallengeError';
 
 export async function runPerplexityAutomation(
   workerWin: BrowserWindow,
@@ -18,6 +21,7 @@ export async function runPerplexityAutomation(
   // Detect a Cloudflare challenge and fail immediately — do not block the queue waiting for resolution.
   if (await isCloudflareChallengeActive(wc)) {
     const strings = getLangCache();
+    await showInteractiveWorkerWindow(targetUrl);
     sendWebNotification(
       t(strings, 'cloudflare.notify.title'),
       t(strings, 'cloudflare.notify.body'),
@@ -28,9 +32,9 @@ export async function runPerplexityAutomation(
       },
     );
     sendLog('⚠️ Cloudflare security check detected — task marked as FAILED and removed from queue');
-    throw new Error(
-      t(strings, 'cloudflare.error.verificationFailed'),
-    );
+    const error = new Error(t(strings, 'cloudflare.error.verificationFailed'));
+    error.name = PERPLEXITY_CLOUDFLARE_ERROR_NAME;
+    throw error;
   }
 
   await wc.executeJavaScript(`

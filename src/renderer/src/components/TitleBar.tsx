@@ -27,13 +27,10 @@ const brandGroupStyle: React.CSSProperties = { flexShrink: 0, minWidth: 0 };
 const brandTextStyle: React.CSSProperties = { whiteSpace: 'nowrap' };
 const navScrollStyle: React.CSSProperties = {
   ...noDrag,
-  overflowX: 'auto',
-  overflowY: 'hidden',
   minWidth: 0,
   flexShrink: 1,
   scrollbarWidth: 'none' as React.CSSProperties['scrollbarWidth'],
 };
-const updateDotStyle: React.CSSProperties = { borderRadius: '50%', pointerEvents: 'none', zIndex: 1 };
 const statusWrapperStyle: React.CSSProperties = { ...noDrag, flexShrink: 0 };
 
 // ─── Window action helpers ──────────────────────────────────────────────────────
@@ -276,28 +273,17 @@ export const TitleBar: React.FC = () => {
               size="compact-xs"
               radius={isTight ? 999 : 'xl'}
               leftSection={!isTight ? item.icon : undefined}
-              h={isTight ? 32 : 33}
+              h={32}
               w={isTight ? 32 : undefined}
-              miw={isTight ? 32 : undefined}
               style={{
                 '--button-hover': currentView !== item.id ? 'var(--mantine-color-default-hover)' : undefined,
                 padding: isTight ? 0 : '6px 12px',
                 flexShrink: 0,
+                boxShadow: item.id === 'about' && hasUpdate && currentView !== 'about' ? '0 0 0 1px var(--mantine-color-orange-6)' : undefined,
               } as React.CSSProperties}
             >
               {isTight ? item.icon : item.label}
             </MButton>
-            {item.id === 'settings' && hasUpdate && (
-              <Box
-                pos="absolute"
-                top={4}
-                right={4}
-                w={7}
-                h={7}
-                bg="var(--mantine-color-orange-6)"
-                style={updateDotStyle}
-              />
-            )}
           </Box>
         ))}
       </Flex>

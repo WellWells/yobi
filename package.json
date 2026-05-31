@@ -1,6 +1,6 @@
 {
   "name": "desktop-agent-center",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Desktop Agent Center (DAC) — Free, no-API-key AI automation desktop app. Integrates ChatGPT/Gemini via global hotkeys, features AgentFlow visual workflows, and supports Telegram bot control. Built with Electron & React.",
   "author": "WellsTsai",
   "repository": {

@@ -4,6 +4,10 @@ import * as path from 'node:path';
 import { existsSync } from 'node:fs';
 import { sendLog, sendWebNotification, getAssetPath } from './helpers';
 import { getLangCache, t } from './i18n';
+import { CLEAN_UA } from './userAgent';
+
+const WORKER_PARTITION = 'persist:gemini';
+type WorkerWindowMode = 'automation' | 'interactive';
 
 // ── Icon resolution ───────────────────────────────────────────────────────────
 // Windows: prefer multi-size .ico (better scaling at 16/32/48 px), fall back to PNG.
@@ -19,11 +23,10 @@ function getWindowIcon(): Electron.NativeImage {
   return nativeImage.createFromPath(getAssetPath('icon-win.png'));
 }
 
-const CLEAN_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:149.0) Gecko/20100101 Firefox/149.0';
-
 let mainWin: BrowserWindow | null = null;
 let workerWin: BrowserWindow | null = null;
 let workerVisibleBounds: Electron.Rectangle | null = null;
+let workerWindowMode: WorkerWindowMode | null = null;
 let isAppQuitting = false;
 
 // Injectable close handler — set by index.ts to implement tray/first-close logic.
@@ -41,6 +44,10 @@ export function getMainWin(): BrowserWindow | null {
 
 export function getWorkerWin(): BrowserWindow | null {
   return workerWin;
+}
+
+export function getWorkerWindowMode(): WorkerWindowMode | null {
+  return workerWindowMode;
 }
 
 export function setAppQuitting(value: boolean): void {
@@ -124,8 +131,35 @@ export function createMainWindow(): void {
   mainWin.on('closed', () => { mainWin = null; });
 }
 
-export function createWorkerWindow(initialUrl: string): void {
+function destroyWorkerWindowForModeSwitch(): void {
+  if (!workerWin || workerWin.isDestroyed()) return;
+  const previousWorkerWin = workerWin;
+  previousWorkerWin.removeAllListeners('close');
+  previousWorkerWin.removeAllListeners('closed');
+  previousWorkerWin.destroy();
+  workerWin = null;
+  workerWindowMode = null;
+}
+
+export function createWorkerWindow(initialUrl: string, mode: WorkerWindowMode = 'automation'): void {
+  destroyWorkerWindowForModeSwitch();
   const geminiPreload = path.join(__dirname, '../preload/gemini.js');
+  const webPreferences = mode === 'automation'
+    ? {
+        partition: WORKER_PARTITION,
+        contextIsolation: false,
+        nodeIntegration: false,
+        sandbox: false,
+        backgroundThrottling: false,
+        preload: geminiPreload,
+      }
+    : {
+        partition: WORKER_PARTITION,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        backgroundThrottling: false,
+      };
 
   workerWin = new BrowserWindow({
     width: 1_280,
@@ -141,15 +175,9 @@ export function createWorkerWindow(initialUrl: string): void {
     focusable: true,
     hasShadow: false,
     title: 'Provider Worker',
-    webPreferences: {
-      partition: 'persist:gemini',
-      contextIsolation: false,
-      nodeIntegration: false,
-      sandbox: false,
-      backgroundThrottling: false,
-      preload: geminiPreload,
-    },
+    webPreferences,
   });
+  workerWindowMode = mode;
 
   workerWin.setMenuBarVisibility(false);
 
@@ -164,7 +192,10 @@ export function createWorkerWindow(initialUrl: string): void {
     event.preventDefault();
     hideWorkerWindow();
   });
-  workerWin.on('closed', () => { workerWin = null; });
+  workerWin.on('closed', () => {
+    workerWin = null;
+    workerWindowMode = null;
+  });
 }
 
 export function revealWorkerWindow(): void {
@@ -211,20 +242,33 @@ function rememberWorkerVisibleBounds(): void {
   workerVisibleBounds = workerWin.getBounds();
 }
 
-export async function ensureWorkerWindow(initialUrl: string): Promise<BrowserWindow | null> {
-  if (!workerWin || workerWin.isDestroyed()) {
-    createWorkerWindow(initialUrl);
+export async function ensureWorkerWindow(
+  initialUrl: string,
+  mode?: WorkerWindowMode,
+): Promise<BrowserWindow | null> {
+  const desiredMode = mode ?? 'automation';
+  if (!workerWin || workerWin.isDestroyed() || (mode && workerWindowMode !== desiredMode)) {
+    createWorkerWindow(initialUrl, desiredMode);
     await new Promise((r) => setTimeout(r, 1_200));
   }
   if (!workerWin || workerWin.isDestroyed()) return null;
   return workerWin;
 }
 
-export async function showLoginWindowIfNeeded(providerLabel: string, targetUrl: string, initialUrl: string): Promise<void> {
-  const win = await ensureWorkerWindow(initialUrl);
-  if (!win) return;
-  await win.loadURL(targetUrl);
+export async function showInteractiveWorkerWindow(targetUrl: string): Promise<BrowserWindow | null> {
+  const win = await ensureWorkerWindow(targetUrl, 'interactive');
+  if (!win) return null;
+  const currentUrl = win.webContents.getURL();
+  if (currentUrl && currentUrl !== targetUrl) {
+    await win.loadURL(targetUrl);
+  }
   revealWorkerWindow();
+  return win;
+}
+
+export async function showLoginWindowIfNeeded(providerLabel: string, targetUrl: string, _initialUrl: string): Promise<void> {
+  const win = await showInteractiveWorkerWindow(targetUrl);
+  if (!win) return;
   sendLog(`🔐 ${providerLabel} requires login — complete sign-in in the opened window`);
   const strings = getLangCache();
   sendWebNotification(
@@ -233,6 +277,3 @@ export async function showLoginWindowIfNeeded(providerLabel: string, targetUrl: 
     'warning',
   );
 }
-
-export { CLEAN_UA };
-

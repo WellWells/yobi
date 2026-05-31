@@ -1,7 +1,4 @@
-// src/preload/gemini.ts — Visibility & Focus spoof for Gemini worker window
-// Runs BEFORE any Gemini page JS so it cannot be undone by the page.
-// This forces the page to always believe it is visible and focused,
-// defeating Chromium's background-tab throttling and Gemini's focus guards.
+// src/preload/gemini.ts
 //
 // NOTE: This preload runs with contextIsolation: false so it executes in the
 // same JS world as the page — that is what makes Object.defineProperty work.

@@ -15,7 +15,7 @@ import {
   normalizePromptPreferences,
   normalizeCaptureSettings,
 } from './config';
-import { getProviderLabel } from './providers';
+import { detectProvider, getProviderLabel } from './providers';
 import { fetchDuckaiModels } from './providers/duckai';
 import {
   sendLog,
@@ -43,6 +43,7 @@ import {
   revealWorkerWindow,
   hideWorkerWindow,
   ensureWorkerWindow,
+  showInteractiveWorkerWindow,
   createMainWindow,
 } from './windows';
 import { captureMarkdownDocument } from './capture';
@@ -146,6 +147,10 @@ export function setupIpcHandlers(deps: SetupDeps): void {
 
   // Window control
   ipcMain.on(IPC.SHOW_WORKER, async () => {
+    if (detectProvider(config.targetUrl) === 'perplexity') {
+      await showInteractiveWorkerWindow(config.targetUrl);
+      return;
+    }
     await ensureWorkerWindow(config.targetUrl);
     revealWorkerWindow();
   });
@@ -842,4 +847,3 @@ export function setupIpcHandlers(deps: SetupDeps): void {
     }
   });
 }
-

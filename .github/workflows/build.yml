@@ -37,7 +37,7 @@ jobs:
             build_script: build:win
             artifact_name: dist-win
             artifact_path: |
-              dist/*.exe
+              dist/*.zip
               dist/*.yml
 
     steps:
@@ -85,6 +85,19 @@ jobs:
           # Disable macOS automatic code signing identity discovery (no certificates in CI)
           CSC_IDENTITY_AUTO_DISCOVERY: false
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Wrap Windows EXE in ZIP (browsers block direct .exe downloads) ───────
+      - name: Package Windows EXE into ZIP
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist\*.exe | Select-Object -First 1
+          if ($exe) {
+            Compress-Archive -Path $exe.FullName -DestinationPath "dist\$($exe.BaseName).zip"
+            Write-Host "Packaged: $($exe.BaseName).zip"
+          } else {
+            Write-Error "No .exe found in dist\"
+          }
 
       # ── Upload artifacts for the Release Job ──────────────────────
       - name: Upload artifact
@@ -148,7 +161,7 @@ jobs:
               echo "| macOS | 🍎 Apple Silicon (M1 / M2 / M3 / M4) | \`$file\` |" >> $GITHUB_OUTPUT
             elif [[ "$file" == *.dmg ]]; then
               echo "| macOS | 🖥️ Intel (x64) | \`$file\` |" >> $GITHUB_OUTPUT
-            elif [[ "$file" == *.exe ]]; then
+            elif [[ "$file" == *.zip ]]; then
               echo "| Windows | x64 | \`$file\` |" >> $GITHUB_OUTPUT
             fi
           done
@@ -193,6 +206,8 @@ jobs:
             ## 📦 Downloads
 
             ${{ steps.downloads.outputs.table }}
+
+            > **Windows** — The download is a `.zip` archive. Extract it and run the `.exe` installer inside.
 
             > **macOS — not sure which version?**
             > Check **Apple menu → About This Mac**.
