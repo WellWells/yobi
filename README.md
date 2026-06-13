@@ -90,7 +90,7 @@ npm run dev
 1. **Login** (optional) — Open the in-app browser and sign in to ChatGPT / Gemini / Perplexity.
 2. **Enable tray** — Go to **Settings → General → System Tray** to keep Yobi running in the background.
 3. **Select text** — Highlight any text in any application.
-4. **Press `Alt+G`** — Yobi sends it to your chosen AI, writes the result back to your clipboard, and auto-saves the response.
+4. **Press `Alt+G`** — Yobi sends it to your chosen AI and auto-saves the response as a timestamped Markdown file.
 
 > **Tip:** The hotkey is fully customizable in **Settings → General → Hotkey**. On macOS the default is `Command+G`.
 
@@ -127,10 +127,10 @@ npm run dev
 
 Download the latest release from the [**Releases**](https://github.com/WellWells/yobi/releases) page:
 
-| Platform | Format                                 |
-| -------- | -------------------------------------- |
-| Windows  | NSIS Installer · Portable `.exe` (x64) |
-| macOS    | DMG · ZIP (x64 & Apple Silicon arm64)  |
+| Platform | Format                          |
+| -------- | ------------------------------- |
+| Windows  | NSIS Installer (x64)            |
+| macOS    | DMG (x64 & Apple Silicon arm64) |
 
 ---
 
@@ -149,19 +149,20 @@ AgentFlow is Yobi's visual automation engine. Chain **LLM calls, data sources, a
 
 ### Skills
 
-| Skill                 | Description                                                                                                 |
-| --------------------- | ----------------------------------------------------------------------------------------------------------- |
-| 🧠 **LLM**             | Send prompts to ChatGPT, Gemini, Perplexity, or Duck.ai; optionally export the response as PNG / WebP / PDF |
-| 🌐 **Browser**         | Fetch and extract text content from any URL                                                                 |
-| 📡 **RSS**             | Monitor RSS/Atom feeds — only new items since the last run are returned                                     |
-| 🕵️ **Web Scraper**     | Scrape links and titles from any webpage via CSS selectors, output as JSON                                  |
-| 🐚 **Shell**           | Run shell commands (cmd / PowerShell on Windows; bash / zsh on macOS)                                       |
-| 📋 **Clipboard**       | Read from or write text to the system clipboard                                                             |
-| 📨 **Bot**             | Send a message or file to a Telegram chat                                                                   |
-| 🔁 **Loop / End Loop** | Iterate over a list of items line by line                                                                   |
-| 🛠️ **Utility**         | Add a timed delay or export a rendered snapshot (PNG / WebP / PDF)                                          |
-| ⏹ **Stop**            | Conditionally halt the flow when a variable is empty                                                        |
-| 💬 **Comment**         | Add documentation notes to a step (not executed)                                                            |
+| Skill                 | Description                                                                                                              |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| 🧠 **LLM**             | Send prompts to ChatGPT, Gemini, Perplexity, or Duck.ai; optionally export the response as PNG / WebP / PDF              |
+| 🌐 **Browser**         | Fetch and extract text content from any URL                                                                              |
+| 📡 **RSS**             | Monitor RSS/Atom feeds — only new items since the last run are returned                                                  |
+| 🕵️ **Web Scraper**     | Scrape links and titles from any webpage via CSS selectors, output as JSON                                               |
+| 🐚 **Shell**           | Run shell commands (cmd / PowerShell on Windows; bash / zsh on macOS)                                                    |
+| 📋 **Clipboard**       | Read from or write text to the system clipboard                                                                          |
+| 📨 **Bot**             | Send a message or file to a Telegram chat                                                                                |
+| 🔁 **Loop / End Loop** | Iterate over a list of items line by line                                                                                |
+| 🔀 **If / End If**     | Run the enclosed steps only when a condition is met (is true / equals / contains / is empty …); otherwise skip to End If |
+| 🛠️ **Utility**         | Add a timed delay or export a rendered snapshot (PNG / WebP / PDF)                                                       |
+| ⏹ **Stop**            | Conditionally halt the flow when a variable is empty                                                                     |
+| 💬 **Comment**         | Add documentation notes to a step (not executed)                                                                         |
 
 ### Variable System
 
@@ -194,12 +195,13 @@ Connect Yobi to Telegram to control your AI agent from anywhere:
 
 ### Built-in Bot Commands
 
-| Command            | Description                 |
-| ------------------ | --------------------------- |
-| `/gpt <prompt>`    | Send a prompt to ChatGPT    |
-| `/gemini <prompt>` | Send a prompt to Gemini     |
-| `/pplx <prompt>`   | Send a prompt to Perplexity |
-| `/status`          | Check agent status          |
+| Command            | Description                                                  |
+| ------------------ | ------------------------------------------------------------ |
+| `/gpt <prompt>`    | Send a prompt to ChatGPT                                     |
+| `/gemini <prompt>` | Send a prompt to Gemini                                      |
+| `/pplx <prompt>`   | Send a prompt to Perplexity                                  |
+| `/output <mode>`   | Set the default reply format (`md` · `png` · `webp` · `pdf`) |
+| `/status`          | Check agent status                                           |
 
 Create **custom bot commands** in AgentFlow using the **Bot Command trigger** to build fully custom workflows triggered by Telegram messages.
 
@@ -227,24 +229,24 @@ Export any AI response as a beautifully styled image or PDF:
 
 ### General Settings
 
-| Setting               | Description                                 |
-| --------------------- | ------------------------------------------- |
-| **Theme**             | Light · Dark · Auto (follows OS)            |
-| **Layout**            | Stacked · Side-by-side                      |
-| **Response Timeout**  | Maximum wait time for an AI response        |
-| **Launch at Startup** | Auto-start Yobi when your computer boots     |
-| **Close to Tray**     | Minimize to system tray instead of quitting |
-| **Markdown Zoom**     | Adjust response text size (70%–200%)        |
+| Setting               | Description                                                                                                           |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| **Theme**             | 11 built-in themes — Light, Dark, Dracula, Nord, AMOLED, Sepia, Catppuccin, Everforest, Rosé Pine, Gruvbox, Cyberpunk |
+| **Layout**            | Stacked · Side-by-side                                                                                                |
+| **Response Timeout**  | Maximum wait time for an AI response                                                                                  |
+| **Launch at Startup** | Auto-start Yobi when your computer boots                                                                              |
+| **Close to Tray**     | Minimize to system tray instead of quitting                                                                           |
+| **Markdown Zoom**     | Adjust response text size (70%–200%)                                                                                  |
 
 ### Config Backup
 
-Export and import your full settings as a JSON file via **Settings → Advanced**.
+Export and import your full settings as a JSON file via **Settings → Advanced & System**.
 
 ---
 
 ## ⚖️ Why Yobi vs. Paid Tools?
 
-|                      | Yobi           | OpenClaw / n8n Cloud / Zapier AI |
+|                      | Yobi                           | OpenClaw / n8n Cloud / Zapier AI |
 | -------------------- | ------------------------------ | -------------------------------- |
 | Price                | **Free forever**               | Paid subscription / credits      |
 | API Key              | **Not required**               | Usually required                 |
@@ -278,10 +280,10 @@ npm run typecheck
 # i18n key audit
 npm run i18n:check
 
-# Build Windows (NSIS + Portable)
+# Build Windows (NSIS installer)
 npm run build:win
 
-# Build macOS (DMG + ZIP)
+# Build macOS (DMG)
 npm run build:mac
 ```
 
