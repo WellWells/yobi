@@ -1,22 +1,20 @@
-// AgentFlow flow execution engine.
-//
-// Executes a FlowDefinition step-by-step, maintaining a context pool for variable
-// interpolation between steps. A single recursive `runRange` drives both the
-// top-level pass (depth 0) and nested loop bodies (depth > 0); the only behavioural
-// differences are gated on `depth`.
-
 import { clipboard } from 'electron';
-import type { FlowDefinition, FlowExecutionResult, SkillInstance } from '../../shared/types';
+import type { FlowDefinition, FlowExecutionResult, SkillInstance, SkillType } from '../../shared/types';
 import { sendLog } from '../helpers';
 import type { FlowExecutorDeps, LogCallback } from './types';
 import {
   escapeRegExp,
+  getProducedFiles,
   interpolate,
   interpolateConfig,
   isFileOutputStep,
+  PRODUCED_FILES_KEY,
+  recordProducedFile,
   resolveMagicUploadFile,
 } from './interpolation';
 import {
+  BreakLoopSignal,
+  ContinueLoopSignal,
   StopFlowSignal,
   emitLog,
   findIfEndIndex,
@@ -25,18 +23,91 @@ import {
   withStepTimeout,
 } from './runtime';
 import { executeSkill } from './skills';
+import { navigatePageBlank } from './skills/browserPages';
+import { PERPLEXITY_CLOUDFLARE_ERROR_NAME } from '../providers/perplexity';
 
-/** Mutable progress shared across the whole flow execution (top-level only). */
 interface RunProgress {
   completed: number;
   stopped: boolean;
+  aborted: boolean;
   error?: string;
+  finalOutput?: string;
 }
 
-/** Interpolates a step's config and resolves bot magic-upload metadata. */
+const NON_RESULT_STEP_TYPES = new Set<SkillType>(['loop', 'end_loop', 'if', 'end_if', 'comment', 'bot', 'break', 'continue']);
+
+interface StepOutput {
+  output: string;
+  subVars: Record<string, string>;
+}
+
+export function unwrapStepOutput(type: SkillType, raw: string): StepOutput {
+  if (type === 'youtube') {
+    try {
+      const env = JSON.parse(raw) as {
+        transcript?: unknown;
+        title?: unknown;
+        isFailed?: unknown;
+        image?: unknown;
+      };
+      if (env && typeof env.transcript === 'string') {
+        const transcript = env.transcript;
+        const title = typeof env.title === 'string' ? env.title : '';
+        const isFailed = env.isFailed === '1' ? '1' : '0';
+        const image = typeof env.image === 'string' ? env.image : '';
+        return { output: transcript, subVars: { title, transcript, isFailed, image } };
+      }
+    } catch {
+    }
+    return { output: raw, subVars: {} };
+  }
+  if (type === 'rss' || type === 'browser') {
+    try {
+      const env = JSON.parse(raw) as { output?: unknown; image?: unknown };
+      if (env && typeof env.output === 'string' && typeof env.image === 'string') {
+        return { output: env.output, subVars: { image: env.image } };
+      }
+    } catch {
+    }
+    return { output: raw, subVars: {} };
+  }
+  if (type === 'stock' || type === 'forex' || type === 'weather') {
+    try {
+      const env = JSON.parse(raw) as Record<string, unknown>;
+      if (env && typeof env.output === 'string') {
+        const subVars: Record<string, string> = {};
+        for (const [k, v] of Object.entries(env)) {
+          if (k !== 'output' && typeof v === 'string') subVars[k] = v;
+        }
+        return { output: env.output, subVars };
+      }
+    } catch {
+    }
+    return { output: raw, subVars: {} };
+  }
+  if (type === 'browser_open') {
+    try {
+      const env = JSON.parse(raw) as { id?: unknown; title?: unknown; url?: unknown };
+      if (env && typeof env.id === 'string') {
+        return {
+          output: env.id,
+          subVars: {
+            title: typeof env.title === 'string' ? env.title : '',
+            url: typeof env.url === 'string' ? env.url : '',
+          },
+        };
+      }
+    } catch {
+    }
+    return { output: raw, subVars: {} };
+  }
+  return { output: raw, subVars: {} };
+}
+
 async function resolveStepConfig(
   step: SkillInstance,
   context: Map<string, string>,
+  flowId: string,
 ): Promise<Record<string, string>> {
   const resolvedConfig = interpolateConfig(step.config, context);
   if (step.type === 'bot') {
@@ -48,30 +119,42 @@ async function resolveStepConfig(
       resolvedConfig.__magicUploadPath = magicFile.filePath;
       resolvedConfig.__magicUploadCaption = interpolate(captionTemplate, context).trim();
     }
-    // Preserve the original chatIds template so execBot can detect
-    // whether it was configured but resolved to empty (e.g. {{bot.triggerChatId}} with no bot context).
     resolvedConfig.__originalChatIdsTemplate = (step.config.chatIds ?? step.config.chatId ?? '').trim();
+    resolvedConfig.__attachmentAllowlist = JSON.stringify(getProducedFiles(context));
+  }
+  if (step.type === 'js') {
+    const entries = Object.fromEntries(context);
+    delete entries[PRODUCED_FILES_KEY];
+    resolvedConfig.__contextJson = JSON.stringify(entries);
+  }
+  if (step.type === 'llm') {
+    resolvedConfig.__flowId = flowId;
+  }
+  if (step.type === 'browser_open' || step.type === 'browser_close') {
+    resolvedConfig.__flowId = flowId;
   }
   return resolvedConfig;
 }
 
-/** Runs a single non-loop step under its skill-specific timeout. */
 async function runStep(
   step: SkillInstance,
   resolvedConfig: Record<string, string>,
   deps: FlowExecutorDeps,
+  signal?: AbortSignal,
 ): Promise<string> {
-  const stepTimeoutMs = resolveStepTimeoutMs(step.type, deps);
-  // For LLM steps: navigate the worker window to about:blank on timeout to
-  // forcibly terminate any zombie executeJavaScript call in the renderer.
-  // Without this, the stuck JS keeps the GPU IPC alive and deadlocks the process.
+  const stepTimeoutMs = resolveStepTimeoutMs(step.type, deps, resolvedConfig);
+  // The llm step serializes on the app-wide llmLane and owns its response
+  // timeout + about:blank interrupt internally, starting the clock only once it
+  // holds the shared worker window (see execLlm). Wrapping it in withStepTimeout
+  // here as well would re-count llmLane queue-wait against the response budget —
+  // exactly the starvation bug — so pass the signal straight through instead.
+  if (step.type === 'llm') {
+    return executeSkill(step.type, step.id, resolvedConfig, deps, stepTimeoutMs, signal);
+  }
   const onStepTimeout =
-    step.type === 'llm'
+    step.type === 'browser_js'
       ? () => {
-          // A pending navigation often rejects this loadURL with ERR_ABORTED
-          // during teardown — swallow it so it doesn't surface as a stray
-          // unhandledRejection.
-          deps.getWorkerWin()?.webContents.loadURL('about:blank').catch(() => { /* expected during teardown */ });
+          navigatePageBlank((resolvedConfig.page ?? '').trim());
         }
       : undefined;
   return withStepTimeout(
@@ -79,13 +162,10 @@ async function runStep(
     stepTimeoutMs,
     step.type,
     onStepTimeout,
+    signal,
   );
 }
 
-/**
- * Expands a loop step over its body steps (the range until the matching end_loop).
- * Returns the new outer index (the loop body is consumed here, so the caller skips it).
- */
 async function expandLoop(
   flow: FlowDefinition,
   loopIndex: number,
@@ -97,6 +177,7 @@ async function expandLoop(
   onLog: LogCallback | undefined,
   progress: RunProgress,
   depth: number,
+  signal?: AbortSignal,
 ): Promise<number> {
   const loopVar = (step.config.loopVar ?? 'item').trim() || 'item';
   const limitIterations = step.config.limitIterations !== 'false';
@@ -114,7 +195,6 @@ async function expandLoop(
     items = items.slice(0, limit);
   }
 
-  // Clamp the loop body to the enclosing range so nested loops never run past their parent.
   const bodyEnd = Math.min(findLoopEndIndex(flow.steps, loopIndex), rangeEnd);
   const nested = depth > 0;
 
@@ -144,12 +224,24 @@ async function expandLoop(
         }
         loopContext.set(loopVar, valStr);
       }
-      await runRange(flow, loopIndex + 1, bodyEnd, loopContext, deps, onLog, progress, depth + 1);
+      try {
+        await runRange(flow, loopIndex + 1, bodyEnd, loopContext, deps, onLog, progress, depth + 1, signal);
+      } catch (err) {
+        if (err instanceof BreakLoopSignal) break;
+        if (!(err instanceof ContinueLoopSignal)) throw err;
+        // ContinueLoopSignal: fall through to the next item.
+      }
+      if (progress.aborted) break;
     }
-    // Mark loop body steps as completed in the flat progress count (top-level only).
     if (depth === 0) {
-      for (let j = loopIndex + 1; j < bodyEnd; j++) {
-        progress.completed++;
+      if (progress.aborted) {
+        for (let j = loopIndex + 1; j < bodyEnd; j++) {
+          emitLog(onLog, flow.id, flow.steps[j].id, j, 'skipped');
+        }
+      } else {
+        for (let j = loopIndex + 1; j < bodyEnd; j++) {
+          progress.completed++;
+        }
       }
     }
     if (!nested) sendLog(`🔄 [AgentFlow] Loop complete`);
@@ -161,13 +253,25 @@ async function expandLoop(
     if (!nested) sendLog(`🔄 [AgentFlow] No items to loop, skipped loop body steps`);
   }
 
-  return bodyEnd - 1; // skip body in outer execution flow
+  return bodyEnd - 1;
 }
 
-/**
- * Executes steps in [startIndex, endIndex). At depth 0 this is the whole flow and
- * records progress/results; at depth > 0 it is a loop body and propagates errors upward.
- */
+function markAbortedFromHere(
+  flow: FlowDefinition,
+  fromIndex: number,
+  depth: number,
+  onLog: LogCallback | undefined,
+  progress: RunProgress,
+): void {
+  if (depth === 0) {
+    for (let j = fromIndex; j < flow.steps.length; j++) {
+      emitLog(onLog, flow.id, flow.steps[j].id, j, 'skipped');
+    }
+    sendLog(`⏹️ [AgentFlow] Flow "${flow.name}" aborted by user (${progress.completed}/${flow.steps.length} steps)`);
+  }
+  progress.aborted = true;
+}
+
 async function runRange(
   flow: FlowDefinition,
   startIndex: number,
@@ -177,8 +281,13 @@ async function runRange(
   onLog: LogCallback | undefined,
   progress: RunProgress,
   depth: number,
+  signal?: AbortSignal,
 ): Promise<void> {
   for (let i = startIndex; i < endIndex; i++) {
+    if (signal?.aborted) {
+      markAbortedFromHere(flow, i, depth, onLog, progress);
+      return;
+    }
     const step = flow.steps[i];
     emitLog(onLog, flow.id, step.id, i, 'running');
     if (depth === 0) {
@@ -186,42 +295,38 @@ async function runRange(
     }
 
     try {
-      const resolvedConfig = await resolveStepConfig(step, context);
-      const output = await runStep(step, resolvedConfig, deps);
+      const resolvedConfig = await resolveStepConfig(step, context, flow.id);
+      const rawOutput = await runStep(step, resolvedConfig, deps, signal);
+      const { output, subVars } = unwrapStepOutput(step.type, rawOutput);
 
-      // Persist step outputs into the active context at every depth so chained
-      // references (e.g. {{browser_1}}, {{llm_1}}) resolve for later steps within
-      // the same loop iteration. At depth > 0 the context is a per-iteration
-      // loopContext copy, so these writes never leak across iterations.
       if (step.outputKey) {
         context.set(step.outputKey, output);
+        for (const [subKey, subVal] of Object.entries(subVars)) {
+          context.set(`${step.outputKey}.${subKey}`, subVal);
+        }
       }
       context.set(`${step.id}.output`, output);
       if (isFileOutputStep(step.type, resolvedConfig) && output) {
         context.set('file', output);
+        recordProducedFile(context, output);
       }
-      // LLM failure flag: on success expose {{<outputKey>.isFailed}} = '0' so a
-      // downstream `if` can branch. Written at every depth like the output writes.
-      if (step.type === 'llm' && step.config.emitFailFlag === 'true' && step.outputKey) {
+      if (output && step.outputKey && !NON_RESULT_STEP_TYPES.has(step.type)) {
+        progress.finalOutput = output;
+      }
+      if ((step.type === 'llm' || step.type === 'browser_js' || step.type === 'bot') && step.config.emitFailFlag === 'true' && step.outputKey) {
         context.set(`${step.outputKey}.isFailed`, '0');
       }
 
-      // Progress accounting and the completion log stay top-level only; loop body
-      // steps are accounted for once in expandLoop to preserve the flat progress model.
       if (depth === 0) {
         progress.completed++;
         emitLog(onLog, flow.id, step.id, i, 'completed', output);
         sendLog(`✅ Step ${i + 1} completed (${output.length} chars)`);
       }
 
-      // If step is a 'loop' step, we loop over the subsequent steps!
       if (step.type === 'loop' && i + 1 < endIndex) {
-        i = await expandLoop(flow, i, endIndex, step, output, context, deps, onLog, progress, depth);
+        i = await expandLoop(flow, i, endIndex, step, output, context, deps, onLog, progress, depth, signal);
       }
 
-      // If step is an 'if' step, skip its body (up to the matching end_if) when the
-      // condition is false. When true, fall through so the body runs in this same
-      // range/context — no recursion, so output writes and progress behave normally.
       if (step.type === 'if') {
         const conditionMet = output === 'true';
         const bodyEnd = Math.min(findIfEndIndex(flow.steps, i), endIndex);
@@ -231,11 +336,10 @@ async function runRange(
             if (depth === 0) progress.completed++;
           }
           if (depth === 0) sendLog(`↪️ [AgentFlow] If condition false — skipped ${Math.max(0, bodyEnd - i - 1)} step(s)`);
-          i = bodyEnd - 1; // jump to just before end_if; the for-loop's i++ runs end_if (no-op)
+          i = bodyEnd - 1;
         }
       }
     } catch (err) {
-      // StopFlowSignal is a graceful halt — not an error.
       if (err instanceof StopFlowSignal) {
         emitLog(onLog, flow.id, step.id, i, 'skipped', undefined, err.message);
         if (depth === 0) sendLog(`⏹️ Step ${i + 1} stopped flow: ${err.message}`);
@@ -247,14 +351,34 @@ async function runRange(
           progress.stopped = true;
           return;
         }
-        // Nested loop body: halt this body but let the enclosing loop continue.
         break;
       }
 
-      // Non-fatal LLM failure: when the failure flag is enabled, don't abort the
-      // flow — expose {{<outputKey>.isFailed}} = '1' and continue so a downstream
-      // `if` can branch on the failure.
-      if (step.type === 'llm' && step.config.emitFailFlag === 'true') {
+      if (err instanceof BreakLoopSignal || err instanceof ContinueLoopSignal) {
+        const kind = err instanceof BreakLoopSignal ? 'break' : 'continue';
+        if (depth === 0) {
+          // No enclosing loop — nothing to break/continue; log and carry on.
+          emitLog(onLog, flow.id, step.id, i, 'skipped', undefined, `${kind} (no loop)`);
+          sendLog(`⚠️ [AgentFlow] "${kind}" ignored — not inside a loop`);
+          continue;
+        }
+        emitLog(onLog, flow.id, step.id, i, 'skipped', undefined, kind);
+        for (let j = i + 1; j < endIndex; j++) {
+          emitLog(onLog, flow.id, flow.steps[j].id, j, 'skipped');
+        }
+        throw err;
+      }
+
+      if (signal?.aborted) {
+        emitLog(onLog, flow.id, step.id, i, 'skipped', undefined, 'Aborted by user');
+        markAbortedFromHere(flow, i + 1, depth, onLog, progress);
+        return;
+      }
+
+      const isVerificationChallenge =
+        err instanceof Error && err.name === PERPLEXITY_CLOUDFLARE_ERROR_NAME;
+
+      if ((step.type === 'llm' || step.type === 'browser_js' || step.type === 'bot') && step.config.emitFailFlag === 'true' && !isVerificationChallenge) {
         const msg = err instanceof Error ? err.message : String(err);
         if (step.outputKey) {
           context.set(step.outputKey, '');
@@ -264,7 +388,7 @@ async function runRange(
         emitLog(onLog, flow.id, step.id, i, 'completed', '', msg);
         if (depth === 0) {
           progress.completed++;
-          sendLog(`⚠️ Step ${i + 1} LLM failed (isFailed=1), continuing: ${msg}`);
+          sendLog(`⚠️ Step ${i + 1} ${step.type} failed (isFailed=1), continuing: ${msg}`);
         }
         continue;
       }
@@ -273,7 +397,6 @@ async function runRange(
       emitLog(onLog, flow.id, step.id, i, 'error', undefined, errorMsg);
       if (depth === 0) sendLog(`❌ Step ${i + 1} failed: ${errorMsg}`);
 
-      // Mark remaining steps as skipped
       for (let j = i + 1; j < flow.steps.length; j++) {
         emitLog(onLog, flow.id, flow.steps[j].id, j, 'skipped');
       }
@@ -292,26 +415,38 @@ export async function executeFlow(
   deps: FlowExecutorDeps,
   onLog?: LogCallback,
   initialContext?: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<FlowExecutionResult> {
   const context = new Map<string, string>();
 
-  // Seed built-in variables
   context.set('clipboard', clipboard.readText());
   context.set('timestamp', new Date().toISOString());
   context.set('flow.name', flow.name);
 
-  // Seed caller-provided initial context (e.g. bot trigger input variables)
   if (initialContext) {
     for (const [k, v] of Object.entries(initialContext)) {
       context.set(k, v);
     }
   }
 
-  const progress: RunProgress = { completed: 0, stopped: false };
+  const progress: RunProgress = { completed: 0, stopped: false, aborted: false };
 
   sendLog(`▶️ [AgentFlow] Executing flow: ${flow.name} (${flow.steps.length} steps)`);
 
-  await runRange(flow, 0, flow.steps.length, context, deps, onLog, progress, 0);
+  await runRange(flow, 0, flow.steps.length, context, deps, onLog, progress, 0, signal);
+
+  if (progress.aborted) {
+    return {
+      flowId: flow.id,
+      success: false,
+      aborted: true,
+      outputs: Object.fromEntries(context),
+      error: 'Aborted by user',
+      completedSteps: progress.completed,
+      totalSteps: flow.steps.length,
+      completedAt: new Date().toISOString(),
+    };
+  }
 
   if (progress.error) {
     return {
@@ -336,5 +471,6 @@ export async function executeFlow(
     completedSteps: progress.completed,
     totalSteps: flow.steps.length,
     completedAt: new Date().toISOString(),
+    finalOutput: progress.finalOutput,
   };
 }

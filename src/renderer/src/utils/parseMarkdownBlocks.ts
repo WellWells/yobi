@@ -1,23 +1,11 @@
-// Parses a Markdown string into structured blocks based on ## headings.
-// IMPORTANT: The original Markdown string is never mutated.
 import { useI18nStore } from '../store/i18nStore';
 
 export interface MarkdownBlocks {
-  /** The # title line content (without the leading #) or null */
   title: string | null;
-  /** Content under the localized Provider heading */
   provider: string | null;
-  /** Content under the localized Time heading */
   time: string | null;
-  /** Content under the localized Prompt heading */
   prompt: string | null;
-  /**
-   * Everything from the Response heading to the end of the document.
-   * Deliberately includes any sub-headings generated inside the response,
-   * so they are rendered as markdown rather than being split into extra blocks.
-   */
   response: string | null;
-  /** Reserved — always {} in the current implementation */
   extra: Record<string, string>;
 }
 
@@ -68,18 +56,6 @@ function classifyHeading(heading: string, headingAliases: HeadingAliases): Headi
   return null;
 }
 
-/**
- * Splits a Markdown document into named blocks.
- *
- * Design decisions:
- * - Only level-2 (`## `) headings are used as block boundaries.
- * - `time` is a meta block: its content ends at the next `##`.
- * - `prompt` content is extracted from the Prompt heading until the first
- *   Response heading, so prompt text can safely contain sub-headings.
- * - `response` extends from its heading to **end-of-file**, so sub-headings
- *   generated inside the response stay inside rather than being split into `extra`.
- * - Multi-language: heading names are resolved from i18n `md.*` labels.
- */
 export function parseMarkdownBlocks(raw: string): MarkdownBlocks {
   const lines = raw.split('\n');
   const headingAliases = buildHeadingAliases();
@@ -91,20 +67,16 @@ export function parseMarkdownBlocks(raw: string): MarkdownBlocks {
   let responseIdx = -1;
   const responsePositions: number[] = [];
 
-  // All ## heading line-indices (used to find the "next heading" boundary for
-  // meta blocks; we only need indices before responseIdx for slicing).
   const h2Positions: number[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // Capture the very first H1 as title
     if (title === null && /^#\s+/.test(line)) {
       title = line.replace(/^#+\s+/, '').trim();
       continue;
     }
 
-    // Track every ## heading
     if (/^##\s+/.test(line)) {
       h2Positions.push(i);
       const heading = line.replace(/^##\s+/, '').trim();
@@ -119,10 +91,6 @@ export function parseMarkdownBlocks(raw: string): MarkdownBlocks {
     }
   }
 
-  /**
-   * Extract a meta block: lines from headingIdx+1 up to (not including) the
-   * next ## heading.  For time/prompt this gives a clean short string.
-   */
   const extractMeta = (headingIdx: number): string | null => {
     if (headingIdx < 0) return null;
     const nextH2 = h2Positions.find((p) => p > headingIdx) ?? lines.length;
@@ -135,10 +103,6 @@ export function parseMarkdownBlocks(raw: string): MarkdownBlocks {
     return lines.slice(promptIdx + 1, nextResponse).join('\n').trim() || null;
   };
 
-  /**
-   * Extract the response block: everything from responseIdx+1 to EOF.
-   * This preserves all ## sub-headings Gemini generates inside the response.
-   */
   const extractResponse = (): string | null => {
     if (responseIdx < 0) return null;
     return lines.slice(responseIdx + 1).join('\n').trim() || null;

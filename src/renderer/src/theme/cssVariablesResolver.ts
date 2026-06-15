@@ -1,27 +1,22 @@
-// Bridges Yobi's CSS custom properties into the Mantine CSS variable system.
-// Each theme defines 11 independent tokens; 6 state-derived tokens are
-// computed automatically by expandTheme() — no manual hover values needed.
-
 import type { CSSVariablesResolver } from '@mantine/core';
 import type { Theme } from '../store/themeStore';
 import { lerpHex, hexToRgba } from './colorUtils';
 
 interface BaseTheme {
   bgPrimary: string;
-  bgSurface: string;   // cards, inputs
-  bgElevated: string;   // tooltips, hover surfaces
+  bgSurface: string;
+  bgElevated: string;
   border: string;
   textPrimary: string;
   textSecondary: string;
   textMuted: string;
-  textDisabled: string; // text color for disabled elements
+  textDisabled: string;
   accent: string;
   success: string;
   warning: string;
   error: string;
 }
 
-// Full resolved token set (kept for type safety across the codebase)
 interface ThemeColors {
   '--bg-primary': string;
   '--bg-secondary': string;
@@ -43,8 +38,6 @@ interface ThemeColors {
   '--selection-bg': string;
 }
 
-// Hover / opacity tokens are computed from base colors — never hand-coded.
-
 function expandTheme(base: BaseTheme, isLight: boolean): ThemeColors {
   const toward = isLight ? '#000000' : '#ffffff';
   return {
@@ -60,7 +53,6 @@ function expandTheme(base: BaseTheme, isLight: boolean): ThemeColors {
     '--success': base.success,
     '--warning': base.warning,
     '--error': base.error,
-    // Derived — do not add manually:
     '--accent-dim': hexToRgba(base.accent, 0.15),
     '--selection-bg': hexToRgba(base.accent, isLight ? 0.18 : 0.25),
     '--bg-hover': lerpHex(base.bgElevated, toward, 0.12),
@@ -70,7 +62,7 @@ function expandTheme(base: BaseTheme, isLight: boolean): ThemeColors {
   };
 }
 
-const LIGHT_THEMES: readonly Theme[] = ['light', 'sepia', 'rosepine'];
+export const LIGHT_THEMES: readonly Theme[] = ['light', 'sepia', 'rosepine'];
 
 const baseThemes: Record<Theme, BaseTheme> = {
   dark: {
@@ -157,7 +149,6 @@ export function buildCssVariablesResolver(yobiTheme: Theme): CSSVariablesResolve
   const colors = expandTheme(baseThemes[yobiTheme], isLight);
 
   const allVars = {
-    // Yobi semantic variables
     '--bg-primary': colors['--bg-primary'],
     '--bg-secondary': colors['--bg-secondary'],
     '--bg-tertiary': colors['--bg-tertiary'],
@@ -177,7 +168,6 @@ export function buildCssVariablesResolver(yobiTheme: Theme): CSSVariablesResolve
     '--code-bg': colors['--code-bg'],
     '--selection-bg': colors['--selection-bg'],
 
-    // Mantine built-in bridges
     '--mantine-color-body': colors['--bg-primary'],
     '--mantine-color-text': colors['--text-primary'],
     '--mantine-color-dimmed': colors['--text-disabled'],
@@ -187,11 +177,9 @@ export function buildCssVariablesResolver(yobiTheme: Theme): CSSVariablesResolve
     '--mantine-color-default-color': colors['--text-secondary'],
     '--mantine-color-default-border': colors['--border'],
 
-    // Action hover bridge (Button, ActionIcon, Menu, etc.)
     '--mantine-color-action-hover': colors['--bg-hover'],
     '--mantine-color-action-active': colors['--accent-dim'],
 
-    // Yobi extended bridges
     '--mantine-color-bg-tertiary': colors['--bg-tertiary'],
     '--mantine-color-accent': colors['--accent'],
     '--mantine-color-accent-dim': colors['--accent-dim'],
@@ -204,8 +192,6 @@ export function buildCssVariablesResolver(yobiTheme: Theme): CSSVariablesResolve
     '--mantine-color-selection-bg': colors['--selection-bg'],
   };
 
-  // NavLink / Combobox.Option / Menu.Item use hardcoded palette references
-  // that bypass --mantine-color-default-hover. Override at palette level.
   const paletteHoverOverrides: Record<string, string> = isLight
     ? {
       '--mantine-color-gray-0': colors['--bg-hover'],

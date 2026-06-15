@@ -3,7 +3,6 @@ import { settingsApi } from '../../../api/electronApi';
 import { useI18nStore } from '../../../store/i18nStore';
 import type { PromptLength, PromptPreferences, PromptTone } from '../../../../../shared/types';
 
-/** Assembles a full System Instruction string from PromptPreferences. */
 export function buildCombinedPrompt(
   prefs: PromptPreferences,
   t: (key: string) => string,
@@ -35,16 +34,22 @@ export function usePromptPrefs() {
   const { t, locale } = useI18nStore();
   const [promptPrefs, setPromptPrefs] = useState<PromptPreferences>(DEFAULT_PREFS);
   const [syncSystemLanguageToModel, setSyncSystemLanguageToModel] = useState(false);
+  const [youtubePrompt, setYoutubePrompt] = useState('');
 
   useEffect(() => {
     void settingsApi.getPromptPreferences().then(setPromptPrefs);
     void settingsApi.getSyncSystemLanguageToModel().then(setSyncSystemLanguageToModel);
+    void settingsApi.getYoutubePrompt().then(setYoutubePrompt);
   }, []);
 
   const savePromptPrefs = useCallback(async (prefs: PromptPreferences) => {
     const systemInstruction = buildCombinedPrompt(prefs, t);
     await settingsApi.updatePromptPreferences(prefs, systemInstruction);
   }, [t]);
+
+  const saveYoutubePrompt = useCallback(async (prompt: string) => {
+    await settingsApi.updateYoutubePrompt(prompt);
+  }, []);
 
   const handleToggleSyncSystemLanguageToModel = useCallback(async () => {
     const next = !syncSystemLanguageToModel;
@@ -74,16 +79,19 @@ export function usePromptPrefs() {
     return `System Instruction: ${parts.join('\n')}`;
   }, [promptPrefs, t, syncSystemLanguageToModel, locale]);
 
-  /** Called externally (handleResetSettings) to force-apply the post-reset values. */
-  const applyPromptReset = useCallback((prefs: PromptPreferences, syncLang: boolean) => {
+  const applyPromptReset = useCallback((prefs: PromptPreferences, syncLang: boolean, ytPrompt: string) => {
     setPromptPrefs(prefs);
     setSyncSystemLanguageToModel(syncLang);
+    setYoutubePrompt(ytPrompt);
   }, []);
 
   return {
     promptPrefs,
     setPromptPrefs,
     syncSystemLanguageToModel,
+    youtubePrompt,
+    setYoutubePrompt,
+    saveYoutubePrompt,
     combinedPromptPreview,
     savePromptPrefs,
     handleToggleSyncSystemLanguageToModel,

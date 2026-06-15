@@ -7,13 +7,18 @@ import { SettingsView } from './views/SettingsView';
 import { AboutView } from './views/AboutView';
 import { LogView } from './views/LogView';
 import { AgentFlowView } from './views/AgentFlowView';
+
+const MemoSettingsView = React.memo(SettingsView);
+const MemoAboutView = React.memo(AboutView);
+const MemoLogView = React.memo(LogView);
+const MemoAgentFlowView = React.memo(AgentFlowView);
 import { useAppStore } from './store/appStore';
 import { useI18nStore } from './store/i18nStore';
 import { useAppBootstrap } from './hooks/useAppBootstrap';
 import { ipcEvents, windowApi } from './api/electronApi';
 
 export const App: React.FC = () => {
-  const { currentView } = useAppStore();
+  const currentView = useAppStore((s) => s.currentView);
   const { isReady, t } = useI18nStore();
   const [showCloseDialog, setShowCloseDialog] = useState(false);
   const [closeRemember, setCloseRemember] = useState(false);
@@ -52,16 +57,16 @@ export const App: React.FC = () => {
           <ChatView />
         </Box>
         <Box display={currentView === 'logs' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
-          <LogView />
+          <MemoLogView />
         </Box>
         <Box display={currentView === 'settings' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
-          <SettingsView />
+          <MemoSettingsView />
         </Box>
         <Box display={currentView === 'about' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
-          <AboutView />
+          <MemoAboutView />
         </Box>
         <Box display={currentView === 'agentflow' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
-          <AgentFlowView />
+          <MemoAgentFlowView />
         </Box>
       </Flex>
 

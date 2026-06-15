@@ -3,17 +3,11 @@ import type React from 'react';
 import { settingsApi } from '../../../api/electronApi';
 import { useAppStore } from '../../../store/appStore';
 
-// Computed once at module load; stable for the lifetime of the renderer process.
 const IS_MAC = navigator.platform.toLowerCase().startsWith('mac');
 
-/**
- * Extract a normalized key name from a keyboard event for use as an Electron accelerator key.
- * Uses e.code for letters/digits to avoid macOS Option-key character substitution
- * (e.g., Option+G fires e.key="©" but e.code="KeyG").
- */
 function getKeyFromEvent(e: React.KeyboardEvent<HTMLInputElement>): string {
-  if (e.code.startsWith('Key')) return e.code.slice(3);    // KeyG → G
-  if (e.code.startsWith('Digit')) return e.code.slice(5);  // Digit1 → 1
+  if (e.code.startsWith('Key')) return e.code.slice(3);
+  if (e.code.startsWith('Digit')) return e.code.slice(5);
   if (e.key === 'ArrowUp') return 'Up';
   if (e.key === 'ArrowDown') return 'Down';
   if (e.key === 'ArrowLeft') return 'Left';
@@ -37,7 +31,6 @@ export function useHotkeyRecorder() {
     });
   }, []);
 
-  // Sync recording state to main process: pause global hotkeys while recording.
   useEffect(() => {
     void settingsApi.setHotkeyPaused(recording);
   }, [recording]);
@@ -88,7 +81,6 @@ export function useHotkeyRecorder() {
     setHotkey(defaultHotkey);
   }, [setHotkey]);
 
-  /** Called externally (handleResetSettings) to force-apply the post-reset value. */
   const applyHotkeyReset = useCallback((hotkey: string) => {
     setCurrentHotkey(hotkey);
     setHotkeyInput(hotkey);

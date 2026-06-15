@@ -1,15 +1,18 @@
 import React, { useCallback, useMemo } from 'react';
-import { Box, Chip, Group, Stack, Text } from '@mantine/core';
-import { Bot, TriangleAlert } from 'lucide-react';
+import { ActionIcon, Box, Chip, Group, Stack, Text, Tooltip } from '@mantine/core';
+import { Plus, TriangleAlert, Trash2 } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import { useAgentFlowStore } from '../../store/useAgentFlowStore';
 import { normalizeCronTrigger } from '../../../../shared/flowSchedule';
+import { AppButton } from '../../components/AppButton';
 import { AppNumberInput } from '../../components/AppNumberInput';
 import { AppSegmentedControl } from '../../components/AppSegmentedControl';
-import { AppTextInput } from '../../components/AppTextInput';
+import { GroupHeader } from '../../components/GroupHeader';
 import { SelectDropdown } from '../../components/SelectDropdown';
 import { ToggleSwitch } from '../../components/ToggleSwitch';
 import type { FlowDefinition, TriggerConfig, TriggerType } from '../../../../shared/types';
 import { HotkeyRecorder } from './HotkeyRecorder';
+import { CommandTriggerFields } from './CommandTriggerFields';
 
 const DAY_OPTIONS = [
   { value: '0', key: 'sun' },
@@ -21,49 +24,54 @@ const DAY_OPTIONS = [
   { value: '6', key: 'sat' },
 ] as const;
 
-export interface TriggerEditorProps {
-  flow: FlowDefinition;
+const INLINE_CARD = {
+  background: 'var(--mantine-color-default)',
+  borderRadius: 'var(--mantine-radius-md)',
+  border: '1px solid var(--mantine-color-default-border)',
+} as const;
+
+interface TriggerConfigFormProps {
+  value: TriggerConfig;
+  onChange: (trigger: TriggerConfig) => void;
   t: (k: string) => string;
+  allowManual?: boolean;
+  showBotCompoundHint?: boolean;
 }
 
-export const TriggerEditor: React.FC<TriggerEditorProps> = ({ flow, t }) => {
-  const { updateTrigger } = useAgentFlowStore();
-
-  const weekdays = flow.trigger.weekdays ?? [1, 2, 3, 4, 5];
-  const scheduleHour = flow.trigger.scheduleHour ?? 9;
-  const scheduleMinute = flow.trigger.scheduleMinute ?? 0;
-  const repeatWithinDay = flow.trigger.repeatWithinDay ?? false;
-  const repeatEveryValue = flow.trigger.repeatEveryValue ?? 1;
-  const repeatEveryUnit = flow.trigger.repeatEveryUnit ?? 'hours';
-  const endHour = flow.trigger.endHour ?? 18;
-  const endMinute = flow.trigger.endMinute ?? 0;
-
-  const botCommandEmpty = flow.trigger.type === 'bot' && !flow.trigger.botCommand?.trim();
-  const botInputVariableRaw = (flow.trigger.botInputVariable ?? '').trim();
-  const botInputVariable = botInputVariableRaw
-    ? botInputVariableRaw
-    : t('agentflow.trigger.bot.inputVariable.placeholder');
-  const botInputVariableHint = t('agentflow.trigger.bot.inputVariable.hint')
-    .replace(/\{\{(input|variable)\}\}/g, botInputVariable);
+const TriggerConfigForm: React.FC<TriggerConfigFormProps> = ({
+  value, onChange, t, allowManual = true, showBotCompoundHint = false,
+}) => {
+  const scheduleMode = value.scheduleMode
+    ?? ((value.intervalValue !== undefined || value.intervalUnit !== undefined) ? 'interval' : 'weekly');
+  const intervalValue = value.intervalValue ?? 1;
+  const intervalUnit = value.intervalUnit ?? 'hours';
+  const weekdays = value.weekdays ?? [1, 2, 3, 4, 5];
+  const scheduleHour = value.scheduleHour ?? 9;
+  const scheduleMinute = value.scheduleMinute ?? 0;
+  const repeatWithinDay = value.repeatWithinDay ?? false;
+  const repeatEveryValue = value.repeatEveryValue ?? 1;
+  const repeatEveryUnit = value.repeatEveryUnit ?? 'hours';
+  const endHour = value.endHour ?? 18;
+  const endMinute = value.endMinute ?? 0;
 
   const endTimeInvalid = repeatWithinDay
     && (endHour * 60 + endMinute) <= (scheduleHour * 60 + scheduleMinute);
 
-  const patchTrigger = useCallback((patch: Partial<TriggerConfig>) => {
-    const next = { ...flow.trigger, ...patch };
-    if (next.type === 'cron') {
-      updateTrigger(flow.id, normalizeCronTrigger(next));
-      return;
-    }
-    updateTrigger(flow.id, next);
-  }, [flow.trigger, flow.id, updateTrigger]);
+  const patch = useCallback((p: Partial<TriggerConfig>) => {
+    const next = { ...value, ...p };
+    onChange(next.type === 'cron' ? normalizeCronTrigger(next) : next);
+  }, [value, onChange]);
 
-  const triggerOptions = useMemo(() => [
-    { value: 'manual', label: t('agentflow.trigger.manual') },
-    { value: 'hotkey', label: t('agentflow.trigger.hotkey') },
-    { value: 'cron', label: t('agentflow.trigger.cron') },
-    { value: 'bot', label: t('agentflow.trigger.bot') },
-  ], [t]);
+  const triggerOptions = useMemo(() => {
+    const opts = [
+      { value: 'hotkey', label: t('agentflow.trigger.hotkey') },
+      { value: 'cron', label: t('agentflow.trigger.cron') },
+      { value: 'bot', label: t('agentflow.trigger.bot') },
+      { value: 'chat', label: t('agentflow.trigger.chat') },
+    ];
+    if (allowManual) opts.unshift({ value: 'manual', label: t('agentflow.trigger.manual') });
+    return opts;
+  }, [t, allowManual]);
 
   const hourOptions = useMemo(() =>
     Array.from({ length: 24 }, (_, i) => ({ value: String(i), label: String(i).padStart(2, '0') })), []);
@@ -74,40 +82,74 @@ export const TriggerEditor: React.FC<TriggerEditorProps> = ({ flow, t }) => {
   return (
     <Stack gap="sm">
       <AppSegmentedControl
-        value={flow.trigger.type}
+        value={value.type}
         options={triggerOptions}
-        onChange={(value) => patchTrigger({ type: value as TriggerType })}
+        onChange={(v) => patch({ type: v as TriggerType })}
         size="sm"
       />
 
-      {flow.trigger.type === 'hotkey' && (
+      {value.type === 'hotkey' && (
         <Box pt="xs">
           <HotkeyRecorder
-            value={flow.trigger.keys ?? ''}
-            onChange={(keys) => patchTrigger({ keys })}
+            value={value.keys ?? ''}
+            onChange={(keys) => patch({ keys })}
             t={t}
           />
         </Box>
       )}
 
-      {flow.trigger.type === 'cron' && (
+      {value.type === 'cron' && (
         <Stack gap="xs">
-          <Stack
-            gap="sm"
-            p="sm"
-            style={{
-              background: 'var(--mantine-color-default)',
-              borderRadius: 'var(--mantine-radius-md)',
-              border: '1px solid var(--mantine-color-default-border)',
-            }}
-          >
+          <AppSegmentedControl
+            value={scheduleMode}
+            options={[
+              { value: 'weekly', label: t('agentflow.trigger.schedule.mode.weekly') },
+              { value: 'interval', label: t('agentflow.trigger.schedule.mode.interval') },
+            ]}
+            onChange={(v) => patch({ scheduleMode: v as 'interval' | 'weekly' })}
+            size="sm"
+          />
+
+          {scheduleMode === 'interval' && (
+            <Stack gap="sm" p="sm" style={INLINE_CARD}>
+              <Group gap="xs" align="center" wrap="nowrap">
+                <Text fz="sm" fw={600} miw={86}>{t('agentflow.trigger.schedule.runEvery')}</Text>
+                <AppNumberInput
+                  aria-label={t('agentflow.trigger.schedule.runEvery')}
+                  min={1}
+                  max={intervalUnit === 'hours' ? 24 : 59}
+                  step={1}
+                  allowDecimal={false}
+                  allowNegative={false}
+                  value={intervalValue}
+                  onChange={(v) => patch({ intervalValue: typeof v === 'number' ? v : 1, scheduleMode: 'interval' })}
+                  size="sm"
+                  w={90}
+                  style={{ flexShrink: 0 }}
+                />
+                <SelectDropdown
+                  options={[
+                    { value: 'minutes', label: t('agentflow.trigger.schedule.minutes') },
+                    { value: 'hours', label: t('agentflow.trigger.schedule.hours') },
+                  ]}
+                  value={intervalUnit}
+                  onChange={(v) => patch({ intervalUnit: v as 'minutes' | 'hours', scheduleMode: 'interval' })}
+                  size="sm"
+                  w={120}
+                />
+              </Group>
+            </Stack>
+          )}
+
+          {scheduleMode === 'weekly' && (
+          <Stack gap="sm" p="sm" style={INLINE_CARD}>
             <Text fz="xs" fw={600} c="dimmed" tt="uppercase" style={{ letterSpacing: '0.05em' }}>
               {t('agentflow.trigger.schedule.days')}
             </Text>
             <Chip.Group
               multiple
               value={weekdays.map(String)}
-              onChange={(vals) => patchTrigger({ weekdays: vals.map(Number), scheduleMode: 'weekly' })}
+              onChange={(vals) => patch({ weekdays: vals.map(Number), scheduleMode: 'weekly' })}
             >
               <Group gap={4} wrap="wrap">
                 {DAY_OPTIONS.map((d) => (
@@ -124,7 +166,7 @@ export const TriggerEditor: React.FC<TriggerEditorProps> = ({ flow, t }) => {
                 aria-label={t('agentflow.trigger.schedule.hour')}
                 options={hourOptions}
                 value={String(scheduleHour)}
-                onChange={(v) => patchTrigger({ scheduleHour: Number(v), scheduleMode: 'weekly' })}
+                onChange={(v) => patch({ scheduleHour: Number(v), scheduleMode: 'weekly' })}
                 size="sm"
                 withCheckIcon={false}
                 w={100}
@@ -134,7 +176,7 @@ export const TriggerEditor: React.FC<TriggerEditorProps> = ({ flow, t }) => {
                 aria-label={t('agentflow.trigger.schedule.minute')}
                 options={minuteOptions}
                 value={String(scheduleMinute)}
-                onChange={(v) => patchTrigger({ scheduleMinute: Number(v), scheduleMode: 'weekly' })}
+                onChange={(v) => patch({ scheduleMinute: Number(v), scheduleMode: 'weekly' })}
                 size="sm"
                 withCheckIcon={false}
                 w={90}
@@ -145,7 +187,7 @@ export const TriggerEditor: React.FC<TriggerEditorProps> = ({ flow, t }) => {
               label={t('agentflow.trigger.schedule.repeatWithinDay')}
               size="sm"
               checked={repeatWithinDay}
-              onChange={(e) => patchTrigger({ repeatWithinDay: e.currentTarget.checked, scheduleMode: 'weekly' })}
+              onChange={(e) => patch({ repeatWithinDay: e.currentTarget.checked, scheduleMode: 'weekly' })}
             />
 
             {repeatWithinDay && (
@@ -160,7 +202,7 @@ export const TriggerEditor: React.FC<TriggerEditorProps> = ({ flow, t }) => {
                     allowDecimal={false}
                     allowNegative={false}
                     value={repeatEveryValue}
-                    onChange={(v) => patchTrigger({ repeatEveryValue: typeof v === 'number' ? v : 1, scheduleMode: 'weekly' })}
+                    onChange={(v) => patch({ repeatEveryValue: typeof v === 'number' ? v : 1, scheduleMode: 'weekly' })}
                     size="sm"
                     w={90}
                     style={{ flexShrink: 0 }}
@@ -171,7 +213,7 @@ export const TriggerEditor: React.FC<TriggerEditorProps> = ({ flow, t }) => {
                       { value: 'hours', label: t('agentflow.trigger.schedule.hours') },
                     ]}
                     value={repeatEveryUnit}
-                    onChange={(v) => patchTrigger({ repeatEveryUnit: v as 'minutes' | 'hours', scheduleMode: 'weekly' })}
+                    onChange={(v) => patch({ repeatEveryUnit: v as 'minutes' | 'hours', scheduleMode: 'weekly' })}
                     size="sm"
                     w={120}
                   />
@@ -183,7 +225,7 @@ export const TriggerEditor: React.FC<TriggerEditorProps> = ({ flow, t }) => {
                     aria-label={t('agentflow.trigger.schedule.hour')}
                     options={hourOptions}
                     value={String(endHour)}
-                    onChange={(v) => patchTrigger({ endHour: Number(v), scheduleMode: 'weekly' })}
+                    onChange={(v) => patch({ endHour: Number(v), scheduleMode: 'weekly' })}
                     size="sm"
                     withCheckIcon={false}
                     w={100}
@@ -193,7 +235,7 @@ export const TriggerEditor: React.FC<TriggerEditorProps> = ({ flow, t }) => {
                     aria-label={t('agentflow.trigger.schedule.minute')}
                     options={minuteOptions}
                     value={String(endMinute)}
-                    onChange={(v) => patchTrigger({ endMinute: Number(v), scheduleMode: 'weekly' })}
+                    onChange={(v) => patch({ endMinute: Number(v), scheduleMode: 'weekly' })}
                     size="sm"
                     withCheckIcon={false}
                     w={90}
@@ -209,67 +251,94 @@ export const TriggerEditor: React.FC<TriggerEditorProps> = ({ flow, t }) => {
               </Stack>
             )}
           </Stack>
+          )}
         </Stack>
       )}
 
-      {flow.trigger.type === 'bot' && (
-        <Stack
-          gap="sm"
-          p="sm"
-          style={{
-            background: 'var(--mantine-color-default)',
-            borderRadius: 'var(--mantine-radius-md)',
-            border: '1px solid var(--mantine-color-default-border)',
-          }}
-        >
-          <Group gap={6} align="center">
-            <Bot size={13} color="var(--mantine-color-dimmed)" />
-            <Text fz="xs" fw={600} c="dimmed" tt="uppercase" style={{ letterSpacing: '0.05em' }}>
-              {t('agentflow.trigger.bot.section')}
-            </Text>
-          </Group>
+      {value.type === 'bot' && (
+        <CommandTriggerFields
+          kind="bot"
+          value={value}
+          patch={patch}
+          t={t}
+          showBotCompoundHint={showBotCompoundHint}
+          cardStyle={INLINE_CARD}
+        />
+      )}
 
-          <AppTextInput
-            label={t('agentflow.trigger.bot.command')}
-            description={t('agentflow.trigger.bot.command.hint')}
-            placeholder={t('agentflow.trigger.bot.command.placeholder')}
-            value={flow.trigger.botCommand ?? ''}
-            onChange={(e) => patchTrigger({ botCommand: e.currentTarget.value.replace(/[^a-zA-Z0-9_]/g, '').toLowerCase() })}
-            leftSection={<Text fz="sm" c="dimmed">/</Text>}
-            mono
-            tone="body"
-            size="sm"
-          />
-
-          <AppTextInput
-            label={t('common.description')}
-            placeholder={t('agentflow.trigger.bot.description.placeholder')}
-            value={flow.trigger.botCommandDescription ?? ''}
-            onChange={(e) => patchTrigger({ botCommandDescription: e.currentTarget.value })}
-            tone="body"
-            size="sm"
-          />
-
-          <AppTextInput
-            label={t('agentflow.trigger.bot.inputVariable')}
-            description={botInputVariableHint}
-            placeholder={t('agentflow.trigger.bot.inputVariable.placeholder')}
-            value={flow.trigger.botInputVariable ?? ''}
-            onChange={(e) => patchTrigger({ botInputVariable: e.currentTarget.value.replace(/[^a-zA-Z0-9_.]/g, '') })}
-            mono
-            tone="body"
-            size="sm"
-          />
-
-          {botCommandEmpty && (
-            <Group gap={6} align="center">
-              <TriangleAlert size={13} color="var(--mantine-color-orange-6)" />
-              <Text fz="xs" c="orange">{t('agentflow.trigger.bot.command.empty')}</Text>
-            </Group>
-          )}
-        </Stack>
+      {value.type === 'chat' && (
+        <CommandTriggerFields kind="chat" value={value} patch={patch} t={t} cardStyle={INLINE_CARD} />
       )}
     </Stack>
   );
 };
 
+export interface TriggerEditorProps {
+  flow: FlowDefinition;
+  t: (k: string) => string;
+}
+
+export const TriggerEditor: React.FC<TriggerEditorProps> = ({ flow, t }) => {
+  const { updateTrigger, addExtraTrigger, updateExtraTrigger, removeExtraTrigger } = useAgentFlowStore(
+    useShallow((s) => ({
+      updateTrigger: s.updateTrigger,
+      addExtraTrigger: s.addExtraTrigger,
+      updateExtraTrigger: s.updateExtraTrigger,
+      removeExtraTrigger: s.removeExtraTrigger,
+    })),
+  );
+  const extraTriggers = flow.extraTriggers ?? [];
+  const hasNonBotTrigger = [flow.trigger, ...extraTriggers].some((tr) => tr.type !== 'bot');
+
+  return (
+    <Stack gap="md">
+      <TriggerConfigForm
+        value={flow.trigger}
+        onChange={(next) => updateTrigger(flow.id, next)}
+        t={t}
+        showBotCompoundHint={hasNonBotTrigger}
+      />
+
+      <Box>
+        <GroupHeader label={t('agentflow.trigger.additional')} />
+        <Stack gap="sm">
+          {extraTriggers.map((tr, i) => (
+            <Box key={i} p="sm" style={{ ...INLINE_CARD, background: 'var(--mantine-color-bg-tertiary)' }}>
+              <Group justify="space-between" align="center" mb="xs" wrap="nowrap">
+                <Text fz="xs" fw={600} c="dimmed">{`${t('agentflow.trigger.additional')} ${i + 1}`}</Text>
+                <Tooltip label={t('agentflow.trigger.removeTrigger')} position="left">
+                  <ActionIcon
+                    variant="subtle"
+                    color="red"
+                    size="sm"
+                    aria-label={t('agentflow.trigger.removeTrigger')}
+                    onClick={() => removeExtraTrigger(flow.id, i)}
+                  >
+                    <Trash2 size={14} />
+                  </ActionIcon>
+                </Tooltip>
+              </Group>
+              <TriggerConfigForm
+                value={tr}
+                onChange={(next) => updateExtraTrigger(flow.id, i, next)}
+                t={t}
+                allowManual={false}
+                showBotCompoundHint={hasNonBotTrigger}
+              />
+            </Box>
+          ))}
+
+          <AppButton
+            variant="default"
+            size="xs"
+            leftSection={<Plus size={14} />}
+            onClick={() => addExtraTrigger(flow.id)}
+            style={{ alignSelf: 'flex-start' }}
+          >
+            {t('agentflow.trigger.addTrigger')}
+          </AppButton>
+        </Stack>
+      </Box>
+    </Stack>
+  );
+};

@@ -3,8 +3,9 @@ import {
   ActionIcon, Badge, Box, Button, Flex, Group, Loader, Menu, Stack, Text,
 } from '@mantine/core';
 import {
-  ArrowDown, ArrowUp, Copy, MoreHorizontal, Play, RotateCcw, Save, Trash2, Upload,
+  ArrowDown, ArrowUp, Copy, MoreHorizontal, Play, RotateCcw, Save, Square, Trash2, Upload,
 } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import { useAgentFlowStore } from '../../store/useAgentFlowStore';
 import { useAppStore } from '../../store/appStore';
 import { AppTextarea } from '../../components/AppTextarea';
@@ -30,17 +31,31 @@ export interface FlowEditorProps {
 export const FlowEditor: React.FC<FlowEditorProps> = ({
   flow, t, onDelete, onDuplicate, onExport, onMoveUp, onMoveDown, canMoveUp, canMoveDown,
 }) => {
-  const { currentView } = useAppStore();
+  const currentView = useAppStore((s) => s.currentView);
   const {
-    updateFlow, saveFlow, executeFlow, addStep, isExecuting, executionLogs, restoreFlow, savedFlows,
-  } = useAgentFlowStore();
+    updateFlow, saveFlow, executeFlow, abortFlow, addStep, isExecuting, runningFlowIds, restoreFlow, savedFlows,
+  } = useAgentFlowStore(
+    useShallow((s) => ({
+      updateFlow: s.updateFlow,
+      saveFlow: s.saveFlow,
+      executeFlow: s.executeFlow,
+      abortFlow: s.abortFlow,
+      addStep: s.addStep,
+      isExecuting: s.isExecuting,
+      runningFlowIds: s.runningFlowIds,
+      restoreFlow: s.restoreFlow,
+      savedFlows: s.savedFlows,
+    })),
+  );
+  // ExecutionResultPanel subscribes to the logs itself; the editor only needs
+  // to know whether the panel should exist, so log appends don't re-render it.
+  const hasExecutionLogs = useAgentFlowStore((s) => s.executionLogs.length > 0);
+  const isThisRunning = runningFlowIds.includes(flow.id);
   const prevHotkeyRef = useRef<string | undefined>(undefined);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const [isPinned, setIsPinned] = useState(false);
   const savedFlow = savedFlows[flow.id];
-  // Cache saved flow's serialized form — it only changes on save, so we avoid
-  // re-serializing both objects on every keystroke edit.
   const savedFlowJson = useMemo(() => savedFlow ? JSON.stringify(savedFlow) : null, [savedFlow]);
   const isDirty = useMemo(() => {
     if (!savedFlowJson) return true;
@@ -59,8 +74,6 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
     const sentinel = sentinelRef.current;
     const viewport = viewportRef.current;
     if (!sentinel || !viewport) return;
-    // Use IntersectionObserver instead of a scroll event listener.
-    // When the 1px sentinel exits the scroll viewport, the header is "pinned".
     const observer = new IntersectionObserver(
       ([entry]) => setIsPinned(!(entry?.isIntersecting ?? true)),
       { root: viewport, threshold: 0 },
@@ -75,6 +88,7 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
     await saveFlow(flow);
     await executeFlow(flow.id);
   }, [flow, saveFlow, executeFlow]);
+  const handleStop = useCallback(() => { void abortFlow(flow.id); }, [abortFlow, flow.id]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -95,7 +109,6 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
 
   return (
     <Flex direction="column" h="100%" style={{ overflow: 'hidden' }}>
-      {/* Header sits outside the scroll container so the native scrollbar never crosses it. */}
       <Box
         bg="var(--mantine-color-default)"
         style={{
@@ -125,15 +138,27 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
             <Button variant="default" size="xs" leftSection={<Save size={14} />} onClick={handleSave} disabled={!isDirty}>
               {t('agentflow.saveFlow')}
             </Button>
-            <Button
-              variant="filled"
-              size="xs"
-              leftSection={isExecuting ? <Loader size={14} color="white" /> : <Play size={14} />}
-              onClick={handleRun}
-              disabled={isExecuting}
-            >
-              {t('agentflow.runFlow')}
-            </Button>
+            {isThisRunning ? (
+              <Button
+                variant="filled"
+                color="red"
+                size="xs"
+                leftSection={<Square size={13} fill="currentColor" />}
+                onClick={handleStop}
+              >
+                {t('agentflow.stopFlow')}
+              </Button>
+            ) : (
+              <Button
+                variant="filled"
+                size="xs"
+                leftSection={isExecuting ? <Loader size={14} color="white" /> : <Play size={14} />}
+                onClick={handleRun}
+                disabled={isExecuting}
+              >
+                {t('agentflow.runFlow')}
+              </Button>
+            )}
             <Menu position="bottom-end" withArrow shadow="md">
               <Menu.Target>
                 <ActionIcon variant="default" size="md"><MoreHorizontal size={14} /></ActionIcon>
@@ -151,7 +176,6 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
         </Box>
       </Box>
       <Box flex={1} h="100%" ref={viewportRef} style={{ overflowY: 'auto' }}>
-        {/* 1px sentinel: when it exits the scroll viewport, the header above shows its shadow. */}
         <Box ref={sentinelRef} h="1px" aria-hidden style={{ visibility: 'hidden', pointerEvents: 'none' }} />
         <Box p="24px 20px 40px">
           <Box maw={560} mx="auto">
@@ -187,8 +211,12 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
 
               <FlowStepsCard flow={flow} t={t} onAddStep={handleAddStep} />
 
-              {executionLogs.length > 0 && (
-                <ExecutionResultPanel steps={flow.steps} executionLogs={executionLogs} t={t} />
+              {hasExecutionLogs && (
+                <ExecutionResultPanel
+                  steps={flow.steps}
+                  flowName={flow.name}
+                  t={t}
+                />
               )}
             </Stack>
           </Box>

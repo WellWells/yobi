@@ -1,9 +1,3 @@
-// export callback and direct-export delivery.
-//
-// Handles inline-button export callbacks (markdown reply mode) and direct file
-// exports (png/webp/pdf reply modes). Stateless by design: callers pass a small
-// send context so this module never imports the runtime (no circular imports).
-
 import { InputFile, type Bot } from 'grammy';
 import { t } from '../i18n';
 import { getErrorMessage } from './errors';
@@ -17,11 +11,10 @@ import {
 } from './exporter';
 import type { TelegramContext } from './commandHandlers';
 
-export type TelegramInlineKeyboard = {
+type TelegramInlineKeyboard = {
   inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
 };
 
-/** Minimal capabilities needed to deliver export results. Provided by the runtime. */
 export interface TelegramSendContext {
   getBot: () => Bot<TelegramContext> | null;
   getStrings: () => Record<string, string>;

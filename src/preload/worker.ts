@@ -1,11 +1,3 @@
-// NOTE: This preload runs with contextIsolation: false so it executes in the
-// same JS world as the page — that is what makes Object.defineProperty work.
-
-// When a Chromium-based UA is used, Google's sign-in page checks for
-// window.chrome.runtime to confirm it is running in a genuine Chrome context.
-// Electron does not expose a full window.chrome object, which causes Google to
-// flag the session as an "embedded insecure browser" and block sign-in.
-// Injecting a minimal stub here (before any page JS runs) satisfies the check.
 {
   type ChromeRuntime = {
     id: undefined;
@@ -55,7 +47,6 @@ Object.defineProperty(document, 'hasFocus', {
   writable: true,
 });
 
-// Swallow visibilitychange so Gemini never receives a "hidden" transition
 document.addEventListener(
   'visibilitychange',
   (e) => e.stopImmediatePropagation(),

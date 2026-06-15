@@ -1,4 +1,3 @@
-/** Returns true if the event target is a text input element, preventing global hotkeys from firing inside inputs. */
 export function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable) return true;

@@ -1,5 +1,3 @@
-// Provider dispatcher
-// Add new AI providers here; runAutomation resolves the right one by URL.
 import type { BrowserWindow } from 'electron';
 import { runGeminiAutomation } from './gemini';
 import { runPerplexityAutomation } from './perplexity';
@@ -12,7 +10,7 @@ export type { Provider };
 
 const PROVIDER_RUNNER: Record<
   Provider,
-  (workerWin: BrowserWindow, prompt: string, timeoutMs: number, targetUrl: string) => Promise<{ response: string; title: string }>
+  (workerWin: BrowserWindow, prompt: string, timeoutMs: number, targetUrl: string, attachments?: string[]) => Promise<{ response: string; title: string }>
 > = {
   gemini: runGeminiAutomation,
   perplexity: runPerplexityAutomation,
@@ -58,7 +56,6 @@ export function detectProvider(url: string): Provider {
     if (host.includes('chatgpt.com') || host.includes('chat.openai.com')) return 'chatgpt';
     if (host.includes('duck.ai')) return 'duckai';
   } catch {
-    // fall through
   }
   return 'gemini';
 }
@@ -98,9 +95,10 @@ export async function runAutomation(
   prompt: string,
   timeoutMs: number,
   targetUrl: string,
+  attachments?: string[],
 ): Promise<{ response: string; title: string }> {
   const provider = detectProvider(targetUrl);
-  return PROVIDER_RUNNER[provider](workerWin, prompt, timeoutMs, targetUrl);
+  return PROVIDER_RUNNER[provider](workerWin, prompt, timeoutMs, targetUrl, attachments);
 }
 
 export function isLoginRequiredError(targetUrl: string, err: unknown): boolean {

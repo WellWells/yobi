@@ -1,21 +1,41 @@
-// Parser-block execution against fetched HTML/XML
-//
-// Pure functions: cheerio-based CSS selector / regex / RSS extraction blocks.
-// No Electron APIs here — page loading lives in pageLoader.ts.
-
 import { load } from 'cheerio';
+import type { FeedCandidate } from '../shared/types';
 
-/** A single parsed item from an RSS or Atom feed. */
-export interface RssFeedItem {
-  link: string;
-  pubDate?: string; // ISO 8601 string, undefined if not present or unparseable
+const FEED_LINK_TYPES = new Set(['application/rss+xml', 'application/atom+xml']);
+
+export function extractFeedLinks(html: string, baseUrl: string): FeedCandidate[] {
+  const $ = load(html);
+  const out: FeedCandidate[] = [];
+  const seen = new Set<string>();
+
+  $('link').each((_, el) => {
+    const type = ($(el).attr('type') ?? '').trim().toLowerCase();
+    if (!FEED_LINK_TYPES.has(type)) return;
+
+    const href = ($(el).attr('href') ?? '').trim();
+    if (!href) return;
+
+    let abs: string;
+    try {
+      abs = new URL(href, baseUrl).href;
+    } catch {
+      return;
+    }
+    if (!/^https?:\/\//i.test(abs) || seen.has(abs)) return;
+
+    seen.add(abs);
+    out.push({ url: abs, title: ($(el).attr('title') ?? '').trim() });
+  });
+
+  return out;
 }
 
-/**
- * Parses an RSS/Atom feed XML string and returns items with link + pubDate.
- * Unlike the `parseRss` parser block (which returns only URLs), this function
- * preserves pubDate metadata needed for checkpoint-based deduplication.
- */
+export interface RssFeedItem {
+  link: string;
+  title?: string;
+  pubDate?: string;
+}
+
 export function parseRssFeed(rawXml: string): RssFeedItem[] {
   const $xml = load(rawXml, { xmlMode: true });
   const items: RssFeedItem[] = [];
@@ -26,26 +46,26 @@ export function parseRssFeed(rawXml: string): RssFeedItem[] {
     return isNaN(d.getTime()) ? undefined : d.toISOString();
   };
 
-  // Try RSS 2.0 <item>
   $xml('item').each((_, el) => {
     const link = $xml(el).find('link').first().text().trim();
     if (!link || !/^https?:\/\//i.test(link)) return;
+    const title = $xml(el).find('title').first().text().trim() || undefined;
     const pubDate = toIso($xml(el).find('pubDate').first().text().trim());
-    items.push({ link, pubDate });
+    items.push({ link, title, pubDate });
   });
 
-  // Fall back to Atom <entry>
   if (items.length === 0) {
     $xml('entry').each((_, el) => {
       const href = $xml(el).find('link').attr('href') ?? '';
       const text = $xml(el).find('link').first().text().trim();
       const link = href || text;
       if (!link || !/^https?:\/\//i.test(link)) return;
+      const title = $xml(el).find('title').first().text().trim() || undefined;
       const rawDate =
         $xml(el).find('updated').first().text().trim() ||
         $xml(el).find('published').first().text().trim();
       const pubDate = toIso(rawDate);
-      items.push({ link, pubDate });
+      items.push({ link, title, pubDate });
     });
   }
 
@@ -53,11 +73,11 @@ export function parseRssFeed(rawXml: string): RssFeedItem[] {
 }
 
 export type ParserBlockType =
-  | 'extractLinks'    // user intent: extract all <a> hrefs → URL array
-  | 'extractText'     // user intent: get text content (first match)
-  | 'parseRss'        // user intent: parse RSS/Atom feed items → URL array
-  | 'getLinks'        // legacy alias for extractLinks
-  | 'getText'         // legacy alias for extractText
+  | 'extractLinks'
+  | 'extractText'
+  | 'parseRss'
+  | 'getLinks'
+  | 'getText'
   | 'getTexts'
   | 'getHtml'
   | 'getAttribute'
@@ -68,21 +88,12 @@ export interface ParserBlock {
   type: ParserBlockType;
   selector: string;
   attribute?: string;
-  // Regex-specific fields (used when type === 'getByRegex')
   pattern?: string;
   flags?: string;
   group?: number;
-  // Array output limit: 0 = unlimited, positive N = keep first N items (default: 3)
   maxItems?: number;
 }
 
-/**
- * Extracts elements matching a CSS selector from raw HTML.
- * Selector may include the uBlock-style "##" prefix (stripped automatically).
- *
- * - outputType 'links': finds <a> hrefs within or on matched elements → JSON URL array
- * - outputType 'text': extracts text content of each matched element → separator-joined string
- */
 export function runCssSelector(
   html: string,
   sourceUrl: string,
@@ -99,7 +110,6 @@ export function runCssSelector(
   try {
     baseOrigin = new URL(sourceUrl).origin;
   } catch {
-    // keep empty — relative URLs will not be resolved
   }
 
   if (outputType === 'links') {
@@ -111,7 +121,7 @@ export function runCssSelector(
         try {
           const resolved = new URL(directHref, baseOrigin || sourceUrl).href;
           if (/^https?:\/\//i.test(resolved)) links.push(resolved);
-        } catch { /* skip unparseable href */ }
+        } catch { }
         return;
       }
       $el.find('a[href]').each((_, a) => {
@@ -120,7 +130,7 @@ export function runCssSelector(
         try {
           const resolved = new URL(href, baseOrigin || sourceUrl).href;
           if (/^https?:\/\//i.test(resolved)) links.push(resolved);
-        } catch { /* skip */ }
+        } catch { }
       });
     });
     const limited = maxItems > 0 ? links.slice(0, maxItems) : links;
@@ -136,24 +146,6 @@ export function runCssSelector(
   return limited.join('\n\n---\n\n');
 }
 
-/**
- * Runs an ordered list of parser blocks against the fetched HTML or XML.
- * Returns the output of the last block (or empty string if the list is empty).
- *
- * DOM-based blocks query the content via CSS selectors (works for both HTML and XML):
- * - getLinks: CSS selector → JSON array of absolute href URLs
- * - getText: CSS selector → text content of the first match
- * - getTexts: CSS selector → JSON array of all matches' text content
- * - getHtml: CSS selector → innerHTML of the first match
- * - getAttribute: CSS selector + attribute → attribute value of the first match
- *
- * Regex block operates on the accumulated text output of previous blocks
- * (or the raw HTML/XML when it is the first block):
- * - getByRegex: regex pattern + flags + group → first match text or JSON array of all matches
- *
- * When xmlMode is true, cheerio parses the content with XML semantics (case-sensitive tags,
- * self-closing tags, no implicit HTML structure). Use this for RSS/Atom feeds.
- */
 export function runParserBlocks(html: string, sourceUrl: string, blocks: ParserBlock[], xmlMode = false): string {
   if (blocks.length === 0) return '';
 
@@ -161,17 +153,13 @@ export function runParserBlocks(html: string, sourceUrl: string, blocks: ParserB
     ? load(html, { xmlMode: true })
     : load(`<html>${html}</html>`);
 
-  // Resolve relative URLs to absolute using the source URL's origin.
   let baseOrigin = '';
   try {
     const base = new URL(sourceUrl);
     baseOrigin = base.origin;
   } catch {
-    // keep empty — relative URLs will not be resolved
   }
 
-  // Regex blocks apply to the accumulated text output of previous blocks.
-  // The initial value is the raw HTML so a leading getByRegex works on the full source.
   let lastOutput = html;
 
   for (const block of blocks) {
@@ -187,7 +175,6 @@ export function runParserBlocks(html: string, sourceUrl: string, blocks: ParserB
           let m: RegExpExecArray | null;
           while ((m = regex.exec(lastOutput)) !== null) {
             matches.push(m[group] ?? m[0] ?? '');
-            // Prevent infinite loops on zero-width matches
             if (regex.lastIndex === m.index) regex.lastIndex++;
           }
           lastOutput = JSON.stringify(applyMaxItems(matches, block.maxItems));
@@ -196,23 +183,19 @@ export function runParserBlocks(html: string, sourceUrl: string, blocks: ParserB
           lastOutput = m ? (m[group] ?? m[0] ?? '') : '';
         }
       } catch {
-        // Invalid regex — leave lastOutput unchanged
       }
       continue;
     }
 
-    // parseRss: auto-detect RSS/Atom items using XML-mode parsing (no selector needed)
     if (block.type === 'parseRss') {
       const $xml = load(html, { xmlMode: true });
       const links: string[] = [];
 
-      // Try RSS <item> first
       $xml('item').each((_, el) => {
         const link = $xml(el).find('link').first().text().trim();
         if (link && /^https?:\/\//i.test(link)) links.push(link);
       });
 
-      // Fall back to Atom <entry>
       if (links.length === 0) {
         $xml('entry').each((_, el) => {
           const href = $xml(el).find('link').attr('href') ?? '';
@@ -240,7 +223,6 @@ export function runParserBlocks(html: string, sourceUrl: string, blocks: ParserB
             const resolved = new URL(href, baseOrigin || sourceUrl).href;
             if (/^https?:\/\//i.test(resolved)) links.push(resolved);
           } catch {
-            // skip unparseable hrefs
           }
         });
         lastOutput = JSON.stringify(applyMaxItems(links, block.maxItems));
@@ -275,7 +257,6 @@ export function runParserBlocks(html: string, sourceUrl: string, blocks: ParserB
   return lastOutput;
 }
 
-/** Applies maxItems limit to an array: 0 = unlimited, otherwise keep first N. */
 function applyMaxItems<T>(arr: T[], maxItems: number | undefined): T[] {
   const limit = maxItems ?? 3;
   return limit > 0 ? arr.slice(0, limit) : arr;

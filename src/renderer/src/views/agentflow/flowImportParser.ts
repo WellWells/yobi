@@ -1,20 +1,68 @@
-// Parses a raw unknown JSON value into an array of FlowDefinition objects.
-// Accepts three formats:
-//   1. Single FlowDefinition (has "steps" array and "trigger")
-//   2. Wrapped export { type: "agentflow-export", version: 1, flow: FlowDefinition }
-//   3. Array of the above formats
-import type { FlowDefinition } from '../../../../shared/types';
+import type { FlowDefinition, SkillInstance, TriggerConfig, TriggerType } from '../../../../shared/types';
+import { SKILL_TYPES } from '../../../../shared/flowSkillSchema';
+import { createId } from '../../store/flowHelpers';
 
-function isFlowDefinition(val: unknown): val is FlowDefinition {
+const TRIGGER_TYPES: TriggerType[] = ['hotkey', 'cron', 'manual', 'bot', 'chat'];
+
+function hasFlowShape(val: unknown): val is Record<string, unknown> {
   if (typeof val !== 'object' || val === null) return false;
   const obj = val as Record<string, unknown>;
   return (
-    typeof obj.id === 'string'
-    && typeof obj.name === 'string'
+    typeof obj.name === 'string'
     && Array.isArray(obj.steps)
     && typeof obj.trigger === 'object'
     && obj.trigger !== null
   );
+}
+
+function sanitizeTrigger(raw: unknown): TriggerConfig {
+  const obj = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {};
+  const type = TRIGGER_TYPES.includes(obj.type as TriggerType) ? obj.type as TriggerType : 'manual';
+  return { ...obj, type } as TriggerConfig;
+}
+
+function sanitizeStep(raw: unknown): SkillInstance | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.type !== 'string' || !SKILL_TYPES.includes(obj.type as SkillInstance['type'])) return null;
+  const config: Record<string, string> = {};
+  if (obj.config && typeof obj.config === 'object') {
+    for (const [key, value] of Object.entries(obj.config as Record<string, unknown>)) {
+      if (value === null || value === undefined) continue;
+      config[key] = typeof value === 'string' ? value : String(value);
+    }
+  }
+  return {
+    id: typeof obj.id === 'string' && obj.id ? obj.id : createId(),
+    type: obj.type as SkillInstance['type'],
+    label: typeof obj.label === 'string' ? obj.label : '',
+    config,
+    outputKey: typeof obj.outputKey === 'string' ? obj.outputKey : '',
+  };
+}
+
+function sanitizeFlow(obj: Record<string, unknown>): FlowDefinition | null {
+  const steps: SkillInstance[] = [];
+  for (const rawStep of obj.steps as unknown[]) {
+    const step = sanitizeStep(rawStep);
+    if (!step) return null;
+    steps.push(step);
+  }
+  const extraTriggers = Array.isArray(obj.extraTriggers)
+    ? obj.extraTriggers.filter((tr) => tr && typeof tr === 'object').map(sanitizeTrigger)
+    : [];
+  const now = new Date().toISOString();
+  return {
+    id: typeof obj.id === 'string' && obj.id ? obj.id : createId(),
+    name: obj.name as string,
+    description: typeof obj.description === 'string' ? obj.description : '',
+    enabled: typeof obj.enabled === 'boolean' ? obj.enabled : false,
+    trigger: sanitizeTrigger(obj.trigger),
+    ...(extraTriggers.length > 0 ? { extraTriggers } : {}),
+    steps,
+    createdAt: typeof obj.createdAt === 'string' ? obj.createdAt : now,
+    updatedAt: typeof obj.updatedAt === 'string' ? obj.updatedAt : now,
+  };
 }
 
 export function parseImportedFlows(raw: unknown): FlowDefinition[] | null {
@@ -31,13 +79,15 @@ export function parseImportedFlows(raw: unknown): FlowDefinition[] | null {
 
   const obj = raw as Record<string, unknown>;
 
-  // Wrapped export format
   if (obj.type === 'agentflow-export' && obj.flow) {
-    return isFlowDefinition(obj.flow) ? [obj.flow] : null;
+    return hasFlowShape(obj.flow) ? wrap(sanitizeFlow(obj.flow)) : null;
   }
 
-  // Direct FlowDefinition
-  if (isFlowDefinition(obj)) return [obj];
+  if (hasFlowShape(obj)) return wrap(sanitizeFlow(obj));
 
   return null;
+}
+
+function wrap(flow: FlowDefinition | null): FlowDefinition[] | null {
+  return flow ? [flow] : null;
 }

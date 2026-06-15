@@ -1,26 +1,23 @@
 import { createTheme, type MantineColorsTuple, type MantineThemeOverride } from '@mantine/core';
 import type { Theme } from '../store/themeStore';
 import { lerpHex } from './colorUtils';
-
-// Produces a 10-shade MantineColorsTuple from a single accent hex.
-// Accent placed at index 4 (primaryShade). 0-3 → white, 5-9 → black.
+import { LIGHT_THEMES } from './cssVariablesResolver';
 
 function generateColors(accent: string): MantineColorsTuple {
   return [
-    lerpHex(accent, '#ffffff', 0.85),  // 0 — very light
-    lerpHex(accent, '#ffffff', 0.65),  // 1 — light
-    lerpHex(accent, '#ffffff', 0.45),  // 2 — medium-light
-    lerpHex(accent, '#ffffff', 0.25),  // 3 — slightly light
-    accent,                            // 4 — accent (primaryShade)
-    lerpHex(accent, '#000000', 0.20),  // 5 — slightly dark
-    lerpHex(accent, '#000000', 0.38),  // 6 — medium-dark
-    lerpHex(accent, '#000000', 0.55),  // 7 — dark
-    lerpHex(accent, '#000000', 0.70),  // 8 — very dark
-    lerpHex(accent, '#000000', 0.83),  // 9 — near black
+    lerpHex(accent, '#ffffff', 0.85),
+    lerpHex(accent, '#ffffff', 0.65),
+    lerpHex(accent, '#ffffff', 0.45),
+    lerpHex(accent, '#ffffff', 0.25),
+    accent,
+    lerpHex(accent, '#000000', 0.20),
+    lerpHex(accent, '#000000', 0.38),
+    lerpHex(accent, '#000000', 0.55),
+    lerpHex(accent, '#000000', 0.70),
+    lerpHex(accent, '#000000', 0.83),
   ] as unknown as MantineColorsTuple;
 }
 
-// One accent per theme — all tuples are auto-generated
 const colorTuples: Record<Theme, MantineColorsTuple> = {
   dark:        generateColors('#0969da'),
   light:       generateColors('#0969da'),
@@ -42,6 +39,11 @@ const baseTheme: MantineThemeOverride = {
   cursorType: 'pointer',
   respectReducedMotion: true,
   components: {
+    Tooltip: {
+      defaultProps: {
+        openDelay: 450,
+      },
+    },
     Button: {
       styles: {
         root: {
@@ -65,15 +67,13 @@ export interface YobiMantineTheme {
   colorScheme: 'light' | 'dark';
 }
 
-const LIGHT_THEMES: readonly Theme[] = ['light', 'sepia', 'rosepine'];
-
 export function getMantineTheme(yobiTheme: Theme): YobiMantineTheme {
   const colorScheme: 'light' | 'dark' = LIGHT_THEMES.includes(yobiTheme) ? 'light' : 'dark';
 
   const theme = createTheme({
     ...baseTheme,
     primaryColor: 'brand',
-    primaryShade: 4, // accent is always at index 4 in generateColors
+    primaryShade: 4,
     colors: {
       brand: colorTuples[yobiTheme],
     },

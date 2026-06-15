@@ -1,10 +1,3 @@
-// Shared type definitions between main/preload/renderer
-
-// Single source of truth for all AI provider URLs and labels.
-// To add a new provider: add an entry here, then create a provider module
-// under src/main/providers/ and register it in providers/index.ts.
-
-// Duck AI model entry returned by fetchDuckaiModels (main) and DUCKAI_FETCH_MODELS IPC.
 export interface DuckaiModelInfo {
   id: string;
   label: string;
@@ -27,8 +20,58 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
   duckai: 'Duck AI',
 } as const;
 
+export const PROVIDERS = ['chatgpt', 'gemini', 'perplexity', 'duckai'] as const;
+
+export const AUTH_PROVIDERS = ['chatgpt', 'gemini', 'perplexity'] as const;
+export type AuthProvider = (typeof AUTH_PROVIDERS)[number];
+
+export const DEFAULT_PROVIDER_COMMANDS: Record<Provider, string> = {
+  chatgpt: 'gpt',
+  gemini: 'gemini',
+  perplexity: 'pplx',
+  duckai: 'duck',
+} as const;
+
+export const TELEGRAM_COMMAND_RE = /^[a-z][a-z0-9_]{0,31}$/;
+
+export function buildDuckaiModelUrl(modelId: string): string {
+  const url = new URL(PROVIDER_URLS.duckai);
+  url.searchParams.set('model', modelId);
+  return url.toString();
+}
+
+export function providerFromUrl(url: string): Provider {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (host.includes('perplexity.ai')) return 'perplexity';
+    if (host.includes('chatgpt.com') || host.includes('chat.openai.com')) return 'chatgpt';
+    if (host.includes('duck.ai')) return 'duckai';
+  } catch {
+  }
+  return 'gemini';
+}
+
+export interface PromptAttachment {
+  id: string;
+  name: string;
+  size: number;
+  mimeType: string;
+  path: string;
+  previewUrl?: string;
+}
+
+export interface ProviderAttachmentPolicy {
+  maxFiles: number;
+}
+
+export const PROVIDER_ATTACHMENT_POLICIES: Record<Provider, ProviderAttachmentPolicy> = {
+  gemini: { maxFiles: 10 },
+  chatgpt: { maxFiles: 0 },
+  perplexity: { maxFiles: 0 },
+  duckai: { maxFiles: 0 },
+};
+
 export const IPC = {
-  // Main → Renderer
   LOG: 'log',
   STATUS: 'status',
   QUEUE_UPDATE: 'queue:update',
@@ -41,13 +84,17 @@ export const IPC = {
   HOTKEY_CHANGED: 'hotkey:changed',
   TELEGRAM_RUNTIME: 'telegram:runtime',
   WORKER_STATUS: 'worker:status',
+  ACCOUNT_STATUS_CHANGED: 'account:status-changed',
 
-  // Renderer → Main
   WINDOW_MINIMIZE: 'window:minimize',
   WINDOW_MAXIMIZE: 'window:maximize',
   WINDOW_CLOSE: 'window:close',
   SHOW_WORKER: 'show-worker',
   HIDE_WORKER: 'hide-worker',
+  GET_ACCOUNT_STATUSES: 'account:get-statuses',
+  OPEN_ACCOUNT_LOGIN: 'account:open-login',
+  ACCOUNT_LOGOUT: 'account:logout',
+  PROVIDER_CLEAR_DATA: 'provider:clear-data',
   UPDATE_CHECK: 'update:check',
   GET_FILE_LIST: 'file:get-list',
   SEARCH_FILE_LIST: 'file:search',
@@ -66,13 +113,10 @@ export const IPC = {
   GET_CURRENT_LOCALE: 'language:get-current',
   SET_CURRENT_LOCALE: 'language:set-current',
   SET_LOCALE_AUTO: 'language:set-auto',
-  GET_LICENSE: 'license:get',
   OPEN_THIRD_PARTY_LICENSES: 'license:open-third-party',
   OPEN_EXTERNAL_URL: 'url:open-external',
   TRIGGER_PROMPT: 'prompt:trigger',
   TRIGGER_PROMPT_WITH_OPTIONS: 'prompt:trigger-with-options',
-  GET_CUSTOM_PROMPT: 'prompt:get-custom',
-  UPDATE_CUSTOM_PROMPT: 'prompt:update-custom',
   GET_SYNC_SYSTEM_LANGUAGE_TO_MODEL: 'prompt:get-sync-system-language-to-model',
   UPDATE_SYNC_SYSTEM_LANGUAGE_TO_MODEL: 'prompt:update-sync-system-language-to-model',
   GET_NOTIFY_ON_COMPLETE: 'notify:get-on-complete',
@@ -90,37 +134,35 @@ export const IPC = {
   UPDATE_TELEGRAM_ALLOW_GROUP_COMMANDS: 'telegram:update-allow-group-commands',
   UPDATE_TELEGRAM_DEFAULT_REPLY_MODE: 'telegram:update-default-reply-mode',
   UPDATE_TELEGRAM_ADMIN_USERS: 'telegram:update-admin-users',
+  UPDATE_TELEGRAM_PROVIDER_COMMANDS: 'telegram:update-provider-commands',
   GENERATE_TELEGRAM_PAIRING_CODE: 'telegram:generate-pairing-code',
   REVOKE_TELEGRAM_PAIRING_CODE: 'telegram:revoke-pairing-code',
   UNPAIR_TELEGRAM_USER: 'telegram:unpair-user',
+  GET_EMAIL_SETTINGS: 'email:get-settings',
+  UPDATE_EMAIL_ENABLED: 'email:update-enabled',
+  UPDATE_EMAIL_CREDENTIALS: 'email:update-credentials',
   GET_PROMPT_PREFERENCES: 'prompt:get-preferences',
   UPDATE_PROMPT_PREFERENCES: 'prompt:update-preferences',
+  GET_YOUTUBE_PROMPT: 'youtube:get-prompt',
+  UPDATE_YOUTUBE_PROMPT: 'youtube:update-prompt',
   GET_RESPONSE_TIMEOUT: 'response:get-timeout',
   UPDATE_RESPONSE_TIMEOUT: 'response:update-timeout',
   GET_APP_VERSION: 'app:get-version',
   GET_APP_ICON_DATA_URL: 'app:get-icon-data-url',
   GET_CLOSE_TO_TRAY: 'tray:get-close-to-tray',
   UPDATE_CLOSE_TO_TRAY: 'tray:update-close-to-tray',
-  GET_AUTO_SHOW_TRAY: 'tray:get-auto-show-tray',
-  UPDATE_AUTO_SHOW_TRAY: 'tray:update-auto-show-tray',
   GET_LAUNCH_AT_STARTUP: 'startup:get-launch',
   UPDATE_LAUNCH_AT_STARTUP: 'startup:update-launch',
-  LAUNCH_AT_STARTUP_CHANGED: 'startup:launch-changed',  // main → renderer push
-  // Notify-state push (main → renderer, e.g. toggled via tray menu)
+  LAUNCH_AT_STARTUP_CHANGED: 'startup:launch-changed',
   NOTIFY_ON_COMPLETE_CHANGED: 'notify:on-complete-changed',
   DUCKAI_FETCH_MODELS: 'duckai:fetch-models',
-  // Navigate (main → renderer)
   NAVIGATE_SETTINGS: 'navigate:settings',
-  // Close dialog (main ↔ renderer)
   SHOW_CLOSE_DIALOG: 'close-dialog:show',
   RESPOND_CLOSE_DIALOG: 'close-dialog:respond',
-  // Close-to-tray state push (main → renderer, e.g. saved via close dialog)
   CLOSE_TO_TRAY_CHANGED: 'tray:close-to-tray-changed',
-  // Theme persistence (persisted in main config so it survives rebuilds)
   GET_THEME: 'theme:get',
   UPDATE_THEME: 'theme:update',
   THEME_CHANGED: 'theme:changed',
-  // UI layout preferences (persisted in main config)
   GET_LAYOUT_MODE: 'ui:get-layout-mode',
   UPDATE_LAYOUT_MODE: 'ui:update-layout-mode',
   GET_MARKDOWN_ZOOM: 'ui:get-markdown-zoom',
@@ -130,20 +172,30 @@ export const IPC = {
   OPEN_CONFIG_DIR: 'config:open-dir',
   EXPORT_CONFIG: 'config:export',
   IMPORT_CONFIG: 'config:import',
+  SELECT_PATH: 'dialog:select-path',
   FLOW_GET_ALL: 'flow:get-all',
   FLOW_SAVE: 'flow:save',
   FLOW_DELETE: 'flow:delete',
   FLOW_DUPLICATE: 'flow:duplicate',
   FLOW_MOVE: 'flow:move',
+  FLOW_REORDER: 'flow:reorder',
   FLOW_EXECUTE: 'flow:execute',
+  FLOW_RUN_CHAT_COMMAND: 'flow:run-chat-command',
+  FLOW_ABORT: 'flow:abort',
+  FLOW_GENERATE: 'flow:generate',
   FLOW_EXECUTION_LOG: 'flow:execution-log',
   FLOW_EXECUTION_STARTED: 'flow:execution-started',
   FLOW_EXECUTION_ENDED: 'flow:execution-ended',
   FLOW_EXPORT: 'flow:export',
+  FLOW_EXPORT_RESULT: 'flow:export-result',
   RSS_HAS_CHECKPOINT: 'rss:has-checkpoint',
   RSS_CLEAR_CHECKPOINT: 'rss:clear-checkpoint',
+  RSS_DISCOVER_FEED: 'rss:discover-feed',
   SCRAPER_HAS_CHECKPOINT: 'scraper:has-checkpoint',
   SCRAPER_CLEAR_CHECKPOINT: 'scraper:clear-checkpoint',
+  YT_SUBS_HAS_CHECKPOINT: 'youtube-subs:has-checkpoint',
+  YT_SUBS_CLEAR_CHECKPOINT: 'youtube-subs:clear-checkpoint',
+  CAPTURE_PAGE: 'browser:capture-page',
 } as const;
 
 export interface FlowExecutionEvent {
@@ -151,12 +203,30 @@ export interface FlowExecutionEvent {
   name: string;
 }
 
+export interface FeedCandidate {
+  url: string;
+  title: string;
+}
+
+export interface SelectPathRequest {
+  mode?: 'file' | 'folder';
+  filters?: { name: string; extensions: string[] }[];
+  readContent?: boolean;
+}
+
+export interface SelectPathResult {
+  path: string;
+  content?: string;
+}
+
 export type AppStatus = 'idle' | 'processing';
 
-// Pushed main → renderer so the title-bar worker button can reflect why the
-// worker window needs the user: 'login' (sign-in required) or 'verification'
-// (Cloudflare challenge). 'idle' clears the attention indicator.
 export type WorkerAttention = 'idle' | 'login' | 'verification';
+
+export interface AccountStatus {
+  provider: AuthProvider;
+  loggedIn: boolean;
+}
 
 export interface QueueState {
   total: number;
@@ -174,8 +244,8 @@ export interface QueueTaskItem {
 export interface OutputFile {
   name: string;
   path: string;
-  timestamp: string; // ISO string
-  preview: string;   // first 80 chars of content
+  timestamp: string;
+  preview: string;
   provider?: string;
 }
 
@@ -217,12 +287,18 @@ export interface TelegramPairingState {
   pairedUsers: TelegramPairedUser[];
 }
 
+export interface TelegramProviderCommand {
+  enabled: boolean;
+  command: string;
+  modelId?: string;
+}
+
 export interface TelegramReplyTarget {
   chatId: number;
   userId: number;
   requestMessageId?: number;
   queuedMessageId?: number;
-  command: 'gpt' | 'gemini' | 'pplx';
+  command: string;
 }
 
 export interface TelegramRuntimeSnapshot {
@@ -239,8 +315,25 @@ export interface TelegramSettingsSnapshot {
   allowGroupCommands: boolean;
   defaultReplyMode: TelegramReplyMode;
   adminUserIds: number[];
+  providerCommands: Record<Provider, TelegramProviderCommand>;
   runtime: TelegramRuntimeSnapshot;
   pairing: TelegramPairingState;
+}
+
+export interface EmailSettingsSnapshot {
+  enabled: boolean;
+  host: string;
+  port: number;
+  user: string;
+  hasPassword: boolean;
+  passwordPreview: string;
+}
+
+export interface SmtpCredentials {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
 }
 
 export interface Task {
@@ -248,17 +341,21 @@ export interface Task {
   prompt: string;
   instruction?: string;
   targetUrl?: string;
+  title?: string;
   source?: 'hotkey' | 'ui' | 'telegram';
   replyTarget?: TelegramReplyTarget;
+  attachments?: string[];
 }
 
 export interface PromptTriggerOptions {
   prompt: string;
   targetUrl?: string;
+  attachments?: string[];
 }
 
 export type CaptureFormat = 'png' | 'webp' | 'pdf';
 export type CaptureMode = 'save' | 'copy';
+export type CardTheme = 'light' | 'dark';
 
 export interface CaptureSettings {
   palette: string;
@@ -288,6 +385,7 @@ export interface MarkdownCaptureOptions {
   showTimestamp: boolean;
   width: number;
   background: string;
+  cardTheme: CardTheme;
 }
 
 export interface MarkdownCaptureRequest {
@@ -301,7 +399,7 @@ export interface MarkdownCaptureResult {
   error?: string;
 }
 
-export type SkillType = 'shell' | 'browser' | 'llm' | 'clipboard' | 'utility' | 'bot' | 'rss' | 'stop' | 'comment' | 'scraper' | 'loop' | 'end_loop' | 'if' | 'end_if';
+export type SkillType = 'shell' | 'run' | 'js' | 'browser' | 'browser_open' | 'browser_js' | 'browser_close' | 'llm' | 'clipboard' | 'delay' | 'notify' | 'capture' | 'bot' | 'rss' | 'stop' | 'comment' | 'scraper' | 'loop' | 'end_loop' | 'if' | 'end_if' | 'sysinfo' | 'http' | 'youtube' | 'youtube_subs' | 'power' | 'restart_app' | 'file_write' | 'file_read' | 'file_list' | 'file_delete' | 'file_download' | 'email_send' | 'text' | 'stock' | 'forex' | 'weather' | 'random' | 'break' | 'continue';
 
 export interface SkillInstance {
   id: string;
@@ -311,18 +409,17 @@ export interface SkillInstance {
   outputKey: string;
 }
 
-export type TriggerType = 'hotkey' | 'cron' | 'manual' | 'bot';
+export type TriggerType = 'hotkey' | 'cron' | 'manual' | 'bot' | 'chat';
 export type ScheduleMode = 'interval' | 'weekly';
 
 export interface TriggerConfig {
   type: TriggerType;
   keys?: string;
   cronExpression?: string;
-  // Human-friendly schedule builder fields (auto-computed into cronExpression)
   scheduleMode?: ScheduleMode;
   intervalValue?: number;
   intervalUnit?: 'minutes' | 'hours';
-  weekdays?: number[];      // 0=Sun, 1=Mon, ..., 6=Sat
+  weekdays?: number[];
   scheduleHour?: number;
   scheduleMinute?: number;
   repeatWithinDay?: boolean;
@@ -330,10 +427,12 @@ export interface TriggerConfig {
   repeatEveryUnit?: 'minutes' | 'hours';
   endHour?: number;
   endMinute?: number;
-  // Bot trigger fields (type === 'bot')
-  botCommand?: string;             // command name without slash, e.g. "my_cmd"
-  botCommandDescription?: string;  // displayed in Telegram help
-  botInputVariable?: string;       // context variable seeded from argument text, e.g. "input"
+  botCommand?: string;
+  botCommandDescription?: string;
+  botInputVariable?: string;
+  chatCommand?: string;
+  chatCommandDescription?: string;
+  chatInputVariable?: string;
 }
 
 export interface FlowDefinition {
@@ -342,6 +441,7 @@ export interface FlowDefinition {
   description: string;
   enabled: boolean;
   trigger: TriggerConfig;
+  extraTriggers?: TriggerConfig[];
   steps: SkillInstance[];
   createdAt: string;
   updatedAt: string;
@@ -367,7 +467,18 @@ export interface FlowExecutionResult {
   completedSteps: number;
   totalSteps: number;
   completedAt: string;
+  aborted?: boolean;
+  finalOutput?: string;
 }
+
+export interface ChatCommandResult {
+  result: FlowExecutionResult;
+  filePath?: string;
+}
+
+export type FlowGenerationResult =
+  | { ok: true; flow: FlowDefinition }
+  | { ok: false; error: string };
 
 export type PromptTone = 'default' | 'professional' | 'casual' | 'direct';
 export type PromptLength = 'auto' | 'concise' | 'detailed';
@@ -388,12 +499,12 @@ export interface PromptPreferences {
 
 export interface SettingsSnapshot {
   hotkey: string;
-  geminiUrl: string;
   locale: string;
   theme: string;
   syncSystemLanguageToModel: boolean;
   notifyOnComplete: boolean;
   promptPreferences: PromptPreferences;
+  youtubePrompt: string;
   responseTimeout: number;
   closeToTray: boolean;
   launchAtStartup: boolean;

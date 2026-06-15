@@ -1,13 +1,3 @@
-// safeStorage-based token encryption
-//
-// Versioned encryption format:
-// 'enc:v1:<base64>' — encrypted with safeStorage (OS-level key)
-// Plain string      — legacy plaintext or safeStorage unavailable
-//
-// safeStorage APIs require the app to be ready; callers must only invoke
-// these after app.whenReady() resolves (config.ts enforces this via
-// initSensitiveConfig()).
-
 import { safeStorage } from 'electron';
 
 const ENCRYPTED_PREFIX = 'enc:v1:';
@@ -17,8 +7,6 @@ export function encryptToken(token: string): string {
   if (safeStorage.isEncryptionAvailable()) {
     return ENCRYPTED_PREFIX + safeStorage.encryptString(token).toString('base64');
   }
-  // Fallback: safeStorage unavailable (e.g., libsecret not installed on Linux).
-  // Warn the operator so they are aware the token is stored as plaintext.
   console.warn('[config] safeStorage unavailable — botToken stored as plaintext. Install libsecret on Linux to enable OS-level encryption.');
   return token;
 }
@@ -37,6 +25,5 @@ export function decryptToken(stored: string): string {
       return '';
     }
   }
-  // Legacy plaintext value — return as-is
   return stored;
 }

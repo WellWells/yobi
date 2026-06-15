@@ -1,5 +1,3 @@
-// Language list and locale change IPC handlers.
-
 import { ipcMain } from 'electron';
 import * as fs from 'node:fs/promises';
 import { IPC } from '../../shared/types';
@@ -8,10 +6,6 @@ import { loadLanguageData, setLangCache } from '../i18n';
 import { getLanguageDir } from '../files';
 import type { IpcContext } from './context';
 
-/**
- * Persists a locale change and refreshes the language cache, tray menu and bot.
- * markUserSet distinguishes an explicit user choice from auto-detection.
- */
 function applyLocaleChange(ctx: IpcContext, lang: string, markUserSet: boolean): boolean {
   const nextLocale = (lang ?? '').trim();
   if (!nextLocale) return false;
@@ -44,9 +38,7 @@ export function registerLocaleHandlers(ctx: IpcContext): void {
   }));
   ipcMain.handle(IPC.GET_LANGUAGE_CONTENT, (_event, lang: string) => loadLanguageData(lang));
 
-  // User-initiated locale change — marks locale as explicitly chosen by user
   ipcMain.handle(IPC.SET_CURRENT_LOCALE, (_event, lang: string) => applyLocaleChange(ctx, lang, true));
 
-  // Auto-detected locale save — stores detected locale without marking as user-set
   ipcMain.handle(IPC.SET_LOCALE_AUTO, (_event, lang: string) => applyLocaleChange(ctx, lang, false));
 }

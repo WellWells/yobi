@@ -1,9 +1,3 @@
-// Registers the global capture hotkey.
-//
-// On trigger: captures the selected text, resolves it (URL → analysis prompt when
-// applicable) and enqueues a task. On macOS, guards against the missing
-// Accessibility permission that would otherwise make keystroke simulation fail.
-
 import { registerHotkey } from './hotkey';
 import { config } from './config';
 import { getProviderLabel } from './providers';
@@ -26,8 +20,6 @@ let _accessibilityPrompted = false;
 export function bindHotkey(deps: HotkeyDeps): void {
   const { queue } = deps;
   const ok = registerHotkey(config.hotkey, async () => {
-    // macOS: Accessibility permission is required for keystroke simulation via osascript.
-    // Without it, the simulated Cmd+C silently fails, leaving the clipboard empty.
     if (process.platform === 'darwin' && !checkMacosAccessibility()) {
       const langData = getLangCache();
       const errorMsg = langData['hotkey.error.accessibility'] ??
@@ -48,20 +40,24 @@ export function bindHotkey(deps: HotkeyDeps): void {
     }
 
     const langData = getLangCache();
-    const prompt = await resolveUrlPrompt(rawText, {
+    const resolved = await resolveUrlPrompt(rawText, {
       langData,
+      youtubePrompt: config.youtubePrompt,
       onLog: sendLog,
       onNotify: (title, body) => sendWebNotification(title, body, 'info'),
     });
+    const prompt = resolved.prompt;
+    const targetUrl = resolved.forceProviderUrl ?? config.targetUrl;
 
     const id = createTaskId();
     queue.enqueue({
       id,
       prompt,
-      targetUrl: config.targetUrl,
+      targetUrl,
+      title: resolved.title,
       source: 'hotkey',
     });
-    sendLog(`[${id}] 🔥 Queued for ${getProviderLabel(config.targetUrl)} (queue size: ${queue.size + 1})`);
+    sendLog(`[${id}] 🔥 Queued for ${getProviderLabel(targetUrl)} (queue size: ${queue.size + 1})`);
 
     const notifyTitle = langData['notify.queued.title'] ?? 'Yobi';
     const notifyBodyTemplate = langData['notify.queued.body'] ?? 'Queued: "{{prompt}}"';

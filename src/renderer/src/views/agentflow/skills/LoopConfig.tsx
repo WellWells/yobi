@@ -1,5 +1,3 @@
-// Loop Array skill config editor.
-// Provides: Input array variable, loop item variable name.
 import React from 'react';
 import { Stack, Text } from '@mantine/core';
 import { AppTextInput } from '../../../components/AppTextInput';

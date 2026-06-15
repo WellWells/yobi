@@ -1,4 +1,3 @@
-// Shared prop types for all skill config editor components.
 import type React from 'react';
 import type { SkillInstance, SkillType } from '../../../../../shared/types';
 

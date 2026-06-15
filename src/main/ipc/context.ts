@@ -1,9 +1,3 @@
-// Shared context and helpers for IPC handler registrars.
-//
-// setupIpcHandlers builds one IpcContext and passes it to each registerXxxHandlers
-// function. Stateless helpers (path validation, dialog pickers) live here too so
-// the focused registrars can share them without re-importing electron internals.
-
 import { dialog } from 'electron';
 import * as path from 'node:path';
 import type {
@@ -37,20 +31,18 @@ export interface IpcContext {
 export function buildSettingsSnapshot(): SettingsSnapshot {
   return {
     hotkey: config.hotkey,
-    geminiUrl: config.targetUrl,
     locale: config.locale,
     theme: config.theme,
     syncSystemLanguageToModel: config.syncSystemLanguageToModel,
     notifyOnComplete: config.notifyOnComplete,
     promptPreferences: config.promptPreferences,
+    youtubePrompt: config.youtubePrompt,
     responseTimeout: config.responseTimeout,
     closeToTray: config.closeToTray,
     launchAtStartup: config.launchAtStartup,
   };
 }
 
-// Path validation — restricts file operations to the output directory.
-// Prevents path traversal attacks from malicious IPC messages.
 export async function isAllowedFilePath(filePath: string): Promise<boolean> {
   if (!filePath || typeof filePath !== 'string') return false;
   const resolved = path.resolve(filePath);
@@ -58,7 +50,6 @@ export async function isAllowedFilePath(filePath: string): Promise<boolean> {
   return resolved.startsWith(outputDir + path.sep) || resolved === outputDir;
 }
 
-/** Shows a save dialog anchored to the window when available, falling back to a detached dialog. */
 export function showSaveDialogForWin(
   win: BrowserWindow | null,
   opts: SaveDialogOptions,
@@ -66,7 +57,6 @@ export function showSaveDialogForWin(
   return win && !win.isDestroyed() ? dialog.showSaveDialog(win, opts) : dialog.showSaveDialog(opts);
 }
 
-/** Shows an open dialog anchored to the window when available, falling back to a detached dialog. */
 export function showOpenDialogForWin(
   win: BrowserWindow | null,
   opts: OpenDialogOptions,

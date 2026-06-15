@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActionIcon, Box, Group, Stack, Text, Button as MButton } from '@mantine/core';
+import { ActionIcon, Box, Group, Stack, Text, Tooltip, Button as MButton } from '@mantine/core';
 import {
   AppWindow, Bell, Keyboard, Languages, Palette, RotateCcw, X,
 } from 'lucide-react';
@@ -13,20 +13,15 @@ type HotkeyRecorder = ReturnType<typeof useHotkeyRecorder>;
 type SystemSettings = ReturnType<typeof useSystemSettings>;
 
 interface Props {
-  // Hotkey
   hotkey: HotkeyRecorder;
-  // System settings
   system: SystemSettings;
-  // i18n
   t: (key: string) => string;
   locale: string;
   availableLocales: string[];
   onSetLocale: (locale: string) => Promise<void>;
   getLocaleLabel: (locale: string) => string;
-  // Theme
   theme: string;
   onSetTheme: (theme: string) => void;
-  // Nav helpers
   showSection: (tags: readonly string[], category: 'general') => boolean;
   isSearching: boolean;
   sectionGap: number;
@@ -79,14 +74,16 @@ export const GeneralSection: React.FC<Props> = ({
             {t('settings.hotkey.cancelRecording')}
           </MButton>
         ) : (
-          <ActionIcon
-            variant="default"
-            size={32}
-            onClick={() => { void hotkey.handleClearHotkey(); }}
-            title={t('settings.hotkey.resetDefault')}
-          >
-            <RotateCcw size={14} />
-          </ActionIcon>
+          <Tooltip label={t('settings.hotkey.resetDefault')} position="top">
+            <ActionIcon
+              variant="default"
+              size={32}
+              onClick={() => { void hotkey.handleClearHotkey(); }}
+              aria-label={t('settings.hotkey.resetDefault')}
+            >
+              <RotateCcw size={14} />
+            </ActionIcon>
+          </Tooltip>
         )}
       </Group>
       <Text fz="var(--font-size-sm)" mt={8} c="dimmed">{t('settings.hotkey.hint')}</Text>

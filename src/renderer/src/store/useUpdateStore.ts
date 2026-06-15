@@ -34,7 +34,6 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     if (listenersInitialized) return;
     listenersInitialized = true;
 
-    // Store cleanup functions to prevent IPC listener leaks during HMR
     listenerCleanups = [
       updateApi.onUpdateAvailable((rawPayload) => {
         const payload = normalizePayload(rawPayload);
@@ -86,7 +85,6 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   },
 }));
 
-// HMR cleanup: unsubscribe stale listeners so re-initialization works correctly.
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     listenerCleanups.forEach((fn) => fn());

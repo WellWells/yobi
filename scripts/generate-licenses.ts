@@ -1,13 +1,3 @@
-// Generate THIRD-PARTY-LICENSES.txt from the
-// production dependency closure recorded in package-lock.json.
-//
-// The output is bundled into packaged builds via electron-builder extraResources
-// so distributed copies carry the upstream license notices — required when
-// redistributing MIT/BSD/ISC/Apache-licensed code, and increasingly relevant once
-// any proprietary/subscription features ship alongside them.
-//
-// Run: tsx scripts/generate-licenses.ts
-
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -87,7 +77,6 @@ function licenseText(dir: string): string {
         const text = fs.readFileSync(file, 'utf8').trim();
         if (text) return text;
       } catch {
-        // unreadable — fall through to the next candidate
       }
     }
   }
@@ -101,10 +90,10 @@ function collectPackages(): Pkg[] {
   const result: Pkg[] = [];
 
   for (const [key, entry] of Object.entries(packages)) {
-    if (key === '' || entry.dev) continue;          // skip root project + dev-only deps
+    if (key === '' || entry.dev) continue;
     const marker = 'node_modules/';
     const at = key.lastIndexOf(marker);
-    if (at === -1) continue;                          // skip workspace / linked entries
+    if (at === -1) continue;
     const name = key.slice(at + marker.length);
     const dir = path.join(ROOT, key);
     const manifest = readManifest(dir);

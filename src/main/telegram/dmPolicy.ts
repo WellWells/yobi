@@ -23,11 +23,10 @@ export function hasPairedUser(state: TelegramPairingState, userId: number): bool
 export function issuePairingCode(
   state: TelegramPairingState,
   sessionId: string,
-  ttlMs: number = PAIRING_CODE_TTL_MS,
 ): { nextState: TelegramPairingState; code: string; expiresAt: string } {
   const normalized = normalizePairingState(state);
   const now = Date.now();
-  const expiresAt = new Date(now + Math.max(60_000, ttlMs)).toISOString();
+  const expiresAt = new Date(now + PAIRING_CODE_TTL_MS).toISOString();
   const existing = new Set(normalized.pendingCodes.map((item) => item.code));
   const code = createPairingCode(existing);
   return {
@@ -98,7 +97,6 @@ export interface PairingBridge {
   ) => { ok: boolean; reason?: string };
 }
 
-/** Builds pairing callbacks over a persisted pairing-state accessor (DI for the runtime). */
 export function createPairingBridge(
   getPairing: () => TelegramPairingState,
   savePairing: (next: TelegramPairingState) => void,

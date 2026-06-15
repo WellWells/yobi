@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 import { Box, Button, Flex, Group, Stack, Text } from '@mantine/core';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
-import { PanelHeader } from './PanelHeader';
+import { PanelToolbar } from './PanelToolbar';
 import { AlertCircle, AlertTriangle, CheckCircle2, Download, Info, ScrollText, Trash2, Zap } from 'lucide-react';
 import styles from './LogPanel.module.css';
 
@@ -62,7 +63,9 @@ const LogEntry = React.memo<{ log: string; index: number }>(({ log, index }) => 
 });
 
 export const LogPanel: React.FC = () => {
-  const { logs, clearLogs } = useAppStore();
+  const { logs, clearLogs } = useAppStore(
+    useShallow((s) => ({ logs: s.logs, clearLogs: s.clearLogs })),
+  );
   const { t } = useI18nStore();
   const viewportRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
@@ -108,29 +111,23 @@ export const LogPanel: React.FC = () => {
 
   return (
     <Stack gap={0} h="100%" style={{ overflow: 'hidden' }}>
-      <PanelHeader
-        label={t('nav.logs')}
-        icon={<ScrollText size={13} />}
-        px={16}
-        py={8}
-        rightSection={(
-          <Group gap={8} wrap="nowrap">
-            <Text fz="var(--font-size-sm)" c="dimmed">{logs.length} {t('log.entries')}</Text>
-            <Button variant="default" size="compact-xs" onClick={handleClear} leftSection={<Trash2 size={11} />}>
-              {t('log.clear')}
-            </Button>
-            <Button
-              variant="default"
-              size="compact-xs"
-              onClick={handleExport}
-              disabled={logs.length === 0}
-              leftSection={<Download size={11} />}
-            >
-              {t('log.export')}
-            </Button>
-          </Group>
-        )}
-      />
+      <PanelToolbar px={16} py={8} withBottomBorder>
+        <Text fz="var(--font-size-sm)" c="dimmed">{logs.length} {t('log.entries')}</Text>
+        <Group gap={8} wrap="nowrap">
+          <Button variant="default" size="compact-xs" onClick={handleClear} leftSection={<Trash2 size={11} />}>
+            {t('log.clear')}
+          </Button>
+          <Button
+            variant="default"
+            size="compact-xs"
+            onClick={handleExport}
+            disabled={logs.length === 0}
+            leftSection={<Download size={11} />}
+          >
+            {t('log.export')}
+          </Button>
+        </Group>
+      </PanelToolbar>
 
       <Box
         flex={1}

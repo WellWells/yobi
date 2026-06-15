@@ -1,9 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import { settingsApi, systemApi } from '../api/electronApi';
 import { getResponseAliases } from '../utils/parseMarkdownBlocks';
+import {
+  CAPTURE_PALETTES,
+  buildCaptureBackground,
+  paletteCardTheme,
+  type CaptureDirection,
+} from './captureTheme';
 import type { CaptureFormat, CaptureSettings, MarkdownCapturePayload } from '../../../shared/types';
+
+export { CAPTURE_PALETTES, buildCaptureBackground };
+export type { CaptureDirection };
 
 export type ExportToast = {
   id: number;
@@ -12,32 +22,9 @@ export type ExportToast = {
   fileName?: string;
 } | null;
 
-export const CAPTURE_PALETTES = [
-  { key: 'aurora', label: 'Aurora', from: '#0f172a', to: '#3b0764' },
-  { key: 'mint',   label: 'Mint',   from: '#0f766e', to: '#1f2937' },
-  { key: 'rose',   label: 'Rose',   from: '#7f1d1d', to: '#312e81' },
-  { key: 'ocean',  label: 'Ocean',  from: '#0c4a6e', to: '#1e293b' },
-  { key: 'sunset', label: 'Sunset', from: '#7c2d12', to: '#4338ca' },
-  { key: 'forest', label: 'Forest', from: '#14532d', to: '#1f2937' },
-  { key: 'violet', label: 'Violet', from: '#312e81', to: '#4a044e' },
-  { key: 'steel',  label: 'Steel',  from: '#334155', to: '#111827' },
-  { key: 'ember',  label: 'Ember',  from: '#7f1d1d', to: '#111827' },
-] as const;
-
-export type CaptureDirection = 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'nw' | 'c';
-
-export function buildCaptureBackground(from: string, to: string, direction: CaptureDirection): string {
-  if (direction === 'c') return `radial-gradient(circle at center, ${from} 0%, ${to} 100%)`;
-  const angleMap: Record<Exclude<CaptureDirection, 'c'>, number> = {
-    n: 0, ne: 45, e: 90, se: 135, s: 180, sw: 225, w: 270, nw: 315,
-  };
-  return `linear-gradient(${angleMap[direction]}deg, ${from} 0%, ${to} 100%)`;
-}
-
 function stripAfterResponseHeading(raw: string): string {
   const lines = raw.split('\n');
   const responseAliases = getResponseAliases();
-  // Uses i18n-derived response heading aliases as the single source of truth.
   const responseIdx = lines.findIndex((line) => {
     const m = line.trim().match(/^##\s+(.+)$/);
     return m != null && responseAliases.has(m[1].trim());
@@ -59,7 +46,13 @@ function buildSummary(raw: string): string {
 }
 
 export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
-  const { fileContent, selectedFile, parsedBlocks } = useAppStore();
+  const { fileContent, selectedFile, parsedBlocks } = useAppStore(
+    useShallow((s) => ({
+      fileContent: s.fileContent,
+      selectedFile: s.selectedFile,
+      parsedBlocks: s.parsedBlocks,
+    })),
+  );
   const { t } = useI18nStore();
 
   const [captureDialogOpen, setCaptureDialogOpen] = useState(false);
@@ -113,6 +106,8 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
     return buildCaptureBackground(palette.from, palette.to, captureDirection);
   }, [capturePaletteKey, captureDirection]);
 
+  const captureCardTheme = useMemo(() => paletteCardTheme(capturePaletteKey), [capturePaletteKey]);
+
   const capturePreview = useMemo<MarkdownCapturePayload | null>(() => {
     if (!fileContent || !selectedFile || !parsedBlocks) return null;
     const title = captureTitle.trim() || parsedBlocks.title || selectedFile.name.replace(/\.md$/i, '');
@@ -146,6 +141,7 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
           fileName: captureFileName.trim(),
           width: 1200,
           background: captureBackground,
+          cardTheme: captureCardTheme,
         },
       });
       if (!result.ok) {
@@ -172,7 +168,7 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
       setCaptureBusy(false);
       setCaptureBusyMode(null);
     }
-  }, [capturePreview, captureFormat, captureShowPrompt, captureShowProvider, captureShowTimestamp, captureFileName, captureBackground, t, setExportToast]);
+  }, [capturePreview, captureFormat, captureShowPrompt, captureShowProvider, captureShowTimestamp, captureFileName, captureBackground, captureCardTheme, t, setExportToast]);
 
   return {
     captureDialogOpen, setCaptureDialogOpen,
@@ -185,7 +181,7 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
     captureTitle, setCaptureTitle,
     captureFileName, setCaptureFileName,
     captureBusy, captureBusyMode,
-    captureBackground, capturePreview,
+    captureBackground, captureCardTheme, capturePreview,
     handleCaptureImage,
   };
 }

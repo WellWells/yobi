@@ -106,7 +106,6 @@ export function initializeUpdater(deps: UpdaterDeps): void {
     const msg = getErrorMessage(error);
     sendLogRef(`⚠️ Update check failed: ${msg}`);
     if (isNetworkError(error)) {
-      // Treat connectivity issues as "already on latest" — no alarming UI.
       sendToRendererRef(IPC.UPDATE_NOT_AVAILABLE);
     } else {
       sendToRendererRef(IPC.UPDATE_ERROR);
@@ -124,7 +123,6 @@ export async function checkForUpdates(): Promise<boolean> {
     await autoUpdater.checkForUpdates();
     return true;
   } catch {
-    // The 'error' event listener already handles error classification and IPC.
     return false;
   } finally {
     checking = false;

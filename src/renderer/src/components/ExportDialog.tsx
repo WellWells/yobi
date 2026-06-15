@@ -1,21 +1,17 @@
 import React from 'react';
 import { Modal, Button, Box, Flex, Group, Text } from '@mantine/core';
 import 'katex/dist/katex.min.css';
-import type { CaptureFormat, MarkdownCapturePayload } from '../../../shared/types';
-import {
-  Clipboard,
-  Download,
-  Image as ImageIcon,
-  Save,
-  Upload,
-} from 'lucide-react';
+import type { CaptureFormat, CardTheme, MarkdownCapturePayload } from '../../../shared/types';
+import { Clipboard, Download, Image as ImageIcon, Save, Upload, } from 'lucide-react';
 import { ExportSettingsPanel } from './exportDialog/ExportSettingsPanel';
 import { ExportPreviewPanel } from './exportDialog/ExportPreviewPanel';
+import { AppButton } from './AppButton';
 
 interface ExportDialogProps {
   open: boolean;
   background: string;
-  palettes: readonly { key: string; from: string; to: string; label: string }[];
+  cardTheme: CardTheme;
+  palettes: readonly { key: string; from: string; to: string; label: string; card: CardTheme }[];
   selectedPalette: string;
   setSelectedPalette: (value: string) => void;
   direction: string;
@@ -44,6 +40,7 @@ interface ExportDialogProps {
 export const ExportDialog: React.FC<ExportDialogProps> = ({
   open,
   background,
+  cardTheme,
   palettes,
   selectedPalette,
   setSelectedPalette,
@@ -112,69 +109,70 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
       }}
     >
 
-        <Flex flex={1} style={{ minHeight: 0, overflow: 'hidden' }}>
-          <ExportSettingsPanel
-            palettes={palettes}
-            selectedPalette={selectedPalette}
-            setSelectedPalette={setSelectedPalette}
-            direction={direction}
-            setDirection={setDirection}
-            showPrompt={showPrompt}
-            setShowPrompt={setShowPrompt}
-            showProvider={showProvider}
-            setShowProvider={setShowProvider}
-            showTimestamp={showTimestamp}
-            setShowTimestamp={setShowTimestamp}
-            title={title}
-            setTitle={setTitle}
-            fileName={fileName}
-            setFileName={setFileName}
-            format={format}
-            setFormat={setFormat}
-            t={t}
-          />
+      <Flex flex={1} style={{ minHeight: 0, overflow: 'hidden' }}>
+        <ExportSettingsPanel
+          palettes={palettes}
+          selectedPalette={selectedPalette}
+          setSelectedPalette={setSelectedPalette}
+          direction={direction}
+          setDirection={setDirection}
+          showPrompt={showPrompt}
+          setShowPrompt={setShowPrompt}
+          showProvider={showProvider}
+          setShowProvider={setShowProvider}
+          showTimestamp={showTimestamp}
+          setShowTimestamp={setShowTimestamp}
+          title={title}
+          setTitle={setTitle}
+          fileName={fileName}
+          setFileName={setFileName}
+          format={format}
+          setFormat={setFormat}
+          t={t}
+        />
 
-          <ExportPreviewPanel
-            background={background}
-            showPrompt={showPrompt}
-            showProvider={showProvider}
-            showTimestamp={showTimestamp}
-            preview={preview}
-            t={t}
-          />
-        </Flex>
+        <ExportPreviewPanel
+          background={background}
+          cardTheme={cardTheme}
+          showPrompt={showPrompt}
+          showProvider={showProvider}
+          showTimestamp={showTimestamp}
+          preview={preview}
+          t={t}
+        />
+      </Flex>
 
-        <Group
-          justify="flex-end"
-          gap={8}
-          p="12px 16px"
-          bg="var(--bg-secondary)"
-          style={{ borderTop: '1px solid var(--border)', flexShrink: 0 }}
+      <Group
+        justify="flex-end"
+        gap={8}
+        p="12px 16px"
+        bg="var(--bg-secondary)"
+        style={{ borderTop: '1px solid var(--border)', flexShrink: 0 }}
+      >
+        <Button variant="subtle" onClick={onCancel}>
+          {t('dialog.cancel')}
+        </Button>
+        <AppButton
+          variant="outline"
+          onClick={onCopy}
+          disabled={busy}
+          loading={busyMode === 'copy'}
+          justify="center"
+          leftSection={isPdf ? <Clipboard size={14} /> : <ImageIcon size={14} />}
         >
-          <Button variant="subtle" onClick={onCancel}>
-            {t('dialog.cancel')}
-          </Button>
-          <Button
-            variant="outline"
-            onClick={onCopy}
-            disabled={busy}
-            loading={busyMode === 'copy'}
-            justify="center"
-            leftSection={busyMode === 'copy' ? undefined : (isPdf ? <Clipboard size={14} /> : <ImageIcon size={14} />)}
-          >
-            {busyMode === 'copy' ? t('capture.copying') : t('capture.copy')}
-          </Button>
-          <Button
-            variant="filled"
-            onClick={onSave}
-            disabled={busy}
-            loading={busyMode === 'save'}
-            justify="center"
-            leftSection={busyMode === 'save' ? undefined : (isPdf ? <Save size={14} /> : <Download size={14} />)}
-          >
-            {busyMode === 'save' ? t('capture.exporting') : saveLabel}
-          </Button>
-        </Group>
-      </Modal>
+          {busyMode === 'copy' ? t('capture.copying') : t('capture.copy')}
+        </AppButton>
+        <AppButton
+          variant="filled"
+          onClick={onSave}
+          disabled={busy}
+          loading={busyMode === 'save'}
+          justify="center"
+          leftSection={isPdf ? <Save size={14} /> : <Download size={14} />}
+        >
+          {busyMode === 'save' ? t('capture.exporting') : saveLabel}
+        </AppButton>
+      </Group>
+    </Modal>
   );
 };

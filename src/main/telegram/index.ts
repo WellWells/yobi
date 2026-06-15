@@ -1,6 +1,7 @@
 export { TelegramRuntime } from './runtime';
+export { resolveProviderCommands } from './providerCommands';
+export type { ResolvedProviderCommand } from './providerCommands';
 export {
-  PAIRING_CODE_TTL_MS,
   issuePairingCode,
   revokePairingCode,
   unpairUser,

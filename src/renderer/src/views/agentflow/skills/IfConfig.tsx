@@ -5,7 +5,6 @@ import { SelectDropdown } from '../../../components/SelectDropdown';
 import type { SkillConfigProps } from './types';
 
 const IF_OPERATORS = ['is_true', 'is_false', 'equals', 'not_equals', 'contains', 'is_empty'] as const;
-// Operators that compare only the left value need no right-hand operand.
 const OPERATORS_WITHOUT_RIGHT = new Set<string>(['is_true', 'is_false', 'is_empty']);
 
 export const IfConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {

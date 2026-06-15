@@ -1,10 +1,3 @@
-// export token lifecycle and callback codec.
-//
-// When a task result is sent in markdown mode, the user can request a rendered
-// snapshot (png/webp/pdf) via inline buttons. The token registry holds the data
-// needed to render each export for a limited time; the callback codec encodes the
-// (token, format) pair into Telegram's callback_data.
-
 import type { TelegramReplyTarget } from '../../shared/types';
 
 const TELEGRAM_EXPORT_TTL_MS = 30 * 60 * 1000;
@@ -28,7 +21,6 @@ export type TelegramExportRecord = TelegramExportContext & {
   createdAt: number;
 };
 
-// Encapsulates export token lifecycle: generation, TTL-aware lookup, and cleanup.
 export class ExportTokenRegistry {
   private readonly records = new Map<string, TelegramExportRecord>();
   private readonly TTL_MS = TELEGRAM_EXPORT_TTL_MS;
@@ -37,13 +29,11 @@ export class ExportTokenRegistry {
   private pruneTimer: ReturnType<typeof setInterval> | null = null;
   private static readonly PRUNE_INTERVAL_MS = 10 * 60_000;
 
-  /** Starts a background interval that periodically removes expired records. */
   startPeriodicPrune(): void {
     if (this.pruneTimer) return;
     this.pruneTimer = setInterval(() => this.prune(), ExportTokenRegistry.PRUNE_INTERVAL_MS);
   }
 
-  /** Stops the periodic prune interval. */
   stopPeriodicPrune(): void {
     if (this.pruneTimer) {
       clearInterval(this.pruneTimer);
@@ -53,7 +43,6 @@ export class ExportTokenRegistry {
 
   issue(data: Omit<TelegramExportRecord, 'token' | 'createdAt'>): string {
     this.prune();
-    // Hard cap: evict oldest entries if registry exceeds limit
     if (this.records.size >= this.MAX_RECORDS) {
       const entries = [...this.records.entries()].sort((a, b) => a[1].createdAt - b[1].createdAt);
       const toRemove = entries.slice(0, this.records.size - this.MAX_RECORDS + 1);
@@ -74,7 +63,6 @@ export class ExportTokenRegistry {
     return token;
   }
 
-  /** Returns the record only if it exists and has not expired. */
   get(token: string): TelegramExportRecord | undefined {
     const record = this.records.get(token);
     if (!record) return undefined;

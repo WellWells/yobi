@@ -1,4 +1,3 @@
-// Self-contained hotkey recorder for AgentFlow flows (no global settings side effects).
 import React, { useCallback, useState } from 'react';
 import { Box, Button, Group } from '@mantine/core';
 import { X } from 'lucide-react';

@@ -3,7 +3,7 @@ import { settingsApi, ipcEvents } from '../../../api/electronApi';
 
 export const MIN_RESPONSE_TIMEOUT_SEC = 15;
 export const MAX_RESPONSE_TIMEOUT_SEC = 300;
-export const DEFAULT_RESPONSE_TIMEOUT_SEC = 60;
+const DEFAULT_RESPONSE_TIMEOUT_SEC = 60;
 
 export function useSystemSettings() {
 
@@ -26,7 +26,6 @@ export function useSystemSettings() {
       setResponseTimeoutInput(`${sec}`);
     });
 
-    // Subscribe to tray-menu toggle notifications pushed from the main process.
     const unsubs = [
       ipcEvents.onNotifyOnCompleteChanged(setNotifyOnComplete),
       ipcEvents.onLaunchAtStartupChanged(setLaunchAtStartup),
@@ -67,7 +66,6 @@ export function useSystemSettings() {
     await settingsApi.updateResponseTimeout(nextSec * 1_000);
   }, [responseTimeoutSec]);
 
-  // Timeout input validation.
   const timeoutParsed = Number(responseTimeoutInput);
   const timeoutInputEmpty = responseTimeoutInput.trim() === '';
   const timeoutInputIsInteger = /^\d+$/.test(responseTimeoutInput.trim());
@@ -75,7 +73,6 @@ export function useSystemSettings() {
     && (timeoutParsed < MIN_RESPONSE_TIMEOUT_SEC || timeoutParsed > MAX_RESPONSE_TIMEOUT_SEC);
   const timeoutInvalid = !timeoutInputEmpty && (!timeoutInputIsInteger || timeoutOutOfRange);
 
-  /** Called externally (handleResetSettings) to force-apply the post-reset values. */
   const applySystemReset = useCallback(
     (notify: boolean, timeoutMs: number, closeToTrayValue: boolean, launchAtStartupValue: boolean) => {
       const sec = Math.max(

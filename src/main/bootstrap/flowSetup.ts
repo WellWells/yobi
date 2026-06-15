@@ -1,17 +1,12 @@
-// FlowManager initialization wiring
-//
-// Creates the FlowManager with its capture/history/Telegram callbacks, wires
-// the flow queue into the TitleBar queue display, and provides the shared
-// merged-queue broadcast used by both the prompt queue and flow queue.
-
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { IPC } from '../../shared/types';
 import type { QueueState } from '../../shared/types';
 import { config } from '../config';
 import { sendToRenderer } from '../helpers';
-import { getWorkerWin } from '../windows';
+import { getWorkerWin, ensureWorkerWindow } from '../windows';
 import { captureMarkdownDocument } from '../capture';
+import { captureScreenToFile } from '../screenCapture';
 import { saveOutput } from '../output';
 import {
   listOutputFiles,
@@ -25,10 +20,6 @@ import { FlowManager } from '../flow';
 import type { QueueManager } from '../queueManager';
 import type { TelegramRuntime } from '../telegram';
 
-/**
- * Merges the prompt queue with pending flow queue items and broadcasts the
- * combined state to the renderer (TitleBar queue display).
- */
 export function broadcastMergedQueueState(queue: QueueManager, flowManager: FlowManager | null): void {
   const promptState = queue.getState();
   const flowItems = flowManager?.getPendingQueueItems() ?? [];
@@ -49,7 +40,6 @@ export function broadcastMergedQueueState(queue: QueueManager, flowManager: Flow
   sendToRenderer(IPC.STATUS, merged.status);
 }
 
-/** Creates, wires, and asynchronously initializes the FlowManager. */
 export function initFlowManager(deps: {
   queue: QueueManager;
   telegramRuntime: TelegramRuntime;
@@ -58,13 +48,14 @@ export function initFlowManager(deps: {
 
   const flowManager = new FlowManager({
     getWorkerWin,
+    ensureWorkerWin: () => ensureWorkerWindow(config.targetUrl),
     getTargetUrl: () => config.targetUrl,
     getResponseTimeoutMs: () => config.responseTimeout,
     sendTelegramMessage: async (chatId, text) => {
       await telegramRuntime.sendProactive(chatId, text);
     },
-    sendTelegramFile: async (chatId, filePath, sendAs, caption) => {
-      await telegramRuntime.sendProactiveFile(chatId, filePath, sendAs, caption);
+    sendTelegramFile: async (chatId, filePath, sendAs, caption, authorizedPaths) => {
+      await telegramRuntime.sendProactiveFile(chatId, filePath, sendAs, caption, authorizedPaths);
     },
     captureMarkdown: async (payload, format, background, options) => {
       const resultDoc = await captureMarkdownDocument({
@@ -79,6 +70,7 @@ export function initFlowManager(deps: {
           showTimestamp: options?.showTimestamp ?? false,
           width: 1_200,
           background,
+          cardTheme: options?.cardTheme ?? 'dark',
         },
       });
       const outputDir = await getOutputDir();
@@ -91,6 +83,7 @@ export function initFlowManager(deps: {
       await fs.writeFile(filePath, resultDoc.buffer);
       return filePath;
     },
+    captureScreen: (format, targetDir) => captureScreenToFile(format, targetDir),
     getPairedUsers: () => config.telegram.pairing.pairedUsers,
     onSaveHistory: async ({ prompt, response, providerLabel }) => {
       const outputDir = await getOutputDir();
@@ -116,18 +109,15 @@ export function initFlowManager(deps: {
     },
   });
 
-  // Wire the FlowManager queue into the TitleBar queue display
   flowManager.setQueueChangeCallback(() => {
     broadcastMergedQueueState(queue, flowManager);
   });
 
-  // Re-sync Telegram bot commands whenever a bot-trigger flow is saved or deleted
   flowManager.setOnBotCommandsChanged(() => {
     void telegramRuntime.refreshBotCommands();
   });
 
   void flowManager.init().then(() => {
-    // After flows are loaded, restart bot if there are active bot-trigger commands to register
     if (flowManager.getBotCommands().length > 0) {
       void telegramRuntime.refreshBotCommands();
     }

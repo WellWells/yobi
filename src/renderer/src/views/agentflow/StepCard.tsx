@@ -1,64 +1,28 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useRef } from 'react';
 import {
-  ActionIcon, Badge, Code, Group, Paper, Stack, Text, Tooltip,
+  ActionIcon, Badge, Box, Code, Group, Paper, Stack, Text, Tooltip,
 } from '@mantine/core';
-import { ArrowDown, ArrowUp, Trash2 } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, Trash2 } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import { AppTextInput } from '../../components/AppTextInput';
 import { useAgentFlowStore } from '../../store/useAgentFlowStore';
-import { SKILL_ICON, SKILL_COLOR, STEP_CONFIG_EDITOR } from './skills';
-import type { SkillInstance, TriggerConfig } from '../../../../shared/types';
+import { SKILL_ICON, STEP_CONFIG_EDITOR, skillHue, isDangerSkill } from './skills';
+import { AvailableVarsHint, insertTokenAtCaret, type LoopVarHint } from './variableInsert';
+import { validateOutputKey } from './skills/validation';
+import { SKILLS_WITHOUT_OUTPUT_KEY } from '../../../../shared/flowSkillSchema';
+import type { SkillInstance, SkillType, TriggerConfig } from '../../../../shared/types';
+
+const UI_HIDDEN_OUTPUT: SkillType[] = ['clipboard', 'bot', 'loop'];
+
+const ATOMIC_STEPS: SkillType[] = ['restart_app', 'break', 'continue', 'end_loop', 'end_if'];
+
+// Steps that keep their config editor but need no human label (the config itself
+// is the content, so a separate label field is redundant).
+const LABELLESS_STEPS: SkillType[] = ['comment'];
 
 export function stepHasOutput(step: SkillInstance): boolean {
-  if (
-    step.type === 'clipboard' || step.type === 'bot' || step.type === 'comment' ||
-    step.type === 'loop' || step.type === 'end_loop' || step.type === 'if' || step.type === 'end_if'
-  ) return false;
-  if (step.type === 'utility') return step.config.action === 'export';
-  return true;
+  return !SKILLS_WITHOUT_OUTPUT_KEY.includes(step.type) && !UI_HIDDEN_OUTPUT.includes(step.type);
 }
-
-const AvailableVarsHint: React.FC<{
-  prevSteps: SkillInstance[];
-  flowTrigger?: TriggerConfig;
-  loopVars?: string[];
-  t: (k: string) => string;
-}> = ({ prevSteps, flowTrigger, loopVars = [], t }) => {
-  const inputVar = flowTrigger?.type === 'bot'
-    ? (flowTrigger.botInputVariable?.trim() || 'input')
-    : undefined;
-
-  return (
-    <Group gap={6} wrap="wrap" align="center">
-      <Text fz="xs" c="dimmed">{t('agentflow.availableVars')}</Text>
-      <Code fz="xs" c="dimmed">{'{{clipboard}}'}</Code>
-      <Code fz="xs" c="dimmed">{'{{timestamp}}'}</Code>
-      {inputVar && (
-        <Code fz="xs" c="teal">{`{{${inputVar}}}`}</Code>
-      )}
-      {flowTrigger?.type === 'bot' && (
-        <>
-          <Code fz="xs" c="teal">{'{{bot.triggerChatId}}'}</Code>
-          <Code fz="xs" c="teal">{'{{bot.triggerUserId}}'}</Code>
-        </>
-      )}
-      {loopVars.map((v) => (
-        <React.Fragment key={v}>
-          <Code fz="xs" c="orange">{`{{${v}}}`}</Code>
-          <Code fz="xs" c="orange">{`{{${v}.title}}`}</Code>
-          <Code fz="xs" c="orange">{`{{${v}.link}}`}</Code>
-        </React.Fragment>
-      ))}
-      {prevSteps.map((s) => (
-        <React.Fragment key={s.id}>
-          <Code fz="xs" c="blue">{`{{${s.outputKey}}}`}</Code>
-          {s.type === 'llm' && s.config.emitFailFlag === 'true' && (
-            <Code fz="xs" c="grape">{`{{${s.outputKey}.isFailed}}`}</Code>
-          )}
-        </React.Fragment>
-      ))}
-    </Group>
-  );
-};
 
 export interface StepCardProps {
   step: SkillInstance;
@@ -67,34 +31,100 @@ export interface StepCardProps {
   flowId: string;
   prevSteps: SkillInstance[];
   flowTrigger?: TriggerConfig;
-  loopVars?: string[];
+  loopVars?: LoopVarHint[];
+  allPrevSteps?: SkillInstance[];
+  dragHandle?: React.ReactNode;
   t: (k: string) => string;
 }
 
 export const StepCard: React.FC<StepCardProps> = ({
-  step, index, total, flowId, prevSteps, flowTrigger, loopVars = [], t,
+  step, index, total, flowId, prevSteps, flowTrigger, loopVars = [], allPrevSteps = [], dragHandle, t,
 }) => {
-  const { updateStep, removeStep, moveStep } = useAgentFlowStore();
+  const { updateStep, removeStep, moveStep } = useAgentFlowStore(
+    useShallow((s) => ({
+      updateStep: s.updateStep,
+      removeStep: s.removeStep,
+      moveStep: s.moveStep,
+    })),
+  );
   const ConfigEditor = STEP_CONFIG_EDITOR[step.type];
   const skillLabelKey = `agentflow.skill.${step.type}` as const;
+
+  const lastFocusedRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
 
   const handleConfigChange = useCallback((config: Record<string, string>) => {
     updateStep(flowId, step.id, { config });
   }, [flowId, step.id, updateStep]);
 
+  const handleFocusCapture = useCallback((e: React.FocusEvent) => {
+    const el = e.target as HTMLElement;
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+      lastFocusedRef.current = el;
+    }
+  }, []);
+
+  const handleInsertVar = useCallback((token: string) => {
+    const el = lastFocusedRef.current;
+    if (el && el.isConnected) {
+      insertTokenAtCaret(el, token);
+    } else {
+      void navigator.clipboard?.writeText(token);
+    }
+  }, []);
+
+  const outputKeyError = stepHasOutput(step)
+    ? validateOutputKey(step.outputKey, prevSteps.map((s) => s.outputKey))
+    : null;
+
+  if (!ConfigEditor) {
+    return (
+      <Paper withBorder p="sm" radius="md" bg="var(--mantine-color-red-light)">
+        <Stack gap="xs">
+          <Group justify="space-between" wrap="nowrap" align="flex-start">
+            <Group gap="xs" wrap="nowrap" align="center">
+              <Badge variant="light" color="red" size="sm" leftSection={<AlertTriangle size={14} />} radius="sm">
+                {t('agentflow.step.unknown')}
+              </Badge>
+              <Code fz="xs" c="red">{step.type}</Code>
+              <Text fz="xs" c="dimmed">#{index + 1}</Text>
+            </Group>
+            <Tooltip label={t('agentflow.step.delete')} position="top">
+              <ActionIcon variant="subtle" color="red" size="sm" onClick={() => removeStep(flowId, step.id)}>
+                <Trash2 size={14} />
+              </ActionIcon>
+            </Tooltip>
+          </Group>
+          <Text fz="xs" c="dimmed">{t('agentflow.step.unknown.hint')}</Text>
+        </Stack>
+      </Paper>
+    );
+  }
+
+  const hue = skillHue(step.type);
+  const danger = isDangerSkill(step.type);
+  const atomic = ATOMIC_STEPS.includes(step.type);
+  const showLabel = !atomic && !LABELLESS_STEPS.includes(step.type);
+
   return (
-    <Paper withBorder p="sm" radius="md" bg={SKILL_COLOR[step.type]}>
+    <Paper
+      withBorder
+      p="sm"
+      radius="md"
+      bg={danger ? 'color-mix(in srgb, var(--mantine-color-red-light) 50%, transparent)' : undefined}
+      style={{ borderLeft: `3px solid var(--mantine-color-${hue}-filled)` }}
+    >
       <Stack gap="xs">
         <Group justify="space-between" wrap="nowrap">
           <Group gap="xs" wrap="nowrap">
-            <Badge variant="light" size="sm" leftSection={SKILL_ICON[step.type]} radius="sm">
+            {dragHandle}
+            <Badge variant="light" color={hue} size="sm" leftSection={SKILL_ICON[step.type]} radius="sm">
               {t(skillLabelKey)}
             </Badge>
             <Text fz="xs" c="dimmed">#{index + 1}</Text>
           </Group>
           <Group gap={6} wrap="nowrap">
             {stepHasOutput(step) && (
-              <Code fz="xs" c="blue">{`{{${step.outputKey}}}`}</Code>
+              <Code fz="xs" c="dimmed">{`{{${step.outputKey}}}`}</Code>
             )}
             <Tooltip label={t('agentflow.step.moveUp')} position="top">
               <ActionIcon variant="subtle" size="sm" disabled={index === 0} onClick={() => moveStep(flowId, step.id, 'up')}>
@@ -106,7 +136,7 @@ export const StepCard: React.FC<StepCardProps> = ({
                 <ArrowDown size={14} />
               </ActionIcon>
             </Tooltip>
-            <Tooltip label={t('agentflow.deleteFlow')} position="top">
+            <Tooltip label={t('agentflow.step.delete')} position="top">
               <ActionIcon variant="subtle" color="red" size="sm" onClick={() => removeStep(flowId, step.id)}>
                 <Trash2 size={14} />
               </ActionIcon>
@@ -114,24 +144,40 @@ export const StepCard: React.FC<StepCardProps> = ({
           </Group>
         </Group>
 
-        <AppTextInput
-          label={t('agentflow.step.label')}
-          value={step.label}
-          onChange={(e) => updateStep(flowId, step.id, { label: e.currentTarget.value })}
-          size="xs"
-        />
+        {!atomic && (
+          <>
+            {showLabel && (
+              <AppTextInput
+                label={t('agentflow.step.label')}
+                value={step.label}
+                onChange={(e) => updateStep(flowId, step.id, { label: e.currentTarget.value })}
+                size="xs"
+              />
+            )}
 
-        <ConfigEditor step={step} onChange={handleConfigChange} t={t} />
-        <AvailableVarsHint prevSteps={prevSteps} flowTrigger={flowTrigger} loopVars={loopVars} t={t} />
+            <Box onFocusCapture={handleFocusCapture}>
+              <ConfigEditor step={step} onChange={handleConfigChange} t={t} />
+            </Box>
+            <AvailableVarsHint
+              prevSteps={prevSteps}
+              flowTrigger={flowTrigger}
+              loopVars={loopVars}
+              allPrevSteps={allPrevSteps}
+              onInsert={handleInsertVar}
+              t={t}
+            />
 
-        {stepHasOutput(step) && (
-          <AppTextInput
-            label={t('agentflow.step.outputKey')}
-            description={t('agentflow.step.outputKey.hint')}
-            value={step.outputKey}
-            onChange={(e) => updateStep(flowId, step.id, { outputKey: e.currentTarget.value })}
-            size="xs"
-          />
+            {stepHasOutput(step) && (
+              <AppTextInput
+                label={t('agentflow.step.outputKey')}
+                description={t('agentflow.step.outputKey.hint')}
+                value={step.outputKey}
+                onChange={(e) => updateStep(flowId, step.id, { outputKey: e.currentTarget.value })}
+                size="xs"
+                error={outputKeyError ? t(`agentflow.step.outputKey.error.${outputKeyError}`) : undefined}
+              />
+            )}
+          </>
         )}
       </Stack>
     </Paper>

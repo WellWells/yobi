@@ -1,9 +1,10 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useContext } from 'react';
 import { ActionIcon, Badge } from '@mantine/core';
 import { Copy, Check } from 'lucide-react';
 import { getHighlighterSync, loadShiki, appThemeToShikiTheme } from '../utils/shikiPlugins';
 import { useThemeStore } from '../store/themeStore';
 import { useI18nStore } from '../store/i18nStore';
+import { ForcedCodeThemeContext } from '../utils/forcedCodeTheme';
 
 interface ShikiCodeBlockProps {
   lang: string;
@@ -13,7 +14,9 @@ interface ShikiCodeBlockProps {
 export const ShikiCodeBlock = React.memo<ShikiCodeBlockProps>(({ lang, code }) => {
   const [html, setHtml] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const theme = useThemeStore((state) => state.theme);
+  const storeTheme = useThemeStore((state) => state.theme);
+  const forcedTheme = useContext(ForcedCodeThemeContext);
+  const theme = forcedTheme ?? storeTheme;
   const { t } = useI18nStore();
 
   useEffect(() => {
@@ -38,7 +41,6 @@ export const ShikiCodeBlock = React.memo<ShikiCodeBlockProps>(({ lang, code }) =
           const result = await highlighter.codeToHtml(code, { lang: 'text', theme: shikiTheme });
           if (!cancelled) setHtml(result);
         } catch {
-          // Leave html as null to stay on the fallback render.
         }
       }
     };
@@ -53,7 +55,6 @@ export const ShikiCodeBlock = React.memo<ShikiCodeBlockProps>(({ lang, code }) =
       setCopied(true);
       setTimeout(() => setCopied(false), 2_000);
     } catch {
-      // Clipboard write failed silently.
     }
   }, [code]);
 
@@ -66,14 +67,11 @@ export const ShikiCodeBlock = React.memo<ShikiCodeBlockProps>(({ lang, code }) =
     position: 'relative',
     margin: '0.75em 0',
     borderRadius: 'var(--radius-lg)',
-    // overflow:clip clips border-radius without creating a scroll container,
-    // so position:sticky on inner elements works relative to the page.
     overflow: 'clip' as React.CSSProperties['overflow'],
     background: 'var(--code-bg)',
     boxShadow: '0 0 0 1px var(--border), 0 2px 10px rgba(0,0,0,0.15)',
   };
 
-  // Language badge: absolute to wrapper top-left, always visible.
   const langBadge = (
     <Badge
       variant="filled"
@@ -97,9 +95,6 @@ export const ShikiCodeBlock = React.memo<ShikiCodeBlockProps>(({ lang, code }) =
     </Badge>
   );
 
-  // Zero-height sticky row: height:0 + overflow:visible so the button floats
-  // above code without pushing content down. Sticks to top:8px in the page
-  // scroll container — always reachable while the code block is in view.
   const copyButton = (
     <div
       style={{

@@ -34,8 +34,6 @@ export default defineConfig({
     },
   },
   ssr: {
-    // Only electron + Node built-ins are kept external;
-    // all npm packages and local source files are bundled inline.
     external: EXTERNALIZED,
     noExternal: true,
   },

@@ -1,15 +1,17 @@
-// Browser-side automation script builder
-// and localStorage injection helpers for Duck AI. Split out of duckai.ts to
-// keep the entry module focused on the Node-side orchestration flow.
 import type { WebContents } from 'electron';
 import { INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS } from './common';
 
 const DUCKAI_MAX_PROMPT_CHARS = 16_000;
 
-/**
- * Writes the localStorage keys that suppress duck.ai's first-visit onboarding
- * modal. Must be called while the webContents is already on the duck.ai origin.
- */
+// DuckDuckGo shows a human-verification "anomaly" overlay ("select all squares with
+// ducks") when it flags automated / idle-then-burst traffic. It is identified by these
+// language-independent selectors — DuckDuckGo's own testids plus the /assets/anomaly/
+// asset path — so detection never depends on the user's locale. None of these appear on
+// a normal duck.ai page. Single calibration point; consumed both in-page
+// (buildDuckaiAutomationScript) and Node-side (isDuckaiChallengeActive).
+export const DUCKAI_CHALLENGE_SELECTOR =
+  '[data-testid^="anomaly-modal-"], img[src*="assets/anomaly"], [style*="assets/anomaly"]';
+
 export function injectDuckaiLocalStorage(wc: WebContents): Promise<void> {
   return wc
     .executeJavaScript(
@@ -23,11 +25,6 @@ export function injectDuckaiLocalStorage(wc: WebContents): Promise<void> {
     .catch(() => undefined);
 }
 
-/**
- * Registers a one-shot `dom-ready` listener that injects localStorage keys
- * BEFORE React mounts, preventing the onboarding modal from ever rendering.
- * Must be called BEFORE starting navigation (i.e., before navigateAndWait).
- */
 export function setupDuckaiLocalStorageOnDomReady(wc: WebContents): Promise<void> {
   return new Promise<void>((resolve) => {
     wc.once('dom-ready', () => {
@@ -47,17 +44,23 @@ export function buildDuckaiAutomationScript(
     : prompt;
   const escapedPrompt = JSON.stringify(clippedPrompt);
 
-  // Rules for the IIFE body: no backticks, no ?. optional chaining — plain ES2017.
   return `
 (async function duckaiAutomate() {
   var TIMEOUT  = ${timeoutMs};
   var BASELINE = ${baselineMessageCount};
   var TARGET_MODEL = ${JSON.stringify(modelId)};
-  
+  var CHALLENGE_SELECTOR = ${JSON.stringify(DUCKAI_CHALLENGE_SELECTOR)};
+
   console.debug('[DuckAI Automate] 🚀 Script started', { TIMEOUT: TIMEOUT, BASELINE: BASELINE, TARGET_MODEL: TARGET_MODEL });
-  
+
   ${INJECTED_SLEEP_JS}
   ${INJECTED_WAIT_FOR_JS}
+
+  // Detects DuckDuckGo's human-verification overlay (appears right after submit
+  // when traffic is flagged); the Node side reveals the worker window and notifies.
+  function isDuckaiChallenge() {
+    return !!document.querySelector(CHALLENGE_SELECTOR);
+  }
 
   // ── Fallback: dismiss onboarding modal if localStorage injection was too late ──
   var onboardBtn = document.querySelector('button[data-testid="DUCKAI_ONBOARDING_AGREE"]');
@@ -67,81 +70,49 @@ export function buildDuckaiAutomationScript(
     await sleep(600);
   }
 
-  // ── Switch model via DOM dialog (if a specific model was requested) ────────────
+  // ── Switch model via the picker menu (if a specific model was requested) ───────
   if (TARGET_MODEL) {
     console.debug('[DuckAI Automate] 🔄 Switching model to:', TARGET_MODEL);
-    // 1. Wait for and click the model selector button (opens dialog)
-    var modelSelectBtn = null;
+    // 1. Wait for the model-picker button, then open its menu.
+    var modelPickerBtn = null;
     var msWaited = 0;
-    while (!modelSelectBtn && msWaited < 10000) {
-      modelSelectBtn = document.querySelector('[data-testid="model-select-button"]');
-      if (!modelSelectBtn) {
+    while (!modelPickerBtn && msWaited < 10000) {
+      modelPickerBtn = document.querySelector('[data-testid="model-picker-button"]');
+      if (!modelPickerBtn) {
         await sleep(200);
         msWaited += 200;
       }
     }
-    if (!modelSelectBtn) throw new Error('Duck AI error: model selector button not found');
+    if (!modelPickerBtn) throw new Error('Duck AI error: model picker button not found');
 
-    console.debug('[DuckAI Automate] 🖱️ Clicking model selector button to open dialog...');
-    modelSelectBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-    modelSelectBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
-    modelSelectBtn.click();
-    
-    await sleep(600); 
+    if (modelPickerBtn.getAttribute('aria-expanded') !== 'true') {
+      console.debug('[DuckAI Automate] 🖱️ Opening model picker menu...');
+      modelPickerBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+      modelPickerBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+      modelPickerBtn.click();
+      await sleep(500);
+    }
 
-    // 2. Find the target model radio and label
+    // 2. Click the target model row; selection applies immediately and auto-closes the menu.
     var safeTargetModel = TARGET_MODEL.replace(/"/g, '\\"');
-    var targetRadio = document.querySelector('input[name="model"][value="' + safeTargetModel + '"]');
+    var targetRow = document.querySelector('[data-testid="model-picker-row-' + safeTargetModel + '"]');
+    if (!targetRow) throw new Error('Duck AI error: target model ID not found in picker - ' + TARGET_MODEL);
 
-    if (targetRadio) {
-      console.debug('[DuckAI Automate] ✅ Target model radio input found');
-      var targetLabel = document.querySelector('label[for="' + targetRadio.id + '"]');
+    console.debug('[DuckAI Automate] 🖱️ Selecting target model row...');
+    targetRow.scrollIntoView({ block: 'center' });
+    await sleep(100);
+    var events = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
+    events.forEach(function(ev) {
+      targetRow.dispatchEvent(new MouseEvent(ev, { bubbles: true, cancelable: true, view: window }));
+    });
 
-      if (targetLabel) {
-        console.debug('[DuckAI Automate] 🖱️ Simulating click on model label...');
-        targetLabel.scrollIntoView({ block: 'center' });
-        await sleep(100);
-
-        var events = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
-        events.forEach(function(ev) {
-          targetLabel.dispatchEvent(new MouseEvent(ev, { bubbles: true, cancelable: true, view: window }));
-        });
-      }
-      await sleep(150);
-
-      console.debug('[DuckAI Automate] ⚙️ Triggering native input setter to ensure state update...');
-      var nativeCheckedSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'checked').set;
-      if (nativeCheckedSetter) {
-        nativeCheckedSetter.call(targetRadio, true);
-        targetRadio.dispatchEvent(new Event('input', { bubbles: true }));
-        targetRadio.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-      await sleep(300);
-    } else {
-      throw new Error('Duck AI error: target model ID not found in selector - ' + TARGET_MODEL);
+    console.debug('[DuckAI Automate] ⏳ Waiting for picker menu to close...');
+    var dcWaited = 0;
+    while (document.querySelector('[role="menu"]') && dcWaited < 5000) {
+      await sleep(100);
+      dcWaited += 100;
     }
-
-    // 4. Click the "Start a new chat" button inside the dialog
-    var startBtn = document.querySelector('[role="dialog"] button[type="submit"]');
-    if (startBtn) {
-      console.debug('[DuckAI Automate] 🖱️ Clicking "Start a new chat" button...');
-      if (startBtn.disabled) await sleep(300);
-      
-      var btnEvents = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
-      btnEvents.forEach(function(ev) {
-        startBtn.dispatchEvent(new MouseEvent(ev, { bubbles: true, cancelable: true, view: window }));
-      });
-
-      console.debug('[DuckAI Automate] ⏳ Waiting for dialog to close...');
-      var dcWaited = 0;
-      while (document.querySelector('[role="dialog"]') && dcWaited < 5000) {
-        await sleep(100);
-        dcWaited += 100;
-      }
-      await sleep(500); 
-    } else {
-      throw new Error('Duck AI error: could not find confirmation button for "Start a new chat"');
-    }
+    await sleep(400);
   }
 
   // ── Locate textarea ───────────────────────────────────────────────────────────
@@ -188,11 +159,20 @@ export function buildDuckaiAutomationScript(
   console.debug('[DuckAI Automate] 🚀 Submitting prompt...');
   submitBtn.click();
 
-  // ── Wait for response block to appear ─────────────────────────────────────────
+  // ── Wait for response block to appear (or a human-verification overlay) ────────
   console.debug('[DuckAI Automate] ⏳ Waiting for response block to appear (beyond BASELINE)...');
-  await waitFor(function() {
-    return document.querySelectorAll('div[id*="assistant-message"]').length > BASELINE;
-  }, 'Duck AI response block', TIMEOUT, 350);
+  var respWaited = 0;
+  var gotResponse = false;
+  while (respWaited < TIMEOUT) {
+    // Check the challenge FIRST: on submit DuckDuckGo inserts a "generating"
+    // assistant-message placeholder at the same time as the anomaly modal, so a
+    // response-first check would mistake that placeholder for a real answer.
+    if (isDuckaiChallenge()) throw new Error('Duck AI human-verification challenge detected');
+    if (document.querySelectorAll('div[id*="assistant-message"]').length > BASELINE) { gotResponse = true; break; }
+    await sleep(350);
+    respWaited += 350;
+  }
+  if (!gotResponse) throw new Error('Timeout waiting for: Duck AI response block');
 
   // ── Wait for generation to complete ───────────────────────────────────────────
   console.debug('[DuckAI Automate] ⏳ Response block detected, waiting for generation to complete...');
@@ -207,6 +187,11 @@ export function buildDuckaiAutomationScript(
   var loopCount = 0;
 
   while (true) {
+    // The overlay can also appear during generation (or a hair after the response
+    // placeholder), so keep polling for it here — otherwise a challenge-blocked
+    // generation would hang until the Node-side hard timeout (~5 min).
+    if (isDuckaiChallenge()) throw new Error('Duck AI human-verification challenge detected');
+
     var stopBtn = document.querySelector(STOP_BTN_SELECTOR);
     if (stopBtn) seenStopBtn = true;
 

@@ -17,7 +17,6 @@ function resolveInputBackground(tone: AppInputTone): string {
       return 'var(--mantine-color-accent-dim)';
     case 'tertiary':
     default:
-      // Use bgElevated so inputs appear visually distinct from card backgrounds (bgSurface).
       return 'var(--mantine-color-bg-tertiary)';
   }
 }

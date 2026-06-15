@@ -1,5 +1,5 @@
 import React, { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActionIcon, Box, Button, Flex, Group, Stack, Text } from '@mantine/core';
+import { ActionIcon, Box, Button, Flex, Group, Loader, Stack, Text, Tooltip } from '@mantine/core';
 import { RefreshCw, X } from 'lucide-react';
 import { Sidebar } from '../components/Sidebar';
 import { MarkdownView } from '../components/MarkdownView';
@@ -8,9 +8,12 @@ import { FileHeaderBar } from '../components/chat/FileHeaderBar';
 import { ModelDropdown } from '../components/chat/ModelDropdown';
 import { PromptInputArea, type PromptInputAreaHandle } from '../components/chat/PromptInputArea';
 import { WelcomeScreen } from '../components/chat/WelcomeScreen';
+import { ChatDropZone } from '../components/chat/ChatDropZone';
+import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import { useGlobalHotkeys } from '../hooks/useGlobalHotkeys';
+import { usePromptAttachments } from '../hooks/usePromptAttachments';
 import {
   useCaptureExport,
   CAPTURE_PALETTES,
@@ -18,6 +21,8 @@ import {
   type CaptureDirection,
 } from '../hooks/useCaptureExport';
 import { useRewriteTask } from '../hooks/useRewriteTask';
+import { useChatCommands } from '../hooks/useChatCommands';
+import { useChatCommandRunner } from '../hooks/useChatCommandRunner';
 import { fileApi, settingsApi, clipboardApi, promptApi } from '../api/electronApi';
 
 const RewriteTriggerButton = React.memo<{
@@ -29,35 +34,43 @@ const RewriteTriggerButton = React.memo<{
     onChange={onStart}
     menuDirection="down"
     renderTrigger={({ toggle, open }) => (
-      <ActionIcon
-        onClick={toggle}
-        title={title}
-        variant="transparent"
-        size="sm"
-        opacity={open ? 1 : 0.7}
-      >
-        <RefreshCw size={16} />
-      </ActionIcon>
+      <Tooltip label={title} position="bottom">
+        <ActionIcon
+          onClick={toggle}
+          aria-label={title}
+          variant="transparent"
+          size="sm"
+          opacity={open ? 1 : 0.7}
+        >
+          <RefreshCw size={16} />
+        </ActionIcon>
+      </Tooltip>
     )}
   />
 ));
 
-export const ChatView: React.FC = () => {
-  const {
-    selectedFile,
-    fileContent,
-    parsedBlocks,
-    setFileContent,
-    setFiles,
-    selectFile,
-    layoutMode,
-    setLayoutMode,
-    markdownZoom,
-    zoomInMarkdown,
-    zoomOutMarkdown,
-    resetMarkdownZoom,
-    setAiUrl,
-  } = useAppStore();
+export const ChatView: React.FC = React.memo(() => {
+  const { selectedFile, fileContent, parsedBlocks, layoutMode, markdownZoom } = useAppStore(
+    useShallow((s) => ({
+      selectedFile: s.selectedFile,
+      fileContent: s.fileContent,
+      parsedBlocks: s.parsedBlocks,
+      layoutMode: s.layoutMode,
+      markdownZoom: s.markdownZoom,
+    })),
+  );
+  const { setFileContent, setFiles, selectFile, setLayoutMode, zoomInMarkdown, zoomOutMarkdown, resetMarkdownZoom, setAiUrl } = useAppStore(
+    useShallow((s) => ({
+      setFileContent: s.setFileContent,
+      setFiles: s.setFiles,
+      selectFile: s.selectFile,
+      setLayoutMode: s.setLayoutMode,
+      zoomInMarkdown: s.zoomInMarkdown,
+      zoomOutMarkdown: s.zoomOutMarkdown,
+      resetMarkdownZoom: s.resetMarkdownZoom,
+      setAiUrl: s.setAiUrl,
+    })),
+  );
   const { t } = useI18nStore();
 
   const [activeModelUrl, setActiveModelUrl] = useState(() => useAppStore.getState().aiUrl);
@@ -68,6 +81,20 @@ export const ChatView: React.FC = () => {
 
   const captureExport = useCaptureExport(setExportToast);
   const { startRewrite } = useRewriteTask(setExportToast);
+
+  const chatCommands = useChatCommands();
+  const { runCommand, runningCommand } = useChatCommandRunner(setExportToast);
+  const handleUnknownCommand = useCallback((command: string): void => {
+    setExportToast({ id: Date.now(), message: t('chat.command.notFound').replace('{{command}}', command) });
+  }, [t]);
+
+  const {
+    attachments,
+    notice: attachmentNotice,
+    addFiles,
+    removeAttachment,
+    clearAttachments,
+  } = usePromptAttachments(activeModelUrl, t);
 
   const promptAreaRef = useRef<PromptInputAreaHandle>(null);
   const headerInputRef = useRef<HTMLInputElement>(null);
@@ -99,7 +126,6 @@ export const ChatView: React.FC = () => {
     return () => window.clearTimeout(timer);
   }, [exportToast]);
 
-  // clear toast on file switch
   useEffect(() => {
     setExportToast(null);
   }, [selectedFile?.path]);
@@ -111,18 +137,21 @@ export const ChatView: React.FC = () => {
   }, [headerEditing]);
 
   const handleSendPrompt = useCallback(async (text: string): Promise<void> => {
-    // Persist the selected provider and navigate the worker window only on send,
-    // not when the user just opens the dropdown and picks a model.
     const currentModelUrl = useAppStore.getState().aiUrl;
     if (activeModelUrl !== currentModelUrl) {
       await settingsApi.updateAiUrl(activeModelUrl);
       setAiUrl(activeModelUrl);
     }
-    promptApi.triggerWithOptions({ prompt: text, targetUrl: activeModelUrl });
-  }, [activeModelUrl, setAiUrl]);
+    const attachmentPaths = attachments.map((a) => a.path).filter(Boolean);
+    promptApi.triggerWithOptions({
+      prompt: text,
+      targetUrl: activeModelUrl,
+      ...(attachmentPaths.length > 0 ? { attachments: attachmentPaths } : {}),
+    });
+    if (attachments.length > 0) clearAttachments();
+  }, [activeModelUrl, attachments, clearAttachments, setAiUrl]);
 
   const handleAiUrlChange = useCallback((nextUrl: string): void => {
-    // Only update local UI state; do NOT navigate or persist yet.
     setActiveModelUrl(nextUrl);
   }, []);
 
@@ -166,6 +195,7 @@ export const ChatView: React.FC = () => {
     <Flex flex={1} style={{ overflow: 'hidden' }}>
       <Sidebar />
 
+      <ChatDropZone onFiles={addFiles} overlayLabel={t('attach.drop.hint')}>
       <Stack gap={0} flex={1} bg="var(--mantine-color-body)" style={{ overflow: 'hidden' }}>
         {selectedFile && (
           <FileHeaderBar
@@ -214,12 +244,20 @@ export const ChatView: React.FC = () => {
           activeModelUrl={activeModelUrl}
           onChangeModel={handleAiUrlChange}
           onSend={(text) => { void handleSendPrompt(text); }}
+          attachments={attachments}
+          notice={attachmentNotice}
+          onRemoveAttachment={removeAttachment}
+          chatCommands={chatCommands}
+          onRunCommand={(command, input) => { void runCommand(command, input); }}
+          onUnknownCommand={handleUnknownCommand}
         />
       </Stack>
+      </ChatDropZone>
 
       <ExportDialog
         open={captureExport.captureDialogOpen}
         background={captureExport.captureBackground}
+        cardTheme={captureExport.captureCardTheme}
         palettes={CAPTURE_PALETTES}
         selectedPalette={captureExport.capturePaletteKey}
         setSelectedPalette={captureExport.setCapturePaletteKey}
@@ -291,7 +329,31 @@ export const ChatView: React.FC = () => {
           )}
         </Stack>
       )}
+
+      {runningCommand && (
+        <Group
+          gap={8}
+          pos="fixed"
+          right={14}
+          bottom={14}
+          miw={200}
+          bg="var(--mantine-color-default)"
+          p="8px 12px"
+          wrap="nowrap"
+          style={{
+            zIndex: 130,
+            border: '1px solid var(--mantine-color-default-border)',
+            borderRadius: 'var(--mantine-radius-sm)',
+            boxShadow: 'var(--shadow-md)',
+          }}
+        >
+          <Loader size="xs" />
+          <Text fz="var(--font-size-base)" c="var(--mantine-color-text)">
+            {t('chat.slash.running').replace('{{command}}', runningCommand)}
+          </Text>
+        </Group>
+      )}
     </Flex>
   );
-};
+});
 

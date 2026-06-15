@@ -1,7 +1,5 @@
-// shared types for the AgentFlow execution engine.
-
 import type { BrowserWindow } from 'electron';
-import type { CaptureFormat, FlowExecutionLog, MarkdownCapturePayload } from '../../shared/types';
+import type { CaptureFormat, CardTheme, FlowExecutionLog, MarkdownCapturePayload } from '../../shared/types';
 
 export type LogCallback = (log: FlowExecutionLog) => void;
 
@@ -13,12 +11,12 @@ export interface SaveHistoryInfo {
 
 export interface FlowExecutorDeps {
   getWorkerWin: () => BrowserWindow | null;
+  ensureWorkerWin?: () => Promise<BrowserWindow | null>;
   getTargetUrl: () => string;
   getResponseTimeoutMs?: () => number;
   onSaveHistory?: (info: SaveHistoryInfo) => Promise<void>;
   sendTelegramMessage?: (chatId: number, text: string) => Promise<void>;
   getPairedUsers?: () => Array<{ userId: number; username?: string; firstName?: string }>;
-  /** Renders markdown content as a snapshot and returns the saved file path. */
   captureMarkdown?: (
     payload: MarkdownCapturePayload,
     format: CaptureFormat,
@@ -29,13 +27,15 @@ export interface FlowExecutorDeps {
       showTimestamp?: boolean;
       showPrompt?: boolean;
       showContent?: boolean;
+      cardTheme?: CardTheme;
     },
   ) => Promise<string>;
-  /** Sends a file to a Telegram chat as photo or document. */
+  captureScreen?: (format: 'png' | 'jpg', targetDir?: string) => Promise<string>;
   sendTelegramFile?: (
     chatId: number,
     filePath: string,
-    sendAs: 'photo' | 'document',
+    sendAs: 'photo' | 'document' | 'auto',
     caption?: string,
+    authorizedPaths?: string[],
   ) => Promise<void>;
 }

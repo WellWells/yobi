@@ -1,34 +1,26 @@
-// Web Scraper / Tracker skill config editor.
-// Provides: Target URL input, CSS selector inputs, max items input, clear checkpoint button.
 import React, { useCallback, useEffect, useState } from 'react';
 import { Badge, Button, Group, Stack, Text } from '@mantine/core';
 import { AppTextInput } from '../../../components/AppTextInput';
+import { AppNumberInput } from '../../../components/AppNumberInput';
 import { Trash2, BookmarkCheck } from 'lucide-react';
 import { scraperApi, ipcEvents } from '../../../api/electronApi';
+import { isValidUrlOrVar } from './validation';
 import type { SkillConfigProps } from './types';
-
-function isValidUrl(url: string): boolean {
-  const trimmed = url.trim();
-  if (!trimmed) return true;
-  if (/^\{\{[^}]+\}\}$/.test(trimmed)) return true;
-  return /^https?:\/\//i.test(trimmed);
-}
 
 export const ScraperConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
   const url = step.config.url ?? '';
-  const urlError = !isValidUrl(url);
+  const urlError = !isValidUrlOrVar(url);
   const itemSelector = step.config.itemSelector ?? '';
   const titleSelector = step.config.titleSelector ?? '';
   const linkSelector = step.config.linkSelector ?? '';
   const maxItems = step.config.maxItems ?? '5';
+  const cacheDays = step.config.cacheDays ?? '3';
   const [hasCheckpoint, setHasCheckpoint] = useState(false);
 
-  // Check checkpoint status on mount and when step.id changes
   useEffect(() => {
     void scraperApi.hasCheckpoint(step.id).then(setHasCheckpoint);
   }, [step.id]);
 
-  // Refresh checkpoint status after any flow execution ends
   useEffect(() => {
     const unsub = ipcEvents.onFlowExecutionEnded(() => {
       void scraperApi.hasCheckpoint(step.id).then(setHasCheckpoint);
@@ -76,14 +68,31 @@ export const ScraperConfig: React.FC<SkillConfigProps> = ({ step, onChange, t })
         size="sm"
       />
 
-      <AppTextInput
+      <AppNumberInput
         label={t('agentflow.skill.scraper.maxItems')}
         value={maxItems}
-        onChange={(e) => onChange({ ...step.config, maxItems: e.currentTarget.value })}
+        onChange={(v) => onChange({ ...step.config, maxItems: v === '' ? '' : String(v) })}
         size="sm"
-        type="number"
         min={1}
+        step={1}
+        allowDecimal={false}
+        allowNegative={false}
       />
+
+      <AppNumberInput
+        label={t('agentflow.skill.cacheDays')}
+        value={cacheDays}
+        onChange={(v) => onChange({ ...step.config, cacheDays: v === '' ? '' : String(v) })}
+        size="sm"
+        min={1}
+        step={1}
+        allowDecimal={false}
+        allowNegative={false}
+      />
+
+      <Text fz="xs" c="dimmed">
+        {t('agentflow.skill.cacheDays.hint')}
+      </Text>
 
       <Text fz="xs" c="dimmed">
         {t('agentflow.skill.scraper.hint')}

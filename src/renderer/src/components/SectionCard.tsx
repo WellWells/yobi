@@ -1,4 +1,3 @@
-// Bordered card wrapper used in settings and other views.
 import React from 'react';
 import { Paper } from '@mantine/core';
 

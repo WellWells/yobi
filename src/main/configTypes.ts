@@ -1,11 +1,5 @@
-// Config shape definitions and default values
-//
-// Shared by config.ts (store + persistence) and configNormalizers.ts.
-// Keeping types and defaults here avoids circular imports between the
-// store module and the normalizer module.
-
 import { PROVIDER_URLS } from '../shared/types';
-import type { CaptureFormat, CaptureSettings, PromptPreferences, TelegramPairingState } from '../shared/types';
+import type { CaptureFormat, CaptureSettings, PromptPreferences, Provider, TelegramPairingState, TelegramProviderCommand } from '../shared/types';
 
 export interface Config {
   targetUrl: string;
@@ -18,9 +12,10 @@ export interface Config {
   syncSystemLanguageToModel: boolean;
   notifyOnComplete: boolean;
   promptPreferences: PromptPreferences;
+  youtubePrompt: string;
   telegram: TelegramConfig;
+  smtp: SmtpConfig;
   closeToTray: boolean;
-  autoShowTray: boolean;
   closeActionDecided: boolean;
   launchAtStartup: boolean;
   layoutMode: 'stacked' | 'side-by-side';
@@ -34,14 +29,28 @@ export interface TelegramConfig {
   allowGroupCommands: boolean;
   defaultReplyMode: 'markdown' | 'png' | 'webp' | 'pdf';
   adminUserIds: number[];
+  providerCommands: Record<Provider, TelegramProviderCommand>;
   pairing: TelegramPairingState;
 }
 
-// On-disk stored shape — botToken replaced with encrypted form
+export interface SmtpConfig {
+  enabled: boolean;
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+}
+
 export interface StoredTelegramConfig extends Omit<TelegramConfig, 'botToken'> {
   botTokenEncrypted: string;
 }
-export type StoredConfig = Omit<Config, 'telegram'> & { telegram: StoredTelegramConfig };
+export interface StoredSmtpConfig extends Omit<SmtpConfig, 'password'> {
+  passwordEncrypted: string;
+}
+export type StoredConfig = Omit<Config, 'telegram' | 'smtp'> & {
+  telegram: StoredTelegramConfig;
+  smtp: StoredSmtpConfig;
+};
 
 export const defaultStored: StoredConfig = {
   targetUrl: PROVIDER_URLS.gemini,
@@ -54,7 +63,6 @@ export const defaultStored: StoredConfig = {
   syncSystemLanguageToModel: true,
   notifyOnComplete: true,
   closeToTray: false,
-  autoShowTray: false,
   closeActionDecided: false,
   launchAtStartup: false,
   layoutMode: 'stacked',
@@ -67,6 +75,7 @@ export const defaultStored: StoredConfig = {
     showTimestamp: true,
     format: 'png' as CaptureFormat,
   },
+  youtubePrompt: '',
   promptPreferences: {
     tone: 'default',
     length: 'auto',
@@ -80,6 +89,19 @@ export const defaultStored: StoredConfig = {
     allowGroupCommands: false,
     defaultReplyMode: 'markdown',
     adminUserIds: [],
+    providerCommands: {
+      chatgpt: { enabled: true, command: '' },
+      gemini: { enabled: true, command: '' },
+      perplexity: { enabled: true, command: '' },
+      duckai: { enabled: true, command: '', modelId: '' },
+    },
     pairing: { pendingCodes: [], pairedUsers: [] },
+  },
+  smtp: {
+    enabled: false,
+    host: '',
+    port: 587,
+    user: '',
+    passwordEncrypted: '',
   },
 };

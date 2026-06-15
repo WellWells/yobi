@@ -22,14 +22,12 @@ interface ThemeState {
 
 function resolveTheme(raw: string | null | undefined): Theme {
   if (VALID_THEMES.includes(raw as Theme)) return raw as Theme;
-  // 'auto' or unrecognized → follow system preference
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
 const _initial: Theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 const _initialMantine = getMantineTheme(_initial);
 
-// Set data-theme attribute for Shiki and legacy CSS selectors
 document.documentElement.setAttribute('data-theme', _initial);
 
 export const useThemeStore = create<ThemeState>((set) => ({
@@ -47,13 +45,10 @@ export const useThemeStore = create<ThemeState>((set) => ({
       mantineTheme: mantine.theme,
       cssVariablesResolver: buildCssVariablesResolver(theme),
     });
-    // Persist to main config
     window.electronAPI.updateTheme(theme).catch(() => {});
   },
 }));
 
-// Load persisted theme from main config on startup.
-// If config returns 'auto' or empty (= no explicit user choice), fall back to system preference.
 export function initThemeFromConfig(): void {
   window.electronAPI.getTheme().then((raw) => {
     const theme = resolveTheme(raw);

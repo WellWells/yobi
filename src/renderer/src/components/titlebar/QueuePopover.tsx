@@ -1,4 +1,3 @@
-// queue task list popover
 import React from 'react';
 import { Box, Button as MButton, Text } from '@mantine/core';
 import { ListChecks, LoaderCircle, SkipForward, X } from 'lucide-react';

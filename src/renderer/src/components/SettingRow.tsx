@@ -1,4 +1,3 @@
-// Layout for a single settings row: icon + label/hint on left, control on right.
 import React from 'react';
 import { Box, Group, Stack, Text } from '@mantine/core';
 

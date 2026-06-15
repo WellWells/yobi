@@ -1,4 +1,3 @@
-// Cross-platform system tray (Windows) / menu bar (macOS) integration
 import { app, Menu, Tray, nativeImage } from 'electron';
 import type { BrowserWindow, MenuItemConstructorOptions } from 'electron';
 import { getLangCache, t } from './i18n';
@@ -6,17 +5,12 @@ import { sendLog, getAssetPath } from './helpers';
 
 let tray: Tray | null = null;
 
-// Windows : 32×32 PNG (Electron auto-scales to 16 px for the tray area).
-// macOS   : 16×16 template image (black + transparent) — adapts to light/dark
-//           menu bar automatically. Source PNG is resized at runtime via
-//           nativeImage so no separate template PNG file is required.
 function buildTrayIcon(): ReturnType<typeof nativeImage.createEmpty> {
   if (process.platform === 'darwin') {
     const src = nativeImage.createFromPath(getAssetPath('icon-mac.png'));
     const img = src.resize({ width: 18, height: 18 });
     return img;
   }
-  // Windows: 32×32 provides crisp rendering on both 100% and 200% DPI displays.
   const src = nativeImage.createFromPath(getAssetPath('icon-win.png'));
   return src.resize({ width: 32, height: 32 });
 }
@@ -37,7 +31,6 @@ function restoreWindow(getMainWin: () => BrowserWindow | null): void {
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
-  // macOS: bring app to front
   if (process.platform === 'darwin') app.focus({ steal: true });
 }
 
@@ -53,7 +46,6 @@ function buildContextMenu(deps: TrayDeps): Menu {
   let items: MenuItemConstructorOptions[];
 
   if (process.platform === 'darwin') {
-    // macOS Menu Bar — follows Apple HIG
     items = [
       {
         label: t(strings, 'app.name', {}),
@@ -80,7 +72,6 @@ function buildContextMenu(deps: TrayDeps): Menu {
       },
     ];
   } else {
-    // Windows System Tray — use & access keys for keyboard navigation
     items = [
       {
         label: t(strings, 'app.name', {}),
@@ -143,7 +134,6 @@ export function createTray(deps: TrayDeps): void {
   tray.setContextMenu(buildContextMenu(deps));
 
   if (process.platform === 'win32') {
-    // Windows: double-click restores the window
     tray.on('double-click', () => restoreWindow(deps.getMainWin));
   }
 

@@ -1,5 +1,11 @@
-// AgentFlow factory/helper functions
 import type { FlowDefinition, SkillInstance, SkillType } from '../../../shared/types';
+import { DEFAULT_SKILL_CONFIG, SKILLS_WITHOUT_OUTPUT_KEY } from '../../../shared/flowSkillSchema';
+
+export const DEFAULT_OUTPUT_BASE: Partial<Record<SkillType, string>> = {
+  browser_open: 'tab',
+  forex: 'currency',
+  random: 'rand',
+};
 
 export function createId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -7,38 +13,20 @@ export function createId(): string {
 
 export function createDefaultStep(type: SkillType = 'shell', outputKey?: string, t: (key: string) => string = (k) => k): SkillInstance {
   const id = createId();
-  const configMap: Record<SkillType, Record<string, string>> = {
-    shell: { command: '', windowsShell: 'cmd' },
-    browser: { url: '' },
-    llm: {
-      prompt: '',
-      provider: '',
-      saveToHistory: 'false',
-      emitFailFlag: 'false',
-      exportFormat: '',
-      exportTitle: '',
-      exportFileName: '',
-      exportShowProvider: 'false',
-      exportShowTimestamp: 'false',
-    },
-    clipboard: { action: 'read', text: '' },
-    utility: { action: 'delay', delayMs: '1000', title: '', body: '', format: 'png', content: '' },
-    bot: { chatId: '', message: '' },
-    rss: { url: '', fetchContent: 'false', checkpoint: '', lastLinks: '' },
-    stop: { value: '' },
-    comment: { note: '' },
-    scraper: { url: '', itemSelector: '', titleSelector: '', linkSelector: '', maxItems: '5' },
-    loop: { input: '', loopVar: 'item', limitIterations: 'true', maxIterations: '5' },
-    end_loop: {},
-    if: { left: '', operator: 'is_true', right: '' },
-    end_if: {},
-  };
+  const config = { ...DEFAULT_SKILL_CONFIG[type] };
   const labelMap: Record<SkillType, string> = {
     shell: t('agentflow.skill.shell'),
+    run: t('agentflow.skill.run'),
+    js: t('agentflow.skill.js'),
     browser: t('agentflow.skill.browser'),
+    browser_open: t('agentflow.skill.browser_open'),
+    browser_js: t('agentflow.skill.browser_js'),
+    browser_close: t('agentflow.skill.browser_close'),
     llm: t('agentflow.skill.llm'),
     clipboard: t('agentflow.skill.clipboard'),
-    utility: t('agentflow.skill.utility'),
+    delay: t('agentflow.skill.delay'),
+    notify: t('agentflow.skill.notify'),
+    capture: t('agentflow.skill.capture'),
     bot: t('agentflow.skill.bot'),
     rss: t('agentflow.skill.rss'),
     stop: t('agentflow.skill.stop'),
@@ -48,13 +36,32 @@ export function createDefaultStep(type: SkillType = 'shell', outputKey?: string,
     end_loop: t('agentflow.skill.end_loop'),
     if: t('agentflow.skill.if'),
     end_if: t('agentflow.skill.end_if'),
+    break: t('agentflow.skill.break'),
+    continue: t('agentflow.skill.continue'),
+    sysinfo: t('agentflow.skill.sysinfo'),
+    http: t('agentflow.skill.http'),
+    youtube: t('agentflow.skill.youtube'),
+    youtube_subs: t('agentflow.skill.youtube_subs'),
+    power: t('agentflow.skill.power'),
+    restart_app: t('agentflow.skill.restart_app'),
+    file_write: t('agentflow.skill.file_write'),
+    file_read: t('agentflow.skill.file_read'),
+    file_list: t('agentflow.skill.file_list'),
+    file_delete: t('agentflow.skill.file_delete'),
+    file_download: t('agentflow.skill.file_download'),
+    email_send: t('agentflow.skill.email_send'),
+    text: t('agentflow.skill.text'),
+    stock: t('agentflow.skill.stock'),
+    forex: t('agentflow.skill.forex'),
+    weather: t('agentflow.skill.weather'),
+    random: t('agentflow.skill.random'),
   };
-  const noOutputKey = type === 'comment' || type === 'end_loop' || type === 'if' || type === 'end_if';
+  const noOutputKey = SKILLS_WITHOUT_OUTPUT_KEY.includes(type);
   return {
     id,
     type,
     label: labelMap[type],
-    config: configMap[type],
+    config,
     outputKey: outputKey ?? (noOutputKey ? '' : `${type}_1`),
   };
 }
@@ -76,11 +83,6 @@ export function cloneFlow(flow: FlowDefinition): FlowDefinition {
   return JSON.parse(JSON.stringify(flow)) as FlowDefinition;
 }
 
-/**
- * Given an index pointing at a block marker (loop/if opener or end_loop/end_if
- * closer), returns the index of its matching marker, or -1 if none. Depth-tracked
- * so nested blocks of the same kind pair correctly.
- */
 export function findMatchingMarker(steps: SkillInstance[], index: number): number {
   const type = steps[index]?.type;
   const pair: Partial<Record<SkillType, { other: SkillType; dir: 1 | -1 }>> = {

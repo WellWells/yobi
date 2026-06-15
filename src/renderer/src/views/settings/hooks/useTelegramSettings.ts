@@ -1,17 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { telegramApi, clipboardApi } from '../../../api/electronApi';
+import { telegramApi, clipboardApi, settingsApi } from '../../../api/electronApi';
 
-import type { TelegramSettingsSnapshot } from '../../../../../shared/types';
+import type { DuckaiModelInfo, Provider, TelegramProviderCommand, TelegramSettingsSnapshot } from '../../../../../shared/types';
 
 export function useTelegramSettings() {
   const [telegramSettings, setTelegramSettings] = useState<TelegramSettingsSnapshot | null>(null);
   const [telegramTokenInput, setTelegramTokenInput] = useState('');
   const [telegramBusy, setTelegramBusy] = useState(false);
+  const [duckaiModels, setDuckaiModels] = useState<DuckaiModelInfo[]>([]);
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
+  const telegramSettingsRef = useRef<TelegramSettingsSnapshot | null>(null);
+  telegramSettingsRef.current = telegramSettings;
 
   const loadTelegramSettings = useCallback(async () => {
     const snapshot = await telegramApi.getSettings();
     setTelegramSettings(snapshot);
+  }, []);
+
+  // Every mutating handler runs through this so telegramBusy always resets, even
+  // when the IPC call rejects (otherwise a single failure freezes the controls).
+  const runBusy = useCallback(async (action: () => Promise<void>) => {
+    setTelegramBusy(true);
+    try {
+      await action();
+    } finally {
+      setTelegramBusy(false);
+    }
   }, []);
 
   const refreshTelegramSettings = useCallback(async () => {
@@ -33,69 +47,82 @@ export function useTelegramSettings() {
         if (!prev) return prev;
         return { ...prev, runtime };
       });
-      // Pairing or admin changes may be pushed from main with the same runtime signal.
-      // Re-fetch full snapshot to keep pairing lists and counters in sync.
       void refreshTelegramSettings();
     });
     return unsub;
   }, [refreshTelegramSettings]);
 
+  useEffect(() => {
+    void settingsApi.fetchDuckaiModels().then(setDuckaiModels).catch(() => setDuckaiModels([]));
+  }, []);
+
+  const handleUpdateProviderCommand = useCallback(async (provider: Provider, patch: Partial<TelegramProviderCommand>) => {
+    const current = telegramSettingsRef.current?.providerCommands;
+    if (!current) return;
+    const next = { ...current, [provider]: { ...current[provider], ...patch } };
+    await runBusy(async () => {
+      await telegramApi.updateProviderCommands(next);
+      await loadTelegramSettings();
+    });
+  }, [runBusy, loadTelegramSettings]);
+
   const handleToggleTelegramEnabled = useCallback(async () => {
-    if (!telegramSettings) return;
-    setTelegramBusy(true);
-    await telegramApi.updateEnabled(!telegramSettings.enabled);
-    await loadTelegramSettings();
-    setTelegramBusy(false);
-  }, [telegramSettings, loadTelegramSettings]);
+    const snapshot = telegramSettingsRef.current;
+    if (!snapshot) return;
+    await runBusy(async () => {
+      await telegramApi.updateEnabled(!snapshot.enabled);
+      await loadTelegramSettings();
+    });
+  }, [runBusy, loadTelegramSettings]);
 
   const handleToggleTelegramGroupCommands = useCallback(async () => {
-    if (!telegramSettings) return;
-    setTelegramBusy(true);
-    await telegramApi.updateAllowGroupCommands(!telegramSettings.allowGroupCommands);
-    await loadTelegramSettings();
-    setTelegramBusy(false);
-  }, [telegramSettings, loadTelegramSettings]);
+    const snapshot = telegramSettingsRef.current;
+    if (!snapshot) return;
+    await runBusy(async () => {
+      await telegramApi.updateAllowGroupCommands(!snapshot.allowGroupCommands);
+      await loadTelegramSettings();
+    });
+  }, [runBusy, loadTelegramSettings]);
 
   const handleTelegramDefaultReplyMode = useCallback(async (mode: 'markdown' | 'png' | 'webp' | 'pdf') => {
-    setTelegramBusy(true);
-    await telegramApi.updateDefaultReplyMode(mode);
-    await loadTelegramSettings();
-    setTelegramBusy(false);
-  }, [loadTelegramSettings]);
+    await runBusy(async () => {
+      await telegramApi.updateDefaultReplyMode(mode);
+      await loadTelegramSettings();
+    });
+  }, [runBusy, loadTelegramSettings]);
 
   const handleSaveTelegramToken = useCallback(async () => {
-    setTelegramBusy(true);
-    const result = await telegramApi.updateToken(telegramTokenInput);
-    await loadTelegramSettings();
-    setTelegramBusy(false);
-    if (result.ok) {
-      setTelegramTokenInput('');
-    }
-  }, [telegramTokenInput, loadTelegramSettings]);
+    await runBusy(async () => {
+      const result = await telegramApi.updateToken(telegramTokenInput);
+      await loadTelegramSettings();
+      if (result.ok) setTelegramTokenInput('');
+    });
+  }, [runBusy, telegramTokenInput, loadTelegramSettings]);
 
   const handleToggleTelegramAdmin = useCallback(async (userId: number) => {
-    if (!telegramSettings) return;
-    const next = new Set(telegramSettings.adminUserIds ?? []);
+    const snapshot = telegramSettingsRef.current;
+    if (!snapshot) return;
+    const next = new Set(snapshot.adminUserIds ?? []);
     if (next.has(userId)) next.delete(userId); else next.add(userId);
-    setTelegramBusy(true);
-    await telegramApi.updateAdminUsers(Array.from(next));
-    await loadTelegramSettings();
-    setTelegramBusy(false);
-  }, [telegramSettings, loadTelegramSettings]);
+    await runBusy(async () => {
+      await telegramApi.updateAdminUsers(Array.from(next));
+      await loadTelegramSettings();
+    });
+  }, [runBusy, loadTelegramSettings]);
 
   const handleGeneratePairingCode = useCallback(async () => {
-    setTelegramBusy(true);
-    await telegramApi.generatePairingCode();
-    await loadTelegramSettings();
-    setTelegramBusy(false);
-  }, [loadTelegramSettings]);
+    await runBusy(async () => {
+      await telegramApi.generatePairingCode();
+      await loadTelegramSettings();
+    });
+  }, [runBusy, loadTelegramSettings]);
 
   const handleRevokePairingCode = useCallback(async (code: string) => {
-    setTelegramBusy(true);
-    await telegramApi.revokePairingCode(code);
-    await loadTelegramSettings();
-    setTelegramBusy(false);
-  }, [loadTelegramSettings]);
+    await runBusy(async () => {
+      await telegramApi.revokePairingCode(code);
+      await loadTelegramSettings();
+    });
+  }, [runBusy, loadTelegramSettings]);
 
   const handleCopyPairingCode = useCallback(async (code: string) => {
     await clipboardApi.copyText(code);
@@ -121,18 +148,20 @@ export function useTelegramSettings() {
   }, [buildTelegramStartUrl]);
 
   const handleUnpairTelegramUser = useCallback(async (userId: number) => {
-    setTelegramBusy(true);
-    await telegramApi.unpairUser(userId);
-    await loadTelegramSettings();
-    setTelegramBusy(false);
-  }, [loadTelegramSettings]);
+    await runBusy(async () => {
+      await telegramApi.unpairUser(userId);
+      await loadTelegramSettings();
+    });
+  }, [runBusy, loadTelegramSettings]);
 
   return {
     telegramSettings,
     telegramTokenInput,
     setTelegramTokenInput,
     telegramBusy,
+    duckaiModels,
     loadTelegramSettings,
+    handleUpdateProviderCommand,
     handleToggleTelegramEnabled,
     handleToggleTelegramGroupCommands,
     handleTelegramDefaultReplyMode,

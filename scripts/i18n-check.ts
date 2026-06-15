@@ -6,12 +6,7 @@ const LANG_DIR = path.join(ROOT, 'language');
 const EN_JSON_PATH = path.join(LANG_DIR, 'en-US.json');
 const SRC_DIR = path.join(ROOT, 'src');
 
-// --- Configuration ---
-
-// Excluded scripts that should not be scanned for i18n key usage.
 const EXCLUDED_SCRIPTS = new Set(['i18n-check.ts', 'strip-i18n-fallbacks.ts']);
-
-// --- Helpers ---
 
 function walkDir(dir: string, exts: string[]): string[] {
   const results: string[] = [];
@@ -28,24 +23,15 @@ function walkDir(dir: string, exts: string[]): string[] {
   return results;
 }
 
-/**
- * Key extraction logic.
- * t() now takes 1 argument (key) or 2 arguments (ctx, key).
- */
 function extractKeysFromSource(src: string): string[] {
   const keys: string[] = [];
 
-  // 1. Simple form: t('key') or tg('key') -> capture first quoted string.
   const simpleRe = /\bt(?:g)?\(\s*['"]([a-z][a-zA-Z0-9._-]*)['"]\s*[,)]/g;
 
-  // 2. Context form: t(ctx, 'key') or tg(ctx, 'key') -> capture second quoted string.
   const contextRe = /\bt(?:g)?\(\s*[^'"]+?\s*,\s*['"]([a-z][a-zA-Z0-9._-]*)['"]\s*[,)]/g;
 
-  // 3. Bracket-access form: strings['key.sub'].
   const bracketRe = /\[['"]([a-z][a-zA-Z0-9_-]*(?:\.[a-zA-Z0-9._-]+)+)['"]\]/g;
 
-  // 4. Dotted string literals stored in object properties (e.g. descKey: 'capture.format.png.desc').
-  //    Intentionally broad — false positives are harmless since we cross-check against the JSON.
   const keyLiteralRe = /['"]([a-z][a-zA-Z0-9_-]*(?:\.[a-zA-Z0-9._-]+)+)['"]/g;
 
   for (const re of [simpleRe, contextRe, bracketRe, keyLiteralRe]) {
@@ -58,14 +44,8 @@ function extractKeysFromSource(src: string): string[] {
   return keys;
 }
 
-/**
- * Auto-detects dynamic key prefixes from template literal t() calls.
- * e.g. t(`prefix.sub.${variable}`) → prefix 'prefix.sub.'
- * This eliminates the need for a manually maintained whitelist.
- */
 function extractDynamicPrefixes(sources: string[]): Set<string> {
   const prefixes = new Set<string>();
-  // Match t(`staticPart${...}`) and capture the static prefix before ${}
   const re = /\bt(?:g)?\(\s*`([a-z][a-zA-Z0-9._-]*)\$\{/g;
   for (const src of sources) {
     re.lastIndex = 0;
@@ -87,8 +67,6 @@ function writeSortedJson(filePath: string, data: Record<string, string>) {
   fs.writeFileSync(filePath, JSON.stringify(sorted, null, 2) + '\n', 'utf-8');
 }
 
-// --- Main logic ---
-
 if (!fs.existsSync(EN_JSON_PATH)) {
   console.error('❌ en-US.json not found');
   process.exit(1);
@@ -104,10 +82,8 @@ const allSources = [...sourceFiles, ...scriptFiles].map((f) => fs.readFileSync(f
 const usedKeys = new Set<string>();
 allSources.forEach((src) => extractKeysFromSource(src).forEach((k) => usedKeys.add(k)));
 
-// Auto-detect dynamic key prefixes (e.g. t(`prefix.${var}`) → 'prefix.')
 const dynamicPrefixes = extractDynamicPrefixes(allSources);
 
-// Process en-US.json.
 const cleanedEnJson: Record<string, string> = {};
 let removedFromEnCount = 0;
 
@@ -124,7 +100,6 @@ for (const key of Object.keys(enJson)) {
 writeSortedJson(EN_JSON_PATH, cleanedEnJson);
 console.log(`✅ en-US.json synced (removed ${removedFromEnCount} unused keys)`);
 
-// Process other locale files (e.g. zh-TW.json).
 const otherJsons = fs.readdirSync(LANG_DIR).filter(f => f.endsWith('.json') && f !== 'en-US.json');
 let hasMissingKeys = false;
 
@@ -135,7 +110,6 @@ for (const fileName of otherJsons) {
   const missingKeys: string[] = [];
   let removedCount = 0;
 
-  // Strictly align keys with en-US.json.
   for (const key of Object.keys(cleanedEnJson)) {
     if (key in targetJson) {
       cleanedTargetJson[key] = targetJson[key];
@@ -144,7 +118,6 @@ for (const fileName of otherJsons) {
     }
   }
 
-  // Count discarded keys.
   removedCount = Object.keys(targetJson).length - Object.keys(cleanedTargetJson).length;
 
   writeSortedJson(filePath, cleanedTargetJson);

@@ -1,6 +1,3 @@
-// General settings IPC handlers (hotkey, AI URL, prompt,
-// theme/layout, config import/export, tray behavior, license/version).
-
 import { ipcMain, app, shell } from 'electron';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
@@ -27,7 +24,6 @@ import {
 import type { IpcContext } from './context';
 
 export function registerSettingsHandlers(ctx: IpcContext): void {
-  // Hotkey management
   ipcMain.handle(IPC.GET_HOTKEY, () => config.hotkey);
   ipcMain.handle(IPC.UPDATE_HOTKEY, (_event, newHotkey: string) => {
     saveConfig({ hotkey: newHotkey });
@@ -53,14 +49,17 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
     return true;
   });
 
-  // Custom Prompt — built from promptPreferences at runtime, not persisted separately
-  ipcMain.handle(IPC.GET_CUSTOM_PROMPT, () => '');
-  ipcMain.handle(IPC.UPDATE_CUSTOM_PROMPT, () => true);
-
   ipcMain.handle(IPC.GET_PROMPT_PREFERENCES, () => config.promptPreferences);
   ipcMain.handle(IPC.UPDATE_PROMPT_PREFERENCES, (_event, prefs: unknown) => {
     config.promptPreferences = normalizePromptPreferences(prefs);
     saveConfig({ promptPreferences: config.promptPreferences });
+    return true;
+  });
+
+  ipcMain.handle(IPC.GET_YOUTUBE_PROMPT, () => config.youtubePrompt);
+  ipcMain.handle(IPC.UPDATE_YOUTUBE_PROMPT, (_event, prompt: unknown) => {
+    config.youtubePrompt = typeof prompt === 'string' ? prompt : '';
+    saveConfig({ youtubePrompt: config.youtubePrompt });
     return true;
   });
 
@@ -178,21 +177,8 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
     }
   });
 
-  // License
-  ipcMain.handle(IPC.GET_LICENSE, async () => {
-    const licensePath = app.isPackaged
-      ? path.join(process.resourcesPath, 'LICENSE')
-      : path.join(app.getAppPath(), 'LICENSE');
-    try {
-      return await fs.readFile(licensePath, 'utf-8');
-    } catch {
-      return 'MIT License — see LICENSE file.';
-    }
-  });
-
   ipcMain.handle(IPC.GET_APP_VERSION, () => app.getVersion());
 
-  // Theme persistence
   ipcMain.handle(IPC.GET_THEME, () => config.theme);
   ipcMain.handle(IPC.UPDATE_THEME, (_event, theme: string) => {
     config.theme = theme;
@@ -200,7 +186,6 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
     return true;
   });
 
-  // UI layout preferences
   ipcMain.handle(IPC.GET_LAYOUT_MODE, () => config.layoutMode);
   ipcMain.handle(IPC.UPDATE_LAYOUT_MODE, (_event, layoutMode: string) => {
     const normalized = layoutMode === 'side-by-side' ? 'side-by-side' : 'stacked';
@@ -221,22 +206,13 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
     return true;
   });
 
-  // Tray / window close behavior
   ipcMain.handle(IPC.GET_CLOSE_TO_TRAY, () => config.closeToTray);
   ipcMain.handle(IPC.UPDATE_CLOSE_TO_TRAY, (_event, enabled: boolean) => {
     config.closeToTray = Boolean(enabled);
     saveConfig({ closeToTray: config.closeToTray });
-    // Update login item hidden-mode arg to match new closeToTray state
     applyLaunchAtStartup(config.launchAtStartup, config.closeToTray);
     ctx.onTraySettingsChanged?.();
     return true;
   });
 
-  ipcMain.handle(IPC.GET_AUTO_SHOW_TRAY, () => config.autoShowTray);
-  ipcMain.handle(IPC.UPDATE_AUTO_SHOW_TRAY, (_event, enabled: boolean) => {
-    config.autoShowTray = Boolean(enabled);
-    saveConfig({ autoShowTray: config.autoShowTray });
-    ctx.onTraySettingsChanged?.();
-    return true;
-  });
 }

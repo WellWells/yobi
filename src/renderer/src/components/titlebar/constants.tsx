@@ -1,4 +1,3 @@
-// TitleBar static constants and helpers
 import React from 'react';
 import { Minus, Plus, X } from 'lucide-react';
 
@@ -6,14 +5,11 @@ export const noDrag: React.CSSProperties = { WebkitAppRegion: 'no-drag' };
 const navigatorWithUserAgentData = navigator as Navigator & { userAgentData?: { platform?: string } };
 export const isMac = (navigatorWithUserAgentData.userAgentData?.platform ?? navigator.platform ?? '').toLowerCase().includes('mac');
 
-// Titlebar requires WebkitAppRegion for Electron drag; padding is isMac-conditional but static.
 export const titleBarDynStyle: React.CSSProperties = {
   padding: isMac ? '0 10px' : '0 0 0 10px',
   WebkitAppRegion: 'drag' as React.CSSProperties['WebkitAppRegion'],
 };
 
-// macOS traffic-light color when the window is inactive — a neutral gray that
-// reads correctly on both light and dark title bars (mirrors native behavior).
 export const macInactiveColor = 'rgba(140, 140, 140, 0.45)';
 export const navScrollStyle: React.CSSProperties = {
   ...noDrag,

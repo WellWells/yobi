@@ -1,9 +1,3 @@
-// Electron main process entry point
-//
-// Thin orchestrator: app lifecycle wiring only. Setup logic lives in
-// src/main/bootstrap/ (appSetup, traySetup, flowSetup, telegramSetup).
-
-// Suppress url.parse() deprecation (DEP0169) emitted by third-party packages
 {
   const _ew = process.emitWarning.bind(process);
   process.emitWarning = (warning: string | Error, ...args: unknown[]) => {
@@ -13,12 +7,7 @@
   };
 }
 
-// Must be registered before any async work starts to catch stray rejections
-// from third-party libraries (e.g. GrammY AbortError on bot restart) that
-// bypass all application-level try/catch blocks.
 process.on('unhandledRejection', (reason: unknown) => {
-  // AbortError is expected when the Telegram bot is intentionally restarted or
-  // when a fetch is cancelled via AbortController — suppress as non-fatal.
   if (
     reason instanceof Error &&
     (reason.name === 'AbortError' || reason.message === 'The operation was aborted.')
@@ -46,6 +35,7 @@ import {
   isAllWindowsClosed,
 } from './windows';
 import { CLEAN_UA } from './userAgent';
+import { registerWorkerClientHints } from './clientHints';
 import { setupIpcHandlers } from './ipc';
 import { processTask } from './taskProcessor';
 import { bindHotkey as bindHotkeyImpl } from './hotkeyBinding';
@@ -57,13 +47,15 @@ import { setupTrayAndCloseBehavior, buildTrayIpcCallbacks } from './bootstrap/tr
 import { initFlowManager, broadcastMergedQueueState } from './bootstrap/flowSetup';
 import { createTelegramRuntime } from './bootstrap/telegramSetup';
 
-// Chromium flags — must be called before app.on('ready')
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+
+if (!app.isPackaged) {
+  app.commandLine.appendSwitch('remote-debugging-port', '9222');
+}
 app.userAgentFallback = CLEAN_UA;
 
-// Prevent multiple app instances on Windows/Linux (optional, but recommended)
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
   app.quit();
@@ -88,7 +80,6 @@ if (!gotSingleInstanceLock) {
 
 const TELEGRAM_SESSION_ID = `${app.getName().toLowerCase()}-desktop`;
 
-// Track powerSaveBlocker ID for cleanup
 let powerSaveBlockerId: number | null = null;
 
 let flowManager: FlowManager | null = null;
@@ -97,7 +88,6 @@ const queue = new QueueManager(async (task: Task) => {
   await processTask(task, { telegramRuntime });
 });
 
-// Zero-arg hotkey binder bound to the shared queue (matches the IpcContext contract).
 const bindHotkey = (): void => bindHotkeyImpl({ queue });
 
 queue.onUpdate(() => {
@@ -114,8 +104,10 @@ app.whenReady().then(async () => {
   powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension');
   session.fromPartition('persist:gemini').setUserAgent(CLEAN_UA);
   session.fromPartition('persist:url-parser').setUserAgent(CLEAN_UA);
+  session.fromPartition('persist:browser-flow').setUserAgent(CLEAN_UA);
 
-  // Decrypt sensitive config fields (requires app.ready for safeStorage)
+  registerWorkerClientHints(session.fromPartition('persist:gemini'));
+
   initSensitiveConfig();
 
   setupPlatformIcons();
@@ -169,8 +161,6 @@ app.on('will-quit', () => {
 });
 
 app.on('window-all-closed', () => {
-  // If tray is active, the app stays alive (window hidden to tray).
-  // Otherwise, follow platform conventions: macOS keeps alive; others quit.
   if (isTrayCreated()) return;
   if (process.platform !== 'darwin') {
     void app.quit();
@@ -178,8 +168,6 @@ app.on('window-all-closed', () => {
 });
 
 app.on('activate', () => {
-  // On macOS, re-create a window when the dock icon is clicked
-  // and there are no other windows open.
   if (isAllWindowsClosed()) {
     createMainWindow();
     setMainWindow(getMainWin());

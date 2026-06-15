@@ -1,10 +1,3 @@
-// Processes a single queued prompt task end-to-end.
-//
-// Drives provider automation, saves the markdown output, notifies the user and
-// (for Telegram-sourced tasks) replies via the bot. Clipboard backup/restore and
-// Perplexity site-data cleanup are kept in one linear flow so their ordering is
-// preserved exactly.
-
 import * as path from 'node:path';
 import {
   runAutomation,
@@ -25,6 +18,7 @@ import {
   clearPerplexitySiteDataIfNeeded,
 } from './helpers';
 import { backupClipboard, restoreClipboard } from './clipboard';
+import { llmLane } from './flow/lanes';
 import { listOutputFiles, getOutputDir } from './files';
 import {
   loadLanguageData,
@@ -56,23 +50,10 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
 
   sendLog(`[${id}] 📤 "${preview}"`);
 
-  // Backup clipboard before provider automation (copy-button clicks write to system clipboard)
   const clipboardSnapshot = backupClipboard();
   let preservePerplexitySiteData = false;
 
   try {
-    const workerWin = getWorkerWin();
-    if (!workerWin || workerWin.isDestroyed()) {
-      sendLog(`[${id}] 🔄 Relaunching worker window...`);
-      createWorkerWindow(config.targetUrl);
-      await new Promise((r) => setTimeout(r, 3_000));
-    }
-
-    const activeWorker = getWorkerWin();
-    if (!activeWorker || activeWorker.isDestroyed()) {
-      throw new Error('Worker window unavailable after relaunch attempt');
-    }
-
     const t0 = Date.now();
     sendLog(`[${id}] ⏳ Sending to ${providerLabel}...`);
 
@@ -87,12 +68,28 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
       sendLog(`[${id}] ✂️ Prompt truncated to ${preparedPrompt.maxChars} chars for ${providerLabel}`);
     }
 
-    const { response, title } = await runAutomation(
-      activeWorker,
-      preparedPrompt.prompt,
-      config.responseTimeout,
-      targetUrl,
-    );
+    // Resolve the worker window INSIDE the lane: while queued behind other
+    // automations the window can be destroyed/recreated (login/Cloudflare mode
+    // switch), so a reference captured earlier may be dead by the time we run.
+    const { response, title } = await llmLane.runExclusive(async () => {
+      let activeWorker = getWorkerWin();
+      if (!activeWorker || activeWorker.isDestroyed()) {
+        sendLog(`[${id}] 🔄 Relaunching worker window...`);
+        createWorkerWindow(config.targetUrl);
+        await new Promise((r) => setTimeout(r, 3_000));
+        activeWorker = getWorkerWin();
+      }
+      if (!activeWorker || activeWorker.isDestroyed()) {
+        throw new Error('Worker window unavailable after relaunch attempt');
+      }
+      return runAutomation(
+        activeWorker,
+        preparedPrompt.prompt,
+        config.responseTimeout,
+        targetUrl,
+        task.attachments,
+      );
+    });
 
     const elapsed = ((Date.now() - t0) / 1_000).toFixed(1);
     sendLog(`[${id}] ✅ Response received in ${elapsed}s`);
@@ -105,8 +102,9 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
     const timestampLabel = langData?.['md.timestamp'] ?? 'Time';
 
     const geminiTitle = stripSystemInstruction(title?.trim() ?? '').replace(/\s+/g, ' ').trim();
-    const fallbackTitle = promptForOutput.trim().replace(/\s+/g, ' ').slice(0, 70);
-    const finalTitle = geminiTitle || fallbackTitle || 'Untitled';
+    const taskTitle = task.title?.trim().replace(/\s+/g, ' ') ?? '';
+    const promptFallback = promptForOutput.trim().replace(/\s+/g, ' ').slice(0, 70);
+    const finalTitle = taskTitle || geminiTitle || promptFallback || 'Untitled';
 
     const filePath = await saveOutput({
       prompt: promptForOutput,
@@ -149,7 +147,7 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
     const strings = getLangCache();
     if (isLoginRequiredError(targetUrl, err)) {
       const loginUrl = getProviderLoginUrl(targetUrl);
-      if (loginUrl) await showLoginWindowIfNeeded(providerLabel, loginUrl, config.targetUrl);
+      if (loginUrl) await showLoginWindowIfNeeded(providerLabel, loginUrl);
       sendLog(`[${id}] ⚠️ Login required before sending prompt`);
       if (task.replyTarget) {
         await telegramRuntime.sendTaskError(task.replyTarget, {
@@ -160,6 +158,24 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
       return;
     }
     const error = err as Error;
+    const uploadMatch = /^gemini-upload\[([^\]]+)\]/.exec(error.message ?? '');
+    if (uploadMatch) {
+      const phase = uploadMatch[1];
+      const key = phase === 'not-signed-in'
+        ? 'attach.upload.notSignedIn'
+        : phase === 'gems-mode'
+          ? 'attach.upload.gemsMode'
+          : 'attach.upload.failed';
+      sendWebNotification(t(strings, 'app.name'), t(strings, key), 'error');
+      sendLog(`[${id}] ⚠️ attachment upload failed: ${phase}`);
+      if (task.replyTarget) {
+        await telegramRuntime.sendTaskError(task.replyTarget, {
+          providerLabel,
+          message: t(strings, key),
+        });
+      }
+      return;
+    }
     if (error.name === PERPLEXITY_CLOUDFLARE_ERROR_NAME) {
       preservePerplexitySiteData = true;
     }
@@ -172,7 +188,6 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
       });
     }
   } finally {
-    // Restore clipboard to its original state before provider automation
     restoreClipboard(clipboardSnapshot);
     if (!preservePerplexitySiteData) {
       await clearPerplexitySiteDataIfNeeded(targetUrl);

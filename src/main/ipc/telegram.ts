@@ -1,17 +1,12 @@
-// Telegram settings IPC handlers.
-
 import { ipcMain } from 'electron';
 import { IPC } from '../../shared/types';
 import { config, saveConfig } from '../config';
+import { normalizeProviderCommands } from '../configNormalizers';
 import { sendLog } from '../helpers';
 import { buildTelegramSettingsSnapshot } from '../telegramBridge';
 import { issuePairingCode, revokePairingCode, unpairUser } from '../telegram';
 import type { IpcContext } from './context';
 
-/**
- * Registers a Telegram setting handler that mutates config, persists it, and
- * re-syncs the running bot. Used for settings whose change must reach the live bot.
- */
 function registerSyncSetting(
   ctx: IpcContext,
   channel: string,
@@ -45,7 +40,6 @@ export function registerTelegramHandlers(ctx: IpcContext): void {
     },
   );
 
-  // Bot token has a distinct return contract ({ ok, message }) and skips sync when disabled.
   ipcMain.handle(IPC.UPDATE_TELEGRAM_BOT_TOKEN, async (_event, token: string) => {
     const nextToken = (token ?? '').trim();
     config.telegram.botToken = nextToken;
@@ -91,6 +85,18 @@ export function registerTelegramHandlers(ctx: IpcContext): void {
     config.telegram.adminUserIds = normalized;
     saveConfig({ telegram: config.telegram });
     return true;
+  });
+
+  ipcMain.handle(IPC.UPDATE_TELEGRAM_PROVIDER_COMMANDS, async (_event, value: unknown) => {
+    config.telegram.providerCommands = normalizeProviderCommands(value);
+    saveConfig({ telegram: config.telegram });
+    try {
+      await ctx.telegramRuntime.refreshBotCommands();
+      return true;
+    } catch (err: unknown) {
+      sendLog(`⚠️ Failed to update Telegram provider commands: ${(err as Error).message}`);
+      return false;
+    }
   });
 
   ipcMain.handle(IPC.GENERATE_TELEGRAM_PAIRING_CODE, () => {

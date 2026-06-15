@@ -1,11 +1,7 @@
-// Config normalizer/deserializer functions
-//
-// Pure functions that coerce arbitrary JSON input (stored config, imports)
-// into well-formed Config sub-structures. No Electron or disk I/O here.
-
-import type { CaptureFormat, CaptureSettings, CustomTemplate, PromptLength, PromptPreferences, PromptTone, TelegramPairedUser, TelegramPairingState, TelegramPendingCode } from '../shared/types';
+import type { CaptureFormat, CaptureSettings, CustomTemplate, Provider, PromptLength, PromptPreferences, PromptTone, TelegramPairedUser, TelegramPairingState, TelegramPendingCode, TelegramProviderCommand } from '../shared/types';
+import { PROVIDERS } from '../shared/types';
 import { defaultStored } from './configTypes';
-import type { Config, TelegramConfig } from './configTypes';
+import type { Config, SmtpConfig, TelegramConfig } from './configTypes';
 
 export function normalizeConfig(raw: unknown): Config {
   const obj = (raw && typeof raw === 'object') ? (raw as Partial<Config>) : {};
@@ -14,9 +10,6 @@ export function normalizeConfig(raw: unknown): Config {
     ? Math.round(rawZoom / 10) * 10
     : 100;
 
-  // Migration heuristic for localeSetByUser:
-  // Old configs lack this field — infer from the stored locale.
-  // A non-default locale value means the user changed it intentionally.
   const inferredLocaleSetByUser = typeof obj.localeSetByUser === 'boolean'
     ? obj.localeSetByUser
     : (typeof obj.locale === 'string' && obj.locale !== 'zh-TW' && obj.locale !== 'en-US');
@@ -25,12 +18,26 @@ export function normalizeConfig(raw: unknown): Config {
     ...defaultStored,
     ...obj,
     localeSetByUser: inferredLocaleSetByUser,
+    youtubePrompt: typeof obj.youtubePrompt === 'string' ? obj.youtubePrompt : defaultStored.youtubePrompt,
     theme: typeof obj.theme === 'string' && obj.theme ? obj.theme : defaultStored.theme,
     layoutMode: obj.layoutMode === 'side-by-side' ? 'side-by-side' : 'stacked',
     markdownZoom: clampedZoom,
     captureSettings: normalizeCaptureSettings(obj.captureSettings),
     promptPreferences: normalizePromptPreferences(obj.promptPreferences),
     telegram: deserializePairingConfig(obj.telegram),
+    smtp: normalizeSmtp(obj.smtp),
+  };
+}
+
+export function normalizeSmtp(raw: unknown): SmtpConfig {
+  const obj = (raw && typeof raw === 'object') ? (raw as Partial<SmtpConfig>) : {};
+  const port = Number(obj.port);
+  return {
+    enabled: Boolean(obj.enabled),
+    host: typeof obj.host === 'string' ? obj.host.trim() : '',
+    port: Number.isFinite(port) && port > 0 && port <= 65_535 ? Math.floor(port) : 587,
+    user: typeof obj.user === 'string' ? obj.user.trim() : '',
+    password: typeof obj.password === 'string' ? obj.password : '',
   };
 }
 
@@ -57,8 +64,28 @@ export function deserializePairingConfig(raw: unknown): TelegramConfig {
       ? obj.defaultReplyMode
       : 'markdown',
     adminUserIds: normalizeAdminUserIds(obj.adminUserIds),
+    providerCommands: normalizeProviderCommands(obj.providerCommands),
     pairing: deserializePairingState(obj.pairing),
   };
+}
+
+export function normalizeProviderCommands(raw: unknown): Record<Provider, TelegramProviderCommand> {
+  const obj = (raw && typeof raw === 'object') ? (raw as Record<string, unknown>) : {};
+  const result = {} as Record<Provider, TelegramProviderCommand>;
+  for (const provider of PROVIDERS) {
+    const entry = (obj[provider] && typeof obj[provider] === 'object')
+      ? (obj[provider] as Partial<TelegramProviderCommand>)
+      : {};
+    const command: TelegramProviderCommand = {
+      enabled: entry.enabled !== false,
+      command: typeof entry.command === 'string' ? entry.command.trim() : '',
+    };
+    if (provider === 'duckai') {
+      command.modelId = typeof entry.modelId === 'string' ? entry.modelId.trim() : '';
+    }
+    result[provider] = command;
+  }
+  return result;
 }
 
 function normalizeAdminUserIds(raw: unknown): number[] {

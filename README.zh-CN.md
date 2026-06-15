@@ -2,13 +2,12 @@
 
 # 🤖 Yobi
 
-**免费、无需 API Key 的 AI 自动化桌面应用**
+**一个热键，畅用 ChatGPT、Gemini、Perplexity 与 Duck.ai——还能用无代码方式自动化它们。无需 API Key。**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-blue)](#-快速上手)
 [![Electron](https://img.shields.io/badge/Electron-42-47848F?logo=electron)](https://www.electronjs.org/)
-[![No API Key](https://img.shields.io/badge/API%20Key-无需-brightgreen)](#-亮点功能)
-[![PRs Welcome](https://img.shields.io/badge/PRs-欢迎-brightgreen.svg)](https://github.com/WellWells/yobi/pulls)
+[![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen.svg)](https://github.com/WellWells/yobi/pulls)
 
 **[English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md)**
 
@@ -16,67 +15,48 @@
 
 ---
 
-**Yobi** 是一款本地优先的开源 AI 自动化工具，直接运行在你的桌面上。它将系统剪贴板与全局热键直接对接主流 AI 服务——**ChatGPT、Gemini、Perplexity、Duck.ai**——无需 API Key，无需订阅，无需信用卡。
+**Yobi** 把你早已在用的 AI 网站——**ChatGPT、Gemini、Perplexity 与 Duck.ai**——变成一个由全局热键唤起的桌面助手，也是一台可定时运行、可从 Telegram 触发的无代码自动化引擎。无需 API Key，也没有额外费用：它在内置浏览器中驱动服务商自己的网页，就像你亲自操作一样。
 
-不同于 OpenClaw、Zapier AI、n8n 云端版等从第一天就开始收费的付费自动化平台，Yobi **完全免费**，复用你浏览器中已打开的 AI 网页界面。安装完成后，按下热键，剪贴板内容即刻由 AI 处理。
-
----
-
-## 目录
-
-- [🤖 Yobi](#-yobi)
-  - [目录](#目录)
-  - [✨ 亮点功能](#-亮点功能)
-  - [🚀 快速上手](#-快速上手)
-    - [环境要求](#环境要求)
-    - [安装与运行](#安装与运行)
-    - [首次使用（4 步）](#首次使用4-步)
-  - [📸 截图预览](#-截图预览)
-  - [📦 预构建下载](#-预构建下载)
-  - [🔗 AgentFlow — 可视化工作流自动化](#-agentflow--可视化工作流自动化)
-    - [触发方式](#触发方式)
-    - [技能](#技能)
-    - [变量系统](#变量系统)
-    - [内置工作流模板](#内置工作流模板)
-  - [📱 Telegram Bot 集成](#-telegram-bot-集成)
-    - [内置 Bot 指令](#内置-bot-指令)
-  - [⚙️ 设置与自定义](#️-设置与自定义)
-    - [提示词偏好](#提示词偏好)
-    - [截图与导出](#截图与导出)
-    - [通用设置](#通用设置)
-    - [配置备份](#配置备份)
-  - [⚖️ Yobi vs. 付费工具](#️-yobi-vs-付费工具)
-  - [🔒 安全与隐私](#-安全与隐私)
-  - [🛠️ 开发指南](#️-开发指南)
-    - [技术栈](#技术栈)
-  - [🤝 参与贡献](#-参与贡献)
-  - [📜 开源许可](#-开源许可)
+> ℹ️ 须知：自动化这些网站并非服务商官方支持的用法，也不在其服务条款的许可范围内。Yobi 不会绕过任何技术保护——一旦网站弹出 CAPTCHA，它会暂停并把控制权交还给你。请负责任地使用。[运作原理 →](#-yobi-如何运作)
 
 ---
 
-## ✨ 亮点功能
+## ✨ 为什么选 Yobi
 
-|     | 功能              | 说明                                                                        |
-| --- | ----------------- | --------------------------------------------------------------------------- |
-| 🆓   | **零成本**        | 无 API Key、无信用卡、无订阅费——永久免费                                    |
-| ⌨️   | **全局热键**      | `Alt+G`（Windows）/ `Command+G`（macOS）捕获选中文字或剪贴板，立即发送给 AI |
-| 🤖   | **多服务商**      | ChatGPT · Gemini · Perplexity · Duck.ai                                     |
-| 🔁   | **AgentFlow**     | 可视化无代码工作流构建器，内置 12 种自动化技能                              |
-| 📱   | **Telegram 集成** | 通过 Telegram Bot 从手机远程操控桌面 AI                                     |
-| 💾   | **自动保存**      | 结果以 Markdown 格式附带时间戳保存到本地                                    |
-| 🎨   | **截图与导出**    | 将 AI 回复导出为精美的 PNG、WebP 或 PDF 文件                                |
-| 🔒   | **本地优先**      | 所有逻辑在本机运行，无遥测、无追踪                                          |
-| 🌍   | **9 种界面语言**  | English、繁中、简中、日本語、한국어、Deutsch、Español、Français、Português  |
+|     | 功能                 | 对你意味着什么                                                                 |
+| --- | -------------------- | ----------------------------------------------------------------------------- |
+| ⌨️   | **一个热键**         | 在任何地方选中文字，按下 `Alt+G`（macOS 为 `⌘G`）即得答案——并自动保存          |
+| 🔑   | **无需 API Key**     | 使用服务商的网页，而非付费 API——无需注册、无需付费                             |
+| 🤖   | **主流 AI 全覆盖**   | ChatGPT · Gemini · Perplexity · Duck.ai，一键切换                              |
+| 🔁   | **无代码自动化**     | 拖拽步骤即可搭建工作流——或只需描述一下，让 AI 替你组装                         |
+| 📱   | **从 Telegram 运行** | 在手机上触发你的 AI 与自动化流程                                               |
+| 🎨   | **即分享的输出**     | 将任意回复导出为精美的 PNG、WebP 或 PDF                                        |
+| 🔒   | **完全属于你**       | 全程在本机运行——无遥测、无追踪、开源                                          |
+| 🌍   | **9 种语言**         | English · 繁中 · 简中 · 日本語 · 한국어 · Deutsch · Español · Français · Português |
 
 ---
 
 ## 🚀 快速上手
 
-### 环境要求
+**1. 下载** 适合你系统的最新版本：
 
-- **Node.js 20+**（[下载](https://nodejs.org/)）
+| 平台    | 下载                            |
+| ------- | ------------------------------- |
+| Windows | NSIS 安装包（x64）              |
+| macOS   | DMG（Intel 与 Apple Silicon）   |
 
-### 安装与运行
+→ [**Releases 页面**](https://github.com/WellWells/yobi/releases)
+
+**2. 30 秒内获得你的第一个答案：**
+
+1. （可选）打开应用内浏览器，登录 ChatGPT / Gemini / Perplexity。
+2. 在任意应用中高亮选中文字。
+3. 按下 **`Alt+G`**——Yobi 会把它发送给你选定的 AI，并将回复保存为带时间戳的 Markdown 文件。
+
+> 热键、AI 服务商与托盘行为都可在 **设置** 中配置。
+
+<details>
+<summary><b>改为从源码运行</b>（Node.js 20+）</summary>
 
 ```bash
 git clone https://github.com/WellWells/yobi.git
@@ -84,15 +64,7 @@ cd yobi
 npm install
 npm run dev
 ```
-
-### 首次使用（4 步）
-
-1. **登录**（可选）——在内置浏览器窗口中登录 ChatGPT / Gemini / Perplexity。
-2. **开启托盘**——前往 **设置 → 通用 → 系统托盘**，启用最小化到托盘，保持 Yobi 后台运行。
-3. **选中文字**——在任意应用中高亮选中文字。
-4. **按下 `Alt+G`**——Yobi 将其发送给 AI，并将回复自动保存为带时间戳的 Markdown 文件。
-
-> **提示：** 热键可在 **设置 → 通用 → 热键** 中自定义。macOS 默认为 `Command+G`。
+</details>
 
 ---
 
@@ -101,227 +73,135 @@ npm run dev
 |                          主聊天界面                           |                          模型选择菜单                          |
 | :-----------------------------------------------------------: | :------------------------------------------------------------: |
 | <img src="docs/assets/main-chat-interface.png" width="400" /> | <img src="docs/assets/model-selection-menu.png" width="400" /> |
-|                   与 AI 对话——无需 API Key                    |       在 ChatGPT · Gemini · Perplexity · Duck.ai 间切换        |
+|                    通过网页界面与 AI 对话                     |       在 ChatGPT · Gemini · Perplexity · Duck.ai 间切换        |
 
 |                            对话历史与摘要                             |                             导出选项                             |
 | :-------------------------------------------------------------------: | :--------------------------------------------------------------: |
 | <img src="docs/assets/chat-history-summary-result.png" width="400" /> | <img src="docs/assets/export-options-preview.png" width="400" /> |
 |                         自动保存并附带时间戳                          |             导出为 PNG、WebP 或 PDF，支持自定义样式              |
 
-|                               自定义回复设置                                |                           Telegram Bot 配置                            |
-| :-------------------------------------------------------------------------: | :--------------------------------------------------------------------: |
-| <img src="docs/assets/settings-custom-your-own-response.png" width="400" /> | <img src="docs/assets/settings-telegram-bot-config.png" width="400" /> |
-|                         设置语气、长度与自定义指令                          |                        几秒内完成 Bot 连接配置                         |
-
 <div align="center">
 
 ![AgentFlow 编辑器（RSS 步骤）](docs/assets/agentflow-editor-rss-step.png)
 
-**AgentFlow** — 抓取各 URL 内容、逐条 LLM 摘要，并推送至 Telegram——无需编写代码
+**AgentFlow** — 抓取内容、用 AI 摘要，并按计划发送到 Telegram——无需代码
 
 </div>
 
 ---
 
-## 📦 预构建下载
+## 🔗 AgentFlow — 无代码自动化
 
-从 [**Releases**](https://github.com/WellWells/yobi/releases) 页面下载最新版：
+把 AI、数据与动作串成自动化流程，可通过**热键、定时计划、Telegram 指令，或应用内的 `/指令`** 触发——同一条流程还能同时使用多种方式。
 
-| 平台    | 格式                             |
-| ------- | -------------------------------- |
-| Windows | NSIS 安装包（x64）               |
-| macOS   | DMG（x64 & Apple Silicon arm64） |
+**从没做过自动化？你不需要会。** 只需用大白话描述你想要什么，AI 就会为你搭好整条流程：
 
----
+> *「每个工作日早上 8 点，总结我的 RSS 订阅并发送到 Telegram。」* → 🪄 一条完整、即开即用的流程，为你自动生成。
 
-## 🔗 AgentFlow — 可视化工作流自动化
+想再微调？每一步都可编辑——也可以从零开始，自己拖拽搭建。
 
-AgentFlow 是 Yobi 的可视化自动化引擎。将 **LLM 调用、数据源与 Telegram 输出**串成全自动流水线——无需编写代码。可通过热键、定时计划或 Telegram 指令触发。
+**你可以串联起这些能力：**
 
-### 触发方式
+- 📥 **抓取数据**——网页、RSS、HTTP API、YouTube 字幕，甚至实时的股票 / 外汇 / 天气——无需 API Key
+- 🌐 **驱动浏览器**——打开标签页、点击、填写表单、截图
+- 🧠 **询问 AI**——ChatGPT · Gemini · Perplexity · Duck.ai
+- 📤 **发送结果**——Telegram、邮件、文件，或剪贴板
+- 🛠️ **运行任意内容**——程序、JavaScript、Shell，以及系统与电源控制
+- 🔀 **控制流程**——循环、条件、定时调度
 
-| 触发方式       | 说明                                             |
-| -------------- | ------------------------------------------------ |
-| ⌨️ **热键**     | 独立的全局键盘快捷键                             |
-| ⏰ **定时调度** | 每日 / 每周 Cron 计划，支持灵活重复设置          |
-| 🤖 **Bot 指令** | 自定义 Telegram Bot 指令（如 `/my_cmd <input>`） |
-| ▶️ **手动执行** | 在 AgentFlow 界面按需运行                        |
+……**35+ 种技能且仍在增加**，全部通过简单的 `{{variables}}` 串联——每一步的输出都喂给下一步。
 
-### 技能
+**从模板开始** 并自定义：
 
-| 技能                  | 说明                                                                                  |
-| --------------------- | ------------------------------------------------------------------------------------- |
-| 🧠 **LLM**             | 向 ChatGPT、Gemini、Perplexity 或 Duck.ai 发送提示词；可选导出回复为 PNG / WebP / PDF |
-| 🌐 **浏览器**          | 抓取并提取任意 URL 的文本内容                                                         |
-| 📡 **RSS**             | 监控 RSS/Atom 订阅源——仅返回上次运行后的新条目                                        |
-| 🕵️ **网络爬虫**        | 通过 CSS 选择器从任意网页提取链接与标题，输出为 JSON                                  |
-| 🐚 **Shell**           | 执行 Shell 命令（Windows 支持 cmd / PowerShell；macOS 支持 bash / zsh）               |
-| 📋 **剪贴板**          | 读取或写入系统剪贴板的文本内容                                                        |
-| 📨 **Bot**             | 向 Telegram 聊天发送消息或文件                                                        |
-| 🔁 **循环 / 结束循环** | 逐行迭代列表项目                                                                      |
-| 🔀 **条件 / 结束条件** | 仅当条件成立（为真 / 相等 / 包含 / 为空 …）时才执行块内步骤，否则跳至「结束条件」     |
-| 🛠️ **工具**            | 添加延迟或导出渲染快照（PNG / WebP / PDF）                                            |
-| ⏹ **停止**            | 当变量为空时有条件地中止工作流                                                        |
-| 💬 **注释**            | 为步骤添加说明文字（不执行）                                                          |
+| 模板                                      | 功能                                                                 |
+| ----------------------------------------- | -------------------------------------------------------------------- |
+| 📰 **RSS → Telegram**                      | 用 AI 摘要一个订阅源并发送到 Telegram                                |
+| 🕵️ **网站监控 → Telegram**                 | 监控任意网站的新内容，分析后推送到 Telegram                          |
+| ▶️ **YouTube 订阅 → Telegram**             | 摘要你关注频道的新视频，并附带缩略图                                 |
 
-### 变量系统
-
-每个步骤将结果写入命名变量，后续步骤通过 `{{变量名}}` 引用：
-
-```
-RSS 订阅        → 输出: rss_1
-LLM 提示        → "请总结：{{rss_1}}"   → 输出: llm_1
-Telegram Bot   → 消息: "{{llm_1}}"
-```
-
-### 内置工作流模板
-
-| 模板                      | 说明                                          |
-| ------------------------- | --------------------------------------------- |
-| 📰 **RSS → Telegram**      | 抓取 RSS 源，LLM 摘要，发送到 Telegram        |
-| 🕵️ **网络爬虫 → Telegram** | 爬取任意网站新内容，LLM 分析后推送到 Telegram |
-
-流程可导出为 `.json` 文件**分享**，也支持通过文件或 URL **导入**。
+流程就是普通的 `.json` 文件——一键导出、分享与导入。
 
 ---
 
-## 📱 Telegram Bot 集成
+## 📱 从 Telegram 运行
 
-将 Yobi 连接到 Telegram，随时随地远程控制你的桌面 AI：
+想在手机上使用你的 AI？连接一个 Telegram Bot——大约两分钟：
 
-1. **创建 Bot**——在 Telegram 中向 [@BotFather](https://t.me/BotFather) 发消息，获取 Bot Token。
-2. **填入 Token**——进入 **设置 → Telegram**，粘贴 Token。
-3. **绑定账号**——向你的 Bot 发送 `/start` 并完成绑定流程。
+1. **创建 Bot**——给 [@BotFather](https://t.me/BotFather) 发消息，复制它给你的 Token。
+2. **填入 Token**——在 **设置 → Telegram** 中粘贴。
+3. **发送 `/start`**——向你的 Bot 发送并按提示完成绑定。搞定。
 
-### 内置 Bot 指令
+现在就能随时随地给你的 Bot 发消息：
 
-| 指令               | 说明                                              |
-| ------------------ | ------------------------------------------------- |
-| `/gpt <提示词>`    | 发送提示给 ChatGPT                                |
-| `/gemini <提示词>` | 发送提示给 Gemini                                 |
-| `/pplx <提示词>`   | 发送提示给 Perplexity                             |
-| `/output <模式>`   | 设置默认回复格式（`md` · `png` · `webp` · `pdf`） |
-| `/status`          | 查看代理状态                                      |
+| 指令               | 作用                                                 |
+| ------------------ | ---------------------------------------------------- |
+| `/gpt` · `/gemini` · `/pplx` · `/duck` | 询问对应服务商（指令可自定义）   |
+| `/output <模式>`   | 设置回复格式——`md` · `png` · `webp` · `pdf`          |
+| `/status`          | 查看 AI 状态                                         |
+| `/restart`         | 重启 Yobi（管理员）                                  |
 
-在 AgentFlow 中使用 **Bot 指令触发器**，可创建完全自定义的工作流。
+在 AgentFlow 中用 **Telegram 触发器**打造你自己的指令——任意消息都能启动一条流程。
 
 ---
 
 ## ⚙️ 设置与自定义
 
-### 提示词偏好
-
-自定义每次发送给 AI 的提示词方式：
-
-| 选项           | 可选值                                 |
-| -------------- | -------------------------------------- |
-| **语气**       | 默认 · 专业 · 轻松 · 直接              |
-| **长度**       | 自动 · 精简 · 详细                     |
-| **自定义指令** | 自由格式的系统级引导，附加到每次提示词 |
-| **模板**       | 保存并复用你自己的提示词模板           |
-
-### 截图与导出
-
-将任何 AI 回复导出为精美图片或 PDF：
-
-- **格式**：PNG · WebP · PDF
-- **选项**：渐变色板、布局方向、显示/隐藏提示词文本、服务商名称和时间戳
-
-### 通用设置
-
-| 设置              | 说明                                                                                                           |
-| ----------------- | -------------------------------------------------------------------------------------------------------------- |
-| **主题**          | 11 款内置主题——浅色、深色、Dracula、Nord、AMOLED、Sepia、Catppuccin、Everforest、Rosé Pine、Gruvbox、Cyberpunk |
-| **布局**          | 堆叠 · 左右并排                                                                                                |
-| **响应超时**      | AI 响应的最大等待时间                                                                                          |
-| **开机自启**      | 电脑开机时自动启动 Yobi                                                                                        |
-| **关闭至托盘**    | 关闭窗口时最小化到系统托盘而非退出                                                                             |
-| **Markdown 缩放** | 调整回复文字大小（70%–200%）                                                                                   |
-
-### 配置备份
-
-通过 **设置 → 高级与系统** 将完整配置导出或导入为 JSON 文件。
+- **提示词偏好**——设置默认语气与长度，并在每条提示词前加上你自己的引导指令。
+- **截图与导出**——把任意回复变成精美的 PNG / WebP / PDF（浅色或深色卡片、渐变色板、自选元数据）。
+- **邮件（SMTP）**——让流程通过邮件发送结果；密码保存在操作系统密钥链中，绝不会写入流程文件。
+- **账号**——按服务商分别登录或登出，一键重置某个服务商的数据以修复卡死的会话。
+- **外观与行为**——11 款主题、堆叠或左右并排布局、开机自启、关闭至托盘、响应超时、文字缩放。
+- **配置备份**——将全部设置导出和导入为单个 JSON 文件。
 
 ---
 
-## ⚖️ Yobi vs. 付费工具
+## 🔍 Yobi 如何运作
 
-|               | Yobi                           | OpenClaw / n8n Cloud / Zapier AI |
-| ------------- | ------------------------------ | -------------------------------- |
-| 价格          | **永久免费**                   | 付费订阅 / 按量计费              |
-| API Key       | **无需**                       | 通常需要                         |
-| AI 服务商     | ChatGPT、Gemini、PPLX、Duck.ai | 取决于套餐                       |
-| 工作流自动化  | ✅ AgentFlow（可视化）          | ✅（付费）                        |
-| Telegram 集成 | ✅ 内置                         | 不一定                           |
-| 数据隐私      | **本地优先**                   | 云端处理                         |
-| 开源          | ✅ MIT                          | 不一定                           |
+Yobi 自动化 ChatGPT、Gemini、Perplexity 与 Duck.ai 的**网页界面**。它在内置浏览器窗口中，把你的提示词输入服务商的网页，再从页面读回答案——就和你亲手操作一样。只有需要登录的服务商才在该窗口里登录。它**不使用官方 API，也不运行本地模型**——这正是它无需 API Key、也没有任何费用的原因。
+
+由于它使用的是网页而非官方 API，这**并不在服务商服务条款的许可范围内**。不过 Yobi 不会隐瞒这一点——它不会绕过任何保护措施：不破解 CAPTCHA、不规避速率限制、也不轮换 IP。所以你真正会遇到的，是反机器人检查（类似 Cloudflare 的「确认你不是机器人」页面）；一旦发生，Yobi 会暂停，把控制权交还给你手动完成。
+
+**请负责任地使用 Yobi**——不做任何非法之事，也不进行大规模或恶意的自动化。轻度的个人使用通常只会偶尔遇到一次验证；大量或恶意的使用才是会被封锁的情形。是否在此前提下使用由你决定——本说明不构成法律意见，而且服务商的条款可能变化，请自行查阅。
 
 ---
 
 ## 🔒 安全与隐私
 
-- **无遥测** — 零分析、零追踪脚本、零用户行为数据收集。
-- **本地执行** — 所有自动化均在本机运行，数据直接发送给你选择的 AI 服务商。
-- **凭据加密** — Telegram Bot Token 使用 Electron `safeStorage`（系统级密钥链）加密后写入磁盘。
-- **第三方服务商政策** — ChatGPT / Gemini / Perplexity 处理的查询受其各自隐私政策约束，作者对这些平台无控制权。
-- **开源可审计** — 所有自动化逻辑均可在 `src/main/` 目录中审查。
+- **无遥测**——零分析、零追踪；你的查询只发送给你选择的 AI 服务商（受其各自的隐私政策约束）。
+- **本地且开源**——所有自动化逻辑都在本机运行，可在 `src/main/` 中审查。
+- **凭据加密**——你的 Telegram Token 与 SMTP 密码在写入磁盘前，均使用操作系统密钥链（Electron `safeStorage`）加密。
 
 ---
 
-## 🛠️ 开发指南
+## 🛠️ 开发
 
 ```bash
-# 启动开发服务器（含 Electron 热重载）
-npm run dev
-
-# TypeScript 类型检查
-npm run typecheck
-
-# i18n Key 审计
-npm run i18n:check
-
-# 构建 Windows（NSIS 安装包）
-npm run build:win
-
-# 构建 macOS（DMG）
-npm run build:mac
+npm run dev         # dev server with Electron hot-reload
+npm run typecheck   # TypeScript type checking
+npm run i18n:check  # i18n key audit
+npm run build:win   # build Windows (NSIS installer)
+npm run build:mac   # build macOS (DMG)
 ```
 
-### 技术栈
-
-| 层级      | 技术                      |
-| --------- | ------------------------- |
-| 运行时    | Electron 42 + Node.js 20  |
-| 前端      | React 19 + TypeScript     |
-| UI 组件库 | Mantine 9                 |
-| 状态管理  | Zustand 5                 |
-| 构建工具  | Vite 8 + electron-builder |
-| Telegram  | GrammY                    |
-| 定时任务  | node-cron                 |
+**技术栈：** Electron 42 · React 19 + TypeScript · Mantine 9 · Zustand 5 · Vite 8 + electron-builder · GrammY · node-cron
 
 ---
 
 ## 🤝 参与贡献
 
-欢迎提交 Issue、Feature Request 和 Pull Request！
-
-1. **Fork** 仓库并创建功能分支（`git checkout -b feat/my-feature`）。
-2. 完成修改——确保 `npm run typecheck` 无报错通过。
-3. 提交 **Pull Request**，附上清晰的描述。
-
-重大变更请先开 **Issue** 讨论方案。
+欢迎提交 Issue 和 PR！Fork 仓库、创建分支（`git checkout -b feat/my-feature`），确保 `npm run typecheck` 通过，然后提交一个附有清晰描述的 PR。重大变更请先开 Issue 讨论方案。
 
 ---
 
 ## 📜 开源许可
 
-本项目基于 **[MIT 许可证](LICENSE)** 开源——自由使用、修改与分发。
+[**MIT**](LICENSE) — 自由使用、修改与分发。
 
 ---
 
 <div align="center">
 
-如果 Yobi 为你节省了时间或金钱，请 ⭐ **Star** 这个仓库——让更多人发现它！
+如果 Yobi 为你节省了时间，请 ⭐ **Star** 这个仓库——让更多人发现它！
 
 **[报告 Bug](https://github.com/WellWells/yobi/issues) · [功能建议](https://github.com/WellWells/yobi/issues) · [讨论区](https://github.com/WellWells/yobi/discussions)**
 

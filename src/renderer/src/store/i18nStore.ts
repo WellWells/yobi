@@ -51,6 +51,16 @@ interface I18nState {
   t: (key: string) => string;
 }
 
+// Rebuilt whenever the active translations change so its identity changes on a
+// locale switch — this is what lets React.memo/useMemo consumers that receive t
+// as a prop or dependency actually re-render into the new language.
+function makeT(translations: Translations, enTranslations: Translations) {
+  return (key: string): string =>
+    (translations[key] as string | undefined)
+    ?? (enTranslations[key] as string | undefined)
+    ?? key;
+}
+
 function findBestLocaleMatch(availableLocales: string[], targetLocale: string): string | null {
   if (!targetLocale?.trim()) return null;
   const normalizedTarget = normalizeLocale(targetLocale);
@@ -73,13 +83,7 @@ export const useI18nStore = create<I18nState>((set, get) => ({
   availableLocales: [],
   isReady: false,
 
-  t: (key: string): string => {
-    const { translations, enTranslations } = get();
-    // Chain: current locale → en-US → key itself
-    return (translations[key] as string | undefined)
-      ?? (enTranslations[key] as string | undefined)
-      ?? key;
-  },
+  t: makeT({}, {}),
 
   loadLocales: async () => {
     const list = await window.electronAPI.getLanguageList();
@@ -87,18 +91,14 @@ export const useI18nStore = create<I18nState>((set, get) => ({
 
     let resolvedLocale: string;
     if (setByUser) {
-      // Respect the user's explicit choice — never override it
       resolvedLocale = findBestLocaleMatch(list, persistedLocale) ?? FALLBACK_LOCALE;
     } else {
-      // Auto-detect from the OS/browser language preferences
       resolvedLocale = resolveUiLocale(list, []);
-      // Persist the auto-detected locale so config reflects reality
       if (resolvedLocale !== persistedLocale) {
         void window.electronAPI.setLocaleAuto(resolvedLocale);
       }
     }
 
-    // Only preload the active locale + en-US fallback (not all 9 locales)
     const localesToLoad = [...new Set([FALLBACK_LOCALE, resolvedLocale])];
     const localeEntries = await Promise.all(
       localesToLoad.map(async (locale) => {
@@ -110,10 +110,12 @@ export const useI18nStore = create<I18nState>((set, get) => ({
     for (const [locale, content] of localeEntries) {
       if (content) localeTranslations[locale] = content;
     }
+    const enTranslations = localeTranslations[FALLBACK_LOCALE] ?? {};
     set({
       availableLocales: list,
       localeTranslations,
-      enTranslations: localeTranslations[FALLBACK_LOCALE] ?? {},
+      enTranslations,
+      t: makeT({}, enTranslations),
     });
     await get().setLocale(resolvedLocale, { persist: false });
     set({ isReady: true });
@@ -122,7 +124,7 @@ export const useI18nStore = create<I18nState>((set, get) => ({
   setLocale: async (locale: string, options?: { persist?: boolean }) => {
     const cachedTranslations = get().localeTranslations[locale];
     if (cachedTranslations) {
-      set({ locale, translations: cachedTranslations });
+      set((state) => ({ locale, translations: cachedTranslations, t: makeT(cachedTranslations, state.enTranslations) }));
     } else {
       const content = await window.electronAPI.getLanguageContent(locale);
       if (content) {
@@ -130,13 +132,14 @@ export const useI18nStore = create<I18nState>((set, get) => ({
         set((state) => ({
           locale,
           translations,
+          t: makeT(translations, state.enTranslations),
           localeTranslations: {
             ...state.localeTranslations,
             [locale]: translations,
           },
         }));
       } else {
-        set({ locale, translations: {} });
+        set((state) => ({ locale, translations: {}, t: makeT({}, state.enTranslations) }));
       }
     }
     if (options?.persist !== false) {

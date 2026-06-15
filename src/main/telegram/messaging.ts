@@ -1,20 +1,19 @@
-// proactive and task result message delivery.
-//
-// Formats and sends flow/proactive outputs plus task success/error replies.
-// Stateless by design: the runtime passes a messaging context (bot accessor,
-// strings, reply mode, export registry) instead of being imported here.
-
+import * as path from 'node:path';
+import * as fs from 'node:fs/promises';
 import { InputFile } from 'grammy';
 import type { TelegramReplyMode, TelegramReplyTarget } from '../../shared/types';
+import { getOutputDir } from '../files';
 import { getLangCache, t } from '../i18n';
 import { getErrorMessage } from './errors';
 import {
   escapeTelegramHtml,
   extractResponseSection,
   formatResponseForTelegramHtml,
+  telegramVisibleLength,
   truncateText,
 } from './formatter';
 import { buildExportCallbackData, type ExportTokenRegistry } from './exporter';
+import { fetchOptimizedImage } from './remoteImage';
 import {
   safeSendMessage,
   sendDirectExport,
@@ -22,9 +21,9 @@ import {
 } from './exportHandlers';
 
 const TELEGRAM_MSG_LIMIT = 4096;
+const TELEGRAM_CAPTION_LIMIT = 1024;
 const TELEGRAM_RESULT_MAX = 2600;
 
-/** Send context extended with the state needed for task result replies. */
 export interface TelegramMessagingContext extends TelegramSendContext {
   isPollerActive: () => boolean;
   getDefaultReplyMode: () => TelegramReplyMode;
@@ -74,23 +73,118 @@ export async function sendProactive(
   }
 }
 
+async function resolveSafeLocalAttachment(
+  filePath: string,
+  authorizedPaths: string[] = [],
+): Promise<string> {
+  if (filePath.includes('\0')) {
+    throw new Error('Attachment path is invalid (contains a NUL byte)');
+  }
+  const resolved = await fs.realpath(filePath).catch(() => path.resolve(filePath));
+
+  for (const candidate of authorizedPaths) {
+    const authResolved = await fs.realpath(candidate).catch(() => path.resolve(candidate));
+    if (authResolved === resolved) return resolved;
+  }
+
+  if (/^[\\/]{2}/.test(filePath)) {
+    throw new Error('Attachment must be a local file or an http(s) URL, not a network path');
+  }
+  const root = await fs.realpath(await getOutputDir()).catch(() => path.resolve('.'));
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+    throw new Error('Attachment is outside the Yobi output folder and was blocked');
+  }
+  return resolved;
+}
+
+async function fileLooksLikeImage(resolvedPath: string): Promise<boolean> {
+  let handle: fs.FileHandle | undefined;
+  try {
+    handle = await fs.open(resolvedPath, 'r');
+    const buf = Buffer.alloc(16);
+    const { bytesRead } = await handle.read(buf, 0, 16, 0);
+    if (bytesRead < 4) return false;
+    const ascii = (start: number, end: number): string => buf.toString('ascii', start, end);
+    if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return true;
+    if (buf[0] === 0x89 && ascii(1, 4) === 'PNG') return true;
+    if (ascii(0, 4) === 'GIF8') return true;
+    if (ascii(0, 2) === 'BM') return true;
+    if (ascii(0, 2) === 'II' && buf[2] === 0x2a && buf[3] === 0x00) return true;
+    if (ascii(0, 2) === 'MM' && buf[2] === 0x00 && buf[3] === 0x2a) return true;
+    if (buf[0] === 0x00 && buf[1] === 0x00 && buf[2] === 0x01 && buf[3] === 0x00) return true;
+    if (bytesRead >= 12) {
+      if (ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return true;
+      if (ascii(4, 8) === 'ftyp') {
+        const brand = ascii(8, 12);
+        if (['avif', 'avis', 'heic', 'heix', 'hevc', 'heim', 'heis', 'mif1', 'msf1'].includes(brand)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
 export async function sendProactiveFile(
   mctx: TelegramMessagingContext,
   chatId: number,
   filePath: string,
-  sendAs: 'photo' | 'document',
+  sendAs: 'photo' | 'document' | 'auto',
   caption?: string,
+  authorizedPaths?: string[],
 ): Promise<void> {
   const bot = mctx.getBot();
   if (!bot || !mctx.isPollerActive()) {
     throw new Error('Telegram bot is not running');
   }
-  const captionOpts = caption ? { caption } : {};
+  const captionSource = caption ? extractResponseSection(caption, mctx.getStrings()) : '';
+  let captionHtml = captionSource ? formatResponseForTelegramHtml(captionSource) : '';
+  if (captionHtml && telegramVisibleLength(captionHtml) > TELEGRAM_CAPTION_LIMIT) {
+    captionHtml = formatResponseForTelegramHtml(truncateText(captionSource, TELEGRAM_CAPTION_LIMIT));
+  }
+  const captionOpts = captionHtml
+    ? { caption: captionHtml, parse_mode: 'HTML' as const }
+    : {};
   try {
-    if (sendAs === 'photo') {
-      await bot.api.sendPhoto(chatId, new InputFile(filePath), captionOpts);
-    } else {
-      await bot.api.sendDocument(chatId, new InputFile(filePath), captionOpts);
+    const isRemote = /^https?:\/\//i.test(filePath);
+    const resolvedLocal = isRemote ? '' : await resolveSafeLocalAttachment(filePath, authorizedPaths);
+    const media = (): string | InputFile => (isRemote ? filePath : new InputFile(resolvedLocal));
+
+    let mode: 'photo' | 'document' = sendAs === 'auto' ? 'photo' : sendAs;
+    if (sendAs === 'auto' && !isRemote) {
+      mode = (await fileLooksLikeImage(resolvedLocal)) ? 'photo' : 'document';
+    }
+
+    // Telegram downloads remote media on its own servers; hotlink-protected hosts
+    // serve HTML to that fetcher, so sendPhoto/sendDocument by URL fail. For remote
+    // photos, download + optimize the image ourselves (in memory, never on disk) and
+    // upload the bytes so Telegram receives a valid, size-optimized image.
+    if (isRemote && mode === 'photo') {
+      const optimized = await fetchOptimizedImage(filePath, mctx.onLog);
+      if (optimized) {
+        await bot.api.sendPhoto(chatId, new InputFile(optimized, 'image.jpg'), captionOpts);
+        return;
+      }
+      mctx.onLog('[telegram] optimized image upload unavailable; falling back to URL send');
+    }
+
+    try {
+      if (mode === 'photo') {
+        await bot.api.sendPhoto(chatId, media(), captionOpts);
+      } else {
+        await bot.api.sendDocument(chatId, media(), captionOpts);
+      }
+    } catch (sendErr: unknown) {
+      if (sendAs === 'auto' && mode === 'photo') {
+        mctx.onLog(`[telegram] photo send failed, retrying as document: ${String(sendErr)}`);
+        await bot.api.sendDocument(chatId, media(), captionOpts);
+      } else {
+        throw sendErr;
+      }
     }
   } catch (err: unknown) {
     mctx.onLog(`[telegram] sendProactiveFile failed for chat ${chatId}: ${String(err)}`);

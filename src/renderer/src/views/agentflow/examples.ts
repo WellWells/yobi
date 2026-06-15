@@ -1,6 +1,4 @@
-// Built-in template flows for AgentFlow. Each entry is a full FlowDefinition
-// with placeholder values the user can fill in after loading.
-import type { FlowDefinition } from '../../../../shared/types';
+import type { FlowDefinition, SkillType } from '../../../../shared/types';
 
 function makeId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -10,6 +8,7 @@ export interface FlowTemplate {
   key: string;
   titleKey: string;
   descKey: string;
+  primarySkill: SkillType;
   build: (t: (key: string) => string) => FlowDefinition;
 }
 
@@ -18,9 +17,10 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
     key: 'rss_telegram',
     titleKey: 'agentflow.templates.rss',
     descKey: 'agentflow.templates.rss.desc',
+    primarySkill: 'rss',
     build: (t): FlowDefinition => ({
       id: makeId(),
-      name: 'RSS → Telegram',
+      name: t('agentflow.templates.rss'),
       description: t('agentflow.templates.rss.flowdesc'),
       enabled: false,
       trigger: {
@@ -42,7 +42,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
           type: 'rss',
           label: t('agentflow.templates.rss.step.feed'),
           config: {
-            url: '[Fill in RSS URL]',
+            url: '',
             fetchContent: 'false',
             checkpoint: '',
             lastLinks: '',
@@ -91,9 +91,10 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
     key: 'web_monitor',
     titleKey: 'agentflow.templates.webMonitor',
     descKey: 'agentflow.templates.webMonitor.desc',
+    primarySkill: 'scraper',
     build: (t): FlowDefinition => ({
       id: makeId(),
-      name: 'Web Monitor → Telegram',
+      name: t('agentflow.templates.webMonitor'),
       description: t('agentflow.templates.webMonitor.flowdesc'),
       enabled: false,
       trigger: {
@@ -155,6 +156,123 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
             message: '{{llm_1}}',
           },
           outputKey: 'bot_1',
+        },
+      ],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }),
+  },
+  {
+    key: 'youtube_subs',
+    titleKey: 'agentflow.templates.ytSubs',
+    descKey: 'agentflow.templates.ytSubs.desc',
+    primarySkill: 'youtube_subs',
+    build: (t): FlowDefinition => ({
+      id: makeId(),
+      name: t('agentflow.templates.ytSubs'),
+      description: t('agentflow.templates.ytSubs.flowdesc'),
+      enabled: false,
+      trigger: {
+        type: 'cron',
+        scheduleMode: 'weekly',
+        weekdays: [1, 2, 3, 4, 5],
+        scheduleHour: 8,
+        scheduleMinute: 0,
+        repeatWithinDay: false,
+        repeatEveryUnit: 'minutes',
+        repeatEveryValue: 60,
+        endHour: 23,
+        endMinute: 59,
+        cronExpression: '0 8 * * 1-5',
+      },
+      steps: [
+        {
+          id: makeId(),
+          type: 'youtube_subs',
+          label: t('agentflow.templates.ytSubs.step.subs'),
+          config: {
+            channels: '',
+            perChannel: '3',
+            skipShorts: 'true',
+            cacheDays: '3',
+          },
+          outputKey: 'ytsubs_1',
+        },
+        {
+          id: makeId(),
+          type: 'stop',
+          label: t('agentflow.templates.step.stop_noNew'),
+          config: { value: '{{ytsubs_1}}' },
+          outputKey: 'stop_1',
+        },
+        {
+          id: makeId(),
+          type: 'loop',
+          label: t('agentflow.templates.ytSubs.step.loop'),
+          config: { input: '{{ytsubs_1}}', loopVar: 'video', limitIterations: 'true', maxIterations: '5' },
+          outputKey: 'loop_1',
+        },
+        {
+          id: makeId(),
+          type: 'youtube',
+          label: t('agentflow.templates.ytSubs.step.transcript'),
+          config: { url: '{{video.link}}' },
+          outputKey: 'yt_1',
+        },
+        {
+          id: makeId(),
+          type: 'if',
+          label: t('agentflow.templates.ytSubs.step.skipNoCaption'),
+          config: { left: '{{yt_1.transcript}}', operator: 'is_empty', right: '' },
+          outputKey: '',
+        },
+        {
+          id: makeId(),
+          type: 'continue',
+          label: t('agentflow.skill.continue'),
+          config: {},
+          outputKey: '',
+        },
+        {
+          id: makeId(),
+          type: 'end_if',
+          label: t('agentflow.skill.end_if'),
+          config: {},
+          outputKey: '',
+        },
+        {
+          id: makeId(),
+          type: 'llm',
+          label: t('agentflow.templates.ytSubs.step.llm'),
+          config: {
+            prompt: t('agentflow.templates.ytSubs.prompt'),
+            provider: 'https://gemini.google.com/',
+            saveToHistory: 'false',
+            exportFormat: '',
+            exportTitle: '',
+            exportFileName: '',
+            exportShowProvider: 'false',
+            exportShowTimestamp: 'false',
+          },
+          outputKey: 'llm_1',
+        },
+        {
+          id: makeId(),
+          type: 'bot',
+          label: t('agentflow.templates.step.bot'),
+          config: {
+            chatId: '',
+            message: '{{video.title}}\n{{video.link}}\n\n{{llm_1}}',
+            attachment: '{{video.image}}',
+          },
+          outputKey: 'bot_1',
+        },
+        {
+          id: makeId(),
+          type: 'end_loop',
+          label: t('agentflow.skill.end_loop'),
+          config: {},
+          outputKey: '',
         },
       ],
       createdAt: new Date().toISOString(),

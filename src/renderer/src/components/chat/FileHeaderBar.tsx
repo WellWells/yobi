@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActionIcon, Box, Button, Group, Menu as MMenu, Stack, Text } from '@mantine/core';
+import { ActionIcon, Box, Button, Group, Menu as MMenu, Stack, Text, Tooltip } from '@mantine/core';
 import { ChevronDown, Copy, Download, FileText, FolderOpen, Menu, Minus, Pencil, Plus, ZoomIn } from 'lucide-react';
 import type { LayoutMode } from '../../store/appStore';
 import { AppTextInput } from '../AppTextInput';
@@ -99,15 +99,17 @@ export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
               style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, cursor: 'default' }}
             >{fileName}</Text>
           </Group>
-          <ActionIcon
-            onClick={onStartHeaderRename}
-            title={t('header.rename')}
-            variant="subtle"
-            size="sm"
-            c="dimmed"
-          >
-            <Pencil size={13} />
-          </ActionIcon>
+          <Tooltip label={t('header.rename')} position="bottom">
+            <ActionIcon
+              onClick={onStartHeaderRename}
+              aria-label={t('header.rename')}
+              variant="subtle"
+              size="sm"
+              c="dimmed"
+            >
+              <Pencil size={13} />
+            </ActionIcon>
+          </Tooltip>
         </Group>
       )}
 
@@ -149,15 +151,21 @@ export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
                   {t('zoom.label')}
                 </Group>
                 <Group gap={6}>
-                  <ActionIcon variant="default" size={28} radius={6} onClick={onZoomOut} title={t('zoom.out')}>
-                    <Minus size={14} />
-                  </ActionIcon>
-                  <Button variant="subtle" size="compact-xs" radius={6} onClick={onZoomReset} title={t('zoom.reset')} miw={56} fw={700}>
-                    {zoomPercentText}
-                  </Button>
-                  <ActionIcon variant="default" size={28} radius={6} onClick={onZoomIn} title={t('zoom.in')}>
-                    <Plus size={14} />
-                  </ActionIcon>
+                  <Tooltip label={t('zoom.out')} position="top">
+                    <ActionIcon variant="default" size={28} radius={6} onClick={onZoomOut} aria-label={t('zoom.out')}>
+                      <Minus size={14} />
+                    </ActionIcon>
+                  </Tooltip>
+                  <Tooltip label={t('zoom.reset')} position="top">
+                    <Button variant="subtle" size="compact-xs" radius={6} onClick={onZoomReset} miw={56} fw={700}>
+                      {zoomPercentText}
+                    </Button>
+                  </Tooltip>
+                  <Tooltip label={t('zoom.in')} position="top">
+                    <ActionIcon variant="default" size={28} radius={6} onClick={onZoomIn} aria-label={t('zoom.in')}>
+                      <Plus size={14} />
+                    </ActionIcon>
+                  </Tooltip>
                 </Group>
               </Group>
 

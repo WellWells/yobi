@@ -1,6 +1,6 @@
-// empty-state welcome panel for ChatView
 import React from 'react';
 import { Box, Stack, Text } from '@mantine/core';
+import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../../store/appStore';
 import { useI18nStore } from '../../store/i18nStore';
 import { findModelOption } from '../../config/models';
@@ -11,7 +11,9 @@ const WelcomeStepCard: React.FC<{ children: React.ReactNode }> = ({ children }) 
 );
 
 export const WelcomeScreen: React.FC<{ activeModelUrl: string }> = ({ activeModelUrl }) => {
-  const { hotkey, duckaiModels } = useAppStore();
+  const { hotkey, duckaiModels } = useAppStore(
+    useShallow((s) => ({ hotkey: s.hotkey, duckaiModels: s.duckaiModels })),
+  );
   const { t } = useI18nStore();
   const providerLabel = findModelOption(activeModelUrl, duckaiModels).label;
   const welcomeHint = t('welcome.hint').replace('{{provider}}', providerLabel);

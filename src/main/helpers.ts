@@ -1,4 +1,3 @@
-// Shared utility functions for the main process
 import { app, Notification, session } from 'electron';
 import type { BrowserWindow } from 'electron';
 import * as path from 'node:path';
@@ -9,6 +8,7 @@ import { detectProvider, getProviderLabel } from './providers';
 let _mainWin: BrowserWindow | null = null;
 let _notifyEnabled = true;
 let _workerReveal: (() => void) | null = null;
+let _workerAttention: WorkerAttention = 'idle';
 
 export function setMainWindow(win: BrowserWindow | null): void {
   _mainWin = win;
@@ -28,20 +28,23 @@ export function applyLaunchAtStartup(enabled: boolean, hideOnStart: boolean = fa
     app.setLoginItemSettings({
       openAtLogin: enabled,
       path: process.execPath,
-      // Pass --hidden arg so index.ts can detect startup-hidden mode
       args: enabled && hideOnStart ? ['--hidden'] : [],
     });
   } else {
     app.setLoginItemSettings({
       openAtLogin: enabled,
-      // openAsHidden still works on most macOS versions for background launch
       openAsHidden: enabled && hideOnStart,
     });
   }
 }
 
+export function relaunchApp(reason = 'restart requested'): void {
+  sendLog(`🔄 Relaunching Yobi (${reason})...`);
+  app.relaunch();
+  setTimeout(() => app.quit(), 600);
+}
+
 export function sendLog(msg: string): void {
-  // en-GB yields a deterministic 24h HH:mm:ss log timestamp regardless of UI locale
   const time = new Date().toLocaleTimeString('en-GB', { hour12: false });
   const line = `[${time}] ${msg}`;
   console.log(line);
@@ -54,11 +57,13 @@ export function sendToRenderer(channel: string, ...args: unknown[]): void {
   }
 }
 
-// Push worker-window attention state to the renderer so the title-bar worker
-// button can surface "needs login" / "needs verification" without relying on
-// transient notifications.
 export function setWorkerAttention(state: WorkerAttention): void {
+  _workerAttention = state;
   sendToRenderer(IPC.WORKER_STATUS, state);
+}
+
+export function getWorkerAttention(): WorkerAttention {
+  return _workerAttention;
 }
 
 export function sendWebNotification(
@@ -132,7 +137,7 @@ export async function clearPerplexitySiteDataIfNeeded(
     const workerSession = session.fromPartition('persist:gemini');
     await workerSession.clearStorageData({
       origin: PROVIDER_URLS.perplexity.replace(/\/$/, ''),
-      storages: ['cookies', 'localstorage', 'indexdb', 'serviceworkers', 'cachestorage', 'filesystem', 'websql'],
+      storages: ['cookies', 'localstorage', 'indexdb', 'serviceworkers', 'cachestorage', 'filesystem'],
     });
     log(`🧹 Cleared ${providerLabel} cookies/storage`);
   } catch (err: unknown) {
@@ -147,9 +152,6 @@ export function maskToken(token: string): string {
   return `${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`;
 }
 
-// Packaged : <resources>/assets/<filename>  (extraResources copies assets/ there)
-// Dev      : __dirname = out/main/ → ../../assets → project root/assets
-//            Using __dirname is more reliable than app.getAppPath() in dev mode.
 export function getAssetPath(filename: string): string {
   if (app.isPackaged) {
     return path.join(process.resourcesPath, 'assets', filename);

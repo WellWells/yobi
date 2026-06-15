@@ -1,10 +1,8 @@
-// Markdown document capture (PNG, WEBP, PDF)
 import { app, BrowserWindow } from 'electron';
 import * as path from 'node:path';
 import type { MarkdownCaptureRequest, CaptureFormat, CaptureMode } from '../shared/types';
 import { sendLog } from './helpers';
 
-/** Overall timeout for the entire capture operation (ms). */
 const CAPTURE_TIMEOUT_MS = 30_000;
 
 interface CaptureDocumentResult {
@@ -34,6 +32,7 @@ export function normalizeCaptureRequest(request: MarkdownCaptureRequest): Markdo
   const safeBackground = /^(linear-gradient|radial-gradient)\(.+\)$/i.test(background)
     ? background
     : 'linear-gradient(140deg, #0f172a 0%, #1e293b 55%, #334155 100%)';
+  const cardTheme = request?.options?.cardTheme === 'light' ? 'light' : 'dark';
 
   return {
     payload: {
@@ -54,6 +53,7 @@ export function normalizeCaptureRequest(request: MarkdownCaptureRequest): Markdo
       showTimestamp: Boolean(request?.options?.showTimestamp),
       width,
       background: safeBackground,
+      cardTheme,
     },
   };
 }
@@ -84,8 +84,6 @@ export async function captureMarkdownDocument(
   rawRequest: MarkdownCaptureRequest,
 ): Promise<CaptureDocumentResult> {
   const request = normalizeCaptureRequest(rawRequest);
-  // Window dimensions are always in CSS logical pixels.
-  // DPI scaling is handled by Chromium internally.
   const logicalWidth = request.options.width;
 
   const captureWin = new BrowserWindow({
@@ -106,8 +104,6 @@ export async function captureMarkdownDocument(
   });
   attachCaptureConsoleForwarder(captureWin);
 
-  // Overall timeout guard — prevents the window from living forever if
-  // loadCapturePage or executeJavaScript hangs indefinitely.
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
     timeoutId = setTimeout(() => {
@@ -147,7 +143,6 @@ async function captureMarkdownDocumentCore(
     true,
   )) as { logicalHeight?: number } | null;
 
-  // logicalHeight is in CSS pixels, always.
   const logicalHeight = Math.max(1, Math.ceil(renderResult?.logicalHeight ?? 1));
   const imageLogicalHeight = logicalHeight;
   const pdfHeight = logicalHeight - 1;
@@ -157,7 +152,6 @@ async function captureMarkdownDocumentCore(
   }
 
   if (request.options.format === 'pdf') {
-    // PDF: resize window to full height, inject @page CSS, then print.
     captureWin.setContentSize(logicalWidth, logicalHeight);
     const cssKey = await captureWin.webContents.insertCSS(
       `@page { size: ${logicalWidth}px ${pdfHeight}px; margin: 0; }` +
@@ -179,12 +173,6 @@ async function captureMarkdownDocumentCore(
     }
   }
 
-  // PNG / WEBP: use CDP to force-render the full logical height and capture.
-  // Do NOT call setContentSize here — OS window size limits would cap the height
-  // and leave transparent rows at the bottom of the screenshot.
-  // Instead, Emulation.setDeviceMetricsOverride tells Chromium's renderer to lay
-  // out the page at the full logicalWidth × logicalHeight, regardless of the
-  // physical window, before we call Page.captureScreenshot.
   const imageBuffer = await captureScreenshotCdp(
     captureWin, logicalWidth, imageLogicalHeight, request.options.format,
   );
@@ -204,9 +192,6 @@ async function captureScreenshotCdp(
   try {
     await debuggerSession.sendCommand('Page.enable');
 
-    // Force the renderer to lay out the full logical page dimensions.
-    // Without this, Chromium only renders content within the physical window
-    // boundary, leaving the rest of the clip as transparent pixels.
     await debuggerSession.sendCommand('Emulation.setDeviceMetricsOverride', {
       width: logicalWidth,
       height: logicalHeight,
@@ -214,13 +199,11 @@ async function captureScreenshotCdp(
       mobile: false,
     });
 
-    // Wait for the layout reflow triggered by the metrics override.
     await win.webContents.executeJavaScript(
       `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 80))))`,
       true,
     );
 
-    // clip uses CSS logical pixel coordinates; scale: 1 means 1:1 output.
     const result = (await debuggerSession.sendCommand('Page.captureScreenshot', {
       format,
       quality: format === 'webp' ? 75 : undefined,

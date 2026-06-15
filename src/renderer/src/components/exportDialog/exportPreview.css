@@ -1,0 +1,67 @@
+/*
+ * WYSIWYG overrides for the export-dialog preview card. The markdown body is
+ * rendered with the app's global `.md-content` class, whose inline code, links,
+ * blockquotes and tables are styled with app-theme variables. These scoped rules
+ * re-drive those elements from the same `--cap-*` tokens as the real export
+ * (capture.css), so the preview matches the exported image. Scoped under
+ * `.export-preview-card` so the rest of the app's `.md-content` is untouched.
+ * Code-block panels stay dark in both card themes, mirroring capture.css.
+ */
+/* Headings carry an explicit app-theme colour in globals.css; re-drive them
+   from the card title token so they stay dark on a light card (and vice versa). */
+.export-preview-card .md-content h1,
+.export-preview-card .md-content h2,
+.export-preview-card .md-content h3,
+.export-preview-card .md-content h4,
+.export-preview-card .md-content h5,
+.export-preview-card .md-content h6 {
+  color: var(--cap-title);
+}
+
+/* The h1/h2 underline uses the app --border; align it to the card border. */
+.export-preview-card .md-content h1,
+.export-preview-card .md-content h2 {
+  border-bottom-color: var(--cap-card-border);
+}
+
+.export-preview-card .md-content code {
+  background: var(--cap-code-bg);
+  color: var(--cap-code-text);
+}
+
+/* Fenced code (Shiki) keeps its own panel/colours — never the inline-code style. */
+.export-preview-card .md-content pre code {
+  background: transparent;
+}
+
+.export-preview-card .md-content a {
+  color: var(--cap-link);
+}
+
+.export-preview-card .md-content blockquote {
+  border-left-color: var(--cap-quote-border);
+  background: var(--cap-quote-bg);
+  color: var(--cap-quote-text);
+}
+
+.export-preview-card .md-content th,
+.export-preview-card .md-content td {
+  border-color: var(--cap-table-border);
+}
+
+.export-preview-card .md-content th {
+  background: var(--cap-table-head-bg);
+}
+
+/* Dark code-block panel + badge colours, matching capture.css. */
+.export-preview-card .code-block-wrapper {
+  --code-bg: #161b22;
+  --bg-tertiary: #21262d;
+  --border: #30363d;
+  --text-muted: #8b949e;
+}
+
+/* Hide the copy button so the preview matches the static export. */
+.export-preview-card .code-block-wrapper button {
+  display: none;
+}

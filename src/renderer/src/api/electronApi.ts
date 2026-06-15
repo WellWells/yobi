@@ -1,20 +1,29 @@
-// Centralized wrapper for all window.electronAPI IPC calls,
-// so UI components do not depend directly on the underlying transport.
 import type {
+  AccountStatus,
+  AuthProvider,
   CaptureSettings,
+  ChatCommandResult,
   DuckaiModelInfo,
+  FeedCandidate,
   FlowDefinition,
   FlowExecutionEvent,
   FlowExecutionLog,
   FlowExecutionResult,
+  FlowGenerationResult,
   MarkdownCaptureRequest,
   OutputFile,
   PromptPreferences,
   PromptTriggerOptions,
+  Provider,
   QueueState,
+  SelectPathRequest,
+  SelectPathResult,
   SettingsSnapshot,
+  TelegramProviderCommand,
   TelegramRuntimeSnapshot,
   TelegramSettingsSnapshot,
+  EmailSettingsSnapshot,
+  SmtpCredentials,
   UpdateAvailablePayload,
   UiNotificationPayload,
   WorkerAttention,
@@ -41,6 +50,8 @@ export const settingsApi = {
   getPromptPreferences: (): Promise<PromptPreferences> => window.electronAPI.getPromptPreferences(),
   updatePromptPreferences: (prefs: PromptPreferences, builtPrompt: string): Promise<boolean> =>
     window.electronAPI.updatePromptPreferences(prefs, builtPrompt),
+  getYoutubePrompt: (): Promise<string> => window.electronAPI.getYoutubePrompt(),
+  updateYoutubePrompt: (prompt: string): Promise<boolean> => window.electronAPI.updateYoutubePrompt(prompt),
   getSyncSystemLanguageToModel: (): Promise<boolean> => window.electronAPI.getSyncSystemLanguageToModel(),
   updateSyncSystemLanguageToModel: (enabled: boolean): Promise<boolean> =>
     window.electronAPI.updateSyncSystemLanguageToModel(enabled),
@@ -78,12 +89,29 @@ export const telegramApi = {
     window.electronAPI.updateTelegramDefaultReplyMode(mode),
   updateAdminUsers: (userIds: number[]): Promise<boolean> =>
     window.electronAPI.updateTelegramAdminUsers(userIds),
+  updateProviderCommands: (commands: Record<Provider, TelegramProviderCommand>): Promise<boolean> =>
+    window.electronAPI.updateTelegramProviderCommands(commands),
   generatePairingCode: () => window.electronAPI.generateTelegramPairingCode(),
   revokePairingCode: (code: string): Promise<boolean> =>
     window.electronAPI.revokeTelegramPairingCode(code),
   unpairUser: (userId: number): Promise<boolean> => window.electronAPI.unpairTelegramUser(userId),
   onRuntime: (cb: (snapshot: TelegramRuntimeSnapshot) => void) =>
     window.electronAPI.onTelegramRuntime(cb),
+};
+
+export const emailApi = {
+  getSettings: (): Promise<EmailSettingsSnapshot> => window.electronAPI.getEmailSettings(),
+  updateEnabled: (enabled: boolean): Promise<{ ok: boolean }> => window.electronAPI.updateEmailEnabled(enabled),
+  updateCredentials: (creds: SmtpCredentials): Promise<{ ok: boolean; message?: string }> =>
+    window.electronAPI.updateEmailCredentials(creds),
+};
+
+export const accountApi = {
+  getStatuses: (): Promise<AccountStatus[]> => window.electronAPI.getAccountStatuses(),
+  openLogin: (provider: AuthProvider): Promise<boolean> => window.electronAPI.openAccountLogin(provider),
+  logout: (provider: AuthProvider): Promise<boolean> => window.electronAPI.logoutAccount(provider),
+  clearData: (provider: Provider): Promise<boolean> => window.electronAPI.clearProviderData(provider),
+  onStatusChanged: (cb: (status: AccountStatus) => void) => window.electronAPI.onAccountStatusChanged(cb),
 };
 
 export const promptApi = {
@@ -112,9 +140,9 @@ export const systemApi = {
   openConfigDir: (): Promise<boolean> => window.electronAPI.openConfigDir(),
   exportConfig: (): Promise<boolean> => window.electronAPI.exportConfig(),
   importConfig: (): Promise<SettingsSnapshot | null> => window.electronAPI.importConfig(),
-  getAppVersion: (): Promise<string> => window.electronAPI.getAppVersion(),
-  getAppIconDataUrl: (): Promise<string> => window.electronAPI.getAppIconDataUrl(),
-  getLicense: (): Promise<string> => window.electronAPI.getLicense(),
+  selectPath: (request?: SelectPathRequest): Promise<SelectPathResult | null> =>
+    window.electronAPI.selectPath(request),
+  getPathForFile: (file: File): string => window.electronAPI.getPathForFile(file),
 };
 
 export const windowApi = {
@@ -157,17 +185,31 @@ export const flowApi = {
   duplicateFlow: (flowId: string): Promise<FlowDefinition | null> => window.electronAPI.duplicateFlow(flowId),
   moveFlow: (flowId: string, direction: 'up' | 'down'): Promise<FlowDefinition[]> =>
     window.electronAPI.moveFlow(flowId, direction),
+  reorderFlows: (orderedIds: string[]): Promise<FlowDefinition[]> =>
+    window.electronAPI.reorderFlows(orderedIds),
   execute: (flowId: string): Promise<FlowExecutionResult> => window.electronAPI.executeFlow(flowId),
+  runChatCommand: (flowId: string, command: string, input: string): Promise<ChatCommandResult> =>
+    window.electronAPI.runChatCommand(flowId, command, input),
+  abort: (flowId: string): Promise<boolean> => window.electronAPI.abortFlow(flowId),
+  generate: (description: string): Promise<FlowGenerationResult> => window.electronAPI.generateFlow(description),
   exportFlow: (flow: FlowDefinition): Promise<boolean> => window.electronAPI.exportFlow(flow),
+  exportFlowResult: (content: string, defaultFileName: string): Promise<boolean> =>
+    window.electronAPI.exportFlowResult(content, defaultFileName),
 };
 
 export const rssApi = {
   hasCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.rssHasCheckpoint(stepId),
   clearCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.rssClearCheckpoint(stepId),
+  discoverFeed: (siteUrl: string): Promise<FeedCandidate[]> => window.electronAPI.rssDiscoverFeed(siteUrl),
 };
 
 export const scraperApi = {
   hasCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.scraperHasCheckpoint(stepId),
   clearCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.scraperClearCheckpoint(stepId),
+};
+
+export const ytSubsApi = {
+  hasCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.ytSubsHasCheckpoint(stepId),
+  clearCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.ytSubsClearCheckpoint(stepId),
 };
 

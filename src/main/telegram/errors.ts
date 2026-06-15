@@ -1,8 +1,3 @@
-// error message unpacking for Telegram logs.
-//
-// grammy/HTTP errors often nest the useful detail under `error`/`cause`; this
-// flattens them into a single human-readable string.
-
 export function getErrorMessage(err: unknown): string {
   if (err instanceof Error) {
     const base = err.message?.trim() || err.name || 'unknown error';

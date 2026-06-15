@@ -1,13 +1,12 @@
-// left settings column of ExportDialog
 import React from 'react';
 import { ActionIcon, Box, Button, Flex, Group, Stack, Switch, Text } from '@mantine/core';
 import { Check, FileText, Image as ImageIcon, Zap } from 'lucide-react';
-import type { CaptureFormat } from '../../../../shared/types';
+import type { CaptureFormat, CardTheme } from '../../../../shared/types';
 import { AppTextInput } from '../AppTextInput';
 import { SectionLabel } from './SectionLabel';
 
 export interface ExportSettingsPanelProps {
-  palettes: readonly { key: string; from: string; to: string; label: string }[];
+  palettes: readonly { key: string; from: string; to: string; label: string; card: CardTheme }[];
   selectedPalette: string;
   setSelectedPalette: (value: string) => void;
   direction: string;
@@ -145,59 +144,75 @@ export const ExportSettingsPanel: React.FC<ExportSettingsPanelProps> = ({
       </Stack>
     </Box>
 
-    {/* Background palette — bicolor half-circle pills */}
     <Box>
       <SectionLabel>{t('common.background')}</SectionLabel>
-      <Group gap={6} wrap="wrap">
-        {palettes.map((item) => {
-          const active = selectedPalette === item.key;
+      <Stack gap={12}>
+        {(['dark', 'light'] as const).map((group) => {
+          const items = palettes.filter((p) => p.card === group);
+          if (items.length === 0) return null;
           return (
-            <ActionIcon
-              key={item.key}
-              onClick={() => setSelectedPalette(item.key)}
-              title={item.label}
-              aria-label={item.label}
-              variant="transparent"
-              radius="xl"
-              size={32}
-              style={{
-                position: 'relative',
-                padding: 0,
-                border: active ? '2px solid var(--accent)' : '2px solid var(--border)',
-                overflow: 'hidden',
-                boxShadow: active ? '0 0 0 3px var(--accent-dim)' : 'none',
-                transition: 'box-shadow 0.15s ease, border-color 0.15s ease',
-                flexShrink: 0,
-              }}
-            >
-              {/* Left half */}
-              <Box
-                component="span"
-                style={{ position: 'absolute', inset: 0, clipPath: 'inset(0 50% 0 0)', background: item.from }}
-              />
-              {/* Right half */}
-              <Box
-                component="span"
-                style={{ position: 'absolute', inset: 0, clipPath: 'inset(0 0 0 50%)', background: item.to }}
-              />
-              {active && (
-                <Flex
-                  pos="absolute"
-                  align="center"
-                  justify="center"
-                  c="#fff"
-                  style={{ inset: 0, textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}
-                >
-                  <Check size={12} strokeWidth={3} />
-                </Flex>
-              )}
-            </ActionIcon>
+            <Box key={group}>
+              <Text
+                fz="var(--font-size-xs)"
+                fw={600}
+                c="var(--text-muted)"
+                mb={6}
+                tt="uppercase"
+                style={{ letterSpacing: '0.04em' }}
+              >
+                {t(`capture.palette.${group}`)}
+              </Text>
+              <Group gap={6} wrap="wrap">
+                {items.map((item) => {
+                  const active = selectedPalette === item.key;
+                  return (
+                    <ActionIcon
+                      key={item.key}
+                      onClick={() => setSelectedPalette(item.key)}
+                      title={item.label}
+                      aria-label={item.label}
+                      variant="transparent"
+                      radius="xl"
+                      size={32}
+                      style={{
+                        position: 'relative',
+                        padding: 0,
+                        border: active ? '2px solid var(--accent)' : '2px solid var(--border)',
+                        overflow: 'hidden',
+                        boxShadow: active ? '0 0 0 3px var(--accent-dim)' : 'none',
+                        transition: 'box-shadow 0.15s ease, border-color 0.15s ease',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <Box
+                        component="span"
+                        style={{ position: 'absolute', inset: 0, clipPath: 'inset(0 50% 0 0)', background: item.from }}
+                      />
+                      <Box
+                        component="span"
+                        style={{ position: 'absolute', inset: 0, clipPath: 'inset(0 0 0 50%)', background: item.to }}
+                      />
+                      {active && (
+                        <Flex
+                          pos="absolute"
+                          align="center"
+                          justify="center"
+                          c="#fff"
+                          style={{ inset: 0, textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}
+                        >
+                          <Check size={12} strokeWidth={3} />
+                        </Flex>
+                      )}
+                    </ActionIcon>
+                  );
+                })}
+              </Group>
+            </Box>
           );
         })}
-      </Group>
+      </Stack>
     </Box>
 
-    {/* Gradient direction — 3×3 compass grid */}
     <Box>
       <SectionLabel>{t('capture.direction')}</SectionLabel>
       <Box style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 32px)', gap: 4 }}>

@@ -1,4 +1,3 @@
-// Shared helpers for all AI provider automations
 import type { WebContents } from 'electron';
 
 export function sleep(ms: number): Promise<void> {
@@ -26,10 +25,6 @@ export async function navigateAndWait(
   });
 }
 
-/**
- * Returns true if the page is currently showing a Cloudflare challenge.
- * Safe to call at any time — swallows errors from executeJavaScript.
- */
 export async function isCloudflareChallengeActive(wc: WebContents): Promise<boolean> {
   try {
     return (await wc.executeJavaScript(
@@ -51,35 +46,6 @@ export async function isCloudflareChallengeActive(wc: WebContents): Promise<bool
     return false;
   }
 }
-
-/**
- * Wait until a Cloudflare challenge page is resolved.
- * If a challenge is detected, `onDetected()` is called once so the caller
- * can surface a notification to the user.
- * Returns normally once the challenge disappears, or throws if `maxWaitMs` elapses.
- */
-export async function waitForCloudflareResolved(
-  wc: WebContents,
-  onDetected: () => void,
-  maxWaitMs = 120_000,
-): Promise<void> {
-  const POLL_INTERVAL = 2_000;
-
-  if (!(await isCloudflareChallengeActive(wc))) return;
-
-  onDetected();
-
-  const deadline = Date.now() + maxWaitMs;
-  while (Date.now() < deadline) {
-    await sleep(POLL_INTERVAL);
-    if (!(await isCloudflareChallengeActive(wc))) return;
-  }
-  throw new Error('Cloudflare challenge was not resolved within the allowed time');
-}
-
-// These strings are interpolated into executeJavaScript automation scripts so
-// each provider IIFE gets the same canonical implementation.
-// Rules: no backticks, no ??, no TypeScript syntax — plain ES2017 for Chromium.
 
 export const INJECTED_SLEEP_JS = `function sleep(ms) {
     return new Promise(function(r) { setTimeout(r, ms); });

@@ -1,4 +1,5 @@
 import { startTransition, useCallback, useEffect, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import { fileApi, promptApi } from '../api/electronApi';
@@ -23,14 +24,24 @@ export function useRewriteTask(setExportToast: (toast: ExportToast) => void) {
     setFileContent,
     queue,
     duckaiModels,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((s) => ({
+      selectedFile: s.selectedFile,
+      fileContent: s.fileContent,
+      parsedBlocks: s.parsedBlocks,
+      setFiles: s.setFiles,
+      selectFile: s.selectFile,
+      setFileContent: s.setFileContent,
+      queue: s.queue,
+      duckaiModels: s.duckaiModels,
+    })),
+  );
   const { t } = useI18nStore();
 
   const [rewriteTaskId, setRewriteTaskId] = useState<string | null>(null);
   const [rewriteSourcePath, setRewriteSourcePath] = useState<string | null>(null);
   const [rewriteStartedAt, setRewriteStartedAt] = useState(0);
 
-  // Watch queue for changes; auto-select the newly generated file when the task completes.
   useEffect(() => {
     if (!rewriteTaskId) return;
     const stillQueued = queue.items.some((item) => item.id === rewriteTaskId);

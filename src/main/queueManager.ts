@@ -1,4 +1,3 @@
-// Task queue for serialised Gemini requests
 import type { QueueState, QueueTaskItem, Task } from '../shared/types';
 
 type QueueListener = (state: QueueState) => void;
@@ -8,10 +7,7 @@ export class QueueManager {
   private running = false;
   private activeTask: Task | null = null;
   private listener: QueueListener | null = null;
-  // Resolving this function causes drain() to abandon the active task and move on.
   private skipCurrentTask: (() => void) | null = null;
-  // Hard upper bound per task regardless of provider-level timeouts.
-  // Prevents the queue from permanently blocking on a hung Promise.
   private readonly TASK_HARD_TIMEOUT_MS = 10 * 60_000;
 
   private worker: (task: Task) => Promise<void>;
@@ -38,10 +34,6 @@ export class QueueManager {
     return true;
   }
 
-  /**
-   * Force-abandon the currently running task and immediately drain the next queued item.
-   * The abandoned worker promise continues in the background but its result is discarded.
-   */
   forceSkipActive(): boolean {
     if (!this.running || !this.skipCurrentTask) return false;
     this.skipCurrentTask();
@@ -108,7 +100,6 @@ export class QueueManager {
           this.skipCurrentTask = null;
         });
       } catch {
-        // errors are handled inside worker; keep draining
       }
       this.running = false;
       this.activeTask = null;

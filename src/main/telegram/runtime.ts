@@ -1,9 +1,3 @@
-// bot lifecycle and config synchronization.
-//
-// Owns the grammy Bot instance, status reporting, and the export token
-// registry. Message delivery lives in messaging.ts / exportHandlers.ts and
-// receives a messaging context instead of importing this runtime.
-
 import { Bot } from 'grammy';
 import type {
   FlowExecutionResult,
@@ -20,6 +14,7 @@ import {
   type TelegramContext,
   type TelegramTaskRequest,
 } from './commands';
+import type { ResolvedProviderCommand } from './providerCommands';
 import { t } from '../i18n';
 import { getErrorMessage } from './errors';
 import { ExportTokenRegistry } from './exporter';
@@ -39,6 +34,7 @@ export interface TelegramRuntimeDeps {
   isAdminUser: (userId: number) => boolean;
   onTaskRequest: (request: TelegramTaskRequest) => Promise<{ taskId: string }>;
   onStatusRequest: () => string;
+  onRestartApp?: () => void;
   onUpdateDefaultReplyMode: (mode: TelegramReplyMode) => boolean;
   onExportRequest: (
     request: TelegramExportContext & { format: TelegramExportFormat },
@@ -46,9 +42,8 @@ export interface TelegramRuntimeDeps {
   onLog: (message: string) => void;
   onRuntime: (snapshot: TelegramRuntimeSnapshot) => void;
   getStrings: () => Record<string, string>;
-  /** Returns current bot-triggered flow commands for dynamic routing. */
+  getProviderCommands: () => ResolvedProviderCommand[];
   getFlowCommands?: () => Array<{ flowId: string; command: string; description: string; inputVariable: string }>;
-  /** Called when a matched flow command is received; resolves once queued. */
   onFlowCommand?: (
     flowId: string,
     inputVariable: string,
@@ -99,10 +94,11 @@ export class TelegramRuntime {
   async sendProactiveFile(
     chatId: number,
     filePath: string,
-    sendAs: 'photo' | 'document',
+    sendAs: 'photo' | 'document' | 'auto',
     caption?: string,
+    authorizedPaths?: string[],
   ): Promise<void> {
-    await messaging.sendProactiveFile(this.msgCtx, chatId, filePath, sendAs, caption);
+    await messaging.sendProactiveFile(this.msgCtx, chatId, filePath, sendAs, caption, authorizedPaths);
   }
 
   async syncWithConfig(): Promise<void> {
@@ -122,7 +118,7 @@ export class TelegramRuntime {
       if (this.pollerActive && this.currentToken === token && this.currentAllowGroupCommands === allowGroupCommands) {
         if (this.bot) {
           try {
-            await syncPrivateCommands(this.bot, allowGroupCommands, s, this.deps.getFlowCommands?.());
+            await syncPrivateCommands(this.bot, allowGroupCommands, s, this.deps.getProviderCommands(), this.deps.getFlowCommands?.());
           } catch (err: unknown) {
             this.deps.onLog(`[telegram] failed to refresh localized commands: ${getErrorMessage(err)}`);
           }
@@ -181,7 +177,7 @@ export class TelegramRuntime {
     }
 
     try {
-      await syncPrivateCommands(candidate, this.deps.getAllowGroupCommands(), s, this.deps.getFlowCommands?.());
+      await syncPrivateCommands(candidate, this.deps.getAllowGroupCommands(), s, this.deps.getProviderCommands(), this.deps.getFlowCommands?.());
     } catch (err: unknown) {
       this.deps.onLog(`[telegram] failed to sync command scope: ${getErrorMessage(err)}`);
     }
@@ -196,8 +192,6 @@ export class TelegramRuntime {
 
     candidate.start().catch((err: unknown) => {
       if (this.bot !== candidate) return;
-      // AbortError is expected when the bot is intentionally stopped while a
-      // long-poll getUpdates request is in flight. Treat it as a non-error shutdown.
       if (err instanceof Error && (err.name === 'AbortError' || err.message === 'The operation was aborted.')) {
         this.deps.onLog('[telegram] bot polling stopped (aborted)');
         return;
@@ -232,9 +226,11 @@ export class TelegramRuntime {
       isAdminUser: (userId) => this.deps.isAdminUser(userId),
       onTaskRequest: (request) => this.deps.onTaskRequest(request),
       onStatusRequest: () => this.deps.onStatusRequest(),
+      onRestartApp: this.deps.onRestartApp,
       onUpdateOutputMode: (mode) => this.deps.onUpdateDefaultReplyMode(mode),
       onLog: this.deps.onLog,
       getStrings: () => this.deps.getStrings(),
+      getProviderCommands: this.deps.getProviderCommands,
       getFlowCommands: this.deps.getFlowCommands,
       onFlowCommand: this.deps.onFlowCommand,
     });

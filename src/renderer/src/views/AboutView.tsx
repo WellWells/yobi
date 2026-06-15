@@ -46,6 +46,7 @@ export const AboutView: React.FC = () => {
   const blogUrl = isChinese ? 'https://wellstsai.com/' : 'https://wellstsai.com/en/';
   const issueUrl = 'https://github.com/WellWells/yobi/issues';
   const github_repo = 'https://github.com/WellWells/yobi/';
+  const howItWorksUrl = 'https://github.com/WellWells/yobi#-how-yobi-works';
 
   return (
     <Flex flex={1} bg="var(--mantine-color-body)" style={{ overflow: 'hidden' }}>
@@ -99,6 +100,15 @@ export const AboutView: React.FC = () => {
               leftSection={<Bug size={13} />}
             >
               {t('about.reportIssue')}
+            </Button>
+            <Button
+              onClick={() => void window.electronAPI.openExternalUrl(howItWorksUrl)}
+              variant="outline"
+              size="xs"
+              radius="md"
+              leftSection={<Info size={13} />}
+            >
+              {t('about.disclosure.title')}
             </Button>
           </Group>
         </Box>

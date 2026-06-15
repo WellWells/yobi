@@ -1,9 +1,3 @@
-// pairing conversation and pairing command handlers.
-//
-// Covers the /start and /init commands plus the interactive pairing-code
-// conversation. Pairing-code persistence itself lives in dmPolicy.ts; this
-// module only drives the Telegram-side dialogue.
-
 import type { Context } from 'grammy';
 import type { Conversation } from '@grammyjs/conversations';
 import { t } from '../i18n';

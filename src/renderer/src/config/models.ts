@@ -1,7 +1,9 @@
 import { createElement, memo, type ComponentType } from 'react';
 import { Bot, Compass, Sparkles } from 'lucide-react';
-import { PROVIDER_LABELS, PROVIDER_URLS } from '../../../shared/types';
+import { PROVIDER_LABELS, PROVIDER_URLS, buildDuckaiModelUrl } from '../../../shared/types';
 import type { DuckaiModelInfo } from '../../../shared/types';
+
+export { buildDuckaiModelUrl };
 
 interface ModelIconProps {
   size?: number;
@@ -31,7 +33,6 @@ export interface ModelOption {
   icon: ModelIcon;
 }
 
-// Static models (always present); duck.ai models are dynamically appended via appStore.
 export const MODELS: ModelOption[] = [
   { label: PROVIDER_LABELS.gemini, url: PROVIDER_URLS.gemini, icon: Sparkles },
   { label: PROVIDER_LABELS.perplexity, url: PROVIDER_URLS.perplexity, icon: Compass },
@@ -54,13 +55,6 @@ export function isDuckaiUrl(url: string): boolean {
   }
 }
 
-// Builds a URL that encodes the duck.ai model ID as a query param.
-export function buildDuckaiModelUrl(modelId: string): string {
-  const url = new URL(PROVIDER_URLS.duckai);
-  url.searchParams.set('model', modelId);
-  return url.toString();
-}
-
 export function makeDuckaiModelOption(info: DuckaiModelInfo): ModelOption {
   return {
     label: `Duck AI · ${info.label}`,
@@ -69,14 +63,9 @@ export function makeDuckaiModelOption(info: DuckaiModelInfo): ModelOption {
   };
 }
 
-// Resolves the correct ModelOption from both static and dynamic (duck.ai) models.
 export function findModelOption(url: string, extraModels: ModelOption[] = []): ModelOption {
   const all = [...MODELS, ...extraModels];
   return all.find((m) => m.url === url) ?? MODELS[0];
-}
-
-export function getModelOptionByUrl(url: string): ModelOption {
-  return MODELS.find((model) => model.url === url) ?? MODELS[0];
 }
 
 export function getModelIconByUrl(url: string): ModelIcon {

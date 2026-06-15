@@ -1,13 +1,13 @@
-// Modal for selecting and loading built-in flow templates.
 import React from 'react';
-import { Badge, Box, Button, Group, Modal, Stack, Text } from '@mantine/core';
+import { Center, Modal, NavLink, Stack, Text } from '@mantine/core';
+import { ChevronRight } from 'lucide-react';
 import type { FlowDefinition } from '../../../../shared/types';
 import { FLOW_TEMPLATES } from './examples';
+import { SKILL_ICON, skillHue } from './skills';
 
 interface FlowTemplatesModalProps {
   open: boolean;
   t: (key: string) => string;
-  existingFlowNames: string[];
   onClose: () => void;
   onImport: (flows: FlowDefinition[]) => void;
 }
@@ -20,37 +20,39 @@ export const FlowTemplatesModal: React.FC<FlowTemplatesModalProps> = ({
     onClose={onClose}
     title={t('agentflow.templates')}
     centered
-    size="sm"
+    size="md"
     zIndex={200}
   >
-    <Stack gap="sm">
+    <Stack gap={4}>
       {FLOW_TEMPLATES.map((tpl) => (
-        <Box
+        <NavLink
           key={tpl.key}
-          p="md"
-          style={{
-            background: 'var(--mantine-color-bg-tertiary)',
-            border: '1px solid var(--mantine-color-default-border)',
-            borderRadius: 'var(--mantine-radius-md)',
-          }}
-        >
-          <Stack gap={6}>
-            <Group justify="space-between" align="flex-start" wrap="nowrap">
-              <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
-                <Text fz="sm" fw={600}>{t(tpl.titleKey)}</Text>
-                <Text fz="xs" c="dimmed">{t(tpl.descKey)}</Text>
-              </Stack>
-              <Badge size="xs" variant="light">{t('agentflow.templates.badge')}</Badge>
-            </Group>
-            <Button
-              size="xs"
-              variant="default"
-              onClick={() => { onImport([tpl.build(t)]); }}
+          onClick={() => { onImport([tpl.build(t)]); }}
+          leftSection={
+            <Center
+              w={36}
+              h={36}
+              style={{
+                flexShrink: 0,
+                borderRadius: 'var(--mantine-radius-md)',
+                background: `var(--mantine-color-${skillHue(tpl.primarySkill)}-light)`,
+              }}
             >
-              {t('agentflow.templates.load')}
-            </Button>
-          </Stack>
-        </Box>
+              {SKILL_ICON[tpl.primarySkill]}
+            </Center>
+          }
+          label={<Text fz="sm" fw={600}>{t(tpl.titleKey)}</Text>}
+          description={
+            <Text fz="xs" c="dimmed" mt={3} style={{ whiteSpace: 'normal', lineHeight: 1.5 }}>
+              {t(tpl.descKey)}
+            </Text>
+          }
+          rightSection={<ChevronRight size={16} style={{ opacity: 0.35 }} />}
+          styles={{
+            root: { borderRadius: 'var(--mantine-radius-md)', padding: '10px 12px' },
+            section: { alignSelf: 'center' },
+          }}
+        />
       ))}
     </Stack>
   </Modal>

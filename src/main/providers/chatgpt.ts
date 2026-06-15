@@ -1,10 +1,10 @@
-// Electron DOM-injection automation for ChatGPT web
 import type { BrowserWindow } from 'electron';
 import { navigateAndWait, sleep, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
 import { executeAutomationWithTimeout, countElements, dispatchFocusEvents } from './automationExecutor';
 import { isExpiredCookie } from '../helpers';
 import { PROVIDER_URLS } from '../../shared/types';
 import { CLEAN_UA } from '../userAgent';
+import { applyWorkerUserAgent } from '../clientHints';
 
 const CHATGPT_HOME = PROVIDER_URLS.chatgpt;
 export const CHATGPT_LOGIN_URL = 'https://auth.openai.com/log-in-or-create-account';
@@ -85,8 +85,6 @@ function isLoginRequiredFromSignals(
   return false;
 }
 
-// Poll for the composer textarea to appear after React hydration.
-// Times out gracefully — the caller still runs auth checks and decides.
 async function waitForChatgptComposerOrTimeout(
   wc: import('electron').WebContents,
   maxWaitMs = 8_000,
@@ -104,7 +102,6 @@ async function waitForChatgptComposerOrTimeout(
       ) as boolean;
       if (found) return;
     } catch {
-      // page navigating — keep polling
     }
     await sleep(POLL_MS);
   }
@@ -118,15 +115,10 @@ export async function runChatgptAutomation(
 ): Promise<{ response: string; title: string }> {
   const wc = workerWin.webContents;
 
-  // Restore Chrome UA — Cloudflare expects a real Chrome browser fingerprint.
-  wc.setUserAgent(CLEAN_UA);
+  applyWorkerUserAgent(wc, CLEAN_UA);
 
   await navigateAndWait(wc, targetUrl);
 
-  // ChatGPT is a React SPA — did-finish-load fires when the initial HTML is
-  // parsed, but the composer textarea is rendered asynchronously by React.
-  // Waiting here prevents a false "login required" detection when hasComposer
-  // is checked before the component tree has mounted.
   await waitForChatgptComposerOrTimeout(wc);
 
   const authSignals = await getChatgptAuthSignals(workerWin);
@@ -171,7 +163,6 @@ function buildChatgptAutomationScript(
 (async function chatgptAutomate() {
   var TIMEOUT  = ${timeoutMs};
   var BASELINE = ${baselineMessageCount};
-  var startedAt = Date.now();
   ${INJECTED_SLEEP_JS}
   ${INJECTED_WAIT_FOR_JS}
 
@@ -258,17 +249,43 @@ function buildChatgptAutomationScript(
     'button[aria-label="Submit"]',
   ];
 
-  var sent = false;
-  for (var attempt = 0; attempt < 28 && !sent; attempt++) {
+  function findEnabledSendBtn() {
     for (var s = 0; s < SEND_SELECTORS.length; s++) {
-      var sendBtn = document.querySelector(SEND_SELECTORS[s]);
-      if (sendBtn && !sendBtn.disabled) {
-        sendBtn.click();
-        sent = true;
-        break;
+      var b = document.querySelector(SEND_SELECTORS[s]);
+      if (b && !b.disabled && b.getAttribute('aria-disabled') !== 'true') return b;
+    }
+    return null;
+  }
+
+  // After clicking, poll until the button changes state (disabled / gone → stop
+  // button) rather than sleeping a fixed delay. Returns true when confirmed.
+  async function verifySendLanded() {
+    var deadline = Date.now() + 2000;
+    while (Date.now() < deadline) {
+      await sleep(40);
+      var btn = document.querySelector('[data-testid="send-button"]');
+      // Click registered: button gone, disabled, or aria-disabled
+      if (!btn || btn.disabled || btn.getAttribute('aria-disabled') === 'true') {
+        return true;
       }
     }
-    if (!sent) await sleep(120);
+    return false;
+  }
+
+  // Wait up to 30 s — handles the delay when ChatGPT converts a long paste to
+  // a TXT attachment and the send button stays disabled until upload finishes.
+  var sent = false;
+  var SEND_DEADLINE = Date.now() + 30000;
+  while (!sent && Date.now() < SEND_DEADLINE) {
+    var sendBtn = findEnabledSendBtn();
+    if (sendBtn) {
+      sendBtn.click();
+      if (await verifySendLanded()) {
+        sent = true;
+      }
+      // Button still active — click didn't register, retry.
+    }
+    if (!sent) await sleep(150);
   }
 
   if (!sent) {
@@ -290,13 +307,20 @@ function buildChatgptAutomationScript(
     return !!getTurnText(turn);
   }, 'ChatGPT response text', TIMEOUT, 350);
 
+  // Generation is done the moment the turn's action toolbar (its copy button)
+  // renders — ChatGPT only adds it after the stream ends, so this is faster and
+  // more reliable than waiting for the text to stop changing. The text-stability
+  // check stays as a fallback for when the copy button can't be located.
   var stableText = '';
   var stableCount = 0;
   var NO_CHANGE_LIMIT = 30000;
   var chatLastChangeAt = null;
+  var copyBtn = null;
   while (true) {
     var turn = getLatestAssistantTurn();
     var text = getTurnText(turn);
+    copyBtn = findCopyButtonForTurn(turn);
+    if (copyBtn && text) break;
     if (text !== stableText) {
       stableText = text;
       stableCount = 0;
@@ -309,25 +333,16 @@ function buildChatgptAutomationScript(
       if (stableText) break;
       throw new Error('ChatGPT automation timed out: no response changes for 30 seconds');
     }
-    await sleep(350);
+    await sleep(250);
   }
 
   var latestTurn = getLatestAssistantTurn();
   if (!latestTurn) throw new Error('ChatGPT response block not found');
 
-  // Hover must target the whole turn container, not just the text block.
-  var actionContainer = latestTurn.closest('.agent-turn') || latestTurn.closest('.group\\/turn-messages') || latestTurn;
-  actionContainer.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, composed: true }));
-  actionContainer.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, composed: true }));
-  await sleep(300);
-
-  // Wait for the copy button to appear after hover.
-  var copyBtn = null;
-  for (var cbWait = 0; cbWait < 15; cbWait++) {
-    copyBtn = findCopyButtonForTurn(latestTurn);
-    if (copyBtn) break;
-    await sleep(200);
-  }
+  // The copy button is in the DOM even while visually hidden (no hover needed);
+  // element.click() fires its handler regardless of pointer-events. Re-find it
+  // only if we exited via the text-stability fallback.
+  if (!copyBtn) copyBtn = findCopyButtonForTurn(latestTurn);
 
   var answerText = getTurnText(latestTurn);
   var copiedText = copyBtn ? ((await interceptCopy(copyBtn)) || '').trim() : '';

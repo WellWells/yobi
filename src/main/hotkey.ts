@@ -1,4 +1,3 @@
-// Global hotkey registration via Electron globalShortcut
 import { globalShortcut } from 'electron';
 
 let _currentAccelerator: string | null = null;
@@ -8,20 +7,15 @@ export function setHotkeyPaused(paused: boolean): void {
   _paused = paused;
 }
 
-/**
- * Register a global hotkey with built-in debounce.
- */
 export function registerHotkey(
   accelerator: string,
   handler: () => void,
   debounceMs: number = 1000,
 ): boolean {
-  // Unregister old binding first
   if (_currentAccelerator) {
     try {
       globalShortcut.unregister(_currentAccelerator);
     } catch {
-      // ignore
     }
   }
 

@@ -1,20 +1,30 @@
-// Context bridge (typed)
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/types';
 import type {
+  AccountStatus,
+  AuthProvider,
   CaptureSettings,
+  ChatCommandResult,
   DuckaiModelInfo,
+  FeedCandidate,
   FlowDefinition,
   FlowExecutionEvent,
   FlowExecutionLog,
   FlowExecutionResult,
+  FlowGenerationResult,
   MarkdownCaptureRequest,
   MarkdownCaptureResult,
   OutputFile,
   PromptPreferences,
   PromptTriggerOptions,
+  Provider,
   QueueState,
+  EmailSettingsSnapshot,
+  SmtpCredentials,
+  SelectPathRequest,
+  SelectPathResult,
   SettingsSnapshot,
+  TelegramProviderCommand,
   TelegramRuntimeSnapshot,
   TelegramSettingsSnapshot,
   UpdateAvailablePayload,
@@ -23,7 +33,6 @@ import type {
 } from '../shared/types';
 
 export type ElectronAPI = {
-  // Window controls
   showWorker: () => void;
   hideWorker: () => void;
   minimizeWindow: () => void;
@@ -38,7 +47,12 @@ export type ElectronAPI = {
   onTelegramRuntime: (cb: (snapshot: TelegramRuntimeSnapshot) => void) => () => void;
   onWorkerStatus: (cb: (state: WorkerAttention) => void) => () => void;
 
-  // File operations
+  getAccountStatuses: () => Promise<AccountStatus[]>;
+  openAccountLogin: (provider: AuthProvider) => Promise<boolean>;
+  logoutAccount: (provider: AuthProvider) => Promise<boolean>;
+  clearProviderData: (provider: Provider) => Promise<boolean>;
+  onAccountStatusChanged: (cb: (status: AccountStatus) => void) => () => void;
+
   getFileList: () => Promise<OutputFile[]>;
   searchFileList: (query: string) => Promise<OutputFile[]>;
   getFileContent: (filePath: string) => Promise<string | null>;
@@ -47,21 +61,17 @@ export type ElectronAPI = {
   updateFileTitle: (filePath: string, title: string) => Promise<{ ok: boolean; updatedPath: string }>;
   updateFileH1: (filePath: string, title: string) => Promise<boolean>;
 
-  // Hotkey
   getHotkey: () => Promise<string>;
   updateHotkey: (hotkey: string) => Promise<boolean>;
   setHotkeyPaused: (paused: boolean) => Promise<boolean>;
   getAiUrl: () => Promise<string>;
   updateAiUrl: (url: string) => Promise<boolean>;
 
-  // Language / i18n
   getLanguageList: () => Promise<string[]>;
   getLanguageContent: (lang: string) => Promise<Record<string, unknown> | null>;
   getCurrentLocale: () => Promise<{ locale: string; setByUser: boolean }>;
   setLocaleAuto: (lang: string) => Promise<boolean>;
 
-  // License
-  getLicense: () => Promise<string>;
   checkForUpdates: () => Promise<boolean>;
   onUpdateAvailable: (cb: (payload: UpdateAvailablePayload) => void) => () => void;
   onUpdateNotAvailable: (cb: () => void) => () => void;
@@ -70,105 +80,102 @@ export type ElectronAPI = {
   getAppVersion: () => Promise<string>;
   getAppIconDataUrl: () => Promise<string>;
 
-  // Custom Prompt
-  getCustomPrompt: () => Promise<string>;
-  updateCustomPrompt: (text: string) => Promise<boolean>;
   getSyncSystemLanguageToModel: () => Promise<boolean>;
   updateSyncSystemLanguageToModel: (enabled: boolean) => Promise<boolean>;
   getNotifyOnComplete: () => Promise<boolean>;
   updateNotifyOnComplete: (enabled: boolean) => Promise<boolean>;
   getPromptPreferences: () => Promise<PromptPreferences>;
   updatePromptPreferences: (prefs: PromptPreferences, builtPrompt: string) => Promise<boolean>;
+  getYoutubePrompt: () => Promise<string>;
+  updateYoutubePrompt: (prompt: string) => Promise<boolean>;
   getResponseTimeout: () => Promise<number>;
   updateResponseTimeout: (ms: number) => Promise<boolean>;
   resetSettings: () => Promise<SettingsSnapshot | null>;
 
-  // Trigger prompt from UI
   triggerPrompt: (prompt: string) => void;
   triggerPromptWithOptions: (options: PromptTriggerOptions) => Promise<string | null>;
   cancelQueueTask: (taskId: string) => Promise<boolean>;
   forceSkipActiveTask: () => Promise<boolean>;
   setCurrentLocale: (lang: string) => Promise<boolean>;
 
-  // System
   copyTextToClipboard: (text: string) => Promise<boolean>;
+  getPathForFile: (file: File) => string;
   showInFolder: (filePath: string) => Promise<void>;
   openPath: (filePath: string) => Promise<boolean>;
   openConfigDir: () => Promise<boolean>;
   openThirdPartyLicenses: () => Promise<boolean>;
   exportConfig: () => Promise<boolean>;
   importConfig: () => Promise<SettingsSnapshot | null>;
+  selectPath: (request?: SelectPathRequest) => Promise<SelectPathResult | null>;
   captureMarkdownDocument: (request: MarkdownCaptureRequest) => Promise<MarkdownCaptureResult>;
 
-  // Telegram
   getTelegramSettings: () => Promise<TelegramSettingsSnapshot>;
   updateTelegramEnabled: (enabled: boolean) => Promise<boolean>;
   updateTelegramBotToken: (token: string) => Promise<{ ok: boolean; message?: string }>;
   updateTelegramAllowGroupCommands: (enabled: boolean) => Promise<boolean>;
   updateTelegramDefaultReplyMode: (mode: 'markdown' | 'png' | 'webp' | 'pdf') => Promise<boolean>;
   updateTelegramAdminUsers: (userIds: number[]) => Promise<boolean>;
+  updateTelegramProviderCommands: (commands: Record<Provider, TelegramProviderCommand>) => Promise<boolean>;
   generateTelegramPairingCode: () => Promise<{ code: string; expiresAt: string } | null>;
   revokeTelegramPairingCode: (code: string) => Promise<boolean>;
   unpairTelegramUser: (userId: number) => Promise<boolean>;
 
-  // Tray / window behavior
+  getEmailSettings: () => Promise<EmailSettingsSnapshot>;
+  updateEmailEnabled: (enabled: boolean) => Promise<{ ok: boolean }>;
+  updateEmailCredentials: (creds: SmtpCredentials) => Promise<{ ok: boolean; message?: string }>;
+
   getCloseToTray: () => Promise<boolean>;
   updateCloseToTray: (enabled: boolean) => Promise<boolean>;
-  getAutoShowTray: () => Promise<boolean>;
-  updateAutoShowTray: (enabled: boolean) => Promise<boolean>;
 
-  // Startup auto-launch
   getLaunchAtStartup: () => Promise<boolean>;
   updateLaunchAtStartup: (enabled: boolean) => Promise<boolean>;
 
-  // Navigation push from main
   onNavigateSettings: (cb: () => void) => () => void;
 
-  // Notify / launch-at-startup changed (pushed from main when toggled via tray menu)
   onNotifyOnCompleteChanged: (cb: (enabled: boolean) => void) => () => void;
   onLaunchAtStartupChanged: (cb: (enabled: boolean) => void) => () => void;
 
-  // Close dialog (main pushes, renderer responds)
   onShowCloseDialog: (cb: () => void) => () => void;
   respondCloseDialog: (action: 'quit' | 'hide', remember: boolean) => void;
 
-  // Close-to-tray state push (main → renderer, saved via close dialog)
   onCloseToTrayChanged: (cb: (enabled: boolean) => void) => () => void;
 
-  // Theme persistence
   getTheme: () => Promise<string>;
   updateTheme: (theme: string) => Promise<boolean>;
-  // UI layout preferences
   getLayoutMode: () => Promise<string>;
   updateLayoutMode: (mode: string) => Promise<boolean>;
   getMarkdownZoom: () => Promise<number>;
   updateMarkdownZoom: (zoom: number) => Promise<boolean>;
-  // Capture / export settings
   getCaptureSettings: () => Promise<CaptureSettings>;
   updateCaptureSettings: (settings: CaptureSettings) => Promise<boolean>;
 
-  // Duck AI
   fetchDuckaiModels: () => Promise<DuckaiModelInfo[]>;
 
-  // AgentFlow (Flow Automation)
   getFlows: () => Promise<FlowDefinition[]>;
   saveFlow: (flow: FlowDefinition) => Promise<FlowDefinition | null>;
   deleteFlow: (flowId: string) => Promise<boolean>;
   duplicateFlow: (flowId: string) => Promise<FlowDefinition | null>;
   moveFlow: (flowId: string, direction: 'up' | 'down') => Promise<FlowDefinition[]>;
+  reorderFlows: (orderedIds: string[]) => Promise<FlowDefinition[]>;
   executeFlow: (flowId: string) => Promise<FlowExecutionResult>;
+  runChatCommand: (flowId: string, command: string, input: string) => Promise<ChatCommandResult>;
+  abortFlow: (flowId: string) => Promise<boolean>;
+  generateFlow: (description: string) => Promise<FlowGenerationResult>;
   exportFlow: (flow: FlowDefinition) => Promise<boolean>;
+  exportFlowResult: (content: string, defaultFileName: string) => Promise<boolean>;
   onFlowExecutionLog: (cb: (log: FlowExecutionLog) => void) => () => void;
   onFlowExecutionStarted: (cb: (event: FlowExecutionEvent) => void) => () => void;
   onFlowExecutionEnded: (cb: (event: FlowExecutionEvent) => void) => () => void;
 
-  // RSS Checkpoint
   rssHasCheckpoint: (stepId: string) => Promise<boolean>;
   rssClearCheckpoint: (stepId: string) => Promise<boolean>;
+  rssDiscoverFeed: (siteUrl: string) => Promise<FeedCandidate[]>;
 
-  // Scraper Checkpoint
   scraperHasCheckpoint: (stepId: string) => Promise<boolean>;
   scraperClearCheckpoint: (stepId: string) => Promise<boolean>;
+
+  ytSubsHasCheckpoint: (stepId: string) => Promise<boolean>;
+  ytSubsClearCheckpoint: (stepId: string) => Promise<boolean>;
 };
 
 const api: ElectronAPI = {
@@ -214,6 +221,16 @@ const api: ElectronAPI = {
     return () => ipcRenderer.removeListener(IPC.WORKER_STATUS, handler);
   },
 
+  getAccountStatuses: () => ipcRenderer.invoke(IPC.GET_ACCOUNT_STATUSES),
+  openAccountLogin: (provider) => ipcRenderer.invoke(IPC.OPEN_ACCOUNT_LOGIN, provider),
+  logoutAccount: (provider) => ipcRenderer.invoke(IPC.ACCOUNT_LOGOUT, provider),
+  clearProviderData: (provider) => ipcRenderer.invoke(IPC.PROVIDER_CLEAR_DATA, provider),
+  onAccountStatusChanged: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, status: AccountStatus) => cb(status);
+    ipcRenderer.on(IPC.ACCOUNT_STATUS_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.ACCOUNT_STATUS_CHANGED, handler);
+  },
+
   getFileList: () => ipcRenderer.invoke(IPC.GET_FILE_LIST),
   searchFileList: (query) => ipcRenderer.invoke(IPC.SEARCH_FILE_LIST, query),
   getFileContent: (filePath) => ipcRenderer.invoke(IPC.GET_FILE_CONTENT, filePath),
@@ -233,7 +250,6 @@ const api: ElectronAPI = {
   getCurrentLocale: () => ipcRenderer.invoke(IPC.GET_CURRENT_LOCALE),
   setLocaleAuto: (lang) => ipcRenderer.invoke(IPC.SET_LOCALE_AUTO, lang),
 
-  getLicense: () => ipcRenderer.invoke(IPC.GET_LICENSE),
   checkForUpdates: () => ipcRenderer.invoke(IPC.UPDATE_CHECK),
   onUpdateAvailable: (cb) => {
     const handler = (_: Electron.IpcRendererEvent, payload: UpdateAvailablePayload) => cb(payload);
@@ -254,14 +270,14 @@ const api: ElectronAPI = {
   getAppVersion: () => ipcRenderer.invoke(IPC.GET_APP_VERSION),
   getAppIconDataUrl: () => ipcRenderer.invoke(IPC.GET_APP_ICON_DATA_URL),
 
-  getCustomPrompt: () => ipcRenderer.invoke(IPC.GET_CUSTOM_PROMPT),
-  updateCustomPrompt: (text) => ipcRenderer.invoke(IPC.UPDATE_CUSTOM_PROMPT, text),
   getSyncSystemLanguageToModel: () => ipcRenderer.invoke(IPC.GET_SYNC_SYSTEM_LANGUAGE_TO_MODEL),
   updateSyncSystemLanguageToModel: (enabled) => ipcRenderer.invoke(IPC.UPDATE_SYNC_SYSTEM_LANGUAGE_TO_MODEL, enabled),
   getNotifyOnComplete: () => ipcRenderer.invoke(IPC.GET_NOTIFY_ON_COMPLETE),
   updateNotifyOnComplete: (enabled) => ipcRenderer.invoke(IPC.UPDATE_NOTIFY_ON_COMPLETE, enabled),
   getPromptPreferences: () => ipcRenderer.invoke(IPC.GET_PROMPT_PREFERENCES),
   updatePromptPreferences: (prefs, builtPrompt) => ipcRenderer.invoke(IPC.UPDATE_PROMPT_PREFERENCES, prefs, builtPrompt),
+  getYoutubePrompt: () => ipcRenderer.invoke(IPC.GET_YOUTUBE_PROMPT),
+  updateYoutubePrompt: (prompt) => ipcRenderer.invoke(IPC.UPDATE_YOUTUBE_PROMPT, prompt),
   getResponseTimeout: () => ipcRenderer.invoke(IPC.GET_RESPONSE_TIMEOUT),
   updateResponseTimeout: (ms) => ipcRenderer.invoke(IPC.UPDATE_RESPONSE_TIMEOUT, ms),
   resetSettings: () => ipcRenderer.invoke(IPC.RESET_SETTINGS),
@@ -273,12 +289,14 @@ const api: ElectronAPI = {
   setCurrentLocale: (lang) => ipcRenderer.invoke(IPC.SET_CURRENT_LOCALE, lang),
 
   copyTextToClipboard: (text) => ipcRenderer.invoke(IPC.COPY_TEXT_TO_CLIPBOARD, text),
+  getPathForFile: (file) => webUtils.getPathForFile(file),
   showInFolder: (filePath) => ipcRenderer.invoke(IPC.SHOW_IN_FOLDER, filePath),
   openPath: (filePath) => ipcRenderer.invoke(IPC.OPEN_PATH, filePath),
   openConfigDir: () => ipcRenderer.invoke(IPC.OPEN_CONFIG_DIR),
   openThirdPartyLicenses: () => ipcRenderer.invoke(IPC.OPEN_THIRD_PARTY_LICENSES),
   exportConfig: () => ipcRenderer.invoke(IPC.EXPORT_CONFIG),
   importConfig: () => ipcRenderer.invoke(IPC.IMPORT_CONFIG),
+  selectPath: (request) => ipcRenderer.invoke(IPC.SELECT_PATH, request),
   captureMarkdownDocument: (request) => ipcRenderer.invoke(IPC.CAPTURE_MARKDOWN_IMAGE, request),
 
   getTelegramSettings: () => ipcRenderer.invoke(IPC.GET_TELEGRAM_SETTINGS),
@@ -287,14 +305,17 @@ const api: ElectronAPI = {
   updateTelegramAllowGroupCommands: (enabled) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_ALLOW_GROUP_COMMANDS, enabled),
   updateTelegramDefaultReplyMode: (mode) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_DEFAULT_REPLY_MODE, mode),
   updateTelegramAdminUsers: (userIds) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_ADMIN_USERS, userIds),
+  updateTelegramProviderCommands: (commands) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_PROVIDER_COMMANDS, commands),
   generateTelegramPairingCode: () => ipcRenderer.invoke(IPC.GENERATE_TELEGRAM_PAIRING_CODE),
   revokeTelegramPairingCode: (code) => ipcRenderer.invoke(IPC.REVOKE_TELEGRAM_PAIRING_CODE, code),
   unpairTelegramUser: (userId) => ipcRenderer.invoke(IPC.UNPAIR_TELEGRAM_USER, userId),
 
+  getEmailSettings: () => ipcRenderer.invoke(IPC.GET_EMAIL_SETTINGS),
+  updateEmailEnabled: (enabled) => ipcRenderer.invoke(IPC.UPDATE_EMAIL_ENABLED, enabled),
+  updateEmailCredentials: (creds) => ipcRenderer.invoke(IPC.UPDATE_EMAIL_CREDENTIALS, creds),
+
   getCloseToTray: () => ipcRenderer.invoke(IPC.GET_CLOSE_TO_TRAY),
   updateCloseToTray: (enabled) => ipcRenderer.invoke(IPC.UPDATE_CLOSE_TO_TRAY, enabled),
-  getAutoShowTray: () => ipcRenderer.invoke(IPC.GET_AUTO_SHOW_TRAY),
-  updateAutoShowTray: (enabled) => ipcRenderer.invoke(IPC.UPDATE_AUTO_SHOW_TRAY, enabled),
 
   getLaunchAtStartup: () => ipcRenderer.invoke(IPC.GET_LAUNCH_AT_STARTUP),
   updateLaunchAtStartup: (enabled) => ipcRenderer.invoke(IPC.UPDATE_LAUNCH_AT_STARTUP, enabled),
@@ -343,14 +364,18 @@ const api: ElectronAPI = {
 
   fetchDuckaiModels: () => ipcRenderer.invoke(IPC.DUCKAI_FETCH_MODELS),
 
-  // AgentFlow (Flow Automation)
   getFlows: () => ipcRenderer.invoke(IPC.FLOW_GET_ALL),
   saveFlow: (flow) => ipcRenderer.invoke(IPC.FLOW_SAVE, flow),
   deleteFlow: (flowId) => ipcRenderer.invoke(IPC.FLOW_DELETE, flowId),
   duplicateFlow: (flowId) => ipcRenderer.invoke(IPC.FLOW_DUPLICATE, flowId),
   moveFlow: (flowId, direction) => ipcRenderer.invoke(IPC.FLOW_MOVE, flowId, direction),
+  reorderFlows: (orderedIds) => ipcRenderer.invoke(IPC.FLOW_REORDER, orderedIds),
   executeFlow: (flowId) => ipcRenderer.invoke(IPC.FLOW_EXECUTE, flowId),
+  runChatCommand: (flowId, command, input) => ipcRenderer.invoke(IPC.FLOW_RUN_CHAT_COMMAND, flowId, command, input),
+  abortFlow: (flowId) => ipcRenderer.invoke(IPC.FLOW_ABORT, flowId),
+  generateFlow: (description) => ipcRenderer.invoke(IPC.FLOW_GENERATE, description),
   exportFlow: (flow) => ipcRenderer.invoke(IPC.FLOW_EXPORT, flow),
+  exportFlowResult: (content, defaultFileName) => ipcRenderer.invoke(IPC.FLOW_EXPORT_RESULT, { content, defaultFileName }),
   onFlowExecutionLog: (cb) => {
     const handler = (_: Electron.IpcRendererEvent, log: FlowExecutionLog) => cb(log);
     ipcRenderer.on(IPC.FLOW_EXECUTION_LOG, handler);
@@ -367,13 +392,15 @@ const api: ElectronAPI = {
     return () => ipcRenderer.removeListener(IPC.FLOW_EXECUTION_ENDED, handler);
   },
 
-  // RSS Checkpoint
   rssHasCheckpoint: (stepId) => ipcRenderer.invoke(IPC.RSS_HAS_CHECKPOINT, stepId),
   rssClearCheckpoint: (stepId) => ipcRenderer.invoke(IPC.RSS_CLEAR_CHECKPOINT, stepId),
+  rssDiscoverFeed: (siteUrl) => ipcRenderer.invoke(IPC.RSS_DISCOVER_FEED, siteUrl),
 
-  // Scraper Checkpoint
   scraperHasCheckpoint: (stepId) => ipcRenderer.invoke(IPC.SCRAPER_HAS_CHECKPOINT, stepId),
   scraperClearCheckpoint: (stepId) => ipcRenderer.invoke(IPC.SCRAPER_CLEAR_CHECKPOINT, stepId),
+
+  ytSubsHasCheckpoint: (stepId) => ipcRenderer.invoke(IPC.YT_SUBS_HAS_CHECKPOINT, stepId),
+  ytSubsClearCheckpoint: (stepId) => ipcRenderer.invoke(IPC.YT_SUBS_CLEAR_CHECKPOINT, stepId),
 };
 
 contextBridge.exposeInMainWorld('electronAPI', api);

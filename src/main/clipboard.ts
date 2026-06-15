@@ -1,20 +1,11 @@
-// Clipboard capture via simulated OS copy
 import { clipboard, systemPreferences } from 'electron';
 import { execFile } from 'node:child_process';
 
-/**
- * Returns true if the app has been granted Accessibility permission on macOS.
- * Always returns true on non-macOS platforms.
- */
 export function checkMacosAccessibility(): boolean {
   if (process.platform !== 'darwin') return true;
   return systemPreferences.isTrustedAccessibilityClient(false);
 }
 
-/**
- * Triggers the macOS system prompt asking the user to grant Accessibility access.
- * No-op on non-macOS platforms.
- */
 export function promptMacosAccessibility(): void {
   if (process.platform !== 'darwin') return;
   systemPreferences.isTrustedAccessibilityClient(true);
@@ -28,10 +19,6 @@ interface ClipboardSnapshot {
   rtf?: string;
 }
 
-/**
- * Snapshot the current system clipboard contents (text, HTML, RTF, image).
- * Returns a `ClipboardSnapshot` that can be passed to `restoreClipboard()`.
- */
 export function backupClipboard(): ClipboardSnapshot {
   const formats = clipboard.availableFormats();
 
@@ -62,9 +49,6 @@ export function backupClipboard(): ClipboardSnapshot {
   return { format: 'empty' };
 }
 
-/**
- * Restore the system clipboard to a previously captured snapshot.
- */
 export function restoreClipboard(snapshot: ClipboardSnapshot): void {
   if (snapshot.format === 'empty') {
     clipboard.clear();
@@ -81,7 +65,6 @@ export function restoreClipboard(snapshot: ClipboardSnapshot): void {
     return;
   }
 
-  // text / html
   clipboard.write({
     text: snapshot.text ?? '',
     html: snapshot.html ?? '',
@@ -89,14 +72,9 @@ export function restoreClipboard(snapshot: ClipboardSnapshot): void {
   });
 }
 
-// Poll clipboard after a simulated Cmd/Ctrl+C.
-// Checks immediately (Cmd+C may already be done when osascript exits),
-// then every 20ms for up to 3s.
 function pollClipboard(snapshot: ClipboardSnapshot, resolve: (v: string) => void): void {
   const check = () => clipboard.readText().trim();
 
-  // Immediate check — osascript blocks until keystroke is delivered, so the
-  // target app may have already written to clipboard by the time we get here.
   const immediate = check();
   if (immediate) {
     restoreClipboard(snapshot);
@@ -105,7 +83,7 @@ function pollClipboard(snapshot: ClipboardSnapshot, resolve: (v: string) => void
   }
 
   let attempts = 0;
-  const MAX_ATTEMPTS = 150; // 150 × 20ms = 3 000ms timeout
+  const MAX_ATTEMPTS = 150;
   const poll = setInterval(() => {
     attempts++;
     if (attempts > MAX_ATTEMPTS) {
@@ -125,20 +103,11 @@ function pollClipboard(snapshot: ClipboardSnapshot, resolve: (v: string) => void
 
 export function captureSelectedText(): Promise<string> {
   return new Promise((resolve) => {
-    // Backup & clear clipboard so polling can detect new clipboard writes.
     const snapshot = backupClipboard();
     clipboard.clear();
 
     switch (process.platform) {
       case 'darwin': {
-        // Strategy:
-        // 1. Try reading AXSelectedText from the focused UI element via Accessibility API.
-        //    This is instantaneous and doesn't touch the clipboard.
-        // 2. If that returns empty (e.g. browser page text, non-standard apps), fall back to
-        //    simulating Cmd+C on the frontmost process.
-        //
-        // globalShortcut fires in the main process WITHOUT stealing focus from the source app,
-        // so "first application process whose frontmost is true" is always the source app.
         const script = [
           'tell application "System Events"',
           '    set frontProc to first application process whose frontmost is true',
@@ -153,19 +122,16 @@ export function captureSelectedText(): Promise<string> {
 
         execFile('/usr/bin/osascript', ['-e', script], (err, stdout) => {
           if (err) {
-            // osascript failed — likely Accessibility permission not granted.
             restoreClipboard(snapshot);
             resolve('');
             return;
           }
           const axText = stdout.trim();
           if (axText) {
-            // AXSelectedText succeeded — use it directly, no clipboard poll needed.
             restoreClipboard(snapshot);
             resolve(axText);
             return;
           }
-          // Script returned empty: Cmd+C was simulated, poll clipboard for the result.
           pollClipboard(snapshot, resolve);
         });
         break;

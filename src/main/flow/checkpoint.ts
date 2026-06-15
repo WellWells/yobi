@@ -1,9 +1,3 @@
-// generic per-step checkpoint persistence.
-//
-// RSS and scraper skills both persist a small JSON checkpoint per step instance
-// to deduplicate items across runs. This factors the identical path/load/save
-// logic into a single generic store keyed by skill kind.
-
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { getCheckpointPath } from './paths';
@@ -13,7 +7,7 @@ export interface CheckpointStore<T> {
   save: (stepId: string, checkpoint: T) => Promise<void>;
 }
 
-export function makeCheckpointStore<T>(kind: 'rss' | 'scraper'): CheckpointStore<T> {
+export function makeCheckpointStore<T>(kind: 'rss' | 'scraper' | 'youtube_subs'): CheckpointStore<T> {
   async function load(stepId: string): Promise<T | null> {
     try {
       const raw = await fs.readFile(getCheckpointPath(kind, stepId), 'utf-8');

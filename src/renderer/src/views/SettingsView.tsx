@@ -1,25 +1,26 @@
-// Skeleton: only composes sub-modules. All business logic lives in hooks; all rendering lives in sections.
 import React, { useCallback, useState } from 'react';
-import { ActionIcon, Box, Flex, Group, Stack, Text, Title } from '@mantine/core';
+import { ActionIcon, Box, Flex, Stack, Text } from '@mantine/core';
 
-import { Search, SlidersHorizontal, X } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import { AppTextInput } from '../components/AppTextInput';
+import { useShallow } from 'zustand/react/shallow';
 import { useI18nStore } from '../store/i18nStore';
 import { useAppStore } from '../store/appStore';
 import { useThemeStore } from '../store/themeStore';
 import type { Theme } from '../store/themeStore';
 import { settingsApi, fileApi, systemApi } from '../api/electronApi';
 import type { SettingsSnapshot } from '../../../shared/types';
-import { PanelHeader } from '../components/PanelHeader';
 
 import { NavItem } from './settings/components';
 import { useHotkeyRecorder } from './settings/hooks/useHotkeyRecorder';
 import { usePromptPrefs } from './settings/hooks/usePromptPrefs';
 import { useSystemSettings } from './settings/hooks/useSystemSettings';
 import { useTelegramSettings } from './settings/hooks/useTelegramSettings';
+import { useAccountSettings } from './settings/hooks/useAccountSettings';
 import { useSettingsNav } from './settings/hooks/useSettingsNav';
 import { GeneralSection } from './settings/sections/GeneralSection';
 import { AiSection } from './settings/sections/AiSection';
+import { AccountsSection } from './settings/sections/AccountsSection';
 import { TelegramSection } from './settings/sections/TelegramSection';
 import { SystemSection } from './settings/sections/SystemSection';
 import type { DangerAction } from './settings/sections/SystemSection';
@@ -28,20 +29,26 @@ const SECTION_GAP = 12;
 
 export const SettingsView: React.FC = () => {
   const { t, locale, setLocale, availableLocales } = useI18nStore();
-  const { setFiles, selectFile, setFileContent } = useAppStore();
+  const { setFiles, selectFile, setFileContent } = useAppStore(
+    useShallow((s) => ({
+      setFiles: s.setFiles,
+      selectFile: s.selectFile,
+      setFileContent: s.setFileContent,
+    })),
+  );
   const { theme, setTheme } = useThemeStore();
 
   const hotkey = useHotkeyRecorder();
   const prefs = usePromptPrefs();
   const system = useSystemSettings();
   const telegram = useTelegramSettings();
+  const account = useAccountSettings();
   const nav = useSettingsNav();
 
-  // Danger action confirmation state (coordinated across hooks)
   const [dangerAction, setDangerAction] = useState<DangerAction>(null);
   const applySettingsSnapshot = useCallback(async (snapshot: SettingsSnapshot) => {
     hotkey.applyHotkeyReset(snapshot.hotkey);
-    prefs.applyPromptReset(snapshot.promptPreferences, snapshot.syncSystemLanguageToModel);
+    prefs.applyPromptReset(snapshot.promptPreferences, snapshot.syncSystemLanguageToModel, snapshot.youtubePrompt);
     system.applySystemReset(
       snapshot.notifyOnComplete,
       snapshot.responseTimeout,
@@ -104,7 +111,7 @@ export const SettingsView: React.FC = () => {
     else if (action === 'clear-history') await handleClearHistory();
   }, [dangerAction, handleResetSettings, handleClearHistory]);
 
-  const showCategoryBlock = (category: 'general' | 'ai' | 'telegram' | 'system'): string =>
+  const showCategoryBlock = (category: 'general' | 'ai' | 'accounts' | 'bots' | 'system'): string =>
     nav.showCategory(category) ? 'block' : 'none';
 
   return (
@@ -118,13 +125,24 @@ export const SettingsView: React.FC = () => {
         bg="var(--mantine-color-default)"
         style={{ borderRight: '1px solid var(--mantine-color-default-border)', overflowY: 'auto', flexShrink: 0 }}
       >
-        <PanelHeader
-          label={t('nav.settings')}
-          icon={<SlidersHorizontal size={13} />}
-          px="12px"
-          py="9px"
-        />
-        <Box p="8px">
+        <Box px="10px" pt="10px" pb="6px">
+          <AppTextInput
+            value={nav.searchQuery}
+            onChange={(e) => nav.setSearchQuery(e.target.value)}
+            placeholder={t('settings.search.placeholder')}
+            tone="tertiary"
+            variant="default"
+            size="xs"
+            radius="sm"
+            leftSection={<Search size={13} />}
+            rightSection={nav.searchQuery ? (
+              <ActionIcon variant="subtle" size={20} onClick={() => nav.setSearchQuery('')} aria-label={t('settings.search.clear')}>
+                <X size={12} />
+              </ActionIcon>
+            ) : undefined}
+          />
+        </Box>
+        <Box px="8px" pb="8px">
           <Stack gap={4}>
             {nav.navCategoryDefs.map((cat) => (
               <NavItem
@@ -142,43 +160,6 @@ export const SettingsView: React.FC = () => {
 
       <Box flex={1} p="24px 20px 40px" style={{ overflowY: 'auto' }}>
         <Box maw={560} mx="auto">
-
-          <Title
-            order={2}
-            mb={20}
-            fz="var(--font-size-3xl)"
-            fw={700}
-            lts="-0.01em"
-            c="var(--mantine-color-default-color)"
-          >
-            <Group gap={8} align="center">
-              <SlidersHorizontal size={17} color="var(--mantine-color-accent)" style={{ flexShrink: 0 }} />
-              {t('nav.settings')}
-            </Group>
-          </Title>
-
-          <Box pos="relative" mb={20}>
-            <AppTextInput
-              value={nav.searchQuery}
-              onChange={(e) => nav.setSearchQuery(e.target.value)}
-              placeholder={t('settings.search.placeholder')}
-              leftSection={<Search size={14} />}
-              rightSection={nav.searchQuery ? (
-                <ActionIcon variant="subtle" size={28} onClick={() => nav.setSearchQuery('')}>
-                  <X size={13} />
-                </ActionIcon>
-              ) : undefined}
-              styles={{
-                input: {
-                  background: 'var(--mantine-color-default)',
-                  borderColor: 'var(--mantine-color-default-border)',
-                  color: 'var(--mantine-color-default-color)',
-                  fontSize: 'var(--font-size-md)',
-                },
-              }}
-            />
-          </Box>
-
           <Box display={showCategoryBlock('general')}>
             <GeneralSection
               hotkey={hotkey}
@@ -208,11 +189,21 @@ export const SettingsView: React.FC = () => {
             />
           </Box>
 
-          <Box display={showCategoryBlock('telegram')}>
+          <Box display={showCategoryBlock('accounts')}>
+            <AccountsSection
+              account={account}
+              t={t}
+              showSection={(tags) => nav.showSection(tags, 'accounts')}
+              isSearching={nav.isSearching}
+              sectionGap={SECTION_GAP}
+            />
+          </Box>
+
+          <Box display={showCategoryBlock('bots')}>
             <TelegramSection
               telegram={telegram}
               t={t}
-              showSection={(tags) => nav.showSection(tags, 'telegram')}
+              showSection={(tags) => nav.showSection(tags, 'bots')}
               isSearching={nav.isSearching}
               sectionGap={SECTION_GAP}
             />
@@ -233,8 +224,7 @@ export const SettingsView: React.FC = () => {
             />
           </Box>
 
-          {/* No search results */}
-          {nav.isSearching && !(['general', 'ai', 'telegram', 'system'] as const).some((c) => nav.showCategory(c)) && (
+          {nav.isSearching && !(['general', 'ai', 'accounts', 'bots', 'system'] as const).some((c) => nav.showCategory(c)) && (
             <Stack align="center" py={48} px={20} c="dimmed">
               <Search size={32} opacity={0.25} />
               <Text fz="var(--font-size-md)">{t('settings.search.empty')}</Text>

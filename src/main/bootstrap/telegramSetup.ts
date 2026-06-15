@@ -1,14 +1,9 @@
-// Telegram runtime initialization wiring
-//
-// Builds the TelegramRuntime with all config/queue/flow callbacks. The
-// FlowManager is created later in app.whenReady(), so it is accessed through
-// a getter to avoid a value-level circular dependency.
-
 import { IPC } from '../../shared/types';
 import { config, saveConfig } from '../config';
-import { sendLog, sendToRenderer, createTaskId } from '../helpers';
+import { relaunchApp, sendLog, sendToRenderer, sendWebNotification, createTaskId } from '../helpers';
 import { getLangCache } from '../i18n';
-import { TelegramRuntime, normalizePairingState } from '../telegram';
+import { resolveUrlPrompt } from '../urlParser';
+import { TelegramRuntime, normalizePairingState, resolveProviderCommands } from '../telegram';
 import {
   isTelegramAdminUser,
   buildTelegramStatusText,
@@ -19,7 +14,6 @@ import {
 import type { QueueManager } from '../queueManager';
 import type { FlowManager } from '../flow';
 
-/** Creates the TelegramRuntime wired to the shared queue and FlowManager. */
 export function createTelegramRuntime(deps: {
   queue: QueueManager;
   getFlowManager: () => FlowManager | null;
@@ -35,16 +29,22 @@ export function createTelegramRuntime(deps: {
     savePairing: (next) => {
       config.telegram.pairing = normalizePairingState(next);
       saveConfig({ telegram: config.telegram });
-      // Notify renderer to refresh Telegram pairing/admin snapshot immediately.
       sendToRenderer(IPC.TELEGRAM_RUNTIME, getTelegramRuntimeSnapshot());
     },
     isAdminUser: (userId) => isTelegramAdminUser(userId),
     onTaskRequest: async (request) => {
+      const resolved = await resolveUrlPrompt(request.prompt, {
+        langData: getLangCache(),
+        youtubePrompt: config.youtubePrompt,
+        onLog: sendLog,
+        onNotify: (title, body) => sendWebNotification(title, body, 'info'),
+      });
       const id = createTaskId();
       queue.enqueue({
         id,
-        prompt: request.prompt,
-        targetUrl: request.targetUrl,
+        prompt: resolved.prompt,
+        targetUrl: resolved.forceProviderUrl ?? request.targetUrl,
+        title: resolved.title,
         source: 'telegram',
         replyTarget: request.replyTarget,
       });
@@ -52,6 +52,7 @@ export function createTelegramRuntime(deps: {
       return { taskId: id };
     },
     onStatusRequest: () => buildTelegramStatusText(queue),
+    onRestartApp: () => relaunchApp('Telegram /restart'),
     onUpdateDefaultReplyMode: (mode) => {
       if (mode !== 'markdown' && mode !== 'png' && mode !== 'webp' && mode !== 'pdf') return false;
       config.telegram.defaultReplyMode = mode;
@@ -65,6 +66,10 @@ export function createTelegramRuntime(deps: {
       sendToRenderer(IPC.TELEGRAM_RUNTIME, snapshot);
     },
     getStrings: () => getLangCache(),
+    getProviderCommands: () => resolveProviderCommands(
+      config.telegram,
+      (getFlowManager()?.getBotCommands() ?? []).map((fc) => fc.command),
+    ),
     getFlowCommands: () => getFlowManager()?.getBotCommands() ?? [],
     onFlowCommand: async (flowId, inputVariable, input, userId, chatId) => {
       const extraContext: Record<string, string> = {

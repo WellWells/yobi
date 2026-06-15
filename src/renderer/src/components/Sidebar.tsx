@@ -1,14 +1,14 @@
 import React, { startTransition, useCallback, useEffect, useRef, useState } from 'react';
-import { Badge, Box, Menu as MMenu, Stack, Text } from '@mantine/core';
+import { Box, Menu as MMenu, Stack, Text } from '@mantine/core';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import type { OutputFile } from '../../../shared/types';
 import { AppTextInput } from './AppTextInput';
-import { PanelHeader } from './PanelHeader';
 import { WebDialog } from './WebDialog';
 import { ContextMenuPortal } from './ContextMenuPortal';
-import { Edit3, FolderOpen, MessageSquare, Search, Trash2 } from 'lucide-react';
+import { Edit3, FolderOpen, Search, Trash2 } from 'lucide-react';
 import { fileApi } from '../api/electronApi';
 import { FileItem } from './sidebar/FileItem';
 import { useSidebarFileActions } from './sidebar/useSidebarFileActions';
@@ -16,7 +16,16 @@ import { createSidebarKeyDownHandler } from './sidebar/sidebarKeyNav';
 import { useFormatTime } from '../hooks/useFormatTime';
 
 export const Sidebar: React.FC = () => {
-  const { files, selectedFile, selectFile, setFileContent, setFiles, unreadFilePaths } = useAppStore();
+  const { files, selectedFile, selectFile, setFileContent, setFiles, unreadFilePaths } = useAppStore(
+    useShallow((s) => ({
+      files: s.files,
+      selectedFile: s.selectedFile,
+      selectFile: s.selectFile,
+      setFileContent: s.setFileContent,
+      setFiles: s.setFiles,
+      unreadFilePaths: s.unreadFilePaths,
+    })),
+  );
   const { t } = useI18nStore();
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<OutputFile[] | null>(null);
@@ -66,7 +75,6 @@ export const Sidebar: React.FC = () => {
     count: visibleFiles.length,
     getScrollElement: () => sidebarViewportRef.current,
     estimateSize: () => 72,
-    measureElement: (el) => el.getBoundingClientRect().height,
     overscan: 5,
   });
 
@@ -83,13 +91,13 @@ export const Sidebar: React.FC = () => {
     return null;
   }, [files, visibleFiles]);
 
-  const handleSelect = async (file: OutputFile) => {
+  const handleSelect = useCallback(async (file: OutputFile) => {
     selectFile(file);
     const content = await fileApi.getContent(file.path);
     startTransition(() => {
       setFileContent(content);
     });
-  };
+  }, [selectFile, setFileContent]);
 
   const {
     editingPath, editingText, setEditingText, editingMode,
@@ -117,8 +125,6 @@ export const Sidebar: React.FC = () => {
     window.requestAnimationFrame(() => {
       fileItemRefs.current.get(selectedFile.path ?? '')?.focus();
     });
-    // visibleFiles and rowVirtualizer are used but intentionally omitted from deps
-    // to avoid re-triggering on every file list update
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedFile?.path, pendingDeleteFile, editingPath]);
 
@@ -162,40 +168,23 @@ export const Sidebar: React.FC = () => {
       bg="var(--mantine-color-default)"
       style={{ borderRight: '1px solid var(--mantine-color-default-border)', overflow: 'hidden', position: 'relative' }}
     >
-      <Box style={{ flexShrink: 0 }}>
-        <PanelHeader
-          label={t('nav.chat')}
-          icon={<MessageSquare size={13} />}
-          rightSection={(
-            <Badge
-              variant="default"
-              size="xs"
-              radius="sm"
-              ff="var(--font-mono)"
-              style={{
-                color: 'var(--mantine-color-dimmed)',
-                background: 'var(--mantine-color-default-hover)',
-                border: '1px solid var(--mantine-color-default-border)',
-                fontWeight: 400,
-                padding: '1px 6px',
-              }}
-            >
+      <Box style={{ flexShrink: 0 }} px="10px" pt="10px" pb="8px">
+        <AppTextInput
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={t('sidebar.searchPlaceholder')}
+          tone="tertiary"
+          leftSection={<Search size={13} />}
+          rightSection={isSearching ? (
+            <Text component="span" fz="var(--font-size-xs)" c="dimmed" ff="var(--font-mono)" pr={6}>
               {countLabel}
-            </Badge>
-          )}
+            </Text>
+          ) : undefined}
+          rightSectionWidth={isSearching ? 64 : undefined}
+          variant="default"
+          size="xs"
+          radius="sm"
         />
-        <Box px="10px" pt="6px" pb="8px">
-          <AppTextInput
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={t('sidebar.searchPlaceholder')}
-            tone="tertiary"
-            leftSection={<Search size={13} />}
-            variant="default"
-            size="xs"
-            radius="sm"
-          />
-        </Box>
       </Box>
 
       <Box ref={sidebarViewportRef} flex={1} style={{ overflowY: 'auto', padding: '6px 0' }} onKeyDown={handleListKeyDown}>
@@ -217,6 +206,7 @@ export const Sidebar: React.FC = () => {
               return (
                 <Box
                   key={virtualRow.key}
+                  data-index={virtualRow.index}
                   ref={rowVirtualizer.measureElement}
                   style={{
                     position: 'absolute',

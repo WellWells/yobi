@@ -1,5 +1,3 @@
-// Stop Flow skill config editor.
-// Stops the flow gracefully when the given value is empty or equals "[]".
 import React from 'react';
 import { Stack, Text } from '@mantine/core';
 import { AppTextInput } from '../../../components/AppTextInput';

@@ -7,7 +7,6 @@ import type { SkillConfigProps } from './types';
 const IS_WINDOWS = navigator.platform.toLowerCase().includes('win');
 const IS_MAC = navigator.platform.toLowerCase().includes('mac');
 
-// Shell options are determined once at module load based on the current OS.
 const SHELL_OPTIONS = IS_WINDOWS
   ? [
       { value: 'cmd', label: 'cmd' },
@@ -27,9 +26,8 @@ const SHELL_OPTIONS = IS_WINDOWS
 
 const DEFAULT_SHELL = IS_WINDOWS ? 'cmd' : IS_MAC ? '/bin/zsh' : '/bin/bash';
 
-// Read the effective shell from config, supporting the legacy windowsShell/unixShell fields.
 function resolveShell(config: Record<string, string>): string {
-  return config.shell ?? config.windowsShell ?? config.unixShell ?? DEFAULT_SHELL;
+  return config.shell || config.windowsShell || config.unixShell || DEFAULT_SHELL;
 }
 
 export const ShellConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => (

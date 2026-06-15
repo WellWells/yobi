@@ -1,14 +1,3 @@
-// Generate platform icon files from source PNGs
-// Run: tsx scripts/generate-icons.ts
-//
-// Outputs:
-//   assets/icon-win.ico   — Windows multi-size ICO (16/24/32/48/64/128/256 px)
-//   assets/icon-mac.icns  — macOS multi-size ICNS (16–1024 px)
-//
-// Sources:
-//   assets/icon-win.png   — Windows source (1024×1024 recommended)
-//   assets/icon-mac.png   — macOS source  (1024×1024 recommended)
-
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 // eslint-disable-next-line @typescript-eslint/no-require-imports

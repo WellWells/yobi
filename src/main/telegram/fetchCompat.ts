@@ -1,13 +1,7 @@
-// fetch shim for grammy on Node.js 18+.
-//
-// Patches request init for streaming bodies (duplex) and relays grammy's
-// non-native abort signals onto a native AbortController so undici accepts them.
-
 export function telegramFetchCompat(
   input: Parameters<typeof fetch>[0],
   init?: Parameters<typeof fetch>[1],
 ): ReturnType<typeof fetch> {
-  // Node.js 18+ requires duplex: 'half' when sending a request body (e.g. multipart/form-data for sendDocument)
   const patchedInit = init?.body != null
     ? ({ ...init, duplex: 'half' } as Parameters<typeof fetch>[1])
     : init;

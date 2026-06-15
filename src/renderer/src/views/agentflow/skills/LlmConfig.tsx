@@ -4,7 +4,7 @@ import { AppTextarea } from '../../../components/AppTextarea';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { SelectDropdown } from '../../../components/SelectDropdown';
 import { ToggleSwitch } from '../../../components/ToggleSwitch';
-import { CAPTURE_PALETTES, buildCaptureBackground } from '../../../hooks/useCaptureExport';
+import { applyCapturePalette, buildCapturePaletteOptions } from './captureConfig';
 import { MODELS } from '../../../config/models';
 import { useAppStore } from '../../../store/appStore';
 import type { SkillConfigProps } from './types';
@@ -67,13 +67,9 @@ export const LlmConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
         />
         <SelectDropdown
           label={t('common.background')}
-          options={CAPTURE_PALETTES.map((p) => ({ value: p.key, label: p.label }))}
-          value={step.config.palette ?? 'aurora'}
-          onChange={(value) => {
-            const palette = CAPTURE_PALETTES.find((p) => p.key === value) ?? CAPTURE_PALETTES[0];
-            const background = buildCaptureBackground(palette.from, palette.to, 'se');
-            onChange({ ...step.config, palette: palette.key, background });
-          }}
+          options={buildCapturePaletteOptions(t)}
+          value={step.config.palette || 'aurora'}
+          onChange={(value) => onChange(applyCapturePalette(step.config, value))}
           size="sm"
         />
         <ToggleSwitch
@@ -97,6 +93,15 @@ export const LlmConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
       checked={step.config.saveToHistory === 'true'}
       onChange={(e) => onChange({ ...step.config, saveToHistory: e.currentTarget.checked ? 'true' : 'false' })}
     />
+    <ToggleSwitch
+      label={t('agentflow.skill.llm.useMemory')}
+      size="sm"
+      checked={step.config.useMemory === 'true'}
+      onChange={(e) => onChange({ ...step.config, useMemory: e.currentTarget.checked ? 'true' : 'false' })}
+    />
+    {step.config.useMemory === 'true' && (
+      <Text fz="xs" c="dimmed">{t('agentflow.skill.llm.useMemory.hint')}</Text>
+    )}
     <ToggleSwitch
       label={t('agentflow.skill.llm.emitFailFlag')}
       size="sm"

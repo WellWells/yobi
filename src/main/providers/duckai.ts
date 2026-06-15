@@ -1,106 +1,136 @@
-// Electron DOM-injection automation for Duck AI web
-import type { BrowserWindow } from 'electron';
+import type { BrowserWindow, WebContents } from 'electron';
 import { navigateAndWait, sleep } from './common';
 import { executeAutomationWithTimeout, countElements, dispatchFocusEvents } from './automationExecutor';
 import {
   buildDuckaiAutomationScript,
   injectDuckaiLocalStorage,
   setupDuckaiLocalStorageOnDomReady,
+  DUCKAI_CHALLENGE_SELECTOR,
 } from './duckaiScript';
+import { clearProviderSession } from './authStatus';
+import { VERIFICATION_CHALLENGE_ERROR_NAME } from './verificationChallenge';
+import { sendLog, sendWebNotification } from '../helpers';
+import { getLangCache, t } from '../i18n';
 import { PROVIDER_URLS } from '../../shared/types';
 import type { DuckaiModelInfo } from '../../shared/types';
+import { FIREFOX_UA } from '../userAgent';
+import { applyWorkerUserAgent } from '../clientHints';
 
 const DUCKAI_HOME = PROVIDER_URLS.duckai;
 
 export type { DuckaiModelInfo };
-export { buildDuckaiAutomationScript };
 
-/**
- * Fetches the list of models available on duck.ai by reading the model
- * selector radio inputs from the DOM. Opens and immediately closes the
- * model picker dialog if it is not already open.
- *
- * Navigation is skipped when the worker window is already on the duck.ai
- * origin (e.g., ensureWorkerWindow already loaded it as the initial URL).
- * Navigating twice in quick succession doubles the /duckchat/v1/status calls
- * and triggers 429 rate-limit errors from duck.ai.
- */
+// True when DuckDuckGo's human-verification overlay ("select all squares with
+// ducks") is showing on the worker page — detected via language-independent
+// selectors (its own testids / asset path), so it works in any locale.
+export async function isDuckaiChallengeActive(wc: WebContents): Promise<boolean> {
+  try {
+    return (await wc.executeJavaScript(
+      `!!document.querySelector(${JSON.stringify(DUCKAI_CHALLENGE_SELECTOR)})`,
+      false,
+    )) as boolean;
+  } catch {
+    return false;
+  }
+}
+
+// If the verification overlay is up, wipe duck.ai's cookies / session / localStorage
+// so the next attempt starts from a clean session (the anomaly challenge is tied to
+// the flagged session; paired with the Firefox persona this looks like a fresh real
+// browser), notify the user to retry, and throw the shared verification-challenge
+// error so the task fails without retry. Returns normally when no challenge is present.
+async function raiseIfDuckaiChallenge(wc: WebContents): Promise<void> {
+  if (!(await isDuckaiChallengeActive(wc))) return;
+  await clearProviderSession('duckai');
+  const strings = getLangCache();
+  sendWebNotification(
+    t(strings, 'duckai.verify.notify.title'),
+    t(strings, 'duckai.verify.notify.body'),
+    'error',
+  );
+  sendLog('⚠️ DuckDuckGo human-verification detected — cleared Duck AI session/cookies; task marked as FAILED, please retry');
+  const error = new Error(t(strings, 'duckai.verify.error.verificationFailed'));
+  error.name = VERIFICATION_CHALLENGE_ERROR_NAME;
+  throw error;
+}
+
 export async function fetchDuckaiModels(workerWin: BrowserWindow): Promise<DuckaiModelInfo[]> {
   const wc = workerWin.webContents;
+
+  applyWorkerUserAgent(wc, FIREFOX_UA);
 
   const alreadyOnDuckAi = wc.getURL().includes('duck.ai');
 
   if (!alreadyOnDuckAi) {
-    // Worker is on a different URL — navigate cleanly.
-    // setupDuckaiLocalStorageOnDomReady must be registered BEFORE loadURL fires.
     const lsReady = setupDuckaiLocalStorageOnDomReady(wc);
     await navigateAndWait(wc, DUCKAI_HOME);
     await lsReady;
     await sleep(1_500);
   } else {
-    // Worker was already navigated to duck.ai (e.g., by ensureWorkerWindow).
-    // If still loading, wait for it to settle; otherwise just inject LS.
     if (wc.isLoading()) {
       await new Promise<void>((resolve) => { wc.once('did-finish-load', () => resolve()); });
     }
     await injectDuckaiLocalStorage(wc);
-    // Give React time to mount after the existing navigation completes.
     await sleep(1_000);
   }
 
   return wc.executeJavaScript(`
     (async function() {
-        // Wait for either model inputs (dialog open) or the model-select button
-        // to appear, giving React up to 15 seconds to finish rendering.
-        let menuBtn = null;
-        let inputs = document.querySelectorAll('input[name="model"]');
+        // Wait for the model-picker button to render, giving React up to 15s.
+        let btn = null;
         let waited = 0;
-        while (inputs.length === 0 && !menuBtn && waited < 15000) {
+        while (!btn && waited < 15000) {
+            btn = document.querySelector('[data-testid="model-picker-button"]');
+            if (btn) break;
             await new Promise(function(r) { setTimeout(r, 300); });
             waited += 300;
-            inputs = document.querySelectorAll('input[name="model"]');
-            menuBtn = document.querySelector('[data-testid="model-select-button"]');
         }
-        let wasClosedByScript = false;
-        if (inputs.length === 0) {
-            if (!menuBtn) throw new Error("Cannot find model interface after waiting");
-            menuBtn.click();
-            wasClosedByScript = true;
-            await new Promise(function(r) { setTimeout(r, 300); });
-            inputs = document.querySelectorAll('input[name="model"]');
+        if (!btn) throw new Error("Cannot find model interface after waiting");
+
+        // Open the picker menu if it is not already expanded.
+        let wasOpenedByScript = false;
+        if (btn.getAttribute('aria-expanded') !== 'true') {
+            btn.click();
+            wasOpenedByScript = true;
         }
-        if (inputs.length === 0) throw new Error("Cannot fetch model list");
-        const modelList = Array.from(inputs).map(function(input) {
-            const label = document.querySelector('label[for="' + input.id + '"]');
-            const nameNode = label ? label.querySelector('.J58ouJfofMIxA2Ukt6lA') : null;
-            const strongNode = nameNode ? nameNode.querySelector('strong') : null;
-            const fullName = strongNode
-                ? strongNode.textContent.trim()
-                : (nameNode ? nameNode.textContent.trim() : "Unknown");
+
+        // Wait for the menu rows to appear.
+        let rows = [];
+        let rowWaited = 0;
+        while (rows.length === 0 && rowWaited < 5000) {
+            rows = Array.prototype.slice.call(document.querySelectorAll('[data-testid^="model-picker-row-"]'));
+            if (rows.length > 0) break;
+            await new Promise(function(r) { setTimeout(r, 200); });
+            rowWaited += 200;
+        }
+        if (rows.length === 0) throw new Error("Cannot fetch model list");
+
+        const modelList = rows.map(function(row) {
+            const id = (row.getAttribute('data-testid') || '').replace('model-picker-row-', '');
+            // Content wrapper is the last span child (the first child is the icon);
+            // its first child span holds the model name (a second span, if any, is a description).
+            const spanKids = Array.prototype.slice.call(row.children).filter(function(c) { return c.tagName === 'SPAN'; });
+            const content = spanKids.length > 0 ? spanKids[spanKids.length - 1] : null;
+            const nameNode = content && content.children.length > 0 ? content.children[0] : null;
+            const label = nameNode
+                ? (nameNode.innerText || '').replace(/\\s+/g, ' ').trim()
+                : (row.innerText || '').replace(/\\s+/g, ' ').trim();
             return {
-                id: input.value,
-                label: fullName || "Unknown",
-                isActive: input.checked || input.getAttribute('aria-checked') === 'true'
+                id: id,
+                label: label || "Unknown",
+                isActive: row.getAttribute('aria-checked') === 'true'
             };
         });
-        if (wasClosedByScript) {
-            const closeBtn = document.querySelector('button[aria-label="close dialog"]');
-            if (closeBtn) closeBtn.click();
+
+        // Close the menu we opened so the worker window is left clean.
+        if (wasOpenedByScript) {
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true, cancelable: true }));
         }
         return modelList;
     })()
   `, false);
 }
 
-/**
- * Runs the full Duck AI automation: injects the prompt, waits for the
- * response to complete, and returns the extracted text.
- *
- * Model selection is passed via the `targetUrl` query param as an internal
- * encoding (`?model=<id>`). The ID is extracted, stripped from the URL before
- * navigation, then applied via DOM: open the model picker dialog, select the
- * matching radio input, and click "Start New Chat".
- */
 export async function runDuckaiAutomation(
   workerWin: BrowserWindow,
   prompt: string,
@@ -109,7 +139,11 @@ export async function runDuckaiAutomation(
 ): Promise<{ response: string; title: string }> {
   const wc = workerWin.webContents;
 
-  // Extract model ID from ?model= query param; empty string = use current selection.
+  // Present Duck AI as a real Firefox browser (same persona as Gemini): a coherent
+  // Firefox UA with the Chromium Sec-CH-UA* client hints stripped, which looks less
+  // like an automated Electron/Chromium client to DuckDuckGo's anti-bot checks.
+  applyWorkerUserAgent(wc, FIREFOX_UA);
+
   let modelId = '';
   let navigateUrl: string = DUCKAI_HOME;
   try {
@@ -124,25 +158,35 @@ export async function runDuckaiAutomation(
     navigateUrl = DUCKAI_HOME;
   }
 
-  // Inject localStorage at dom-ready so the onboarding modal never mounts.
   const lsReady = setupDuckaiLocalStorageOnDomReady(wc);
   await navigateAndWait(wc, navigateUrl);
   await lsReady;
 
-  // Dispatch focus events so duck.ai doesn't throttle the hidden worker window.
+  // A challenge can already be up on load if traffic is flagged.
+  await raiseIfDuckaiChallenge(wc);
+
   await dispatchFocusEvents(wc);
 
   const baseline = await countElements(wc, 'div[id*="assistant-message"]');
 
   const autoScript = buildDuckaiAutomationScript(prompt, baseline, timeoutMs, modelId);
-  const result = await executeAutomationWithTimeout<{ response: string; title: string }>(
-    wc,
-    autoScript,
-    timeoutMs,
-    'Duck AI',
-  );
+  let result: { response: string; title: string } | null;
+  try {
+    result = await executeAutomationWithTimeout<{ response: string; title: string }>(
+      wc,
+      autoScript,
+      timeoutMs,
+      'Duck AI',
+    );
+  } catch (err) {
+    // The overlay usually appears right after submit; convert the resulting
+    // failure/timeout into the verification flow instead of a generic error.
+    await raiseIfDuckaiChallenge(wc);
+    throw err;
+  }
 
   if (!result || !result.response || result.response.trim() === '') {
+    await raiseIfDuckaiChallenge(wc);
     throw new Error('Duck AI returned empty response');
   }
 

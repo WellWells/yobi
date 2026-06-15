@@ -1,4 +1,3 @@
-// shared uppercase section label
 import React from 'react';
 import { Text } from '@mantine/core';
 

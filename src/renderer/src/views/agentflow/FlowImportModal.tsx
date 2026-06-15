@@ -1,15 +1,15 @@
-// Modal for importing flows from a URL or a local JSON file via file input.
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Button, Group, Modal, Stack, Text } from '@mantine/core';
 import { Download, Link } from 'lucide-react';
 import { AppTextInput } from '../../components/AppTextInput';
+import { AppButton } from '../../components/AppButton';
+import { systemApi } from '../../api/electronApi';
 import type { FlowDefinition } from '../../../../shared/types';
 import { parseImportedFlows } from './flowImportParser';
 
 interface FlowImportModalProps {
   open: boolean;
   t: (key: string) => string;
-  existingFlowNames: string[];
   onClose: () => void;
   onImport: (flows: FlowDefinition[]) => void;
 }
@@ -20,7 +20,7 @@ export const FlowImportModal: React.FC<FlowImportModalProps> = ({
   const [urlValue, setUrlValue] = useState('');
   const [urlError, setUrlError] = useState('');
   const [urlLoading, setUrlLoading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [fileError, setFileError] = useState('');
 
   const handleUrlImport = useCallback(async () => {
     const url = urlValue.trim();
@@ -48,25 +48,30 @@ export const FlowImportModal: React.FC<FlowImportModalProps> = ({
     }
   }, [urlValue, t, onImport]);
 
-  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      try {
-        const raw: unknown = JSON.parse(evt.target?.result as string);
-        const flows = parseImportedFlows(raw);
-        if (flows && flows.length > 0) {
-          onImport(flows);
-        }
-      } catch {
-        // Silently ignore malformed JSON
+  const handleFilePick = useCallback(async () => {
+    setFileError('');
+    const picked = await systemApi.selectPath({
+      mode: 'file',
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+      readContent: true,
+    });
+    if (!picked) return;
+    if (picked.content === undefined) {
+      setFileError(t('agentflow.import.file.error'));
+      return;
+    }
+    try {
+      const raw: unknown = JSON.parse(picked.content);
+      const flows = parseImportedFlows(raw);
+      if (flows && flows.length > 0) {
+        onImport(flows);
+      } else {
+        setFileError(t('agentflow.import.file.error'));
       }
-    };
-    reader.readAsText(file);
-    // Reset so the same file can be re-selected
-    e.target.value = '';
-  }, [onImport]);
+    } catch {
+      setFileError(t('agentflow.import.file.error'));
+    }
+  }, [onImport, t]);
 
   return (
     <Modal
@@ -80,21 +85,15 @@ export const FlowImportModal: React.FC<FlowImportModalProps> = ({
       <Stack gap="md">
         <Stack gap="xs">
           <Text fz="sm" fw={600}>{t('agentflow.import.file.label')}</Text>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".json"
-            style={{ display: 'none' }}
-            onChange={handleFileChange}
-          />
           <Button
             variant="default"
             leftSection={<Download size={14} />}
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => { void handleFilePick(); }}
             fullWidth
           >
             {t('agentflow.import.file.button')}
           </Button>
+          {fileError && <Text fz="xs" c="red">{fileError}</Text>}
         </Stack>
 
         <Stack gap="xs">
@@ -110,7 +109,7 @@ export const FlowImportModal: React.FC<FlowImportModalProps> = ({
             }}
           />
           <Group justify="flex-end">
-            <Button
+            <AppButton
               variant="filled"
               size="xs"
               loading={urlLoading}
@@ -118,7 +117,7 @@ export const FlowImportModal: React.FC<FlowImportModalProps> = ({
               onClick={() => { void handleUrlImport(); }}
             >
               {t('agentflow.import.url.fetch')}
-            </Button>
+            </AppButton>
           </Group>
         </Stack>
       </Stack>

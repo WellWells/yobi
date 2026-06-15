@@ -1,5 +1,3 @@
-// Output file CRUD, snapshot capture and reveal/open handlers.
-
 import { ipcMain, clipboard, nativeImage, shell } from 'electron';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
@@ -18,13 +16,12 @@ import {
 } from '../files';
 import { captureMarkdownDocument } from '../capture';
 import { isAllowedFilePath } from './context';
+import { isManagedPageWebContents } from '../flow/skills/browserPages';
 
 export function registerFileHandlers(): void {
-  // File list
   ipcMain.handle(IPC.GET_FILE_LIST, () => listOutputFiles());
   ipcMain.handle(IPC.SEARCH_FILE_LIST, (_event, query: string) => searchOutputFiles(query));
 
-  // File content
   ipcMain.handle(IPC.GET_FILE_CONTENT, async (_event, filePath: string) => {
     if (!await isAllowedFilePath(filePath)) return null;
     try {
@@ -72,7 +69,6 @@ export function registerFileHandlers(): void {
     }
   });
 
-  // Delete file
   ipcMain.handle(IPC.DELETE_FILE, async (_event, filePath: string) => {
     if (!await isAllowedFilePath(filePath)) return false;
     try {
@@ -93,7 +89,6 @@ export function registerFileHandlers(): void {
         await fs.unlink(file.path);
         deleted += 1;
       } catch {
-        // keep deleting remaining files
       }
     }
     sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
@@ -157,7 +152,22 @@ export function registerFileHandlers(): void {
     return true;
   });
 
-  // Reveal file in system Explorer / Finder
+  ipcMain.handle(IPC.CAPTURE_PAGE, async (event, args: { name?: string }): Promise<string> => {
+    if (!isManagedPageWebContents(event.sender)) {
+      throw new Error('CAPTURE_PAGE is only available to AgentFlow browser pages');
+    }
+    const image = await event.sender.capturePage();
+    const buffer = image.toPNG();
+    const outputDir = await getOutputDir();
+    await fs.mkdir(outputDir, { recursive: true });
+    const rawName = args && typeof args.name === 'string' ? args.name.trim() : '';
+    const fileStem = rawName ? buildSafeFileNameFromTitle(rawName) : buildSnapshotFileName();
+    const filePath = await getUniquePath(path.join(outputDir, `${fileStem}.png`), '');
+    await fs.writeFile(filePath, buffer);
+    sendLog(`🖼️ [AgentFlow] Page screenshot saved: ${path.basename(filePath)}`);
+    return filePath;
+  });
+
   ipcMain.handle(IPC.SHOW_IN_FOLDER, (_event, filePath: string) => shell.showItemInFolder(filePath));
   ipcMain.handle(IPC.OPEN_PATH, async (_event, filePath: string) => {
     const error = await shell.openPath(filePath);

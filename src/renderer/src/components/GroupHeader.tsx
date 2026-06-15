@@ -1,4 +1,3 @@
-// Labeled divider used as a section group header.
 import React from 'react';
 import { Divider } from '@mantine/core';
 

@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Chip, Group, Stack, Text } from '@mantine/core';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { AppTextarea } from '../../../components/AppTextarea';
+import { ToggleSwitch } from '../../../components/ToggleSwitch';
+import { SelectDropdown } from '../../../components/SelectDropdown';
 import { telegramApi } from '../../../api/electronApi';
 import type { TelegramPairedUser } from '../../../../../shared/types';
 import type { SkillConfigProps } from './types';
@@ -13,7 +15,6 @@ export const BotConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
     void telegramApi.getSettings().then((s) => setPairedUsers(s.pairing.pairedUsers));
   }, []);
 
-  // chatIds is comma-separated list of chat IDs (users or groups); empty = all paired users.
   const chatIdsRaw = (step.config.chatIds ?? step.config.chatId ?? '').trim();
   const pairedIdSet = useMemo(() => new Set(pairedUsers.map((u) => String(u.userId))), [pairedUsers]);
   const parsedIds = useMemo(() => (
@@ -69,6 +70,38 @@ export const BotConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
         autosize
         size="sm"
       />
+      <AppTextInput
+        label={t('agentflow.skill.bot.attachment')}
+        placeholder={t('agentflow.skill.bot.attachment.placeholder')}
+        value={step.config.attachment ?? ''}
+        onChange={(e) => onChange({ ...step.config, attachment: e.currentTarget.value })}
+        size="sm"
+        tone="body"
+        mono
+      />
+      <Text fz="xs" c="dimmed">{t('agentflow.skill.bot.attachment.hint')}</Text>
+      {(step.config.attachment ?? '').trim() !== '' && (
+        <SelectDropdown
+          label={t('agentflow.skill.bot.attachmentType')}
+          options={[
+            { value: 'auto', label: t('agentflow.skill.bot.attachmentType.auto') },
+            { value: 'photo', label: t('agentflow.skill.bot.attachmentType.photo') },
+            { value: 'document', label: t('agentflow.skill.bot.attachmentType.document') },
+          ]}
+          value={step.config.attachmentType || 'auto'}
+          onChange={(value) => onChange({ ...step.config, attachmentType: value })}
+          size="sm"
+        />
+      )}
+      <ToggleSwitch
+        label={t('agentflow.skill.bot.emitFailFlag')}
+        size="sm"
+        checked={step.config.emitFailFlag === 'true'}
+        onChange={(e) => onChange({ ...step.config, emitFailFlag: e.currentTarget.checked ? 'true' : 'false' })}
+      />
+      {step.config.emitFailFlag === 'true' && (
+        <Text fz="xs" c="dimmed">{t('agentflow.skill.bot.emitFailFlag.hint')}</Text>
+      )}
     </Stack>
   );
 };

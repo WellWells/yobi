@@ -1,4 +1,3 @@
-// locale-aware relative timestamp formatter
 import { useCallback } from 'react';
 import { useI18nStore } from '../store/i18nStore';
 
@@ -15,13 +14,10 @@ export function useFormatTime(): (ts: string) => string {
       const diffHours = Math.floor(diffMs / 3_600_000);
       const diffDays = Math.floor(diffMs / 86_400_000);
 
-      // Less than 1 minute
       if (diffMins < 1) return t('sidebar.time.justNow');
 
-      // Less than 60 minutes
       if (diffMins < 60) return t('sidebar.time.minutesAgo').replace('{{count}}', String(diffMins));
 
-      // Less than 24 hours: Today HH:mm
       if (diffHours < 24) {
         const timeStr = new Intl.DateTimeFormat(locale, {
           hour: '2-digit',
@@ -31,7 +27,6 @@ export function useFormatTime(): (ts: string) => string {
         return t('sidebar.time.today').replace('{{time}}', timeStr);
       }
 
-      // Yesterday
       if (diffDays === 1) {
         const timeStr = new Intl.DateTimeFormat(locale, {
           hour: '2-digit',
@@ -41,7 +36,6 @@ export function useFormatTime(): (ts: string) => string {
         return t('sidebar.time.yesterday').replace('{{time}}', timeStr);
       }
 
-      // Within a week: weekday HH:mm
       if (diffDays < 7) {
         const weekday = new Intl.DateTimeFormat(locale, { weekday: 'short' }).format(d);
         const timeStr = new Intl.DateTimeFormat(locale, {
@@ -52,7 +46,6 @@ export function useFormatTime(): (ts: string) => string {
         return `${weekday} ${timeStr}`;
       }
 
-      // Within a month or same year: M/D
       if (diffDays < 30 || d.getFullYear() === now.getFullYear()) {
         return new Intl.DateTimeFormat(locale, {
           month: 'numeric',
@@ -60,7 +53,6 @@ export function useFormatTime(): (ts: string) => string {
         }).format(d);
       }
 
-      // Older: YYYY-MM-DD
       return new Intl.DateTimeFormat(locale, {
         year: 'numeric',
         month: '2-digit',
@@ -69,6 +61,5 @@ export function useFormatTime(): (ts: string) => string {
     } catch {
       return ts;
     }
-    // isReady is included so FileItem (React.memo) re-renders once translations load.
   }, [t, locale, isReady]);
 }

@@ -16,7 +16,6 @@ export default defineConfig({
     },
   },
   ssr: {
-    // Keep electron + Node built-ins external, bundle everything else inline
     external: EXTERNALIZED,
     noExternal: true,
   },
@@ -28,7 +27,8 @@ export default defineConfig({
     rollupOptions: {
       input: {
         index: resolve(__dirname, 'src/preload/index.ts'),
-        gemini: resolve(__dirname, 'src/preload/gemini.ts'),
+        worker: resolve(__dirname, 'src/preload/worker.ts'),
+        browserPage: resolve(__dirname, 'src/preload/browserPage.ts'),
       },
       output: {
         format: 'cjs',

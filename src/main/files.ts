@@ -1,4 +1,3 @@
-// Output file management (list, search, build metadata)
 import { app } from 'electron';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
@@ -21,25 +20,49 @@ export async function getOutputDir(): Promise<string> {
 }
 
 export function getLanguageDir(): string {
-  // Works in both dev (out/main/ → out/language/) and packaged (app.asar/out/main/ → app.asar/out/language/)
+  if (!app.isPackaged) return path.resolve('language');
   return path.join(__dirname, '..', 'language');
 }
+
+type OutputFileCacheEntry = {
+  mtimeMs: number;
+  size: number;
+  file: OutputFile;
+};
+
+// Metadata cache keyed by path; entries are reused while mtime+size match so
+// the FILE_LIST broadcast fired after every task doesn't re-read every file.
+const outputFileCache = new Map<string, OutputFileCacheEntry>();
 
 export async function listOutputFiles(): Promise<OutputFile[]> {
   const dir = await getOutputDir();
   try {
     const headingAliases = await loadMarkdownHeadingAliases();
     const filePaths = getOutputMarkdownPaths(dir);
-    return await Promise.all(
+    const files = await Promise.all(
       filePaths.map(async (filePath) => {
         try {
+          const stat = await fs.stat(filePath);
+          const cached = outputFileCache.get(filePath);
+          if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+            return cached.file;
+          }
           const content = await fs.readFile(filePath, 'utf-8');
-          return buildOutputFile(filePath, content, headingAliases);
+          const file = buildOutputFile(filePath, content, headingAliases);
+          outputFileCache.set(filePath, { mtimeMs: stat.mtimeMs, size: stat.size, file });
+          return file;
         } catch {
           return buildOutputFile(filePath, '', headingAliases);
         }
       }),
     );
+    if (outputFileCache.size > filePaths.length) {
+      const live = new Set(filePaths);
+      for (const key of outputFileCache.keys()) {
+        if (!live.has(key)) outputFileCache.delete(key);
+      }
+    }
+    return files;
   } catch {
     return [];
   }
@@ -61,7 +84,6 @@ export async function searchOutputFiles(query: string): Promise<OutputFile[]> {
         if (!searchable.includes(keyword)) continue;
         matches.push(buildOutputFile(filePath, content, headingAliases));
       } catch {
-        // skip unreadable file
       }
     }
     return matches;
@@ -94,7 +116,12 @@ function addHeadingAlias(aliasSet: Set<string>, value: unknown): void {
   aliasSet.add(normalized);
 }
 
+// Aliases come from every locale at once, so one successful load serves the
+// whole app lifetime (no locale-change invalidation needed).
+let headingAliasesCache: MarkdownHeadingAliases | null = null;
+
 async function loadMarkdownHeadingAliases(): Promise<MarkdownHeadingAliases> {
+  if (headingAliasesCache) return headingAliasesCache;
   const aliases = createEmptyHeadingAliases();
   const langDir = getLanguageDir();
   try {
@@ -109,12 +136,13 @@ async function loadMarkdownHeadingAliases(): Promise<MarkdownHeadingAliases> {
           addHeadingAlias(aliases.provider, translations['md.provider']);
           addHeadingAlias(aliases.timestamp, translations['md.timestamp']);
         } catch {
-          // skip malformed locale files
         }
       }),
     );
   } catch {
-    // fallback to empty aliases when locale directory is unavailable
+  }
+  if (aliases.provider.size > 0 || aliases.timestamp.size > 0) {
+    headingAliasesCache = aliases;
   }
   return aliases;
 }

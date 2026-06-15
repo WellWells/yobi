@@ -1,9 +1,3 @@
-// markdown → Telegram-HTML rendering.
-//
-// Telegram only supports a small HTML subset. This renders a result's markdown
-// into that subset, linkifies bare URLs, and provides the escaping/truncation
-// helpers used when composing bot messages.
-
 import { marked, Renderer } from 'marked';
 import { t } from '../i18n';
 
@@ -14,13 +8,23 @@ export function escapeTelegramHtml(text: string): string {
     .replace(/>/g, '&gt;');
 }
 
-export function escapeTelegramAttribute(text: string): string {
+function escapeTelegramAttribute(text: string): string {
   return escapeTelegramHtml(text).replace(/"/g, '&quot;');
 }
 
 export function truncateText(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text;
-  return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+  let cut = Math.max(0, maxLength - 1);
+  const lastCode = text.charCodeAt(cut - 1);
+  if (lastCode >= 0xd800 && lastCode <= 0xdbff) cut -= 1;
+  return `${text.slice(0, cut).trimEnd()}…`;
+}
+
+export function telegramVisibleLength(html: string): number {
+  return html
+    .replace(/<[^>]+>/g, '')
+    .replace(/&(?:amp|lt|gt|quot);/g, ' ')
+    .length;
 }
 
 export function extractResponseSection(raw: string, strings: Record<string, string>): string {
@@ -62,7 +66,7 @@ export function formatResponseForTelegramHtml(input: string): string {
     }
     return `<pre><code>${escapedCode}</code></pre>\n`;
   };
-  renderer.del = ({ tokens }) => `<s>${renderInline(tokens)}</s>`;
+  renderer.del = (token) => escapeTelegramHtml(token.raw);
   renderer.link = ({ href, tokens }) => {
     const safeHref = normalizeSourceUrl(href);
     const text = renderInline(tokens).trim();

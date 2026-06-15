@@ -1,9 +1,3 @@
-// bot command registration and dispatch.
-//
-// Wires grammy middleware (session/conversations) and routes each command to
-// its handler. Handler implementations live in commandHandlers.ts; pairing
-// flows live in pairing.ts.
-
 import { Bot, session } from 'grammy';
 import { conversations, createConversation } from '@grammyjs/conversations';
 import { t } from '../i18n';
@@ -11,11 +5,13 @@ import {
   handleFlowCommand,
   handleOutputCommand,
   handleProviderCommand,
+  handleRestartCommand,
   handleStatusCommand,
   type TelegramCommandOptions,
   type TelegramContext,
 } from './commandHandlers';
 import { handleInitCommand, handleStartCommand, pairingConversation } from './pairing';
+import type { ResolvedProviderCommand } from './providerCommands';
 
 export type { TelegramCommandOptions, TelegramContext, TelegramTaskRequest } from './commandHandlers';
 
@@ -32,23 +28,22 @@ export function attachTelegramHandlers(bot: Bot<TelegramContext>, options: Teleg
     await handleInitCommand(ctx, options);
   });
 
-  bot.command('gpt', async (ctx) => {
-    await handleProviderCommand(ctx, 'gpt', options);
-  });
-  bot.command('gemini', async (ctx) => {
-    await handleProviderCommand(ctx, 'gemini', options);
-  });
-  bot.command('pplx', async (ctx) => {
-    await handleProviderCommand(ctx, 'pplx', options);
-  });
   bot.command('status', async (ctx) => {
     await handleStatusCommand(ctx, options);
   });
   bot.command('output', async (ctx) => {
     await handleOutputCommand(ctx, options);
   });
+  bot.command('restart', async (ctx) => {
+    await handleRestartCommand(ctx, options);
+  });
 
-  // Register bot.command() for each bot-trigger flow (snapshot taken at bot creation time)
+  for (const spec of options.getProviderCommands()) {
+    bot.command(spec.command, async (ctx) => {
+      await handleProviderCommand(ctx, spec, options);
+    });
+  }
+
   if (options.getFlowCommands && options.onFlowCommand) {
     for (const fc of options.getFlowCommands()) {
       if (!/^[a-z][a-z0-9_]*$/.test(fc.command)) continue;
@@ -64,6 +59,7 @@ export async function syncPrivateCommands(
   bot: Bot<TelegramContext>,
   allowGroupCommands: boolean,
   strings: Record<string, string> = {},
+  providerCommands: ResolvedProviderCommand[] = [],
   flowCommands: Array<{ command: string; description: string }> = [],
 ): Promise<void> {
   const staticCommands = [
@@ -71,9 +67,8 @@ export async function syncPrivateCommands(
     { command: 'init', description: t(strings, 'telegram.commands.init') },
     { command: 'output', description: t(strings, 'telegram.commands.output') },
     { command: 'status', description: t(strings, 'telegram.commands.status') },
-    { command: 'gpt', description: t(strings, 'telegram.commands.gpt') },
-    { command: 'gemini', description: t(strings, 'telegram.commands.gemini') },
-    { command: 'pplx', description: t(strings, 'telegram.commands.pplx') },
+    { command: 'restart', description: t(strings, 'telegram.commands.restart') },
+    ...providerCommands.map((pc) => ({ command: pc.command, description: t(strings, pc.descriptionKey) })),
   ];
   const commands = [
     ...staticCommands,

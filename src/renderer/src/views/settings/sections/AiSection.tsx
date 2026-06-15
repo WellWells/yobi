@@ -2,12 +2,12 @@ import React from 'react';
 import { ActionIcon, Box, Group, Stack, Text } from '@mantine/core';
 import {
   AlignJustify, AlignLeft, Eye, FileText, MessageSquare, Minus, Plus,
-  SlidersHorizontal, Timer, User2,
+  SlidersHorizontal, Timer, User2, MonitorPlay,
 } from 'lucide-react';
 import { AppTextarea } from '../../../components/AppTextarea';
 import { AppTextInput } from '../../../components/AppTextInput';
 import {
-  SectionCard, SettingRow, SegmentedControl, ToggleSwitch, GroupHeader, SectionTitle,
+  SectionCard, SettingRow, SettingField, SettingDivider, SegmentedControl, ToggleSwitch, GroupHeader, SectionTitle,
 } from '../components';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import {
@@ -93,7 +93,7 @@ export const AiSection: React.FC<Props> = ({
       <Text
         fz="var(--font-size-sm)"
         mt={8}
-        lh={1.5}
+        lh={1.6}
         c={system.timeoutInvalid ? 'var(--mantine-color-error)' : 'dimmed'}
       >
         {system.timeoutInvalid
@@ -122,67 +122,52 @@ export const AiSection: React.FC<Props> = ({
 
         <SectionTitle icon={<SlidersHorizontal size={15} />} label={t('settings.prompt.persona.title')} />
 
-        <Box mb={12}>
-          <Stack gap={6} mb={6}>
-            <Group gap={6} align="center">
-              <User2 size={13} color="var(--mantine-color-dimmed)" style={{ flexShrink: 0 }} />
-              <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-default-color)">
-                {t('settings.prompt.nickname.label')}
-              </Text>
-            </Group>
-          </Stack>
-          <AppTextInput
-            value={prefs.promptPrefs.nickname ?? ''}
-            tone="body"
-            onChange={(e) => prefs.setPromptPrefs({ ...prefs.promptPrefs, nickname: e.target.value })}
-            onBlur={(e) => {
-              const next = { ...prefs.promptPrefs, nickname: e.target.value };
-              prefs.setPromptPrefs(next);
-              void prefs.savePromptPrefs(next);
-            }}
-            placeholder={t('settings.prompt.nickname.placeholder')}
-          />
-          <Text fz="var(--font-size-sm)" mt={4} c="dimmed">{t('settings.prompt.nickname.hint')}</Text>
-        </Box>
+        <Stack gap={12}>
+          <SettingField
+            icon={<User2 size={13} />}
+            label={t('settings.prompt.nickname.label')}
+            hint={t('settings.prompt.nickname.hint')}
+          >
+            <AppTextInput
+              value={prefs.promptPrefs.nickname ?? ''}
+              tone="body"
+              onChange={(e) => prefs.setPromptPrefs({ ...prefs.promptPrefs, nickname: e.target.value })}
+              onBlur={(e) => {
+                const next = { ...prefs.promptPrefs, nickname: e.target.value };
+                prefs.setPromptPrefs(next);
+                void prefs.savePromptPrefs(next);
+              }}
+              placeholder={t('settings.prompt.nickname.placeholder')}
+            />
+          </SettingField>
 
-        <Box mb={12}>
-          <Group gap={6} align="center" mb={6}>
-            <MessageSquare size={13} color="var(--mantine-color-dimmed)" style={{ flexShrink: 0 }} />
-            <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-default-color)">
-              {t('settings.prompt.tone.label')}
-            </Text>
-          </Group>
-          <SegmentedControl
-            value={prefs.promptPrefs.tone}
-            options={[
-              { value: 'default', label: t('settings.prompt.tone.default') },
-              { value: 'professional', label: t('settings.prompt.tone.professional') },
-              { value: 'casual', label: t('settings.prompt.tone.casual') },
-              { value: 'direct', label: t('settings.prompt.tone.direct') },
-            ]}
-            onChange={prefs.handleToneChange}
-          />
-        </Box>
+          <SettingField icon={<MessageSquare size={13} />} label={t('settings.prompt.tone.label')}>
+            <SegmentedControl
+              value={prefs.promptPrefs.tone}
+              options={[
+                { value: 'default', label: t('settings.prompt.tone.default') },
+                { value: 'professional', label: t('settings.prompt.tone.professional') },
+                { value: 'casual', label: t('settings.prompt.tone.casual') },
+                { value: 'direct', label: t('settings.prompt.tone.direct') },
+              ]}
+              onChange={prefs.handleToneChange}
+            />
+          </SettingField>
 
-        <Box mb={14}>
-          <Group gap={6} align="center" mb={6}>
-            <AlignJustify size={13} color="var(--mantine-color-dimmed)" style={{ flexShrink: 0 }} />
-            <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-default-color)">
-              {t('settings.prompt.length.label')}
-            </Text>
-          </Group>
-          <SegmentedControl
-            value={prefs.promptPrefs.length}
-            options={[
-              { value: 'auto', label: t('settings.prompt.length.auto') },
-              { value: 'concise', label: t('settings.prompt.length.concise') },
-              { value: 'detailed', label: t('settings.prompt.length.detailed') },
-            ]}
-            onChange={prefs.handleLengthChange}
-          />
-        </Box>
+          <SettingField icon={<AlignJustify size={13} />} label={t('settings.prompt.length.label')}>
+            <SegmentedControl
+              value={prefs.promptPrefs.length}
+              options={[
+                { value: 'auto', label: t('settings.prompt.length.auto') },
+                { value: 'concise', label: t('settings.prompt.length.concise') },
+                { value: 'detailed', label: t('settings.prompt.length.detailed') },
+              ]}
+              onChange={prefs.handleLengthChange}
+            />
+          </SettingField>
+        </Stack>
 
-        <Box h={1} bg="var(--mantine-color-default-border)" my={14} />
+        <SettingDivider my={14} />
 
         <SectionTitle icon={<FileText size={15} />} label={t('settings.prompt.templates.title')} mb={10} />
         <AppTextarea
@@ -207,6 +192,29 @@ export const AiSection: React.FC<Props> = ({
             },
           }}
         />
+      </SectionCard>
+
+      <SectionCard style={{ marginBottom: sectionGap }}>
+        <SectionTitle icon={<MonitorPlay size={15} />} label={t('settings.youtube.prompt.title')} mb={8} />
+        <AppTextarea
+          value={prefs.youtubePrompt}
+          onChange={(e) => prefs.setYoutubePrompt(e.target.value)}
+          onBlur={(e) => { void prefs.saveYoutubePrompt(e.target.value); }}
+          placeholder={t('settings.youtube.prompt.placeholder')}
+          autosize
+          minRows={3}
+          maxRows={12}
+          styles={{
+            input: {
+              background: 'var(--mantine-color-body)',
+              border: '1.5px solid var(--mantine-color-default-border)',
+              borderRadius: 'var(--radius-sm)',
+              color: 'var(--mantine-color-default-color)',
+              fontSize: 'var(--font-size-base)',
+            },
+          }}
+        />
+        <Text fz="var(--font-size-sm)" mt={6} c="dimmed">{t('settings.youtube.prompt.hint')}</Text>
       </SectionCard>
 
       <SectionCard style={{ marginBottom: sectionGap }}>

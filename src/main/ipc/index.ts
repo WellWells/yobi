@@ -1,13 +1,9 @@
-// IPC handler registration entry point.
-//
-// Owns the window/queue/trigger/duck.ai handlers directly and delegates focused
-// groups (files, telegram, locale, settings, flow) to registerXxxHandlers modules.
-
 import { ipcMain, nativeImage, shell } from 'electron';
+import * as fs from 'node:fs/promises';
 import { IPC, PROVIDER_URLS } from '../../shared/types';
-import type { PromptTriggerOptions } from '../../shared/types';
+import type { PromptTriggerOptions, SelectPathRequest, SelectPathResult } from '../../shared/types';
 import { config, saveConfig } from '../config';
-import { detectProvider, getProviderLabel } from '../providers';
+import { getProviderLabel } from '../providers';
 import { fetchDuckaiModels } from '../providers/duckai';
 import {
   sendLog,
@@ -24,25 +20,23 @@ import {
   revealWorkerWindow,
   hideWorkerWindow,
   ensureWorkerWindow,
-  showInteractiveWorkerWindow,
 } from '../windows';
 import type { QueueManager } from '../queueManager';
 import type { TelegramRuntime } from '../telegram';
 import type { DuckaiModelInfo } from '../providers/duckai';
 import type { FlowManager } from '../flow';
 import type { IpcContext } from './context';
+import { showOpenDialogForWin } from './context';
 import { registerFileHandlers } from './files';
 import { registerTelegramHandlers } from './telegram';
 import { registerLocaleHandlers } from './locale';
 import { registerSettingsHandlers } from './settings';
 import { registerFlowHandlers } from './flow';
+import { registerAccountHandlers } from './account';
+import { registerEmailHandlers } from './email';
 
-// Session-scoped cache: duck.ai model list changes rarely so we fetch once per
-// process lifetime and serve subsequent calls from memory, avoiding extra page
-// navigations that trigger rate-limit (429) responses from duck.ai.
 let duckaiModelsCache: DuckaiModelInfo[] | null = null;
 
-// Idempotent guard — prevents accidental double-registration of ipcMain.on() listeners
 let _ipcInitialized = false;
 
 interface SetupDeps {
@@ -69,7 +63,7 @@ export function setupIpcHandlers(deps: SetupDeps): void {
   const { queue, getMainWin, checkForUpdates } = deps;
   const ctx: IpcContext = deps;
 
-  async function enqueuePromptFromUi(rawPrompt: string, targetUrl?: string): Promise<string | null> {
+  async function enqueuePromptFromUi(rawPrompt: string, targetUrl?: string, attachments?: string[]): Promise<string | null> {
     const text = (rawPrompt ?? '').trim();
     if (!text) {
       sendLog('⚠️ Empty UI prompt ignored');
@@ -81,36 +75,34 @@ export function setupIpcHandlers(deps: SetupDeps): void {
       : config.targetUrl;
 
     const langData = await loadLanguageData(config.locale) ?? {};
-    const prompt = await resolveUrlPrompt(text, {
+    const resolved = await resolveUrlPrompt(text, {
       langData: langData as Record<string, string>,
+      youtubePrompt: config.youtubePrompt,
       onLog: sendLog,
       onNotify: (title, body) => sendWebNotification(title, body, 'info'),
     });
+    const finalTargetUrl = resolved.forceProviderUrl ?? resolvedTargetUrl;
 
     const id = createTaskId();
     queue.enqueue({
       id,
-      prompt,
-      targetUrl: resolvedTargetUrl,
+      prompt: resolved.prompt,
+      targetUrl: finalTargetUrl,
+      title: resolved.title,
       source: 'ui',
+      attachments,
     });
-    sendLog(`[${id}] 🎯 UI prompt queued for ${getProviderLabel(resolvedTargetUrl)}`);
+    sendLog(`[${id}] 🎯 UI prompt queued for ${getProviderLabel(finalTargetUrl)}`);
     return id;
   }
 
-  // Window control
   ipcMain.on(IPC.SHOW_WORKER, async () => {
-    if (detectProvider(config.targetUrl) === 'perplexity') {
-      await showInteractiveWorkerWindow(config.targetUrl);
-      return;
-    }
     await ensureWorkerWindow(config.targetUrl);
     revealWorkerWindow();
   });
   ipcMain.on(IPC.HIDE_WORKER, () => hideWorkerWindow());
   ipcMain.handle(IPC.UPDATE_CHECK, () => checkForUpdates());
 
-  // Title bar controls
   ipcMain.on(IPC.WINDOW_MINIMIZE, () => getMainWin()?.minimize());
   ipcMain.on(IPC.WINDOW_MAXIMIZE, () => {
     const win = getMainWin();
@@ -125,6 +117,24 @@ export function setupIpcHandlers(deps: SetupDeps): void {
     return img.toDataURL();
   });
 
+  ipcMain.handle(IPC.SELECT_PATH, async (_event, req: SelectPathRequest = {}): Promise<SelectPathResult | null> => {
+    const mode = req.mode === 'folder' ? 'folder' : 'file';
+    const result = await showOpenDialogForWin(getMainWin(), {
+      properties: mode === 'folder' ? ['openDirectory'] : ['openFile'],
+      filters: req.filters,
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    const filePath = result.filePaths[0];
+    if (req.readContent && mode === 'file') {
+      try {
+        return { path: filePath, content: await fs.readFile(filePath, 'utf-8') };
+      } catch {
+        return { path: filePath };
+      }
+    }
+    return { path: filePath };
+  });
+
   ipcMain.handle(IPC.OPEN_EXTERNAL_URL, async (_event, rawUrl: string) => {
     if (!isHttpUrl(rawUrl)) return false;
     try {
@@ -135,10 +145,6 @@ export function setupIpcHandlers(deps: SetupDeps): void {
     }
   });
 
-  // Open the bundled third-party license notices. The file is generated by
-  // scripts/generate-licenses.ts and copied to the resources root via
-  // electron-builder extraResources; getAssetPath anchors at <resources>/assets
-  // (packaged) or <root>/assets (dev), so '../' resolves to the file's location.
   ipcMain.handle(IPC.OPEN_THIRD_PARTY_LICENSES, async () => {
     const error = await shell.openPath(getAssetPath('../THIRD-PARTY-LICENSES.txt'));
     if (error) {
@@ -148,13 +154,12 @@ export function setupIpcHandlers(deps: SetupDeps): void {
     return true;
   });
 
-  // Trigger prompt from UI directly
   ipcMain.on(IPC.TRIGGER_PROMPT, (_event, prompt: string) => {
     void enqueuePromptFromUi(prompt, config.targetUrl);
   });
 
   ipcMain.handle(IPC.TRIGGER_PROMPT_WITH_OPTIONS, (_event, options: PromptTriggerOptions) =>
-    enqueuePromptFromUi(options?.prompt ?? '', options?.targetUrl),
+    enqueuePromptFromUi(options?.prompt ?? '', options?.targetUrl, options?.attachments),
   );
 
   ipcMain.handle(IPC.CANCEL_QUEUE_TASK, (_event, taskId: string) => {
@@ -171,7 +176,6 @@ export function setupIpcHandlers(deps: SetupDeps): void {
     return skipped;
   });
 
-  // Close dialog response from renderer
   ipcMain.on(IPC.RESPOND_CLOSE_DIALOG, (_event, action: 'quit' | 'hide', remember: boolean) => {
     if (remember) {
       const hideToTray = action === 'hide';
@@ -188,7 +192,6 @@ export function setupIpcHandlers(deps: SetupDeps): void {
     }
   });
 
-  // Duck AI — dynamic model list fetch (cached per process lifetime)
   ipcMain.handle(IPC.DUCKAI_FETCH_MODELS, async () => {
     if (duckaiModelsCache !== null) return duckaiModelsCache;
     try {
@@ -202,10 +205,11 @@ export function setupIpcHandlers(deps: SetupDeps): void {
     }
   });
 
-  // Delegated handler groups
   registerFileHandlers();
   registerTelegramHandlers(ctx);
   registerLocaleHandlers(ctx);
   registerSettingsHandlers(ctx);
   registerFlowHandlers(ctx);
+  registerAccountHandlers();
+  registerEmailHandlers();
 }

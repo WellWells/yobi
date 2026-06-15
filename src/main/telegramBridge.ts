@@ -1,4 +1,3 @@
-// Telegram settings snapshot & status helpers
 import type {
   TelegramRuntimeSnapshot,
   TelegramSettingsSnapshot,
@@ -56,6 +55,7 @@ export function buildTelegramSettingsSnapshot(): TelegramSettingsSnapshot {
     allowGroupCommands: config.telegram.allowGroupCommands,
     defaultReplyMode: config.telegram.defaultReplyMode,
     adminUserIds: normalizedAdmins,
+    providerCommands: config.telegram.providerCommands,
     runtime: _telegramRuntimeSnapshot,
     pairing: normalizedPairing,
   };
@@ -110,6 +110,7 @@ export async function exportTelegramResultDocument(request: {
         showTimestamp: true,
         width: 1_200,
         background: 'linear-gradient(140deg, #0f172a 0%, #1e293b 55%, #334155 100%)',
+        cardTheme: 'dark',
       },
     });
 

@@ -1,11 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
-
-function isTypingTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-  return Boolean(target.closest('input, textarea, select, [contenteditable="true"]'));
-}
+import { isTypingTarget } from '../utils/domUtils';
 
 function getScrollableHostWithin(container: HTMLElement, target: EventTarget | null): HTMLElement | null {
   if (!(target instanceof HTMLElement)) return null;

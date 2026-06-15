@@ -1,0 +1,10 @@
+/* AddStepMenu.module.css */
+/* Native scroll container — matches the app-wide native scrollbar
+   (globals.css) instead of Mantine's ScrollArea overlay scrollbar.
+   Item hover/active is handled by Mantine Button (variant="default"),
+   the same themed approach as the chat FileHeaderBar menu. */
+
+.scroll {
+  max-height: 360px;
+  overflow-y: auto;
+}

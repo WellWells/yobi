@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useAppStore } from '../store/appStore';
+import { useAgentFlowStore } from '../store/useAgentFlowStore';
 import { useI18nStore } from '../store/i18nStore';
 import { useUpdateStore } from '../store/useUpdateStore';
 import { initThemeFromConfig } from '../store/themeStore';
@@ -17,17 +18,25 @@ const VIEW_BY_SHORTCUT: Record<string, View> = {
 };
 
 export function useAppBootstrap() {
-  const { appendLog, setStatus, setQueue, setWorkerAttention, setHotkey, setView, setAiUrl, setDuckaiModels } = useAppStore();
-  const { loadLocales } = useI18nStore();
-  const { initializeListeners } = useUpdateStore();
+  // Store actions are stable references; selecting them individually avoids
+  // re-rendering App on every unrelated store write (logs, queue, status).
+  const appendLog = useAppStore((s) => s.appendLog);
+  const setStatus = useAppStore((s) => s.setStatus);
+  const setQueue = useAppStore((s) => s.setQueue);
+  const setWorkerAttention = useAppStore((s) => s.setWorkerAttention);
+  const setHotkey = useAppStore((s) => s.setHotkey);
+  const setView = useAppStore((s) => s.setView);
+  const setAiUrl = useAppStore((s) => s.setAiUrl);
+  const setDuckaiModels = useAppStore((s) => s.setDuckaiModels);
+  const loadLocales = useI18nStore((s) => s.loadLocales);
+  const initializeListeners = useUpdateStore((s) => s.initializeListeners);
   const duckaiModelsFetched = useRef(false);
 
-  // One-time init: i18n, theme, and preference loading.
   useEffect(() => {
     void loadLocales();
     initThemeFromConfig();
+    void useAgentFlowStore.getState().loadFlows();
     void settingsApi.getHotkey().then(setHotkey);
-    // Preload aiUrl in parallel with loadLocales so ChatView has it on first render
     void settingsApi.getAiUrl().then(setAiUrl);
     initializeListeners();
     void settingsApi.getLayoutMode().then((mode) => {
@@ -40,7 +49,6 @@ export function useAppBootstrap() {
         useAppStore.setState({ markdownZoom: zoom });
       }
     });
-    // Fetch duck.ai models once per app session; skip if already fetched.
     if (!duckaiModelsFetched.current) {
       duckaiModelsFetched.current = true;
       void settingsApi.fetchDuckaiModels().then((models) => {
@@ -51,7 +59,6 @@ export function useAppBootstrap() {
     }
   }, [initializeListeners, loadLocales, setHotkey, setAiUrl, setDuckaiModels]);
 
-  // IPC event subscriptions.
   useEffect(() => {
     const unsubs = [
       ipcEvents.onLog(appendLog),
@@ -63,7 +70,6 @@ export function useAppBootstrap() {
     return () => unsubs.forEach((fn) => fn());
   }, [appendLog, setStatus, setQueue, setWorkerAttention, setView]);
 
-  // Global Alt+[1-4] keyboard navigation.
   const handleKeyDown = useCallback((event: KeyboardEvent) => {
     if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
     if (isTypingTarget(event.target)) return;

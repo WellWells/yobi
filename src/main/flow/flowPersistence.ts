@@ -1,5 +1,3 @@
-// flows.json disk I/O and entity id factory
-
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { getFlowDataDir } from './paths';
@@ -19,7 +17,6 @@ export async function loadFlowsFromDisk(): Promise<FlowDefinition[]> {
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) return parsed as FlowDefinition[];
   } catch {
-    // File doesn't exist or is invalid — start with empty list
   }
   return [];
 }

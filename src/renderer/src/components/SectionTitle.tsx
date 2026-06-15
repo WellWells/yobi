@@ -1,4 +1,3 @@
-// Consistent section heading with icon + label, used across all sections.
 import React from 'react';
 import { Group } from '@mantine/core';
 

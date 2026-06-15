@@ -1,20 +1,14 @@
-// URL detection, HTML fetch & prompt construction
-//
-// Orchestrates page loading (pageLoader.ts) and parser-block execution
-// (parserBlocks.ts), and builds the AI analysis prompt from parsed content.
-// Re-exports the loader/parser public surface so existing importers keep
-// working against './urlParser'.
-
 import { load } from 'cheerio';
+import { PROVIDER_URLS } from '../shared/types';
+import type { FeedCandidate } from '../shared/types';
 import { loadPageHtml, fetchRawText } from './pageLoader';
-import { runParserBlocks, runCssSelector, parseRssFeed } from './parserBlocks';
+import { runParserBlocks, runCssSelector, parseRssFeed, extractFeedLinks } from './parserBlocks';
 import type { ParserBlock, ParserBlockType, RssFeedItem } from './parserBlocks';
+import { isYoutubeUrl, fetchYoutubeVideo } from './youtubeTranscript';
 
-// Re-export the public surface of the extracted modules.
-export { fetchRawText, runParserBlocks, runCssSelector, parseRssFeed };
+export { fetchRawText, runParserBlocks, runCssSelector, parseRssFeed, extractFeedLinks };
 export type { ParserBlock, ParserBlockType, RssFeedItem };
 
-/** Max body characters sent to AI (avoid context overflow). */
 const MAX_CONTENT_CHARS = 80_000;
 
 export interface UrlParseResult {
@@ -22,6 +16,7 @@ export interface UrlParseResult {
   url: string;
   cleanedText: string;
   truncated: boolean;
+  image?: string;
 }
 
 export interface FetchAndParseOptions {
@@ -30,10 +25,6 @@ export interface FetchAndParseOptions {
   parserBlocks?: ParserBlock[];
 }
 
-/**
- * Returns true when `text` is a single, standalone HTTP(S) URL
- * (no whitespace, no line breaks).
- */
 export function isSingleUrl(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed || /\s/.test(trimmed)) return false;
@@ -45,17 +36,61 @@ export function isSingleUrl(text: string): boolean {
   }
 }
 
-/**
- * Opens a hidden Electron BrowserWindow, loads `url` in an isolated parser
- * session, waits for the page
- * to finish rendering, then extracts and cleans the page content.
- *
- * When `options.rawHtml` is true, returns the full HTML source in `cleanedText`.
- * When `options.parserBlocks` is non-empty, the last block's result is returned
- * in `cleanedText` (overrides rawHtml mode).
- *
- * The window is always destroyed after extraction, even on error.
- */
+function feedTitle(rawXml: string): string {
+  try {
+    const $ = load(rawXml, { xmlMode: true });
+    return ($('channel > title').first().text() || $('feed > title').first().text() || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+const COMMON_FEED_PATHS = ['/feed/', '/feed', '/rss', '/rss.xml', '/feed.xml', '/atom.xml', '/index.xml'];
+
+export async function discoverFeeds(siteUrl: string): Promise<FeedCandidate[]> {
+  const trimmed = siteUrl.trim();
+  if (!trimmed) return [];
+
+  let raw: string;
+  try {
+    raw = await fetchRawText(trimmed);
+  } catch {
+    return probeCommonFeedPaths(trimmed);
+  }
+
+  if (parseRssFeed(raw).length > 0) {
+    return [{ url: trimmed, title: feedTitle(raw) }];
+  }
+
+  const declared = extractFeedLinks(raw, trimmed);
+  if (declared.length > 0) return declared;
+
+  return probeCommonFeedPaths(trimmed);
+}
+
+async function probeCommonFeedPaths(siteUrl: string): Promise<FeedCandidate[]> {
+  let origin: string;
+  try {
+    origin = new URL(siteUrl).origin;
+  } catch {
+    return [];
+  }
+
+  const probes = await Promise.allSettled(
+    COMMON_FEED_PATHS.map(async (p): Promise<FeedCandidate> => {
+      const url = new URL(p, origin).href;
+      const candidate = await fetchRawText(url);
+      if (parseRssFeed(candidate).length === 0) throw new Error('not a feed');
+      return { url, title: feedTitle(candidate) };
+    }),
+  );
+
+  for (const probe of probes) {
+    if (probe.status === 'fulfilled') return [probe.value];
+  }
+  return [];
+}
+
 export async function fetchAndParse(url: string, options?: FetchAndParseOptions): Promise<UrlParseResult> {
   const html = await loadPageHtml(url);
 
@@ -77,11 +112,6 @@ export async function fetchAndParse(url: string, options?: FetchAndParseOptions)
   return parseHtml(html, url);
 }
 
-/**
- * Fetches multiple URLs sequentially and returns their results in order.
- * Uses sequential (not parallel) loading to avoid Electron session conflicts
- * with concurrent BrowserWindow navigations. Skips failed URLs and logs them.
- */
 export async function fetchAndParseMany(urls: string[], options?: FetchAndParseOptions): Promise<UrlParseResult[]> {
   const results: UrlParseResult[] = [];
   for (const url of urls) {
@@ -95,10 +125,6 @@ export async function fetchAndParseMany(urls: string[], options?: FetchAndParseO
   return results;
 }
 
-/**
- * Builds the analysis prompt by substituting {{title}}, {{url}},
- * {{cleaned_text}} in the template (sourced from i18n).
- */
 export function buildUrlAnalysisPrompt(
   result: UrlParseResult,
   promptTemplate: string,
@@ -114,11 +140,57 @@ export function buildUrlAnalysisPrompt(
     .replace(/\{\{cleaned_text\}\}/g, body);
 }
 
+export function buildYoutubePrompt(
+  template: string,
+  vars: { title: string; url: string; transcript: string },
+): string {
+  return template
+    .replace(/\{\{title\}\}/g, () => vars.title)
+    .replace(/\{\{url\}\}/g, () => vars.url)
+    .replace(/\{\{transcript\}\}/g, () => vars.transcript);
+}
+
+function absoluteHttpUrl(raw: string | undefined, base: string): string {
+  const trimmed = raw?.trim();
+  if (!trimmed) return '';
+  try {
+    const u = new URL(trimmed, base);
+    return u.protocol === 'http:' || u.protocol === 'https:' ? u.href : '';
+  } catch {
+    return '';
+  }
+}
+
+function pickCoverImage($: ReturnType<typeof load>, sourceUrl: string): string {
+  const candidates = [
+    $('meta[property="og:image"]').attr('content'),
+    $('meta[property="og:image:url"]').attr('content'),
+    $('meta[name="twitter:image"]').attr('content'),
+    $('meta[name="twitter:image:src"]').attr('content'),
+    $('article img, main img, [role="main"] img').first().attr('src'),
+    $('img').first().attr('src'),
+  ];
+  for (const raw of candidates) {
+    const abs = absoluteHttpUrl(raw, sourceUrl);
+    if (abs) return abs;
+  }
+  return '';
+}
+
+export function extractCoverImage(html: string, sourceUrl: string): string {
+  try {
+    return pickCoverImage(load(`<html>${html}</html>`), sourceUrl);
+  } catch {
+    return '';
+  }
+}
+
 function parseHtml(html: string, sourceUrl: string): UrlParseResult {
   const fullHtml = `<html>${html}</html>`;
   const $ = load(fullHtml);
 
-  // Strip non-content elements
+  const image = pickCoverImage($, sourceUrl);
+
   $(
     'script, style, noscript, iframe, nav, footer, header, aside, ' +
     '[role="banner"], [role="navigation"], [role="complementary"], ' +
@@ -127,18 +199,16 @@ function parseHtml(html: string, sourceUrl: string): UrlParseResult {
 
   const title = $('title').first().text().trim() || sourceUrl;
 
-  // Prefer article/main content; fall back to full body
   const contentEl = $('article, [role="main"], main').first();
   const rawText = (contentEl.length ? contentEl : $('body')).text();
 
-  // Collapse whitespace
   const cleanedText = rawText
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 
   if (cleanedText.length <= MAX_CONTENT_CHARS) {
-    return { title, url: sourceUrl, cleanedText, truncated: false };
+    return { title, url: sourceUrl, cleanedText, truncated: false, image };
   }
 
   return {
@@ -146,23 +216,27 @@ function parseHtml(html: string, sourceUrl: string): UrlParseResult {
     url: sourceUrl,
     cleanedText: cleanedText.slice(0, MAX_CONTENT_CHARS),
     truncated: true,
+    image,
   };
 }
 
-// Eliminates duplication between hotkey handler (index.ts) and UI handler (ipcHandlers.ts).
-
 interface UrlPromptContext {
   langData: Record<string, string>;
+  youtubePrompt: string;
   onLog: (msg: string) => void;
   onNotify: (title: string, body: string) => void;
 }
 
-/**
- * If `text` is a single URL, fetches and parses it into an analysis prompt.
- * Otherwise returns the text unchanged.
- */
-export async function resolveUrlPrompt(text: string, ctx: UrlPromptContext): Promise<string> {
-  if (!isSingleUrl(text)) return text;
+export interface ResolvedPrompt {
+  prompt: string;
+  forceProviderUrl?: string;
+  title?: string;
+}
+
+export async function resolveUrlPrompt(text: string, ctx: UrlPromptContext): Promise<ResolvedPrompt> {
+  if (!isSingleUrl(text)) return { prompt: text };
+
+  if (isYoutubeUrl(text)) return resolveYoutubePrompt(text, ctx);
 
   const logFetching = ctx.langData['urlParser.log.fetching'] ?? '🔗 URL detected — fetching page content...';
   const notifyTitle = ctx.langData['urlParser.notify.title'] ?? 'Yobi';
@@ -178,12 +252,45 @@ export async function resolveUrlPrompt(text: string, ctx: UrlPromptContext): Pro
     const logDone = (ctx.langData['urlParser.log.done'] ?? '🔗 Fetched {{chars}} chars — wrapping analysis prompt...')
       .replace('{{chars}}', String(parsed.cleanedText.length));
     ctx.onLog(logDone);
-    return prompt;
+    return { prompt };
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     const logError = (ctx.langData['urlParser.log.error'] ?? '❌ URL fetch failed: {{error}} (sending raw URL instead)')
       .replace('{{error}}', errMsg);
     ctx.onLog(logError);
-    return text;
+    return { prompt: text };
   }
+}
+
+async function resolveYoutubePrompt(text: string, ctx: UrlPromptContext): Promise<ResolvedPrompt> {
+  const notifyTitle = ctx.langData['urlParser.notify.title'] ?? 'Yobi';
+  const notifyBody = (ctx.langData['youtube.notify.body'] ?? 'Fetching transcript: {{url}}').replace('{{url}}', text);
+  ctx.onLog(ctx.langData['youtube.log.fetching'] ?? '▶️ YouTube URL detected — fetching transcript...');
+  ctx.onNotify(notifyTitle, notifyBody);
+
+  const template = ctx.youtubePrompt.trim() || ctx.langData['youtube.prompt.default'] || '';
+  const result = await fetchYoutubeVideo(text).catch(() => ({ title: '', transcript: '', ok: false }));
+
+  if (result.ok) {
+    const logDone = (ctx.langData['youtube.log.done'] ?? '▶️ Transcript fetched ({{chars}} chars) — wrapping summary prompt...')
+      .replace('{{chars}}', String(result.transcript.length));
+    ctx.onLog(logDone);
+    return {
+      prompt: buildYoutubePrompt(template, {
+        title: result.title || text,
+        url: text,
+        transcript: result.transcript,
+      }),
+      title: result.title || undefined,
+    };
+  }
+
+  ctx.onLog(ctx.langData['youtube.log.noTranscript'] ?? '▶️ No transcript available — handing the video URL to Gemini...');
+  const note = ctx.langData['youtube.noTranscript']
+    ?? '(No transcript/captions are available for this video. Please watch the video at the URL above and summarize it.)';
+  return {
+    prompt: buildYoutubePrompt(template, { title: result.title || text, url: text, transcript: note }),
+    forceProviderUrl: PROVIDER_URLS.gemini,
+    title: result.title || undefined,
+  };
 }

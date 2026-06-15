@@ -1,21 +1,15 @@
-// individual bot command handler implementations.
-//
-// Holds the shared command option/context types plus the handlers for provider,
-// status, output-mode, and flow commands. Pairing-related handlers live in
-// pairing.ts; registration/dispatch stays in commands.ts.
-
 import type { Context, SessionFlavor } from 'grammy';
 import type { ConversationFlavor } from '@grammyjs/conversations';
 import type { PairingUserProfile } from './dmPolicy';
 import type { FlowExecutionResult, TelegramReplyMode, TelegramReplyTarget } from '../../shared/types';
-import { PROVIDER_URLS } from '../../shared/types';
+import type { ResolvedProviderCommand } from './providerCommands';
 import { t } from '../i18n';
 
 type TelegramSessionData = Record<string, never>;
 export type TelegramContext = Context & SessionFlavor<TelegramSessionData> & ConversationFlavor<Context>;
 
 export interface TelegramTaskRequest {
-  command: 'gpt' | 'gemini' | 'pplx';
+  command: string;
   prompt: string;
   targetUrl: string;
   replyTarget: TelegramReplyTarget;
@@ -31,12 +25,12 @@ export interface TelegramCommandOptions {
   allowGroupCommands: () => boolean;
   onTaskRequest: (request: TelegramTaskRequest) => Promise<{ taskId: string }>;
   onStatusRequest: () => string;
+  onRestartApp?: () => void;
   onUpdateOutputMode: (mode: TelegramReplyMode) => boolean;
   onLog: (message: string) => void;
   getStrings: () => Record<string, string>;
-  /** Returns current list of enabled bot-triggered flows (called on each message). */
+  getProviderCommands: () => ResolvedProviderCommand[];
   getFlowCommands?: () => Array<{ flowId: string; command: string; description: string; inputVariable: string }>;
-  /** Executes a flow triggered by a bot command; returns task ID and result promise. */
   onFlowCommand?: (
     flowId: string,
     inputVariable: string,
@@ -46,15 +40,9 @@ export interface TelegramCommandOptions {
   ) => Promise<{ taskId: string; result: Promise<FlowExecutionResult> }>;
 }
 
-const PROVIDER_URL: Record<TelegramTaskRequest['command'], string> = {
-  gpt: PROVIDER_URLS.chatgpt,
-  gemini: PROVIDER_URLS.gemini,
-  pplx: PROVIDER_URLS.perplexity,
-};
-
 export async function handleProviderCommand(
   ctx: TelegramContext,
-  command: TelegramTaskRequest['command'],
+  spec: ResolvedProviderCommand,
   options: TelegramCommandOptions,
 ): Promise<void> {
   if (!isProviderChatAllowed(ctx, options)) {
@@ -71,7 +59,7 @@ export async function handleProviderCommand(
   }
   const prompt = extractCommandPrompt(ctx.message?.text || '');
   if (!prompt) {
-    await ctx.reply(t(options.getStrings(), 'telegram.cmd.usage', { command }));
+    await ctx.reply(t(options.getStrings(), 'telegram.cmd.usage', { command: spec.command }));
     return;
   }
 
@@ -80,27 +68,26 @@ export async function handleProviderCommand(
     const queuedMessage = await ctx.reply(t(options.getStrings(), 'telegram.cmd.queued'));
     queuedMessageId = queuedMessage.message_id;
     const request: TelegramTaskRequest = {
-      command,
+      command: spec.command,
       prompt,
-      targetUrl: PROVIDER_URL[command],
+      targetUrl: spec.targetUrl,
       replyTarget: {
         chatId: ctx.chat.id,
         userId: ctx.from.id,
         requestMessageId: ctx.message?.message_id,
         queuedMessageId: queuedMessage.message_id,
-        command,
+        command: spec.command,
       },
     };
     const queued = await options.onTaskRequest(request);
     await ctx.api.editMessageText(ctx.chat.id, queuedMessage.message_id, t(options.getStrings(), 'telegram.cmd.queuedWithId', { taskId: queued.taskId }));
   } catch (err: unknown) {
-    options.onLog(`[telegram] failed to queue /${command}: ${(err as Error).message}`);
+    options.onLog(`[telegram] failed to queue /${spec.command}: ${(err as Error).message}`);
     if (queuedMessageId) {
       try {
         await ctx.api.editMessageText(ctx.chat.id, queuedMessageId, t(options.getStrings(), 'telegram.cmd.queueFailed'));
         return;
       } catch {
-        // fallback to regular reply
       }
     }
     await ctx.reply(t(options.getStrings(), 'telegram.cmd.queueFailed'));
@@ -121,6 +108,23 @@ export async function handleStatusCommand(ctx: TelegramContext, options: Telegra
     return;
   }
   await ctx.reply(options.onStatusRequest());
+}
+
+export async function handleRestartCommand(ctx: TelegramContext, options: TelegramCommandOptions): Promise<void> {
+  if (!isProviderChatAllowed(ctx, options)) {
+    await ctx.reply(t(options.getStrings(), 'telegram.cmd.providerPrivateOnly'));
+    return;
+  }
+  if (!ctx.from || !options.isPairedUser(ctx.from.id)) {
+    await ctx.reply(t(options.getStrings(), 'telegram.cmd.accessDenied'));
+    return;
+  }
+  if (!options.isAdminUser(ctx.from.id)) {
+    await ctx.reply(t(options.getStrings(), 'telegram.cmd.adminOnly'));
+    return;
+  }
+  await ctx.reply(t(options.getStrings(), 'telegram.cmd.restartAck'));
+  options.onRestartApp?.();
 }
 
 export async function handleOutputCommand(ctx: TelegramContext, options: TelegramCommandOptions): Promise<void> {
@@ -168,7 +172,6 @@ export async function handleFlowCommand(
   if (!ctx.chat) return;
   const chatId = ctx.chat.id;
 
-  // Re-validate against live command list — flow may have been disabled/deleted since bot last started
   const liveCmds = options.getFlowCommands?.() ?? [];
   const match = liveCmds.find((fc) => fc.command === commandName);
   if (!match) return;
@@ -195,14 +198,12 @@ export async function handleFlowCommand(
         try {
           await ctx.api.editMessageText(chatId, queuedMsgId, t(s, 'telegram.cmd.flowFailed'));
         } catch {
-          // ignore update failures
         }
         return;
       }
       try {
         await ctx.api.deleteMessage(chatId, queuedMsgId);
       } catch {
-        // ignore delete failures
       }
     }).catch(async (err: unknown) => {
       options.onLog(`[telegram] flow result failed: ${String(err)}`);
@@ -210,7 +211,6 @@ export async function handleFlowCommand(
         try {
           await ctx.api.editMessageText(chatId, queuedMsgId, t(s, 'telegram.cmd.flowFailed'));
         } catch {
-          // ignore
         }
       }
     });
@@ -221,7 +221,6 @@ export async function handleFlowCommand(
         await ctx.api.editMessageText(ctx.chat.id, queuedMsgId, t(s, 'telegram.cmd.flowFailed'));
         return;
       } catch {
-        // fallback to new reply
       }
     }
     await ctx.reply(t(s, 'telegram.cmd.flowFailed'));

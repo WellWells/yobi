@@ -4,6 +4,8 @@ import 'katex/dist/katex.min.css';
 import type { MarkdownCaptureRequest } from '../../shared/types';
 import { REHYPE_PLUGINS } from './utils/shikiPlugins';
 import { SharedCodeBlock, SharedPreBlock, remarkPlugins } from './utils/markdownConfig';
+import { captureCardCssVars } from './hooks/captureTheme';
+import { ForcedCodeThemeContext } from './utils/forcedCodeTheme';
 
 const mdComponents = { pre: SharedPreBlock, code: SharedCodeBlock };
 
@@ -23,12 +25,14 @@ export const CapturePage: React.FC<CapturePageProps> = ({ request }) => {
   const { payload, options } = request;
 
   return (
+    <ForcedCodeThemeContext.Provider value="dark">
     <div
       id="capture-logical-root"
       style={{
+        ...captureCardCssVars(options.cardTheme),
         width: options.width,
         background: options.background,
-      }}
+      } as React.CSSProperties}
     >
       <div
         className="capture-scene"
@@ -73,5 +77,6 @@ export const CapturePage: React.FC<CapturePageProps> = ({ request }) => {
         </article>
       </div>
     </div>
+    </ForcedCodeThemeContext.Provider>
   );
 };

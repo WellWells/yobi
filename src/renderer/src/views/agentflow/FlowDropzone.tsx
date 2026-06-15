@@ -1,4 +1,3 @@
-// Full-page drag-and-drop overlay for importing flow JSON files into AgentFlow.
 import React, { useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Box, Flex, Stack, Text } from '@mantine/core';
@@ -25,7 +24,6 @@ export const FlowDropzone: React.FC<FlowDropzoneProps> = ({ t, onImport, childre
               onImport(flows);
             }
           } catch {
-            // Silently ignore malformed JSON on drag-drop
           }
         };
         reader.readAsText(file);

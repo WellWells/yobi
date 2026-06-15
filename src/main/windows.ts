@@ -1,16 +1,14 @@
-// Electron window creation and management
 import { app, BrowserWindow, nativeImage } from 'electron';
 import * as path from 'node:path';
 import { existsSync } from 'node:fs';
 import { sendLog, sendWebNotification, getAssetPath, setWorkerAttention } from './helpers';
 import { getLangCache, t } from './i18n';
 import { CLEAN_UA } from './userAgent';
+import { applyWorkerUserAgent } from './clientHints';
 
 const WORKER_PARTITION = 'persist:gemini';
 type WorkerWindowMode = 'automation' | 'interactive';
 
-// Windows: prefer multi-size .ico (better scaling at 16/32/48 px), fall back to PNG.
-// macOS  : PNG is sufficient at runtime; .icns is only needed for app-bundle packaging.
 function getWindowIcon(): Electron.NativeImage {
   if (process.platform === 'darwin') {
     return nativeImage.createFromPath(getAssetPath('icon-mac.png'));
@@ -28,8 +26,6 @@ let workerVisibleBounds: Electron.Rectangle | null = null;
 let workerWindowMode: WorkerWindowMode | null = null;
 let isAppQuitting = false;
 
-// Injectable close handler — set by index.ts to implement tray/first-close logic.
-// If null, default platform behavior applies.
 type MainWinCloseHandler = (event: Electron.Event) => void;
 let _mainWinCloseHandler: MainWinCloseHandler | null = null;
 
@@ -45,10 +41,6 @@ export function getWorkerWin(): BrowserWindow | null {
   return workerWin;
 }
 
-export function getWorkerWindowMode(): WorkerWindowMode | null {
-  return workerWindowMode;
-}
-
 export function setAppQuitting(value: boolean): void {
   isAppQuitting = value;
 }
@@ -56,30 +48,6 @@ export function setAppQuitting(value: boolean): void {
 export function isAllWindowsClosed(): boolean {
   return (mainWin === null || mainWin.isDestroyed()) &&
     (workerWin === null || workerWin.isDestroyed());
-}
-
-export async function closeAllWindows(): Promise<void> {
-  sendLog('🛑 Closing all windows...');
-
-  // Close DevTools if open
-  if (mainWin && !mainWin.isDestroyed()) {
-    mainWin.webContents.closeDevTools();
-  }
-  if (workerWin && !workerWin.isDestroyed()) {
-    workerWin.webContents.closeDevTools();
-  }
-
-  // Close worker window
-  if (workerWin && !workerWin.isDestroyed()) {
-    workerWin.destroy();
-    await new Promise((r) => setTimeout(r, 100));
-  }
-
-  // Close main window
-  if (mainWin && !mainWin.isDestroyed()) {
-    mainWin.destroy();
-    await new Promise((r) => setTimeout(r, 100));
-  }
 }
 
 export function createMainWindow(): void {
@@ -120,7 +88,6 @@ export function createMainWindow(): void {
       _mainWinCloseHandler(event);
       return;
     }
-    // Default behavior: macOS keeps app alive after window close, Windows quits.
     if (process.platform !== 'darwin') {
       event.preventDefault();
       void app.quit();
@@ -142,7 +109,7 @@ function destroyWorkerWindowForModeSwitch(): void {
 
 export function createWorkerWindow(initialUrl: string, mode: WorkerWindowMode = 'automation'): void {
   destroyWorkerWindowForModeSwitch();
-  const geminiPreload = path.join(__dirname, '../preload/gemini.js');
+  const workerPreload = path.join(__dirname, '../preload/worker.js');
   const webPreferences = mode === 'automation'
     ? {
         partition: WORKER_PARTITION,
@@ -150,7 +117,7 @@ export function createWorkerWindow(initialUrl: string, mode: WorkerWindowMode = 
         nodeIntegration: false,
         sandbox: false,
         backgroundThrottling: false,
-        preload: geminiPreload,
+        preload: workerPreload,
       }
     : {
         partition: WORKER_PARTITION,
@@ -163,13 +130,10 @@ export function createWorkerWindow(initialUrl: string, mode: WorkerWindowMode = 
   workerWin = new BrowserWindow({
     width: 1_280,
     height: 900,
-    // Start fully hidden — no off-screen coordinates or opacity tricks needed.
-    // The Chromium renderer still runs JS/DOM at full speed with backgroundThrottling: false.
     show: false,
     frame: true,
     autoHideMenuBar: true,
     skipTaskbar: true,
-    // On macOS: hide from Mission Control and Dock window list entirely.
     hiddenInMissionControl: process.platform === 'darwin',
     focusable: true,
     hasShadow: false,
@@ -180,10 +144,14 @@ export function createWorkerWindow(initialUrl: string, mode: WorkerWindowMode = 
 
   workerWin.setMenuBarVisibility(false);
 
+  workerWin.setOpacity(0);
+  workerWin.setPosition(-10_000, -10_000);
+  workerWin.showInactive();
+
   workerWin.on('move', () => rememberWorkerVisibleBounds());
   workerWin.on('resize', () => rememberWorkerVisibleBounds());
 
-  workerWin.webContents.setUserAgent(CLEAN_UA);
+  applyWorkerUserAgent(workerWin.webContents, CLEAN_UA);
   workerWin.loadURL(initialUrl);
 
   workerWin.on('close', (event) => {
@@ -204,16 +172,14 @@ export function revealWorkerWindow(): void {
   } else {
     workerWin.setPosition(100, 100);
   }
-  // On macOS, keep worker window hidden from Dock/taskbar at all times.
   if (process.platform !== 'darwin') {
     workerWin.setSkipTaskbar(false);
   }
-  workerWin.setOpacity(1);  // restore if previously hidden with opacity trick
-  workerWin.show();          // no-op if already shown; reveals if was show:false
+  workerWin.setOpacity(1);
+  workerWin.show();
   workerWin.focus();
   if (!app.isPackaged) workerWin.webContents.openDevTools({ mode: 'detach' });
   rememberWorkerVisibleBounds();
-  // User is now looking at the worker window — clear any attention indicator.
   setWorkerAttention('idle');
 }
 
@@ -222,21 +188,14 @@ export function hideWorkerWindow(): void {
   rememberWorkerVisibleBounds();
   workerWin.setSkipTaskbar(true);
   if (workerWin.isVisible()) {
-    // Use off-screen + opacity instead of win.hide().
-    // On macOS, win.hide() calls [NSWindow orderOut:] which suspends the Chromium
-    // renderer process (via App Nap) even with backgroundThrottling:false,
-    // causing executeJavaScript() to hang until the window is shown again.
-    // Keeping the window in a "shown" state (just off-screen + invisible) avoids this.
     workerWin.setOpacity(0);
     workerWin.setPosition(-10_000, -10_000);
   }
-  // If window was never shown (show:false), no action needed — renderer is already active.
 }
 
 function rememberWorkerVisibleBounds(): void {
   if (!workerWin || workerWin.isDestroyed()) return;
   if (!workerWin.isVisible()) return;
-  // Don't save bounds when the window is in the "hidden" off-screen state.
   if (workerWin.getOpacity() < 0.99) return;
   const [x, y] = workerWin.getPosition();
   if (x <= -9_000 || y <= -9_000) return;
@@ -267,7 +226,7 @@ export async function showInteractiveWorkerWindow(targetUrl: string): Promise<Br
   return win;
 }
 
-export async function showLoginWindowIfNeeded(providerLabel: string, targetUrl: string, _initialUrl: string): Promise<void> {
+export async function showLoginWindowIfNeeded(providerLabel: string, targetUrl: string): Promise<void> {
   const win = await showInteractiveWorkerWindow(targetUrl);
   if (!win) return;
   setWorkerAttention('login');

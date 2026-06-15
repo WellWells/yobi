@@ -1,4 +1,3 @@
-// Internationalization helpers for the main process
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { getLanguageDir } from './files';
@@ -127,7 +126,6 @@ export function stripSystemInstruction(rawPrompt: string): string {
   const normalized = (rawPrompt ?? '')
     .replace(/^\uFEFF/, '')
     .replace(/\r\n/g, '\n');
-  // Strip "System Instruction: ..." block: first line + any non-blank continuation lines
   const systemInstructionBlock = /^System Instruction:[^\n]*(?:\n(?!\n)[^\n]*)*(?:\n|$)/gim;
   const stripped = normalized.replace(systemInstructionBlock, '');
   return stripped.replace(/\n{3,}/g, '\n\n').trim();

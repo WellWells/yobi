@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Box, Button as MButton, Flex, Group, Tooltip } from '@mantine/core';
+import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import { useUpdateStore } from '../store/useUpdateStore';
@@ -18,7 +19,15 @@ import { QueuePopover } from './titlebar/QueuePopover';
 import styles from './TitleBar.module.css';
 
 export const TitleBar: React.FC = () => {
-  const { currentView, setView, status, queue, workerAttention } = useAppStore();
+  const { currentView, setView, status, queue, workerAttention } = useAppStore(
+    useShallow((s) => ({
+      currentView: s.currentView,
+      setView: s.setView,
+      status: s.status,
+      queue: s.queue,
+      workerAttention: s.workerAttention,
+    })),
+  );
   const { t, locale } = useI18nStore();
   const hasUpdate = useUpdateStore((state) => state.hasUpdate);
   const barRef = useRef<HTMLDivElement>(null);
@@ -32,10 +41,6 @@ export const TitleBar: React.FC = () => {
   const queuePopoverCloseTimerRef = useRef<number | null>(null);
   const statusBadgeRef = useRef<HTMLDivElement>(null);
 
-  // OS-level window activation (not element focus): native title bars dim their
-  // chrome when the window is inactive — mac traffic lights gray out, the Windows
-  // wordmark and caption controls fade. The renderer's window focus/blur events
-  // mirror BrowserWindow activation, so no IPC is needed.
   const [windowFocused, setWindowFocused] = useState(() => document.hasFocus());
   useEffect(() => {
     const onFocus = (): void => setWindowFocused(true);
@@ -54,10 +59,6 @@ export const TitleBar: React.FC = () => {
     }
   }, []);
 
-  // Collapse nav/worker labels to icons only when they would actually overflow
-  // and overlap the status area — measured from real content fit (locale-aware),
-  // not a fixed viewport breakpoint. The brand text and window controls are
-  // flex-shrink:0 and are never affected. Hysteresis avoids flip-flopping.
   useLayoutEffect(() => {
     const bar = barRef.current;
     const nav = navRef.current;
@@ -65,14 +66,11 @@ export const TitleBar: React.FC = () => {
     const evaluate = (): void => {
       const barWidth = bar.clientWidth;
       if (!isTight) {
-        // Full labels: nav is allowed to shrink below its content, so content
-        // wider than the allotted width means the labels no longer fit.
         if (nav.scrollWidth > nav.clientWidth + 2) {
           tightThresholdRef.current = barWidth;
           setIsTight(true);
         }
       } else if (barWidth > tightThresholdRef.current + 32) {
-        // Comfortably wider than where it broke — safe to show labels again.
         setIsTight(false);
       }
     };
@@ -93,7 +91,7 @@ export const TitleBar: React.FC = () => {
     { id: 'settings' as View, label: t('nav.settings'), icon: <Settings size={13} /> },
     { id: 'about' as View, label: t('nav.about'), icon: <Info size={13} /> },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [locale]); // locale changes trigger re-translation; t is stable
+  ], [locale]);
   const isProcessing = status === 'processing';
   const hasQueueItems = queue.total > 0;
   const queuePending = Math.max(queue.total - queue.current, 0);
@@ -167,9 +165,6 @@ export const TitleBar: React.FC = () => {
     ? isProcessing ? 'rgba(210,153,34,0.32)' : 'rgba(56,139,253,0.35)'
     : 'rgba(63,185,80,0.32)';
 
-  // Worker-window quick access. The button is always visible; when the main
-  // process detects the worker needs the user (login / Cloudflare verification)
-  // it turns orange and swaps to a state-specific icon.
   const workerNeedsAttention = workerAttention !== 'idle';
   const workerIcon = workerAttention === 'login'
     ? <LogIn size={15} />
@@ -192,15 +187,10 @@ export const TitleBar: React.FC = () => {
     >
       {isMac && <MacWindowControls t={t} focused={windowFocused} />}
 
-      {/* No brand mark in the title bar — kept minimal on both platforms. macOS
-          shows only the traffic lights; Windows starts straight into the nav.
-          App identity lives in the taskbar/Dock, tray, and About. */}
-
       <Flex ref={navRef} gap={isTight ? 4 : 8} style={navScrollStyle}>
         {navItems.map((item) => (
           <Box key={item.id} pos="relative" display="inline-flex">
-            {/* Tooltip only when the label is collapsed to an icon (tight layout). */}
-            <Tooltip label={item.label} position="bottom" openDelay={450} disabled={!isTight}>
+            <Tooltip label={item.label} position="bottom" disabled={!isTight}>
               <MButton
                 onClick={() => setView(item.id)}
                 variant={currentView === item.id ? 'filled' : 'subtle'}
@@ -227,8 +217,7 @@ export const TitleBar: React.FC = () => {
       <Box className={styles.spacer} />
 
       <Box mr={6} style={statusWrapperStyle}>
-        {/* Label shows when wide; collapses to icon + hover tooltip when tight (mirrors nav buttons). */}
-        <Tooltip label={workerTitle} position="bottom" openDelay={450} disabled={!isTight}>
+        <Tooltip label={workerTitle} position="bottom" disabled={!isTight}>
           <MButton
             onClick={() => systemApi.showWorker()}
             aria-label={workerTitle}
@@ -251,7 +240,6 @@ export const TitleBar: React.FC = () => {
         </Tooltip>
       </Box>
 
-      {/* onMouseEnter/onMouseLeave here are functional (show/hide popover), not for styling */}
       <Box
         pos="relative"
         mr={6}

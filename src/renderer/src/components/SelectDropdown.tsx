@@ -1,10 +1,12 @@
-// Themed Select wrapper — use instead of bare Mantine <Select> for consistent dark-theme styling.
 import React from 'react';
 import { Select } from '@mantine/core';
 import type { SelectProps } from '@mantine/core';
 
+type SelectOption = { value: string; label: string };
+type SelectOptionGroup = { group: string; items: SelectOption[] };
+
 export type SelectDropdownProps = Omit<SelectProps, 'data' | 'onChange'> & {
-  options: { value: string; label: string }[];
+  options: (SelectOption | SelectOptionGroup)[];
   onChange: (value: string) => void;
 };
 

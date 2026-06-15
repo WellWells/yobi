@@ -1,41 +1,64 @@
-// AgentFlowView: flow editor and runner. Sidebar + editor panel layout.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActionIcon, Box, Flex, Group, Menu, Stack, Text, Tooltip,
 } from '@mantine/core';
 import {
-  ArrowDown, ArrowUp, BookOpen, Copy, Download, Play, Plus, Trash2, Upload,
+  ArrowDown, ArrowUp, BookOpen, Copy, Download, Pencil, Play, Plus, Search, Sparkles, Trash2, Upload, X,
 } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import { useI18nStore } from '../../store/i18nStore';
 import { useAgentFlowStore } from '../../store/useAgentFlowStore';
 import { flowApi, ipcEvents } from '../../api/electronApi';
-import { AgentFlowIcon } from '../../components/AgentFlowIcon';
-import { PanelHeader } from '../../components/PanelHeader';
+import { PanelToolbar } from '../../components/PanelToolbar';
+import { AppTextInput } from '../../components/AppTextInput';
 import { WebDialog } from '../../components/WebDialog';
 import { ContextMenuPortal } from '../../components/ContextMenuPortal';
 import type { FlowDefinition } from '../../../../shared/types';
-import { FlowSidebarItem } from './FlowSidebarItem';
+import { FlowSidebarList } from './FlowSidebarList';
 import { FlowEditor } from './FlowEditor';
 import { FlowDropzone } from './FlowDropzone';
 import { FlowTemplatesModal } from './FlowTemplatesModal';
 import { FlowImportModal } from './FlowImportModal';
+import { FlowGenerateModal } from './FlowGenerateModal';
+import { FlowRenameModal } from './FlowRenameModal';
 
 export const AgentFlowView: React.FC = () => {
   const { t } = useI18nStore();
   const {
     flows, selectedFlowId, runningFlowIds,
-    loadFlows, selectFlow, createFlow, deleteFlow, duplicateFlow,
-    saveFlow, updateFlow, moveFlow, executeFlow, importFlows,
+    selectFlow, createFlow, deleteFlow, duplicateFlow,
+    saveFlow, updateFlow, moveFlow, reorderFlows, executeFlow, importFlows, generateFlow,
     appendExecutionLog, markFlowRunning, markFlowDone,
-  } = useAgentFlowStore();
+  } = useAgentFlowStore(
+    useShallow((s) => ({
+      flows: s.flows,
+      selectedFlowId: s.selectedFlowId,
+      runningFlowIds: s.runningFlowIds,
+      selectFlow: s.selectFlow,
+      createFlow: s.createFlow,
+      deleteFlow: s.deleteFlow,
+      duplicateFlow: s.duplicateFlow,
+      saveFlow: s.saveFlow,
+      updateFlow: s.updateFlow,
+      moveFlow: s.moveFlow,
+      reorderFlows: s.reorderFlows,
+      executeFlow: s.executeFlow,
+      importFlows: s.importFlows,
+      generateFlow: s.generateFlow,
+      appendExecutionLog: s.appendExecutionLog,
+      markFlowRunning: s.markFlowRunning,
+      markFlowDone: s.markFlowDone,
+    })),
+  );
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; flowId: string } | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [renameId, setRenameId] = useState<string | null>(null);
   const [isBatchRunning, setIsBatchRunning] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
-
-  useEffect(() => { void loadFlows(); }, [loadFlows]);
+  const [generateOpen, setGenerateOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     const unsub = ipcEvents.onFlowExecutionLog((log) => { appendExecutionLog(log); });
@@ -66,6 +89,17 @@ export const AgentFlowView: React.FC = () => {
     [flows, selectedFlowId],
   );
 
+  const flowQuery = searchQuery.trim().toLowerCase();
+  const isSearching = flowQuery.length > 0;
+  const visibleFlows = useMemo(() => {
+    if (!isSearching) return flows;
+    return flows.filter((flow) =>
+      flow.name.toLowerCase().includes(flowQuery)
+      || (flow.description ?? '').toLowerCase().includes(flowQuery)
+      || [flow.trigger, ...(flow.extraTriggers ?? [])].some((tr) => (tr?.type ?? '').toLowerCase().includes(flowQuery))
+      || flow.steps.some((step) => (step.type ?? '').toLowerCase().includes(flowQuery) || (step.label ?? '').toLowerCase().includes(flowQuery)));
+  }, [flows, flowQuery, isSearching]);
+
   const handleDeleteFlow = useCallback(async (flowId: string) => {
     await deleteFlow(flowId);
     setPendingDeleteId(null);
@@ -75,6 +109,14 @@ export const AgentFlowView: React.FC = () => {
     await duplicateFlow(flowId);
     setContextMenu(null);
   }, [duplicateFlow]);
+
+  const handleRenameFlow = useCallback(async (flowId: string, name: string) => {
+    const flow = flows.find((item) => item.id === flowId);
+    if (!flow) return;
+    const updated = { ...flow, name };
+    updateFlow(updated);
+    await saveFlow(updated);
+  }, [flows, updateFlow, saveFlow]);
 
   const handleMoveFlow = useCallback(async (flowId: string, direction: 'up' | 'down') => {
     await moveFlow(flowId, direction);
@@ -127,6 +169,10 @@ export const AgentFlowView: React.FC = () => {
     () => (contextMenu ? flows.find((flow) => flow.id === contextMenu.flowId) ?? null : null),
     [contextMenu, flows],
   );
+  const renameFlow = useMemo(
+    () => (renameId ? flows.find((flow) => flow.id === renameId) ?? null : null),
+    [renameId, flows],
+  );
   const contextFlowIndex = contextFlow ? flows.findIndex((flow) => flow.id === contextFlow.id) : -1;
 
   return (
@@ -140,61 +186,74 @@ export const AgentFlowView: React.FC = () => {
           bg="var(--mantine-color-default)"
           style={{ borderRight: '1px solid var(--mantine-color-default-border)', overflow: 'hidden' }}
         >
-          <PanelHeader
-            label={t('nav.agentflow')}
-            icon={<AgentFlowIcon size={15} />}
-            rightSection={(
-              <Group gap={4}>
-                <Tooltip label={t('agentflow.runAll')}>
-                  <ActionIcon
-                    variant="subtle"
-                    size="sm"
-                    disabled={flows.length === 0 || isBatchRunning}
-                    onClick={() => { void handleRunAllFlows(); }}
-                  >
-                    <Play size={14} />
+          <PanelToolbar gap={6}>
+            {flows.length > 0 ? (
+              <AppTextInput
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={t('agentflow.search.placeholder')}
+                tone="tertiary"
+                variant="default"
+                size="xs"
+                radius="sm"
+                style={{ flex: 1, minWidth: 0 }}
+                leftSection={<Search size={13} />}
+                rightSection={searchQuery ? (
+                  <ActionIcon variant="subtle" size={20} onClick={() => setSearchQuery('')} aria-label={t('agentflow.search.clear')}>
+                    <X size={12} />
                   </ActionIcon>
-                </Tooltip>
-                <Menu trigger="hover" position="bottom-end" withinPortal zIndex={200}>
-                  <Menu.Target>
-                    <ActionIcon variant="subtle" size="sm" aria-label={t('agentflow.newFlow')}>
-                      <Plus size={14} />
-                    </ActionIcon>
-                  </Menu.Target>
-                  <Menu.Dropdown>
-                    <Menu.Item leftSection={<Plus size={13} />} onClick={() => { void createFlow(); }}>
-                      {t('agentflow.newFlow')}
-                    </Menu.Item>
-                    <Menu.Item leftSection={<BookOpen size={13} />} onClick={() => setTemplatesOpen(true)}>
-                      {t('agentflow.templates')}
-                    </Menu.Item>
-                    <Menu.Item leftSection={<Download size={13} />} onClick={() => setImportOpen(true)}>
-                      {t('agentflow.import')}
-                    </Menu.Item>
-                  </Menu.Dropdown>
-                </Menu>
-              </Group>
-            )}
-          />
-
-          <Box flex={1} style={{ overflowY: 'auto', padding: '4px 0' }}>
-            {flows.length === 0 ? (
-              <Text p="20px 14px" c="dimmed" fz="sm" ta="center">{t('agentflow.flowList.empty')}</Text>
+                ) : undefined}
+              />
             ) : (
-              flows.map((flow) => (
-                <FlowSidebarItem
-                  key={flow.id}
-                  flow={flow}
-                  selected={selectedFlowId === flow.id}
-                  isRunning={runningFlowIds.includes(flow.id)}
-                  t={t}
-                  onSelect={() => selectFlow(flow.id)}
-                  onContextMenu={(e) => openContextMenu(e, flow.id)}
-                  onToggleEnabled={(enabled) => { void handleToggleEnabled(flow, enabled); }}
-                />
-              ))
+              <Box style={{ flex: 1, minWidth: 0 }} />
             )}
-          </Box>
+            <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+              <Tooltip label={t('agentflow.runAll')}>
+                <ActionIcon
+                  variant="subtle"
+                  size="sm"
+                  disabled={flows.length === 0 || isBatchRunning}
+                  onClick={() => { void handleRunAllFlows(); }}
+                >
+                  <Play size={14} />
+                </ActionIcon>
+              </Tooltip>
+              <Menu trigger="hover" position="bottom-end" withinPortal zIndex={200}>
+                <Menu.Target>
+                  <ActionIcon variant="subtle" size="sm" aria-label={t('agentflow.newFlow')}>
+                    <Plus size={14} />
+                  </ActionIcon>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  <Menu.Item leftSection={<Plus size={13} />} onClick={() => { void createFlow(); }}>
+                    {t('agentflow.newFlow')}
+                  </Menu.Item>
+                  <Menu.Item leftSection={<Sparkles size={13} />} onClick={() => setGenerateOpen(true)}>
+                    {t('agentflow.generate')}
+                  </Menu.Item>
+                  <Menu.Item leftSection={<BookOpen size={13} />} onClick={() => setTemplatesOpen(true)}>
+                    {t('agentflow.templates')}
+                  </Menu.Item>
+                  <Menu.Item leftSection={<Download size={13} />} onClick={() => setImportOpen(true)}>
+                    {t('agentflow.import')}
+                  </Menu.Item>
+                </Menu.Dropdown>
+              </Menu>
+            </Group>
+          </PanelToolbar>
+
+          <FlowSidebarList
+            flows={flows}
+            visibleFlows={visibleFlows}
+            isSearching={isSearching}
+            selectedFlowId={selectedFlowId}
+            runningFlowIds={runningFlowIds}
+            t={t}
+            onSelect={(id) => selectFlow(id)}
+            onContextMenu={(e, id) => openContextMenu(e, id)}
+            onToggleEnabled={(flow, enabled) => { void handleToggleEnabled(flow, enabled); }}
+            onReorder={(orderedIds) => { void reorderFlows(orderedIds); }}
+          />
         </Stack>
 
         <ContextMenuPortal
@@ -202,6 +261,7 @@ export const AgentFlowView: React.FC = () => {
           onClose={() => setContextMenu(null)}
         >
           <Menu.Item leftSection={<Play size={13} />} onClick={() => { void handleRunFlow(contextMenu!.flowId); }}>{t('agentflow.runFlow')}</Menu.Item>
+          <Menu.Item leftSection={<Pencil size={13} />} onClick={() => { setRenameId(contextMenu!.flowId); setContextMenu(null); }}>{t('agentflow.renameFlow')}</Menu.Item>
           <Menu.Item leftSection={<Copy size={13} />} onClick={() => { void handleDuplicateFlow(contextMenu!.flowId); }}>{t('agentflow.duplicateFlow')}</Menu.Item>
           <Menu.Item leftSection={<Upload size={13} />} onClick={() => { void handleExportFlow(contextMenu!.flowId); }}>{t('agentflow.exportFlow')}</Menu.Item>
           <Menu.Item leftSection={<ArrowUp size={13} />} disabled={contextFlowIndex <= 0} onClick={() => { void handleMoveFlow(contextMenu!.flowId, 'up'); }}>{t('agentflow.flow.moveUp')}</Menu.Item>
@@ -224,7 +284,6 @@ export const AgentFlowView: React.FC = () => {
         <FlowTemplatesModal
           open={templatesOpen}
           t={t}
-          existingFlowNames={flows.map((f) => f.name)}
           onClose={() => setTemplatesOpen(false)}
           onImport={(imported) => { void importFlows(imported); setTemplatesOpen(false); }}
         />
@@ -232,9 +291,23 @@ export const AgentFlowView: React.FC = () => {
         <FlowImportModal
           open={importOpen}
           t={t}
-          existingFlowNames={flows.map((f) => f.name)}
           onClose={() => setImportOpen(false)}
           onImport={(imported) => { void importFlows(imported); setImportOpen(false); }}
+        />
+
+        <FlowGenerateModal
+          open={generateOpen}
+          t={t}
+          onClose={() => setGenerateOpen(false)}
+          onGenerate={generateFlow}
+        />
+
+        <FlowRenameModal
+          open={Boolean(renameFlow)}
+          initialName={renameFlow?.name ?? ''}
+          t={t}
+          onClose={() => setRenameId(null)}
+          onRename={(name) => { if (renameId) void handleRenameFlow(renameId, name); }}
         />
 
         <Flex flex={1} direction="column" h="100%" style={{ overflow: 'hidden' }}>

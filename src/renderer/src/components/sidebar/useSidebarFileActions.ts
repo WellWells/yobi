@@ -1,4 +1,3 @@
-// rename/edit-H1/delete/context-menu state and handlers
 import { startTransition, useState } from 'react';
 import type React from 'react';
 import type { OutputFile } from '../../../../shared/types';

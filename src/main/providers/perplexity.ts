@@ -1,14 +1,15 @@
-// Electron DOM-injection automation for Perplexity web
-import type { BrowserWindow } from 'electron';
+import type { BrowserWindow, WebContents } from 'electron';
 import { navigateAndWait, isCloudflareChallengeActive, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
 import { executeAutomationWithTimeout, countElements, dispatchFocusEvents } from './automationExecutor';
-import { sendLog, sendWebNotification, setWorkerAttention } from '../helpers';
 import { showInteractiveWorkerWindow } from '../windows';
-import { getLangCache, t } from '../i18n';
+import { raiseVerificationChallenge, VERIFICATION_CHALLENGE_ERROR_NAME } from './verificationChallenge';
 import { PROVIDER_URLS } from '../../shared/types';
 import { CLEAN_UA } from '../userAgent';
+import { applyWorkerUserAgent } from '../clientHints';
 
-export const PERPLEXITY_CLOUDFLARE_ERROR_NAME = 'PerplexityCloudflareChallengeError';
+// Backward-compatible alias: consumers (taskProcessor, flow executor) still import
+// this name; it now points at the shared, provider-neutral verification-challenge marker.
+export const PERPLEXITY_CLOUDFLARE_ERROR_NAME = VERIFICATION_CHALLENGE_ERROR_NAME;
 
 export async function runPerplexityAutomation(
   workerWin: BrowserWindow,
@@ -18,44 +19,47 @@ export async function runPerplexityAutomation(
 ): Promise<{ response: string; title: string }> {
   const wc = workerWin.webContents;
 
-  // Restore Chrome UA — Cloudflare expects a real Chrome browser fingerprint.
-  wc.setUserAgent(CLEAN_UA);
+  applyWorkerUserAgent(wc, CLEAN_UA);
 
   await navigateAndWait(wc, targetUrl);
 
-  // Detect a Cloudflare challenge and fail immediately — do not block the queue waiting for resolution.
   if (await isCloudflareChallengeActive(wc)) {
-    const strings = getLangCache();
+    // Cloudflare re-challenges on a fresh load, so reloading into the interactive
+    // window reliably re-shows the challenge for the user to solve.
     await showInteractiveWorkerWindow(targetUrl);
-    // Flag attention AFTER reveal (which clears to 'idle') so the title-bar
-    // button keeps signaling "needs verification" until the user opens it again.
-    setWorkerAttention('verification');
-    sendWebNotification(
-      t(strings, 'cloudflare.notify.title'),
-      t(strings, 'cloudflare.notify.body'),
-      'error',
-      {
-        id: 'open-worker-window',
-        label: t(strings, 'cloudflare.notify.action.openWorker'),
-      },
-    );
-    sendLog('⚠️ Cloudflare security check detected — task marked as FAILED and removed from queue');
-    const error = new Error(t(strings, 'cloudflare.error.verificationFailed'));
-    error.name = PERPLEXITY_CLOUDFLARE_ERROR_NAME;
-    throw error;
+    throw raiseVerificationChallenge({
+      titleKey: 'cloudflare.notify.title',
+      bodyKey: 'cloudflare.notify.body',
+      actionKey: 'cloudflare.notify.action.openWorker',
+      errorKey: 'cloudflare.error.verificationFailed',
+      logMessage: '⚠️ Cloudflare security check detected — task marked as FAILED and removed from queue',
+    });
   }
 
   await dispatchFocusEvents(wc);
 
-  // Baseline: count existing response nodes before sending
   const baseline = await countElements(wc, '[id^="markdown-content-"]');
 
+  type PplxResult = { response: string; title: string; isImageOnly?: boolean };
+  let fullyNavigated = false;
+  const onFullNavigate = () => { fullyNavigated = true; };
+  wc.on('did-navigate', onFullNavigate);
+
   const autoScript = buildPerplexityAutomationScript(prompt, baseline, timeoutMs);
-  const result = await executeAutomationWithTimeout<{
-    response: string;
-    title: string;
-    isImageOnly?: boolean;
-  }>(wc, autoScript, timeoutMs, 'Perplexity');
+  let result: PplxResult | null = null;
+  try {
+    result = await executeAutomationWithTimeout<PplxResult>(wc, autoScript, timeoutMs, 'Perplexity');
+  } catch (err) {
+    if (!fullyNavigated) throw err;
+  } finally {
+    wc.off('did-navigate', onFullNavigate);
+  }
+
+  if (!result && fullyNavigated) {
+    await waitForPageLoad(wc, 30_000);
+    const readScript = buildPerplexityReadScript(0, timeoutMs);
+    result = await executeAutomationWithTimeout<PplxResult>(wc, readScript, timeoutMs, 'Perplexity');
+  }
 
   if (!result || typeof result.response !== 'string') {
     throw new Error('Perplexity returned empty response');
@@ -70,22 +74,18 @@ export async function runPerplexityAutomation(
   };
 }
 
-function buildPerplexityAutomationScript(
-  prompt: string,
-  baselineMessageCount: number,
-  timeoutMs: number,
-): string {
-  const escapedPrompt = JSON.stringify(prompt);
+async function waitForPageLoad(wc: WebContents, timeoutMs: number): Promise<void> {
+  if (!wc.isLoading()) return;
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`Post-navigation page load timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+    wc.once('did-finish-load', () => { clearTimeout(timer); resolve(); });
+  });
+}
 
-  return `
-(async function perplexityAutomate() {
-  var TIMEOUT  = ${timeoutMs};
-  var BASELINE = ${baselineMessageCount};
-  var startedAt = Date.now();
-  ${INJECTED_SLEEP_JS}
-  ${INJECTED_WAIT_FOR_JS}
-  ${INJECTED_INTERCEPT_COPY_JS}
-
+const INJECTED_PPLX_READ_JS = `
   // Perplexity renders response blocks as div[id^="markdown-content-"], NOT article.
   // Matching any element (tag-agnostic) is required.
   function getResponseNodes() {
@@ -195,6 +195,96 @@ function buildPerplexityAutomationScript(
     return false;
   }
 
+  // Waits for the latest response to finish generating, then extracts its text.
+  async function perplexityWaitAndRead(baseline) {
+    await waitFor(function() {
+      return getResponseNodes().length > baseline;
+    }, 'new Perplexity response node', TIMEOUT, 350);
+
+    await waitFor(function() {
+      var nodes = getResponseNodes();
+      var el = nodes[nodes.length - 1];
+      return el && ((el.innerText || '').trim().length > 0 || hasGeneratedImageAsset(el));
+    }, 'Perplexity AI response content', TIMEOUT, 350);
+
+    // Generation complete = the action toolbar (copy / image actions) appeared.
+    // Timeout only starts after response content stops changing (30 s inactivity).
+    var NO_CHANGE_LIMIT = 30000;
+    var pplxLastLen = -1;
+    var pplxLastChangeAt = null;
+    while (true) {
+      var nodes = getResponseNodes();
+      var el = nodes[nodes.length - 1];
+      if (el && (findCopyButtonFor(el) !== null || findImageActionToolbarFor(el) !== null)) break;
+      var curLen = el ? (el.innerText || '').length : 0;
+      if (el && hasGeneratedImageAsset(el)) curLen += 1;
+      if (curLen !== pplxLastLen) {
+        pplxLastLen = curLen;
+        pplxLastChangeAt = Date.now();
+      }
+      if (pplxLastChangeAt !== null && Date.now() - pplxLastChangeAt > NO_CHANGE_LIMIT) {
+        throw new Error('Timeout: Perplexity response had no changes for 30 seconds');
+      }
+      await sleep(400);
+    }
+
+    // Brief settle delay for any trailing DOM updates
+    await sleep(300);
+
+    var allResponses = getResponseNodes();
+    var targetResponse = allResponses[allResponses.length - 1];
+    if (!targetResponse) throw new Error('Perplexity response block not found');
+
+    var copyBtn = findCopyButtonFor(targetResponse);
+    var hasGeneratedImage = hasGeneratedImageAsset(targetResponse);
+    var hasImageToolbar = findImageActionToolbarFor(targetResponse) !== null;
+    var isImageOnly = hasGeneratedImage && !copyBtn && hasImageToolbar;
+    var copiedText = copyBtn ? ((await interceptCopy(copyBtn)) || '').trim() : '';
+    var answerText = (targetResponse.innerText || '').trim();
+    var finalAnswer = isImageOnly ? '' : (copiedText || answerText);
+
+    if (!finalAnswer && !isImageOnly) throw new Error('Perplexity response is empty');
+
+    // User query title lives in a [role="heading"][aria-level="1"] block (not an <h1>).
+    var queryEl = document.querySelector('[role="heading"][aria-level="1"] span.select-text, [role="heading"][aria-level="1"] span, h1 span');
+    var queryText = queryEl ? (queryEl.innerText || '').trim() : '';
+
+    return { response: finalAnswer, title: queryText, isImageOnly: isImageOnly };
+  }`;
+
+function buildPerplexityReadScript(
+  baselineMessageCount: number,
+  timeoutMs: number,
+): string {
+  return `
+(async function perplexityRead() {
+  var TIMEOUT  = ${timeoutMs};
+  var BASELINE = ${baselineMessageCount};
+  ${INJECTED_SLEEP_JS}
+  ${INJECTED_WAIT_FOR_JS}
+  ${INJECTED_INTERCEPT_COPY_JS}
+  ${INJECTED_PPLX_READ_JS}
+
+  return await perplexityWaitAndRead(BASELINE);
+})()`;
+}
+
+function buildPerplexityAutomationScript(
+  prompt: string,
+  baselineMessageCount: number,
+  timeoutMs: number,
+): string {
+  const escapedPrompt = JSON.stringify(prompt);
+
+  return `
+(async function perplexityAutomate() {
+  var TIMEOUT  = ${timeoutMs};
+  var BASELINE = ${baselineMessageCount};
+  ${INJECTED_SLEEP_JS}
+  ${INJECTED_WAIT_FOR_JS}
+  ${INJECTED_INTERCEPT_COPY_JS}
+  ${INJECTED_PPLX_READ_JS}
+
   // ── Locate input ─────────────────────────────────────────────────────────────
   var INPUT_SELECTORS = [
     '#ask-input[contenteditable="true"]',
@@ -236,21 +326,27 @@ function buildPerplexityAutomationScript(
   await sleep(250);
 
   // ── Submit ───────────────────────────────────────────────────────────────────
-  var SEND_SELECTORS = [
-    'button[aria-label="Submit"]',
-    'button[aria-label="Send"]',
-    'button[data-testid="submit-button"]',
-  ];
+  // The submit button is the primary (bg-button-bg) button inside the ask-input
+  // container; the English aria-label selectors are kept only as a fallback.
+  function findSubmitBtn() {
+    var container = document.querySelector('[data-ask-input-container="true"]');
+    var btn = container ? container.querySelector('button.bg-button-bg') : null;
+    if (btn) return btn;
+    var SEND_SELECTORS = ['button[aria-label="Submit"]', 'button[aria-label="Send"]', 'button[data-testid="submit-button"]'];
+    for (var s = 0; s < SEND_SELECTORS.length; s++) {
+      var b = document.querySelector(SEND_SELECTORS[s]);
+      if (b) return b;
+    }
+    return null;
+  }
 
   var sent = false;
   for (var attempt = 0; attempt < 28 && !sent; attempt++) {
-    for (var s = 0; s < SEND_SELECTORS.length; s++) {
-      var sendBtn = document.querySelector(SEND_SELECTORS[s]);
-      if (sendBtn && !sendBtn.disabled) {
-        sendBtn.click();
-        sent = true;
-        break;
-      }
+    var sendBtn = findSubmitBtn();
+    if (sendBtn && !sendBtn.disabled) {
+      sendBtn.click();
+      sent = true;
+      break;
     }
     if (!sent) await sleep(120);
   }
@@ -265,60 +361,6 @@ function buildPerplexityAutomationScript(
     }));
   }
 
-  // ── Wait for new response node ────────────────────────────────────────────────
-  await waitFor(function() {
-    return getResponseNodes().length > BASELINE;
-  }, 'new Perplexity response node', TIMEOUT, 350);
-
-  await waitFor(function() {
-    var nodes = getResponseNodes();
-    var el = nodes[nodes.length - 1];
-    return el && ((el.innerText || '').trim().length > 0 || hasGeneratedImageAsset(el));
-  }, 'Perplexity AI response content', TIMEOUT, 350);
-
-  // ── Wait for generation complete ───────────────────────────────────────────────
-  // Timeout only starts after response content stops changing (30 s of inactivity).
-  var NO_CHANGE_LIMIT = 30000;
-  var pplxLastLen = -1;
-  var pplxLastChangeAt = null;
-  while (true) {
-    var nodes = getResponseNodes();
-    var el = nodes[nodes.length - 1];
-    if (el && (findCopyButtonFor(el) !== null || findImageActionToolbarFor(el) !== null)) break;
-    var curLen = el ? (el.innerText || '').length : 0;
-    if (el && hasGeneratedImageAsset(el)) curLen += 1;
-    if (curLen !== pplxLastLen) {
-      pplxLastLen = curLen;
-      pplxLastChangeAt = Date.now();
-    }
-    if (pplxLastChangeAt !== null && Date.now() - pplxLastChangeAt > NO_CHANGE_LIMIT) {
-      throw new Error('Timeout: Perplexity response had no changes for 30 seconds');
-    }
-    await sleep(400);
-  }
-
-  // Brief settle delay for any trailing DOM updates
-  await sleep(300);
-
-  // ── Extract response ──────────────────────────────────────────────────────────
-  var allResponses = getResponseNodes();
-  var targetResponse = allResponses[allResponses.length - 1];
-  if (!targetResponse) throw new Error('Perplexity response block not found');
-
-  var copyBtn = findCopyButtonFor(targetResponse);
-  var hasGeneratedImage = hasGeneratedImageAsset(targetResponse);
-  var hasImageToolbar = findImageActionToolbarFor(targetResponse) !== null;
-  var isImageOnly = hasGeneratedImage && !copyBtn && hasImageToolbar;
-  var copiedText = copyBtn ? ((await interceptCopy(copyBtn)) || '').trim() : '';
-  var answerText = (targetResponse.innerText || '').trim();
-  var finalAnswer = isImageOnly ? '' : (copiedText || answerText);
-
-  if (!finalAnswer && !isImageOnly) throw new Error('Perplexity response is empty');
-
-  // Extract query title: look for the user-query h1 in the whole page
-  var queryEl  = document.querySelector('h1 span.select-text, h1 span[class*="min-w-0"], h1 span');
-  var queryText = queryEl ? (queryEl.innerText || '').trim() : '';
-
-  return { response: finalAnswer, title: queryText, isImageOnly: isImageOnly };
+  return await perplexityWaitAndRead(BASELINE);
 })()`;
 }

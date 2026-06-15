@@ -1,23 +1,22 @@
-// AgentFlow flow CRUD and execution orchestration
-//
-// Persistence lives in flowPersistence.ts, trigger registration in
-// flowTriggers.ts, and the serial execution queue in flowQueue.ts.
-
 import type {
   FlowDefinition,
   FlowExecutionEvent,
   FlowExecutionLog,
   FlowExecutionResult,
+  FlowGenerationResult,
   QueueTaskItem,
 } from '../../shared/types';
 import { executeFlow } from './executor';
+import { closeRunPages } from './skills/browserPages';
+import { generateFlowDefinition } from './flowGenerator';
 import type { FlowExecutorDeps } from './types';
-import { sendLog, sendToRenderer } from '../helpers';
-import { IPC } from '../../shared/types';
+import { getWorkerAttention, sendLog, sendToRenderer } from '../helpers';
+import { IPC, TELEGRAM_COMMAND_RE } from '../../shared/types';
 import { normalizeCronTrigger, shouldNormalizeCronTrigger } from '../../shared/flowSchedule';
 import { createEntityId, loadFlowsFromDisk, saveFlowsToDisk } from './flowPersistence';
 import { FlowTriggerRegistry } from './flowTriggers';
-import { FlowSerialQueue } from './flowQueue';
+import { FlowQueue } from './flowQueue';
+import { llmLane } from './lanes';
 
 export interface FlowBotCommandDef {
   flowId: string;
@@ -26,17 +25,18 @@ export interface FlowBotCommandDef {
   inputVariable: string;
 }
 
-type FlowExecutionSource = 'ui' | 'bot' | 'system';
+type FlowExecutionSource = 'ui' | 'bot' | 'system' | 'chat';
 
 export class FlowManager {
   private flows: FlowDefinition[] = [];
   private deps: FlowExecutorDeps;
   private _running = new Set<string>();
+  private _abortControllers = new Map<string, AbortController>();
   private _onBotCommandsChanged: (() => void) | null = null;
   private triggers = new FlowTriggerRegistry((flowId) => {
     void this.queueExecution(flowId);
   });
-  private queue = new FlowSerialQueue();
+  private queue = new FlowQueue();
 
   constructor(deps: FlowExecutorDeps) {
     this.deps = deps;
@@ -62,24 +62,58 @@ export class FlowManager {
   }
 
   getBotCommands(): FlowBotCommandDef[] {
-    return this.flows
-      .filter((f) => f.enabled && f.trigger.type === 'bot' && f.trigger.botCommand?.trim())
-      .map((f) => ({
-        flowId: f.id,
-        command: (f.trigger.botCommand ?? '').toLowerCase().trim(),
-        description: f.trigger.botCommandDescription ?? '',
-        inputVariable: f.trigger.botInputVariable?.trim() || 'input',
-      }));
+    const seen = new Set<string>();
+    const commands: FlowBotCommandDef[] = [];
+    for (const f of this.flows) {
+      if (!f.enabled) continue;
+      for (const trigger of [f.trigger, ...(f.extraTriggers ?? [])]) {
+        if (trigger.type !== 'bot') continue;
+        const command = (trigger.botCommand ?? '').toLowerCase().trim();
+        if (!command) continue;
+        if (!TELEGRAM_COMMAND_RE.test(command)) {
+          sendLog(`⚠️ [AgentFlow] Bot command "/${command}" is invalid (must start with a letter, ≤32 chars, a–z/0–9/_) — skipping "${f.name}"`);
+          continue;
+        }
+        if (seen.has(command)) {
+          sendLog(`⚠️ [AgentFlow] Bot command "/${command}" is used more than once — keeping the first, skipping "${f.name}"`);
+          continue;
+        }
+        seen.add(command);
+        commands.push({
+          flowId: f.id,
+          command,
+          description: trigger.botCommandDescription ?? '',
+          inputVariable: trigger.botInputVariable?.trim() || 'input',
+        });
+      }
+    }
+    return commands;
+  }
+
+  private flowHasBotTrigger(flow: FlowDefinition): boolean {
+    return [flow.trigger, ...(flow.extraTriggers ?? [])].some((t) => t.type === 'bot');
+  }
+
+  getChatCommandInfo(flowId: string, command?: string): { command: string; inputVariable: string } | null {
+    const flow = this.flows.find((f) => f.id === flowId);
+    if (!flow) return null;
+    const triggers = [flow.trigger, ...(flow.extraTriggers ?? [])].filter((t) => t.type === 'chat');
+    if (triggers.length === 0) return null;
+    const wanted = (command ?? '').toLowerCase().trim();
+    const trigger = (wanted && triggers.find((t) => (t.chatCommand ?? '').toLowerCase().trim() === wanted)) || triggers[0];
+    return {
+      command: (trigger.chatCommand ?? '').toLowerCase().trim(),
+      inputVariable: trigger.chatInputVariable?.trim() || 'input',
+    };
   }
 
   async save(flow: FlowDefinition): Promise<FlowDefinition> {
     const normalizedFlow = this.normalizeFlow(flow);
     const idx = this.flows.findIndex((f) => f.id === flow.id);
     normalizedFlow.updatedAt = new Date().toISOString();
-    const oldTriggerType = idx >= 0 ? this.flows[idx].trigger.type : undefined;
+    const hadBotTrigger = idx >= 0 ? this.flowHasBotTrigger(this.flows[idx]) : false;
 
     if (idx >= 0) {
-      // Unregister old triggers before replacement
       this.triggers.unregister(this.flows[idx]);
       this.flows[idx] = normalizedFlow;
     } else {
@@ -93,7 +127,7 @@ export class FlowManager {
 
     await saveFlowsToDisk(this.flows);
 
-    if (normalizedFlow.trigger.type === 'bot' || oldTriggerType === 'bot') {
+    if (this.flowHasBotTrigger(normalizedFlow) || hadBotTrigger) {
       this._onBotCommandsChanged?.();
     }
 
@@ -103,11 +137,11 @@ export class FlowManager {
   async delete(flowId: string): Promise<boolean> {
     const idx = this.flows.findIndex((f) => f.id === flowId);
     if (idx < 0) return false;
-    const deletedTriggerType = this.flows[idx].trigger.type;
+    const hadBotTrigger = this.flowHasBotTrigger(this.flows[idx]);
     this.triggers.unregister(this.flows[idx]);
     this.flows.splice(idx, 1);
     await saveFlowsToDisk(this.flows);
-    if (deletedTriggerType === 'bot') {
+    if (hadBotTrigger) {
       this._onBotCommandsChanged?.();
     }
     return true;
@@ -125,6 +159,10 @@ export class FlowManager {
         ...source.trigger,
         weekdays: source.trigger.weekdays ? [...source.trigger.weekdays] : undefined,
       },
+      extraTriggers: source.extraTriggers?.map((tr) => ({
+        ...tr,
+        weekdays: tr.weekdays ? [...tr.weekdays] : undefined,
+      })),
       steps: source.steps.map((step) => ({
         ...step,
         id: createEntityId(),
@@ -144,6 +182,21 @@ export class FlowManager {
     const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
     if (targetIdx < 0 || targetIdx >= this.flows.length) return this.flows;
     [this.flows[idx], this.flows[targetIdx]] = [this.flows[targetIdx], this.flows[idx]];
+    await saveFlowsToDisk(this.flows);
+    return this.flows;
+  }
+
+  async reorder(orderedIds: string[]): Promise<FlowDefinition[]> {
+    const byId = new Map(this.flows.map((f) => [f.id, f]));
+    const next: FlowDefinition[] = [];
+    for (const id of orderedIds) {
+      const flow = byId.get(id);
+      if (flow) { next.push(flow); byId.delete(id); }
+    }
+    for (const flow of this.flows) {
+      if (byId.has(flow.id)) next.push(flow);
+    }
+    this.flows.splice(0, this.flows.length, ...next);
     await saveFlowsToDisk(this.flows);
     return this.flows;
   }
@@ -183,7 +236,9 @@ export class FlowManager {
       return { taskId, result: Promise.resolve(this.failureResult(flowId, 'Flow not found', 0)) };
     }
 
-    if (flow.trigger.type === 'bot' && source !== 'bot') {
+    const triggers = [flow.trigger, ...(flow.extraTriggers ?? [])];
+    const isBotOnly = triggers.length > 0 && triggers.every((t) => t.type === 'bot');
+    if (isBotOnly && source !== 'bot') {
       sendLog(`🚫 [AgentFlow] Flow "${flow.name}" requires a Telegram trigger — skipped (source: ${source})`);
       return {
         taskId,
@@ -202,11 +257,11 @@ export class FlowManager {
         err instanceof Error ? err.message : String(err),
         flow.steps.length,
       ),
+      flowId,
     );
     return { taskId, result };
   }
 
-  // Enqueues a flow execution onto the serial chain, returns the result when it runs.
   async queueExecution(
     flowId: string,
     extraContext?: Record<string, string>,
@@ -223,6 +278,62 @@ export class FlowManager {
     return this.createQueueExecution(flowId, extraContext, source);
   }
 
+  async queueGeneration(description: string, queueLabel = 'AI Flow'): Promise<FlowGenerationResult> {
+    const taskId = createEntityId();
+    return this.queue.enqueue<FlowGenerationResult>(
+      taskId,
+      queueLabel,
+      async () => {
+        try {
+          const outcome = await generateFlowDefinition(description, this.deps);
+          if (!outcome.ok) return outcome;
+          const now = new Date().toISOString();
+          const flow: FlowDefinition = {
+            ...outcome.flow,
+            id: createEntityId(),
+            enabled: false,
+            steps: outcome.flow.steps.map((step) => ({ ...step, id: createEntityId() })),
+            createdAt: now,
+            updatedAt: now,
+          };
+          const saved = await this.save(flow);
+          return { ok: true, flow: saved };
+        } finally {
+          this.blankWorkerWhenIdle();
+        }
+      },
+      (err) => ({ ok: false, error: err instanceof Error ? err.message : String(err) }),
+    );
+  }
+
+  // Reset the shared worker window to about:blank, but only once nothing is
+  // driving it. Routed through llmLane so it queues behind any in-flight
+  // automation (flow LLM step / prompt task / generation) rather than tearing
+  // the page out mid-response; the guard is re-checked after acquiring the lane.
+  private blankWorkerWhenIdle(): void {
+    void llmLane.runExclusive(async () => {
+      if (this._running.size !== 0 || getWorkerAttention() !== 'idle') return;
+      const workerWin = this.deps.getWorkerWin();
+      if (workerWin && !workerWin.isDestroyed()) {
+        void workerWin.webContents.loadURL('about:blank').catch(() => { });
+      }
+    });
+  }
+
+  abort(flowId: string): boolean {
+    const removedFromQueue = this.queue.cancelQueuedForFlow(flowId);
+    const controller = this._abortControllers.get(flowId);
+    if (controller && !controller.signal.aborted) {
+      controller.abort();
+      sendLog(`⏹️ [AgentFlow] Abort requested for running flow: ${flowId}`);
+      return true;
+    }
+    if (removedFromQueue) {
+      sendLog(`⏹️ [AgentFlow] Removed queued flow (not yet running): ${flowId}`);
+    }
+    return removedFromQueue;
+  }
+
   async execute(flowId: string, extraContext?: Record<string, string>): Promise<FlowExecutionResult> {
     const flow = this.flows.find((f) => f.id === flowId);
     if (!flow) {
@@ -234,6 +345,8 @@ export class FlowManager {
     }
 
     this._running.add(flowId);
+    const controller = new AbortController();
+    this._abortControllers.set(flowId, controller);
     const event: FlowExecutionEvent = { flowId, name: flow.name };
     sendToRenderer(IPC.FLOW_EXECUTION_STARTED, event);
 
@@ -241,28 +354,26 @@ export class FlowManager {
       const onLog = (log: FlowExecutionLog): void => {
         sendToRenderer(IPC.FLOW_EXECUTION_LOG, log);
       };
-      return await executeFlow(flow, this.deps, onLog, extraContext);
+      return await executeFlow(flow, this.deps, onLog, extraContext, controller.signal);
     } finally {
+      closeRunPages(flowId);
+      this._abortControllers.delete(flowId);
       this._running.delete(flowId);
       sendToRenderer(IPC.FLOW_EXECUTION_ENDED, { flowId, name: flow.name } satisfies FlowExecutionEvent);
-      // Reload the worker window to the provider URL after every flow execution.
-      // If the LLM kill-switch navigated it to about:blank, this restores it.
-      // Even without a timeout, reloading clears residual renderer state between flows.
-      const workerWin = this.deps.getWorkerWin();
-      if (workerWin && !workerWin.isDestroyed()) {
-        const targetUrl = this.deps.getTargetUrl();
-        if (targetUrl) {
-          workerWin.webContents.loadURL(targetUrl).catch(() => { /* ignore navigation errors on cleanup */ });
-        }
-      }
+      this.blankWorkerWhenIdle();
     }
   }
 
   private normalizeFlow(flow: FlowDefinition): FlowDefinition {
-    if (!shouldNormalizeCronTrigger(flow.trigger)) return flow;
-    return {
-      ...flow,
-      trigger: normalizeCronTrigger(flow.trigger),
-    };
+    const triggerNeedsNorm = shouldNormalizeCronTrigger(flow.trigger);
+    const extra = flow.extraTriggers;
+    const extraNeedsNorm = Array.isArray(extra) && extra.some(shouldNormalizeCronTrigger);
+    if (!triggerNeedsNorm && !extraNeedsNorm) return flow;
+    const next: FlowDefinition = { ...flow };
+    if (triggerNeedsNorm) next.trigger = normalizeCronTrigger(flow.trigger);
+    if (extra) {
+      next.extraTriggers = extra.map((t) => (shouldNormalizeCronTrigger(t) ? normalizeCronTrigger(t) : t));
+    }
+    return next;
   }
 }

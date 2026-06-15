@@ -25,33 +25,26 @@ function createMarkdownZoomUpdate(nextZoom: number): { markdownZoom: number } {
 }
 
 interface AppState {
-  // Status
   status: 'idle' | 'processing';
   queue: QueueState;
   workerAttention: WorkerAttention;
   logs: string[];
 
-  // Files
   files: OutputFile[];
   selectedFile: OutputFile | null;
   fileContent: string | null;
-  /** Pre-parsed blocks, always in sync with fileContent. Avoids parsing during render. */
   parsedBlocks: MarkdownBlocks | null;
   unreadFilePaths: Record<string, true>;
 
-  // Navigation
   currentView: View;
 
-  // Layout
   layoutMode: LayoutMode;
   markdownZoom: number;
 
-  // Configuration
   hotkey: string;
   aiUrl: string;
   duckaiModels: ModelOption[];
 
-  // Actions
   setStatus: (status: 'idle' | 'processing') => void;
   setQueue: (q: QueueState) => void;
   setWorkerAttention: (state: WorkerAttention) => void;
@@ -60,10 +53,8 @@ interface AppState {
   setFiles: (files: OutputFile[], options?: FileUpdateOptions) => void;
   selectFile: (file: OutputFile | null) => void;
   setFileContent: (content: string | null) => void;
-  setParsedBlocks: (blocks: MarkdownBlocks | null) => void;
   setView: (view: View) => void;
   setLayoutMode: (mode: LayoutMode) => void;
-  setMarkdownZoom: (percent: number) => void;
   zoomInMarkdown: () => void;
   zoomOutMarkdown: () => void;
   resetMarkdownZoom: () => void;
@@ -136,13 +127,11 @@ export const useAppStore = create<AppState>((set) => ({
     fileContent,
     parsedBlocks: fileContent !== null ? parseMarkdownBlocks(fileContent) : null,
   }),
-  setParsedBlocks: (parsedBlocks) => set({ parsedBlocks }),
   setView: (currentView) => set({ currentView }),
   setLayoutMode: (layoutMode) => {
     window.electronAPI.updateLayoutMode(layoutMode).catch(() => {});
     set({ layoutMode });
   },
-  setMarkdownZoom: (percent) => set(createMarkdownZoomUpdate(percent)),
   zoomInMarkdown: () => set((state) => createMarkdownZoomUpdate(state.markdownZoom + MD_ZOOM_STEP)),
   zoomOutMarkdown: () => set((state) => createMarkdownZoomUpdate(state.markdownZoom - MD_ZOOM_STEP)),
   resetMarkdownZoom: () => set(createMarkdownZoomUpdate(100)),
