@@ -1,7 +1,7 @@
 {
   "name": "yobi",
-  "version": "1.2.0",
-  "description": "Yobi — desktop AI automation that drives the web interfaces of ChatGPT, Gemini, Perplexity, and Duck.ai in a built-in browser window. Includes AgentFlow visual workflows and Telegram bot control. Built with Electron & React. Automating these web interfaces is against the providers' terms of service; see the README disclosure.",
+  "version": "1.2.1",
+  "description": "Desktop AI automation that drives the ChatGPT, Gemini, Perplexity, and Duck.ai web interfaces via global hotkeys, with AgentFlow visual workflows and Telegram bot control.",
   "author": "WellsTsai",
   "repository": {
     "type": "git",
