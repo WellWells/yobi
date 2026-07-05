@@ -7,7 +7,7 @@ export function encryptToken(token: string): string {
   if (safeStorage.isEncryptionAvailable()) {
     return ENCRYPTED_PREFIX + safeStorage.encryptString(token).toString('base64');
   }
-  console.warn('[config] safeStorage unavailable — botToken stored as plaintext. Install libsecret on Linux to enable OS-level encryption.');
+  console.warn('[config] safeStorage unavailable — secret stored as plaintext. Install libsecret on Linux to enable OS-level encryption.');
   return token;
 }
 

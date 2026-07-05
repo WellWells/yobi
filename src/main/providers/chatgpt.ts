@@ -313,7 +313,7 @@ function buildChatgptAutomationScript(
   // check stays as a fallback for when the copy button can't be located.
   var stableText = '';
   var stableCount = 0;
-  var NO_CHANGE_LIMIT = 30000;
+  var NO_CHANGE_LIMIT = TIMEOUT;   // idle window = configured response timeout (reset on every text change)
   var chatLastChangeAt = null;
   var copyBtn = null;
   while (true) {
@@ -331,7 +331,7 @@ function buildChatgptAutomationScript(
     if (stableText && stableCount >= 3) break;
     if (chatLastChangeAt !== null && Date.now() - chatLastChangeAt > NO_CHANGE_LIMIT) {
       if (stableText) break;
-      throw new Error('ChatGPT automation timed out: no response changes for 30 seconds');
+      throw new Error('ChatGPT automation timed out: response stopped updating');
     }
     await sleep(250);
   }

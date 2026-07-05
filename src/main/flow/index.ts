@@ -1,2 +1,3 @@
 export { FlowManager } from './flowManager';
-export { getCheckpointPath } from './paths';
+export { getCheckpointPath, getFlowDataDir } from './paths';
+export { saveFlowsToDisk } from './flowPersistence';

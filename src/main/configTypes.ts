@@ -1,5 +1,5 @@
 import { PROVIDER_URLS } from '../shared/types';
-import type { CaptureFormat, CaptureSettings, PromptPreferences, Provider, TelegramPairingState, TelegramProviderCommand } from '../shared/types';
+import type { ByokGroup, ByokProviderType, CaptureFormat, CaptureSettings, PromptPreferences, Provider, TelegramPairingState, TelegramProviderCommand } from '../shared/types';
 
 export interface Config {
   targetUrl: string;
@@ -15,12 +15,23 @@ export interface Config {
   youtubePrompt: string;
   telegram: TelegramConfig;
   smtp: SmtpConfig;
+  byokInstances: ByokInstance[];
+  byokGroups: ByokGroup[];
   closeToTray: boolean;
   closeActionDecided: boolean;
   launchAtStartup: boolean;
   layoutMode: 'stacked' | 'side-by-side';
   markdownZoom: number;
   captureSettings: CaptureSettings;
+}
+
+export interface ByokInstance {
+  id: string;
+  name: string;
+  providerType: ByokProviderType;
+  apiKey: string;
+  baseUrl: string;
+  model: string;
 }
 
 export interface TelegramConfig {
@@ -47,16 +58,20 @@ export interface StoredTelegramConfig extends Omit<TelegramConfig, 'botToken'> {
 export interface StoredSmtpConfig extends Omit<SmtpConfig, 'password'> {
   passwordEncrypted: string;
 }
-export type StoredConfig = Omit<Config, 'telegram' | 'smtp'> & {
+export interface StoredByokInstance extends Omit<ByokInstance, 'apiKey'> {
+  apiKeyEncrypted: string;
+}
+export type StoredConfig = Omit<Config, 'telegram' | 'smtp' | 'byokInstances'> & {
   telegram: StoredTelegramConfig;
   smtp: StoredSmtpConfig;
+  byokInstances: StoredByokInstance[];
 };
 
 export const defaultStored: StoredConfig = {
   targetUrl: PROVIDER_URLS.gemini,
   hotkey: process.platform === 'darwin' ? 'Command+G' : 'Alt+G',
   debounceMs: 1000,
-  responseTimeout: 60_000,
+  responseTimeout: 120_000,
   locale: 'en-US',
   localeSetByUser: false,
   theme: 'auto',
@@ -104,4 +119,6 @@ export const defaultStored: StoredConfig = {
     user: '',
     passwordEncrypted: '',
   },
+  byokInstances: [],
+  byokGroups: [],
 };

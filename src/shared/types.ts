@@ -51,6 +51,142 @@ export function providerFromUrl(url: string): Provider {
   return 'gemini';
 }
 
+// Provider type is purely a UI convenience (display label + base-URL prefill +
+// model placeholder) — the call path is identical OpenAI-compatible HTTP for
+// every instance, so a specific vendor is never elevated. 'openai' is the
+// generic type covering OpenAI, OpenRouter, Together, Groq, local servers, etc.;
+// 'gemini' exists only because its base URL is worth prefilling.
+export const BYOK_PROVIDER_TYPES = ['openai', 'gemini'] as const;
+export type ByokProviderType = (typeof BYOK_PROVIDER_TYPES)[number];
+
+export const BYOK_PROVIDER_TYPE_LABELS: Record<ByokProviderType, string> = {
+  openai: 'OpenAI-compatible',
+  gemini: 'Gemini API',
+} as const;
+
+export const BYOK_DEFAULT_BASE_URLS: Record<ByokProviderType, string> = {
+  openai: 'https://api.openai.com/v1',
+  gemini: 'https://generativelanguage.googleapis.com/v1beta/openai',
+} as const;
+
+// BYOK instances ride the existing "provider = URL string" selection mechanism
+// via a synthetic scheme. Both hostname sniffers (providerFromUrl/detectProvider)
+// fall back to 'gemini' for unknown URLs, so every consumer must check isByokUrl
+// BEFORE sniffing. Parsed by hand: WHATWG URL host parsing for non-special
+// schemes is not something we want to depend on.
+const BYOK_URL_PREFIX = 'byok://';
+
+export function buildByokUrl(instanceId: string): string {
+  return `${BYOK_URL_PREFIX}${instanceId}/`;
+}
+
+export function isByokUrl(url: string): boolean {
+  return url.trim().toLowerCase().startsWith(BYOK_URL_PREFIX);
+}
+
+export function byokIdFromUrl(url: string): string | null {
+  const trimmed = url.trim();
+  if (!trimmed.toLowerCase().startsWith(BYOK_URL_PREFIX)) return null;
+  const id = trimmed.slice(BYOK_URL_PREFIX.length).split(/[/?#]/, 1)[0]?.trim();
+  return id ? id : null;
+}
+
+// A group of BYOK keys selected for round-robin rotation rides the same
+// "provider = URL string" mechanism as single keys, via its own synthetic scheme.
+// 'byokgroup://' is deliberately NOT a prefix of 'byok://' (…group… vs …://…), so
+// isByokUrl / byokIdFromUrl never match a group url and vice versa.
+const BYOK_GROUP_URL_PREFIX = 'byokgroup://';
+
+export function buildByokGroupUrl(groupId: string): string {
+  return `${BYOK_GROUP_URL_PREFIX}${groupId}/`;
+}
+
+export function isByokGroupUrl(url: string): boolean {
+  return url.trim().toLowerCase().startsWith(BYOK_GROUP_URL_PREFIX);
+}
+
+export function byokGroupIdFromUrl(url: string): string | null {
+  const trimmed = url.trim();
+  if (!trimmed.toLowerCase().startsWith(BYOK_GROUP_URL_PREFIX)) return null;
+  const id = trimmed.slice(BYOK_GROUP_URL_PREFIX.length).split(/[/?#]/, 1)[0]?.trim();
+  return id ? id : null;
+}
+
+// True for any target that must route through the BYOK HTTP path — a single key
+// OR a group — instead of browser automation. Every place that used isByokUrl to
+// mean "this is a BYOK target, don't hostname-sniff / don't load a page" must use
+// this so groups are handled identically to single keys.
+export function isByokTargetUrl(url: string): boolean {
+  return isByokUrl(url) || isByokGroupUrl(url);
+}
+
+export interface ByokInstanceSnapshot {
+  id: string;
+  name: string;
+  providerType: ByokProviderType;
+  baseUrl: string;
+  model: string;
+  hasKey: boolean;
+  keyPreview: string;
+}
+
+// Persisted group definition — holds no secrets, only references key ids.
+export interface ByokGroup {
+  id: string;
+  name: string;
+  memberIds: string[];
+}
+
+export interface ByokGroupSnapshot {
+  id: string;
+  name: string;
+  // Only ids that still reference an existing key (dangling members pruned) —
+  // the count/badges the UI shows always match keys that actually exist.
+  memberIds: string[];
+}
+
+export interface ByokGroupSaveRequest {
+  id?: string;
+  name: string;
+  memberIds: string[];
+}
+
+export interface ByokSettingsSnapshot {
+  instances: ByokInstanceSnapshot[];
+  groups: ByokGroupSnapshot[];
+}
+
+export interface ByokInstanceSaveRequest {
+  id?: string;
+  name: string;
+  providerType: ByokProviderType;
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+}
+
+// Probe an endpoint before/without saving. apiKey may be blank when editing an
+// existing instance (id set) — main falls back to the stored key.
+export interface ByokConnectionProbe {
+  id?: string;
+  name?: string;
+  baseUrl: string;
+  apiKey: string;
+  model?: string;
+}
+
+export interface ByokModelsResult {
+  ok: boolean;
+  models: string[];
+  message?: string;
+}
+
+export interface ByokTestResult {
+  ok: boolean;
+  reply?: string;
+  message?: string;
+}
+
 export interface PromptAttachment {
   id: string;
   name: string;
@@ -156,6 +292,13 @@ export const IPC = {
   LAUNCH_AT_STARTUP_CHANGED: 'startup:launch-changed',
   NOTIFY_ON_COMPLETE_CHANGED: 'notify:on-complete-changed',
   DUCKAI_FETCH_MODELS: 'duckai:fetch-models',
+  BYOK_GET_SETTINGS: 'byok:get-settings',
+  BYOK_SAVE_INSTANCE: 'byok:save-instance',
+  BYOK_DELETE_INSTANCE: 'byok:delete-instance',
+  BYOK_LIST_MODELS: 'byok:list-models',
+  BYOK_TEST_INSTANCE: 'byok:test-instance',
+  BYOK_SAVE_GROUP: 'byok:save-group',
+  BYOK_DELETE_GROUP: 'byok:delete-group',
   NAVIGATE_SETTINGS: 'navigate:settings',
   SHOW_CLOSE_DIALOG: 'close-dialog:show',
   RESPOND_CLOSE_DIALOG: 'close-dialog:respond',

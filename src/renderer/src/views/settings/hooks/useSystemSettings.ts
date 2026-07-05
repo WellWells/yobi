@@ -3,7 +3,7 @@ import { settingsApi, ipcEvents } from '../../../api/electronApi';
 
 export const MIN_RESPONSE_TIMEOUT_SEC = 15;
 export const MAX_RESPONSE_TIMEOUT_SEC = 300;
-const DEFAULT_RESPONSE_TIMEOUT_SEC = 60;
+const DEFAULT_RESPONSE_TIMEOUT_SEC = 120;
 
 export function useSystemSettings() {
 

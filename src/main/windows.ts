@@ -5,6 +5,7 @@ import { sendLog, sendWebNotification, getAssetPath, setWorkerAttention } from '
 import { getLangCache, t } from './i18n';
 import { CLEAN_UA } from './userAgent';
 import { applyWorkerUserAgent } from './clientHints';
+import { PROVIDER_URLS, isByokTargetUrl } from '../shared/types';
 
 const WORKER_PARTITION = 'persist:gemini';
 type WorkerWindowMode = 'automation' | 'interactive';
@@ -108,6 +109,9 @@ function destroyWorkerWindowForModeSwitch(): void {
 }
 
 export function createWorkerWindow(initialUrl: string, mode: WorkerWindowMode = 'automation'): void {
+  // BYOK targets are HTTP API endpoints, not loadable pages; boot the worker on
+  // the default provider so browser automations passing their own URL still work.
+  const bootUrl = isByokTargetUrl(initialUrl) ? PROVIDER_URLS.gemini : initialUrl;
   destroyWorkerWindowForModeSwitch();
   const workerPreload = path.join(__dirname, '../preload/worker.js');
   const webPreferences = mode === 'automation'
@@ -152,7 +156,7 @@ export function createWorkerWindow(initialUrl: string, mode: WorkerWindowMode = 
   workerWin.on('resize', () => rememberWorkerVisibleBounds());
 
   applyWorkerUserAgent(workerWin.webContents, CLEAN_UA);
-  workerWin.loadURL(initialUrl);
+  workerWin.loadURL(bootUrl);
 
   workerWin.on('close', (event) => {
     if (isAppQuitting) return;

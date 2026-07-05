@@ -1,35 +1,13 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/types';
 import type {
-  AccountStatus,
-  AuthProvider,
-  CaptureSettings,
-  ChatCommandResult,
-  DuckaiModelInfo,
-  FeedCandidate,
-  FlowDefinition,
-  FlowExecutionEvent,
-  FlowExecutionLog,
-  FlowExecutionResult,
-  FlowGenerationResult,
-  MarkdownCaptureRequest,
-  MarkdownCaptureResult,
-  OutputFile,
-  PromptPreferences,
-  PromptTriggerOptions,
-  Provider,
-  QueueState,
-  EmailSettingsSnapshot,
-  SmtpCredentials,
-  SelectPathRequest,
-  SelectPathResult,
-  SettingsSnapshot,
-  TelegramProviderCommand,
-  TelegramRuntimeSnapshot,
-  TelegramSettingsSnapshot,
-  UpdateAvailablePayload,
-  UiNotificationPayload,
-  WorkerAttention,
+  AccountStatus, AuthProvider, ByokConnectionProbe, ByokGroupSaveRequest, ByokInstanceSaveRequest, ByokModelsResult,
+  ByokSettingsSnapshot, ByokTestResult, CaptureSettings, ChatCommandResult, DuckaiModelInfo,
+  FeedCandidate, FlowDefinition, FlowExecutionEvent, FlowExecutionLog, FlowExecutionResult,
+  FlowGenerationResult, MarkdownCaptureRequest, MarkdownCaptureResult, OutputFile, PromptPreferences,
+  PromptTriggerOptions, Provider, QueueState, EmailSettingsSnapshot, SmtpCredentials,
+  SelectPathRequest, SelectPathResult, SettingsSnapshot, TelegramProviderCommand, TelegramRuntimeSnapshot,
+  TelegramSettingsSnapshot, UpdateAvailablePayload, UiNotificationPayload, WorkerAttention,
 } from '../shared/types';
 
 export type ElectronAPI = {
@@ -123,6 +101,14 @@ export type ElectronAPI = {
   getEmailSettings: () => Promise<EmailSettingsSnapshot>;
   updateEmailEnabled: (enabled: boolean) => Promise<{ ok: boolean }>;
   updateEmailCredentials: (creds: SmtpCredentials) => Promise<{ ok: boolean; message?: string }>;
+
+  getByokSettings: () => Promise<ByokSettingsSnapshot>;
+  saveByokInstance: (req: ByokInstanceSaveRequest) => Promise<{ ok: boolean; snapshot: ByokSettingsSnapshot }>;
+  deleteByokInstance: (id: string) => Promise<{ ok: boolean; snapshot: ByokSettingsSnapshot }>;
+  listByokModels: (req: ByokConnectionProbe) => Promise<ByokModelsResult>;
+  testByokInstance: (req: ByokConnectionProbe) => Promise<ByokTestResult>;
+  saveByokGroup: (req: ByokGroupSaveRequest) => Promise<{ ok: boolean; snapshot: ByokSettingsSnapshot }>;
+  deleteByokGroup: (id: string) => Promise<{ ok: boolean; snapshot: ByokSettingsSnapshot }>;
 
   getCloseToTray: () => Promise<boolean>;
   updateCloseToTray: (enabled: boolean) => Promise<boolean>;
@@ -313,6 +299,14 @@ const api: ElectronAPI = {
   getEmailSettings: () => ipcRenderer.invoke(IPC.GET_EMAIL_SETTINGS),
   updateEmailEnabled: (enabled) => ipcRenderer.invoke(IPC.UPDATE_EMAIL_ENABLED, enabled),
   updateEmailCredentials: (creds) => ipcRenderer.invoke(IPC.UPDATE_EMAIL_CREDENTIALS, creds),
+
+  getByokSettings: () => ipcRenderer.invoke(IPC.BYOK_GET_SETTINGS),
+  saveByokInstance: (req) => ipcRenderer.invoke(IPC.BYOK_SAVE_INSTANCE, req),
+  deleteByokInstance: (id) => ipcRenderer.invoke(IPC.BYOK_DELETE_INSTANCE, id),
+  listByokModels: (req) => ipcRenderer.invoke(IPC.BYOK_LIST_MODELS, req),
+  testByokInstance: (req) => ipcRenderer.invoke(IPC.BYOK_TEST_INSTANCE, req),
+  saveByokGroup: (req) => ipcRenderer.invoke(IPC.BYOK_SAVE_GROUP, req),
+  deleteByokGroup: (id) => ipcRenderer.invoke(IPC.BYOK_DELETE_GROUP, id),
 
   getCloseToTray: () => ipcRenderer.invoke(IPC.GET_CLOSE_TO_TRAY),
   updateCloseToTray: (enabled) => ipcRenderer.invoke(IPC.UPDATE_CLOSE_TO_TRAY, enabled),

@@ -6,10 +6,11 @@ import {
   isLoginRequiredError,
   getProviderLoginUrl,
 } from './providers';
+import { runByokCompletion } from './providers/byokClient';
 import { PERPLEXITY_CLOUDFLARE_ERROR_NAME } from './providers/perplexity';
 import { saveOutput } from './output';
 import { config } from './config';
-import { IPC } from '../shared/types';
+import { IPC, isByokTargetUrl } from '../shared/types';
 import type { Task } from '../shared/types';
 import {
   sendLog,
@@ -60,36 +61,45 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
     const dynamicInstruction = buildCombinedPromptFromPrefs(config.promptPreferences, getLangCache());
     const instruction = buildTaskInstruction(dynamicInstruction, config.syncSystemLanguageToModel, config.locale);
     const fullPrompt = instruction ? `${instruction}\n\n${prompt}` : prompt;
-    const preparedPrompt = preparePromptForProvider(fullPrompt, targetUrl);
-    if (preparedPrompt.removedBlankLines) {
-      sendLog(`[${id}] ✂️ Removed blank lines before sending to ${providerLabel}`);
-    }
-    if (preparedPrompt.truncated) {
-      sendLog(`[${id}] ✂️ Prompt truncated to ${preparedPrompt.maxChars} chars for ${providerLabel}`);
-    }
 
-    // Resolve the worker window INSIDE the lane: while queued behind other
-    // automations the window can be destroyed/recreated (login/Cloudflare mode
-    // switch), so a reference captured earlier may be dead by the time we run.
-    const { response, title } = await llmLane.runExclusive(async () => {
-      let activeWorker = getWorkerWin();
-      if (!activeWorker || activeWorker.isDestroyed()) {
-        sendLog(`[${id}] 🔄 Relaunching worker window...`);
-        createWorkerWindow(config.targetUrl);
-        await new Promise((r) => setTimeout(r, 3_000));
-        activeWorker = getWorkerWin();
+    const runBrowserTask = async (): Promise<{ response: string; title: string }> => {
+      const preparedPrompt = preparePromptForProvider(fullPrompt, targetUrl);
+      if (preparedPrompt.removedBlankLines) {
+        sendLog(`[${id}] ✂️ Removed blank lines before sending to ${providerLabel}`);
       }
-      if (!activeWorker || activeWorker.isDestroyed()) {
-        throw new Error('Worker window unavailable after relaunch attempt');
+      if (preparedPrompt.truncated) {
+        sendLog(`[${id}] ✂️ Prompt truncated to ${preparedPrompt.maxChars} chars for ${providerLabel}`);
       }
-      return runAutomation(
-        activeWorker,
-        preparedPrompt.prompt,
-        config.responseTimeout,
-        targetUrl,
-        task.attachments,
-      );
-    });
+
+      // Resolve the worker window INSIDE the lane: while queued behind other
+      // automations the window can be destroyed/recreated (login/Cloudflare mode
+      // switch), so a reference captured earlier may be dead by the time we run.
+      return llmLane.runExclusive(async () => {
+        let activeWorker = getWorkerWin();
+        if (!activeWorker || activeWorker.isDestroyed()) {
+          sendLog(`[${id}] 🔄 Relaunching worker window...`);
+          createWorkerWindow(config.targetUrl);
+          await new Promise((r) => setTimeout(r, 3_000));
+          activeWorker = getWorkerWin();
+        }
+        if (!activeWorker || activeWorker.isDestroyed()) {
+          throw new Error('Worker window unavailable after relaunch attempt');
+        }
+        return runAutomation(
+          activeWorker,
+          preparedPrompt.prompt,
+          config.responseTimeout,
+          targetUrl,
+          task.attachments,
+        );
+      });
+    };
+
+    // BYOK targets are direct HTTP API calls: no worker window, no llmLane
+    // serialization, and the prompt goes through verbatim (no truncation).
+    const { response, title } = isByokTargetUrl(targetUrl)
+      ? await runByokCompletion(targetUrl, fullPrompt, config.responseTimeout)
+      : await runBrowserTask();
 
     const elapsed = ((Date.now() - t0) / 1_000).toFixed(1);
     sendLog(`[${id}] ✅ Response received in ${elapsed}s`);

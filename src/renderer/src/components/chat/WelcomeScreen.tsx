@@ -11,11 +11,11 @@ const WelcomeStepCard: React.FC<{ children: React.ReactNode }> = ({ children }) 
 );
 
 export const WelcomeScreen: React.FC<{ activeModelUrl: string }> = ({ activeModelUrl }) => {
-  const { hotkey, duckaiModels } = useAppStore(
-    useShallow((s) => ({ hotkey: s.hotkey, duckaiModels: s.duckaiModels })),
+  const { hotkey, duckaiModels, byokModels } = useAppStore(
+    useShallow((s) => ({ hotkey: s.hotkey, duckaiModels: s.duckaiModels, byokModels: s.byokModels })),
   );
   const { t } = useI18nStore();
-  const providerLabel = findModelOption(activeModelUrl, duckaiModels).label;
+  const providerLabel = findModelOption(activeModelUrl, [...duckaiModels, ...byokModels]).label;
   const welcomeHint = t('welcome.hint').replace('{{provider}}', providerLabel);
 
   return (

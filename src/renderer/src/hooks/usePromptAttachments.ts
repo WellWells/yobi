@@ -2,10 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   PROVIDER_ATTACHMENT_POLICIES,
   PROVIDER_LABELS,
+  isByokTargetUrl,
   providerFromUrl,
   type PromptAttachment,
 } from '../../../shared/types';
 import { systemApi } from '../api/electronApi';
+import { useAppStore } from '../store/appStore';
 
 let attachmentSeq = 0;
 
@@ -48,8 +50,16 @@ export function usePromptAttachments(
   const [attachments, setAttachments] = useState<PromptAttachment[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
 
+  const byokModels = useAppStore((s) => s.byokModels);
+  const byokGroupModels = useAppStore((s) => s.byokGroupModels);
+  // BYOK targets (single keys and groups) would otherwise hostname-sniff to
+  // 'gemini' and wrongly allow uploads; the HTTP path sends text only.
+  const isByokTarget = isByokTargetUrl(modelUrl);
   const provider = providerFromUrl(modelUrl);
-  const maxFiles = PROVIDER_ATTACHMENT_POLICIES[provider].maxFiles;
+  const maxFiles = isByokTarget ? 0 : PROVIDER_ATTACHMENT_POLICIES[provider].maxFiles;
+  const providerLabel = isByokTarget
+    ? ([...byokModels, ...byokGroupModels].find((m) => m.url === modelUrl)?.label ?? 'BYOK')
+    : PROVIDER_LABELS[provider];
 
   const attachmentsRef = useRef<PromptAttachment[]>([]);
   attachmentsRef.current = attachments;
@@ -57,7 +67,7 @@ export function usePromptAttachments(
   const addFiles = useCallback((incoming: File[]) => {
     if (incoming.length === 0) return;
     if (maxFiles <= 0) {
-      setNotice(t('attach.unsupported').replace('{{provider}}', PROVIDER_LABELS[provider]));
+      setNotice(t('attach.unsupported').replace('{{provider}}', providerLabel));
       return;
     }
     const built = incoming.map(buildAttachment);
@@ -83,7 +93,7 @@ export function usePromptAttachments(
     if (pathless.length > 0) notices.push(t('attach.noPath'));
     if (usable.length > room) notices.push(t('attach.limit.reached').replace('{{max}}', String(maxFiles)));
     setNotice(notices.length > 0 ? notices.join(' ') : null);
-  }, [maxFiles, provider, t]);
+  }, [maxFiles, providerLabel, t]);
 
   const removeAttachment = useCallback((id: string) => {
     setAttachments((prev) => {
@@ -113,7 +123,7 @@ export function usePromptAttachments(
       current.forEach(revokePreview);
       attachmentsRef.current = [];
       setAttachments([]);
-      setNotice(t('attach.unsupported').replace('{{provider}}', PROVIDER_LABELS[provider]));
+      setNotice(t('attach.unsupported').replace('{{provider}}', providerLabel));
     } else if (current.length > maxFiles) {
       current.slice(maxFiles).forEach(revokePreview);
       const kept = current.slice(0, maxFiles);
@@ -121,7 +131,7 @@ export function usePromptAttachments(
       setAttachments(kept);
       setNotice(t('attach.limit.reached').replace('{{max}}', String(maxFiles)));
     }
-  }, [provider, maxFiles, t]);
+  }, [providerLabel, maxFiles, t]);
 
   useEffect(() => {
     if (!notice) return;

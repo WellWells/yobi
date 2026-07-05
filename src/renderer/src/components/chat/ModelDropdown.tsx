@@ -28,8 +28,11 @@ export const ModelDropdown: React.FC<ModelDropdownProps> = ({
 }) => {
   const [open, setOpen] = useState(false);
   const duckaiModels = useAppStore((state) => state.duckaiModels);
-  const allModels = [...MODELS, ...duckaiModels];
-  const current = findModelOption(value, duckaiModels);
+  const byokModels = useAppStore((state) => state.byokModels);
+  const byokGroupModels = useAppStore((state) => state.byokGroupModels);
+  const extraModels = [...duckaiModels, ...byokModels, ...byokGroupModels];
+  const allModels = [...MODELS, ...extraModels];
+  const current = findModelOption(value, extraModels);
   const CurrentIcon = getModelIconByUrl(current.url);
   const toggle = () => {
     if (disabled) return;

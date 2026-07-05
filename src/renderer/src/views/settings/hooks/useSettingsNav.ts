@@ -12,6 +12,7 @@ export const TAG_SETS = {
   timeout: ['timeout', 'timer', 'response', 'time', 'settings.responseTimeout.title'],
   prompt: ['prompt', 'persona', 'template', 'tone', 'length', 'nickname', 'settings.prompt.persona.title', 'settings.prompt.templates.title', 'settings.youtube.prompt.title', 'settings.prompt.preview.title'],
   accounts: ['account', 'accounts', 'login', 'logout', 'sign in', 'sign out', 'signin', 'session', 'chatgpt', 'gemini', 'perplexity', 'settings.group.accounts', 'settings.accounts.title'],
+  byok: ['byok', 'api key', 'apikey', 'key', 'token', 'openrouter', 'openai', 'gemini api', 'base url', 'model', 'group', 'pool', 'rotate', 'rotation', 'round robin', 'load balance', 'settings.byok.title', 'settings.byok.group.title'],
   bots: ['bot', 'telegram', 'line', 'token', 'pairing', 'group', 'command', 'duck', 'settings.group.bots', 'settings.telegram.section.connection', 'settings.telegram.commands.title', 'settings.telegram.section.access'],
   config: ['config', 'configuration', 'backup', 'restore', 'import', 'export', 'json', 'folder', 'directory', 'settings.config.title'],
   danger: ['danger', 'reset', 'clear', 'delete', 'restore', 'settings.danger.title'],
@@ -21,7 +22,7 @@ export const TAG_SETS = {
 const CATEGORY_TAG_MAP: Record<Category, (keyof typeof TAG_SETS)[]> = {
   general: ['hotkey', 'language', 'notify', 'theme', 'tray'],
   ai: ['timeout', 'prompt'],
-  accounts: ['accounts'],
+  accounts: ['accounts', 'byok'],
   bots: ['bots'],
   system: ['config', 'danger'],
 };

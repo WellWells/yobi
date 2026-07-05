@@ -24,6 +24,8 @@ import { useRewriteTask } from '../hooks/useRewriteTask';
 import { useChatCommands } from '../hooks/useChatCommands';
 import { useChatCommandRunner } from '../hooks/useChatCommandRunner';
 import { fileApi, settingsApi, clipboardApi, promptApi } from '../api/electronApi';
+import { DEFAULT_MODEL_URL } from '../config/models';
+import { isByokTargetUrl } from '../../../shared/types';
 
 const RewriteTriggerButton = React.memo<{
   onStart: (url: string) => void;
@@ -116,6 +118,26 @@ export const ChatView: React.FC = React.memo(() => {
   useEffect(() => {
     setViewMenuOpen(false);
   }, [selectedFile?.path]);
+
+  // A BYOK key or group can disappear underneath the locally-held selection
+  // (deleted in Settings, wiped by reset/import). Without this sync the
+  // dropdown would fall back to displaying Gemini while sends still target the
+  // dead byok:// / byokgroup:// URL — and the next send would re-persist that
+  // dangling URL into config.targetUrl, undoing the main-side cleanup.
+  const byokModels = useAppStore((s) => s.byokModels);
+  const byokGroupModels = useAppStore((s) => s.byokGroupModels);
+  const byokModelsLoaded = useAppStore((s) => s.byokModelsLoaded);
+  useEffect(() => {
+    if (!byokModelsLoaded) return;
+    const known = (url: string): boolean =>
+      byokModels.some((m) => m.url === url) || byokGroupModels.some((m) => m.url === url);
+    setActiveModelUrl((prev) => {
+      if (!isByokTargetUrl(prev) || known(prev)) return prev;
+      const storeAiUrl = useAppStore.getState().aiUrl;
+      const storeAiUrlDangling = isByokTargetUrl(storeAiUrl) && !known(storeAiUrl);
+      return storeAiUrlDangling ? DEFAULT_MODEL_URL : storeAiUrl;
+    });
+  }, [byokModels, byokGroupModels, byokModelsLoaded]);
 
 
   useEffect(() => {

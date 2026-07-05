@@ -5,6 +5,8 @@ import { load } from 'cheerio';
 import type { MarkdownCapturePayload } from '../../../shared/types';
 import { paletteBackground, paletteCardTheme } from '../../../shared/capturePalettes';
 import { getProviderLabel, preparePromptForProvider, runAutomation } from '../../providers';
+import { runByokCompletion } from '../../providers/byokClient';
+import { isByokTargetUrl } from '../../../shared/types';
 import { extractCoverImage, fetchAndParse } from '../../urlParser';
 import { sendLog, sendWebNotification } from '../../helpers';
 import { clipboardLane, llmLane, pageFetchLane } from '../lanes';
@@ -140,9 +142,8 @@ export async function execLlm(
 ): Promise<string> {
   const prompt = config.prompt ?? '';
   if (!prompt) return '';
-  const workerWin = deps.getWorkerWin();
-  if (!workerWin) throw new Error('Worker window not available');
   const providerUrl = config.provider || deps.getTargetUrl();
+  const isByokTarget = isByokTargetUrl(providerUrl);
 
   const useMemory = config.useMemory === 'true';
   const flowId = (config.__flowId ?? '').trim();
@@ -155,35 +156,59 @@ export async function execLlm(
     }
   }
 
-  const preparedPrompt = preparePromptForProvider(effectivePrompt, providerUrl);
-  if (preparedPrompt.removedBlankLines) {
-    sendLog(`✂️ [AgentFlow] Removed blank lines for ${getProviderLabel(providerUrl)} input`);
-  }
-  if (preparedPrompt.truncated) {
-    sendLog(`✂️ [AgentFlow] Truncated ${getProviderLabel(providerUrl)} input to ${preparedPrompt.maxChars} chars`);
+  // BYOK targets go through verbatim: API calls need none of the input-box
+  // shaping (blank-line removal, char truncation) the browser path relies on.
+  let promptForModel = effectivePrompt;
+  if (!isByokTarget) {
+    const preparedPrompt = preparePromptForProvider(effectivePrompt, providerUrl);
+    if (preparedPrompt.removedBlankLines) {
+      sendLog(`✂️ [AgentFlow] Removed blank lines for ${getProviderLabel(providerUrl)} input`);
+    }
+    if (preparedPrompt.truncated) {
+      sendLog(`✂️ [AgentFlow] Truncated ${getProviderLabel(providerUrl)} input to ${preparedPrompt.maxChars} chars`);
+    }
+    promptForModel = preparedPrompt.prompt;
   }
 
-  // LLM automation is serialized app-wide by llmLane, so many concurrent flows
-  // pile up here. The response-timeout clock must only start once THIS step owns
-  // the shared worker window — otherwise time spent queued behind other flows is
-  // wrongly counted against the budget and later steps time out before they ever
-  // run. withAbort lets a queued step bail promptly on user abort; the in-lane
-  // guard stops it from firing stale automation once the lane frees; and the
-  // about:blank interrupt only runs while we hold the lane, so it can never nuke
-  // another flow's in-progress response.
-  const { response } = await withAbort(
-    llmLane.runExclusive(() => {
-      if (signal?.aborted) throw new FlowAbortError();
-      return withStepTimeout(
-        runAutomation(workerWin, preparedPrompt.prompt, timeoutMs, providerUrl),
-        timeoutMs,
-        'llm',
-        () => { workerWin.webContents.loadURL('about:blank').catch(() => {}); },
-        signal,
-      );
-    }),
-    signal,
-  );
+  let response: string;
+  if (isByokTarget) {
+    // Direct HTTP call — no shared worker window, so no llmLane serialization;
+    // the abort controller cancels the in-flight fetch on timeout or user abort.
+    const byokAbort = new AbortController();
+    const result = await withStepTimeout(
+      runByokCompletion(providerUrl, promptForModel, timeoutMs, byokAbort.signal),
+      timeoutMs,
+      'llm',
+      () => byokAbort.abort(),
+      signal,
+    );
+    response = result.response;
+  } else {
+    const workerWin = deps.getWorkerWin();
+    if (!workerWin) throw new Error('Worker window not available');
+    // LLM automation is serialized app-wide by llmLane, so many concurrent flows
+    // pile up here. The response-timeout clock must only start once THIS step owns
+    // the shared worker window — otherwise time spent queued behind other flows is
+    // wrongly counted against the budget and later steps time out before they ever
+    // run. withAbort lets a queued step bail promptly on user abort; the in-lane
+    // guard stops it from firing stale automation once the lane frees; and the
+    // about:blank interrupt only runs while we hold the lane, so it can never nuke
+    // another flow's in-progress response.
+    const result = await withAbort(
+      llmLane.runExclusive(() => {
+        if (signal?.aborted) throw new FlowAbortError();
+        return withStepTimeout(
+          runAutomation(workerWin, promptForModel, timeoutMs, providerUrl),
+          timeoutMs,
+          'llm',
+          () => { workerWin.webContents.loadURL('about:blank').catch(() => {}); },
+          signal,
+        );
+      }),
+      signal,
+    );
+    response = result.response;
+  }
 
   let finalResponse = response;
   if (useMemory && flowId) {
@@ -201,7 +226,7 @@ export async function execLlm(
 
   if (config.saveToHistory === 'true' && deps.onSaveHistory) {
     await deps.onSaveHistory({
-      prompt: preparedPrompt.prompt,
+      prompt: promptForModel,
       response: finalResponse,
       providerLabel: getProviderLabel(providerUrl),
     });
@@ -225,7 +250,7 @@ export async function execLlm(
   };
   const payload: MarkdownCapturePayload = {
     title,
-    prompt: preparedPrompt.prompt,
+    prompt: promptForModel,
     content: finalResponse,
     summary: finalResponse.replace(/```[\s\S]*?```/g, ' ').replace(/[#>*_~\-`\[\]()]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220),
     provider: getProviderLabel(providerUrl),

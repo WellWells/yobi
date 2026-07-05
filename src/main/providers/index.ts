@@ -3,7 +3,8 @@ import { runGeminiAutomation } from './gemini';
 import { runPerplexityAutomation } from './perplexity';
 import { CHATGPT_LOGIN_URL, isChatgptLoginRequiredError, runChatgptAutomation } from './chatgpt';
 import { runDuckaiAutomation } from './duckai';
-import { PROVIDER_LABELS } from '../../shared/types';
+import { getByokLabel } from './byokClient';
+import { PROVIDER_LABELS, PROVIDER_URLS, isByokTargetUrl } from '../../shared/types';
 import type { Provider } from '../../shared/types';
 
 export type { Provider };
@@ -61,6 +62,7 @@ export function detectProvider(url: string): Provider {
 }
 
 export function getProviderLabel(url: string): string {
+  if (isByokTargetUrl(url)) return getByokLabel(url);
   return PROVIDER_LABELS[detectProvider(url)];
 }
 
@@ -97,6 +99,12 @@ export async function runAutomation(
   targetUrl: string,
   attachments?: string[],
 ): Promise<{ response: string; title: string }> {
+  // Guard against the hostname-sniff fallback: an unrouted BYOK url would
+  // otherwise silently run Gemini browser automation. Callers must branch to
+  // runByokCompletion before reaching here.
+  if (isByokTargetUrl(targetUrl)) {
+    throw new Error('BYOK targets must not reach browser automation');
+  }
   const provider = detectProvider(targetUrl);
   return PROVIDER_RUNNER[provider](workerWin, prompt, timeoutMs, targetUrl, attachments);
 }
@@ -106,11 +114,16 @@ export function isLoginRequiredError(targetUrl: string, err: unknown): boolean {
   if (provider === 'chatgpt') {
     return isChatgptLoginRequiredError(err);
   }
+  if (provider === 'gemini') {
+    const msg = err instanceof Error ? err.message : String(err ?? '');
+    return msg.includes('GEMINI_LOGIN_REQUIRED');
+  }
   return false;
 }
 
 export function getProviderLoginUrl(targetUrl: string): string | null {
   const provider = detectProvider(targetUrl);
   if (provider === 'chatgpt') return CHATGPT_LOGIN_URL;
+  if (provider === 'gemini') return PROVIDER_URLS.gemini;
   return null;
 }

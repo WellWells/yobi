@@ -1,6 +1,12 @@
 import type {
   AccountStatus,
   AuthProvider,
+  ByokConnectionProbe,
+  ByokGroupSaveRequest,
+  ByokInstanceSaveRequest,
+  ByokModelsResult,
+  ByokSettingsSnapshot,
+  ByokTestResult,
   CaptureSettings,
   ChatCommandResult,
   DuckaiModelInfo,
@@ -104,6 +110,20 @@ export const emailApi = {
   updateEnabled: (enabled: boolean): Promise<{ ok: boolean }> => window.electronAPI.updateEmailEnabled(enabled),
   updateCredentials: (creds: SmtpCredentials): Promise<{ ok: boolean; message?: string }> =>
     window.electronAPI.updateEmailCredentials(creds),
+};
+
+export const byokApi = {
+  getSettings: (): Promise<ByokSettingsSnapshot> => window.electronAPI.getByokSettings(),
+  saveInstance: (req: ByokInstanceSaveRequest): Promise<{ ok: boolean; snapshot: ByokSettingsSnapshot }> =>
+    window.electronAPI.saveByokInstance(req),
+  deleteInstance: (id: string): Promise<{ ok: boolean; snapshot: ByokSettingsSnapshot }> =>
+    window.electronAPI.deleteByokInstance(id),
+  listModels: (req: ByokConnectionProbe): Promise<ByokModelsResult> => window.electronAPI.listByokModels(req),
+  testInstance: (req: ByokConnectionProbe): Promise<ByokTestResult> => window.electronAPI.testByokInstance(req),
+  saveGroup: (req: ByokGroupSaveRequest): Promise<{ ok: boolean; snapshot: ByokSettingsSnapshot }> =>
+    window.electronAPI.saveByokGroup(req),
+  deleteGroup: (id: string): Promise<{ ok: boolean; snapshot: ByokSettingsSnapshot }> =>
+    window.electronAPI.deleteByokGroup(id),
 };
 
 export const accountApi = {

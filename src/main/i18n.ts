@@ -51,8 +51,7 @@ export function localizeUserFacingError(raw: string, strings: Record<string, str
     'ChatGPT response is empty': t(strings, 'main.error.chatgptResponseEmpty'),
     'Gemini input area not found — is the page logged in?': t(strings, 'main.error.geminiInputNotFound'),
     'Clipboard interceptor returned empty text': t(strings, 'main.error.geminiClipboardEmpty'),
-    'Copy button vanished unexpectedly': t(strings, 'main.error.geminiCopyButtonMissing'),
-    'Clipboard interceptor got nothing after copy click': t(strings, 'main.error.geminiCopyNoText'),
+    'Gemini answer element present but its text was empty': t(strings, 'main.error.geminiCopyNoText'),
     'Perplexity returned empty response': t(strings, 'main.error.pplxEmptyResponse'),
     'Perplexity input area not found': t(strings, 'main.error.pplxInputNotFound'),
     'Perplexity response block not found': t(strings, 'main.error.pplxResponseBlockNotFound'),
@@ -61,6 +60,9 @@ export function localizeUserFacingError(raw: string, strings: Record<string, str
     'webp screenshot data is empty': t(strings, 'main.error.webpDataEmpty'),
     'export failed': t(strings, 'main.error.exportFailed'),
     'Image height exceeds limits. Please use PDF format.': t(strings, 'main.error.imageTooTall'),
+    'BYOK provider not found — the instance may have been deleted': t(strings, 'main.error.byokInstanceMissing'),
+    'BYOK group not found — it may have been deleted': t(strings, 'main.error.byokGroupMissing'),
+    'BYOK group has no usable keys — add at least one key to the group': t(strings, 'main.error.byokGroupEmpty'),
   };
   if (exactMap[raw]) return exactMap[raw];
 
@@ -68,6 +70,8 @@ export function localizeUserFacingError(raw: string, strings: Record<string, str
     ['ChatGPT automation failed: ', 'main.error.chatgptAutomationFailed'],
     ['Gemini automation failed: ', 'main.error.geminiAutomationFailed'],
     ['Perplexity automation failed: ', 'main.error.pplxAutomationFailed'],
+    ['BYOK configuration incomplete: ', 'main.error.byokConfigIncomplete'],
+    ['BYOK request failed: ', 'main.error.byokRequestFailed'],
   ];
   for (const [prefix, key] of prefixHandlers) {
     if (raw.startsWith(prefix)) {

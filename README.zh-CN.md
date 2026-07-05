@@ -26,7 +26,7 @@
 |     | 功能                 | 对你意味着什么                                                                 |
 | --- | -------------------- | ----------------------------------------------------------------------------- |
 | ⌨️   | **一个热键**         | 在任何地方选中文字，按下 `Alt+G`（macOS 为 `⌘G`）即得答案——并自动保存          |
-| 🔑   | **无需 API Key**     | 使用服务商的网页，而非付费 API——无需注册、无需付费                             |
+| 🔑   | **无需 API Key**     | 使用服务商的网页，而非付费 API——无需注册、无需付费。已经有 Key？可选的 BYOK 模式也支持 |
 | 🤖   | **主流 AI 全覆盖**   | ChatGPT · Gemini · Perplexity · Duck.ai，一键切换                              |
 | 🔁   | **无代码自动化**     | 拖拽步骤即可搭建工作流——或只需描述一下，让 AI 替你组装                         |
 | 📱   | **从 Telegram 运行** | 在手机上触发你的 AI 与自动化流程                                               |
@@ -72,17 +72,17 @@ npm run dev
 
 |                          主聊天界面                           |                          模型选择菜单                          |
 | :-----------------------------------------------------------: | :------------------------------------------------------------: |
-| <img src="docs/assets/main-chat-interface.png" width="400" /> | <img src="docs/assets/model-selection-menu.png" width="400" /> |
+| <img src="assets/screenshots/main-chat-interface.png" width="400" /> | <img src="assets/screenshots/model-selection-menu.png" width="400" /> |
 |                    通过网页界面与 AI 对话                     |       在 ChatGPT · Gemini · Perplexity · Duck.ai 间切换        |
 
 |                            对话历史与摘要                             |                             导出选项                             |
 | :-------------------------------------------------------------------: | :--------------------------------------------------------------: |
-| <img src="docs/assets/chat-history-summary-result.png" width="400" /> | <img src="docs/assets/export-options-preview.png" width="400" /> |
+| <img src="assets/screenshots/chat-history-summary-result.png" width="400" /> | <img src="assets/screenshots/export-options-preview.png" width="400" /> |
 |                         自动保存并附带时间戳                          |             导出为 PNG、WebP 或 PDF，支持自定义样式              |
 
 <div align="center">
 
-![AgentFlow 编辑器（RSS 步骤）](docs/assets/agentflow-editor-rss-step.png)
+![AgentFlow 编辑器（RSS 步骤）](assets/screenshots/agentflow-editor-rss-step.png)
 
 **AgentFlow** — 抓取内容、用 AI 摘要，并按计划发送到 Telegram——无需代码
 
@@ -104,7 +104,7 @@ npm run dev
 
 - 📥 **抓取数据**——网页、RSS、HTTP API、YouTube 字幕，甚至实时的股票 / 外汇 / 天气——无需 API Key
 - 🌐 **驱动浏览器**——打开标签页、点击、填写表单、截图
-- 🧠 **询问 AI**——ChatGPT · Gemini · Perplexity · Duck.ai
+- 🧠 **询问 AI**——ChatGPT · Gemini · Perplexity · Duck.ai——或通过 BYOK 使用你自己的 API Key
 - 📤 **发送结果**——Telegram、邮件、文件，或剪贴板
 - 🛠️ **运行任意内容**——程序、JavaScript、Shell，以及系统与电源控制
 - 🔀 **控制流程**——循环、条件、定时调度
@@ -150,6 +150,7 @@ npm run dev
 - **截图与导出**——把任意回复变成精美的 PNG / WebP / PDF（浅色或深色卡片、渐变色板、自选元数据）。
 - **邮件（SMTP）**——让流程通过邮件发送结果；密码保存在操作系统密钥链中，绝不会写入流程文件。
 - **账号**——按服务商分别登录或登出，一键重置某个服务商的数据以修复卡死的会话。
+- **自备密钥（BYOK）**——可选择添加你自己的 OpenAI 兼容（OpenAI、OpenRouter、Together、Groq、本地服务器…）或 Gemini API 密钥作为额外服务商：选类型、填 base URL／模型／密钥，再用「**加载模型**」从端点支持的列表挑选、用「**测试**」确认能通。BYOK 实例在聊天与 AgentFlow 中和其他服务商一样选用；浏览器模式仍是默认，密钥以操作系统密钥链加密存储。
 - **外观与行为**——11 款主题、堆叠或左右并排布局、开机自启、关闭至托盘、响应超时、文字缩放。
 - **配置备份**——将全部设置导出和导入为单个 JSON 文件。
 
@@ -157,7 +158,7 @@ npm run dev
 
 ## 🔍 Yobi 如何运作
 
-Yobi 自动化 ChatGPT、Gemini、Perplexity 与 Duck.ai 的**网页界面**。它在内置浏览器窗口中，把你的提示词输入服务商的网页，再从页面读回答案——就和你亲手操作一样。只有需要登录的服务商才在该窗口里登录。它**不使用官方 API，也不运行本地模型**——这正是它无需 API Key、也没有任何费用的原因。
+Yobi 自动化 ChatGPT、Gemini、Perplexity 与 Duck.ai 的**网页界面**。它在内置浏览器窗口中，把你的提示词输入服务商的网页，再从页面读回答案——就和你亲手操作一样。只有需要登录的服务商才在该窗口里登录。默认**不使用官方 API，也不运行本地模型**——这正是它无需 API Key、也没有任何费用的原因。（如果你有 Key，可选的 BYOK 模式会改为直接调用任何 OpenAI 兼容端点或 Gemini API——以下说明均针对默认的浏览器模式。）
 
 由于它使用的是网页而非官方 API，这**并不在服务商服务条款的许可范围内**。不过 Yobi 不会隐瞒这一点——它不会绕过任何保护措施：不破解 CAPTCHA、不规避速率限制、也不轮换 IP。所以你真正会遇到的，是反机器人检查（类似 Cloudflare 的「确认你不是机器人」页面）；一旦发生，Yobi 会暂停，把控制权交还给你手动完成。
 
@@ -169,7 +170,7 @@ Yobi 自动化 ChatGPT、Gemini、Perplexity 与 Duck.ai 的**网页界面**。�
 
 - **无遥测**——零分析、零追踪；你的查询只发送给你选择的 AI 服务商（受其各自的隐私政策约束）。
 - **本地且开源**——所有自动化逻辑都在本机运行，可在 `src/main/` 中审查。
-- **凭据加密**——你的 Telegram Token 与 SMTP 密码在写入磁盘前，均使用操作系统密钥链（Electron `safeStorage`）加密。
+- **凭据加密**——你的 Telegram Token、SMTP 密码与 BYOK API 密钥在写入磁盘前，均使用操作系统密钥链（Electron `safeStorage`）加密。
 
 ---
 

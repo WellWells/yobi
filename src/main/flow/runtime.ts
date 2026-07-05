@@ -3,6 +3,10 @@ import type { FlowExecutorDeps, LogCallback } from './types';
 
 const DEFAULT_STEP_TIMEOUT_MS = 60_000;
 const BROWSER_STEP_TIMEOUT_MS = 300_000;
+// LLM steps follow the configured Model Response Timeout; this is only the
+// fallback used when that value is unavailable, kept in sync with the shipped
+// `responseTimeout` default (see configTypes).
+const DEFAULT_LLM_TIMEOUT_MS = 120_000;
 const MAX_DELAY_MS = 3_600_000;
 
 function normalizeTimeoutMs(value: number | undefined, fallbackMs: number): number {
@@ -20,7 +24,7 @@ export function resolveStepTimeoutMs(
   config?: Record<string, string>,
 ): number {
   if (type === 'llm') {
-    return normalizeTimeoutMs(deps.getResponseTimeoutMs?.(), DEFAULT_STEP_TIMEOUT_MS);
+    return normalizeTimeoutMs(deps.getResponseTimeoutMs?.(), DEFAULT_LLM_TIMEOUT_MS);
   }
   if (type === 'delay') {
     return resolveDelayMs(config) + 10_000;

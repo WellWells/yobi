@@ -1,6 +1,6 @@
 {
   "name": "yobi",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Desktop AI automation that drives the ChatGPT, Gemini, Perplexity, and Duck.ai web interfaces via global hotkeys, with AgentFlow visual workflows and Telegram bot control.",
   "author": "WellsTsai",
   "repository": {
@@ -22,6 +22,7 @@
     "prepare:icons": "tsx scripts/generate-icons.ts",
     "licenses:generate": "tsx scripts/generate-licenses.ts",
     "build:win": "npm run prepare:icons && npm run build:compile && npm run licenses:generate && electron-builder --win",
+    "build:msix": "npm run prepare:icons && npm run build:compile && npm run licenses:generate && electron-builder --win appx",
     "build:mac": "npm run prepare:icons && npm run build:compile && npm run licenses:generate && electron-builder --mac",
     "build": "npm run build:win",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
@@ -80,7 +81,7 @@
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
-    "shiki": "^4.3.0",
+    "shiki": "^4.3.1",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
@@ -98,9 +99,9 @@
     "postcss": "^8.5.16",
     "postcss-preset-mantine": "^1.18.0",
     "postcss-simple-vars": "^7.0.1",
-    "tsx": "^4.22.4",
+    "tsx": "^4.23.0",
     "typescript": "^6.0.3",
-    "vite": "^8.1.2",
+    "vite": "^8.1.3",
     "vitest": "^4.1.9"
   },
   "build": {
@@ -150,6 +151,27 @@
     },
     "nsis": {
       "artifactName": "Yobi-${version}-win-x64-Setup.exe"
+    },
+    "appx": {
+      "applicationId": "Yobi",
+      "identityName": "wellstsai.YobiAI",
+      "publisher": "CN=BF03D00F-7701-4B9B-AA3B-BC3A391584C3",
+      "publisherDisplayName": "wellstsai.com",
+      "displayName": "Yobi AI",
+      "showNameOnTiles": true,
+      "minVersion": "10.0.17763.0",
+      "languages": [
+        "en-US",
+        "de-DE",
+        "es-ES",
+        "fr-FR",
+        "ja-JP",
+        "ko-KR",
+        "pt-BR",
+        "zh-CN",
+        "zh-TW"
+      ],
+      "artifactName": "Yobi-${version}-win-${arch}.msix"
     },
     "mac": {
       "icon": "assets/icon-mac.icns",

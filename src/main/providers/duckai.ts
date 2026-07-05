@@ -54,24 +54,81 @@ async function raiseIfDuckaiChallenge(wc: WebContents): Promise<void> {
   throw error;
 }
 
+// Waits for an in-flight page load on the shared worker to settle before we drive it elsewhere.
+// did-stop-loading fires on success OR failure; the timeout is a floor so a slow/looping boot
+// load (e.g. a logged-out provider redirect) can't block us forever.
+async function waitForWorkerIdle(wc: WebContents, timeoutMs: number): Promise<void> {
+  if (!wc.isLoading()) return;
+  await new Promise<void>((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const done = (): void => {
+      clearTimeout(timer);
+      wc.removeListener('did-stop-loading', done);
+      wc.removeListener('did-finish-load', done);
+      resolve();
+    };
+    timer = setTimeout(done, timeoutMs);
+    wc.once('did-stop-loading', done);
+    wc.once('did-finish-load', done);
+  });
+}
+
+// Navigates the worker to duck.ai, retrying once on a transient ERR_ABORTED. An abort here means
+// another navigation (typically the worker's initial provider load) superseded ours; re-navigating
+// in quick succession can trip duck.ai's 429, so we settle first and skip the retry if we ended up
+// on duck.ai anyway. The localStorage injector is registered per attempt so it fires at duck.ai's
+// dom-ready, before the onboarding modal can mount.
+async function navigateToDuckaiWithRetry(wc: WebContents): Promise<void> {
+  const MAX_ATTEMPTS = 2;
+  // Register the localStorage injector once, with a handle we can remove, so it fires at duck.ai's
+  // dom-ready (before the onboarding modal mounts) yet never leaks onto a later, unrelated navigation
+  // if every attempt aborts — once() only self-removes when it actually fires.
+  let lsInjected: Promise<void> | null = null;
+  const onDomReady = (): void => { lsInjected = injectDuckaiLocalStorage(wc).catch(() => {}); };
+  wc.once('dom-ready', onDomReady);
+  try {
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        await navigateAndWait(wc, DUCKAI_HOME);
+        if (lsInjected) await lsInjected;
+        return;
+      } catch (err) {
+        if (wc.getURL().includes('duck.ai')) {
+          await injectDuckaiLocalStorage(wc).catch(() => {});
+          return;
+        }
+        const aborted = err instanceof Error && /ERR_ABORTED|\(-3\)/.test(err.message);
+        if (!aborted || attempt === MAX_ATTEMPTS) throw err;
+        await sleep(1_500);
+        await waitForWorkerIdle(wc, 8_000);
+      }
+    }
+  } finally {
+    wc.removeListener('dom-ready', onDomReady);
+  }
+}
+
 export async function fetchDuckaiModels(workerWin: BrowserWindow): Promise<DuckaiModelInfo[]> {
   const wc = workerWin.webContents;
 
   applyWorkerUserAgent(wc, FIREFOX_UA);
 
-  const alreadyOnDuckAi = wc.getURL().includes('duck.ai');
+  // The shared worker boots on the default provider (config.targetUrl) at startup, and that first
+  // navigation can still be loading when this runs. Driving the SAME webContents to duck.ai
+  // mid-flight makes the two loads race -> ERR_ABORTED (seen only on a cold first launch; a warm
+  // restart finishes the boot load first, so it doesn't reproduce). Let the boot load settle first,
+  // THEN decide based on where it actually landed.
+  await waitForWorkerIdle(wc, 8_000);
 
-  if (!alreadyOnDuckAi) {
-    const lsReady = setupDuckaiLocalStorageOnDomReady(wc);
-    await navigateAndWait(wc, DUCKAI_HOME);
-    await lsReady;
-    await sleep(1_500);
-  } else {
-    if (wc.isLoading()) {
-      await new Promise<void>((resolve) => { wc.once('did-finish-load', () => resolve()); });
-    }
+  if (wc.getURL().includes('duck.ai')) {
+    // Already on duck.ai (e.g. the default provider IS duck.ai) — do NOT re-navigate: a second
+    // load in quick succession doubles duck.ai's /duckchat/v1/status call and trips its 429.
     await injectDuckaiLocalStorage(wc);
     await sleep(1_000);
+  } else {
+    // On another provider — navigate to duck.ai, with a one-shot retry on a transient abort.
+    await navigateToDuckaiWithRetry(wc);
+    await sleep(1_500);
   }
 
   return wc.executeJavaScript(`

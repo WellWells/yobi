@@ -116,6 +116,7 @@ export function initializeUpdater(deps: UpdaterDeps): void {
 }
 
 export async function checkForUpdates(): Promise<boolean> {
+  if (process.windowsStore) return false;
   if (!initialized || !app.isPackaged || checking) return false;
 
   checking = true;

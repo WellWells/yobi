@@ -44,6 +44,9 @@ interface AppState {
   hotkey: string;
   aiUrl: string;
   duckaiModels: ModelOption[];
+  byokModels: ModelOption[];
+  byokGroupModels: ModelOption[];
+  byokModelsLoaded: boolean;
 
   setStatus: (status: 'idle' | 'processing') => void;
   setQueue: (q: QueueState) => void;
@@ -61,6 +64,8 @@ interface AppState {
   setHotkey: (hotkey: string) => void;
   setAiUrl: (url: string) => void;
   setDuckaiModels: (models: ModelOption[]) => void;
+  setByokModels: (models: ModelOption[]) => void;
+  setByokGroupModels: (models: ModelOption[]) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -77,6 +82,9 @@ export const useAppStore = create<AppState>((set) => ({
   hotkey: 'Alt+G',
   aiUrl: DEFAULT_MODEL_URL,
   duckaiModels: [],
+  byokModels: [],
+  byokGroupModels: [],
+  byokModelsLoaded: false,
   layoutMode: 'stacked',
   markdownZoom: 100,
 
@@ -138,4 +146,6 @@ export const useAppStore = create<AppState>((set) => ({
   setHotkey: (hotkey) => set({ hotkey }),
   setAiUrl: (aiUrl) => set({ aiUrl }),
   setDuckaiModels: (duckaiModels) => set({ duckaiModels }),
+  setByokModels: (byokModels) => set({ byokModels, byokModelsLoaded: true }),
+  setByokGroupModels: (byokGroupModels) => set({ byokGroupModels }),
 }));

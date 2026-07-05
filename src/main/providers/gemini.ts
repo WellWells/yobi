@@ -391,30 +391,71 @@ function buildGeminiReadScript(
 }
 
 const INJECTED_GEMINI_WAIT_AND_READ_JS = `async function geminiWaitAndRead(baseline, copyBtnSel) {
-  var NO_CHANGE_LIMIT = 30000;
-  var geminiLastLen = -1;
-  var geminiLastChangeAt = null;
+  var IDLE_LIMIT = TIMEOUT;      // reset on any answer change or while still generating; give up only after
+                                 // this long with no activity (idle window = the configured response timeout)
+  var STABLE_MS = 2500;          // answer text unchanged AND generation stopped, continuously, this long -> done
+
+  // Newest answer's clean text (no "Gemini said" screen-reader prefix). Selects the LAST
+  // model-response in document order — ':last-of-type' would match every per-turn node and
+  // return the OLDEST. The markdown node only exists once content renders, so this returns
+  // '' until the first token — callers use that to tell "answer present" from "nothing yet".
+  function readAnswerText() {
+    var responses = document.querySelectorAll('model-response');
+    if (responses.length > 0) {
+      var last = responses[responses.length - 1];
+      var md = last.querySelector('message-content .markdown, .markdown');
+      if (md && (md.innerText || '').trim()) return (md.innerText || '').trim();
+      return (last.innerText || '').trim();
+    }
+    var mc = document.querySelectorAll('message-content');
+    if (mc.length > 0) return (mc[mc.length - 1].innerText || '').trim();
+    return '';
+  }
+  function isGenerating() {
+    return !!document.querySelector('button[aria-label*="Stop" i], [data-test-id="stop-button"]');
+  }
+  function copyButtonReady() {
+    return document.querySelectorAll(copyBtnSel).length > baseline;
+  }
+
+  // Completion is signalled by EITHER the copy button appearing (preferred: clicking it
+  // yields real Markdown with tables/code intact) OR the answer text staying unchanged while
+  // generation is no longer active for a continuous STABLE_MS. The second path is essential
+  // where Gemini renders no copy toolbar (observed on some logged-out locales) — the answer
+  // is in the DOM either way, so gating solely on the copy button is what made those cases
+  // time out.
+  var lastLen = -1;
+  var lastChangeAt = null;
+  var stableSince = null;
+  var sawAnswer = false;
 
   while (true) {
-    var copyBtns = document.querySelectorAll(copyBtnSel);
-    if (copyBtns.length > baseline) break;
-    var respEls = document.querySelectorAll('model-response, message-content');
-    var respLen = 0;
-    if (respEls.length > 0) {
-      respLen = (respEls[respEls.length - 1].innerText || '').length;
+    if (copyButtonReady()) break;
+    var text = readAnswerText();
+    if (text.length > 0) sawAnswer = true;
+    if (text.length !== lastLen) {
+      lastLen = text.length;
+      lastChangeAt = Date.now();
+      stableSince = null;
+    } else if (isGenerating()) {
+      // Still generating (Stop button present): only suppress the stable-text completion path so a
+      // mid-stream pause isn't mistaken for "done". Do NOT reset the idle timer here — the idle guard
+      // below must still fire on a truly frozen page (e.g. a Stop button that never clears) so an
+      // answer already in the DOM is returned instead of hanging to the ~10-min outer backstop.
+      stableSince = null;
+    } else if (text.length > 0) {
+      if (stableSince === null) stableSince = Date.now();
+      if (Date.now() - stableSince >= STABLE_MS) break;
     }
-    if (respLen === 0) {
-      var mainEl = document.querySelector('main');
-      respLen = mainEl ? (mainEl.innerText || '').length : (document.body.innerText || '').length;
+    // Idle timeout: the answer text has not changed for IDLE_LIMIT (reset on every change above),
+    // independent of the Stop button — so a page that finished but left its Stop button stuck still
+    // returns its answer here rather than hanging. With an answer in hand, return it; with none,
+    // surface sign-in required (a login wall streams nothing).
+    if (lastChangeAt !== null && Date.now() - lastChangeAt > IDLE_LIMIT) {
+      if (sawAnswer && lastLen > 0) break;
+      throw new Error('GEMINI_LOGIN_REQUIRED: Gemini produced no answer (sign-in required or blocked)');
     }
-    if (respLen !== geminiLastLen) {
-      geminiLastLen = respLen;
-      geminiLastChangeAt = Date.now();
-    }
-    if (geminiLastChangeAt !== null && Date.now() - geminiLastChangeAt > NO_CHANGE_LIMIT) {
-      throw new Error('Timeout: Gemini response had no changes for 30 seconds');
-    }
-    await sleep(500);
+    await sleep(400);
   }
 
   await sleep(150);
@@ -425,15 +466,16 @@ const INJECTED_GEMINI_WAIT_AND_READ_JS = `async function geminiWaitAndRead(basel
     if (titleEl) title = titleEl.innerText;
   } catch(e) {}
 
+  // Prefer the copy button (keeps Markdown formatting); fall back to the rendered text
+  // when it is absent. This fallback is now always reachable — previously the loop above
+  // could only exit once the copy button existed, so it never ran.
+  var response = '';
   var allCopyBtns = document.querySelectorAll(copyBtnSel);
   var lastCopyBtn = allCopyBtns[allCopyBtns.length - 1];
-  if (!lastCopyBtn) throw new Error('Copy button vanished unexpectedly');
-
-  var response = await interceptCopy(lastCopyBtn);
-  if (!response) {
-    var lastResp = document.querySelector('model-response:last-of-type message-content div.markdown, .response-container:last-of-type .markdown');
-    response = lastResp ? (lastResp.innerText || '').trim() : '';
+  if (lastCopyBtn) {
+    response = (await interceptCopy(lastCopyBtn)) || '';
   }
-  if (!response) throw new Error('Clipboard interceptor got nothing after copy click');
+  if (!response) response = readAnswerText();
+  if (!response) throw new Error('Gemini answer element present but its text was empty');
   return { response: response, title: title };
 }`;

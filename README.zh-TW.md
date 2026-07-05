@@ -26,7 +26,7 @@
 |     | 功能 | 對你的意義 |
 | --- | --- | --- |
 | ⌨️ | **一個熱鍵** | 在任何地方選取文字，按下 `Alt+G`（macOS 為 `⌘G`）就有答案——還會自動存檔 |
-| 🔑 | **無需 API 金鑰** | 用的是服務商的網頁，而非付費 API——不必註冊、不必付費 |
+| 🔑 | **無需 API 金鑰** | 用的是服務商的網頁，而非付費 API——不必註冊、不必付費。已經有金鑰？可選的 BYOK 模式也支援 |
 | 🤖 | **主流 AI 全到齊** | ChatGPT · Gemini · Perplexity · Duck.ai，一鍵切換 |
 | 🔁 | **零程式碼自動化** | 拖拉步驟就能組工作流程——或直接用一句話描述，讓 AI 幫你組起來 |
 | 📱 | **從 Telegram 操控** | 用手機就能啟動你的 AI 與自動化流程 |
@@ -72,17 +72,17 @@ npm run dev
 
 |                      主要聊天介面                      |                        模型選擇                         |
 | :-----------------------------------------------------------: | :------------------------------------------------------------: |
-| <img src="docs/assets/main-chat-interface.png" width="400" /> | <img src="docs/assets/model-selection-menu.png" width="400" /> |
+| <img src="assets/screenshots/main-chat-interface.png" width="400" /> | <img src="assets/screenshots/model-selection-menu.png" width="400" /> |
 |            透過網頁介面與 AI 對話             |     在 ChatGPT · Gemini · Perplexity · Duck.ai 間切換     |
 
 |                        對話紀錄與摘要                         |                          匯出選項                          |
 | :-------------------------------------------------------------------: | :--------------------------------------------------------------: |
-| <img src="docs/assets/chat-history-summary-result.png" width="400" /> | <img src="docs/assets/export-options-preview.png" width="400" /> |
+| <img src="assets/screenshots/chat-history-summary-result.png" width="400" /> | <img src="assets/screenshots/export-options-preview.png" width="400" /> |
 |                 附時間戳記自動儲存的回應                  |          匯出為 PNG、WebP 或 PDF，支援自訂樣式          |
 
 <div align="center">
 
-![AgentFlow 編輯器（RSS 步驟）](docs/assets/agentflow-editor-rss-step.png)
+![AgentFlow 編輯器（RSS 步驟）](assets/screenshots/agentflow-editor-rss-step.png)
 
 **AgentFlow** — 排程擷取內容、用 AI 摘要、再送到 Telegram——全程零程式碼
 
@@ -104,7 +104,7 @@ npm run dev
 
 - 📥 **抓取資料** — 網頁、RSS、HTTP API、YouTube 字幕，甚至即時的股票 / 外匯 / 天氣——全都免 API 金鑰
 - 🌐 **操控瀏覽器** — 開分頁、點擊、填表單、截圖
-- 🧠 **詢問 AI** — ChatGPT · Gemini · Perplexity · Duck.ai
+- 🧠 **詢問 AI** — ChatGPT · Gemini · Perplexity · Duck.ai——或透過 BYOK 使用你自己的 API 金鑰
 - 📤 **送出結果** — Telegram、電子郵件、檔案，或剪貼簿
 - 🛠️ **執行任何東西** — 程式、JavaScript、shell，外加系統與電源控制
 - 🔀 **流程控制** — 迴圈、條件、排程
@@ -150,6 +150,7 @@ npm run dev
 - **擷取與匯出** — 把任何回答變成精美的 PNG / WebP / PDF（淺色或深色卡片、漸層調色盤、自選顯示的中繼資料）。
 - **電子郵件（SMTP）** — 讓流程用郵件寄出結果；密碼存在作業系統金鑰圈裡，絕不會寫進流程檔案。
 - **帳號** — 逐一登入或登出各服務商，並可一鍵重設某服務商的資料，修復卡住的工作階段。
+- **自備金鑰（BYOK）** — 可選擇加入你自己的 OpenAI 相容（OpenAI、OpenRouter、Together、Groq、本地伺服器…）或 Gemini API 金鑰作為額外服務商：選類型、填 base URL／模型／金鑰，再用「**載入模型**」從端點支援的清單挑選、用「**測試**」確認能通。BYOK 實例在聊天與 AgentFlow 中和其他服務商一樣選用；瀏覽器模式仍是預設，金鑰以作業系統金鑰圈加密儲存。
 - **外觀與行為** — 11 款主題、堆疊或並排版面、開機自動啟動、關閉至系統匣、回應逾時、文字縮放。
 - **備份** — 把所有設定匯出或匯入為單一 JSON 檔案。
 
@@ -157,7 +158,7 @@ npm run dev
 
 ## 🔍 Yobi 如何運作
 
-Yobi 自動化 ChatGPT、Gemini、Perplexity 與 Duck.ai 的**網頁介面**。它在內建瀏覽器視窗中，把你的提示詞輸入服務商的網站，再從頁面讀回答案——就和你親手操作一樣。只有需要登入的服務商才得在那裡登入。它**不使用官方 API、也不在本機跑模型**，這正是它不需要 API 金鑰、也沒有費用的原因。
+Yobi 自動化 ChatGPT、Gemini、Perplexity 與 Duck.ai 的**網頁介面**。它在內建瀏覽器視窗中，把你的提示詞輸入服務商的網站，再從頁面讀回答案——就和你親手操作一樣。只有需要登入的服務商才得在那裡登入。預設**不使用官方 API、也不在本機跑模型**，這正是它不需要 API 金鑰、也沒有費用的原因。（如果你有金鑰，可選的 BYOK 模式會改為直接呼叫任何 OpenAI 相容端點或 Gemini API——以下說明皆針對預設的瀏覽器模式。）
 
 這**並非服務商官方支援的用法，也不在其服務條款的允許範圍內**；不過 Yobi 不會掩飾這一點——它不會繞過任何防護措施：不會破解 CAPTCHA、不會規避速率限制，也不會輪換 IP。所以你真正會碰到的，是反機器人檢查（類似 Cloudflare 的「確認你不是機器人」頁面）；發生時，Yobi 會暫停，把控制權交還給你手動完成。
 
@@ -169,7 +170,7 @@ Yobi 自動化 ChatGPT、Gemini、Perplexity 與 Duck.ai 的**網頁介面**。�
 
 - **無遙測** — 零分析、零追蹤；你的查詢只會送到你選擇的 AI 服務商（並受其各自的隱私權政策規範）。
 - **本機執行、開放原始碼** — 每一段自動化邏輯都在你的電腦上執行，並可在 `src/main/` 中查閱稽核。
-- **加密憑證** — 你的 Telegram token 與 SMTP 密碼會用作業系統金鑰圈（Electron `safeStorage`）加密後才寫入磁碟。
+- **加密憑證** — 你的 Telegram token、SMTP 密碼與 BYOK API 金鑰會用作業系統金鑰圈（Electron `safeStorage`）加密後才寫入磁碟。
 
 ---
 

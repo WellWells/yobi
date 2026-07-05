@@ -208,8 +208,9 @@ const INJECTED_PPLX_READ_JS = `
     }, 'Perplexity AI response content', TIMEOUT, 350);
 
     // Generation complete = the action toolbar (copy / image actions) appeared.
-    // Timeout only starts after response content stops changing (30 s inactivity).
-    var NO_CHANGE_LIMIT = 30000;
+    // Idle timeout only starts after response content stops changing; window = the configured
+    // response timeout (reset on every content change).
+    var NO_CHANGE_LIMIT = TIMEOUT;
     var pplxLastLen = -1;
     var pplxLastChangeAt = null;
     while (true) {
@@ -223,7 +224,7 @@ const INJECTED_PPLX_READ_JS = `
         pplxLastChangeAt = Date.now();
       }
       if (pplxLastChangeAt !== null && Date.now() - pplxLastChangeAt > NO_CHANGE_LIMIT) {
-        throw new Error('Timeout: Perplexity response had no changes for 30 seconds');
+        throw new Error('Timeout: Perplexity response stopped updating');
       }
       await sleep(400);
     }

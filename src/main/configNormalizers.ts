@@ -1,7 +1,7 @@
-import type { CaptureFormat, CaptureSettings, CustomTemplate, Provider, PromptLength, PromptPreferences, PromptTone, TelegramPairedUser, TelegramPairingState, TelegramPendingCode, TelegramProviderCommand } from '../shared/types';
-import { PROVIDERS } from '../shared/types';
+import type { ByokGroup, ByokProviderType, CaptureFormat, CaptureSettings, CustomTemplate, Provider, PromptLength, PromptPreferences, PromptTone, TelegramPairedUser, TelegramPairingState, TelegramPendingCode, TelegramProviderCommand } from '../shared/types';
+import { BYOK_PROVIDER_TYPES, PROVIDERS } from '../shared/types';
 import { defaultStored } from './configTypes';
-import type { Config, SmtpConfig, TelegramConfig } from './configTypes';
+import type { ByokInstance, Config, SmtpConfig, TelegramConfig } from './configTypes';
 
 export function normalizeConfig(raw: unknown): Config {
   const obj = (raw && typeof raw === 'object') ? (raw as Partial<Config>) : {};
@@ -26,7 +26,60 @@ export function normalizeConfig(raw: unknown): Config {
     promptPreferences: normalizePromptPreferences(obj.promptPreferences),
     telegram: deserializePairingConfig(obj.telegram),
     smtp: normalizeSmtp(obj.smtp),
+    byokInstances: normalizeByokInstances(obj.byokInstances),
+    byokGroups: normalizeByokGroups(obj.byokGroups),
   };
+}
+
+export function normalizeByokInstances(raw: unknown): ByokInstance[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const instances: ByokInstance[] = [];
+  for (const item of raw) {
+    const entry = (item && typeof item === 'object') ? (item as Partial<ByokInstance>) : {};
+    const id = typeof entry.id === 'string' ? entry.id.trim() : '';
+    const name = typeof entry.name === 'string' ? entry.name.trim() : '';
+    if (!id || !name || seen.has(id)) continue;
+    seen.add(id);
+    instances.push({
+      id,
+      name,
+      providerType: BYOK_PROVIDER_TYPES.includes(entry.providerType as ByokProviderType)
+        ? (entry.providerType as ByokProviderType)
+        : 'openai',
+      apiKey: typeof entry.apiKey === 'string' ? entry.apiKey.trim() : '',
+      baseUrl: typeof entry.baseUrl === 'string' ? entry.baseUrl.trim() : '',
+      model: typeof entry.model === 'string' ? entry.model.trim() : '',
+    });
+  }
+  return instances;
+}
+
+export function normalizeByokGroups(raw: unknown): ByokGroup[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const groups: ByokGroup[] = [];
+  for (const item of raw) {
+    const entry = (item && typeof item === 'object') ? (item as Partial<ByokGroup>) : {};
+    const id = typeof entry.id === 'string' ? entry.id.trim() : '';
+    const name = typeof entry.name === 'string' ? entry.name.trim() : '';
+    if (!id || !name || seen.has(id)) continue;
+    seen.add(id);
+    // Dangling members (a key deleted while still listed here) are tolerated:
+    // kept as-is on disk, skipped at resolution time. Dedup within a group.
+    const memberSeen = new Set<string>();
+    const memberIds: string[] = [];
+    if (Array.isArray(entry.memberIds)) {
+      for (const rawMember of entry.memberIds) {
+        const memberId = typeof rawMember === 'string' ? rawMember.trim() : '';
+        if (!memberId || memberSeen.has(memberId)) continue;
+        memberSeen.add(memberId);
+        memberIds.push(memberId);
+      }
+    }
+    groups.push({ id, name, memberIds });
+  }
+  return groups;
 }
 
 export function normalizeSmtp(raw: unknown): SmtpConfig {

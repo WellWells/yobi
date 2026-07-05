@@ -26,7 +26,7 @@
 |     | Feature              | What it means for you                                                                               |
 | --- | -------------------- | -------------------------------------------------------------------------------------------------- |
 | ⌨️   | **One hotkey**       | Select text anywhere, press `Alt+G` (`⌘G` on macOS), get an answer — saved automatically            |
-| 🔑   | **No API key**       | Uses the providers' web pages, not paid APIs — nothing to sign up or pay for                        |
+| 🔑   | **No API key**       | Uses the providers' web pages, not paid APIs — nothing to sign up or pay for. Have a key anyway? An optional BYOK mode supports it |
 | 🤖   | **Every major AI**   | ChatGPT · Gemini · Perplexity · Duck.ai, switchable in one click                                    |
 | 🔁   | **No-code automation** | Build workflows by dragging steps — or just describe one and let AI assemble it                   |
 | 📱   | **Runs from Telegram** | Fire your AI and your automations from your phone                                                  |
@@ -72,17 +72,17 @@ npm run dev
 
 |                      Main Chat Interface                      |                        Model Selection                         |
 | :-----------------------------------------------------------: | :------------------------------------------------------------: |
-| <img src="docs/assets/main-chat-interface.png" width="400" /> | <img src="docs/assets/model-selection-menu.png" width="400" /> |
+| <img src="assets/screenshots/main-chat-interface.png" width="400" /> | <img src="assets/screenshots/model-selection-menu.png" width="400" /> |
 |            Chat with AI through its web interface             |     Switch between ChatGPT · Gemini · Perplexity · Duck.ai     |
 
 |                        Chat History & Summary                         |                          Export Options                          |
 | :-------------------------------------------------------------------: | :--------------------------------------------------------------: |
-| <img src="docs/assets/chat-history-summary-result.png" width="400" /> | <img src="docs/assets/export-options-preview.png" width="400" /> |
+| <img src="assets/screenshots/chat-history-summary-result.png" width="400" /> | <img src="assets/screenshots/export-options-preview.png" width="400" /> |
 |                 Auto-saved responses with timestamps                  |          Export as PNG, WebP, or PDF with custom styles          |
 
 <div align="center">
 
-![AgentFlow editor with RSS step](docs/assets/agentflow-editor-rss-step.png)
+![AgentFlow editor with RSS step](assets/screenshots/agentflow-editor-rss-step.png)
 
 **AgentFlow** — fetch, summarize with AI, and send to Telegram, on a schedule — no code
 
@@ -104,7 +104,7 @@ Want to fine-tune it? Every step is editable — or drag your own together from 
 
 - 📥 **Pull data** — web pages, RSS, HTTP APIs, YouTube transcripts, even live stock / forex / weather — no API key
 - 🌐 **Drive a browser** — open tabs, click, fill forms, take screenshots
-- 🧠 **Ask AI** — ChatGPT · Gemini · Perplexity · Duck.ai
+- 🧠 **Ask AI** — ChatGPT · Gemini · Perplexity · Duck.ai — or your own API key via BYOK
 - 📤 **Send results** — Telegram, email, a file, or the clipboard
 - 🛠️ **Run anything** — programs, JavaScript, shell, plus system & power controls
 - 🔀 **Control flow** — loops, conditions, scheduling
@@ -150,6 +150,7 @@ Build your own commands in AgentFlow with the **Telegram trigger** — any messa
 - **Capture & export** — turn any answer into a styled PNG / WebP / PDF (light or dark card, gradient palette, your choice of metadata).
 - **Email (SMTP)** — let flows send results by mail; the password is stored in your OS keychain, never in a flow file.
 - **Accounts** — sign in or out per provider, and reset a provider's data in one click to fix a stuck session.
+- **Bring Your Own Key (BYOK)** — optionally add your own OpenAI-compatible (OpenAI, OpenRouter, Together, Groq, a local server, …) or Gemini API key as an extra provider: choose the type, set the base URL, model, and key, then use **Load models** to pick from what the endpoint offers and **Test** to confirm it works. BYOK instances are selectable in chat and AgentFlow like any other; browser mode stays the default, and keys are encrypted with your OS keychain.
 - **Appearance & behavior** — 11 themes, stacked or side-by-side layout, launch at startup, close-to-tray, response timeout, text zoom.
 - **Backup** — export and import all settings as a single JSON file.
 
@@ -157,7 +158,7 @@ Build your own commands in AgentFlow with the **Telegram trigger** — any messa
 
 ## 🔍 How Yobi Works
 
-Yobi automates the **web interfaces** of ChatGPT, Gemini, Perplexity, and Duck.ai. In a built-in browser window it types your prompt into the provider's site and reads the answer back from the page — the same thing you'd do by hand. You sign in there only for providers that require it. It uses **no official API and no local model**, which is exactly why it needs no API key and has no fee.
+Yobi automates the **web interfaces** of ChatGPT, Gemini, Perplexity, and Duck.ai. In a built-in browser window it types your prompt into the provider's site and reads the answer back from the page — the same thing you'd do by hand. You sign in there only for providers that require it. By default it uses **no official API and no local model**, which is exactly why it needs no API key and has no fee. (If you *do* have a key, the optional BYOK mode calls any OpenAI-compatible endpoint or the Gemini API directly instead — everything below applies to the default browser mode.)
 
 Since it uses the web pages rather than official APIs, this falls outside the providers' terms of service. Yobi doesn't hide that, though — it bypasses no protections: no solving CAPTCHAs, no evading rate limits, no rotating IPs. So in practice the most you'll run into is an anti-bot check (a Cloudflare-style "verify you're human" page), and when that happens Yobi pauses and hands control back to you to clear it manually.
 
@@ -169,7 +170,7 @@ Since it uses the web pages rather than official APIs, this falls outside the pr
 
 - **No telemetry** — zero analytics or tracking; your queries go only to the AI providers you pick (subject to their own privacy policies).
 - **Local & open source** — every bit of automation logic runs on your machine and is auditable in `src/main/`.
-- **Encrypted credentials** — your Telegram token and SMTP password are encrypted with the OS keychain (Electron `safeStorage`) before touching disk.
+- **Encrypted credentials** — your Telegram token, SMTP password, and BYOK API keys are encrypted with the OS keychain (Electron `safeStorage`) before touching disk.
 
 ---
 

@@ -11,11 +11,13 @@ import type { SkillConfigProps } from './types';
 
 export const LlmConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
   const duckaiModels = useAppStore((state) => state.duckaiModels);
+  const byokModels = useAppStore((state) => state.byokModels);
 
   const providerOptions = [
     { value: '', label: t('agentflow.skill.llm.providerCurrent') },
     ...MODELS.map((m) => ({ value: m.url, label: m.label })),
     ...duckaiModels.map((m) => ({ value: m.url, label: m.label })),
+    ...byokModels.map((m) => ({ value: m.url, label: m.label })),
   ];
 
   return (

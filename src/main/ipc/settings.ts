@@ -1,19 +1,20 @@
 import { ipcMain, app, shell } from 'electron';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
-import { IPC } from '../../shared/types';
+import { IPC, isByokTargetUrl } from '../../shared/types';
 import type { CaptureSettings } from '../../shared/types';
+import { getProviderLabel } from '../providers';
 import {
   config,
   saveConfig,
-  getDefaultConfig,
   getConfigPath,
   importConfigFromJson,
   normalizePromptPreferences,
   normalizeCaptureSettings,
 } from '../config';
-import { sendLog, normalizeAiUrl, applyLaunchAtStartup } from '../helpers';
+import { sendLog, normalizeAiUrl, applyLaunchAtStartup, relaunchApp } from '../helpers';
 import { loadLanguageData, setLangCache, setEnCache } from '../i18n';
+import { requestFactoryReset } from '../factoryReset';
 import { getWorkerWin } from '../windows';
 import { setHotkeyPaused } from '../hotkey';
 import {
@@ -43,9 +44,13 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
     const normalized = normalizeAiUrl(nextUrl);
     config.targetUrl = normalized;
     saveConfig({ targetUrl: normalized });
-    const worker = getWorkerWin();
-    if (worker && !worker.isDestroyed()) await worker.loadURL(normalized);
-    sendLog(`🌐 AI target updated: ${normalized}`);
+    // BYOK targets are HTTP API endpoints — leave the worker window on its
+    // current page instead of navigating it to an unloadable byok:// url.
+    if (!isByokTargetUrl(normalized)) {
+      const worker = getWorkerWin();
+      if (worker && !worker.isDestroyed()) await worker.loadURL(normalized);
+    }
+    sendLog(`🌐 AI target updated: ${getProviderLabel(normalized)}`);
     return true;
   });
 
@@ -97,19 +102,10 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
     return true;
   });
 
-  ipcMain.handle(IPC.RESET_SETTINGS, () => {
-    const defaults = getDefaultConfig();
-    Object.assign(config, defaults);
-    saveConfig(defaults);
-    ctx.bindHotkey();
-    const worker = getWorkerWin();
-    if (worker && !worker.isDestroyed()) {
-      worker.loadURL(config.targetUrl).catch(() => {
-        sendLog('⚠️ Failed to reload worker after settings reset');
-      });
-    }
-    void ctx.telegramRuntime.syncWithConfig();
-    sendLog('♻️ Settings restored to defaults');
+  ipcMain.handle(IPC.RESET_SETTINGS, async () => {
+    await requestFactoryReset();
+    sendLog('♻️ Factory reset scheduled — relaunching Yobi');
+    relaunchApp('factory reset');
     return buildSettingsSnapshot();
   });
 
@@ -151,11 +147,15 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
       ctx.onTraySettingsChanged?.();
       ctx.onTrayMenuRebuild?.();
 
-      const worker = getWorkerWin();
-      if (worker && !worker.isDestroyed()) {
-        void worker.loadURL(importedConfig.targetUrl).catch(() => {
-          sendLog('⚠️ Failed to reload worker after config import');
-        });
+      // BYOK targets are HTTP API endpoints, not loadable pages (same guard as
+      // UPDATE_AI_URL above).
+      if (!isByokTargetUrl(importedConfig.targetUrl)) {
+        const worker = getWorkerWin();
+        if (worker && !worker.isDestroyed()) {
+          void worker.loadURL(importedConfig.targetUrl).catch(() => {
+            sendLog('⚠️ Failed to reload worker after config import');
+          });
+        }
       }
 
       void loadLanguageData(importedConfig.locale).then((data) => {

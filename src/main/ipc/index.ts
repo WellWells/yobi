@@ -34,6 +34,7 @@ import { registerSettingsHandlers } from './settings';
 import { registerFlowHandlers } from './flow';
 import { registerAccountHandlers } from './account';
 import { registerEmailHandlers } from './email';
+import { registerByokHandlers } from './byok';
 
 let duckaiModelsCache: DuckaiModelInfo[] | null = null;
 
@@ -212,4 +213,5 @@ export function setupIpcHandlers(deps: SetupDeps): void {
   registerFlowHandlers(ctx);
   registerAccountHandlers();
   registerEmailHandlers();
+  registerByokHandlers();
 }

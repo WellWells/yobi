@@ -182,7 +182,7 @@ export function buildDuckaiAutomationScript(
   var seenStopBtn = false;
   var stableText = '';
   var stableCount = 0;
-  var NO_CHANGE_LIMIT = 30000;
+  var NO_CHANGE_LIMIT = TIMEOUT;   // idle window = configured response timeout (reset on every content change)
   var lastChangeAt = null;
   var loopCount = 0;
 
@@ -226,8 +226,8 @@ export function buildDuckaiAutomationScript(
     }
 
     if (lastChangeAt !== null && Date.now() - lastChangeAt > NO_CHANGE_LIMIT) {
-      console.debug('[DuckAI Automate] ❌ Generation timeout: no content change for 30 seconds');
-      throw new Error('Duck AI automation timed out: no response changes for 30 seconds');
+      console.debug('[DuckAI Automate] ❌ Generation timeout: content stopped updating');
+      throw new Error('Duck AI automation timed out: response stopped updating');
     }
 
     await sleep(100);

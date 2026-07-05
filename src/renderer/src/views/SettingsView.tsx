@@ -17,10 +17,13 @@ import { usePromptPrefs } from './settings/hooks/usePromptPrefs';
 import { useSystemSettings } from './settings/hooks/useSystemSettings';
 import { useTelegramSettings } from './settings/hooks/useTelegramSettings';
 import { useAccountSettings } from './settings/hooks/useAccountSettings';
+import { useByokSettings } from './settings/hooks/useByokSettings';
+import { useByokGroups } from './settings/hooks/useByokGroups';
 import { useSettingsNav } from './settings/hooks/useSettingsNav';
 import { GeneralSection } from './settings/sections/GeneralSection';
 import { AiSection } from './settings/sections/AiSection';
 import { AccountsSection } from './settings/sections/AccountsSection';
+import { ByokSection } from './settings/sections/ByokSection';
 import { TelegramSection } from './settings/sections/TelegramSection';
 import { SystemSection } from './settings/sections/SystemSection';
 import type { DangerAction } from './settings/sections/SystemSection';
@@ -43,6 +46,8 @@ export const SettingsView: React.FC = () => {
   const system = useSystemSettings();
   const telegram = useTelegramSettings();
   const account = useAccountSettings();
+  const byok = useByokSettings();
+  const byokGroups = useByokGroups(byok.snapshot, byok.applySnapshot);
   const nav = useSettingsNav();
 
   const [dangerAction, setDangerAction] = useState<DangerAction>(null);
@@ -58,7 +63,8 @@ export const SettingsView: React.FC = () => {
     setTheme((snapshot.theme as Theme) ?? 'dark');
     await setLocale(snapshot.locale);
     await telegram.loadTelegramSettings();
-  }, [hotkey, prefs, system, telegram, setTheme, setLocale]);
+    await byok.reload();
+  }, [hotkey, prefs, system, telegram, byok, setTheme, setLocale]);
 
   const localeKeyMap: Record<string, string> = {
     'en-US': 'language.name.enUS',
@@ -77,10 +83,8 @@ export const SettingsView: React.FC = () => {
   }, [t]);
 
   const handleResetSettings = useCallback(async () => {
-    const reset = await settingsApi.resetSettings();
-    if (!reset) return;
-    await applySettingsSnapshot(reset);
-  }, [applySettingsSnapshot]);
+    await settingsApi.resetSettings();
+  }, []);
 
   const handleOpenConfigDir = useCallback(async () => {
     await systemApi.openConfigDir();
@@ -195,6 +199,13 @@ export const SettingsView: React.FC = () => {
               t={t}
               showSection={(tags) => nav.showSection(tags, 'accounts')}
               isSearching={nav.isSearching}
+              sectionGap={SECTION_GAP}
+            />
+            <ByokSection
+              byok={byok}
+              byokGroups={byokGroups}
+              t={t}
+              showSection={(tags) => nav.showSection(tags, 'accounts')}
               sectionGap={SECTION_GAP}
             />
           </Box>

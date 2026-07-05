@@ -24,6 +24,7 @@ export function useRewriteTask(setExportToast: (toast: ExportToast) => void) {
     setFileContent,
     queue,
     duckaiModels,
+    byokModels,
   } = useAppStore(
     useShallow((s) => ({
       selectedFile: s.selectedFile,
@@ -34,6 +35,7 @@ export function useRewriteTask(setExportToast: (toast: ExportToast) => void) {
       setFileContent: s.setFileContent,
       queue: s.queue,
       duckaiModels: s.duckaiModels,
+      byokModels: s.byokModels,
     })),
   );
   const { t } = useI18nStore();
@@ -83,7 +85,7 @@ export function useRewriteTask(setExportToast: (toast: ExportToast) => void) {
   const startRewrite = useCallback(async (nextUrl: string) => {
     if (!selectedFile || !fileContent) return;
     const prompt = parsedBlocks?.prompt?.trim() || fileContent.trim();
-    const modelLabel = findModelOption(nextUrl, duckaiModels).label;
+    const modelLabel = findModelOption(nextUrl, [...duckaiModels, ...byokModels]).label;
     const taskId = await promptApi.triggerWithOptions({ prompt, targetUrl: nextUrl });
     if (!taskId) {
       setExportToast({ id: Date.now(), message: t('rewrite.enqueueFailed') });
@@ -96,7 +98,7 @@ export function useRewriteTask(setExportToast: (toast: ExportToast) => void) {
       id: Date.now(),
       message: t('rewrite.queued').replace('{{model}}', modelLabel),
     });
-  }, [selectedFile, fileContent, parsedBlocks, t, setExportToast, duckaiModels]);
+  }, [selectedFile, fileContent, parsedBlocks, t, setExportToast, duckaiModels, byokModels]);
 
   return { startRewrite };
 }

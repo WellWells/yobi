@@ -5,10 +5,10 @@ import { useI18nStore } from '../store/i18nStore';
 import { useUpdateStore } from '../store/useUpdateStore';
 import { initThemeFromConfig } from '../store/themeStore';
 import type { LayoutMode } from '../store/appStore';
-import { ipcEvents, settingsApi } from '../api/electronApi';
+import { byokApi, ipcEvents, settingsApi } from '../api/electronApi';
 import { isTypingTarget } from '../utils/domUtils';
 import type { View } from '../store/appStore';
-import { makeDuckaiModelOption } from '../config/models';
+import { makeByokGroupModels, makeByokModelOption, makeDuckaiModelOption } from '../config/models';
 
 const VIEW_BY_SHORTCUT: Record<string, View> = {
   '1': 'chat',
@@ -28,6 +28,8 @@ export function useAppBootstrap() {
   const setView = useAppStore((s) => s.setView);
   const setAiUrl = useAppStore((s) => s.setAiUrl);
   const setDuckaiModels = useAppStore((s) => s.setDuckaiModels);
+  const setByokModels = useAppStore((s) => s.setByokModels);
+  const setByokGroupModels = useAppStore((s) => s.setByokGroupModels);
   const loadLocales = useI18nStore((s) => s.loadLocales);
   const initializeListeners = useUpdateStore((s) => s.initializeListeners);
   const duckaiModelsFetched = useRef(false);
@@ -57,7 +59,13 @@ export function useAppBootstrap() {
         }
       });
     }
-  }, [initializeListeners, loadLocales, setHotkey, setAiUrl, setDuckaiModels]);
+    void byokApi.getSettings().then((snapshot) => {
+      // Groups first so the "loaded" flag (flipped by setByokModels) never gates
+      // ChatView's dangling-selection sweep on a half-populated picker.
+      setByokGroupModels(makeByokGroupModels(snapshot.groups));
+      setByokModels(snapshot.instances.map(makeByokModelOption));
+    });
+  }, [initializeListeners, loadLocales, setHotkey, setAiUrl, setDuckaiModels, setByokModels, setByokGroupModels]);
 
   useEffect(() => {
     const unsubs = [

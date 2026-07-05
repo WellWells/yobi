@@ -136,7 +136,7 @@ export const SystemSection: React.FC<Props> = ({
             : t('settings.reset.button')
         }
         cancelText={t('dialog.cancel')}
-        danger={dangerAction === 'clear-history'}
+        danger={dangerAction === 'clear-history' || dangerAction === 'reset'}
         onConfirm={onConfirmDangerAction}
         onCancel={() => setDangerAction(null)}
       />

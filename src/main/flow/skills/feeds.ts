@@ -1,5 +1,6 @@
 import { load } from 'cheerio';
 import { getProviderLabel, preparePromptForProvider } from '../../providers';
+import { isByokTargetUrl } from '../../../shared/types';
 import { extractCoverImage, fetchAndParse, fetchRawText, parseRssFeed, type RssFeedItem } from '../../urlParser';
 import { pageFetchLane } from '../lanes';
 import { fetchYoutubeVideo, youtubeThumbnailUrl, type YoutubeVideoResult } from '../../youtubeTranscript';
@@ -82,12 +83,18 @@ export async function execRss(
   }
 
   const rawOutput = parts.join('\n\n---\n\n');
-  const prepared = preparePromptForProvider(rawOutput, targetUrl);
-  if (prepared.truncated) {
-    sendLog(`✂️ [AgentFlow] RSS: output truncated to ${prepared.maxChars} chars (${getProviderLabel(targetUrl)} limit)`);
+  // BYOK targets take content verbatim — shaping would misapply the gemini
+  // fallback policy (detectProvider can't recognize byok:// URLs).
+  let shapedOutput = rawOutput;
+  if (!isByokTargetUrl(targetUrl)) {
+    const prepared = preparePromptForProvider(rawOutput, targetUrl);
+    if (prepared.truncated) {
+      sendLog(`✂️ [AgentFlow] RSS: output truncated to ${prepared.maxChars} chars (${getProviderLabel(targetUrl)} limit)`);
+    }
+    shapedOutput = prepared.prompt;
   }
-  if (!includeImage) return prepared.prompt;
-  return JSON.stringify({ output: prepared.prompt, image: firstImage });
+  if (!includeImage) return shapedOutput;
+  return JSON.stringify({ output: shapedOutput, image: firstImage });
 }
 
 async function firstLinkImage(articleUrl: string): Promise<string> {

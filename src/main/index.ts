@@ -42,6 +42,7 @@ import { bindHotkey as bindHotkeyImpl } from './hotkeyBinding';
 import type { FlowManager } from './flow';
 import { checkForUpdates } from './updater';
 import { destroyTray, isTrayCreated } from './tray';
+import { applyPendingFactoryReset } from './factoryReset';
 import { setupPlatformIcons, loadInitialLanguages, setupWindows } from './bootstrap/appSetup';
 import { setupTrayAndCloseBehavior, buildTrayIpcCallbacks } from './bootstrap/traySetup';
 import { initFlowManager, broadcastMergedQueueState } from './bootstrap/flowSetup';
@@ -102,6 +103,14 @@ const telegramRuntime = createTelegramRuntime({
 app.whenReady().then(async () => {
   app.setAppUserModelId('com.wellstsai.yobi');
   powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+
+  // Apply a scheduled factory reset (from RESET_SETTINGS) here — before any
+  // window, the task queue, the flow manager or the Telegram bot exist — so the
+  // wipe runs in a pristine process with no in-flight work to resurrect deleted
+  // files or re-persist provider cookies. Must precede initSensitiveConfig() and
+  // setupWindows() below.
+  await applyPendingFactoryReset();
+
   session.fromPartition('persist:gemini').setUserAgent(CLEAN_UA);
   session.fromPartition('persist:url-parser').setUserAgent(CLEAN_UA);
   session.fromPartition('persist:browser-flow').setUserAgent(CLEAN_UA);

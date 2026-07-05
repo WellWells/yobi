@@ -1,7 +1,7 @@
 import { createElement, memo, type ComponentType } from 'react';
-import { Bot, Compass, Sparkles } from 'lucide-react';
-import { PROVIDER_LABELS, PROVIDER_URLS, buildDuckaiModelUrl } from '../../../shared/types';
-import type { DuckaiModelInfo } from '../../../shared/types';
+import { Bot, Compass, KeyRound, Layers, Sparkles } from 'lucide-react';
+import { PROVIDER_LABELS, PROVIDER_URLS, buildByokUrl, buildByokGroupUrl, buildDuckaiModelUrl, isByokGroupUrl, isByokUrl } from '../../../shared/types';
+import type { ByokGroupSnapshot, ByokInstanceSnapshot, DuckaiModelInfo } from '../../../shared/types';
 
 export { buildDuckaiModelUrl };
 
@@ -63,6 +63,29 @@ export function makeDuckaiModelOption(info: DuckaiModelInfo): ModelOption {
   };
 }
 
+export function makeByokModelOption(instance: ByokInstanceSnapshot): ModelOption {
+  return {
+    label: instance.name,
+    url: buildByokUrl(instance.id),
+    icon: KeyRound,
+  };
+}
+
+export function makeByokGroupModelOption(group: ByokGroupSnapshot): ModelOption {
+  return {
+    label: group.name,
+    url: buildByokGroupUrl(group.id),
+    icon: Layers,
+  };
+}
+
+// Picker options for selectable groups. Empty groups (every member key deleted)
+// are unusable and would only throw at run time, so they are omitted here — they
+// remain visible and editable in the Settings groups card.
+export function makeByokGroupModels(groups: ByokGroupSnapshot[]): ModelOption[] {
+  return groups.filter((group) => group.memberIds.length > 0).map(makeByokGroupModelOption);
+}
+
 export function findModelOption(url: string, extraModels: ModelOption[] = []): ModelOption {
   const all = [...MODELS, ...extraModels];
   return all.find((m) => m.url === url) ?? MODELS[0];
@@ -71,5 +94,7 @@ export function findModelOption(url: string, extraModels: ModelOption[] = []): M
 export function getModelIconByUrl(url: string): ModelIcon {
   if (MODEL_ICON_BY_URL[url]) return MODEL_ICON_BY_URL[url];
   if (isDuckaiUrl(url)) return DuckDuckGoIcon;
+  if (isByokGroupUrl(url)) return Layers;
+  if (isByokUrl(url)) return KeyRound;
   return Sparkles;
 }
