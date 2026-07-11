@@ -63,7 +63,7 @@ export async function executeSkill(
     case 'bot':
       return execBot(config, deps);
     case 'rss':
-      return execRss(config, stepId, deps.getTargetUrl());
+      return execRss(config, stepId);
     case 'scraper':
       return execScraper(config, stepId);
     case 'youtube':

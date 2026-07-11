@@ -26,6 +26,9 @@ export const SelectDropdown: React.FC<SelectDropdownProps> = ({
     allowDeselect={false}
     withCheckIcon
     comboboxProps={{ zIndex: 200 }}
+    // Mantine's default ScrollArea type is 'scroll', which only reveals the
+    // scrollbar once you already scroll — an overflowing list reads as complete.
+    scrollAreaProps={{ type: 'auto' }}
     styles={{
       input: {
         background: 'var(--mantine-color-bg-tertiary)',

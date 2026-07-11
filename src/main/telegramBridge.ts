@@ -54,8 +54,9 @@ export function buildTelegramSettingsSnapshot(): TelegramSettingsSnapshot {
     tokenPreview: maskToken(config.telegram.botToken),
     allowGroupCommands: config.telegram.allowGroupCommands,
     defaultReplyMode: config.telegram.defaultReplyMode,
+    compactReply: config.telegram.compactReply,
     adminUserIds: normalizedAdmins,
-    providerCommands: config.telegram.providerCommands,
+    llmDirect: config.telegram.llmDirect,
     runtime: _telegramRuntimeSnapshot,
     pairing: normalizedPairing,
   };

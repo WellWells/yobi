@@ -1,0 +1,38 @@
+/* Template gallery tile. Hover state is CSS-driven (no JS hover state), matching
+   the flow sidebar row. Mantine's focus ring on UnstyledButton is left as-is.
+   These rules override UnstyledButton's background/border/padding reset, which
+   only holds because main.tsx imports Mantine's stylesheet before any app CSS. */
+.tile {
+  height: 100%;
+  /* A button centers its content box vertically by default, which would float a
+     short tile's icon out of line with its taller row neighbours. Pin to the top. */
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 10px;
+  border-radius: 12px;
+  text-align: left;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-default-border);
+  transition: background 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.tile:hover {
+  background: var(--mantine-color-bg-tertiary);
+  border-color: var(--mantine-color-accent);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.08);
+}
+
+.icon {
+  flex-shrink: 0;
+  border-radius: var(--mantine-radius-md);
+}
+
+/* Clamp so every tile in a row keeps the same height regardless of copy length. */
+.desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

@@ -1,14 +1,19 @@
 import React, { useState } from 'react';
 import { ActionIcon, Badge, Box, Group, Loader, Menu, Stack, Text } from '@mantine/core';
 import { CircleUserRound, LogIn, LogOut, MoreVertical, RotateCcw } from 'lucide-react';
-import { SectionCard, GroupHeader, SectionTitle } from '../components';
+import { SectionCard, GroupHeader, SectionTitle, VisibilityCheckbox } from '../components';
 import { AppButton } from '../../../components/AppButton';
 import { WebDialog } from '../../../components/WebDialog';
 import { getModelIconByUrl } from '../../../config/models';
+import { useAppStore } from '../../../store/appStore';
+import { useHiddenSources } from '../hooks/useHiddenSources';
+import type { HiddenSourcesController } from '../hooks/useHiddenSources';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import type { useAccountSettings } from '../hooks/useAccountSettings';
-import { AUTH_PROVIDERS, PROVIDERS, PROVIDER_LABELS, PROVIDER_URLS } from '../../../../../shared/types';
-import type { AuthProvider, Provider } from '../../../../../shared/types';
+import {
+  AUTH_PROVIDERS, PROVIDERS, PROVIDER_LABELS, PROVIDER_URLS, duckaiModelIdFromUrl,
+} from '../../../../../shared/types';
+import type { AuthProvider, HiddenSources, Provider } from '../../../../../shared/types';
 
 type AccountSettings = ReturnType<typeof useAccountSettings>;
 
@@ -48,6 +53,47 @@ const StatusPill: React.FC<{ state: PillState; t: (key: string) => string }> = (
   );
 };
 
+// The Duck.ai row expands into its models: hiding the provider drops six rows from
+// every picker at once, but most users only ever reach for one or two of them.
+const DuckaiModelList: React.FC<{
+  sources: HiddenSourcesController;
+  t: (key: string) => string;
+}> = ({ sources, t }) => {
+  const duckaiModels = useAppStore((s) => s.duckaiModels);
+
+  if (duckaiModels.length === 0) {
+    return (
+      <Text fz="var(--font-size-sm)" c="dimmed">{t('settings.modelSources.duckaiEmpty')}</Text>
+    );
+  }
+
+  return (
+    <Stack gap={7}>
+      {duckaiModels.map((model) => {
+        const id = duckaiModelIdFromUrl(model.url);
+        if (!id) return null;
+        const modelHidden = sources.hidden.duckaiModelIds.includes(id);
+        const afterHiding: HiddenSources = {
+          ...sources.hidden,
+          duckaiModelIds: [...sources.hidden.duckaiModelIds, id],
+        };
+        return (
+          <VisibilityCheckbox
+            key={id}
+            size="xs"
+            label={model.shortLabel ?? model.label}
+            checked={!modelHidden}
+            blocked={!modelHidden && !sources.canApply(afterHiding)}
+            busy={sources.busy}
+            onToggle={() => sources.toggleDuckaiModel(id)}
+            t={t}
+          />
+        );
+      })}
+    </Stack>
+  );
+};
+
 const RowMenu: React.FC<{ busy: boolean; onReset: () => void; t: (key: string) => string }> = ({ busy, onReset, t }) => (
   <Menu position="bottom-end" radius="sm" withinPortal zIndex={200}>
     <Menu.Target>
@@ -63,9 +109,10 @@ const RowMenu: React.FC<{ busy: boolean; onReset: () => void; t: (key: string) =
   </Menu>
 );
 
-export const AccountsSection: React.FC<Props> = ({ account, t, showSection, isSearching, sectionGap }) => {
+export const ModelSourcesSection: React.FC<Props> = ({ account, t, showSection, isSearching, sectionGap }) => {
   const [confirmLogout, setConfirmLogout] = useState<AuthProvider | null>(null);
   const [confirmReset, setConfirmReset] = useState<Provider | null>(null);
+  const sources = useHiddenSources();
   const confirmLabel = confirmLogout ? PROVIDER_LABELS[confirmLogout] : '';
   const resetLabel = confirmReset ? PROVIDER_LABELS[confirmReset] : '';
   const resetSignsOut =
@@ -81,8 +128,11 @@ export const AccountsSection: React.FC<Props> = ({ account, t, showSection, isSe
       <Box display={showSection(TAG_SETS.accounts, 'accounts') ? 'block' : 'none'}>
         <SectionCard style={{ marginBottom: sectionGap }}>
           <SectionTitle icon={<CircleUserRound size={15} />} label={t('settings.accounts.title')} />
-          <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6} mb={14}>
+          <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>
             {t('settings.accounts.hint')}
+          </Text>
+          <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6} mb={14}>
+            {t('settings.modelSources.hint')}
           </Text>
 
           <Stack gap={0}>
@@ -98,6 +148,17 @@ export const AccountsSection: React.FC<Props> = ({ account, t, showSection, isSe
                   : loggedIn
                     ? 'in'
                     : 'out';
+              const isDuckai = provider === 'duckai';
+              const providerHidden = isDuckai
+                ? sources.duckaiState === 'none'
+                : sources.hidden.providers.includes(provider);
+              const afterHiding: HiddenSources = {
+                ...sources.hidden,
+                providers: [...sources.hidden.providers, provider],
+              };
+              // Signing in and being listed are orthogonal: a hidden provider keeps its
+              // session, and you may still log into one you have hidden.
+              const blocked = !providerHidden && !sources.canApply(afterHiding);
               return (
                 <Box
                   key={provider}
@@ -106,17 +167,37 @@ export const AccountsSection: React.FC<Props> = ({ account, t, showSection, isSe
                 >
                   <Group justify="space-between" align="center" wrap="nowrap" gap={12}>
                     <Group gap={10} align="flex-start" wrap="nowrap" flex={1} miw={0}>
-                      <Box c="var(--mantine-color-default-color)" mt={2} style={{ flexShrink: 0 }}>
-                        <Icon size={18} />
+                      <Box mt={2}>
+                        <VisibilityCheckbox
+                          checked={!providerHidden}
+                          indeterminate={isDuckai && sources.duckaiState === 'partial'}
+                          blocked={blocked}
+                          busy={sources.busy}
+                          onToggle={() => (isDuckai
+                            ? sources.setDuckaiAll(sources.duckaiState !== 'all')
+                            : sources.toggleProvider(provider))}
+                          t={t}
+                        />
                       </Box>
-                      <Stack gap={4} miw={0}>
-                        <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-default-color)">
-                          {PROVIDER_LABELS[provider]}
-                        </Text>
-                        <Text fz="var(--font-size-sm)" c="dimmed" lh={1.5}>
-                          {t(`settings.accounts.necessity.${provider}`)}
-                        </Text>
-                      </Stack>
+                      <Group
+                        gap={10}
+                        align="flex-start"
+                        wrap="nowrap"
+                        miw={0}
+                        opacity={providerHidden ? 0.55 : 1}
+                      >
+                        <Box c="var(--mantine-color-default-color)" mt={2} style={{ flexShrink: 0 }}>
+                          <Icon size={18} />
+                        </Box>
+                        <Stack gap={4} miw={0}>
+                          <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-default-color)">
+                            {PROVIDER_LABELS[provider]}
+                          </Text>
+                          <Text fz="var(--font-size-sm)" c="dimmed" lh={1.5}>
+                            {t(`settings.accounts.necessity.${provider}`)}
+                          </Text>
+                        </Stack>
+                      </Group>
                     </Group>
 
                     <Group gap={8} align="center" wrap="nowrap" style={{ flexShrink: 0 }}>
@@ -149,6 +230,15 @@ export const AccountsSection: React.FC<Props> = ({ account, t, showSection, isSe
                       <RowMenu busy={busy} onReset={() => setConfirmReset(provider)} t={t} />
                     </Group>
                   </Group>
+
+                  {/* Keyed off the provider itself, not `providerHidden`: unchecking the
+                      last model also reads as 'none', and collapsing the list there would
+                      strand the user with no way to re-check an individual model. */}
+                  {isDuckai && !sources.hidden.providers.includes('duckai') && (
+                    <Box pl={22} ml={12} mt={10} style={{ borderLeft: '2px solid var(--mantine-color-default-border)' }}>
+                      <DuckaiModelList sources={sources} t={t} />
+                    </Box>
+                  )}
                 </Box>
               );
             })}

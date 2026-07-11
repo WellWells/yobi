@@ -1,12 +1,12 @@
 import React from 'react';
 import { ActionIcon, Box, Group, Stack, Text, Tooltip, Button as MButton } from '@mantine/core';
 import {
-  Bot, Copy, ExternalLink, KeyRound, Link, Plug, Send, ShieldAlert, Sparkles, Unlink, Users,
+  Bot, Copy, ExternalLink, KeyRound, Link, MessageSquare, Plug, Send, ShieldAlert, Unlink, Users,
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import { AppPasswordInput } from '../../../components/AppPasswordInput';
 import { SectionCard, SettingRow, SettingField, SettingDivider, SelectDropdown, ToggleSwitch, GroupHeader, SectionTitle } from '../components';
-import { TelegramProviderCommands } from './TelegramProviderCommands';
+import { BotLlmDirectSetting } from './BotLlmDirectSetting';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import type { useTelegramSettings } from '../hooks/useTelegramSettings';
 
@@ -131,6 +131,43 @@ export const TelegramSection: React.FC<Props> = ({
 
         <SettingDivider my={16} />
 
+        <SectionTitle icon={<MessageSquare size={15} />} label={t('settings.telegram.section.reply')} />
+        <Stack gap={12}>
+          <SettingRow
+            icon={<MessageSquare size={13} />}
+            label={t('settings.telegram.compactReply')}
+            hint={t('settings.telegram.compactReply.hint')}
+            control={
+              <ToggleSwitch
+                checked={settings?.compactReply ?? false}
+                onChange={() => { void telegram.handleToggleTelegramCompactReply(); }}
+              />
+            }
+          />
+
+          {/* A compact reply is plain text by definition — there is no format to pick. */}
+          {!settings?.compactReply && (
+            <Box>
+              <Text fz="var(--font-size-base)" c="var(--mantine-color-default-color)" mb={6}>
+                {t('settings.telegram.defaultReply')}
+              </Text>
+              <SelectDropdown
+                value={settings?.defaultReplyMode ?? 'markdown'}
+                options={[
+                  { value: 'markdown', label: t('settings.telegram.reply.markdown') },
+                  { value: 'png', label: t('settings.telegram.reply.png') },
+                  { value: 'webp', label: t('settings.telegram.reply.webp') },
+                  { value: 'pdf', label: t('settings.telegram.reply.pdf') },
+                ]}
+                onChange={(v) => { void telegram.handleTelegramDefaultReplyMode(v as 'markdown' | 'png' | 'webp' | 'pdf'); }}
+                disabled={telegram.telegramBusy}
+              />
+            </Box>
+          )}
+        </Stack>
+
+        <SettingDivider my={16} />
+
         <SectionTitle icon={<Users size={15} />} label={t('settings.telegram.section.access')} />
         <Stack gap={12}>
           <SettingRow
@@ -143,6 +180,16 @@ export const TelegramSection: React.FC<Props> = ({
               />
             }
           />
+
+          {settings && (
+            <BotLlmDirectSetting
+              value={settings.llmDirect}
+              busy={telegram.telegramBusy}
+              hint={t('settings.telegram.llmDirect.hint')}
+              onUpdate={(patch) => { void telegram.handleUpdateTelegramLlmDirect(patch); }}
+              t={t}
+            />
+          )}
 
           <SettingDivider />
 
@@ -253,40 +300,6 @@ export const TelegramSection: React.FC<Props> = ({
                 );
               })}
             </Stack>
-          )}
-        </Stack>
-      </SectionCard>
-
-      <SectionCard style={{ marginBottom: sectionGap }}>
-        <SectionTitle icon={<Sparkles size={15} />} label={t('settings.telegram.commands.title')} />
-        <Stack gap={12}>
-          <Box>
-            <Text fz="var(--font-size-base)" c="var(--mantine-color-default-color)" mb={6}>
-              {t('settings.telegram.defaultReply')}
-            </Text>
-            <SelectDropdown
-              value={settings?.defaultReplyMode ?? 'markdown'}
-              options={[
-                { value: 'markdown', label: t('settings.telegram.reply.markdown') },
-                { value: 'png', label: t('settings.telegram.reply.png') },
-                { value: 'webp', label: t('settings.telegram.reply.webp') },
-                { value: 'pdf', label: t('settings.telegram.reply.pdf') },
-              ]}
-              onChange={(v) => { void telegram.handleTelegramDefaultReplyMode(v as 'markdown' | 'png' | 'webp' | 'pdf'); }}
-              disabled={telegram.telegramBusy}
-            />
-          </Box>
-
-          <SettingDivider />
-
-          {settings && (
-            <TelegramProviderCommands
-              providerCommands={settings.providerCommands}
-              duckaiModels={telegram.duckaiModels}
-              busy={telegram.telegramBusy}
-              onUpdate={(provider, patch) => { void telegram.handleUpdateProviderCommand(provider, patch); }}
-              t={t}
-            />
           )}
         </Stack>
       </SectionCard>

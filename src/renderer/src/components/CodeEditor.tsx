@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Box } from '@mantine/core';
 import Editor from 'react-simple-code-editor';
 import type { Plugin } from 'prettier';
-import { getHighlighterSync, loadShiki, appThemeToShikiTheme } from '../utils/shikiPlugins';
+import { getHighlighterSync, loadShiki, shikiThemeFor, ensureShikiTheme, SHIKI_FALLBACK_THEME } from '../utils/shikiPlugins';
 import { useThemeStore } from '../store/themeStore';
 
 interface CodeEditorProps {
@@ -32,16 +32,23 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
 }) => {
   const theme = useThemeStore((s) => s.theme);
   const [ready, setReady] = useState(() => getHighlighterSync() !== null);
-  const shikiTheme = appThemeToShikiTheme[theme] ?? 'github-dark';
+  const [shikiTheme, setShikiTheme] = useState<string>(() => {
+    const wanted = shikiThemeFor(theme);
+    return getHighlighterSync()?.getLoadedThemes().includes(wanted) ? wanted : SHIKI_FALLBACK_THEME;
+  });
 
   useEffect(() => {
-    if (ready) return;
     let cancelled = false;
-    void loadShiki().then(() => {
-      if (!cancelled) setReady(getHighlighterSync() !== null);
-    });
+    void (async () => {
+      const hl = getHighlighterSync() ?? await loadShiki();
+      if (!hl || cancelled) return;
+      const resolved = await ensureShikiTheme(hl, shikiThemeFor(theme));
+      if (cancelled) return;
+      setShikiTheme(resolved);
+      setReady(true);
+    })();
     return () => { cancelled = true; };
-  }, [ready]);
+  }, [theme]);
 
   const highlight = useCallback((code: string): string => {
     const hl = getHighlighterSync();

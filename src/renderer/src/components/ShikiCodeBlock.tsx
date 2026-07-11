@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useContext } from 'react';
 import { ActionIcon, Badge } from '@mantine/core';
 import { Copy, Check } from 'lucide-react';
-import { getHighlighterSync, loadShiki, appThemeToShikiTheme } from '../utils/shikiPlugins';
+import { getHighlighterSync, loadShiki, shikiThemeFor, ensureShikiTheme } from '../utils/shikiPlugins';
 import { useThemeStore } from '../store/themeStore';
 import { useI18nStore } from '../store/i18nStore';
 import { ForcedCodeThemeContext } from '../utils/forcedCodeTheme';
@@ -29,7 +29,8 @@ export const ShikiCodeBlock = React.memo<ShikiCodeBlockProps>(({ lang, code }) =
       }
       if (cancelled || !highlighter) return;
 
-      const shikiTheme = appThemeToShikiTheme[theme] ?? 'github-dark';
+      const shikiTheme = await ensureShikiTheme(highlighter, shikiThemeFor(theme));
+      if (cancelled) return;
       try {
         const result = await highlighter.codeToHtml(code, {
           lang: lang || 'text',

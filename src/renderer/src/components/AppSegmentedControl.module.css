@@ -6,7 +6,7 @@
 }
 
 .indicator {
-  background: var(--mantine-color-accent) !important;
+  background: var(--mantine-color-accent);
   border: none;
   border-radius: var(--mantine-radius-sm);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
@@ -19,6 +19,6 @@
 }
 
 .label[data-active] {
-  color: var(--mantine-color-white) !important;
+  color: var(--mantine-color-white);
   font-weight: 600;
 }

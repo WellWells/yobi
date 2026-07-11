@@ -1,29 +1,34 @@
 import React, { useMemo, useState } from 'react';
-import { Bot, CircleUserRound, MessageSquare, ShieldAlert, SlidersHorizontal } from 'lucide-react';
+import { Bell, Bot, ChartLine, CircleUserRound, DatabaseBackup, MessageSquare, Palette, SlidersHorizontal } from 'lucide-react';
 import { useI18nStore } from '../../../store/i18nStore';
 
-export type Category = 'general' | 'ai' | 'accounts' | 'bots' | 'system';
+export type Category = 'general' | 'appearance' | 'notify' | 'ai' | 'accounts' | 'bots' | 'stats' | 'system';
 
 export const TAG_SETS = {
   hotkey: ['hotkey', 'keyboard', 'shortcut', 'key', 'binding', 'settings.hotkey'],
   language: ['language', 'locale', 'translation', 'i18n', 'zh', 'en', 'settings.language'],
   notify: ['notification', 'bell', 'notify', 'alert', 'settings.notifications'],
   theme: ['theme', 'dark', 'light', 'dracula', 'nord', 'amoled', 'sepia', 'appearance', 'color', 'oled', 'settings.theme'],
+  reading: ['layout', 'zoom', 'markdown', 'reading', 'stacked', 'side by side', 'scale', 'settings.appearance.reading'],
   timeout: ['timeout', 'timer', 'response', 'time', 'settings.responseTimeout.title'],
   prompt: ['prompt', 'persona', 'template', 'tone', 'length', 'nickname', 'settings.prompt.persona.title', 'settings.prompt.templates.title', 'settings.youtube.prompt.title', 'settings.prompt.preview.title'],
-  accounts: ['account', 'accounts', 'login', 'logout', 'sign in', 'sign out', 'signin', 'session', 'chatgpt', 'gemini', 'perplexity', 'settings.group.accounts', 'settings.accounts.title'],
+  accounts: ['account', 'accounts', 'login', 'logout', 'sign in', 'sign out', 'signin', 'session', 'chatgpt', 'gemini', 'perplexity', 'hide', 'hidden', 'visible', 'source', 'model source', 'settings.group.accounts', 'settings.accounts.title'],
   byok: ['byok', 'api key', 'apikey', 'key', 'token', 'openrouter', 'openai', 'gemini api', 'base url', 'model', 'group', 'pool', 'rotate', 'rotation', 'round robin', 'load balance', 'settings.byok.title', 'settings.byok.group.title'],
-  bots: ['bot', 'telegram', 'line', 'token', 'pairing', 'group', 'command', 'duck', 'settings.group.bots', 'settings.telegram.section.connection', 'settings.telegram.commands.title', 'settings.telegram.section.access'],
-  config: ['config', 'configuration', 'backup', 'restore', 'import', 'export', 'json', 'folder', 'directory', 'settings.config.title'],
+  bots: ['bot', 'telegram', 'line', 'token', 'pairing', 'group', 'command', 'duck', 'direct', 'mention', 'tag', 'compact', 'settings.group.bots', 'settings.bot.commands.title', 'settings.telegram.section.connection', 'settings.telegram.section.reply', 'settings.telegram.compactReply', 'settings.telegram.section.access', 'settings.llmDirect.label'],
+  stats: ['stats', 'statistics', 'usage', 'metrics', 'chart', 'trend', 'counter', 'success', 'failure', 'timeout', 'settings.stats.title'],
+  config: ['config', 'configuration', 'backup', 'restore', 'import', 'export', 'zip', 'markdown', 'json', 'folder', 'directory', 'settings.config.title'],
   danger: ['danger', 'reset', 'clear', 'delete', 'restore', 'settings.danger.title'],
   tray: ['tray', 'system tray', 'menu bar', 'close', 'hide', 'startup', 'minimize', 'settings.tray.title', 'settings.tray.title.mac'],
 } as const;
 
 const CATEGORY_TAG_MAP: Record<Category, (keyof typeof TAG_SETS)[]> = {
-  general: ['hotkey', 'language', 'notify', 'theme', 'tray'],
+  general: ['hotkey', 'language', 'tray'],
+  appearance: ['theme', 'reading'],
+  notify: ['notify'],
   ai: ['timeout', 'prompt'],
   accounts: ['accounts', 'byok'],
   bots: ['bots'],
+  stats: ['stats'],
   system: ['config', 'danger'],
 };
 
@@ -52,10 +57,13 @@ export function useSettingsNav() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const navCategoryDefs = useMemo(() => [
     { id: 'general' as Category, label: t('settings.group.general'), icon: React.createElement(SlidersHorizontal, { size: 14 }) },
+    { id: 'appearance' as Category, label: t('settings.group.appearance'), icon: React.createElement(Palette, { size: 14 }) },
+    { id: 'notify' as Category, label: t('settings.group.notify'), icon: React.createElement(Bell, { size: 14 }) },
     { id: 'ai' as Category, label: t('settings.group.ai'), icon: React.createElement(Bot, { size: 14 }) },
     { id: 'accounts' as Category, label: t('settings.group.accounts'), icon: React.createElement(CircleUserRound, { size: 14 }) },
     { id: 'bots' as Category, label: t('settings.group.bots'), icon: React.createElement(MessageSquare, { size: 14 }) },
-    { id: 'system' as Category, label: t('settings.group.system'), icon: React.createElement(ShieldAlert, { size: 14 }) },
+    { id: 'stats' as Category, label: t('settings.group.stats'), icon: React.createElement(ChartLine, { size: 14 }) },
+    { id: 'system' as Category, label: t('settings.group.system'), icon: React.createElement(DatabaseBackup, { size: 14 }) },
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [locale]);
 

@@ -70,7 +70,6 @@ export const PromptBlock = React.memo<PromptBlockProps>(({
         className="md-content md-prompt"
         style={{
           overflow: expanded ? 'auto' : 'hidden',
-          userSelect: 'text',
           fontSize: 'var(--font-size-md)',
           lineHeight: 1.6,
           color: 'var(--text-secondary)',

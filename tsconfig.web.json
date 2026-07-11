@@ -15,11 +15,9 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "ignoreDeprecations": "6.0",
-    "baseUrl": ".",
     "paths": {
-      "@renderer/*": ["src/renderer/src/*"],
-      "@shared/*": ["src/shared/*"]
+      "@renderer/*": ["./src/renderer/src/*"],
+      "@shared/*": ["./src/shared/*"]
     }
   },
   "include": [

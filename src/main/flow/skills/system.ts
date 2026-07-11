@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import * as os from 'node:os';
 import { app } from 'electron';
-import { fetchRawText } from '../../urlParser';
+import { ensureHttpScheme, fetchRawText } from '../../urlParser';
 import { relaunchApp, sendLog } from '../../helpers';
 
 const BYTES_PER_GB = 1024 ** 3;
@@ -92,7 +92,7 @@ export async function execSysInfo(config: Record<string, string>): Promise<strin
 }
 
 export async function execHttp(config: Record<string, string>, timeoutMs: number): Promise<string> {
-  const url = (config.url ?? '').trim();
+  const url = ensureHttpScheme(config.url ?? '');
   if (!url) return '';
   if (!/^https?:\/\//i.test(url)) throw new Error(`Invalid HTTP URL: ${url}`);
 

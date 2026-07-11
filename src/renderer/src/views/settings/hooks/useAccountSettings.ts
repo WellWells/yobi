@@ -1,17 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { accountApi } from '../../../api/electronApi';
-import { AUTH_PROVIDERS, PROVIDERS } from '../../../../../shared/types';
+import { useAppStore } from '../../../store/appStore';
+import { PROVIDERS } from '../../../../../shared/types';
 import type { AuthProvider, Provider } from '../../../../../shared/types';
 
-type StatusMap = Record<AuthProvider, boolean | null>;
 type BusyMap = Record<Provider, boolean>;
-
-function initStatus(): StatusMap {
-  return AUTH_PROVIDERS.reduce((acc, provider) => {
-    acc[provider] = null;
-    return acc;
-  }, {} as StatusMap);
-}
 
 function initBusy(): BusyMap {
   return PROVIDERS.reduce((acc, provider) => {
@@ -20,27 +13,20 @@ function initBusy(): BusyMap {
   }, {} as BusyMap);
 }
 
+// Login state lives in appStore because the chat model picker reads it too; the bootstrap
+// subscription keeps it fresh. This hook only owns the per-provider busy flags, which are
+// local to this panel's buttons.
 export function useAccountSettings() {
-  const [statuses, setStatuses] = useState<StatusMap>(initStatus);
+  const statuses = useAppStore((state) => state.accountStatuses);
   const [busy, setBusy] = useState<BusyMap>(initBusy);
 
-  const refresh = useCallback(async () => {
-    const list = await accountApi.getStatuses();
-    setStatuses((prev) => {
-      const next = { ...prev };
-      for (const status of list) next[status.provider] = status.loggedIn;
-      return next;
-    });
-  }, []);
-
+  // A status push means the provider settled (login window closed, logout finished), so
+  // whichever button was spinning for it is done. The status value itself lands in the store.
   useEffect(() => {
-    void refresh();
-    const off = accountApi.onStatusChanged((status) => {
-      setStatuses((prev) => ({ ...prev, [status.provider]: status.loggedIn }));
+    return accountApi.onStatusChanged((status) => {
       setBusy((prev) => ({ ...prev, [status.provider]: false }));
     });
-    return off;
-  }, [refresh]);
+  }, []);
 
   const login = useCallback(async (provider: AuthProvider) => {
     setBusy((prev) => ({ ...prev, [provider]: true }));
@@ -66,5 +52,5 @@ export function useAccountSettings() {
     }
   }, []);
 
-  return { statuses, busy, login, logout, clearData, refresh };
+  return { statuses, busy, login, logout, clearData };
 }

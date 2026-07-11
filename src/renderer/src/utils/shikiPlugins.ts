@@ -1,20 +1,13 @@
 import rehypeKatex from 'rehype-katex';
-import type { Highlighter } from 'shiki';
-import type { Theme } from '../store/themeStore';
+import type { BundledTheme, Highlighter } from 'shiki';
+import { THEME_DEFS } from '../../../shared/themes';
+import type { Theme } from '../../../shared/themes';
 
-export const appThemeToShikiTheme: Record<Theme, string> = {
-  dark:        'github-dark',
-  light:       'github-light',
-  dracula:     'dracula',
-  nord:        'nord',
-  amoled:      'github-dark',
-  sepia:       'github-light',
-  catppuccin:  'github-dark',
-  everforest:  'nord',
-  rosepine:    'github-light',
-  gruvbox:     'github-dark',
-  cyberpunk:   'github-dark',
-};
+export const SHIKI_FALLBACK_THEME = 'github-dark';
+
+export function shikiThemeFor(theme: Theme): string {
+  return THEME_DEFS[theme].shiki;
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type RehypePluginList = any[];
@@ -34,7 +27,8 @@ export function loadShiki(): Promise<Highlighter | null> {
     try {
       const { createHighlighter } = await import('shiki');
       _highlighter = await createHighlighter({
-        themes: ['github-dark', 'github-light', 'dracula', 'nord'],
+        // Other app themes load their Shiki theme on demand (ensureShikiTheme).
+        themes: [SHIKI_FALLBACK_THEME, 'github-light'],
         langs: [
           'typescript', 'tsx', 'javascript', 'jsx',
           'python', 'bash', 'sh', 'json', 'css', 'html',
@@ -46,4 +40,19 @@ export function loadShiki(): Promise<Highlighter | null> {
     return _highlighter;
   })();
   return _loadPromise;
+}
+
+const _themeLoads = new Map<string, Promise<string>>();
+
+/** Loads a bundled Shiki theme on demand; falls back to github-dark on failure. */
+export function ensureShikiTheme(highlighter: Highlighter, theme: string): Promise<string> {
+  if (highlighter.getLoadedThemes().includes(theme)) return Promise.resolve(theme);
+  const pending = _themeLoads.get(theme);
+  if (pending) return pending;
+  const load = highlighter.loadTheme(theme as BundledTheme)
+    .then(() => theme)
+    .catch(() => SHIKI_FALLBACK_THEME)
+    .finally(() => { _themeLoads.delete(theme); });
+  _themeLoads.set(theme, load);
+  return load;
 }

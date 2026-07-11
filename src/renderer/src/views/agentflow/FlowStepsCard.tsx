@@ -14,7 +14,7 @@ import { SKILL_ICON, skillHue } from './skills';
 import type { LoopVarHint } from './variableInsert';
 import { useAgentFlowStore } from '../../store/useAgentFlowStore';
 import { findMatchingMarker } from '../../store/flowHelpers';
-import type { FlowDefinition, SkillInstance, SkillType, TriggerConfig } from '../../../../shared/types';
+import type { FlowDefinition, FlowVariable, SkillInstance, SkillType, TriggerConfig } from '../../../../shared/types';
 
 const GUIDE = '2px dashed var(--mantine-color-violet-filled)';
 const INDENT = 24;
@@ -38,13 +38,15 @@ interface RowProps {
   prevSteps: SkillInstance[];
   allPrevSteps: SkillInstance[];
   loopVars: LoopVarHint[];
+  flowVariables: FlowVariable[];
   t: (k: string) => string;
 }
 
 // Memoized with per-index arrays precomputed in FlowStepsCard, so rows only
 // re-render when flow.steps itself changes (not on name/description keystrokes).
 const SortableStepRow: React.FC<RowProps> = React.memo(({
-  step, index, total, level, prevLevel, prevStep, flowId, botTrigger, prevSteps, allPrevSteps, loopVars, t,
+  step, index, total, level, prevLevel, prevStep, flowId, botTrigger, prevSteps, allPrevSteps,
+  loopVars, flowVariables, t,
 }) => {
   const locked = ENDERS.includes(step.type);
   const {
@@ -97,6 +99,7 @@ const SortableStepRow: React.FC<RowProps> = React.memo(({
           allPrevSteps={allPrevSteps}
           flowTrigger={botTrigger}
           loopVars={loopVars}
+          flowVariables={flowVariables}
           dragHandle={handle}
           t={t}
         />
@@ -153,6 +156,10 @@ export const FlowStepsCard: React.FC<FlowStepsCardProps> = ({ flow, t, onAddStep
     () => [flow.trigger, ...(flow.extraTriggers ?? [])].find((tr) => tr.type === 'bot') ?? flow.trigger,
     [flow.trigger, flow.extraTriggers],
   );
+
+  // Memoized so the `?? []` fallback does not hand the memoized rows a fresh
+  // array on every render of an unrelated field.
+  const flowVariables = useMemo(() => flow.variables ?? [], [flow.variables]);
 
   // Per-row arrays keyed on flow.steps keep row props referentially stable so
   // the memoized rows skip re-rendering when only flow metadata changes.
@@ -232,6 +239,7 @@ export const FlowStepsCard: React.FC<FlowStepsCardProps> = ({ flow, t, onAddStep
                     prevSteps={rowData[index].prevSteps}
                     allPrevSteps={rowData[index].allPrevSteps}
                     loopVars={rowData[index].loopVars}
+                    flowVariables={flowVariables}
                     t={t}
                   />
                 ))}

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 import { isTypingTarget } from '../utils/domUtils';
+import { useAppStore } from '../store/appStore';
 
 function getScrollableHostWithin(container: HTMLElement, target: EventTarget | null): HTMLElement | null {
   if (!(target instanceof HTMLElement)) return null;
@@ -31,6 +32,7 @@ function isPointerOverVerticalScrollbar(container: HTMLElement, event: WheelEven
 interface UseGlobalHotkeysOptions {
   contentAreaRef: RefObject<HTMLDivElement | null>;
   onFocusPrompt: () => void;
+  onCycleModel: () => void;
   zoomInMarkdown: () => void;
   zoomOutMarkdown: () => void;
   resetMarkdownZoom: () => void;
@@ -39,22 +41,42 @@ interface UseGlobalHotkeysOptions {
 export function useGlobalHotkeys({
   contentAreaRef,
   onFocusPrompt,
+  onCycleModel,
   zoomInMarkdown,
   zoomOutMarkdown,
   resetMarkdownZoom,
 }: UseGlobalHotkeysOptions): void {
   const wheelZoomTickRef = useRef(0);
 
+  // Shift+Tab cycles the chat model no matter where focus sits on the chat page.
+  // Capture phase + preventDefault beats the browser's native reverse focus
+  // traversal (which otherwise moves focus around the sidebar/toolbar). Gated to
+  // the chat view, and skipped inside modals so their focus trap keeps working.
+  useEffect(() => {
+    const onCycleModelHotkey = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab' || !event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (useAppStore.getState().currentView !== 'chat') return;
+      if (document.activeElement?.closest('[role="dialog"],[aria-modal="true"]')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onCycleModel();
+    };
+    window.addEventListener('keydown', onCycleModelHotkey, true);
+    return () => window.removeEventListener('keydown', onCycleModelHotkey, true);
+  }, [onCycleModel]);
+
   useEffect(() => {
     const onFocusPromptHotkey = (event: KeyboardEvent) => {
-      if (
-        (event.ctrlKey || event.metaKey) &&
-        !event.altKey && !event.shiftKey &&
-        event.key.toLowerCase() === 'e'
-      ) {
-        event.preventDefault();
-        onFocusPrompt();
-      }
+      // Ctrl/Cmd+K is the advertised focus-prompt shortcut; Ctrl/Cmd+E is kept as
+      // a long-standing alias so existing muscle memory keeps working.
+      const key = event.key.toLowerCase();
+      if (!((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && (key === 'k' || key === 'e'))) return;
+      // The prompt only lives (and is focusable) on the chat view; gate here so the
+      // combo isn't swallowed elsewhere, and skip while a dialog owns focus.
+      if (useAppStore.getState().currentView !== 'chat') return;
+      if (document.querySelector('[aria-modal="true"]')) return;
+      event.preventDefault();
+      onFocusPrompt();
     };
     window.addEventListener('keydown', onFocusPromptHotkey);
     return () => window.removeEventListener('keydown', onFocusPromptHotkey);

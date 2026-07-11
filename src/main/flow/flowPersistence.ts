@@ -22,7 +22,14 @@ export async function loadFlowsFromDisk(): Promise<FlowDefinition[]> {
 }
 
 export async function saveFlowsToDisk(flows: FlowDefinition[]): Promise<void> {
-  const dir = path.dirname(getFlowsPath());
-  await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(getFlowsPath(), JSON.stringify(flows, null, 2), 'utf-8');
+  const target = getFlowsPath();
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  // Write to a unique temp file then atomically rename over the target. A direct
+  // writeFile can leave a half-written flows.json if the process dies mid-write
+  // (loadFlowsFromDisk then parses [], and the next save persists that empty list,
+  // destroying every flow); two concurrent saves could also interleave bytes.
+  // rename is atomic and last-writer-wins, so a reader never sees a partial file.
+  const tmp = `${target}.${createEntityId()}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(flows, null, 2), 'utf-8');
+  await fs.rename(tmp, target);
 }

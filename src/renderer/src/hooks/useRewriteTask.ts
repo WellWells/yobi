@@ -4,6 +4,7 @@ import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import { fileApi, promptApi } from '../api/electronApi';
 import { findModelOption } from '../config/models';
+import { useProviderModels } from './useProviderModels';
 import type { ExportToast } from './useCaptureExport';
 
 function parseOutputTimestamp(name: string): number {
@@ -23,8 +24,6 @@ export function useRewriteTask(setExportToast: (toast: ExportToast) => void) {
     selectFile,
     setFileContent,
     queue,
-    duckaiModels,
-    byokModels,
   } = useAppStore(
     useShallow((s) => ({
       selectedFile: s.selectedFile,
@@ -34,10 +33,9 @@ export function useRewriteTask(setExportToast: (toast: ExportToast) => void) {
       selectFile: s.selectFile,
       setFileContent: s.setFileContent,
       queue: s.queue,
-      duckaiModels: s.duckaiModels,
-      byokModels: s.byokModels,
     })),
   );
+  const { extraModels } = useProviderModels();
   const { t } = useI18nStore();
 
   const [rewriteTaskId, setRewriteTaskId] = useState<string | null>(null);
@@ -85,7 +83,7 @@ export function useRewriteTask(setExportToast: (toast: ExportToast) => void) {
   const startRewrite = useCallback(async (nextUrl: string) => {
     if (!selectedFile || !fileContent) return;
     const prompt = parsedBlocks?.prompt?.trim() || fileContent.trim();
-    const modelLabel = findModelOption(nextUrl, [...duckaiModels, ...byokModels]).label;
+    const modelLabel = findModelOption(nextUrl, extraModels).label;
     const taskId = await promptApi.triggerWithOptions({ prompt, targetUrl: nextUrl });
     if (!taskId) {
       setExportToast({ id: Date.now(), message: t('rewrite.enqueueFailed') });
@@ -98,7 +96,7 @@ export function useRewriteTask(setExportToast: (toast: ExportToast) => void) {
       id: Date.now(),
       message: t('rewrite.queued').replace('{{model}}', modelLabel),
     });
-  }, [selectedFile, fileContent, parsedBlocks, t, setExportToast, duckaiModels, byokModels]);
+  }, [selectedFile, fileContent, parsedBlocks, t, setExportToast, extraModels]);
 
   return { startRewrite };
 }

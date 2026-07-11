@@ -8,9 +8,12 @@ import { FileHeaderBar } from '../components/chat/FileHeaderBar';
 import { ModelDropdown } from '../components/chat/ModelDropdown';
 import { PromptInputArea, type PromptInputAreaHandle } from '../components/chat/PromptInputArea';
 import { WelcomeScreen } from '../components/chat/WelcomeScreen';
+import { IncognitoWelcome } from '../components/chat/IncognitoWelcome';
+import { TempChatToggle } from '../components/chat/TempChatToggle';
 import { ChatDropZone } from '../components/chat/ChatDropZone';
+import { LoginRequiredDialog } from '../components/chat/LoginRequiredDialog';
 import { useShallow } from 'zustand/react/shallow';
-import { useAppStore } from '../store/appStore';
+import { selectHiddenSources, useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import { useGlobalHotkeys } from '../hooks/useGlobalHotkeys';
 import { usePromptAttachments } from '../hooks/usePromptAttachments';
@@ -23,9 +26,10 @@ import {
 import { useRewriteTask } from '../hooks/useRewriteTask';
 import { useChatCommands } from '../hooks/useChatCommands';
 import { useChatCommandRunner } from '../hooks/useChatCommandRunner';
-import { fileApi, settingsApi, clipboardApi, promptApi } from '../api/electronApi';
-import { DEFAULT_MODEL_URL } from '../config/models';
-import { isByokTargetUrl } from '../../../shared/types';
+import { accountApi, fileApi, settingsApi, clipboardApi, promptApi } from '../api/electronApi';
+import { DEFAULT_MODEL_URL, nextModelUrl, visibleModels } from '../config/models';
+import { isByokTargetUrl, isModelUrlHidden, loginRequiredProviderForUrl } from '../../../shared/types';
+import type { LoginRequiredProvider } from '../../../shared/types';
 
 const RewriteTriggerButton = React.memo<{
   onStart: (url: string) => void;
@@ -52,13 +56,16 @@ const RewriteTriggerButton = React.memo<{
 ));
 
 export const ChatView: React.FC = React.memo(() => {
-  const { selectedFile, fileContent, parsedBlocks, layoutMode, markdownZoom } = useAppStore(
+  const { selectedFile, fileContent, parsedBlocks, layoutMode, markdownZoom, tempChatMode, tempChatContent, tempChatBlocks } = useAppStore(
     useShallow((s) => ({
       selectedFile: s.selectedFile,
       fileContent: s.fileContent,
       parsedBlocks: s.parsedBlocks,
       layoutMode: s.layoutMode,
       markdownZoom: s.markdownZoom,
+      tempChatMode: s.tempChatMode,
+      tempChatContent: s.tempChatContent,
+      tempChatBlocks: s.tempChatBlocks,
     })),
   );
   const { setFileContent, setFiles, selectFile, setLayoutMode, zoomInMarkdown, zoomOutMarkdown, resetMarkdownZoom, setAiUrl } = useAppStore(
@@ -76,6 +83,7 @@ export const ChatView: React.FC = React.memo(() => {
   const { t } = useI18nStore();
 
   const [activeModelUrl, setActiveModelUrl] = useState(() => useAppStore.getState().aiUrl);
+  const [pendingLoginModel, setPendingLoginModel] = useState<{ provider: LoginRequiredProvider; url: string } | null>(null);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [exportToast, setExportToast] = useState<ExportToast>(null);
   const [headerEditing, setHeaderEditing] = useState(false);
@@ -107,13 +115,33 @@ export const ChatView: React.FC = React.memo(() => {
     promptAreaRef.current?.focusPrompt();
   }, []);
 
+  // Reads models from the store at call time so the callback stays stable; the cycle
+  // order comes from visibleModels, the same helper the dropdowns render from, so a
+  // hidden provider is never cycled into.
+  const handleCycleModel = useCallback((): void => {
+    const state = useAppStore.getState();
+    setActiveModelUrl((prev) => nextModelUrl(prev, visibleModels(state, selectHiddenSources(state))));
+  }, []);
+
   useGlobalHotkeys({
     contentAreaRef,
     onFocusPrompt: focusPromptInput,
+    onCycleModel: handleCycleModel,
     zoomInMarkdown,
     zoomOutMarkdown,
     resetMarkdownZoom,
   });
+
+  // Toggling temporary chat mode drops the user straight into typing. Skip the
+  // initial mount so app startup doesn't steal focus.
+  const tempModeFocusArmed = useRef(false);
+  useEffect(() => {
+    if (!tempModeFocusArmed.current) {
+      tempModeFocusArmed.current = true;
+      return;
+    }
+    focusPromptInput();
+  }, [tempChatMode, focusPromptInput]);
 
   useEffect(() => {
     setViewMenuOpen(false);
@@ -139,6 +167,22 @@ export const ChatView: React.FC = React.memo(() => {
     });
   }, [byokModels, byokGroupModels, byokModelsLoaded]);
 
+  // Hiding the model the chat is currently on must move the chat off it. The switch
+  // is persisted, not just local: hotkey tasks read config.targetUrl, so a local-only
+  // change would keep firing the very provider the user just hid.
+  const hidden = useAppStore(useShallow(selectHiddenSources));
+  const hiddenSourcesLoaded = useAppStore((s) => s.hiddenSourcesLoaded);
+  useEffect(() => {
+    if (!hiddenSourcesLoaded) return;
+    if (!isModelUrlHidden(activeModelUrl, hidden)) return;
+    // The settings UI blocks hiding the last visible source, so this is only empty
+    // while the byok lists are still hydrating.
+    const next = visibleModels(useAppStore.getState(), hidden)[0];
+    if (!next) return;
+    setActiveModelUrl(next.url);
+    void settingsApi.updateAiUrl(next.url).then(() => setAiUrl(next.url));
+  }, [activeModelUrl, hidden, hiddenSourcesLoaded, setAiUrl]);
+
 
   useEffect(() => {
     if (!exportToast) return;
@@ -158,24 +202,52 @@ export const ChatView: React.FC = React.memo(() => {
     }
   }, [headerEditing]);
 
-  const handleSendPrompt = useCallback(async (text: string): Promise<void> => {
-    const currentModelUrl = useAppStore.getState().aiUrl;
-    if (activeModelUrl !== currentModelUrl) {
-      await settingsApi.updateAiUrl(activeModelUrl);
-      setAiUrl(activeModelUrl);
+  // Returns false when the login gate refused the send, which keeps the prompt (and any
+  // attachments) in the composer instead of dropping the user's text on the floor. The gate
+  // decides synchronously so the caller can act on the answer before it clears its input.
+  const handleSendPrompt = useCallback((text: string): boolean => {
+    // The selection gate cannot cover a model that was already active on launch, nor one
+    // reached by the Shift+Tab cycle, so send is the second place worth asking.
+    const gated = loginRequiredProviderForUrl(activeModelUrl);
+    if (gated && useAppStore.getState().accountStatuses[gated] === false) {
+      setPendingLoginModel({ provider: gated, url: activeModelUrl });
+      return false;
     }
-    const attachmentPaths = attachments.map((a) => a.path).filter(Boolean);
-    promptApi.triggerWithOptions({
-      prompt: text,
-      targetUrl: activeModelUrl,
-      ...(attachmentPaths.length > 0 ? { attachments: attachmentPaths } : {}),
-    });
-    if (attachments.length > 0) clearAttachments();
+    void (async () => {
+      const currentModelUrl = useAppStore.getState().aiUrl;
+      if (activeModelUrl !== currentModelUrl) {
+        await settingsApi.updateAiUrl(activeModelUrl);
+        setAiUrl(activeModelUrl);
+      }
+      const attachmentPaths = attachments.map((a) => a.path).filter(Boolean);
+      promptApi.triggerWithOptions({
+        prompt: text,
+        targetUrl: activeModelUrl,
+        ...(attachmentPaths.length > 0 ? { attachments: attachmentPaths } : {}),
+      });
+      if (attachments.length > 0) clearAttachments();
+    })();
+    return true;
   }, [activeModelUrl, attachments, clearAttachments, setAiUrl]);
 
+  // Switching to a model that cannot answer without an account asks first, and only
+  // commits the switch once the user opts into signing in. Cancelling leaves the previous
+  // model selected because the switch was never applied. A status of null (first check
+  // still in flight) lets the switch through; the provider re-checks before sending.
   const handleAiUrlChange = useCallback((nextUrl: string): void => {
+    const provider = loginRequiredProviderForUrl(nextUrl);
+    if (provider && useAppStore.getState().accountStatuses[provider] === false) {
+      setPendingLoginModel({ provider, url: nextUrl });
+      return;
+    }
     setActiveModelUrl(nextUrl);
   }, []);
+
+  const handleLoginConfirm = useCallback((provider: LoginRequiredProvider): void => {
+    if (pendingLoginModel) setActiveModelUrl(pendingLoginModel.url);
+    setPendingLoginModel(null);
+    void accountApi.openLogin(provider);
+  }, [pendingLoginModel]);
 
   const handleCopyFullText = useCallback(async (): Promise<void> => {
     if (!fileContent) return;
@@ -218,7 +290,14 @@ export const ChatView: React.FC = React.memo(() => {
       <Sidebar />
 
       <ChatDropZone onFiles={addFiles} overlayLabel={t('attach.drop.hint')}>
-      <Stack gap={0} flex={1} bg="var(--mantine-color-body)" style={{ overflow: 'hidden' }}>
+      <Stack gap={0} flex={1} pos="relative" bg="var(--mantine-color-body)" style={{ overflow: 'hidden' }}>
+        {/* With no file open there is no header bar — pin the toggle to the
+            pane's top-right corner so it stays reachable in every state. */}
+        {!selectedFile && (
+          <Box pos="absolute" top={10} right={14} style={{ zIndex: 50 }}>
+            <TempChatToggle />
+          </Box>
+        )}
         {selectedFile && (
           <FileHeaderBar
             fileName={selectedFile.name}
@@ -255,6 +334,10 @@ export const ChatView: React.FC = React.memo(() => {
             <Flex align="center" justify="center" h="100%" c="dimmed" fz="var(--font-size-md)">
               {t('main.loading')}
             </Flex>
+          ) : tempChatMode && tempChatContent && tempChatBlocks ? (
+            <MarkdownView content={tempChatContent} blocks={tempChatBlocks} />
+          ) : tempChatMode ? (
+            <IncognitoWelcome />
           ) : (
             <WelcomeScreen activeModelUrl={activeModelUrl} />
           )}
@@ -265,7 +348,7 @@ export const ChatView: React.FC = React.memo(() => {
           t={t}
           activeModelUrl={activeModelUrl}
           onChangeModel={handleAiUrlChange}
-          onSend={(text) => { void handleSendPrompt(text); }}
+          onSend={handleSendPrompt}
           attachments={attachments}
           notice={attachmentNotice}
           onRemoveAttachment={removeAttachment}
@@ -275,6 +358,13 @@ export const ChatView: React.FC = React.memo(() => {
         />
       </Stack>
       </ChatDropZone>
+
+      <LoginRequiredDialog
+        provider={pendingLoginModel?.provider ?? null}
+        t={t}
+        onCancel={() => setPendingLoginModel(null)}
+        onConfirm={handleLoginConfirm}
+      />
 
       <ExportDialog
         open={captureExport.captureDialogOpen}

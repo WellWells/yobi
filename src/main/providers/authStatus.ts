@@ -3,6 +3,7 @@ import type { Cookie } from 'electron';
 import { isExpiredCookie } from '../helpers';
 import { CLEAN_UA, FIREFOX_UA } from '../userAgent';
 import { CHATGPT_LOGIN_URL } from './chatgpt';
+import { isPerplexitySessionCookie } from './perplexity';
 import { PROVIDER_URLS, AUTH_PROVIDERS } from '../../shared/types';
 import type { AccountStatus, AuthProvider, Provider } from '../../shared/types';
 
@@ -76,8 +77,7 @@ const AUTH_CONFIG: Record<AuthProvider, AuthProviderConfig> = {
   perplexity: {
     loginUrl: PROVIDER_URLS.perplexity,
     userAgent: CLEAN_UA,
-    isSessionCookie: (c) =>
-      c.name.startsWith('__Secure-next-auth.session-token') && !isExpiredCookie(c.expirationDate),
+    isSessionCookie: isPerplexitySessionCookie,
   },
 };
 

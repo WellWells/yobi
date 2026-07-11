@@ -1,6 +1,7 @@
 import React from 'react';
 import { Code, Group, Text, Tooltip } from '@mantine/core';
-import type { SkillInstance, SkillType, TriggerConfig } from '../../../../shared/types';
+import { FLOW_VAR_PREFIX } from '../../../../shared/flowVariables';
+import type { FlowVariable, SkillInstance, SkillType, TriggerConfig } from '../../../../shared/types';
 
 export interface LoopVarHint {
   name: string;
@@ -13,9 +14,9 @@ export interface LoopVarHint {
 function loopSubfields(sourceType?: SkillType): string[] {
   switch (sourceType) {
     case 'youtube_subs': return ['title', 'link', 'image'];
+    case 'rss':
     case 'scraper':
     case 'file_list': return ['title', 'link'];
-    case 'rss':
     case 'random': return [];
     default: return ['title', 'link'];
   }
@@ -71,13 +72,16 @@ export const AvailableVarsHint: React.FC<{
   flowTrigger?: TriggerConfig;
   loopVars?: LoopVarHint[];
   allPrevSteps?: SkillInstance[];
+  flowVariables?: FlowVariable[];
   onInsert: (token: string) => void;
   t: (k: string) => string;
-}> = ({ prevSteps, flowTrigger, loopVars = [], allPrevSteps = [], onInsert, t }) => {
+}> = ({ prevSteps, flowTrigger, loopVars = [], allPrevSteps = [], flowVariables = [], onInsert, t }) => {
   const insertHint = t('agentflow.availableVars.insert');
   const inputVar = flowTrigger?.type === 'bot'
     ? (flowTrigger.botInputVariable?.trim() || 'input')
-    : undefined;
+    : flowTrigger?.type === 'chat'
+      ? (flowTrigger.chatInputVariable?.trim() || 'input')
+      : undefined;
   const hasFileOutput = allPrevSteps.some(isFileProducerStep);
   const botFailSteps = allPrevSteps.filter(
     (s) => s.type === 'bot' && s.config.emitFailFlag === 'true' && s.outputKey,
@@ -88,6 +92,17 @@ export const AvailableVarsHint: React.FC<{
       <Text fz="xs" c="dimmed">{t('agentflow.availableVars')}</Text>
       <VarChip token="clipboard" color="dimmed" insertHint={insertHint} onInsert={onInsert} />
       <VarChip token="timestamp" color="dimmed" insertHint={insertHint} onInsert={onInsert} />
+      {/* Flow variables are seeded before step 0, so they are offered on every
+          step rather than gated on what ran earlier. */}
+      {flowVariables.map((variable) => (
+        <VarChip
+          key={variable.key}
+          token={`${FLOW_VAR_PREFIX}.${variable.key}`}
+          color="violet"
+          insertHint={variable.label || insertHint}
+          onInsert={onInsert}
+        />
+      ))}
       {hasFileOutput && (
         <VarChip token="file" color="green" insertHint={t('agentflow.availableVars.fileHint')} onInsert={onInsert} />
       )}
@@ -98,6 +113,7 @@ export const AvailableVarsHint: React.FC<{
         <>
           <VarChip token="bot.triggerChatId" color="teal" insertHint={insertHint} onInsert={onInsert} />
           <VarChip token="bot.triggerUserId" color="teal" insertHint={insertHint} onInsert={onInsert} />
+          <VarChip token="bot.triggerPlatform" color="teal" insertHint={insertHint} onInsert={onInsert} />
         </>
       )}
       {loopVars.map((v) => (
@@ -111,7 +127,7 @@ export const AvailableVarsHint: React.FC<{
       {prevSteps.map((s) => (
         <React.Fragment key={s.id}>
           <VarChip token={s.outputKey} color="blue" insertHint={insertHint} onInsert={onInsert} />
-          {s.type === 'llm' && s.config.emitFailFlag === 'true' && (
+          {(s.type === 'llm' || s.type === 'browser') && s.config.emitFailFlag === 'true' && (
             <VarChip token={`${s.outputKey}.isFailed`} color="grape" insertHint={insertHint} onInsert={onInsert} />
           )}
           {s.type === 'youtube' && (
@@ -121,7 +137,7 @@ export const AvailableVarsHint: React.FC<{
               <VarChip token={`${s.outputKey}.image`} color="grape" insertHint={insertHint} onInsert={onInsert} />
             </>
           )}
-          {(s.type === 'rss' || s.type === 'browser') && s.config.includeImage === 'true' && (
+          {s.type === 'browser' && s.config.includeImage === 'true' && (
             <VarChip token={`${s.outputKey}.image`} color="grape" insertHint={insertHint} onInsert={onInsert} />
           )}
           {s.type === 'stock' && !/[,\n]/.test(s.config.symbol ?? '') && (

@@ -4,21 +4,25 @@ import {
   getProviderLabel,
   preparePromptForProvider,
   isLoginRequiredError,
-  getProviderLoginUrl,
 } from './providers';
 import { runByokCompletion } from './providers/byokClient';
 import { PERPLEXITY_CLOUDFLARE_ERROR_NAME } from './providers/perplexity';
-import { saveOutput } from './output';
+import { VERIFICATION_CHALLENGE_ERROR_NAME } from './providers/verificationChallenge';
+import { buildOutputMarkdown, saveOutput } from './output';
 import { config } from './config';
+import { deliverTempChatResult, isTempChatMode } from './tempChat';
 import { IPC, isByokTargetUrl } from '../shared/types';
-import type { Task } from '../shared/types';
+import type { PromptPreferences, Task } from '../shared/types';
 import {
   sendLog,
   sendToRenderer,
   sendWebNotification,
   clearPerplexitySiteDataIfNeeded,
+  sanitizeRequesterName,
 } from './helpers';
 import { backupClipboard, restoreClipboard } from './clipboard';
+import { TaskHardTimeoutError } from './queueManager';
+import { classifyFailure, recordTaskOutcome } from './metrics';
 import { llmLane } from './flow/lanes';
 import { listOutputFiles, getOutputDir } from './files';
 import {
@@ -30,19 +34,56 @@ import {
   stripSystemInstruction,
   t,
 } from './i18n';
-import {
-  createWorkerWindow,
-  getWorkerWin,
-  showLoginWindowIfNeeded,
-} from './windows';
+import { ensureWorkerWindow } from './windows';
 import type { TelegramRuntime } from './telegram';
+import type { LineRuntime } from './line';
 
 export interface TaskProcessorDeps {
   telegramRuntime: TelegramRuntime;
+  lineRuntime: LineRuntime;
+}
+
+// The nickname preference answers "what should the AI call *you*", where "you"
+// is whoever sits at this desktop. A task arriving over a bot is addressed to
+// the sender instead, so their display name takes that slot — and when no name
+// came through, the prompt drops the form of address rather than greeting a
+// stranger by the desktop owner's name.
+function resolvePromptPrefs(task: Task): PromptPreferences {
+  const isBotTask = task.source === 'telegram' || task.source === 'line';
+  if (!isBotTask) return config.promptPreferences;
+  return { ...config.promptPreferences, nickname: sanitizeRequesterName(task.requesterName) };
+}
+
+// A task that came in over a bot gets exactly one reply, whoever gets there
+// first. Two writers race for it: processTask, and the queue's hard timeout —
+// which does NOT cancel processTask, so without this the worker would later push
+// its answer on top of a timeout notice the user had already been given.
+const remotelyReported = new WeakSet<Task>();
+
+// Desktop failure toasts race the same two writers (processTask's catch and the
+// queue hard timeout, which does not cancel processTask) — dedupe them the same
+// way bot replies are, or one task pops two error notifications.
+const locallyNotified = new WeakSet<Task>();
+
+function claimRemoteReply(task: Task): boolean {
+  if (!task.replyTarget && !task.lineReplyTarget) return false;
+  if (remotelyReported.has(task)) return false;
+  remotelyReported.add(task);
+  return true;
+}
+
+async function replyRemoteError(
+  task: Task,
+  deps: TaskProcessorDeps,
+  payload: { providerLabel: string; message: string },
+): Promise<void> {
+  if (!claimRemoteReply(task)) return;
+  if (task.replyTarget) await deps.telegramRuntime.sendTaskError(task.replyTarget, payload);
+  if (task.lineReplyTarget) await deps.lineRuntime.sendTaskError(task.lineReplyTarget.chatId, payload);
 }
 
 export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
-  const { telegramRuntime } = deps;
+  const { telegramRuntime, lineRuntime } = deps;
   const { id, prompt } = task;
   const promptForOutput = stripSystemInstruction(prompt);
   const targetUrl = task.targetUrl ?? config.targetUrl;
@@ -58,7 +99,7 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
     const t0 = Date.now();
     sendLog(`[${id}] ⏳ Sending to ${providerLabel}...`);
 
-    const dynamicInstruction = buildCombinedPromptFromPrefs(config.promptPreferences, getLangCache());
+    const dynamicInstruction = buildCombinedPromptFromPrefs(resolvePromptPrefs(task), getLangCache());
     const instruction = buildTaskInstruction(dynamicInstruction, config.syncSystemLanguageToModel, config.locale);
     const fullPrompt = instruction ? `${instruction}\n\n${prompt}` : prompt;
 
@@ -75,13 +116,11 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
       // automations the window can be destroyed/recreated (login/Cloudflare mode
       // switch), so a reference captured earlier may be dead by the time we run.
       return llmLane.runExclusive(async () => {
-        let activeWorker = getWorkerWin();
-        if (!activeWorker || activeWorker.isDestroyed()) {
-          sendLog(`[${id}] 🔄 Relaunching worker window...`);
-          createWorkerWindow(config.targetUrl);
-          await new Promise((r) => setTimeout(r, 3_000));
-          activeWorker = getWorkerWin();
-        }
+        // Resolve the worker inside the lane so a concurrent login/Cloudflare mode
+        // switch can't swap the window mid-run. ensureWorkerWindow forces
+        // 'automation' mode, reclaiming a worker left interactive after a prior
+        // login so streamed replies don't stall in a hidden, unspoofed window.
+        const activeWorker = await ensureWorkerWindow(config.targetUrl, 'automation');
         if (!activeWorker || activeWorker.isDestroyed()) {
           throw new Error('Worker window unavailable after relaunch attempt');
         }
@@ -103,6 +142,7 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
 
     const elapsed = ((Date.now() - t0) / 1_000).toFixed(1);
     sendLog(`[${id}] ✅ Response received in ${elapsed}s`);
+    recordTaskOutcome('chat', 'success', task);
 
     const outputDir = await getOutputDir();
     const langData = await loadLanguageData(config.locale);
@@ -116,55 +156,78 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
     const promptFallback = promptForOutput.trim().replace(/\s+/g, ' ').slice(0, 70);
     const finalTitle = taskTitle || geminiTitle || promptFallback || 'Untitled';
 
-    const filePath = await saveOutput({
+    const markdownOptions = {
       prompt: promptForOutput,
       response,
-      outputDir,
       title: finalTitle,
       provider: providerLabel,
       providerLabel: providerHeaderLabel,
       promptLabel,
       responseLabel,
       timestampLabel,
-    });
-    const savedFileName = path.basename(filePath);
-    sendLog(`[${id}] 💾 Saved: ${savedFileName}`);
+    };
 
-    sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
+    // Temporary chat mode: no .md file, no file-list broadcast — the reply is
+    // pushed to the renderer in memory only. Remote-originated tasks (Telegram,
+    // LINE) are exempt (the mode covers local traces; remote replies still need
+    // a file to export/reference).
+    const temporaryReply = isTempChatMode() && !task.replyTarget && !task.lineReplyTarget;
+    let savedFileName = '';
+    if (temporaryReply) {
+      deliverTempChatResult({ content: buildOutputMarkdown(markdownOptions) });
+      sendLog(`[${id}] 👻 Temporary chat — reply not saved`);
+    } else {
+      const filePath = await saveOutput({ ...markdownOptions, outputDir });
+      savedFileName = path.basename(filePath);
+      sendLog(`[${id}] 💾 Saved: ${savedFileName}`);
 
-    const notifyTitle = langData?.['notify.completed.title'] ?? 'Yobi';
-    const notifyBodyTemplate = langData?.['notify.completed.body'] ?? '"{{prompt}}" saved as {{file}}';
-    const compactPrompt = promptForOutput.replace(/\s+/g, ' ').trim().slice(0, 36);
-    const displayPrompt = compactPrompt.length < promptForOutput.replace(/\s+/g, ' ').trim().length
-      ? `${compactPrompt}…`
-      : compactPrompt;
-    sendWebNotification(
-      notifyTitle,
-      notifyBodyTemplate.replace('{{prompt}}', displayPrompt).replace('{{file}}', savedFileName),
-    );
-
-    if (task.replyTarget) {
-      await telegramRuntime.sendTaskSuccess(task.replyTarget, {
-        providerLabel,
-        savedFileName,
-        response,
-        prompt: promptForOutput,
-        title: finalTitle,
-        elapsedSeconds: elapsed,
-      });
+      sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
     }
-  } catch (err: unknown) {
-    const strings = getLangCache();
-    if (isLoginRequiredError(targetUrl, err)) {
-      const loginUrl = getProviderLoginUrl(targetUrl);
-      if (loginUrl) await showLoginWindowIfNeeded(providerLabel, loginUrl);
-      sendLog(`[${id}] ⚠️ Login required before sending prompt`);
+
+    if (config.notifyEvents.chatComplete) {
+      const notifyTitle = langData?.['notify.completed.title'] ?? 'Yobi';
+      const notifyBodyTemplate = temporaryReply
+        ? (langData?.['notify.completed.temp.body'] ?? '"{{prompt}}" — temporary chat, not saved')
+        : (langData?.['notify.completed.body'] ?? '"{{prompt}}" saved as {{file}}');
+      const compactPrompt = promptForOutput.replace(/\s+/g, ' ').trim().slice(0, 36);
+      const displayPrompt = compactPrompt.length < promptForOutput.replace(/\s+/g, ' ').trim().length
+        ? `${compactPrompt}…`
+        : compactPrompt;
+      sendWebNotification(
+        notifyTitle,
+        notifyBodyTemplate.replace('{{prompt}}', displayPrompt).replace('{{file}}', savedFileName),
+      );
+    }
+
+    if (claimRemoteReply(task)) {
       if (task.replyTarget) {
-        await telegramRuntime.sendTaskError(task.replyTarget, {
+        await telegramRuntime.sendTaskSuccess(task.replyTarget, {
           providerLabel,
-          message: t(strings, 'telegram.error.loginRequired'),
+          savedFileName,
+          response,
+          prompt: promptForOutput,
+          title: finalTitle,
+          elapsedSeconds: elapsed,
         });
       }
+      if (task.lineReplyTarget) {
+        await lineRuntime.sendTaskSuccess(task.lineReplyTarget.chatId, response);
+      }
+    }
+  } catch (err: unknown) {
+    recordTaskOutcome('chat', classifyFailure(err instanceof Error ? err.message : String(err)), task);
+    const strings = getLangCache();
+    if (isLoginRequiredError(targetUrl, err)) {
+      // The provider already revealed the interactive login window (chat + flow);
+      // here we only log and notify the remote (Telegram) caller.
+      // Keep the site data: the cleanup below would drop the sign-in page's CSRF cookie
+      // out from under the login the user was just asked to complete.
+      preservePerplexitySiteData = true;
+      sendLog(`[${id}] ⚠️ Login required before sending prompt`);
+      await replyRemoteError(task, deps, {
+        providerLabel,
+        message: t(strings, 'telegram.error.loginRequired'),
+      });
       return;
     }
     const error = err as Error;
@@ -178,12 +241,7 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
           : 'attach.upload.failed';
       sendWebNotification(t(strings, 'app.name'), t(strings, key), 'error');
       sendLog(`[${id}] ⚠️ attachment upload failed: ${phase}`);
-      if (task.replyTarget) {
-        await telegramRuntime.sendTaskError(task.replyTarget, {
-          providerLabel,
-          message: t(strings, key),
-        });
-      }
+      await replyRemoteError(task, deps, { providerLabel, message: t(strings, key) });
       return;
     }
     if (error.name === PERPLEXITY_CLOUDFLARE_ERROR_NAME) {
@@ -191,16 +249,61 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
     }
     const rawMessage = error.message;
     sendLog(`[${id}] ❌ ${rawMessage}`);
-    if (task.replyTarget) {
-      await telegramRuntime.sendTaskError(task.replyTarget, {
-        providerLabel,
-        message: localizeUserFacingError(rawMessage, strings),
-      });
+    // Verification challenges already notified at raise time (with an "open
+    // worker window" action) — a second generic failure toast would duplicate it.
+    if (config.notifyEvents.chatFailure && error.name !== VERIFICATION_CHALLENGE_ERROR_NAME && !locallyNotified.has(task)) {
+      locallyNotified.add(task);
+      const compactError = localizeUserFacingError(rawMessage, strings).replace(/\s+/g, ' ').trim();
+      const displayError = compactError.length > 90 ? `${compactError.slice(0, 90)}…` : compactError;
+      sendWebNotification(
+        t(strings, 'notify.chat.failure.title'),
+        t(strings, 'notify.chat.failure.body', { provider: providerLabel, error: displayError }),
+        'error',
+      );
     }
+    await replyRemoteError(task, deps, {
+      providerLabel,
+      message: localizeUserFacingError(rawMessage, strings),
+    });
   } finally {
     restoreClipboard(clipboardSnapshot);
     if (!preservePerplexitySiteData) {
       await clearPerplexitySiteDataIfNeeded(targetUrl);
     }
+  }
+}
+
+// The queue's hard timeout rejects its own race, outside processTask's try/catch,
+// so a remote caller would sit waiting for a reply that never arrives. Every
+// queue-level rejection reports back on whichever bot asked for the task, and
+// claimRemoteReply guarantees the still-running worker cannot contradict it.
+export async function notifyQueueLevelFailure(
+  task: Task,
+  err: unknown,
+  deps: TaskProcessorDeps,
+): Promise<void> {
+  const strings = getLangCache();
+  const message = err instanceof TaskHardTimeoutError
+    ? t(strings, 'main.error.taskTimeout', { minutes: String(err.timeoutMinutes) })
+    : localizeUserFacingError(err instanceof Error ? err.message : String(err), strings);
+
+  sendLog(`[${task.id}] ❌ ${message}`);
+
+  // A hotkey or in-app task has no chat to answer, and processTask's own failure
+  // toast lives in a catch the timeout never reaches — so it would vanish in
+  // silence. Surface it on the desktop instead.
+  if (!task.replyTarget && !task.lineReplyTarget) {
+    if (config.notifyEvents.chatFailure && !locallyNotified.has(task)) {
+      locallyNotified.add(task);
+      sendWebNotification(t(strings, 'notify.chat.failure.title'), message, 'error');
+    }
+    return;
+  }
+
+  const providerLabel = getProviderLabel(task.targetUrl ?? config.targetUrl);
+  try {
+    await replyRemoteError(task, deps, { providerLabel, message });
+  } catch (notifyErr: unknown) {
+    sendLog(`[${task.id}] ⚠️ failed to report the queue-level failure: ${(notifyErr as Error).message}`);
   }
 }

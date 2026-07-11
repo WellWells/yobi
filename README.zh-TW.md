@@ -6,7 +6,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-blue)](#-快速上手)
-[![Electron](https://img.shields.io/badge/Electron-42-47848F?logo=electron)](https://www.electronjs.org/)
+[![Microsoft Store](https://img.shields.io/badge/Microsoft%20Store-下載-0067b8)](https://apps.microsoft.com/detail/9nnx8prfstc9)
+[![Electron](https://img.shields.io/badge/Electron-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen.svg)](https://github.com/WellWells/yobi/pulls)
 
 **[English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md)**
@@ -40,12 +41,11 @@
 
 **1. 下載**適合你作業系統的最新版本：
 
-| 平台 | 下載 |
-| --- | --- |
-| Windows | NSIS 安裝程式（x64） |
-| macOS | DMG（Intel 與 Apple Silicon） |
-
-→ [**Releases 頁面**](https://github.com/WellWells/yobi/releases)
+| 平台        | 下載                                                                                          | 說明                                                                                              |
+| ----------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| **Windows** | [**Microsoft Store**](https://apps.microsoft.com/detail/9nnx8prfstc9)（推薦）                 | 自動安裝並自動更新。                                                            |
+| **Windows** | [GitHub Releases](https://github.com/WellWells/yobi/releases) — NSIS 安裝程式（x64）          | 未簽章，首次啟動時 Windows 會跳出提示——選擇 **更多資訊 → 仍要執行** 即可開啟。   |
+| **macOS**   | [GitHub Releases](https://github.com/WellWells/yobi/releases) — DMG（Intel 與 Apple Silicon） | 未簽章，首次啟動會被 macOS Gatekeeper 阻擋——[release 頁面](https://github.com/WellWells/yobi/releases) 附有開啟教學。 |
 
 **2. 30 秒內得到第一個答案：**
 
@@ -184,7 +184,7 @@ npm run build:win   # build Windows (NSIS installer)
 npm run build:mac   # build macOS (DMG)
 ```
 
-**技術堆疊：** Electron 42 · React 19 + TypeScript · Mantine 9 · Zustand 5 · Vite 8 + electron-builder · GrammY · node-cron
+**技術堆疊：** Electron · React + TypeScript · Mantine · Zustand · Vite + electron-builder · grammY · LINE Bot SDK
 
 ---
 

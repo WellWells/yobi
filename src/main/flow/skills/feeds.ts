@@ -1,7 +1,5 @@
 import { load } from 'cheerio';
-import { getProviderLabel, preparePromptForProvider } from '../../providers';
-import { isByokTargetUrl } from '../../../shared/types';
-import { extractCoverImage, fetchAndParse, fetchRawText, parseRssFeed, type RssFeedItem } from '../../urlParser';
+import { ensureHttpScheme, fetchAndParse, fetchRawText, parseRssFeed, type RssFeedItem } from '../../urlParser';
 import { pageFetchLane } from '../lanes';
 import { fetchYoutubeVideo, youtubeThumbnailUrl, type YoutubeVideoResult } from '../../youtubeTranscript';
 import { sendLog } from '../../helpers';
@@ -19,92 +17,70 @@ function pushResolved(items: Array<{ title: string; link: string }>, title: stri
   }
 }
 
+// Feeds hand back the new items only — `{title, link}` per item, the list shape
+// every loop-feeding skill uses. Fetching each article's body is a separate step
+// downstream (`browser` inside a `loop`), so one article's failure costs one
+// article, and one LLM call sees one article instead of five spliced together.
 export async function execRss(
   config: Record<string, string>,
   stepId: string,
-  targetUrl: string,
 ): Promise<string> {
   const url = config.url ?? '';
   if (!url) return '[]';
 
-  const includeImage = config.includeImage === 'true';
+  // Removed in the loop refactor. Left flows would otherwise hand their LLM step a
+  // JSON list of links where it expects article bodies — garbage in, plausible
+  // garbage out. Fail loudly instead.
+  if (config.fetchContent === 'true') {
+    throw new Error(
+      'The RSS "fetch linked content" option has been removed. Feed the RSS output into a loop and fetch each article with a browser step. See the "RSS Article Summary" template.',
+    );
+  }
 
-  const INITIAL_FETCH_COUNT = 5;
+  // On a first run every item in the feed is "new". Seeding with just the latest
+  // one keeps the flow from firing a burst of briefings the moment it is created;
+  // the rest are still written to the checkpoint, so they are never revisited.
+  const FIRST_RUN_COUNT = 1;
+  // A later run that finds a pile of new items (a slow cron, a feed that dumped a
+  // backlog) is still capped, or a single tick could sit in the queue for an hour.
+  const BURST_CAP = 5;
 
   sendLog(`📡 [AgentFlow] RSS step — fetching feed: ${url}`);
 
   const rawXml = await fetchRawText(url);
+  const allItems = parseRssFeed(rawXml);
 
-  const allLinks = parseRssFeed(rawXml).map((item) => item.link);
-
-  if (allLinks.length === 0) {
+  if (allItems.length === 0) {
     sendLog('📡 [AgentFlow] RSS: feed returned 0 items');
     return '[]';
   }
 
-  const { fresh, isFirstRun } = await reconcileSeenCache(rssCheckpoints, stepId, allLinks, config.cacheDays);
+  const byLink = new Map(allItems.map((item) => [item.link, item]));
+  const { fresh, isFirstRun } = await reconcileSeenCache(
+    rssCheckpoints,
+    stepId,
+    allItems.map((item) => item.link),
+    config.cacheDays,
+  );
 
   let newLinks = fresh;
-  if (newLinks.length > INITIAL_FETCH_COUNT) {
-    sendLog(`📡 [AgentFlow] RSS: ${isFirstRun ? 'first run' : `burst of ${newLinks.length}`} — returning latest ${INITIAL_FETCH_COUNT}`);
-    newLinks = allLinks.slice(0, INITIAL_FETCH_COUNT);
+  if (isFirstRun) {
+    sendLog(`📡 [AgentFlow] RSS: first run — seeding the checkpoint, returning the latest ${FIRST_RUN_COUNT} item`);
+    newLinks = allItems.slice(0, FIRST_RUN_COUNT).map((item) => item.link);
+  } else if (newLinks.length > BURST_CAP) {
+    sendLog(`📡 [AgentFlow] RSS: burst of ${newLinks.length} — returning latest ${BURST_CAP}`);
+    newLinks = allItems.slice(0, BURST_CAP).map((item) => item.link);
   } else {
     sendLog(`📡 [AgentFlow] RSS: found ${newLinks.length} new items since checkpoint`);
   }
 
-  if (newLinks.length === 0) {
-    return '[]';
-  }
+  if (newLinks.length === 0) return '[]';
 
-  if (config.fetchContent !== 'true') {
-    const linksJson = JSON.stringify(newLinks);
-    if (!includeImage) return linksJson;
-    const image = await firstLinkImage(newLinks[0]);
-    return JSON.stringify({ output: linksJson, image });
-  }
-
-  sendLog(`📡 [AgentFlow] RSS: fetching content for ${newLinks.length} articles`);
-  const parts: string[] = [];
-  let firstImage = '';
-  for (let i = 0; i < newLinks.length; i++) {
-    const articleUrl = newLinks[i];
-    sendLog(`📡 [${i + 1}/${newLinks.length}] Fetching: ${articleUrl}`);
-    try {
-      const result = await pageFetchLane.runExclusive(() => fetchAndParse(articleUrl, { rawHtml: false }));
-      const title = result.title || articleUrl;
-      parts.push(`title: ${title}\nlink: ${articleUrl}\ncontent: ${result.cleanedText}`);
-      if (includeImage && !firstImage && result.image) firstImage = result.image;
-      sendLog(`✅ [${i + 1}/${newLinks.length}] OK — ${result.cleanedText.length} chars`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      parts.push(`title: (fetch failed)\nlink: ${articleUrl}\ncontent: Error: ${msg}`);
-      sendLog(`❌ [${i + 1}/${newLinks.length}] Failed: ${msg}`);
-    }
-  }
-
-  const rawOutput = parts.join('\n\n---\n\n');
-  // BYOK targets take content verbatim — shaping would misapply the gemini
-  // fallback policy (detectProvider can't recognize byok:// URLs).
-  let shapedOutput = rawOutput;
-  if (!isByokTargetUrl(targetUrl)) {
-    const prepared = preparePromptForProvider(rawOutput, targetUrl);
-    if (prepared.truncated) {
-      sendLog(`✂️ [AgentFlow] RSS: output truncated to ${prepared.maxChars} chars (${getProviderLabel(targetUrl)} limit)`);
-    }
-    shapedOutput = prepared.prompt;
-  }
-  if (!includeImage) return shapedOutput;
-  return JSON.stringify({ output: shapedOutput, image: firstImage });
-}
-
-async function firstLinkImage(articleUrl: string): Promise<string> {
-  if (!articleUrl) return '';
-  try {
-    const { cleanedText: html } = await pageFetchLane.runExclusive(() => fetchAndParse(articleUrl, { rawHtml: true }));
-    return extractCoverImage(html, articleUrl);
-  } catch {
-    return '';
-  }
+  const items = newLinks.map((link) => ({
+    title: byLink.get(link)?.title?.trim() || link,
+    link,
+  }));
+  return JSON.stringify(items);
 }
 
 const scraperCheckpoints = makeCheckpointStore<SeenCheckpoint>('scraper');
@@ -193,7 +169,12 @@ export async function execScraper(
   const freshSet = new Set(fresh);
   const newItems = items.filter((item) => freshSet.has(item.link.trim()));
 
-  const INITIAL_FETCH_COUNT = parseInt(config.maxItems ?? '5', 10);
+  // Guard against a cleared field: the UI stores '' (not undefined) when the max
+  // is blanked, so `?? '5'` doesn't help and parseInt('') is NaN → slice(0, NaN)
+  // returns []. reconcileSeenCache already marked every item seen above, so a NaN
+  // here would silently consume the whole page and never emit anything again.
+  const parsedMax = parseInt(config.maxItems ?? '', 10);
+  const INITIAL_FETCH_COUNT = Number.isFinite(parsedMax) && parsedMax > 0 ? parsedMax : 5;
   const itemsToReturn = newItems.slice(0, INITIAL_FETCH_COUNT);
 
   if (isFirstRun) {
@@ -361,7 +342,7 @@ export function buildYoutubeEnvelope(result: YoutubeVideoResult, image = ''): st
 }
 
 export async function execYoutube(config: Record<string, string>): Promise<string> {
-  const url = (config.url ?? '').trim();
+  const url = ensureHttpScheme(config.url ?? '');
   if (!url) {
     sendLog('▶️ [AgentFlow] YouTube: no URL provided (isFailed=1)');
     return buildYoutubeEnvelope({ title: '', transcript: '', ok: false });

@@ -25,6 +25,7 @@ import {
 import { executeSkill } from './skills';
 import { navigatePageBlank } from './skills/browserPages';
 import { PERPLEXITY_CLOUDFLARE_ERROR_NAME } from '../providers/perplexity';
+import { FLOW_VAR_PREFIX } from '../../shared/flowVariables';
 
 interface RunProgress {
   completed: number;
@@ -61,7 +62,7 @@ export function unwrapStepOutput(type: SkillType, raw: string): StepOutput {
     }
     return { output: raw, subVars: {} };
   }
-  if (type === 'rss' || type === 'browser') {
+  if (type === 'browser') {
     try {
       const env = JSON.parse(raw) as { output?: unknown; image?: unknown };
       if (env && typeof env.output === 'string' && typeof env.image === 'string') {
@@ -121,6 +122,9 @@ async function resolveStepConfig(
     }
     resolvedConfig.__originalChatIdsTemplate = (step.config.chatIds ?? step.config.chatId ?? '').trim();
     resolvedConfig.__attachmentAllowlist = JSON.stringify(getProducedFiles(context));
+    // Lets a step configured as platform='auto' reply on whichever platform
+    // triggered this run. Absent for cron/hotkey/manual runs.
+    resolvedConfig.__triggerPlatform = context.get('bot.triggerPlatform') ?? '';
   }
   if (step.type === 'js') {
     const entries = Object.fromEntries(context);
@@ -378,7 +382,12 @@ async function runRange(
       const isVerificationChallenge =
         err instanceof Error && err.name === PERPLEXITY_CLOUDFLARE_ERROR_NAME;
 
-      if ((step.type === 'llm' || step.type === 'browser_js' || step.type === 'bot') && step.config.emitFailFlag === 'true' && !isVerificationChallenge) {
+      const canFailSoft = step.type === 'llm'
+        || step.type === 'browser'
+        || step.type === 'browser_js'
+        || step.type === 'bot';
+
+      if (canFailSoft && step.config.emitFailFlag === 'true' && !isVerificationChallenge) {
         const msg = err instanceof Error ? err.message : String(err);
         if (step.outputKey) {
           context.set(step.outputKey, '');
@@ -422,6 +431,13 @@ export async function executeFlow(
   context.set('clipboard', clipboard.readText());
   context.set('timestamp', new Date().toISOString());
   context.set('flow.name', flow.name);
+
+  // Flow variables are in scope from step 0. The context is a flat map whose
+  // keys already carry dots ("browser_1.image"), so the {{var.<key>}} namespace
+  // needs nothing from the interpolator beyond being seeded here.
+  for (const variable of flow.variables ?? []) {
+    context.set(`${FLOW_VAR_PREFIX}.${variable.key}`, variable.value);
+  }
 
   if (initialContext) {
     for (const [k, v] of Object.entries(initialContext)) {

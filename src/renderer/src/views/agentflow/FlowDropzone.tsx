@@ -14,20 +14,25 @@ interface FlowDropzoneProps {
 export const FlowDropzone: React.FC<FlowDropzoneProps> = ({ t, onImport, children }) => {
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
-      for (const file of acceptedFiles) {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          try {
-            const raw: unknown = JSON.parse(e.target?.result as string);
-            const flows = parseImportedFlows(raw);
-            if (flows && flows.length > 0) {
-              onImport(flows);
+      // Read every dropped file, then hand the whole batch over in ONE call.
+      // The importer parks its argument in a single slot (so it can be reviewed
+      // before anything is written), so firing once per file would let each
+      // drop overwrite the last — dropping two files would import only one.
+      void Promise.all(
+        acceptedFiles.map((file) => file.text().then(
+          (text) => {
+            try {
+              return parseImportedFlows(JSON.parse(text) as unknown) ?? [];
+            } catch {
+              return [];
             }
-          } catch {
-          }
-        };
-        reader.readAsText(file);
-      }
+          },
+          () => [],
+        )),
+      ).then((perFile) => {
+        const flows = perFile.flat();
+        if (flows.length > 0) onImport(flows);
+      });
     },
     [onImport],
   );

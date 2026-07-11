@@ -6,25 +6,33 @@ import { AppTextInput } from '../components/AppTextInput';
 import { useShallow } from 'zustand/react/shallow';
 import { useI18nStore } from '../store/i18nStore';
 import { useAppStore } from '../store/appStore';
-import { useThemeStore } from '../store/themeStore';
-import type { Theme } from '../store/themeStore';
+import { useAgentFlowStore } from '../store/useAgentFlowStore';
+import { useThemeStore, resolveThemePreference } from '../store/themeStore';
 import { settingsApi, fileApi, systemApi } from '../api/electronApi';
-import type { SettingsSnapshot } from '../../../shared/types';
+import type { BackupImportResult, SettingsSnapshot } from '../../../shared/types';
 
 import { NavItem } from './settings/components';
 import { useHotkeyRecorder } from './settings/hooks/useHotkeyRecorder';
+import { useMetrics } from './settings/hooks/useMetrics';
 import { usePromptPrefs } from './settings/hooks/usePromptPrefs';
 import { useSystemSettings } from './settings/hooks/useSystemSettings';
 import { useTelegramSettings } from './settings/hooks/useTelegramSettings';
+import { useLineSettings } from './settings/hooks/useLineSettings';
+import { useBotCommands } from './settings/hooks/useBotCommands';
 import { useAccountSettings } from './settings/hooks/useAccountSettings';
 import { useByokSettings } from './settings/hooks/useByokSettings';
 import { useByokGroups } from './settings/hooks/useByokGroups';
 import { useSettingsNav } from './settings/hooks/useSettingsNav';
 import { GeneralSection } from './settings/sections/GeneralSection';
+import { AppearanceSection } from './settings/sections/AppearanceSection';
+import { NotificationsSection } from './settings/sections/NotificationsSection';
 import { AiSection } from './settings/sections/AiSection';
-import { AccountsSection } from './settings/sections/AccountsSection';
+import { ModelSourcesSection } from './settings/sections/ModelSourcesSection';
 import { ByokSection } from './settings/sections/ByokSection';
+import { BotCommandsSection } from './settings/sections/BotCommandsSection';
 import { TelegramSection } from './settings/sections/TelegramSection';
+import { LineSection } from './settings/sections/LineSection';
+import { StatsSection } from './settings/sections/StatsSection';
 import { SystemSection } from './settings/sections/SystemSection';
 import type { DangerAction } from './settings/sections/SystemSection';
 
@@ -39,12 +47,15 @@ export const SettingsView: React.FC = () => {
       setFileContent: s.setFileContent,
     })),
   );
-  const { theme, setTheme } = useThemeStore();
+  const setTheme = useThemeStore((s) => s.setTheme);
 
   const hotkey = useHotkeyRecorder();
   const prefs = usePromptPrefs();
   const system = useSystemSettings();
+  const metrics = useMetrics();
   const telegram = useTelegramSettings();
+  const line = useLineSettings();
+  const botCommands = useBotCommands();
   const account = useAccountSettings();
   const byok = useByokSettings();
   const byokGroups = useByokGroups(byok.snapshot, byok.applySnapshot);
@@ -59,12 +70,16 @@ export const SettingsView: React.FC = () => {
       snapshot.responseTimeout,
       snapshot.closeToTray,
       snapshot.launchAtStartup,
+      snapshot.notifyEvents,
     );
-    setTheme((snapshot.theme as Theme) ?? 'dark');
+    metrics.applyMetricsReset(snapshot.metricsEnabled);
+    setTheme(resolveThemePreference(snapshot.theme));
     await setLocale(snapshot.locale);
     await telegram.loadTelegramSettings();
+    await line.loadLineSettings();
+    await botCommands.loadBotCommands();
     await byok.reload();
-  }, [hotkey, prefs, system, telegram, byok, setTheme, setLocale]);
+  }, [hotkey, prefs, system, metrics, telegram, line, botCommands, byok, setTheme, setLocale]);
 
   const localeKeyMap: Record<string, string> = {
     'en-US': 'language.name.enUS',
@@ -90,14 +105,11 @@ export const SettingsView: React.FC = () => {
     await systemApi.openConfigDir();
   }, []);
 
-  const handleExportConfig = useCallback(async () => {
-    await systemApi.exportConfig();
-  }, []);
-
-  const handleImportConfig = useCallback(async () => {
-    const imported = await systemApi.importConfig();
-    if (!imported) return;
-    await applySettingsSnapshot(imported);
+  const handleBackupRestored = useCallback(async (result: BackupImportResult) => {
+    if (result.snapshot) await applySettingsSnapshot(result.snapshot);
+    if (result.restored.includes('flows')) {
+      await useAgentFlowStore.getState().loadFlows();
+    }
   }, [applySettingsSnapshot]);
 
   const handleClearHistory = useCallback(async () => {
@@ -115,7 +127,7 @@ export const SettingsView: React.FC = () => {
     else if (action === 'clear-history') await handleClearHistory();
   }, [dangerAction, handleResetSettings, handleClearHistory]);
 
-  const showCategoryBlock = (category: 'general' | 'ai' | 'accounts' | 'bots' | 'system'): string =>
+  const showCategoryBlock = (category: 'general' | 'appearance' | 'notify' | 'ai' | 'accounts' | 'bots' | 'stats' | 'system'): string =>
     nav.showCategory(category) ? 'block' : 'none';
 
   return (
@@ -173,9 +185,26 @@ export const SettingsView: React.FC = () => {
               availableLocales={availableLocales}
               onSetLocale={setLocale}
               getLocaleLabel={getLocaleLabel}
-              theme={theme}
-              onSetTheme={(v) => setTheme(v as Theme)}
               showSection={(tags) => nav.showSection(tags, 'general')}
+              isSearching={nav.isSearching}
+              sectionGap={SECTION_GAP}
+            />
+          </Box>
+
+          <Box display={showCategoryBlock('appearance')}>
+            <AppearanceSection
+              t={t}
+              showSection={(tags) => nav.showSection(tags, 'appearance')}
+              isSearching={nav.isSearching}
+              sectionGap={SECTION_GAP}
+            />
+          </Box>
+
+          <Box display={showCategoryBlock('notify')}>
+            <NotificationsSection
+              system={system}
+              t={t}
+              showSection={(tags) => nav.showSection(tags, 'notify')}
               isSearching={nav.isSearching}
               sectionGap={SECTION_GAP}
             />
@@ -194,7 +223,7 @@ export const SettingsView: React.FC = () => {
           </Box>
 
           <Box display={showCategoryBlock('accounts')}>
-            <AccountsSection
+            <ModelSourcesSection
               account={account}
               t={t}
               showSection={(tags) => nav.showSection(tags, 'accounts')}
@@ -211,10 +240,34 @@ export const SettingsView: React.FC = () => {
           </Box>
 
           <Box display={showCategoryBlock('bots')}>
+            <BotCommandsSection
+              botCommands={botCommands}
+              t={t}
+              showSection={(tags) => nav.showSection(tags, 'bots')}
+              isSearching={nav.isSearching}
+              sectionGap={SECTION_GAP}
+            />
             <TelegramSection
               telegram={telegram}
               t={t}
               showSection={(tags) => nav.showSection(tags, 'bots')}
+              isSearching={nav.isSearching}
+              sectionGap={SECTION_GAP}
+            />
+            <LineSection
+              line={line}
+              t={t}
+              showSection={(tags) => nav.showSection(tags, 'bots')}
+              isSearching={nav.isSearching}
+              sectionGap={SECTION_GAP}
+            />
+          </Box>
+
+          <Box display={showCategoryBlock('stats')}>
+            <StatsSection
+              metrics={metrics}
+              t={t}
+              showSection={(tags) => nav.showSection(tags, 'stats')}
               isSearching={nav.isSearching}
               sectionGap={SECTION_GAP}
             />
@@ -226,8 +279,7 @@ export const SettingsView: React.FC = () => {
               setDangerAction={setDangerAction}
               onConfirmDangerAction={handleConfirmDangerAction}
               onOpenConfigDir={handleOpenConfigDir}
-              onExportConfig={handleExportConfig}
-              onImportConfig={handleImportConfig}
+              onBackupRestored={handleBackupRestored}
               t={t}
               showSection={(tags) => nav.showSection(tags, 'system')}
               isSearching={nav.isSearching}
@@ -235,7 +287,7 @@ export const SettingsView: React.FC = () => {
             />
           </Box>
 
-          {nav.isSearching && !(['general', 'ai', 'accounts', 'bots', 'system'] as const).some((c) => nav.showCategory(c)) && (
+          {nav.isSearching && !(['general', 'appearance', 'notify', 'ai', 'accounts', 'bots', 'stats', 'system'] as const).some((c) => nav.showCategory(c)) && (
             <Stack align="center" py={48} px={20} c="dimmed">
               <Search size={32} opacity={0.25} />
               <Text fz="var(--font-size-md)">{t('settings.search.empty')}</Text>

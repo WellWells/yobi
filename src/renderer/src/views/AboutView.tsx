@@ -1,27 +1,47 @@
 import React, { useEffect, useState } from 'react';
 import { Anchor, Box, Button, Container, Divider, Flex, Group, Stack, Text } from '@mantine/core';
+import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import { useUpdateStore } from '../store/useUpdateStore';
-import { BookOpen, Bug, Book, Download, Info, RefreshCw, Scale } from 'lucide-react';
+import { BookOpen, Bug, Book, Download, Info, RefreshCw, Scale, Store } from 'lucide-react';
 import { SectionCard } from '../components/SectionCard';
 import { GroupHeader } from '../components/GroupHeader';
 import styles from './AboutView.module.css';
 
-const TECH_STACK: Array<{ name: string; url: string; desc: string }> = [
-  { name: 'Electron', url: 'https://www.electronjs.org/', desc: 'Desktop runtime' },
-  { name: 'React + TypeScript', url: 'https://react.dev/', desc: 'UI renderer' },
-  { name: 'Mantine', url: 'https://mantine.dev/', desc: 'UI component library' },
-  { name: 'Zustand', url: 'https://github.com/pmndrs/zustand', desc: 'State management' },
-  { name: 'Vite', url: 'https://vitejs.dev/', desc: 'Build tool' },
-  { name: 'lucide-react', url: 'https://lucide.dev/', desc: 'Icon set' },
-  { name: 'grammY', url: 'https://grammy.dev/', desc: 'Telegram Bot API framework' },
-  { name: 'react-markdown + Shiki', url: 'https://github.com/remarkjs/react-markdown', desc: 'Markdown rendering & syntax highlighting' },
-  { name: 'marked', url: 'https://marked.js.org/', desc: 'Markdown parser (Telegram)' },
-  { name: 'KaTeX', url: 'https://katex.org/', desc: 'Math typesetting' },
-  { name: 'electron-updater', url: 'https://www.electron.build/auto-update', desc: 'Auto-update' },
-  { name: 'electron-store', url: 'https://github.com/sindresorhus/electron-store', desc: 'Settings persistence' },
-  { name: 'dayjs', url: 'https://day.js.org/', desc: 'Date & time' },
-  { name: 'cheerio', url: 'https://cheerio.js.org/', desc: 'HTML parsing (scraper / RSS)' },
+// Store builds update through Microsoft Store; this deep-links to the Store app on Windows.
+const MICROSOFT_STORE_URL = 'https://apps.microsoft.com/detail/9nnx8prfstc9';
+
+// Longest staggered entrance ends at 0.34s delay + 0.5s duration.
+const ENTRANCE_ANIMATION_MS = 900;
+
+// Each translated README carries its own "How Yobi Works" section under a
+// localized anchor. Locales without a translation fall back to README.md, which
+// GitHub renders on the repo root.
+const HOW_IT_WORKS_URLS: Record<string, string> = {
+  'zh-TW': 'https://github.com/WellWells/yobi/blob/main/README.zh-TW.md#-yobi-如何運作',
+  'zh-CN': 'https://github.com/WellWells/yobi/blob/main/README.zh-CN.md#-yobi-如何运作',
+  ja: 'https://github.com/WellWells/yobi/blob/main/README.ja.md#-yobi-の仕組み',
+};
+const HOW_IT_WORKS_FALLBACK = 'https://github.com/WellWells/yobi#-how-yobi-works';
+
+// A colophon, not an attribution list — the authoritative notice for every
+// bundled package is THIRD-PARTY-LICENSES.txt (openThirdPartyLicenses).
+// A row earns its place only if it names the app's stack or touches the user's
+// content, accounts, or credentials; implementation details stay out. Never list
+// a dependency that a proprietary-only feature pulls in, or this list forks
+// between the official build and the public release.
+// `id` resolves the row's description via `about.stack.item.<id>`.
+const TECH_STACK: Array<{ id: string; name: string; url: string }> = [
+  { id: 'electron', name: 'Electron', url: 'https://www.electronjs.org/' },
+  { id: 'react', name: 'React + TypeScript', url: 'https://react.dev/' },
+  { id: 'mantine', name: 'Mantine', url: 'https://mantine.dev/' },
+  { id: 'zustand', name: 'Zustand', url: 'https://github.com/pmndrs/zustand' },
+  { id: 'vite', name: 'Vite', url: 'https://vitejs.dev/' },
+  { id: 'reactMarkdown', name: 'react-markdown + Shiki', url: 'https://github.com/remarkjs/react-markdown' },
+  { id: 'grammy', name: 'grammY', url: 'https://grammy.dev/' },
+  { id: 'lineBotSdk', name: 'LINE Bot SDK', url: 'https://github.com/line/line-bot-sdk-nodejs' },
+  { id: 'nodemailer', name: 'Nodemailer', url: 'https://nodemailer.com/' },
+  { id: 'cheerio', name: 'cheerio', url: 'https://cheerio.js.org/' },
 ];
 
 export const AboutView: React.FC = () => {
@@ -29,9 +49,15 @@ export const AboutView: React.FC = () => {
   const [appVersion, setAppVersion] = useState('');
   const [appIconDataUrl, setAppIconDataUrl] = useState('');
 
+  // The view stays mounted and is toggled via `display`, which cancels and then
+  // restarts CSS animations. Freeze the entrance stagger after it has played once.
+  const isVisible = useAppStore((s) => s.currentView === 'about');
+  const [hasEntered, setHasEntered] = useState(false);
+
   const isChecking = useUpdateStore((s) => s.isChecking);
   const hasUpdate = useUpdateStore((s) => s.hasUpdate);
   const checkFailed = useUpdateStore((s) => s.checkFailed);
+  const isStoreBuild = useUpdateStore((s) => s.isStoreBuild);
   const newVersion = useUpdateStore((s) => s.newVersion);
   const releaseUrl = useUpdateStore((s) => s.releaseUrl);
   const checkForUpdates = useUpdateStore((s) => s.checkForUpdates);
@@ -42,14 +68,25 @@ export const AboutView: React.FC = () => {
     window.electronAPI.getAppIconDataUrl().then(setAppIconDataUrl).catch(() => { });
   }, []);
 
+  useEffect(() => {
+    if (!isVisible || hasEntered) return;
+    const timer = window.setTimeout(() => setHasEntered(true), ENTRANCE_ANIMATION_MS);
+    return () => window.clearTimeout(timer);
+  }, [isVisible, hasEntered]);
+
   const isChinese = locale.toLowerCase().includes('zh');
   const blogUrl = isChinese ? 'https://wellstsai.com/' : 'https://wellstsai.com/en/';
   const issueUrl = 'https://github.com/WellWells/yobi/issues';
   const github_repo = 'https://github.com/WellWells/yobi/';
-  const howItWorksUrl = 'https://github.com/WellWells/yobi#-how-yobi-works';
+  const howItWorksUrl = encodeURI(HOW_IT_WORKS_URLS[locale] ?? HOW_IT_WORKS_FALLBACK);
 
   return (
-    <Flex flex={1} bg="var(--mantine-color-body)" style={{ overflow: 'hidden' }}>
+    <Flex
+      flex={1}
+      bg="var(--mantine-color-body)"
+      className={hasEntered ? styles.entered : undefined}
+      style={{ overflow: 'hidden' }}
+    >
       <Box flex={1} style={{ overflowY: 'auto' }}>
         <Container size={680} py={28} pb={40}>
 
@@ -136,59 +173,85 @@ export const AboutView: React.FC = () => {
                 </Text>
               </Group>
 
-              <Group justify="space-between" align="center" wrap="nowrap">
-                <Stack gap={2} style={{ minWidth: 0 }}>
-                  <Group gap="xs" wrap="nowrap">
-                    <Box c={checkFailed ? 'var(--mantine-color-error)' : hasUpdate ? 'var(--mantine-color-blue-5)' : 'dimmed'}>
-                      <RefreshCw
-                        size={13}
-                        className={isChecking ? styles.spinning : undefined}
-                      />
-                    </Box>
-                    <Text fz="var(--font-size-sm)" fw={600}
-                      c={checkFailed ? 'var(--mantine-color-error)' : hasUpdate ? 'var(--mantine-color-blue-5)' : undefined}
-                    >
-                      {hasUpdate && newVersion
-                        ? t('settings.update.available').replace('{{version}}', newVersion)
-                        : checkFailed
-                          ? t('settings.update.checkFailed')
-                          : t('settings.update.latest')}
+              {isStoreBuild ? (
+                <Group justify="space-between" align="center" wrap="nowrap">
+                  <Stack gap={2} style={{ minWidth: 0 }}>
+                    <Group gap="xs" wrap="nowrap">
+                      <Box c="dimmed"><Store size={13} /></Box>
+                      <Text fz="var(--font-size-sm)" fw={600}>
+                        {t('settings.update.store.status')}
+                      </Text>
+                    </Group>
+                    <Text fz="var(--font-size-xs)" c="dimmed">
+                      {t('settings.update.store.hint')}
                     </Text>
-                  </Group>
-                  <Text fz="var(--font-size-xs)" c="dimmed">
-                    {hasUpdate
-                      ? t('settings.update.hint.available')
-                      : checkFailed
-                        ? t('settings.update.hint.failed')
-                        : t('settings.update.hint.latest')}
-                  </Text>
-                </Stack>
+                  </Stack>
 
-                {hasUpdate ? (
-                  <Button
-                    size="xs"
-                    variant="filled"
-                    color="blue"
-                    leftSection={<Download size={13} />}
-                    onClick={() => { void openReleaseUrl(); }}
-                    disabled={!releaseUrl}
-                    style={{ flexShrink: 0 }}
-                  >
-                    {t('settings.update.download')}
-                  </Button>
-                ) : (
                   <Button
                     size="xs"
                     variant="light"
-                    leftSection={<RefreshCw size={13} />}
-                    onClick={() => { void checkForUpdates(); }}
-                    disabled={isChecking}
+                    leftSection={<Store size={13} />}
+                    onClick={() => void window.electronAPI.openExternalUrl(MICROSOFT_STORE_URL)}
                     style={{ flexShrink: 0 }}
                   >
-                    {isChecking ? t('settings.update.checking') : t('settings.update.check')}
+                    {t('settings.update.store.button')}
                   </Button>
-                )}
-              </Group>
+                </Group>
+              ) : (
+                <Group justify="space-between" align="center" wrap="nowrap">
+                  <Stack gap={2} style={{ minWidth: 0 }}>
+                    <Group gap="xs" wrap="nowrap">
+                      <Box c={checkFailed ? 'var(--mantine-color-error)' : hasUpdate ? 'var(--mantine-color-blue-5)' : 'dimmed'}>
+                        <RefreshCw
+                          size={13}
+                          className={isChecking ? styles.spinning : undefined}
+                        />
+                      </Box>
+                      <Text fz="var(--font-size-sm)" fw={600}
+                        c={checkFailed ? 'var(--mantine-color-error)' : hasUpdate ? 'var(--mantine-color-blue-5)' : undefined}
+                      >
+                        {hasUpdate && newVersion
+                          ? t('settings.update.available').replace('{{version}}', newVersion)
+                          : checkFailed
+                            ? t('settings.update.checkFailed')
+                            : t('settings.update.latest')}
+                      </Text>
+                    </Group>
+                    <Text fz="var(--font-size-xs)" c="dimmed">
+                      {hasUpdate
+                        ? t('settings.update.hint.available')
+                        : checkFailed
+                          ? t('settings.update.hint.failed')
+                          : t('settings.update.hint.latest')}
+                    </Text>
+                  </Stack>
+
+                  {hasUpdate ? (
+                    <Button
+                      size="xs"
+                      variant="filled"
+                      color="blue"
+                      leftSection={<Download size={13} />}
+                      onClick={() => { void openReleaseUrl(); }}
+                      disabled={!releaseUrl}
+                      style={{ flexShrink: 0 }}
+                    >
+                      {t('settings.update.download')}
+                    </Button>
+                  ) : (
+                    <Button
+                      size="xs"
+                      variant="light"
+                      leftSection={<RefreshCw size={13} />}
+                      onClick={() => { void checkForUpdates(); }}
+                      disabled={isChecking}
+                      style={{ flexShrink: 0 }}
+                    >
+                      {isChecking ? t('settings.update.checking') : t('settings.update.check')}
+                    </Button>
+                  )}
+                </Group>
+              )}
             </Stack>
           </SectionCard>
         </Box>
@@ -200,9 +263,9 @@ export const AboutView: React.FC = () => {
             <Text fz="var(--font-size-sm)" c="dimmed" mb={12} lh={1.6}>
               {t('about.stack.intro')}
             </Text>
-            {TECH_STACK.map(({ name, url, desc }, i, arr) => (
+            {TECH_STACK.map(({ id, name, url }, i, arr) => (
               <Group
-                key={name}
+                key={id}
                 justify="space-between"
                 align="center"
                 gap={8}
@@ -221,7 +284,7 @@ export const AboutView: React.FC = () => {
                 >
                   {name}
                 </Anchor>
-                <Text fz="var(--font-size-sm)" c="dimmed">{desc}</Text>
+                <Text fz="var(--font-size-sm)" c="dimmed">{t(`about.stack.item.${id}`)}</Text>
               </Group>
             ))}
             <Flex justify="center" mt={16}>

@@ -1,7 +1,7 @@
 import { createElement, memo, type ComponentType } from 'react';
 import { Bot, Compass, KeyRound, Layers, Sparkles } from 'lucide-react';
-import { PROVIDER_LABELS, PROVIDER_URLS, buildByokUrl, buildByokGroupUrl, buildDuckaiModelUrl, isByokGroupUrl, isByokUrl } from '../../../shared/types';
-import type { ByokGroupSnapshot, ByokInstanceSnapshot, DuckaiModelInfo } from '../../../shared/types';
+import { PROVIDER_LABELS, PROVIDER_URLS, buildByokUrl, buildByokGroupUrl, buildDuckaiModelUrl, isByokGroupUrl, isByokUrl, isModelUrlHidden } from '../../../shared/types';
+import type { ByokGroupSnapshot, ByokInstanceSnapshot, DuckaiModelInfo, HiddenSources } from '../../../shared/types';
 
 export { buildDuckaiModelUrl };
 
@@ -31,6 +31,8 @@ export interface ModelOption {
   label: string;
   url: string;
   icon: ModelIcon;
+  /** Label without its provider prefix, for lists already nested under that provider. */
+  shortLabel?: string;
 }
 
 export const MODELS: ModelOption[] = [
@@ -58,6 +60,7 @@ export function isDuckaiUrl(url: string): boolean {
 export function makeDuckaiModelOption(info: DuckaiModelInfo): ModelOption {
   return {
     label: `Duck AI · ${info.label}`,
+    shortLabel: info.label,
     url: buildDuckaiModelUrl(info.id),
     icon: DuckDuckGoIcon,
   };
@@ -89,6 +92,127 @@ export function makeByokGroupModels(groups: ByokGroupSnapshot[]): ModelOption[] 
 export function findModelOption(url: string, extraModels: ModelOption[] = []): ModelOption {
   const all = [...MODELS, ...extraModels];
   return all.find((m) => m.url === url) ?? MODELS[0];
+}
+
+export interface ProviderSelectOption {
+  value: string;
+  label: string;
+}
+
+export interface ProviderSelectGroup {
+  group: string;
+  items: ProviderSelectOption[];
+}
+
+export interface ProviderSelectExtras {
+  duckaiModels: ModelOption[];
+  byokModels: ModelOption[];
+  byokGroupModels: ModelOption[];
+}
+
+export interface ProviderSelectLabels {
+  byok: string;
+  byokGroups: string;
+}
+
+export interface PickerModel extends ModelOption {
+  /** Hidden, but listed anyway because it is the caller's current selection. */
+  hidden?: boolean;
+}
+
+// One selectable block of the provider picker. A null label renders flat, with no
+// header: the built-in providers and the Duck.ai models need none, while a BYOK
+// instance's user-chosen name says nothing about what it is.
+export interface ProviderSection {
+  label: string | null;
+  models: PickerModel[];
+}
+
+const NO_HIDDEN: HiddenSources = { providers: [], duckaiModelIds: [], byokIds: [], byokGroupIds: [] };
+
+// Every built-in provider plus the Duck.ai models already fills Mantine's default
+// 220px dropdown, so the picker must be tall enough for the BYOK entries below them
+// to be on screen.
+export const PROVIDER_DROPDOWN_MAX_HEIGHT = 320;
+
+// Picker order for everything the user configured on top of MODELS. Callers that
+// cannot use useProviderModels (callbacks reading the store at call time) go through
+// this so the Shift+Tab cycle order stays identical to the rendered menu.
+export function providerExtraModels(extras: ProviderSelectExtras): ModelOption[] {
+  return [...extras.duckaiModels, ...extras.byokModels, ...extras.byokGroupModels];
+}
+
+// Applies the hidden sets to one ordered model list. keepVisibleUrl survives the
+// filter and is flagged, so a picker never blanks out its own stored value.
+function applyHidden(
+  models: ModelOption[],
+  hidden: HiddenSources,
+  keepVisibleUrl: string | undefined,
+): PickerModel[] {
+  const out: PickerModel[] = [];
+  for (const model of models) {
+    if (!isModelUrlHidden(model.url, hidden)) {
+      out.push(model);
+    } else if (model.url === keepVisibleUrl) {
+      out.push({ ...model, hidden: true });
+    }
+  }
+  return out;
+}
+
+// The single source of truth for provider-picker order and grouping. Both the chat
+// menu (Mantine Menu) and the settings/AgentFlow pickers (Mantine Select) render
+// from this, so a model can never appear in one picker and go missing in another.
+export function buildProviderSections(
+  extras: ProviderSelectExtras,
+  labels: ProviderSelectLabels,
+  opts: { hidden?: HiddenSources; keepVisibleUrl?: string } = {},
+): ProviderSection[] {
+  const hidden = opts.hidden ?? NO_HIDDEN;
+  const keep = opts.keepVisibleUrl;
+  const candidates: ProviderSection[] = [
+    { label: null, models: applyHidden([...MODELS, ...extras.duckaiModels], hidden, keep) },
+    { label: labels.byok, models: applyHidden(extras.byokModels, hidden, keep) },
+    { label: labels.byokGroups, models: applyHidden(extras.byokGroupModels, hidden, keep) },
+  ];
+  return candidates.filter((section) => section.models.length > 0);
+}
+
+export function providerSectionsToSelectData(
+  sections: ProviderSection[],
+  hiddenSuffix = '',
+): (ProviderSelectOption | ProviderSelectGroup)[] {
+  const toOption = (model: PickerModel): ProviderSelectOption => ({
+    value: model.url,
+    label: model.hidden ? `${model.label}${hiddenSuffix}` : model.label,
+  });
+  return sections.flatMap<ProviderSelectOption | ProviderSelectGroup>((section) => (
+    section.label === null
+      ? section.models.map(toOption)
+      : [{ group: section.label, items: section.models.map(toOption) }]
+  ));
+}
+
+// Every selectable model in picker order, minus the hidden ones. Backs the
+// Shift+Tab cycle, the "last visible source" guard, and the auto-reselect.
+export function visibleModels(extras: ProviderSelectExtras, hidden: HiddenSources): ModelOption[] {
+  return [...MODELS, ...providerExtraModels(extras)]
+    .filter((model) => !isModelUrlHidden(model.url, hidden));
+}
+
+// Cycle to the next model in picker order. Backs the Shift+Tab shortcut in the
+// chat prompt. `models` is the full visible list — the caller decides what is
+// visible, because built-in providers can be hidden too. Falls back to the first
+// entry when the current url is unknown.
+export function nextModelUrl(
+  currentUrl: string,
+  models: ModelOption[],
+  direction: 1 | -1 = 1,
+): string {
+  if (models.length === 0) return currentUrl;
+  const idx = models.findIndex((m) => m.url === currentUrl);
+  if (idx === -1) return models[0].url;
+  return models[(idx + direction + models.length) % models.length].url;
 }
 
 export function getModelIconByUrl(url: string): ModelIcon {

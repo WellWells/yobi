@@ -2,6 +2,7 @@ import type { BrowserWindow } from 'electron';
 import { navigateAndWait, sleep, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
 import { executeAutomationWithTimeout, countElements, dispatchFocusEvents } from './automationExecutor';
 import { isExpiredCookie } from '../helpers';
+import { showLoginWindowIfNeeded } from '../windows';
 import { PROVIDER_URLS } from '../../shared/types';
 import { CLEAN_UA } from '../userAgent';
 import { applyWorkerUserAgent } from '../clientHints';
@@ -124,7 +125,10 @@ export async function runChatgptAutomation(
   const authSignals = await getChatgptAuthSignals(workerWin);
   const pageSignals = await getChatgptPageSignals(workerWin);
   if (isLoginRequiredFromSignals(authSignals, pageSignals)) {
-    await navigateAndWait(wc, CHATGPT_LOGIN_URL);
+    // Reveal the interactive login window here (provider layer) so both chat and
+    // AgentFlow contexts surface it; orchestration layers only handle messaging.
+    // showLoginWindowIfNeeded navigates the interactive worker to the login URL.
+    await showLoginWindowIfNeeded('ChatGPT', CHATGPT_LOGIN_URL);
     throw new Error(
       `${CHATGPT_LOGIN_REQUIRED}: ChatGPT page indicates logged-out state (session=${authSignals.hasSessionCookie}, logoutDebug=${authSignals.hasLogoutDebugCookie}, composer=${pageSignals.hasComposer})`,
     );
@@ -195,8 +199,7 @@ function buildChatgptAutomationScript(
 
     // Use exact selectors only — avoids matching code-block copy buttons.
     var selectors = [
-      'button[data-testid="copy-turn-action-button"]',
-      'button[aria-label="Copy response"]'
+      'button[data-testid="copy-turn-action-button"]'
     ];
 
     for (var i = 0; i < selectors.length; i++) {
@@ -245,8 +248,6 @@ function buildChatgptAutomationScript(
 
   var SEND_SELECTORS = [
     'button[data-testid="send-button"]',
-    'button[aria-label="Send prompt"]',
-    'button[aria-label="Submit"]',
   ];
 
   function findEnabledSendBtn() {

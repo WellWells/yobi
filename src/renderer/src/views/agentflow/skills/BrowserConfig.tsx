@@ -1,6 +1,6 @@
 import React from 'react';
 import { Stack, Text } from '@mantine/core';
-import { Image as ImageIcon } from 'lucide-react';
+import { Image as ImageIcon, ShieldAlert } from 'lucide-react';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { ToggleSwitch } from '../../../components/ToggleSwitch';
 import { SettingRow } from '../../../components/SettingRow';
@@ -31,6 +31,18 @@ export const BrowserConfig: React.FC<SkillConfigProps> = ({ step, onChange, t })
           <ToggleSwitch
             checked={includeImage}
             onChange={(e) => onChange({ ...step.config, includeImage: e.currentTarget.checked ? 'true' : 'false' })}
+          />
+        }
+      />
+
+      <SettingRow
+        icon={<ShieldAlert size={13} />}
+        label={t('agentflow.skill.browser.emitFailFlag')}
+        hint={t('agentflow.skill.browser.emitFailFlag.hint')}
+        control={
+          <ToggleSwitch
+            checked={step.config.emitFailFlag === 'true'}
+            onChange={(e) => onChange({ ...step.config, emitFailFlag: e.currentTarget.checked ? 'true' : 'false' })}
           />
         }
       />

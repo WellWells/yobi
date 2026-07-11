@@ -29,7 +29,6 @@ export const TimeBlock = React.memo<TimeBlockProps>(({ time, provider, action })
         padding: '4px 0 10px',
         color: 'var(--text-muted)',
         fontSize: 'var(--font-size-sm)',
-        userSelect: 'text',
       }}
     >
       {provider && (

@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import type { UiNotificationPayload, WorkerAttention } from '../shared/types';
 import { IPC, PROVIDER_URLS } from '../shared/types';
 import { detectProvider, getProviderLabel } from './providers';
+import { isPerplexitySessionCookie } from './providers/perplexity';
 
 let _mainWin: BrowserWindow | null = null;
 let _notifyEnabled = true;
@@ -57,9 +58,17 @@ export function sendToRenderer(channel: string, ...args: unknown[]): void {
   }
 }
 
+// For senders that must know whether a push can actually be delivered (e.g.
+// temporary-chat replies, whose payload exists nowhere else).
+export function isMainWindowAlive(): boolean {
+  return _mainWin !== null && !_mainWin.isDestroyed();
+}
+
+// Main-process only: the flow manager reads this to avoid navigating the worker to
+// about:blank while a sign-in or a human-verification challenge is on screen. It is not
+// surfaced in the UI — revealing the worker window already tells the user what to do.
 export function setWorkerAttention(state: WorkerAttention): void {
   _workerAttention = state;
-  sendToRenderer(IPC.WORKER_STATUS, state);
 }
 
 export function getWorkerAttention(): WorkerAttention {
@@ -118,8 +127,8 @@ export async function hasPerplexityReusableSiteCookie(): Promise<boolean> {
   const cookies = await workerSession.cookies.get({ url: PROVIDER_URLS.perplexity });
   return cookies.some(
     (cookie) =>
-      (cookie.name.startsWith('__Secure-next-auth.session-token') || cookie.name === 'cf_clearance') &&
-      !isExpiredCookie(cookie.expirationDate),
+      isPerplexitySessionCookie(cookie) ||
+      (cookie.name === 'cf_clearance' && !isExpiredCookie(cookie.expirationDate)),
   );
 }
 
@@ -150,6 +159,22 @@ export function maskToken(token: string): string {
   if (!trimmed) return '';
   if (trimmed.length <= 8) return '********';
   return `${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`;
+}
+
+const MAX_REQUESTER_NAME_CHARS = 64;
+
+// Bot display names are free text the sender controls, and they get spliced into
+// the system instruction. Collapsing whitespace denies a name any newline it
+// could use to forge an extra instruction line; the cap keeps the prompt sane.
+export function sanitizeRequesterName(raw: string | undefined): string {
+  if (!raw) return '';
+  const collapsed = raw.replace(/\s+/g, ' ').trim();
+  // Cap by code point, not UTF-16 unit: emoji are ordinary in LINE display
+  // names, and a plain slice can cut a surrogate pair into a lone half.
+  const chars = Array.from(collapsed);
+  return chars.length <= MAX_REQUESTER_NAME_CHARS
+    ? collapsed
+    : chars.slice(0, MAX_REQUESTER_NAME_CHARS).join('');
 }
 
 export function getAssetPath(filename: string): string {

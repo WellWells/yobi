@@ -1,66 +1,44 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Chip, Group, Stack, Text } from '@mantine/core';
+import React from 'react';
+import { Stack, Text } from '@mantine/core';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { AppTextarea } from '../../../components/AppTextarea';
+import { ChatRecipientPicker } from '../../../components/ChatRecipientPicker';
 import { ToggleSwitch } from '../../../components/ToggleSwitch';
 import { SelectDropdown } from '../../../components/SelectDropdown';
-import { telegramApi } from '../../../api/electronApi';
-import type { TelegramPairedUser } from '../../../../../shared/types';
+import type { BotPlatform } from '../../../../../shared/types';
 import type { SkillConfigProps } from './types';
 
 export const BotConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
-  const [pairedUsers, setPairedUsers] = useState<TelegramPairedUser[]>([]);
-
-  useEffect(() => {
-    void telegramApi.getSettings().then((s) => setPairedUsers(s.pairing.pairedUsers));
-  }, []);
-
+  const platform = (step.config.platform || 'auto') as BotPlatform | 'auto';
   const chatIdsRaw = (step.config.chatIds ?? step.config.chatId ?? '').trim();
-  const pairedIdSet = useMemo(() => new Set(pairedUsers.map((u) => String(u.userId))), [pairedUsers]);
-  const parsedIds = useMemo(() => (
-    chatIdsRaw ? chatIdsRaw.split(',').map((s) => s.trim()).filter(Boolean) : []
-  ), [chatIdsRaw]);
-  const selectedIds = useMemo(() => parsedIds.filter((id) => pairedIdSet.has(id)), [parsedIds, pairedIdSet]);
-  const nonPairedIds = useMemo(() => parsedIds.filter((id) => !pairedIdSet.has(id)), [parsedIds, pairedIdSet]);
-
-  const handleSelectionChange = (next: string[]) => {
-    const merged = [...new Set([...next, ...nonPairedIds])];
-    onChange({ ...step.config, chatIds: merged.join(','), chatId: '' });
-  };
 
   return (
     <Stack gap="xs">
-      <Stack gap={4}>
-        <Text fz="sm" fw={500}>{t('agentflow.skill.bot.chatId')}</Text>
-        <Text fz="xs" c="dimmed">{t('agentflow.skill.bot.chatId.hint')}</Text>
-        <AppTextInput
-          value={chatIdsRaw}
-          onChange={(e) => onChange({ ...step.config, chatIds: e.currentTarget.value, chatId: '' })}
-          placeholder={t('agentflow.skill.bot.chatId.placeholder')}
-          tone="body"
-          mono
-        />
-        {pairedUsers.length === 0 ? (
-          <Text fz="xs" c="dimmed" fs="italic">{t('agentflow.skill.bot.chatId.noPaired')}</Text>
-        ) : (
-          <Chip.Group multiple value={selectedIds} onChange={handleSelectionChange}>
-            <Group gap={4} wrap="wrap">
-              {pairedUsers.map((u) => (
-                <Chip key={String(u.userId)} value={String(u.userId)} size="xs" variant="light">
-                  {u.firstName || u.lastName ? (
-                    `${[u.firstName, u.lastName].filter(Boolean).join(' ')}${u.username ? ` (@${u.username})` : ''}`
-                  ) : (
-                    u.username ? `@${u.username}` : String(u.userId)
-                  )}
-                </Chip>
-              ))}
-            </Group>
-          </Chip.Group>
-        )}
-        {chatIdsRaw.length === 0 && pairedUsers.length > 0 && (
-          <Text fz="xs" c="dimmed" fs="italic">{t('agentflow.skill.bot.chatId.allPaired')}</Text>
-        )}
-      </Stack>
+      <SelectDropdown
+        label={t('agentflow.skill.bot.platform')}
+        options={[
+          { value: 'auto', label: t('agentflow.skill.bot.platform.auto') },
+          { value: 'telegram', label: t('agentflow.skill.bot.platform.telegram') },
+          { value: 'line', label: t('agentflow.skill.bot.platform.line') },
+        ]}
+        value={platform}
+        onChange={(value) => onChange({ ...step.config, platform: value })}
+        size="sm"
+      />
+      <Text fz="xs" c="dimmed">{t(`agentflow.skill.bot.platform.${platform}.hint`)}</Text>
+      {platform === 'line' && (step.config.attachment ?? '').trim() !== '' && (
+        <Text fz="xs" c="orange">{t('agentflow.skill.bot.platform.line.attachmentWarning')}</Text>
+      )}
+      <ChatRecipientPicker
+        value={chatIdsRaw}
+        onChange={(next) => onChange({ ...step.config, chatIds: next, chatId: '' })}
+        platform={platform}
+        label={t('agentflow.skill.bot.chatId')}
+        hint={t('agentflow.skill.bot.chatId.hint')}
+        placeholder={t('agentflow.skill.bot.chatId.placeholder')}
+        emptyHint={t('agentflow.skill.bot.chatId.noPaired')}
+        blankHint={t('agentflow.skill.bot.chatId.allPaired')}
+      />
       <AppTextarea
         label={t('agentflow.skill.bot.message')}
         placeholder={t('agentflow.skill.bot.message.placeholder')}
@@ -80,7 +58,7 @@ export const BotConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
         mono
       />
       <Text fz="xs" c="dimmed">{t('agentflow.skill.bot.attachment.hint')}</Text>
-      {(step.config.attachment ?? '').trim() !== '' && (
+      {platform !== 'line' && (step.config.attachment ?? '').trim() !== '' && (
         <SelectDropdown
           label={t('agentflow.skill.bot.attachmentType')}
           options={[

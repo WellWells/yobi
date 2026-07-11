@@ -7,10 +7,8 @@ import {
   setupDuckaiLocalStorageOnDomReady,
   DUCKAI_CHALLENGE_SELECTOR,
 } from './duckaiScript';
-import { clearProviderSession } from './authStatus';
-import { VERIFICATION_CHALLENGE_ERROR_NAME } from './verificationChallenge';
-import { sendLog, sendWebNotification } from '../helpers';
-import { getLangCache, t } from '../i18n';
+import { raiseVerificationChallenge } from './verificationChallenge';
+import { revealWorkerWindow } from '../windows';
 import { PROVIDER_URLS } from '../../shared/types';
 import type { DuckaiModelInfo } from '../../shared/types';
 import { FIREFOX_UA } from '../userAgent';
@@ -34,24 +32,24 @@ export async function isDuckaiChallengeActive(wc: WebContents): Promise<boolean>
   }
 }
 
-// If the verification overlay is up, wipe duck.ai's cookies / session / localStorage
-// so the next attempt starts from a clean session (the anomaly challenge is tied to
-// the flagged session; paired with the Firefox persona this looks like a fresh real
-// browser), notify the user to retry, and throw the shared verification-challenge
-// error so the task fails without retry. Returns normally when no challenge is present.
+// If the verification overlay is up, reveal the worker window that is already showing
+// it so the user can solve the "select all ducks" challenge in place — the Firefox
+// persona and the live overlay stay intact (no reload, no session wipe: clearing
+// duck.ai's cookies does NOT clear the challenge). Then raise the shared verification-
+// challenge error so the task fails without retry and the worker is not re-navigated
+// (which would wipe the in-progress challenge). Returns normally when no challenge is
+// present. revealWorkerWindow() must run BEFORE raiseVerificationChallenge(), because
+// revealing the window resets worker attention to 'idle'.
 async function raiseIfDuckaiChallenge(wc: WebContents): Promise<void> {
   if (!(await isDuckaiChallengeActive(wc))) return;
-  await clearProviderSession('duckai');
-  const strings = getLangCache();
-  sendWebNotification(
-    t(strings, 'duckai.verify.notify.title'),
-    t(strings, 'duckai.verify.notify.body'),
-    'error',
-  );
-  sendLog('⚠️ DuckDuckGo human-verification detected — cleared Duck AI session/cookies; task marked as FAILED, please retry');
-  const error = new Error(t(strings, 'duckai.verify.error.verificationFailed'));
-  error.name = VERIFICATION_CHALLENGE_ERROR_NAME;
-  throw error;
+  revealWorkerWindow();
+  throw raiseVerificationChallenge({
+    titleKey: 'duckai.verify.notify.title',
+    bodyKey: 'duckai.verify.notify.body',
+    actionKey: 'duckai.verify.notify.action.openWorker',
+    errorKey: 'duckai.verify.error.verificationFailed',
+    logMessage: '⚠️ DuckDuckGo human-verification detected — worker window opened for manual solve; task marked as FAILED (retry after solving)',
+  });
 }
 
 // Waits for an in-flight page load on the shared worker to settle before we drive it elsewhere.

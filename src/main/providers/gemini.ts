@@ -5,6 +5,7 @@ import { PROVIDER_URLS } from '../../shared/types';
 import { FIREFOX_UA } from '../userAgent';
 import { applyWorkerUserAgent } from '../clientHints';
 import { sendLog } from '../helpers';
+import { showLoginWindowIfNeeded } from '../windows';
 import { uploadFilesToGemini } from './geminiUpload';
 
 const COPY_BTN_SELECTOR =
@@ -46,40 +47,50 @@ export async function runGeminiAutomation(
   let result: { response: string; title: string } | null = null;
 
   try {
-    result = await executeAutomationWithTimeout<{ response: string; title: string }>(
-      wc,
-      autoScript,
-      timeoutMs,
-      'Gemini',
-    );
+    try {
+      result = await executeAutomationWithTimeout<{ response: string; title: string }>(
+        wc,
+        autoScript,
+        timeoutMs,
+        'Gemini',
+      );
+    } catch (err) {
+      if (!fullyNavigated) throw err;
+    } finally {
+      wc.off('did-navigate', onFullNavigate);
+    }
+
+    if (!result && fullyNavigated) {
+      await waitForPageLoad(wc, 30_000);
+      await waitForInputArea(wc, 15_000);
+      await applyVisibilityPatch(wc);
+
+      const readScript = buildGeminiReadScript(0, timeoutMs, COPY_BTN_SELECTOR);
+      result = await executeAutomationWithTimeout<{ response: string; title: string }>(
+        wc,
+        readScript,
+        timeoutMs,
+        'Gemini',
+      );
+    }
+
+    if (!result || !result.response || result.response.trim() === '') {
+      throw new Error('Clipboard interceptor returned empty text');
+    }
+
+    return {
+      response: result.response.trim(),
+      title: (result.title || '').trim(),
+    };
   } catch (err) {
-    if (!fullyNavigated) throw err;
-  } finally {
-    wc.off('did-navigate', onFullNavigate);
+    // A logged-out Gemini streams no answer, surfacing as GEMINI_LOGIN_REQUIRED from the
+    // browser-side script. Reveal the interactive login window here (provider layer) so
+    // both chat and AgentFlow contexts surface it; orchestration only handles messaging.
+    if (err instanceof Error && err.message.includes('GEMINI_LOGIN_REQUIRED')) {
+      await showLoginWindowIfNeeded('Gemini', PROVIDER_URLS.gemini);
+    }
+    throw err;
   }
-
-  if (!result && fullyNavigated) {
-    await waitForPageLoad(wc, 30_000);
-    await waitForInputArea(wc, 15_000);
-    await applyVisibilityPatch(wc);
-
-    const readScript = buildGeminiReadScript(0, timeoutMs, COPY_BTN_SELECTOR);
-    result = await executeAutomationWithTimeout<{ response: string; title: string }>(
-      wc,
-      readScript,
-      timeoutMs,
-      'Gemini',
-    );
-  }
-
-  if (!result || !result.response || result.response.trim() === '') {
-    throw new Error('Clipboard interceptor returned empty text');
-  }
-
-  return {
-    response: result.response.trim(),
-    title: (result.title || '').trim(),
-  };
 }
 
 async function applyVisibilityPatch(wc: WebContents): Promise<void> {
@@ -171,7 +182,9 @@ function buildGeminiAutomationScript(
     return document.querySelectorAll('model-response').length;
   }
   function generationActive() {
-    return !!document.querySelector('button[aria-label*="Stop" i], [data-test-id="stop-button"]');
+    var c = document.querySelector('[data-test-id="send-button-container"]');
+    if (c && c.querySelector('mat-icon[fonticon="stop"]')) return true;
+    return !!document.querySelector('[data-test-id="stop-button"]');
   }
   // Send button: anchor on the stable data-test-id container; the enabled state
   // lives on the wrapping <gem-icon-button> (aria-disabled / gem-button-disabled
@@ -196,7 +209,7 @@ function buildGeminiAutomationScript(
   // page, start a fresh chat so this run takes the same reliable new-conversation
   // path (full-frame nav -> recovery) as the very first run.
   if (countResponses() > 0) {
-    var newChatBtn = document.querySelector('[data-test-id="new-chat-button"], [aria-label="New chat"], [aria-label*="new chat" i], [aria-label*="新對話"], [aria-label*="新交談"]');
+    var newChatBtn = document.querySelector('[data-test-id="new-chat-button"]');
     if (newChatBtn) {
       newChatBtn.click();
       try {
@@ -405,14 +418,18 @@ const INJECTED_GEMINI_WAIT_AND_READ_JS = `async function geminiWaitAndRead(basel
       var last = responses[responses.length - 1];
       var md = last.querySelector('message-content .markdown, .markdown');
       if (md && (md.innerText || '').trim()) return (md.innerText || '').trim();
-      return (last.innerText || '').trim();
+      var mc = last.querySelector('message-content');
+      if (mc && (mc.innerText || '').trim()) return (mc.innerText || '').trim();
+      return '';
     }
-    var mc = document.querySelectorAll('message-content');
-    if (mc.length > 0) return (mc[mc.length - 1].innerText || '').trim();
+    var allMc = document.querySelectorAll('message-content');
+    if (allMc.length > 0) return (allMc[allMc.length - 1].innerText || '').trim();
     return '';
   }
   function isGenerating() {
-    return !!document.querySelector('button[aria-label*="Stop" i], [data-test-id="stop-button"]');
+    var c = document.querySelector('[data-test-id="send-button-container"]');
+    if (c && c.querySelector('mat-icon[fonticon="stop"]')) return true;
+    return !!document.querySelector('[data-test-id="stop-button"]');
   }
   function copyButtonReady() {
     return document.querySelectorAll(copyBtnSel).length > baseline;

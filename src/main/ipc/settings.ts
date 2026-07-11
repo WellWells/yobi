@@ -1,28 +1,58 @@
 import { ipcMain, app, shell } from 'electron';
-import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { IPC, isByokTargetUrl } from '../../shared/types';
-import type { CaptureSettings } from '../../shared/types';
+import type { CaptureSettings, HiddenSources } from '../../shared/types';
+import { isThemePreference } from '../../shared/themes';
 import { getProviderLabel } from '../providers';
 import {
   config,
   saveConfig,
-  getConfigPath,
-  importConfigFromJson,
   normalizePromptPreferences,
   normalizeCaptureSettings,
+  normalizeHiddenSources,
+  normalizeNotifyEvents,
 } from '../config';
+import type { Config } from '../config';
 import { sendLog, normalizeAiUrl, applyLaunchAtStartup, relaunchApp } from '../helpers';
+import { getMetricsSnapshot, resetMetrics } from '../metrics';
 import { loadLanguageData, setLangCache, setEnCache } from '../i18n';
 import { requestFactoryReset } from '../factoryReset';
+import { flushPendingTempChatResult, isTempChatMode, setTempChatMode } from '../tempChat';
 import { getWorkerWin } from '../windows';
 import { setHotkeyPaused } from '../hotkey';
-import {
-  buildSettingsSnapshot,
-  showOpenDialogForWin,
-  showSaveDialogForWin,
-} from './context';
+import { buildSettingsSnapshot } from './context';
 import type { IpcContext } from './context';
+
+// Re-apply everything that must react to a freshly imported config (used by the
+// backup restore path once the config category is written). Mirrors what the old
+// standalone config-import handler did inline.
+export function applyImportedConfigLiveEffects(importedConfig: Config, ctx: IpcContext): void {
+  ctx.bindHotkey();
+  applyLaunchAtStartup(importedConfig.launchAtStartup, importedConfig.closeToTray);
+  ctx.onTraySettingsChanged?.();
+  ctx.onTrayMenuRebuild?.();
+
+  // BYOK targets are HTTP API endpoints, not loadable pages — same guard as
+  // UPDATE_AI_URL.
+  if (!isByokTargetUrl(importedConfig.targetUrl)) {
+    const worker = getWorkerWin();
+    if (worker && !worker.isDestroyed()) {
+      void worker.loadURL(importedConfig.targetUrl).catch(() => {
+        sendLog('⚠️ Failed to reload worker after config import');
+      });
+    }
+  }
+
+  void loadLanguageData(importedConfig.locale).then((data) => {
+    if (data) setLangCache(data);
+  });
+  void loadLanguageData('en-US').then((data) => {
+    if (data) setEnCache(data);
+  });
+
+  void ctx.telegramRuntime.syncWithConfig();
+  void ctx.lineRuntime.syncWithConfig();
+}
 
 export function registerSettingsHandlers(ctx: IpcContext): void {
   ipcMain.handle(IPC.GET_HOTKEY, () => config.hotkey);
@@ -52,6 +82,28 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
     }
     sendLog(`🌐 AI target updated: ${getProviderLabel(normalized)}`);
     return true;
+  });
+
+  ipcMain.handle(IPC.GET_HIDDEN_SOURCES, (): HiddenSources => ({
+    providers: config.hiddenProviders,
+    duckaiModelIds: config.hiddenDuckaiModelIds,
+    byokIds: config.hiddenByokIds,
+    byokGroupIds: config.hiddenByokGroupIds,
+  }));
+
+  ipcMain.handle(IPC.UPDATE_HIDDEN_SOURCES, (_event, raw: unknown) => {
+    const next = normalizeHiddenSources(raw);
+    config.hiddenProviders = next.providers;
+    config.hiddenDuckaiModelIds = next.duckaiModelIds;
+    config.hiddenByokIds = next.byokIds;
+    config.hiddenByokGroupIds = next.byokGroupIds;
+    saveConfig({
+      hiddenProviders: config.hiddenProviders,
+      hiddenDuckaiModelIds: config.hiddenDuckaiModelIds,
+      hiddenByokIds: config.hiddenByokIds,
+      hiddenByokGroupIds: config.hiddenByokGroupIds,
+    });
+    return { ok: true as const };
   });
 
   ipcMain.handle(IPC.GET_PROMPT_PREFERENCES, () => config.promptPreferences);
@@ -93,6 +145,13 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
     return true;
   });
 
+  ipcMain.handle(IPC.GET_NOTIFY_EVENTS, () => config.notifyEvents);
+  ipcMain.handle(IPC.UPDATE_NOTIFY_EVENTS, (_event, prefs: unknown) => {
+    config.notifyEvents = normalizeNotifyEvents(prefs);
+    saveConfig({ notifyEvents: config.notifyEvents });
+    return true;
+  });
+
   ipcMain.handle(IPC.GET_LAUNCH_AT_STARTUP, () => config.launchAtStartup);
   ipcMain.handle(IPC.UPDATE_LAUNCH_AT_STARTUP, (_event, enabled: boolean) => {
     config.launchAtStartup = Boolean(enabled);
@@ -116,72 +175,12 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
     return error === '';
   });
 
-  ipcMain.handle(IPC.EXPORT_CONFIG, async () => {
-    try {
-      const defaultPath = path.join(app.getPath('documents'), 'config.json');
-      const result = await showSaveDialogForWin(ctx.getMainWin(), { defaultPath });
-      if (result.canceled || !result.filePath) return false;
-      const sourcePath = getConfigPath();
-      await fs.copyFile(sourcePath, result.filePath);
-      return true;
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'unknown export error';
-      sendLog(`⚠️ Failed to export config: ${message}`);
-      return false;
-    }
-  });
-
-  ipcMain.handle(IPC.IMPORT_CONFIG, async () => {
-    try {
-      const result = await showOpenDialogForWin(ctx.getMainWin(), { properties: ['openFile'] });
-      if (result.canceled || result.filePaths.length === 0) return null;
-      if (path.extname(result.filePaths[0]).toLowerCase() !== '.json') return null;
-
-      const importedRaw = await fs.readFile(result.filePaths[0], 'utf-8');
-      const importedJson = JSON.parse(importedRaw) as unknown;
-      const importedConfig = importConfigFromJson(importedJson);
-      if (!importedConfig) return null;
-
-      ctx.bindHotkey();
-      applyLaunchAtStartup(importedConfig.launchAtStartup, importedConfig.closeToTray);
-      ctx.onTraySettingsChanged?.();
-      ctx.onTrayMenuRebuild?.();
-
-      // BYOK targets are HTTP API endpoints, not loadable pages (same guard as
-      // UPDATE_AI_URL above).
-      if (!isByokTargetUrl(importedConfig.targetUrl)) {
-        const worker = getWorkerWin();
-        if (worker && !worker.isDestroyed()) {
-          void worker.loadURL(importedConfig.targetUrl).catch(() => {
-            sendLog('⚠️ Failed to reload worker after config import');
-          });
-        }
-      }
-
-      void loadLanguageData(importedConfig.locale).then((data) => {
-        if (!data) return;
-        setLangCache(data);
-      });
-      void loadLanguageData('en-US').then((data) => {
-        if (!data) return;
-        setEnCache(data);
-      });
-
-      void ctx.telegramRuntime.syncWithConfig();
-      sendLog('📥 Config imported');
-      return buildSettingsSnapshot();
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'unknown import error';
-      sendLog(`⚠️ Failed to import config: ${message}`);
-      return null;
-    }
-  });
-
   ipcMain.handle(IPC.GET_APP_VERSION, () => app.getVersion());
+  ipcMain.handle(IPC.GET_UPDATE_SOURCE, () => (process.windowsStore ? 'store' : 'github'));
 
   ipcMain.handle(IPC.GET_THEME, () => config.theme);
   ipcMain.handle(IPC.UPDATE_THEME, (_event, theme: string) => {
-    config.theme = theme;
+    if (!isThemePreference(theme)) return false;
     saveConfig({ theme });
     return true;
   });
@@ -203,6 +202,30 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
   ipcMain.handle(IPC.UPDATE_CAPTURE_SETTINGS, (_event, settings: CaptureSettings) => {
     config.captureSettings = normalizeCaptureSettings(settings);
     saveConfig({ captureSettings: config.captureSettings });
+    return true;
+  });
+
+  ipcMain.handle(IPC.METRICS_GET, () => getMetricsSnapshot());
+  ipcMain.handle(IPC.METRICS_RESET, () => {
+    sendLog('📊 Usage statistics cleared');
+    return resetMetrics();
+  });
+  ipcMain.handle(IPC.GET_METRICS_ENABLED, () => config.metricsEnabled);
+  ipcMain.handle(IPC.UPDATE_METRICS_ENABLED, (_event, enabled: boolean) => {
+    config.metricsEnabled = Boolean(enabled);
+    saveConfig({ metricsEnabled: config.metricsEnabled });
+    sendLog(`📊 Usage statistics ${config.metricsEnabled ? 'enabled' : 'disabled'}`);
+    return true;
+  });
+
+  ipcMain.handle(IPC.TEMP_CHAT_GET_MODE, () => {
+    // A (re)booted renderer is attaching — hand over any reply that completed
+    // while no window existed, after this reply returns.
+    setImmediate(flushPendingTempChatResult);
+    return isTempChatMode();
+  });
+  ipcMain.handle(IPC.TEMP_CHAT_SET_MODE, (_event, enabled: boolean) => {
+    setTempChatMode(Boolean(enabled));
     return true;
   });
 

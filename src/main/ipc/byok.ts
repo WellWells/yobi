@@ -7,6 +7,7 @@ import type { ByokInstance } from '../configTypes';
 import { maskToken, sendLog } from '../helpers';
 import { callByokChat, listByokModels } from '../providers/byokClient';
 import { getLangCache, localizeUserFacingError } from '../i18n';
+import type { IpcContext } from './context';
 
 // A probe is a foreground UI action; keep it snappier than a queued task.
 const BYOK_PROBE_TIMEOUT_MS = 30_000;
@@ -43,6 +44,50 @@ function isValidBaseUrl(raw: string): boolean {
   }
 }
 
+// True when the url names a BYOK key that no longer exists, or a group that no
+// longer exists / has no members left (unresolvable at run time).
+function isDanglingByokTarget(url: string): boolean {
+  const instanceId = byokIdFromUrl(url);
+  if (instanceId) return !config.byokInstances.some((instance) => instance.id === instanceId);
+  const groupId = byokGroupIdFromUrl(url);
+  if (groupId) {
+    const group = config.byokGroups.find((entry) => entry.id === groupId);
+    return !group || group.memberIds.length === 0;
+  }
+  return false;
+}
+
+// Command-free chat targets may point at a just-deleted key or emptied group;
+// fall back to the app default ('') so bot messages never hit a dead target
+// while the settings UI still shows a valid selection.
+// A deleted key/group must not leave its id in the hidden lists: the entry is gone
+// from the pickers anyway, and a stale id would only accumulate in the config file.
+function pruneHiddenByokIds(): void {
+  const keyIds = new Set(config.byokInstances.map((instance) => instance.id));
+  const groupIds = new Set(config.byokGroups.map((group) => group.id));
+  const nextKeys = config.hiddenByokIds.filter((id) => keyIds.has(id));
+  const nextGroups = config.hiddenByokGroupIds.filter((id) => groupIds.has(id));
+  if (nextKeys.length === config.hiddenByokIds.length && nextGroups.length === config.hiddenByokGroupIds.length) {
+    return;
+  }
+  config.hiddenByokIds = nextKeys;
+  config.hiddenByokGroupIds = nextGroups;
+  saveConfig({ hiddenByokIds: nextKeys, hiddenByokGroupIds: nextGroups });
+}
+
+function resetDanglingLlmDirectTargets(): void {
+  let changed = false;
+  if (isDanglingByokTarget(config.telegram.llmDirect.targetUrl)) {
+    config.telegram.llmDirect = { ...config.telegram.llmDirect, targetUrl: '' };
+    changed = true;
+  }
+  if (isDanglingByokTarget(config.line.llmDirect.targetUrl)) {
+    config.line.llmDirect = { ...config.line.llmDirect, targetUrl: '' };
+    changed = true;
+  }
+  if (changed) saveConfig({ telegram: config.telegram, line: config.line });
+}
+
 // The key input is blank when editing (write-only field); fall back to the
 // instance's stored key so probes work without re-typing it.
 function resolveProbeKey(req: ByokConnectionProbe): string {
@@ -53,7 +98,13 @@ function resolveProbeKey(req: ByokConnectionProbe): string {
   return config.byokInstances.find((instance) => instance.id === id)?.apiKey ?? '';
 }
 
-export function registerByokHandlers(): void {
+export function registerByokHandlers(ctx: IpcContext): void {
+  // Keys and groups double as Telegram '/name' commands; any rename/add/delete
+  // must reach the '/' menu. Dispatch itself resolves live and needs no sync.
+  const refreshTelegramMenu = (): void => {
+    void ctx.telegramRuntime.refreshBotCommands();
+  };
+
   ipcMain.handle(IPC.BYOK_GET_SETTINGS, (): ByokSettingsSnapshot => buildByokSnapshot());
 
   ipcMain.handle(IPC.BYOK_SAVE_INSTANCE, (_event, req: ByokInstanceSaveRequest) => {
@@ -96,6 +147,7 @@ export function registerByokHandlers(): void {
 
     saveConfig({ byokInstances: config.byokInstances });
     sendLog(`🔑 BYOK instance ${existing ? 'updated' : 'added'}: ${name}`);
+    refreshTelegramMenu();
     return { ok: true as const, snapshot: buildByokSnapshot() };
   });
 
@@ -163,6 +215,9 @@ export function registerByokHandlers(): void {
       ...(targetReset ? { targetUrl: config.targetUrl } : {}),
     });
     sendLog(`🗑️ BYOK instance removed: ${removed.name}`);
+    pruneHiddenByokIds();
+    resetDanglingLlmDirectTargets();
+    refreshTelegramMenu();
     return { ok: true as const, snapshot: buildByokSnapshot() };
   });
 
@@ -195,6 +250,7 @@ export function registerByokHandlers(): void {
 
     saveConfig({ byokGroups: config.byokGroups });
     sendLog(`🔗 BYOK group ${existing ? 'updated' : 'added'}: ${name}`);
+    refreshTelegramMenu();
     return { ok: true as const, snapshot: buildByokSnapshot() };
   });
 
@@ -212,6 +268,9 @@ export function registerByokHandlers(): void {
       saveConfig({ byokGroups: config.byokGroups });
     }
     sendLog(`🗑️ BYOK group removed: ${removed.name}`);
+    pruneHiddenByokIds();
+    resetDanglingLlmDirectTargets();
+    refreshTelegramMenu();
     return { ok: true as const, snapshot: buildByokSnapshot() };
   });
 }

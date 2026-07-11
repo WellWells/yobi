@@ -13,6 +13,7 @@ export const WeatherConfig: React.FC<SkillConfigProps> = ({ step, onChange, t })
       onChange={(e) => onChange({ ...step.config, location: e.currentTarget.value })}
       size="sm"
     />
+    <Text fz="xs" c="dimmed">{t('agentflow.skill.weather.location.hint')}</Text>
     <SelectDropdown
       label={t('agentflow.skill.weather.units')}
       options={[

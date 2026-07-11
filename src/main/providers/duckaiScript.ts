@@ -176,10 +176,7 @@ export function buildDuckaiAutomationScript(
 
   // ── Wait for generation to complete ───────────────────────────────────────────
   console.debug('[DuckAI Automate] ⏳ Response block detected, waiting for generation to complete...');
-  var STOP_BTN_SELECTOR =
-    'button[aria-label="Stop generating"],' +
-    'button[aria-label="\u505c\u6b62\u7522\u751f"]';
-  var seenStopBtn = false;
+  var seenGenerating = false;
   var stableText = '';
   var stableCount = 0;
   var NO_CHANGE_LIMIT = TIMEOUT;   // idle window = configured response timeout (reset on every content change)
@@ -192,11 +189,9 @@ export function buildDuckaiAutomationScript(
     // generation would hang until the Node-side hard timeout (~5 min).
     if (isDuckaiChallenge()) throw new Error('Duck AI human-verification challenge detected');
 
-    var stopBtn = document.querySelector(STOP_BTN_SELECTOR);
-    if (stopBtn) seenStopBtn = true;
-
     var promptArea = document.querySelector('textarea[name="user-prompt"]');
     var isInputReady = !!(promptArea && !promptArea.disabled);
+    if (!isInputReady) seenGenerating = true;
 
     var allBlocks = document.querySelectorAll('div[id*="assistant-message"]');
     var lastBlock = allBlocks.length > 0 ? allBlocks[allBlocks.length - 1] : null;
@@ -204,11 +199,11 @@ export function buildDuckaiAutomationScript(
 
     loopCount++;
     if (loopCount % 10 === 0) {
-      console.debug('[DuckAI Automate] 🔄 Polling generation... current length:', currentText.length, 'InputReady:', isInputReady, 'StopBtn:', !!stopBtn);
+      console.debug('[DuckAI Automate] 🔄 Polling generation... current length:', currentText.length, 'InputReady:', isInputReady, 'seenGenerating:', seenGenerating);
     }
 
-    if (seenStopBtn && !stopBtn && isInputReady && currentText.trim()) {
-      console.debug('[DuckAI Automate] ✅ Generation completed (primary signal: stop button gone and input re-enabled)');
+    if (seenGenerating && isInputReady && currentText.trim()) {
+      console.debug('[DuckAI Automate] ✅ Generation completed (primary signal: input re-enabled after generating)');
       break;
     }
 

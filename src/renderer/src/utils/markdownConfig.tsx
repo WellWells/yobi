@@ -28,3 +28,37 @@ export const SharedPreBlock: React.FC<{ children?: React.ReactNode }> = ({ child
   }
   return <pre>{children}</pre>;
 };
+
+function isHttpUrl(href?: string): boolean {
+  if (!href) return false;
+  try {
+    const parsed = new URL(href);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+// Route every markdown link through the OS browser instead of the app's own
+// BrowserWindow. A remote- or AI-authored href must never navigate the renderer
+// top-level frame: that would hand the full electronAPI bridge to the loaded
+// page. Shared by every markdown surface (chat view, export preview) so none of
+// them can regress into default same-window navigation.
+export const ExternalLink: React.FC<React.ComponentPropsWithoutRef<'a'>> = ({ href, onClick, ...props }) => {
+  const handleClick: React.MouseEventHandler<HTMLAnchorElement> = (event) => {
+    onClick?.(event);
+    if (event.defaultPrevented || !href || !isHttpUrl(href)) return;
+    event.preventDefault();
+    void window.electronAPI.openExternalUrl(href);
+  };
+
+  return (
+    <a
+      {...props}
+      href={href}
+      onClick={handleClick}
+      target="_blank"
+      rel="noopener noreferrer"
+    />
+  );
+};

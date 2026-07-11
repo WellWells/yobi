@@ -5,45 +5,24 @@ import {
   SKILL_TYPES,
   SKILLS_WITHOUT_OUTPUT_KEY,
 } from './flowSkillSchema';
-import { parseCronToScheduleFields } from './flowSchedule';
+import { validateTrigger } from './flowTriggerValidation';
+import { checkVariableReferences } from './flowReferenceCheck';
+import { sanitizeFlowVariables } from './flowVariables';
+
+export { extractJsonFromLlmResponse } from './llmJsonExtract';
 
 type StepValidationResult =
   | { ok: true; step: SkillInstance }
   | { ok: false; error: string };
 
+// Canonical outputKey grammar — shared with the renderer step editor.
+export const OUTPUT_KEY_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
 const REQUIRED_KEYS: Partial<Record<SkillType, string[]>> = Object.fromEntries(
   SKILL_SPECS.map((spec) => [spec.type, spec.fields.filter((f) => f.required).map((f) => f.key)]),
 );
 
-function tryParse(text: string): unknown | undefined {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-}
-
-export function extractJsonFromLlmResponse(text: string): unknown | null {
-  if (!text) return null;
-  let body = text.trim();
-
-  const fence = body.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fence?.[1]) body = fence[1].trim();
-
-  const direct = tryParse(body);
-  if (direct !== undefined) return direct;
-
-  const firstObj = body.indexOf('{');
-  const firstArr = body.indexOf('[');
-  if (firstObj === -1 && firstArr === -1) return null;
-  const useObj = firstArr === -1 || (firstObj !== -1 && firstObj < firstArr);
-  const start = useObj ? firstObj : firstArr;
-  const end = body.lastIndexOf(useObj ? '}' : ']');
-  if (end <= start) return null;
-
-  const parsed = tryParse(body.slice(start, end + 1));
-  return parsed === undefined ? null : parsed;
-}
+const LLM_EXPORT_FORMATS = ['png', 'webp', 'pdf'];
 
 function coerceString(value: unknown): string {
   if (typeof value === 'string') return value;
@@ -86,6 +65,17 @@ function validateStep(raw: unknown, index: number): StepValidationResult {
     }
   }
 
+  // The runtime's file-export gate (isCaptureFormat) is an exact lowercase
+  // match, so normalize here and reject unknown formats instead of letting
+  // "PNG"/"jpg" silently skip the export at execution time.
+  if (skillType === 'llm') {
+    const exportFormat = (config.exportFormat ?? '').trim().toLowerCase();
+    if (exportFormat && !LLM_EXPORT_FORMATS.includes(exportFormat)) {
+      return { ok: false, error: `Step ${index + 1} ("llm") has invalid exportFormat "${config.exportFormat}" — use "png", "webp", "pdf" or ""` };
+    }
+    config.exportFormat = exportFormat;
+  }
+
   for (const key of REQUIRED_KEYS[skillType] ?? []) {
     if (!(config[key] ?? '').trim()) {
       return { ok: false, error: `Step ${index + 1} ("${skillType}") is missing required "${key}"` };
@@ -93,9 +83,11 @@ function validateStep(raw: unknown, index: number): StepValidationResult {
   }
 
   const noOutput = SKILLS_WITHOUT_OUTPUT_KEY.includes(skillType);
-  const outputKey = noOutput
-    ? ''
-    : (typeof s.outputKey === 'string' && s.outputKey.trim() ? s.outputKey.trim() : `${skillType}_${index + 1}`);
+  const rawKey = typeof s.outputKey === 'string' ? s.outputKey.trim() : '';
+  if (!noOutput && rawKey && !OUTPUT_KEY_RE.test(rawKey)) {
+    return { ok: false, error: `Step ${index + 1} has invalid outputKey "${rawKey}" — use only letters, digits and underscores, starting with a letter (e.g. "${skillType}_${index + 1}")` };
+  }
+  const outputKey = noOutput ? '' : rawKey;
   const label = typeof s.label === 'string' && s.label.trim() ? s.label.trim() : skillType;
 
   return { ok: true, step: { id: '', type: skillType, label, config, outputKey } };
@@ -122,51 +114,29 @@ function checkBlockBalance(steps: SkillInstance[]): string | null {
   return null;
 }
 
-function normalizeTrigger(raw: unknown): TriggerConfig {
-  const manual: TriggerConfig = { type: 'manual' };
-  if (typeof raw !== 'object' || raw === null) return manual;
-  const tr = raw as Record<string, unknown>;
-
-  if (tr.type === 'hotkey') {
-    const keys = typeof tr.keys === 'string' ? tr.keys.trim() : '';
-    return keys ? { type: 'hotkey', keys } : manual;
+function checkDuplicateOutputKeys(steps: SkillInstance[]): string | null {
+  const seen = new Set<string>();
+  for (let i = 0; i < steps.length; i++) {
+    const key = steps[i].outputKey;
+    if (!key) continue;
+    if (seen.has(key)) return `Step ${i + 1} reuses outputKey "${key}" — every outputKey must be unique`;
+    seen.add(key);
   }
-  if (tr.type === 'cron') {
-    const cronExpression = typeof tr.cronExpression === 'string' ? tr.cronExpression.trim() : '';
-    if (!cronExpression) return manual;
-    const scheduleFields = parseCronToScheduleFields(cronExpression);
-    return scheduleFields ? { type: 'cron', cronExpression, ...scheduleFields } : { type: 'cron', cronExpression };
-  }
-  if (tr.type === 'bot') {
-    const botCommand = typeof tr.botCommand === 'string' ? tr.botCommand.trim().toLowerCase() : '';
-    if (!botCommand) return manual;
-    return {
-      type: 'bot',
-      botCommand,
-      botCommandDescription: typeof tr.botCommandDescription === 'string' ? tr.botCommandDescription : '',
-      botInputVariable: typeof tr.botInputVariable === 'string' && tr.botInputVariable.trim()
-        ? tr.botInputVariable.trim()
-        : 'input',
-    };
-  }
-  if (tr.type === 'chat') {
-    const chatCommand = typeof tr.chatCommand === 'string' ? tr.chatCommand.trim().toLowerCase() : '';
-    if (!chatCommand) return manual;
-    return {
-      type: 'chat',
-      chatCommand,
-      chatCommandDescription: typeof tr.chatCommandDescription === 'string' ? tr.chatCommandDescription : '',
-      chatInputVariable: typeof tr.chatInputVariable === 'string' && tr.chatInputVariable.trim()
-        ? tr.chatInputVariable.trim()
-        : 'input',
-    };
-  }
-  return manual;
+  return null;
 }
 
-function normalizeExtraTriggers(raw: unknown): TriggerConfig[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.map(normalizeTrigger).filter((t) => t.type !== 'manual');
+// Runs after the explicit-duplicate check so an auto-assigned key can never
+// collide with (or be blamed for) a key the model chose.
+function assignFallbackOutputKeys(steps: SkillInstance[]): void {
+  const used = new Set(steps.map((s) => s.outputKey).filter(Boolean));
+  steps.forEach((step, i) => {
+    if (step.outputKey || SKILLS_WITHOUT_OUTPUT_KEY.includes(step.type)) return;
+    let n = i + 1;
+    let key = `${step.type}_${n}`;
+    while (used.has(key)) key = `${step.type}_${++n}`;
+    used.add(key);
+    step.outputKey = key;
+  });
 }
 
 export function validateFlowCandidate(raw: unknown): FlowGenerationResult {
@@ -189,10 +159,29 @@ export function validateFlowCandidate(raw: unknown): FlowGenerationResult {
     steps.push(result.step);
   }
 
+  const duplicateError = checkDuplicateOutputKeys(steps);
+  if (duplicateError) return { ok: false, error: duplicateError };
+  assignFallbackOutputKeys(steps);
+
   const balanceError = checkBlockBalance(steps);
   if (balanceError) return { ok: false, error: balanceError };
 
-  const extraTriggers = normalizeExtraTriggers(inner.extraTriggers);
+  const triggerResult = validateTrigger(inner.trigger);
+  if (!triggerResult.ok) return triggerResult;
+
+  const extraTriggers: TriggerConfig[] = [];
+  if (Array.isArray(inner.extraTriggers)) {
+    for (const rawExtra of inner.extraTriggers) {
+      const extraResult = validateTrigger(rawExtra);
+      if (!extraResult.ok) return extraResult;
+      if (extraResult.trigger.type !== 'manual') extraTriggers.push(extraResult.trigger);
+    }
+  }
+
+  const variables = sanitizeFlowVariables(inner.variables);
+
+  const referenceError = checkVariableReferences(steps, [triggerResult.trigger, ...extraTriggers], variables);
+  if (referenceError) return { ok: false, error: referenceError };
 
   return {
     ok: true,
@@ -201,8 +190,9 @@ export function validateFlowCandidate(raw: unknown): FlowGenerationResult {
       name,
       description: typeof inner.description === 'string' ? inner.description : '',
       enabled: false,
-      trigger: normalizeTrigger(inner.trigger),
+      trigger: triggerResult.trigger,
       ...(extraTriggers.length > 0 ? { extraTriggers } : {}),
+      ...(variables.length > 0 ? { variables } : {}),
       steps,
       createdAt: '',
       updatedAt: '',

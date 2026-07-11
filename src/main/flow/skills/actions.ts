@@ -1,13 +1,13 @@
 import { clipboard } from 'electron';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
-import { load } from 'cheerio';
 import type { MarkdownCapturePayload } from '../../../shared/types';
 import { paletteBackground, paletteCardTheme } from '../../../shared/capturePalettes';
 import { getProviderLabel, preparePromptForProvider, runAutomation } from '../../providers';
 import { runByokCompletion } from '../../providers/byokClient';
-import { isByokTargetUrl } from '../../../shared/types';
-import { extractCoverImage, fetchAndParse } from '../../urlParser';
+import { isBotPlatform, isByokTargetUrl } from '../../../shared/types';
+import type { BotPlatform } from '../../../shared/types';
+import { ensureHttpScheme, fetchAndParse } from '../../urlParser';
 import { sendLog, sendWebNotification } from '../../helpers';
 import { clipboardLane, llmLane, pageFetchLane } from '../lanes';
 import { FlowAbortError, resolveDelayMs, withAbort, withStepTimeout } from '../runtime';
@@ -37,19 +37,11 @@ export async function execShell(config: Record<string, string>, timeoutMs: numbe
   return (stdout || stderr).trim();
 }
 
-function htmlToText(html: string): string {
-  const $ = load(html);
-  $('script, style, noscript, iframe').remove();
-  const rawText = $('body').text() || $.text() || '';
-  return rawText
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-async function fetchEntirePageText(url: string): Promise<string> {
-  const { cleanedText: html } = await pageFetchLane.runExclusive(() => fetchAndParse(url, { rawHtml: true }));
-  return htmlToText(html);
+async function fetchPage(url: string): Promise<{ text: string; image: string }> {
+  const { cleanedText, image = '' } = await pageFetchLane.runExclusive(
+    () => fetchAndParse(url, { bodyText: true }),
+  );
+  return { text: cleanedText, image };
 }
 
 export async function execBrowser(config: Record<string, string>): Promise<string> {
@@ -65,10 +57,10 @@ export async function execBrowser(config: Record<string, string>): Promise<strin
   try {
     const parsed: unknown = JSON.parse(url);
     if (Array.isArray(parsed) && parsed.every((u): u is string => typeof u === 'string')) {
-      urlArray = parsed.filter((u) => /^https?:\/\//i.test(u.trim()));
+      urlArray = parsed.map((u) => ensureHttpScheme(u)).filter(Boolean);
     }
   } catch {
-    const candidates = url.split(/[\n\r,]+/).map((s) => s.trim()).filter((s) => /^https?:\/\//i.test(s));
+    const candidates = url.split(/[\n\r,]+/).map((s) => ensureHttpScheme(s)).filter(Boolean);
     if (candidates.length > 1) urlArray = candidates;
   }
 
@@ -80,7 +72,7 @@ export async function execBrowser(config: Record<string, string>): Promise<strin
       const batchUrl = urlArray[i];
       sendLog(`🌐 [${i + 1}/${urlArray.length}] Fetching: ${batchUrl}`);
       try {
-        const text = await fetchEntirePageText(batchUrl);
+        const { text } = await fetchPage(batchUrl);
         parts.push(text);
         sendLog(`✅ [${i + 1}/${urlArray.length}] OK — ${text.length} chars`);
       } catch (err) {
@@ -93,18 +85,19 @@ export async function execBrowser(config: Record<string, string>): Promise<strin
     return parts.join('\n\n---\n\n');
   }
 
+  const { text, image } = await fetchPage(url);
+  sendLog(`✅ [AgentFlow] Browser: ${text.length} chars`);
+
   if (includeImage) {
-    const { cleanedText: html } = await pageFetchLane.runExclusive(() => fetchAndParse(url, { rawHtml: true }));
-    const image = extractCoverImage(html, url);
     sendLog(`🖼️ [AgentFlow] Browser: cover image ${image ? `→ ${image}` : 'not found'}`);
-    return JSON.stringify({ output: htmlToText(html), image });
+    return JSON.stringify({ output: text, image });
   }
 
-  return await fetchEntirePageText(url);
+  return text;
 }
 
 export async function execBrowserOpen(config: Record<string, string>): Promise<string> {
-  const url = (config.url ?? '').trim();
+  const url = ensureHttpScheme(config.url ?? '');
   if (!url) throw new Error('browser_open requires a url');
   const flowId = (config.__flowId ?? '').trim();
   const show = config.show === 'true';
@@ -184,8 +177,6 @@ export async function execLlm(
     );
     response = result.response;
   } else {
-    const workerWin = deps.getWorkerWin();
-    if (!workerWin) throw new Error('Worker window not available');
     // LLM automation is serialized app-wide by llmLane, so many concurrent flows
     // pile up here. The response-timeout clock must only start once THIS step owns
     // the shared worker window — otherwise time spent queued behind other flows is
@@ -193,10 +184,15 @@ export async function execLlm(
     // run. withAbort lets a queued step bail promptly on user abort; the in-lane
     // guard stops it from firing stale automation once the lane frees; and the
     // about:blank interrupt only runs while we hold the lane, so it can never nuke
-    // another flow's in-progress response.
+    // another flow's in-progress response. The worker is resolved INSIDE the lane
+    // (via ensureWorkerWin, which forces automation mode) so a login/Cloudflare
+    // mode switch can't swap the window mid-run and a worker left interactive after
+    // a prior login is reclaimed instead of silently degrading this step.
     const result = await withAbort(
-      llmLane.runExclusive(() => {
+      llmLane.runExclusive(async () => {
         if (signal?.aborted) throw new FlowAbortError();
+        const workerWin = deps.ensureWorkerWin ? await deps.ensureWorkerWin() : deps.getWorkerWin();
+        if (!workerWin || workerWin.isDestroyed()) throw new Error('Worker window not available');
         return withStepTimeout(
           runAutomation(workerWin, promptForModel, timeoutMs, providerUrl),
           timeoutMs,
@@ -308,6 +304,30 @@ function resolveAttachmentSendAs(
   return inferTelegramSendAs(attachment);
 }
 
+// A step's `platform` is authored in the editor. 'auto' — the default, and what
+// every flow written before LINE existed carries — follows whichever platform
+// triggered this run, falling back to Telegram for cron/hotkey/manual runs so
+// those flows keep behaving exactly as they did.
+function resolveBotPlatform(config: Record<string, string>): BotPlatform {
+  const choice = (config.platform ?? 'auto').trim().toLowerCase();
+  if (isBotPlatform(choice)) return choice;
+  const triggered = (config.__triggerPlatform ?? '').trim().toLowerCase();
+  return isBotPlatform(triggered) ? triggered : 'telegram';
+}
+
+const LINE_IMAGE_PATH_RE = /\.(?:jpe?g|png)$/i;
+
+// LINE fetches the image itself over HTTPS; there is no upload endpoint, and it
+// accepts only JPEG/PNG. Everything else has to degrade to text.
+function isLineSendableImage(attachment: string): boolean {
+  if (!/^https:\/\//i.test(attachment)) return false;
+  try {
+    return LINE_IMAGE_PATH_RE.test(new URL(attachment).pathname);
+  } catch {
+    return false;
+  }
+}
+
 export async function execBot(
   config: Record<string, string>,
   deps: FlowExecutorDeps,
@@ -318,11 +338,26 @@ export async function execBot(
   const legacyMagicCaption = (config.__magicUploadCaption ?? '').trim();
 
   const chatIdsRaw = (config.chatIds ?? config.chatId ?? '').trim();
-  const explicitIds = chatIdsRaw
-    ? chatIdsRaw.split(',').map((s) => s.trim()).filter(Boolean).map(Number).filter((n) => Number.isFinite(n) && n !== 0)
+  const rawTargets = chatIdsRaw
+    ? chatIdsRaw.split(',').map((s) => s.trim()).filter(Boolean)
     : [];
-
   const originalChatIdsTemplate = (config.__originalChatIdsTemplate ?? '').trim();
+
+  if (resolveBotPlatform(config) === 'line') {
+    return execBotLine(deps, {
+      message,
+      explicitAttachment,
+      legacyMagicPath,
+      legacyMagicCaption,
+      rawTargets,
+      originalChatIdsTemplate,
+    });
+  }
+
+  const explicitIds = rawTargets
+    .map(Number)
+    .filter((n) => Number.isFinite(n) && n !== 0);
+
   const chatIdsWereConfiguredButEmpty = originalChatIdsTemplate !== '' && explicitIds.length === 0;
 
   if (chatIdsWereConfiguredButEmpty) {
@@ -399,6 +434,75 @@ export async function execBot(
       sendLog(`📤 [Bot] Sent to user ${user.userId} (${user.username ?? user.firstName ?? ''})`);
     },
   );
+  return message;
+}
+
+interface BotSendParts {
+  message: string;
+  explicitAttachment: string;
+  legacyMagicPath: string;
+  legacyMagicCaption: string;
+  rawTargets: string[];
+  originalChatIdsTemplate: string;
+}
+
+async function sendLineTextToAll(
+  deps: FlowExecutorDeps,
+  recipients: string[],
+  text: string,
+): Promise<void> {
+  if (!deps.sendLineMessage) throw new Error('LINE bot is not configured in FlowExecutorDeps');
+  const send = deps.sendLineMessage;
+  for (const userId of recipients) {
+    await send(userId, text);
+    sendLog(`📤 [Bot] Sent to LINE user ${userId}`);
+  }
+}
+
+// LINE recipients are opaque userId strings ('U' + 32 hex), never the numeric
+// chat ids Telegram uses, so they are passed through untouched.
+async function execBotLine(
+  deps: FlowExecutorDeps,
+  parts: BotSendParts,
+): Promise<string> {
+  const { message, explicitAttachment, legacyMagicPath, legacyMagicCaption, rawTargets } = parts;
+
+  if (parts.originalChatIdsTemplate !== '' && rawTargets.length === 0) {
+    sendLog('⚠️ [Bot] LINE recipients resolved to empty (no trigger context) — skipping send');
+    return explicitAttachment || message || legacyMagicPath;
+  }
+
+  const recipients = rawTargets.length > 0
+    ? rawTargets
+    : (deps.getLinePairedUsers?.() ?? []).map((user) => user.userId);
+  if (recipients.length === 0) throw new Error('No paired LINE users found');
+
+  const attachment = explicitAttachment || legacyMagicPath;
+  const caption = (explicitAttachment ? message : legacyMagicCaption).trim();
+
+  if (attachment && isLineSendableImage(attachment)) {
+    if (!deps.sendLineImage) throw new Error('sendLineImage not configured in FlowExecutorDeps');
+    const sendImage = deps.sendLineImage;
+    for (const userId of recipients) {
+      await sendImage(userId, attachment);
+      sendLog(`📤 [Bot] Sent image to LINE user ${userId}: ${attachment}`);
+    }
+    if (caption) await sendLineTextToAll(deps, recipients, caption);
+    return attachment;
+  }
+
+  if (attachment) {
+    sendLog(`⚠️ [Bot] LINE cannot deliver local files or non-image URLs (${attachment}) — sending text only`);
+    if (!caption) {
+      sendLog('⚠️ [Bot] attachment carried no message text — nothing sent to LINE');
+      return attachment;
+    }
+    await sendLineTextToAll(deps, recipients, caption);
+    return attachment;
+  }
+
+  if (!message) return '';
+  await sendLineTextToAll(deps, recipients, message);
   return message;
 }
 

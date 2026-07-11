@@ -6,13 +6,16 @@ import { ModelDropdown } from './ModelDropdown';
 import { AttachmentChips } from './AttachmentChips';
 import { SlashCommandMenu } from './SlashCommandMenu';
 import { parseSlashCommand, slashMenuQuery, type ChatCommand } from '../../hooks/useChatCommands';
+import { useAppStore } from '../../store/appStore';
+import { SHIFT_TAB_HINT } from '../../utils/keyLabels';
 import type { PromptAttachment } from '../../../../shared/types';
 
 interface PromptInputAreaProps {
   t: (key: string) => string;
   activeModelUrl: string;
   onChangeModel: (url: string) => void;
-  onSend: (text: string) => void;
+  /** Returns false when the send was refused (e.g. the model needs a sign-in first). */
+  onSend: (text: string) => boolean;
   attachments: PromptAttachment[];
   notice: string | null;
   onRemoveAttachment: (id: string) => void;
@@ -39,6 +42,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
 }, ref) => {
   const [promptInput, setPromptInput] = useState('');
   const [inputFocused, setInputFocused] = useState(false);
+  const tempChatMode = useAppStore((s) => s.tempChatMode);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [menuDismissed, setMenuDismissed] = useState(false);
   const promptInputRef = useRef<HTMLTextAreaElement>(null);
@@ -78,8 +82,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
       }
       return;
     }
-    onSend(text);
-    setPromptInput('');
+    if (onSend(text)) setPromptInput('');
   }, [promptInput, chatCommands, onRunCommand, onUnknownCommand, onSend]);
 
   return (
@@ -107,7 +110,16 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
         onFocusCapture={() => setInputFocused(true)}
         onBlurCapture={() => setInputFocused(false)}
         onClick={() => promptInputRef.current?.focus()}
-        style={{
+        style={tempChatMode ? {
+          // Incognito look: dashed violet border + slightly translucent body so
+          // the temporary mode is unmistakable at a glance.
+          borderStyle: 'dashed',
+          borderColor: inputFocused ? 'var(--mantine-color-violet-4)' : 'var(--mantine-color-violet-6)',
+          boxShadow: inputFocused ? '0 0 0 2px color-mix(in srgb, var(--mantine-color-violet-5) 25%, transparent)' : 'none',
+          background: 'color-mix(in srgb, var(--mantine-color-default) 82%, transparent)',
+          transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
+          cursor: 'text',
+        } : {
           borderColor: inputFocused ? 'var(--mantine-color-accent)' : 'var(--mantine-color-default-border)',
           boxShadow: inputFocused ? '0 0 0 2px var(--mantine-color-accent-dim)' : 'none',
           transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
@@ -159,13 +171,17 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
                 handleSendPrompt();
               }
             }}
-            placeholder={t('input.placeholder.short')}
+            placeholder={t(tempChatMode ? 'chat.tempMode.input.placeholder' : 'input.placeholder.short')}
             minRows={2}
           />
         </Box>
 
         <Flex align="center" justify="flex-end" gap={8} p="8px 12px">
-          <ModelDropdown value={activeModelUrl} onChange={onChangeModel} />
+          <ModelDropdown
+            value={activeModelUrl}
+            onChange={onChangeModel}
+            tooltipLabel={t('chat.model.tooltip').replace('{{shortcut}}', SHIFT_TAB_HINT)}
+          />
           <Tooltip label={t('input.send')} position="top">
             <ActionIcon
               onClick={handleSendPrompt}

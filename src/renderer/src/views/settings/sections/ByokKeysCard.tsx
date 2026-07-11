@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { ActionIcon, Autocomplete, Badge, Box, Group, Stack, Text } from '@mantine/core';
 import { CheckCircle2, KeyRound, ListChecks, Pencil, Plus, Trash2, XCircle, Zap } from 'lucide-react';
-import { SectionCard, SectionTitle, SelectDropdown } from '../components';
+import { SectionCard, SectionTitle, SelectDropdown, VisibilityCheckbox } from '../components';
+import { useHiddenSources } from '../hooks/useHiddenSources';
 import { AppButton } from '../../../components/AppButton';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { AppPasswordInput } from '../../../components/AppPasswordInput';
@@ -35,9 +36,11 @@ const PROVIDER_TYPE_OPTIONS = BYOK_PROVIDER_TYPES.map((type) => ({
 
 export const ByokKeysCard: React.FC<Props> = ({ byok, t, sectionGap }) => {
   const [confirmDelete, setConfirmDelete] = useState<ByokInstanceSnapshot | null>(null);
+  const sources = useHiddenSources();
   const instances = byok.snapshot?.instances ?? [];
   const { form } = byok;
   const editingInstance = form?.id ? instances.find((instance) => instance.id === form.id) : undefined;
+  const hiddenNow = (id: string): boolean => sources.hidden.byokIds.includes(id);
 
   return (
     <Box>
@@ -62,24 +65,38 @@ export const ByokKeysCard: React.FC<Props> = ({ byok, t, sectionGap }) => {
             >
               <Group justify="space-between" align="center" wrap="nowrap" gap={12}>
                 <Group gap={10} align="flex-start" wrap="nowrap" flex={1} miw={0}>
-                  <Box c="var(--mantine-color-default-color)" mt={2} style={{ flexShrink: 0 }}>
-                    <KeyRound size={16} />
+                  <Box mt={2}>
+                    <VisibilityCheckbox
+                      checked={!hiddenNow(instance.id)}
+                      blocked={!hiddenNow(instance.id) && !sources.canApply({
+                        ...sources.hidden,
+                        byokIds: [...sources.hidden.byokIds, instance.id],
+                      })}
+                      busy={sources.busy}
+                      onToggle={() => sources.toggleByok(instance.id)}
+                      t={t}
+                    />
                   </Box>
-                  <Stack gap={4} miw={0}>
-                    <Group gap={8} wrap="nowrap">
-                      <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-default-color)" truncate>
-                        {instance.name}
+                  <Group gap={10} align="flex-start" wrap="nowrap" miw={0} opacity={hiddenNow(instance.id) ? 0.55 : 1}>
+                    <Box c="var(--mantine-color-default-color)" mt={2} style={{ flexShrink: 0 }}>
+                      <KeyRound size={16} />
+                    </Box>
+                    <Stack gap={4} miw={0}>
+                      <Group gap={8} wrap="nowrap">
+                        <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-default-color)" truncate>
+                          {instance.name}
+                        </Text>
+                        <Badge variant="light" color="gray" radius="sm" size="sm" tt="none" fw={500}>
+                          {BYOK_PROVIDER_TYPE_LABELS[instance.providerType]}
+                        </Badge>
+                      </Group>
+                      <Text fz="var(--font-size-sm)" c="dimmed" lh={1.5} truncate>
+                        {instance.model}
+                        {' · '}
+                        {instance.hasKey ? instance.keyPreview : t('settings.byok.keyNotSet')}
                       </Text>
-                      <Badge variant="light" color="gray" radius="sm" size="sm" tt="none" fw={500}>
-                        {BYOK_PROVIDER_TYPE_LABELS[instance.providerType]}
-                      </Badge>
-                    </Group>
-                    <Text fz="var(--font-size-sm)" c="dimmed" lh={1.5} truncate>
-                      {instance.model}
-                      {' · '}
-                      {instance.hasKey ? instance.keyPreview : t('settings.byok.keyNotSet')}
-                    </Text>
-                  </Stack>
+                    </Stack>
+                  </Group>
                 </Group>
 
                 <Group gap={6} align="center" wrap="nowrap" style={{ flexShrink: 0 }}>

@@ -11,6 +11,9 @@ const LICENSE_FILE_NAMES = [
   'LICENSE-MIT', 'COPYING', 'COPYING.md',
 ];
 
+// Apache-2.0 §4(d): a NOTICE file, where present, must be reproduced downstream.
+const NOTICE_FILE_NAMES = ['NOTICE', 'NOTICE.md', 'NOTICE.txt'];
+
 interface LockEntry {
   version?: string;
   dev?: boolean;
@@ -32,6 +35,7 @@ interface Pkg {
   author: string;
   homepage: string;
   text: string;
+  notice: string;
 }
 
 function readJson<T>(file: string): T {
@@ -69,8 +73,8 @@ function authorString(manifest: Manifest): string {
   return [a.name, a.email ? `<${a.email}>` : ''].filter(Boolean).join(' ');
 }
 
-function licenseText(dir: string): string {
-  for (const name of LICENSE_FILE_NAMES) {
+function firstFileText(dir: string, names: string[]): string {
+  for (const name of names) {
     const file = path.join(dir, name);
     if (fs.existsSync(file)) {
       try {
@@ -107,7 +111,8 @@ function collectPackages(): Pkg[] {
       license: licenseId(entry, manifest),
       author: authorString(manifest),
       homepage: manifest.homepage ?? '',
-      text: licenseText(dir),
+      text: firstFileText(dir, LICENSE_FILE_NAMES),
+      notice: firstFileText(dir, NOTICE_FILE_NAMES),
     });
   }
 
@@ -133,7 +138,8 @@ function render(pkgs: Pkg[]): string {
     if (p.author) meta.push(`Author: ${p.author}`);
     if (p.homepage) meta.push(`Homepage: ${p.homepage}`);
     const text = p.text || '(No bundled license file; see SPDX identifier above.)';
-    return `${meta.join('\n')}\n\n${text}\n\n${rule}\n`;
+    const notice = p.notice ? `\nNOTICE:\n\n${p.notice}\n` : '';
+    return `${meta.join('\n')}\n\n${text}\n${notice}\n${rule}\n`;
   }).join('\n');
 
   return `${header}${body}`;

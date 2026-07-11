@@ -5,19 +5,18 @@ import { AppTextInput } from '../../../components/AppTextInput';
 import { SelectDropdown } from '../../../components/SelectDropdown';
 import { ToggleSwitch } from '../../../components/ToggleSwitch';
 import { applyCapturePalette, buildCapturePaletteOptions } from './captureConfig';
-import { MODELS } from '../../../config/models';
-import { useAppStore } from '../../../store/appStore';
+import { PROVIDER_DROPDOWN_MAX_HEIGHT, providerSectionsToSelectData } from '../../../config/models';
+import { useProviderModels } from '../../../hooks/useProviderModels';
 import type { SkillConfigProps } from './types';
 
 export const LlmConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
-  const duckaiModels = useAppStore((state) => state.duckaiModels);
-  const byokModels = useAppStore((state) => state.byokModels);
+  // A step may target a provider the user has since hidden. Keep it listed and
+  // flagged — hiding is display-only and must never silently rewrite a flow.
+  const { sections, hiddenSuffix } = useProviderModels(step.config.provider ?? '');
 
   const providerOptions = [
     { value: '', label: t('agentflow.skill.llm.providerCurrent') },
-    ...MODELS.map((m) => ({ value: m.url, label: m.label })),
-    ...duckaiModels.map((m) => ({ value: m.url, label: m.label })),
-    ...byokModels.map((m) => ({ value: m.url, label: m.label })),
+    ...providerSectionsToSelectData(sections, hiddenSuffix),
   ];
 
   return (
@@ -28,6 +27,7 @@ export const LlmConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
       options={providerOptions}
       value={step.config.provider ?? ''}
       onChange={(value) => onChange({ ...step.config, provider: value })}
+      maxDropdownHeight={PROVIDER_DROPDOWN_MAX_HEIGHT}
       size="sm"
     />
     <AppTextarea

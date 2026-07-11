@@ -19,7 +19,7 @@ export const ExtraBlock = React.memo<ExtraBlockProps>(({ heading, content, Markd
     }}>
       {heading}
     </Text>
-    <Box className="md-content" style={{ userSelect: 'text', fontSize: 'var(--font-size-md)' }}>
+    <Box className="md-content" style={{ fontSize: 'var(--font-size-md)' }}>
       <MarkdownRenderer>{content}</MarkdownRenderer>
     </Box>
   </Box>

@@ -9,6 +9,7 @@ import {
   escapeTelegramHtml,
   extractResponseSection,
   formatResponseForTelegramHtml,
+  splitMarkdownIntoChunks,
   telegramVisibleLength,
   truncateText,
 } from './formatter';
@@ -23,10 +24,15 @@ import {
 const TELEGRAM_MSG_LIMIT = 4096;
 const TELEGRAM_CAPTION_LIMIT = 1024;
 const TELEGRAM_RESULT_MAX = 2600;
+// Compact replies carry no header, so a chunk gets the whole message budget
+// minus room for the HTML tags markdown rendering adds.
+const COMPACT_CHUNK_CHARS = 3000;
+const COMPACT_MAX_MESSAGES = 3;
 
 export interface TelegramMessagingContext extends TelegramSendContext {
   isPollerActive: () => boolean;
   getDefaultReplyMode: () => TelegramReplyMode;
+  getCompactReply: () => boolean;
   registry: ExportTokenRegistry;
 }
 
@@ -192,6 +198,12 @@ export async function sendProactiveFile(
   }
 }
 
+// 'direct' is the synthetic command that command-free chat queues under — not a
+// slash command the user typed — so headers show a localized label instead.
+function commandLabel(s: Record<string, string>, command: string): string {
+  return command === 'direct' ? t(s, 'telegram.msg.directLabel') : command;
+}
+
 export async function sendTaskSuccess(
   mctx: TelegramMessagingContext,
   target: TelegramReplyTarget,
@@ -200,12 +212,21 @@ export async function sendTaskSuccess(
   if (!mctx.getBot() || !mctx.isPollerActive()) return;
   const s = mctx.getStrings();
   const responseSection = extractResponseSection(payload.response, s);
+
+  // Compact: the answer and nothing else. The markdown file is still written to
+  // the output folder, it just goes unannounced, and no export token is issued.
+  if (mctx.getCompactReply()) {
+    await sendCompactReply(mctx, target, responseSection);
+    await deleteQueuedMessage(mctx, target);
+    return;
+  }
+
   const responseText = truncateText(responseSection.trim(), TELEGRAM_RESULT_MAX);
   const body = formatResponseForTelegramHtml(responseText);
   const defaultReplyMode = mctx.getDefaultReplyMode();
   const titleLine = escapeTelegramHtml(
     t(s, 'telegram.msg.completed', {
-      command: target.command,
+      command: commandLabel(s, target.command),
       provider: payload.providerLabel,
       elapsed: payload.elapsedSeconds,
     }),
@@ -261,6 +282,42 @@ export async function sendTaskSuccess(
   await deleteQueuedMessage(mctx, target);
 }
 
+// An answer longer than one Telegram message continues into the next one, the
+// way a person sends a long thought. Only the first message quotes the request.
+async function sendCompactReply(
+  mctx: TelegramMessagingContext,
+  target: TelegramReplyTarget,
+  response: string,
+): Promise<void> {
+  const s = mctx.getStrings();
+  const emptyBody = `<i>${escapeTelegramHtml(t(s, 'telegram.msg.emptyResponse'))}</i>`;
+  const chunks = splitMarkdownIntoChunks(response, COMPACT_CHUNK_CHARS, COMPACT_MAX_MESSAGES);
+  if (chunks.length === 0) {
+    await safeSendMessage(mctx, target.chatId, emptyBody, target.requestMessageId);
+    return;
+  }
+  // Sequential: Telegram orders messages by call order, and a reply chain that
+  // starts with its second half reads backwards.
+  for (const [index, chunk] of chunks.entries()) {
+    const body = renderCompactChunk(chunk) || emptyBody;
+    await safeSendMessage(mctx, target.chatId, body, index === 0 ? target.requestMessageId : undefined);
+  }
+}
+
+// Rendering grows the source (entity escapes, <a href="…">), so a chunk that fit
+// as markdown can still overflow as HTML. Shorten the source and re-render
+// rather than cutting the HTML, which would leave a tag unclosed.
+function renderCompactChunk(chunk: string): string {
+  let source = chunk;
+  let html = formatResponseForTelegramHtml(source);
+  while (html.length > TELEGRAM_MSG_LIMIT && source.length > 32) {
+    const ratio = TELEGRAM_MSG_LIMIT / html.length;
+    source = truncateText(source, Math.max(32, Math.floor(source.length * ratio) - 16));
+    html = formatResponseForTelegramHtml(source);
+  }
+  return html;
+}
+
 export async function sendTaskError(
   mctx: TelegramMessagingContext,
   target: TelegramReplyTarget,
@@ -270,7 +327,7 @@ export async function sendTaskError(
   const s = mctx.getStrings();
   const plainText = truncateText(
     t(s, 'telegram.msg.failed', {
-      command: target.command,
+      command: commandLabel(s, target.command),
       provider: payload.providerLabel,
     })+ '\n' + (payload.message || t(s, 'telegram.msg.unknownError')),
     TELEGRAM_MSG_LIMIT - 32,

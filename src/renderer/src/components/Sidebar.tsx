@@ -1,4 +1,4 @@
-import React, { startTransition, useCallback, useEffect, useRef, useState } from 'react';
+import React, { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Menu as MMenu, Stack, Text } from '@mantine/core';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useShallow } from 'zustand/react/shallow';
@@ -8,12 +8,16 @@ import type { OutputFile } from '../../../shared/types';
 import { AppTextInput } from './AppTextInput';
 import { WebDialog } from './WebDialog';
 import { ContextMenuPortal } from './ContextMenuPortal';
-import { Edit3, FolderOpen, Search, Trash2 } from 'lucide-react';
+import { ShortcutHint } from './ShortcutHint';
+import { SelectionActionBar } from './SelectionActionBar';
+import { Edit3, FolderOpen, ListChecks, Search, Trash2 } from 'lucide-react';
 import { fileApi } from '../api/electronApi';
 import { FileItem } from './sidebar/FileItem';
 import { useSidebarFileActions } from './sidebar/useSidebarFileActions';
 import { createSidebarKeyDownHandler } from './sidebar/sidebarKeyNav';
+import { useMultiSelect } from '../hooks/useMultiSelect';
 import { useFormatTime } from '../hooks/useFormatTime';
+import { isTypingTarget } from '../utils/domUtils';
 
 export const Sidebar: React.FC = () => {
   const { files, selectedFile, selectFile, setFileContent, setFiles, unreadFilePaths } = useAppStore(
@@ -29,7 +33,10 @@ export const Sidebar: React.FC = () => {
   const { t } = useI18nStore();
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<OutputFile[] | null>(null);
+  const selection = useMultiSelect();
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const searchSeqRef = useRef(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const fileItemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const prevDeleteDialogOpenRef = useRef(false);
   const sidebarViewportRef = useRef<HTMLDivElement>(null);
@@ -47,6 +54,39 @@ export const Sidebar: React.FC = () => {
     });
     return unsub;
   }, [loadFiles, setFiles]);
+
+  // Ctrl/Cmd+F jumps focus to the file search box. The sidebar stays mounted
+  // behind other views (display toggling), so gate on the active view.
+  useEffect(() => {
+    const onSearchHotkey = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+      if (event.key.toLowerCase() !== 'f') return;
+      if (useAppStore.getState().currentView !== 'chat') return;
+      // Don't hijack Ctrl+F while typing, or steal focus from an open dialog's trap.
+      if (isTypingTarget(event.target) || document.querySelector('[aria-modal="true"]')) return;
+      const input = searchInputRef.current;
+      if (!input) return;
+      event.preventDefault();
+      input.focus();
+      input.select();
+    };
+    window.addEventListener('keydown', onSearchHotkey);
+    return () => window.removeEventListener('keydown', onSearchHotkey);
+  }, []);
+
+  useEffect(() => {
+    if (!selection.selectMode) return;
+    const onDeleteKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Delete') return;
+      if (useAppStore.getState().currentView !== 'chat') return;
+      if (isTypingTarget(event.target) || document.querySelector('[aria-modal="true"]')) return;
+      if (selection.count === 0) return;
+      event.preventDefault();
+      setBulkDeleteOpen(true);
+    };
+    window.addEventListener('keydown', onDeleteKey);
+    return () => window.removeEventListener('keydown', onDeleteKey);
+  }, [selection.selectMode, selection.count]);
 
   useEffect(() => {
     const keyword = query.trim();
@@ -67,6 +107,7 @@ export const Sidebar: React.FC = () => {
 
   const visibleFiles = searchResults ?? files;
   const isSearching = query.trim().length > 0;
+  const selectableIds = useMemo(() => visibleFiles.map((f) => f.path), [visibleFiles]);
   const countLabel = isSearching
     ? `${visibleFiles.length} / ${files.length}`
     : `${files.length}`;
@@ -99,6 +140,37 @@ export const Sidebar: React.FC = () => {
     });
   }, [selectFile, setFileContent]);
 
+  // File-manager click handling: Ctrl toggles, Shift ranges, a plain click
+  // collapses back to a single selection and opens the file.
+  const handleRowClick = useCallback((file: OutputFile, mods: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => {
+    const result = selection.selectClick(file.path, {
+      ctrlKey: mods.ctrlKey || mods.metaKey,
+      shiftKey: mods.shiftKey,
+      orderedIds: selectableIds,
+    });
+    if (result === 'open') void handleSelect(file);
+  }, [selection, selectableIds, handleSelect]);
+
+  // Keep the range-selection anchor pinned to the open file while not in
+  // multi-select, so the first Ctrl/Shift-click builds on what's already open.
+  useEffect(() => {
+    if (!selection.selectMode) selection.setAnchor(selectedFile?.path ?? null);
+  }, [selectedFile?.path, selection.selectMode, selection.setAnchor]);
+
+  const handleBulkDelete = useCallback(async () => {
+    const paths = [...selection.selectedIds];
+    setBulkDeleteOpen(false);
+    if (paths.length === 0) return;
+    const removed = new Set(paths);
+    await fileApi.deleteFiles(paths);
+    if (selectedFile?.path && removed.has(selectedFile.path)) {
+      selectFile(null);
+      setFileContent(null);
+    }
+    selection.exit();
+    void loadFiles();
+  }, [selection, selectedFile, selectFile, setFileContent, loadFiles]);
+
   const {
     editingPath, editingText, setEditingText, editingMode,
     pendingDeleteFile, setPendingDeleteFile, contextMenu, setContextMenu,
@@ -107,6 +179,15 @@ export const Sidebar: React.FC = () => {
   } = useSidebarFileActions({
     visibleFiles, selectedFile, selectFile, setFileContent, loadFiles, onSelect: handleSelect,
   });
+
+  const handleStartSelection = useCallback((file: OutputFile) => {
+    selection.enter();
+    selection.toggle(file.path);
+    // Pin the anchor to the item that started the selection so a following
+    // Shift-click ranges from here.
+    selection.setAnchor(file.path);
+    setContextMenu(null);
+  }, [selection, setContextMenu]);
 
   const registerItemRef = useCallback((path: string, node: HTMLDivElement | null) => {
     if (node) {
@@ -170,6 +251,7 @@ export const Sidebar: React.FC = () => {
     >
       <Box style={{ flexShrink: 0 }} px="10px" pt="10px" pb="8px">
         <AppTextInput
+          ref={searchInputRef}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder={t('sidebar.searchPlaceholder')}
@@ -187,7 +269,7 @@ export const Sidebar: React.FC = () => {
         />
       </Box>
 
-      <Box ref={sidebarViewportRef} flex={1} style={{ overflowY: 'auto', padding: '6px 0' }} onKeyDown={handleListKeyDown}>
+      <Box ref={sidebarViewportRef} flex={1} style={{ overflowY: 'auto', padding: '6px 0' }} onKeyDown={selection.selectMode ? undefined : handleListKeyDown}>
         {visibleFiles.length === 0 ? (
           <Text
             p="20px 14px"
@@ -226,7 +308,10 @@ export const Sidebar: React.FC = () => {
                     editingMode={editingMode}
                     editingText={editingText}
                     setEditingText={setEditingText}
-                    onSelect={handleSelect}
+                    selectMode={selection.selectMode}
+                    checked={selection.isSelected(file.path)}
+                    onToggleSelect={selection.toggle}
+                    onRowClick={handleRowClick}
                     onOpenMenu={openContextMenu}
                     onCommitEdit={handleCommitEdit}
                     onCancelEdit={handleCancelEdit}
@@ -240,29 +325,47 @@ export const Sidebar: React.FC = () => {
         )}
       </Box>
 
+      {selection.selectMode && (
+        <SelectionActionBar
+          count={selection.count}
+          allSelected={selection.allSelected(selectableIds)}
+          onToggleAll={() => selection.toggleAll(selectableIds)}
+          onDelete={() => setBulkDeleteOpen(true)}
+          onCancel={selection.exit}
+          t={t}
+        />
+      )}
+
       <ContextMenuPortal
         position={contextMenu ? { x: contextMenu.x, y: contextMenu.y } : null}
         onClose={() => setContextMenu(null)}
       >
         <MMenu.Item
           leftSection={<Edit3 size={13} />}
-          rightSection={<Text component="span" fz="var(--font-size-xs)" c="var(--text-muted)" ff="var(--font-mono)">{t('context.shortcut.editH1')}</Text>}
+          rightSection={<ShortcutHint combo={t('context.shortcut.editH1')} />}
           onClick={() => { void startEditH1(contextMenu!.file); }}
         >
           {t('context.editH1')}
         </MMenu.Item>
         <MMenu.Item
           leftSection={<FolderOpen size={13} />}
-          rightSection={<Text component="span" fz="var(--font-size-xs)" c="var(--text-muted)" ff="var(--font-mono)">{t('context.shortcut.showInFolder')}</Text>}
+          rightSection={<ShortcutHint combo={t('context.shortcut.showInFolder')} />}
           onClick={() => { void window.electronAPI.showInFolder(contextMenu!.file.path); setContextMenu(null); }}
         >
           {t('context.showInFolder')}
         </MMenu.Item>
         <MMenu.Divider />
         <MMenu.Item
+          leftSection={<ListChecks size={13} />}
+          disabled={visibleFiles.length < 2}
+          onClick={() => handleStartSelection(contextMenu!.file)}
+        >
+          {t('selection.selectMultiple')}
+        </MMenu.Item>
+        <MMenu.Item
           leftSection={<Trash2 size={13} />}
           color="red"
-          rightSection={<Text component="span" fz="var(--font-size-xs)" c="var(--text-muted)" ff="var(--font-mono)">{t('context.shortcut.delete')}</Text>}
+          rightSection={<ShortcutHint combo={t('context.shortcut.delete')} />}
           onClick={() => startDelete(contextMenu!.file)}
         >
           {t('common.delete')}
@@ -278,6 +381,17 @@ export const Sidebar: React.FC = () => {
         danger
         onConfirm={handleConfirmDelete}
         onCancel={() => setPendingDeleteFile(null)}
+      />
+
+      <WebDialog
+        open={bulkDeleteOpen}
+        title={t('selection.deleteFiles.confirm').replace('{{count}}', String(selection.count))}
+        description={t('selection.delete.detail')}
+        confirmText={t('common.delete')}
+        cancelText={t('dialog.cancel')}
+        danger
+        onConfirm={() => { void handleBulkDelete(); }}
+        onCancel={() => setBulkDeleteOpen(false)}
       />
     </Stack>
   );

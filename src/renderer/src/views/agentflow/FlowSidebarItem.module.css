@@ -21,3 +21,16 @@
   background: var(--mantine-color-accent-dim);
   border-color: var(--mantine-color-accent);
 }
+
+/* dnd-kit's sortable wrapper carries tabIndex (via {...attributes}), so it is
+   the keyboard tab stop — a plain square div around the rounded row. Keep its
+   outline transparent (visible ring would be square; transparent keeps a
+   detectable indicator for forced-colors/AT, see globals.css) and draw the
+   focus ring on the rounded row instead, matching Sidebar .fileItem. */
+.sortableWrap {
+  outline: 2px solid transparent;
+}
+
+.sortableWrap:focus-visible .row {
+  box-shadow: 0 0 0 2px var(--mantine-color-accent-dim);
+}

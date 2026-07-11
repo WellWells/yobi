@@ -19,6 +19,7 @@ import { loadLanguageData } from '../i18n';
 import { FlowManager } from '../flow';
 import type { QueueManager } from '../queueManager';
 import type { TelegramRuntime } from '../telegram';
+import type { LineRuntime } from '../line';
 
 export function broadcastMergedQueueState(queue: QueueManager, flowManager: FlowManager | null): void {
   const promptState = queue.getState();
@@ -43,8 +44,9 @@ export function broadcastMergedQueueState(queue: QueueManager, flowManager: Flow
 export function initFlowManager(deps: {
   queue: QueueManager;
   telegramRuntime: TelegramRuntime;
+  lineRuntime: LineRuntime;
 }): FlowManager {
-  const { queue, telegramRuntime } = deps;
+  const { queue, telegramRuntime, lineRuntime } = deps;
 
   const flowManager = new FlowManager({
     getWorkerWin,
@@ -57,6 +59,13 @@ export function initFlowManager(deps: {
     sendTelegramFile: async (chatId, filePath, sendAs, caption, authorizedPaths) => {
       await telegramRuntime.sendProactiveFile(chatId, filePath, sendAs, caption, authorizedPaths);
     },
+    sendLineMessage: async (userId, text) => {
+      await lineRuntime.sendProactive(userId, text);
+    },
+    sendLineImage: async (userId, imageUrl) => {
+      await lineRuntime.sendProactiveImage(userId, imageUrl);
+    },
+    getLinePairedUsers: () => config.line.pairing.pairedUsers,
     captureMarkdown: async (payload, format, background, options) => {
       const resultDoc = await captureMarkdownDocument({
         payload,

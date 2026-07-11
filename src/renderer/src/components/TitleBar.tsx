@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Box, Button as MButton, Flex, Group, Tooltip } from '@mantine/core';
+import { Box, Button as MButton, Flex, Group, Text, Tooltip } from '@mantine/core';
 import { useShallow } from 'zustand/react/shallow';
-import { useAppStore } from '../store/appStore';
+import { NAV_ORDER, useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import { useUpdateStore } from '../store/useUpdateStore';
+import { useAltKeyHeld } from '../hooks/useAltKeyHeld';
 import type { View } from '../store/appStore';
 import { AgentFlowIcon } from './AgentFlowIcon';
-import { AppWindow, Info, ListOrdered, LogIn, MessageSquare, ScrollText, Settings, ShieldAlert } from 'lucide-react';
+import { AppWindow, Info, ListOrdered, MessageSquare, ScrollText, Settings } from 'lucide-react';
 import { systemApi } from '../api/electronApi';
 import {
   isMac,
@@ -18,14 +19,21 @@ import { MacWindowControls, WindowsControls } from './titlebar/WindowControls';
 import { QueuePopover } from './titlebar/QueuePopover';
 import styles from './TitleBar.module.css';
 
+const NAV_META: Record<View, { labelKey: string; icon: React.ReactNode }> = {
+  chat: { labelKey: 'nav.chat', icon: <MessageSquare size={13} /> },
+  agentflow: { labelKey: 'nav.agentflow', icon: <AgentFlowIcon size={15} /> },
+  logs: { labelKey: 'nav.logs', icon: <ScrollText size={13} /> },
+  settings: { labelKey: 'nav.settings', icon: <Settings size={13} /> },
+  about: { labelKey: 'nav.about', icon: <Info size={13} /> },
+};
+
 export const TitleBar: React.FC = () => {
-  const { currentView, setView, status, queue, workerAttention } = useAppStore(
+  const { currentView, setView, status, queue } = useAppStore(
     useShallow((s) => ({
       currentView: s.currentView,
       setView: s.setView,
       status: s.status,
       queue: s.queue,
-      workerAttention: s.workerAttention,
     })),
   );
   const { t, locale } = useI18nStore();
@@ -80,18 +88,12 @@ export const TitleBar: React.FC = () => {
     return () => observer.disconnect();
   }, [isTight, locale]);
 
-  const navItems = useMemo(() => [
-    { id: 'chat' as View, label: t('nav.chat'), icon: <MessageSquare size={13} /> },
-    {
-      id: 'agentflow' as View,
-      label: t('nav.agentflow'),
-      icon: <AgentFlowIcon size={15} />,
-    },
-    { id: 'logs' as View, label: t('nav.logs'), icon: <ScrollText size={13} /> },
-    { id: 'settings' as View, label: t('nav.settings'), icon: <Settings size={13} /> },
-    { id: 'about' as View, label: t('nav.about'), icon: <Info size={13} /> },
+  const navItems = useMemo(
+    () => NAV_ORDER.map((id) => ({ id, label: t(NAV_META[id].labelKey), icon: NAV_META[id].icon })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [locale]);
+    [locale],
+  );
+  const altHeld = useAltKeyHeld();
   const isProcessing = status === 'processing';
   const hasQueueItems = queue.total > 0;
   const queuePending = Math.max(queue.total - queue.current, 0);
@@ -165,17 +167,11 @@ export const TitleBar: React.FC = () => {
     ? isProcessing ? 'rgba(210,153,34,0.32)' : 'rgba(56,139,253,0.35)'
     : 'rgba(63,185,80,0.32)';
 
-  const workerNeedsAttention = workerAttention !== 'idle';
-  const workerIcon = workerAttention === 'login'
-    ? <LogIn size={15} />
-    : workerAttention === 'verification'
-      ? <ShieldAlert size={15} />
-      : <AppWindow size={15} />;
-  const workerTitle = workerAttention === 'login'
-    ? t('titlebar.worker.needLogin')
-    : workerAttention === 'verification'
-      ? t('titlebar.worker.needVerification')
-      : t('titlebar.worker.open');
+  // Sign-in and human-verification both reveal the worker window on the spot and fire a
+  // system notification, so an extra "needs attention" state here would only restate what
+  // the user is already looking at.
+  const workerIcon = <AppWindow size={15} />;
+  const workerTitle = t('titlebar.worker.open');
 
   return (
     <Flex
@@ -188,30 +184,39 @@ export const TitleBar: React.FC = () => {
       {isMac && <MacWindowControls t={t} focused={windowFocused} />}
 
       <Flex ref={navRef} gap={isTight ? 4 : 8} style={navScrollStyle}>
-        {navItems.map((item) => (
-          <Box key={item.id} pos="relative" display="inline-flex">
-            <Tooltip label={item.label} position="bottom" disabled={!isTight}>
-              <MButton
-                onClick={() => setView(item.id)}
-                variant={currentView === item.id ? 'filled' : 'subtle'}
-                color={currentView === item.id ? undefined : 'gray'}
-                size="compact-xs"
-                radius={isTight ? 999 : 'xl'}
-                leftSection={!isTight ? item.icon : undefined}
-                h={32}
-                w={isTight ? 32 : undefined}
-                style={{
-                  '--button-hover': currentView !== item.id ? 'var(--mantine-color-default-hover)' : undefined,
-                  padding: isTight ? 0 : '6px 12px',
-                  flexShrink: 0,
-                  boxShadow: item.id === 'about' && hasUpdate && currentView !== 'about' ? '0 0 0 1px var(--mantine-color-orange-6)' : undefined,
-                } as React.CSSProperties}
-              >
-                {isTight ? item.icon : item.label}
-              </MButton>
-            </Tooltip>
-          </Box>
-        ))}
+        {navItems.map((item, index) => {
+          const icon = altHeld ? (
+            <Text component="span" w={15} ta="center" fz={13} fw={700} lh={1}>
+              {index + 1}
+            </Text>
+          ) : (
+            item.icon
+          );
+          return (
+            <Box key={item.id} pos="relative" display="inline-flex">
+              <Tooltip label={item.label} position="bottom" disabled={!isTight}>
+                <MButton
+                  onClick={() => setView(item.id)}
+                  variant={currentView === item.id ? 'filled' : 'subtle'}
+                  color={currentView === item.id ? undefined : 'gray'}
+                  size="compact-xs"
+                  radius={isTight ? 999 : 'xl'}
+                  leftSection={!isTight ? icon : undefined}
+                  h={32}
+                  w={isTight ? 32 : undefined}
+                  style={{
+                    '--button-hover': currentView !== item.id ? 'var(--mantine-color-default-hover)' : undefined,
+                    padding: isTight ? 0 : '6px 12px',
+                    flexShrink: 0,
+                    boxShadow: item.id === 'about' && hasUpdate && currentView !== 'about' ? '0 0 0 1px var(--mantine-color-orange-6)' : undefined,
+                  } as React.CSSProperties}
+                >
+                  {isTight ? icon : item.label}
+                </MButton>
+              </Tooltip>
+            </Box>
+          );
+        })}
       </Flex>
 
       <Box className={styles.spacer} />
@@ -221,18 +226,17 @@ export const TitleBar: React.FC = () => {
           <MButton
             onClick={() => systemApi.showWorker()}
             aria-label={workerTitle}
-            variant={workerNeedsAttention ? 'light' : 'subtle'}
-            color={workerNeedsAttention ? 'orange' : 'gray'}
+            variant="subtle"
+            color="gray"
             size="compact-xs"
             radius={isTight ? 999 : 'xl'}
             leftSection={!isTight ? workerIcon : undefined}
             h={32}
             w={isTight ? 32 : undefined}
             style={{
-              '--button-hover': !workerNeedsAttention ? 'var(--mantine-color-default-hover)' : undefined,
+              '--button-hover': 'var(--mantine-color-default-hover)',
               padding: isTight ? 0 : '6px 12px',
               flexShrink: 0,
-              boxShadow: workerNeedsAttention ? '0 0 0 1px var(--mantine-color-orange-6)' : undefined,
             } as React.CSSProperties}
           >
             {isTight ? workerIcon : workerTitle}

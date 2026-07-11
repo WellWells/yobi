@@ -1,21 +1,16 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { useAppStore } from '../store/appStore';
+import { NAV_ORDER, useAppStore } from '../store/appStore';
 import { useAgentFlowStore } from '../store/useAgentFlowStore';
 import { useI18nStore } from '../store/i18nStore';
 import { useUpdateStore } from '../store/useUpdateStore';
 import { initThemeFromConfig } from '../store/themeStore';
 import type { LayoutMode } from '../store/appStore';
-import { byokApi, ipcEvents, settingsApi } from '../api/electronApi';
+import { accountApi, byokApi, ipcEvents, settingsApi, tempChatApi } from '../api/electronApi';
 import { isTypingTarget } from '../utils/domUtils';
 import type { View } from '../store/appStore';
 import { makeByokGroupModels, makeByokModelOption, makeDuckaiModelOption } from '../config/models';
 
-const VIEW_BY_SHORTCUT: Record<string, View> = {
-  '1': 'chat',
-  '2': 'settings',
-  '3': 'logs',
-  '4': 'about',
-};
+const VIEW_BY_SHORTCUT: Record<string, View> = Object.fromEntries(NAV_ORDER.map((view, index) => [String(index + 1), view]));
 
 export function useAppBootstrap() {
   // Store actions are stable references; selecting them individually avoids
@@ -23,13 +18,18 @@ export function useAppBootstrap() {
   const appendLog = useAppStore((s) => s.appendLog);
   const setStatus = useAppStore((s) => s.setStatus);
   const setQueue = useAppStore((s) => s.setQueue);
-  const setWorkerAttention = useAppStore((s) => s.setWorkerAttention);
+  const setAccountStatuses = useAppStore((s) => s.setAccountStatuses);
+  const setAccountStatus = useAppStore((s) => s.setAccountStatus);
   const setHotkey = useAppStore((s) => s.setHotkey);
+  const setUserNickname = useAppStore((s) => s.setUserNickname);
   const setView = useAppStore((s) => s.setView);
   const setAiUrl = useAppStore((s) => s.setAiUrl);
   const setDuckaiModels = useAppStore((s) => s.setDuckaiModels);
   const setByokModels = useAppStore((s) => s.setByokModels);
   const setByokGroupModels = useAppStore((s) => s.setByokGroupModels);
+  const setHiddenSources = useAppStore((s) => s.setHiddenSources);
+  const setTempChatMode = useAppStore((s) => s.setTempChatMode);
+  const setTempChatResult = useAppStore((s) => s.setTempChatResult);
   const loadLocales = useI18nStore((s) => s.loadLocales);
   const initializeListeners = useUpdateStore((s) => s.initializeListeners);
   const duckaiModelsFetched = useRef(false);
@@ -39,7 +39,9 @@ export function useAppBootstrap() {
     initThemeFromConfig();
     void useAgentFlowStore.getState().loadFlows();
     void settingsApi.getHotkey().then(setHotkey);
+    void settingsApi.getPromptPreferences().then((prefs) => setUserNickname(prefs.nickname ?? ''));
     void settingsApi.getAiUrl().then(setAiUrl);
+    void tempChatApi.getMode().then(setTempChatMode);
     initializeListeners();
     void settingsApi.getLayoutMode().then((mode) => {
       if (mode === 'side-by-side' || mode === 'stacked') {
@@ -65,18 +67,27 @@ export function useAppBootstrap() {
       setByokGroupModels(makeByokGroupModels(snapshot.groups));
       setByokModels(snapshot.instances.map(makeByokModelOption));
     });
-  }, [initializeListeners, loadLocales, setHotkey, setAiUrl, setDuckaiModels, setByokModels, setByokGroupModels]);
+    void settingsApi.getHiddenSources().then(setHiddenSources);
+    void accountApi.getStatuses().then(setAccountStatuses);
+  }, [initializeListeners, loadLocales, setHotkey, setUserNickname, setAiUrl, setDuckaiModels, setByokModels, setByokGroupModels, setHiddenSources, setTempChatMode, setAccountStatuses]);
 
   useEffect(() => {
     const unsubs = [
       ipcEvents.onLog(appendLog),
       ipcEvents.onStatus((s) => setStatus(s as 'idle' | 'processing')),
       ipcEvents.onQueueUpdate(setQueue),
-      ipcEvents.onWorkerStatus(setWorkerAttention),
+      accountApi.onStatusChanged(setAccountStatus),
       ipcEvents.onNavigateSettings(() => setView('settings')),
+      // Toggling temporary chat (hotkey or button) always lands the user in the
+      // chat view; ChatView then focuses the prompt input on the mode change.
+      ipcEvents.onTempChatModeChanged((enabled) => {
+        setTempChatMode(enabled);
+        setView('chat');
+      }),
+      ipcEvents.onTempChatResult(({ content }) => setTempChatResult(content)),
     ];
     return () => unsubs.forEach((fn) => fn());
-  }, [appendLog, setStatus, setQueue, setWorkerAttention, setView]);
+  }, [appendLog, setStatus, setQueue, setAccountStatus, setView, setTempChatMode, setTempChatResult]);
 
   const handleKeyDown = useCallback((event: KeyboardEvent) => {
     if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;

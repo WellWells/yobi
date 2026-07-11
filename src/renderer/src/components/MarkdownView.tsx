@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import 'katex/dist/katex.min.css';
 import type { MarkdownBlocks } from '../utils/parseMarkdownBlocks';
 import { REHYPE_PLUGINS } from '../utils/shikiPlugins';
-import { SharedCodeBlock, SharedPreBlock, remarkPlugins } from '../utils/markdownConfig';
+import { ExternalLink, SharedCodeBlock, SharedPreBlock, remarkPlugins } from '../utils/markdownConfig';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import { useElementSize } from '../hooks/useElementSize';
@@ -15,35 +15,6 @@ interface MarkdownViewProps {
   blocks: MarkdownBlocks;
   headerAction?: React.ReactNode;
 }
-
-function isHttpUrl(href?: string): boolean {
-  if (!href) return false;
-  try {
-    const parsed = new URL(href);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
-
-const ExternalLink: React.FC<React.ComponentPropsWithoutRef<'a'>> = ({ href, onClick, ...props }) => {
-  const handleClick: React.MouseEventHandler<HTMLAnchorElement> = (event) => {
-    onClick?.(event);
-    if (event.defaultPrevented || !href || !isHttpUrl(href)) return;
-    event.preventDefault();
-    void window.electronAPI.openExternalUrl(href);
-  };
-
-  return (
-    <a
-      {...props}
-      href={href}
-      onClick={handleClick}
-      target="_blank"
-      rel="noopener noreferrer"
-    />
-  );
-};
 
 const mdComponents = { a: ExternalLink, pre: SharedPreBlock, code: SharedCodeBlock } as const;
 
@@ -145,7 +116,7 @@ function MarkdownViewInner({ content, blocks, headerAction }: MarkdownViewProps)
       {deferredBlocks.response ? (
         <ResponseBlock response={deferredBlocks.response} MarkdownRenderer={MD} />
       ) : (
-        <Box className="md-content" style={{ userSelect: 'text', fontSize: 'var(--font-size-md)', lineHeight: 1.75 }}>
+        <Box className="md-content" style={{ fontSize: 'var(--font-size-md)', lineHeight: 1.75 }}>
           <MD>{deferredContent}</MD>
         </Box>
       )}

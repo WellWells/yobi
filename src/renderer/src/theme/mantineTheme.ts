@@ -1,7 +1,6 @@
 import { createTheme, type MantineColorsTuple, type MantineThemeOverride } from '@mantine/core';
-import type { Theme } from '../store/themeStore';
+import { themeDef, type Theme } from '../../../shared/themes';
 import { lerpHex } from './colorUtils';
-import { LIGHT_THEMES } from './cssVariablesResolver';
 
 function generateColors(accent: string): MantineColorsTuple {
   return [
@@ -18,23 +17,14 @@ function generateColors(accent: string): MantineColorsTuple {
   ] as unknown as MantineColorsTuple;
 }
 
-const colorTuples: Record<Theme, MantineColorsTuple> = {
-  dark:        generateColors('#0969da'),
-  light:       generateColors('#0969da'),
-  dracula:     generateColors('#8434f4'),
-  nord:        generateColors('#4698af'),
-  amoled:      generateColors('#00b4d8'),
-  sepia:       generateColors('#b5451b'),
-  catppuccin:  generateColors('#cba6f7'),
-  everforest:  generateColors('#a7c080'),
-  rosepine:    generateColors('#b4637a'),
-  gruvbox:     generateColors('#8b6304'),
-  cyberpunk:   generateColors('#008a99'),
-};
-
 const baseTheme: MantineThemeOverride = {
-  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif',
-  fontFamilyMonospace: '"SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
+  // Pale accents (catppuccin, everforest, amoled) get dark text on filled
+  // buttons instead of unreadable white-on-pastel. Threshold must stay in sync
+  // with ON_ACCENT_LUMINANCE_THRESHOLD in cssVariablesResolver.ts.
+  autoContrast: true,
+  luminanceThreshold: 0.3,
+  fontFamily: 'var(--font-sans)',
+  fontFamilyMonospace: 'var(--font-mono)',
   defaultRadius: 'md',
   cursorType: 'pointer',
   respectReducedMotion: true,
@@ -42,15 +32,6 @@ const baseTheme: MantineThemeOverride = {
     Tooltip: {
       defaultProps: {
         openDelay: 450,
-      },
-    },
-    Button: {
-      styles: {
-        root: {
-          '&:disabled': {
-            opacity: 0.6,
-          },
-        },
       },
     },
     ScrollArea: {
@@ -68,16 +49,16 @@ export interface YobiMantineTheme {
 }
 
 export function getMantineTheme(yobiTheme: Theme): YobiMantineTheme {
-  const colorScheme: 'light' | 'dark' = LIGHT_THEMES.includes(yobiTheme) ? 'light' : 'dark';
+  const def = themeDef(yobiTheme);
 
   const theme = createTheme({
     ...baseTheme,
     primaryColor: 'brand',
     primaryShade: 4,
     colors: {
-      brand: colorTuples[yobiTheme],
+      brand: generateColors(def.buttonAccent ?? def.colors.accent),
     },
   });
 
-  return { theme, colorScheme };
+  return { theme, colorScheme: def.light === true ? 'light' : 'dark' };
 }

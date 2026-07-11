@@ -6,7 +6,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-blue)](#-get-started)
-[![Electron](https://img.shields.io/badge/Electron-42-47848F?logo=electron)](https://www.electronjs.org/)
+[![Microsoft Store](https://img.shields.io/badge/Microsoft%20Store-Download-0067b8)](https://apps.microsoft.com/detail/9nnx8prfstc9)
+[![Electron](https://img.shields.io/badge/Electron-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen.svg)](https://github.com/WellWells/yobi/pulls)
 
 **[English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md)**
@@ -40,12 +41,11 @@
 
 **1. Download** the latest release for your OS:
 
-| Platform | Download                        |
-| -------- | ------------------------------- |
-| Windows  | NSIS Installer (x64)            |
-| macOS    | DMG (Intel & Apple Silicon)     |
-
-→ [**Releases page**](https://github.com/WellWells/yobi/releases)
+| Platform    | Download                                                                                    | Notes                                                                                             |
+| ----------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| **Windows** | [**Microsoft Store**](https://apps.microsoft.com/detail/9nnx8prfstc9) **(Recommended)**     | Installs and updates automatically.                                                               |
+| **Windows** | [GitHub Releases](https://github.com/WellWells/yobi/releases) — NSIS installer (x64)        | Unsigned, so Windows prompts on first launch — choose **More info → Run anyway** to open.         |
+| **macOS**   | [GitHub Releases](https://github.com/WellWells/yobi/releases) — DMG (Intel & Apple Silicon) | Unsigned, so macOS Gatekeeper blocks the first launch — the [release notes](https://github.com/WellWells/yobi/releases) explain how to open it. |
 
 **2. Get your first answer in 30 seconds:**
 
@@ -184,7 +184,7 @@ npm run build:win   # build Windows (NSIS installer)
 npm run build:mac   # build macOS (DMG)
 ```
 
-**Stack:** Electron 42 · React 19 + TypeScript · Mantine 9 · Zustand 5 · Vite 8 + electron-builder · GrammY · node-cron
+**Stack:** Electron · React + TypeScript · Mantine · Zustand · Vite + electron-builder · grammY · LINE Bot SDK
 
 ---
 

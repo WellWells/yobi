@@ -80,6 +80,21 @@ export function registerFileHandlers(): void {
     }
   });
 
+  ipcMain.handle(IPC.DELETE_FILES, async (_event, filePaths: string[]) => {
+    if (!Array.isArray(filePaths) || filePaths.length === 0) return 0;
+    let deleted = 0;
+    for (const filePath of filePaths) {
+      if (!await isAllowedFilePath(filePath)) continue;
+      try {
+        await fs.unlink(filePath);
+        deleted += 1;
+      } catch {
+      }
+    }
+    if (deleted > 0) sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
+    return deleted;
+  });
+
   ipcMain.handle(IPC.DELETE_ALL_FILES, async () => {
     const files = await listOutputFiles();
     if (files.length === 0) return 0;
@@ -108,9 +123,16 @@ export function registerFileHandlers(): void {
 
           if (process.platform === 'win32') {
             await new Promise<void>((resolve) => {
+              // Pass the path through an env var referenced as $env:YOBI_CLIP_PATH
+              // rather than interpolating it into the -Command string. buildSafe-
+              // FileNameFromTitle keeps '$', backticks and parens, so a filename
+              // like "a$(calc)" interpolated into a double-quoted PowerShell string
+              // would run as a subexpression. As an env-var value it is never parsed
+              // as code, and -LiteralPath disables wildcard expansion.
               execFile(
                 'powershell.exe',
-                ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', `Set-Clipboard -Path "${tmpPath}"`],
+                ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', 'Set-Clipboard -LiteralPath $env:YOBI_CLIP_PATH'],
+                { env: { ...process.env, YOBI_CLIP_PATH: tmpPath } },
                 () => resolve(),
               );
             });

@@ -4,9 +4,7 @@ import { AppTextInput } from '../../../components/AppTextInput';
 import { AppNumberInput } from '../../../components/AppNumberInput';
 import { AppButton } from '../../../components/AppButton';
 import { SelectDropdown } from '../../../components/SelectDropdown';
-import { ToggleSwitch } from '../../../components/ToggleSwitch';
-import { SettingRow } from '../../../components/SettingRow';
-import { Trash2, FileText, BookmarkCheck, Search, Image as ImageIcon } from 'lucide-react';
+import { BookmarkCheck, Search, Trash2 } from 'lucide-react';
 import { rssApi, ipcEvents } from '../../../api/electronApi';
 import { isValidUrlOrVar } from './validation';
 import type { FeedCandidate } from '../../../../../shared/types';
@@ -17,8 +15,6 @@ type DiscoverStatus = 'idle' | 'found' | 'notfound' | 'error';
 export const RssConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
   const url = step.config.url ?? '';
   const urlError = !isValidUrlOrVar(url);
-  const fetchContent = step.config.fetchContent === 'true';
-  const includeImage = step.config.includeImage === 'true';
   const cacheDays = step.config.cacheDays ?? '3';
   const [hasCheckpoint, setHasCheckpoint] = useState(false);
 
@@ -176,32 +172,8 @@ export const RssConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
         {t('agentflow.skill.rss.clearState')}
       </Button>
 
-      <SettingRow
-        icon={<FileText size={13} />}
-        label={t('agentflow.skill.rss.fetchContent')}
-        hint={t('agentflow.skill.rss.fetchContent.hint')}
-        control={
-          <ToggleSwitch
-            checked={fetchContent}
-            onChange={(e) => onChange({ ...step.config, fetchContent: e.currentTarget.checked ? 'true' : 'false' })}
-          />
-        }
-      />
-
-      <SettingRow
-        icon={<ImageIcon size={13} />}
-        label={t('agentflow.skill.includeImage')}
-        hint={t('agentflow.skill.includeImage.hint')}
-        control={
-          <ToggleSwitch
-            checked={includeImage}
-            onChange={(e) => onChange({ ...step.config, includeImage: e.currentTarget.checked ? 'true' : 'false' })}
-          />
-        }
-      />
-
       <Text fz="xs" c="dimmed">
-        {t('agentflow.skill.browser.outputHint').replace('{{outputKey}}', `{{${step.outputKey}}}`)}
+        {t('agentflow.skill.rss.outputHint').replace('{{outputKey}}', `{{${step.outputKey}}}`)}
       </Text>
     </Stack>
   );

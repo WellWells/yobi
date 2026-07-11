@@ -1,7 +1,7 @@
 import React from 'react';
 import { ActionIcon, Box, Group, Stack, Text, Tooltip, Button as MButton } from '@mantine/core';
 import {
-  AppWindow, Bell, Keyboard, Languages, Palette, RotateCcw, X,
+  AppWindow, Keyboard, Languages, RotateCcw, X,
 } from 'lucide-react';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { SectionCard, SettingRow, SelectDropdown, ToggleSwitch, GroupHeader, SectionTitle } from '../components';
@@ -20,8 +20,6 @@ interface Props {
   availableLocales: string[];
   onSetLocale: (locale: string) => Promise<void>;
   getLocaleLabel: (locale: string) => string;
-  theme: string;
-  onSetTheme: (theme: string) => void;
   showSection: (tags: readonly string[], category: 'general') => boolean;
   isSearching: boolean;
   sectionGap: number;
@@ -29,9 +27,9 @@ interface Props {
 
 export const GeneralSection: React.FC<Props> = ({
   hotkey, system, t, locale, availableLocales, onSetLocale, getLocaleLabel,
-  theme, onSetTheme, showSection, isSearching, sectionGap,
+  showSection, isSearching, sectionGap,
 }) => (
-  <Box display={showSection(TAG_SETS.hotkey, 'general') || showSection(TAG_SETS.notify, 'general') || showSection(TAG_SETS.tray, 'general') || showSection(TAG_SETS.language, 'general') || showSection(TAG_SETS.theme, 'general') ? 'block' : 'none'}>
+  <Box display={showSection(TAG_SETS.hotkey, 'general') || showSection(TAG_SETS.tray, 'general') || showSection(TAG_SETS.language, 'general') ? 'block' : 'none'}>
     {isSearching && <GroupHeader label={t('settings.group.general')} />}
 
     <SectionCard style={{ marginBottom: sectionGap, display: showSection(TAG_SETS.hotkey, 'general') ? 'block' : 'none' }}>
@@ -89,15 +87,6 @@ export const GeneralSection: React.FC<Props> = ({
       <Text fz="var(--font-size-sm)" mt={8} c="dimmed">{t('settings.hotkey.hint')}</Text>
     </SectionCard>
 
-    <SectionCard style={{ marginBottom: sectionGap, display: showSection(TAG_SETS.notify, 'general') ? 'block' : 'none' }}>
-      <SectionTitle icon={<Bell size={15} />} label={t('settings.notifications')} />
-      <SettingRow
-        icon={<Bell size={13} />}
-        label={t('settings.notifications.hint')}
-        control={<ToggleSwitch checked={system.notifyOnComplete} onChange={() => { void system.handleToggleNotification(); }} />}
-      />
-    </SectionCard>
-
     <SectionCard style={{ marginBottom: sectionGap, display: showSection(TAG_SETS.tray, 'general') ? 'block' : 'none' }}>
       {(() => {
         const isMac = navigator.userAgent.includes('Macintosh');
@@ -137,31 +126,5 @@ export const GeneralSection: React.FC<Props> = ({
       />
     </SectionCard>
 
-    <SectionCard style={{ marginBottom: sectionGap, display: showSection(TAG_SETS.theme, 'general') ? 'block' : 'none' }}>
-      <SettingRow
-        icon={<Palette size={13} />}
-        label={t('settings.theme')}
-        hint={t('settings.theme.hint')}
-        control={
-          <SelectDropdown
-            value={theme}
-            options={[
-              { value: 'dark', label: t('settings.theme.dark') },
-              { value: 'light', label: t('settings.theme.light') },
-              { value: 'dracula', label: t('settings.theme.dracula') },
-              { value: 'nord', label: t('settings.theme.nord') },
-              { value: 'amoled', label: t('settings.theme.amoled') },
-              { value: 'sepia', label: t('settings.theme.sepia') },
-              { value: 'catppuccin', label: t('settings.theme.catppuccin') },
-              { value: 'everforest', label: t('settings.theme.everforest') },
-              { value: 'rosepine', label: t('settings.theme.rosepine') },
-              { value: 'gruvbox', label: t('settings.theme.gruvbox') },
-              { value: 'cyberpunk', label: t('settings.theme.cyberpunk') },
-            ]}
-            onChange={onSetTheme}
-          />
-        }
-      />
-    </SectionCard>
   </Box>
 );

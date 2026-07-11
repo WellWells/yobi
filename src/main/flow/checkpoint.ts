@@ -20,7 +20,11 @@ export function makeCheckpointStore<T>(kind: 'rss' | 'scraper' | 'youtube_subs')
   async function save(stepId: string, checkpoint: T): Promise<void> {
     const filePath = getCheckpointPath(kind, stepId);
     await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(filePath, JSON.stringify(checkpoint, null, 2), 'utf-8');
+    // Atomic write (temp + rename): a truncated checkpoint reads back as null and
+    // is treated as a first run, causing duplicate re-sends of already-seen items.
+    const tmp = `${filePath}.${Date.now()}-${process.pid}.tmp`;
+    await fs.writeFile(tmp, JSON.stringify(checkpoint, null, 2), 'utf-8');
+    await fs.rename(tmp, filePath);
   }
 
   return { load, save };

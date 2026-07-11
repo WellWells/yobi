@@ -111,7 +111,7 @@
 .toastOpenBtn {
   border: none;
   background: var(--mantine-color-accent);
-  color: #fff;
+  color: var(--on-accent);
   border-radius: var(--mantine-radius-xs);
   padding: 5px 9px;
   font-size: var(--font-size-base);

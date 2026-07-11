@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Button, Group, Modal, Stack } from '@mantine/core';
+import { Button, Group, Stack } from '@mantine/core';
+import { Pencil } from 'lucide-react';
+import { AppModal } from '../../components/AppModal';
 import { AppTextInput } from '../../components/AppTextInput';
 import { AppButton } from '../../components/AppButton';
 
@@ -28,7 +30,7 @@ export const FlowRenameModal: React.FC<FlowRenameModalProps> = ({
   };
 
   return (
-    <Modal opened={open} onClose={onClose} title={t('agentflow.renameFlow')} centered size="sm" zIndex={200}>
+    <AppModal opened={open} onClose={onClose} title={t('agentflow.renameFlow')} icon={<Pencil size={16} />} size="sm" zIndex={200}>
       <Stack gap="md">
         <AppTextInput
           data-autofocus
@@ -42,6 +44,6 @@ export const FlowRenameModal: React.FC<FlowRenameModalProps> = ({
           <AppButton size="xs" disabled={!trimmed} onClick={submit}>{t('common.save')}</AppButton>
         </Group>
       </Stack>
-    </Modal>
+    </AppModal>
   );
 };

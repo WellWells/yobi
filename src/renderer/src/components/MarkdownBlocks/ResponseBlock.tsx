@@ -11,7 +11,6 @@ export const ResponseBlock = React.memo<ResponseBlockProps>(({ response, Markdow
     className="md-content md-response"
     style={{
       flex: 1,
-      userSelect: 'text',
       fontSize: 'var(--font-size-md)',
       lineHeight: 1.75,
       color: 'var(--text-primary)',

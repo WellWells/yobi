@@ -130,12 +130,12 @@ jobs:
         id: meta
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            echo "tag=$GITHUB_REF_NAME" >> $GITHUB_OUTPUT
-            echo "title=Yobi $GITHUB_REF_NAME" >> $GITHUB_OUTPUT
+            TAG="$GITHUB_REF_NAME"
           else
-            echo "tag=v${{ steps.pkg.outputs.version }}-build.${{ github.run_number }}" >> $GITHUB_OUTPUT
-            echo "title=Yobi v${{ steps.pkg.outputs.version }} (Build #${{ github.run_number }})" >> $GITHUB_OUTPUT
+            TAG="v${{ steps.pkg.outputs.version }}"
           fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "title=$TAG" >> $GITHUB_OUTPUT
 
       # ── Download artifacts from all platforms ───────────────────────
       - name: Download all artifacts

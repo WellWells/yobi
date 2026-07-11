@@ -20,11 +20,12 @@
   --success: #3fb950;
   --warning: #d29922;
   --error: #f85149;
-  --bg-hover: #2d333b;
+  --bg-hover: #3c4046;
   --accent-hover: #79b8ff;
-  --border-hover: #484f58;
+  --border-hover: #64686e;
   --code-bg: #161b22;
-  --selection-bg: rgba(88, 166, 255, 0.28);
+  --selection-bg: rgba(88, 166, 255, 0.25);
+  --on-accent: #1b1b1b;
 
   /* Mantine-namespaced aliases — keep in sync with cssVariablesResolver.ts */
   --mantine-color-bg-tertiary: var(--bg-tertiary);
@@ -44,8 +45,9 @@
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.16);
   --shadow-md: 0 6px 16px rgba(0, 0, 0, 0.2);
 
+  /* Single font source — mantineTheme.ts points fontFamily at these vars. */
   --font-sans: 'Segoe UI', system-ui, -apple-system, sans-serif;
-  --font-mono: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+  --font-mono: 'Cascadia Code', 'SFMono-Regular', 'Menlo', 'Consolas', 'Liberation Mono', monospace;
 
   /* Font-size scale */
   --font-size-xs:   11px;
@@ -65,14 +67,34 @@ body {
   font-family: var(--font-sans);
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-size: 14px;
-  line-height: 1.5;
+  /* No base font-size/line-height here: the Mantine theme owns them (md / 1.55) and
+     the app has always rendered against those. This rule used to declare 14px/1.5,
+     but it was dead — Mantine's stylesheet loaded last and won the tie. Now that
+     Mantine loads first, re-declaring them here would shrink every inherited text
+     in the app by 12.5%. */
   -webkit-font-smoothing: antialiased;
-  /* user-select intentionally NOT set globally — content must remain selectable by default.
-     Apply user-select: none only to specific interactive chrome elements below. */
+  /* App chrome is unselectable by default, like a native desktop app.
+     Content the user is expected to copy opts back in via the rules below. */
+  user-select: none;
 }
 
-/* Prevent interactive chrome elements from triggering text selection on click. */
+/* Selectable content: editable fields, rendered markdown, and explicit opt-ins. */
+input,
+textarea,
+[contenteditable="true"],
+.md-content,
+.selectable {
+  user-select: text;
+}
+
+/* Comboboxes render a readonly <input> but behave as chrome, not as a text field. */
+input[aria-haspopup="listbox"],
+.mantine-Select-input,
+.mantine-Combobox-input {
+  user-select: none;
+}
+
+/* Interactive chrome stays unselectable even when nested inside selectable content. */
 button,
 [role="button"],
 [role="tab"],
@@ -131,6 +153,9 @@ textarea:focus-visible {
 ::placeholder {
   color: var(--text-muted);
   opacity: 0.85;
+  /* A placeholder is a hint, not content. The pseudo-element inherits user-select
+     from its input, so without this a drag starting outside the field highlights it. */
+  user-select: none;
 }
 
 ::selection {

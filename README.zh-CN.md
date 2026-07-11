@@ -6,7 +6,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-blue)](#-快速上手)
-[![Electron](https://img.shields.io/badge/Electron-42-47848F?logo=electron)](https://www.electronjs.org/)
+[![Microsoft Store](https://img.shields.io/badge/Microsoft%20Store-下载-0067b8)](https://apps.microsoft.com/detail/9nnx8prfstc9)
+[![Electron](https://img.shields.io/badge/Electron-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen.svg)](https://github.com/WellWells/yobi/pulls)
 
 **[English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md)**
@@ -40,12 +41,11 @@
 
 **1. 下载** 适合你系统的最新版本：
 
-| 平台    | 下载                            |
-| ------- | ------------------------------- |
-| Windows | NSIS 安装包（x64）              |
-| macOS   | DMG（Intel 与 Apple Silicon）   |
-
-→ [**Releases 页面**](https://github.com/WellWells/yobi/releases)
+| 平台        | 下载                                                                                          | 说明                                                                                              |
+| ----------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| **Windows** | [**Microsoft Store**](https://apps.microsoft.com/detail/9nnx8prfstc9)（推荐）                 | 自动安装并自动更新。                                                            |
+| **Windows** | [GitHub Releases](https://github.com/WellWells/yobi/releases) — NSIS 安装包（x64）            | 未签名，首次启动时 Windows 会弹出提示——选择 **更多信息 → 仍要运行** 即可打开。   |
+| **macOS**   | [GitHub Releases](https://github.com/WellWells/yobi/releases) — DMG（Intel 与 Apple Silicon） | 未签名，首次启动会被 macOS Gatekeeper 拦截——[release 页面](https://github.com/WellWells/yobi/releases) 附有打开教程。 |
 
 **2. 30 秒内获得你的第一个答案：**
 
@@ -184,7 +184,7 @@ npm run build:win   # build Windows (NSIS installer)
 npm run build:mac   # build macOS (DMG)
 ```
 
-**技术栈：** Electron 42 · React 19 + TypeScript · Mantine 9 · Zustand 5 · Vite 8 + electron-builder · GrammY · node-cron
+**技术栈：** Electron · React + TypeScript · Mantine · Zustand · Vite + electron-builder · grammY · LINE Bot SDK
 
 ---
 

@@ -4,7 +4,7 @@ import { Box, Group, Stack, Text } from '@mantine/core';
 import { Clock3, Cpu } from 'lucide-react';
 import type { CardTheme, MarkdownCapturePayload } from '../../../../shared/types';
 import { REHYPE_PLUGINS } from '../../utils/shikiPlugins';
-import { SharedCodeBlock, SharedPreBlock, remarkPlugins } from '../../utils/markdownConfig';
+import { ExternalLink, SharedCodeBlock, SharedPreBlock, remarkPlugins } from '../../utils/markdownConfig';
 import { CAPTURE_CARD_TOKENS, captureCardCssVars } from '../../hooks/captureTheme';
 import { ForcedCodeThemeContext } from '../../utils/forcedCodeTheme';
 import { SectionLabel } from './SectionLabel';
@@ -20,7 +20,7 @@ export interface ExportPreviewPanelProps {
   t: (key: string) => string;
 }
 
-const previewMdComponents = { pre: SharedPreBlock, code: SharedCodeBlock } as const;
+const previewMdComponents = { a: ExternalLink, pre: SharedPreBlock, code: SharedCodeBlock } as const;
 
 const PreviewMarkdown: React.FC<{ children: string }> = ({ children }) => (
   <ReactMarkdown
@@ -51,6 +51,9 @@ export const ExportPreviewPanel: React.FC<ExportPreviewPanelProps> = ({
       style={{ minHeight: 0, overflowY: 'auto' }}
     >
       <SectionLabel>{t('capture.preview')}</SectionLabel>
+      {/* 'safe center': short previews float mid-pane, tall ones start at the
+          top and scroll instead of clipping. */}
+      <Box flex={1} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'safe center' }}>
       <Box style={{ borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '1px solid var(--border)', flexShrink: 0 }}>
         <Box p={10} style={{ background }}>
           <ForcedCodeThemeContext.Provider value="dark">
@@ -95,6 +98,7 @@ export const ExportPreviewPanel: React.FC<ExportPreviewPanelProps> = ({
           </Box>
           </ForcedCodeThemeContext.Provider>
         </Box>
+      </Box>
       </Box>
     </Stack>
   );

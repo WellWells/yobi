@@ -37,7 +37,9 @@ export function t(
   let result = strings[key] ?? enCache[key] ?? key;
   if (vars) {
     for (const [k, v] of Object.entries(vars)) {
-      result = result.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), v);
+      // Function replacement keeps `$&`/`$'`-style patterns in user-controlled
+      // values (flow names, error text) literal instead of regex-expanded.
+      result = result.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), () => v);
     }
   }
   return result;
@@ -98,9 +100,12 @@ export function buildCombinedPromptFromPrefs(
   strings: Record<string, string>,
 ): string {
   const parts: string[] = [];
-  if ((prefs.nickname ?? '').trim()) {
+  const nickname = (prefs.nickname ?? '').trim();
+  if (nickname) {
     const nicknameTemplate = t(strings, 'settings.prompt.built.nickname');
-    parts.push(nicknameTemplate.replace(/\{\{name\}\}/g, prefs.nickname!.trim()));
+    // Function replacer: a name carrying `$&` or `$'` must not be read as a
+    // replacement pattern. Bot-sourced names make this reachable from outside.
+    parts.push(nicknameTemplate.replace(/\{\{name\}\}/g, () => nickname));
   }
   if (prefs.tone !== 'default') {
     const toneText = t(strings, `settings.prompt.built.tone.${prefs.tone}`);

@@ -34,5 +34,6 @@ Thumbs.db
 .claude/settings.local.json
 
 config.json
+metrics.json
 
 flow-checkpoints

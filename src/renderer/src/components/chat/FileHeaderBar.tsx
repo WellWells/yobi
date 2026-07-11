@@ -4,6 +4,7 @@ import { ChevronDown, Copy, Download, FileText, FolderOpen, Menu, Minus, Pencil,
 import type { LayoutMode } from '../../store/appStore';
 import { AppTextInput } from '../AppTextInput';
 import { AppSegmentedControl } from '../AppSegmentedControl';
+import { TempChatToggle } from './TempChatToggle';
 
 interface FileHeaderBarProps {
   fileName: string;
@@ -113,7 +114,11 @@ export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
         </Group>
       )}
 
-      <Box ref={viewMenuRef} pos="relative" ml="auto" style={{ flexShrink: 0 }}>
+      <Box ml="auto" style={{ flexShrink: 0 }}>
+        <TempChatToggle />
+      </Box>
+
+      <Box ref={viewMenuRef} pos="relative" style={{ flexShrink: 0 }}>
         <MMenu
           opened={viewMenuOpen}
           onChange={(opened) => { if (!opened) onCloseViewMenu(); }}

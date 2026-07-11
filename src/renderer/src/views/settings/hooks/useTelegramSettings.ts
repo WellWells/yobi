@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { telegramApi, clipboardApi, settingsApi } from '../../../api/electronApi';
+import { telegramApi, clipboardApi } from '../../../api/electronApi';
 
-import type { DuckaiModelInfo, Provider, TelegramProviderCommand, TelegramSettingsSnapshot } from '../../../../../shared/types';
+import type { BotLlmDirectConfig, TelegramSettingsSnapshot } from '../../../../../shared/types';
 
 export function useTelegramSettings() {
   const [telegramSettings, setTelegramSettings] = useState<TelegramSettingsSnapshot | null>(null);
   const [telegramTokenInput, setTelegramTokenInput] = useState('');
   const [telegramBusy, setTelegramBusy] = useState(false);
-  const [duckaiModels, setDuckaiModels] = useState<DuckaiModelInfo[]>([]);
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
   const telegramSettingsRef = useRef<TelegramSettingsSnapshot | null>(null);
   telegramSettingsRef.current = telegramSettings;
@@ -52,20 +51,6 @@ export function useTelegramSettings() {
     return unsub;
   }, [refreshTelegramSettings]);
 
-  useEffect(() => {
-    void settingsApi.fetchDuckaiModels().then(setDuckaiModels).catch(() => setDuckaiModels([]));
-  }, []);
-
-  const handleUpdateProviderCommand = useCallback(async (provider: Provider, patch: Partial<TelegramProviderCommand>) => {
-    const current = telegramSettingsRef.current?.providerCommands;
-    if (!current) return;
-    const next = { ...current, [provider]: { ...current[provider], ...patch } };
-    await runBusy(async () => {
-      await telegramApi.updateProviderCommands(next);
-      await loadTelegramSettings();
-    });
-  }, [runBusy, loadTelegramSettings]);
-
   const handleToggleTelegramEnabled = useCallback(async () => {
     const snapshot = telegramSettingsRef.current;
     if (!snapshot) return;
@@ -84,9 +69,27 @@ export function useTelegramSettings() {
     });
   }, [runBusy, loadTelegramSettings]);
 
+  const handleUpdateTelegramLlmDirect = useCallback(async (patch: Partial<BotLlmDirectConfig>) => {
+    const current = telegramSettingsRef.current?.llmDirect;
+    if (!current) return;
+    await runBusy(async () => {
+      await telegramApi.updateLlmDirect({ ...current, ...patch });
+      await loadTelegramSettings();
+    });
+  }, [runBusy, loadTelegramSettings]);
+
   const handleTelegramDefaultReplyMode = useCallback(async (mode: 'markdown' | 'png' | 'webp' | 'pdf') => {
     await runBusy(async () => {
       await telegramApi.updateDefaultReplyMode(mode);
+      await loadTelegramSettings();
+    });
+  }, [runBusy, loadTelegramSettings]);
+
+  const handleToggleTelegramCompactReply = useCallback(async () => {
+    const snapshot = telegramSettingsRef.current;
+    if (!snapshot) return;
+    await runBusy(async () => {
+      await telegramApi.updateCompactReply(!snapshot.compactReply);
       await loadTelegramSettings();
     });
   }, [runBusy, loadTelegramSettings]);
@@ -159,12 +162,12 @@ export function useTelegramSettings() {
     telegramTokenInput,
     setTelegramTokenInput,
     telegramBusy,
-    duckaiModels,
     loadTelegramSettings,
-    handleUpdateProviderCommand,
     handleToggleTelegramEnabled,
     handleToggleTelegramGroupCommands,
+    handleUpdateTelegramLlmDirect,
     handleTelegramDefaultReplyMode,
+    handleToggleTelegramCompactReply,
     handleSaveTelegramToken,
     handleToggleTelegramAdmin,
     handleGeneratePairingCode,

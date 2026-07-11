@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { ActionIcon, Badge, Box, Checkbox, Group, Stack, Text } from '@mantine/core';
 import { Layers, Pencil, Plus, Trash2 } from 'lucide-react';
-import { SectionCard, SectionTitle } from '../components';
+import { SectionCard, SectionTitle, VisibilityCheckbox } from '../components';
+import { useHiddenSources } from '../hooks/useHiddenSources';
 import { AppButton } from '../../../components/AppButton';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { WebDialog } from '../../../components/WebDialog';
@@ -19,10 +20,12 @@ interface Props {
 
 export const ByokGroupsCard: React.FC<Props> = ({ byokGroups, t, sectionGap }) => {
   const [confirmDelete, setConfirmDelete] = useState<ByokGroupSnapshot | null>(null);
+  const sources = useHiddenSources();
   const { groups, availableKeys, form } = byokGroups;
 
   const keyName = (id: string): string =>
     availableKeys.find((key) => key.id === id)?.name ?? id;
+  const hiddenNow = (id: string): boolean => sources.hidden.byokGroupIds.includes(id);
 
   return (
     <Box>
@@ -53,26 +56,40 @@ export const ByokGroupsCard: React.FC<Props> = ({ byokGroups, t, sectionGap }) =
                 >
                   <Group justify="space-between" align="center" wrap="nowrap" gap={12}>
                     <Group gap={10} align="flex-start" wrap="nowrap" flex={1} miw={0}>
-                      <Box c="var(--mantine-color-default-color)" mt={2} style={{ flexShrink: 0 }}>
-                        <Layers size={16} />
+                      <Box mt={2}>
+                        <VisibilityCheckbox
+                          checked={!hiddenNow(group.id)}
+                          blocked={!hiddenNow(group.id) && !sources.canApply({
+                            ...sources.hidden,
+                            byokGroupIds: [...sources.hidden.byokGroupIds, group.id],
+                          })}
+                          busy={sources.busy}
+                          onToggle={() => sources.toggleByokGroup(group.id)}
+                          t={t}
+                        />
                       </Box>
-                      <Stack gap={6} miw={0}>
-                        <Group gap={8} wrap="nowrap">
-                          <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-default-color)" truncate>
-                            {group.name}
-                          </Text>
-                          <Badge variant="light" color="gray" radius="sm" size="sm" tt="none" fw={500}>
-                            {t('settings.byok.group.memberCount').replace('{{count}}', String(group.memberIds.length))}
-                          </Badge>
-                        </Group>
-                        <Group gap={6} wrap="wrap">
-                          {group.memberIds.map((id) => (
-                            <Badge key={id} variant="default" radius="sm" size="sm" tt="none" fw={500}>
-                              {keyName(id)}
+                      <Group gap={10} align="flex-start" wrap="nowrap" miw={0} opacity={hiddenNow(group.id) ? 0.55 : 1}>
+                        <Box c="var(--mantine-color-default-color)" mt={2} style={{ flexShrink: 0 }}>
+                          <Layers size={16} />
+                        </Box>
+                        <Stack gap={6} miw={0}>
+                          <Group gap={8} wrap="nowrap">
+                            <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-default-color)" truncate>
+                              {group.name}
+                            </Text>
+                            <Badge variant="light" color="gray" radius="sm" size="sm" tt="none" fw={500}>
+                              {t('settings.byok.group.memberCount').replace('{{count}}', String(group.memberIds.length))}
                             </Badge>
-                          ))}
-                        </Group>
-                      </Stack>
+                          </Group>
+                          <Group gap={6} wrap="wrap">
+                            {group.memberIds.map((id) => (
+                              <Badge key={id} variant="default" radius="sm" size="sm" tt="none" fw={500}>
+                                {keyName(id)}
+                              </Badge>
+                            ))}
+                          </Group>
+                        </Stack>
+                      </Group>
                     </Group>
 
                     <Group gap={6} align="center" wrap="nowrap" style={{ flexShrink: 0 }}>

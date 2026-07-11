@@ -2,8 +2,9 @@ import { app, session } from 'electron';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { config, getDefaultConfig, saveConfig } from './config';
+import { config, getDefaultConfig, saveConfig, wipeSensitiveConfig } from './config';
 import { applyLaunchAtStartup, sendLog } from './helpers';
+import { resetMetrics } from './metrics';
 import { getOutputDir } from './files';
 import { getFlowDataDir } from './flow';
 
@@ -49,14 +50,19 @@ export async function applyPendingFactoryReset(): Promise<void> {
   // Never throw: this runs inside app.whenReady before the windows are created,
   // so a rejection here would abort startup entirely. Best-effort each step.
   try {
-    // 1. Settings -> defaults. store.store= is a full-file replace, so this zeroes
-    //    every field including the encrypted Telegram token / SMTP password / BYOK
-    //    keys and the Telegram pairing list. Runs before initSensitiveConfig() so
-    //    the (now-empty) secrets decrypt to ''.
+    // 1. Settings -> defaults, then an explicit secret wipe. saveConfig alone is
+    //    NOT enough: its keep-if-blank guards (LINE channel token/secret, BYOK
+    //    keys, and the safeStorage-outage case) preserve existing ciphertext when
+    //    the incoming value is '', so a plain saveConfig(defaults) would leave the
+    //    LINE credentials decryptable on disk. wipeSensitiveConfig() zeroes every
+    //    stored ciphertext + in-memory secret. Runs before initSensitiveConfig()
+    //    so the (now-empty) secrets decrypt to ''.
     const defaults = getDefaultConfig();
     Object.assign(config, defaults);
     saveConfig(defaults);
+    wipeSensitiveConfig();
     applyLaunchAtStartup(config.launchAtStartup, config.closeToTray);
+    resetMetrics();
 
     // 2. Log out of every AI provider + drop all browser caches. No window uses
     //    these partitions yet this early in boot, so there is no live page to

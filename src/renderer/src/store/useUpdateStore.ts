@@ -6,6 +6,7 @@ interface UpdateState {
   isChecking: boolean;
   hasUpdate: boolean;
   checkFailed: boolean;
+  isStoreBuild: boolean;
   newVersion: string | null;
   releaseUrl: string | null;
   initializeListeners: () => void;
@@ -27,6 +28,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   isChecking: false,
   hasUpdate: false,
   checkFailed: false,
+  isStoreBuild: false,
   newVersion: null,
   releaseUrl: null,
 
@@ -64,7 +66,18 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       }),
     ];
 
-    void get().checkForUpdates();
+    // Store builds auto-update through the Microsoft Store — never run the yml-based
+    // electron-updater check (it would only ever report a misleading "up to date").
+    void updateApi
+      .getUpdateSource()
+      .then((source) => {
+        const isStoreBuild = source === 'store';
+        set({ isStoreBuild });
+        if (!isStoreBuild) void get().checkForUpdates();
+      })
+      .catch(() => {
+        void get().checkForUpdates();
+      });
   },
 
   checkForUpdates: async () => {

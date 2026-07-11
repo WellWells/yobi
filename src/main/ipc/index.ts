@@ -23,14 +23,18 @@ import {
 } from '../windows';
 import type { QueueManager } from '../queueManager';
 import type { TelegramRuntime } from '../telegram';
+import type { LineRuntime } from '../line';
 import type { DuckaiModelInfo } from '../providers/duckai';
 import type { FlowManager } from '../flow';
 import type { IpcContext } from './context';
 import { showOpenDialogForWin } from './context';
 import { registerFileHandlers } from './files';
 import { registerTelegramHandlers } from './telegram';
+import { registerLineHandlers } from './line';
+import { registerBotHandlers } from './bot';
 import { registerLocaleHandlers } from './locale';
 import { registerSettingsHandlers } from './settings';
+import { registerBackupHandlers } from './backup';
 import { registerFlowHandlers } from './flow';
 import { registerAccountHandlers } from './account';
 import { registerEmailHandlers } from './email';
@@ -43,6 +47,7 @@ let _ipcInitialized = false;
 interface SetupDeps {
   queue: QueueManager;
   telegramRuntime: TelegramRuntime;
+  lineRuntime: LineRuntime;
   telegramSessionId: string;
   getMainWin: () => import('electron').BrowserWindow | null;
   bindHotkey: () => void;
@@ -208,10 +213,13 @@ export function setupIpcHandlers(deps: SetupDeps): void {
 
   registerFileHandlers();
   registerTelegramHandlers(ctx);
+  registerLineHandlers(ctx);
+  registerBotHandlers(ctx);
   registerLocaleHandlers(ctx);
   registerSettingsHandlers(ctx);
+  registerBackupHandlers(ctx);
   registerFlowHandlers(ctx);
   registerAccountHandlers();
   registerEmailHandlers();
-  registerByokHandlers();
+  registerByokHandlers(ctx);
 }

@@ -10,7 +10,7 @@ import { SKILL_ICON, STEP_CONFIG_EDITOR, skillHue, isDangerSkill } from './skill
 import { AvailableVarsHint, insertTokenAtCaret, type LoopVarHint } from './variableInsert';
 import { validateOutputKey } from './skills/validation';
 import { SKILLS_WITHOUT_OUTPUT_KEY } from '../../../../shared/flowSkillSchema';
-import type { SkillInstance, SkillType, TriggerConfig } from '../../../../shared/types';
+import type { FlowVariable, SkillInstance, SkillType, TriggerConfig } from '../../../../shared/types';
 
 const UI_HIDDEN_OUTPUT: SkillType[] = ['clipboard', 'bot', 'loop'];
 
@@ -33,12 +33,14 @@ export interface StepCardProps {
   flowTrigger?: TriggerConfig;
   loopVars?: LoopVarHint[];
   allPrevSteps?: SkillInstance[];
+  flowVariables?: FlowVariable[];
   dragHandle?: React.ReactNode;
   t: (k: string) => string;
 }
 
 export const StepCard: React.FC<StepCardProps> = ({
-  step, index, total, flowId, prevSteps, flowTrigger, loopVars = [], allPrevSteps = [], dragHandle, t,
+  step, index, total, flowId, prevSteps, flowTrigger, loopVars = [], allPrevSteps = [],
+  flowVariables = [], dragHandle, t,
 }) => {
   const { updateStep, removeStep, moveStep } = useAgentFlowStore(
     useShallow((s) => ({
@@ -163,6 +165,7 @@ export const StepCard: React.FC<StepCardProps> = ({
               flowTrigger={flowTrigger}
               loopVars={loopVars}
               allPrevSteps={allPrevSteps}
+              flowVariables={flowVariables}
               onInsert={handleInsertVar}
               t={t}
             />

@@ -1,6 +1,12 @@
 import type {
   AccountStatus,
   AuthProvider,
+  BackupCategoryId,
+  BackupCategoryInfo,
+  BackupExportResult,
+  BackupImportResult,
+  BackupInspectResult,
+  BotLlmDirectConfig,
   ByokConnectionProbe,
   ByokGroupSaveRequest,
   ByokInstanceSaveRequest,
@@ -16,7 +22,10 @@ import type {
   FlowExecutionLog,
   FlowExecutionResult,
   FlowGenerationResult,
+  HiddenSources,
   MarkdownCaptureRequest,
+  MetricsSnapshot,
+  NotifyEventPrefs,
   OutputFile,
   PromptPreferences,
   PromptTriggerOptions,
@@ -24,15 +33,18 @@ import type {
   QueueState,
   SelectPathRequest,
   SelectPathResult,
-  SettingsSnapshot,
-  TelegramProviderCommand,
+  TempChatResult,
+  BotProviderCommand,
   TelegramRuntimeSnapshot,
   TelegramSettingsSnapshot,
+  LineSettingsSnapshot,
+  LineRuntimeSnapshot,
+  LineCredentialsUpdate,
   EmailSettingsSnapshot,
   SmtpCredentials,
   UpdateAvailablePayload,
+  UpdateSource,
   UiNotificationPayload,
-  WorkerAttention,
 } from '../../../shared/types';
 
 export const fileApi = {
@@ -40,6 +52,7 @@ export const fileApi = {
   search: (query: string): Promise<OutputFile[]> => window.electronAPI.searchFileList(query),
   getContent: (filePath: string): Promise<string | null> => window.electronAPI.getFileContent(filePath),
   deleteFile: (filePath: string): Promise<boolean> => window.electronAPI.deleteFile(filePath),
+  deleteFiles: (filePaths: string[]): Promise<number> => window.electronAPI.deleteFiles(filePaths),
   deleteAll: (): Promise<number> => window.electronAPI.deleteAllFiles(),
   updateTitle: (filePath: string, title: string) => window.electronAPI.updateFileTitle(filePath, title),
   updateH1: (filePath: string, title: string): Promise<boolean> => window.electronAPI.updateFileH1(filePath, title),
@@ -53,6 +66,9 @@ export const settingsApi = {
   setHotkeyPaused: (paused: boolean): Promise<boolean> => window.electronAPI.setHotkeyPaused(paused),
   getAiUrl: (): Promise<string> => window.electronAPI.getAiUrl(),
   updateAiUrl: (url: string): Promise<boolean> => window.electronAPI.updateAiUrl(url),
+  getHiddenSources: (): Promise<HiddenSources> => window.electronAPI.getHiddenSources(),
+  updateHiddenSources: (next: HiddenSources): Promise<{ ok: boolean }> =>
+    window.electronAPI.updateHiddenSources(next),
   getPromptPreferences: (): Promise<PromptPreferences> => window.electronAPI.getPromptPreferences(),
   updatePromptPreferences: (prefs: PromptPreferences, builtPrompt: string): Promise<boolean> =>
     window.electronAPI.updatePromptPreferences(prefs, builtPrompt),
@@ -64,6 +80,9 @@ export const settingsApi = {
   getNotifyOnComplete: (): Promise<boolean> => window.electronAPI.getNotifyOnComplete(),
   updateNotifyOnComplete: (enabled: boolean): Promise<boolean> =>
     window.electronAPI.updateNotifyOnComplete(enabled),
+  getNotifyEvents: (): Promise<NotifyEventPrefs> => window.electronAPI.getNotifyEvents(),
+  updateNotifyEvents: (prefs: NotifyEventPrefs): Promise<boolean> =>
+    window.electronAPI.updateNotifyEvents(prefs),
   getCloseToTray: (): Promise<boolean> => window.electronAPI.getCloseToTray(),
   updateCloseToTray: (enabled: boolean): Promise<boolean> =>
     window.electronAPI.updateCloseToTray(enabled),
@@ -85,6 +104,18 @@ export const settingsApi = {
   fetchDuckaiModels: (): Promise<DuckaiModelInfo[]> => window.electronAPI.fetchDuckaiModels(),
 };
 
+export const tempChatApi = {
+  getMode: (): Promise<boolean> => window.electronAPI.getTempChatMode(),
+  setMode: (enabled: boolean): Promise<boolean> => window.electronAPI.setTempChatMode(enabled),
+};
+
+export const metricsApi = {
+  get: (): Promise<MetricsSnapshot> => window.electronAPI.getMetrics(),
+  reset: (): Promise<MetricsSnapshot> => window.electronAPI.resetMetrics(),
+  getEnabled: (): Promise<boolean> => window.electronAPI.getMetricsEnabled(),
+  updateEnabled: (enabled: boolean): Promise<boolean> => window.electronAPI.updateMetricsEnabled(enabled),
+};
+
 export const telegramApi = {
   getSettings: (): Promise<TelegramSettingsSnapshot> => window.electronAPI.getTelegramSettings(),
   updateEnabled: (enabled: boolean): Promise<boolean> => window.electronAPI.updateTelegramEnabled(enabled),
@@ -93,16 +124,48 @@ export const telegramApi = {
     window.electronAPI.updateTelegramAllowGroupCommands(enabled),
   updateDefaultReplyMode: (mode: 'markdown' | 'png' | 'webp' | 'pdf'): Promise<boolean> =>
     window.electronAPI.updateTelegramDefaultReplyMode(mode),
+  updateCompactReply: (enabled: boolean): Promise<boolean> =>
+    window.electronAPI.updateTelegramCompactReply(enabled),
   updateAdminUsers: (userIds: number[]): Promise<boolean> =>
     window.electronAPI.updateTelegramAdminUsers(userIds),
-  updateProviderCommands: (commands: Record<Provider, TelegramProviderCommand>): Promise<boolean> =>
-    window.electronAPI.updateTelegramProviderCommands(commands),
+  updateLlmDirect: (config: BotLlmDirectConfig): Promise<boolean> =>
+    window.electronAPI.updateTelegramLlmDirect(config),
   generatePairingCode: () => window.electronAPI.generateTelegramPairingCode(),
   revokePairingCode: (code: string): Promise<boolean> =>
     window.electronAPI.revokeTelegramPairingCode(code),
   unpairUser: (userId: number): Promise<boolean> => window.electronAPI.unpairTelegramUser(userId),
   onRuntime: (cb: (snapshot: TelegramRuntimeSnapshot) => void) =>
     window.electronAPI.onTelegramRuntime(cb),
+};
+
+// AI provider slash commands, shared by the Telegram and LINE bots.
+export const botApi = {
+  getProviderCommands: (): Promise<Record<Provider, BotProviderCommand>> =>
+    window.electronAPI.getBotProviderCommands(),
+  updateProviderCommands: (commands: Record<Provider, BotProviderCommand>): Promise<boolean> =>
+    window.electronAPI.updateBotProviderCommands(commands),
+};
+
+export const lineApi = {
+  getSettings: (): Promise<LineSettingsSnapshot> => window.electronAPI.getLineSettings(),
+  updateEnabled: (enabled: boolean): Promise<{ ok: boolean; message?: string }> =>
+    window.electronAPI.updateLineEnabled(enabled),
+  updateCredentials: (creds: LineCredentialsUpdate): Promise<{ ok: boolean; message?: string }> =>
+    window.electronAPI.updateLineCredentials(creds),
+  updatePort: (port: number): Promise<{ ok: boolean; message?: string }> =>
+    window.electronAPI.updateLinePort(port),
+  updateLlmDirect: (config: BotLlmDirectConfig): Promise<{ ok: boolean; snapshot: LineSettingsSnapshot }> =>
+    window.electronAPI.updateLineLlmDirect(config),
+  generatePairingCode: (): Promise<{ ok: boolean; snapshot: LineSettingsSnapshot }> =>
+    window.electronAPI.generateLinePairingCode(),
+  revokePairingCode: (code: string): Promise<{ ok: boolean; snapshot: LineSettingsSnapshot }> =>
+    window.electronAPI.revokeLinePairingCode(code),
+  unpairUser: (userId: string): Promise<{ ok: boolean; snapshot: LineSettingsSnapshot }> =>
+    window.electronAPI.unpairLineUser(userId),
+  refreshAccount: (): Promise<{ ok: boolean; message?: string }> =>
+    window.electronAPI.refreshLineAccount(),
+  onRuntime: (cb: (snapshot: LineRuntimeSnapshot) => void) =>
+    window.electronAPI.onLineRuntime(cb),
 };
 
 export const emailApi = {
@@ -147,6 +210,7 @@ export const clipboardApi = {
 
 export const updateApi = {
   checkForUpdates: (): Promise<boolean> => window.electronAPI.checkForUpdates(),
+  getUpdateSource: (): Promise<UpdateSource> => window.electronAPI.getUpdateSource(),
   onUpdateAvailable: (cb: (payload: UpdateAvailablePayload) => void) => window.electronAPI.onUpdateAvailable(cb),
   onUpdateNotAvailable: (cb: () => void) => window.electronAPI.onUpdateNotAvailable(cb),
   onUpdateError: (cb: () => void) => window.electronAPI.onUpdateError(cb),
@@ -158,11 +222,18 @@ export const systemApi = {
     window.electronAPI.captureMarkdownDocument(request),
   showWorker: (): void => window.electronAPI.showWorker(),
   openConfigDir: (): Promise<boolean> => window.electronAPI.openConfigDir(),
-  exportConfig: (): Promise<boolean> => window.electronAPI.exportConfig(),
-  importConfig: (): Promise<SettingsSnapshot | null> => window.electronAPI.importConfig(),
   selectPath: (request?: SelectPathRequest): Promise<SelectPathResult | null> =>
     window.electronAPI.selectPath(request),
   getPathForFile: (file: File): string => window.electronAPI.getPathForFile(file),
+};
+
+export const backupApi = {
+  getCategories: (): Promise<BackupCategoryInfo[]> => window.electronAPI.backupGetCategories(),
+  export: (categories: BackupCategoryId[], namePrefix?: string): Promise<BackupExportResult> =>
+    window.electronAPI.backupExport(categories, namePrefix),
+  inspect: (zipPath: string): Promise<BackupInspectResult> => window.electronAPI.backupInspect(zipPath),
+  import: (zipPath: string, categories: BackupCategoryId[]): Promise<BackupImportResult> =>
+    window.electronAPI.backupImport(zipPath, categories),
 };
 
 export const windowApi = {
@@ -180,8 +251,6 @@ export const ipcEvents = {
   onFileListUpdate: (cb: (files: OutputFile[]) => void) => window.electronAPI.onFileListUpdate(cb),
   onUiNotification: (cb: (payload: UiNotificationPayload) => void) =>
     window.electronAPI.onUiNotification(cb),
-  onWorkerStatus: (cb: (state: WorkerAttention) => void) =>
-    window.electronAPI.onWorkerStatus(cb),
   onNavigateSettings: (cb: () => void) => window.electronAPI.onNavigateSettings(cb),
   onShowCloseDialog: (cb: () => void) => window.electronAPI.onShowCloseDialog(cb),
   onNotifyOnCompleteChanged: (cb: (enabled: boolean) => void) =>
@@ -190,6 +259,12 @@ export const ipcEvents = {
     window.electronAPI.onLaunchAtStartupChanged(cb),
   onCloseToTrayChanged: (cb: (enabled: boolean) => void) =>
     window.electronAPI.onCloseToTrayChanged(cb),
+  onMetricsChanged: (cb: (snapshot: MetricsSnapshot) => void) =>
+    window.electronAPI.onMetricsChanged(cb),
+  onTempChatModeChanged: (cb: (enabled: boolean) => void) =>
+    window.electronAPI.onTempChatModeChanged(cb),
+  onTempChatResult: (cb: (payload: TempChatResult) => void) =>
+    window.electronAPI.onTempChatResult(cb),
   onFlowExecutionLog: (cb: (log: FlowExecutionLog) => void) =>
     window.electronAPI.onFlowExecutionLog(cb),
   onFlowExecutionStarted: (cb: (event: FlowExecutionEvent) => void) =>
@@ -202,6 +277,9 @@ export const flowApi = {
   getAll: (): Promise<FlowDefinition[]> => window.electronAPI.getFlows(),
   save: (flow: FlowDefinition): Promise<FlowDefinition | null> => window.electronAPI.saveFlow(flow),
   deleteFlow: (flowId: string): Promise<boolean> => window.electronAPI.deleteFlow(flowId),
+  deleteFlows: (flowIds: string[]): Promise<boolean> => window.electronAPI.deleteFlows(flowIds),
+  setFlowsEnabled: (flowIds: string[], enabled: boolean): Promise<FlowDefinition[]> =>
+    window.electronAPI.setFlowsEnabled(flowIds, enabled),
   duplicateFlow: (flowId: string): Promise<FlowDefinition | null> => window.electronAPI.duplicateFlow(flowId),
   moveFlow: (flowId: string, direction: 'up' | 'down'): Promise<FlowDefinition[]> =>
     window.electronAPI.moveFlow(flowId, direction),

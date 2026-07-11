@@ -1,6 +1,5 @@
 import type { TelegramPairedUser, TelegramPairingState } from '../../shared/types';
-
-export const PAIRING_CODE_TTL_MS = 60 * 60 * 1000;
+import { findPendingCode, issuePendingCode, prunePendingCodes, revokePendingCode } from '../pairingCodes';
 
 export type PairingUserProfile = {
   userId: number;
@@ -11,7 +10,7 @@ export type PairingUserProfile = {
 
 export function normalizePairingState(state: TelegramPairingState): TelegramPairingState {
   return {
-    pendingCodes: state.pendingCodes.filter((item) => Date.parse(item.expiresAt) > Date.now()),
+    pendingCodes: prunePendingCodes(state.pendingCodes),
     pairedUsers: dedupePairedUsers(state.pairedUsers),
   };
 }
@@ -25,35 +24,22 @@ export function issuePairingCode(
   sessionId: string,
 ): { nextState: TelegramPairingState; code: string; expiresAt: string } {
   const normalized = normalizePairingState(state);
-  const now = Date.now();
-  const expiresAt = new Date(now + PAIRING_CODE_TTL_MS).toISOString();
-  const existing = new Set(normalized.pendingCodes.map((item) => item.code));
-  const code = createPairingCode(existing);
+  const issued = issuePendingCode(normalized.pendingCodes);
   return {
     nextState: {
       ...normalized,
-      pendingCodes: [
-        ...normalized.pendingCodes,
-        {
-          code,
-          sessionId,
-          createdAt: new Date(now).toISOString(),
-          expiresAt,
-        },
-      ],
+      pendingCodes: [...normalized.pendingCodes, { ...issued, sessionId }],
     },
-    code,
-    expiresAt,
+    code: issued.code,
+    expiresAt: issued.expiresAt,
   };
 }
 
 export function revokePairingCode(state: TelegramPairingState, code: string): TelegramPairingState {
-  const normalizedCode = code.trim().toUpperCase();
-  if (!normalizedCode) return normalizePairingState(state);
   const normalized = normalizePairingState(state);
   return {
     ...normalized,
-    pendingCodes: normalized.pendingCodes.filter((item) => item.code !== normalizedCode),
+    pendingCodes: revokePendingCode(normalized.pendingCodes, code),
   };
 }
 
@@ -71,20 +57,18 @@ export function consumePairingCode(
   user: PairingUserProfile,
 ): { ok: boolean; nextState: TelegramPairingState; reason?: string } {
   const normalized = normalizePairingState(state);
-  const code = rawCode.trim().toUpperCase();
-  if (!code) {
+  if (!rawCode.trim()) {
     return { ok: false, nextState: normalized, reason: 'empty_code' };
   }
-  const pending = normalized.pendingCodes.find((item) => item.code === code);
+  const pending = findPendingCode(normalized.pendingCodes, rawCode);
   if (!pending) {
     return { ok: false, nextState: normalized, reason: 'invalid_code' };
   }
-  const pairedUsers = upsertPairedUser(normalized.pairedUsers, user);
   return {
     ok: true,
     nextState: {
-      pendingCodes: normalized.pendingCodes.filter((item) => item.code !== code),
-      pairedUsers,
+      pendingCodes: revokePendingCode(normalized.pendingCodes, pending.code),
+      pairedUsers: upsertPairedUser(normalized.pairedUsers, user),
     },
   };
 }
@@ -116,18 +100,6 @@ export function createPairingBridge(
       return { ok: result.ok, reason: result.reason };
     },
   };
-}
-
-function createPairingCode(existing: Set<string>): string {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    let code = '';
-    for (let i = 0; i < 8; i += 1) {
-      code += alphabet[Math.floor(Math.random() * alphabet.length)];
-    }
-    if (!existing.has(code)) return code;
-  }
-  return `${Date.now().toString(36).slice(-8).toUpperCase()}`;
 }
 
 function dedupePairedUsers(input: TelegramPairedUser[]): TelegramPairedUser[] {

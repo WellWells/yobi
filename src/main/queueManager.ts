@@ -2,6 +2,16 @@ import type { QueueState, QueueTaskItem, Task } from '../shared/types';
 
 type QueueListener = (state: QueueState) => void;
 
+// Rejects the drain loop's race, so it never reaches processTask's own error
+// handling. Typed so the queue-level handler can tell a timeout apart from any
+// other rejection and tell the remote caller which one happened.
+export class TaskHardTimeoutError extends Error {
+  constructor(taskId: string, readonly timeoutMinutes: number) {
+    super(`Task ${taskId} exceeded hard timeout of ${timeoutMinutes} min`);
+    this.name = 'TaskHardTimeoutError';
+  }
+}
+
 export class QueueManager {
   private queue: Task[] = [];
   private running = false;
@@ -11,9 +21,11 @@ export class QueueManager {
   private readonly TASK_HARD_TIMEOUT_MS = 10 * 60_000;
 
   private worker: (task: Task) => Promise<void>;
+  private onTaskError: ((task: Task, err: unknown) => void) | null;
 
-  constructor(worker: (task: Task) => Promise<void>) {
+  constructor(worker: (task: Task) => Promise<void>, onTaskError?: (task: Task, err: unknown) => void) {
     this.worker = worker;
+    this.onTaskError = onTaskError ?? null;
   }
 
   onUpdate(listener: QueueListener): void {
@@ -88,7 +100,7 @@ export class QueueManager {
         let hardTimeoutId!: ReturnType<typeof setTimeout>;
         const hardTimeout = new Promise<void>((_, reject) => {
           hardTimeoutId = setTimeout(
-            () => reject(new Error(`Task ${task.id} exceeded hard timeout of ${this.TASK_HARD_TIMEOUT_MS / 60_000} min`)),
+            () => reject(new TaskHardTimeoutError(task.id, this.TASK_HARD_TIMEOUT_MS / 60_000)),
             this.TASK_HARD_TIMEOUT_MS,
           );
         });
@@ -99,7 +111,10 @@ export class QueueManager {
           clearTimeout(hardTimeoutId);
           this.skipCurrentTask = null;
         });
-      } catch {
+      } catch (err) {
+        // Only the hard timeout rejects in practice (the worker handles its own
+        // errors internally) — surface it so callers can account for the task.
+        this.onTaskError?.(task, err);
       }
       this.running = false;
       this.activeTask = null;

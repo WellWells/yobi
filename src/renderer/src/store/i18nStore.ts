@@ -99,7 +99,7 @@ export const useI18nStore = create<I18nState>((set, get) => ({
       }
     }
 
-    const localesToLoad = [...new Set([FALLBACK_LOCALE, resolvedLocale])];
+    const localesToLoad = [...new Set([FALLBACK_LOCALE, resolvedLocale, ...list])];
     const localeEntries = await Promise.all(
       localesToLoad.map(async (locale) => {
         const content = await window.electronAPI.getLanguageContent(locale);

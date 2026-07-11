@@ -6,7 +6,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-blue)](#-クイックスタート)
-[![Electron](https://img.shields.io/badge/Electron-42-47848F?logo=electron)](https://www.electronjs.org/)
+[![Microsoft Store](https://img.shields.io/badge/Microsoft%20Store-ダウンロード-0067b8)](https://apps.microsoft.com/detail/9nnx8prfstc9)
+[![Electron](https://img.shields.io/badge/Electron-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen.svg)](https://github.com/WellWells/yobi/pulls)
 
 **[English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md)**
@@ -40,12 +41,11 @@
 
 **1. ダウンロード** — お使いの OS 向けの最新リリースを入手：
 
-| プラットフォーム | ダウンロード                |
-| ---------------- | --------------------------- |
-| Windows          | NSIS インストーラー（x64）  |
-| macOS            | DMG（Intel & Apple Silicon）|
-
-→ [**Releases ページ**](https://github.com/WellWells/yobi/releases)
+| プラットフォーム | ダウンロード                                                                                  | 備考                                                                                              |
+| ---------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| **Windows**      | [**Microsoft Store**](https://apps.microsoft.com/detail/9nnx8prfstc9)（推奨）                 | 自動でインストール・更新されます。                                             |
+| **Windows**      | [GitHub Releases](https://github.com/WellWells/yobi/releases) — NSIS インストーラー（x64）    | 署名なしのため初回起動時に Windows が確認を表示します——**詳細情報 → 実行** を選べば開けます。 |
+| **macOS**        | [GitHub Releases](https://github.com/WellWells/yobi/releases) — DMG（Intel & Apple Silicon）  | 署名なしのため初回起動が macOS Gatekeeper にブロックされます——開き方は [release ページ](https://github.com/WellWells/yobi/releases) に記載。 |
 
 **2. 30 秒で最初の回答を：**
 
@@ -184,7 +184,7 @@ npm run build:win   # build Windows (NSIS installer)
 npm run build:mac   # build macOS (DMG)
 ```
 
-**技術スタック：** Electron 42 · React 19 + TypeScript · Mantine 9 · Zustand 5 · Vite 8 + electron-builder · GrammY · node-cron
+**技術スタック：** Electron · React + TypeScript · Mantine · Zustand · Vite + electron-builder · grammY · LINE Bot SDK
 
 ---
 

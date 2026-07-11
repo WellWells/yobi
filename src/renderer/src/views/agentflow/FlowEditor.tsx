@@ -13,8 +13,9 @@ import { AppTextInput } from '../../components/AppTextInput';
 import { SectionCard } from '../../components/SectionCard';
 import { ExecutionResultPanel } from './ExecutionResultPanel';
 import { FlowStepsCard } from './FlowStepsCard';
+import { FlowVariablesPanel } from './FlowVariablesPanel';
 import { TriggerEditor } from './TriggerEditor';
-import type { FlowDefinition, SkillType } from '../../../../shared/types';
+import type { FlowDefinition, FlowVariable, SkillType } from '../../../../shared/types';
 
 export interface FlowEditorProps {
   flow: FlowDefinition;
@@ -106,6 +107,9 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
   }, [currentView, handleSave, isDirty]);
 
   const handleAddStep = useCallback((type: SkillType) => { addStep(flow.id, type); }, [addStep, flow.id]);
+  const handleVariablesChange = useCallback((variables: FlowVariable[]) => {
+    updateFlow({ ...flow, variables });
+  }, [flow, updateFlow]);
 
   return (
     <Flex direction="column" h="100%" style={{ overflow: 'hidden' }}>
@@ -208,6 +212,8 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
                   <TriggerEditor flow={flow} t={t} />
                 </Stack>
               </SectionCard>
+
+              <FlowVariablesPanel flow={flow} t={t} onChange={handleVariablesChange} />
 
               <FlowStepsCard flow={flow} t={t} onAddStep={handleAddStep} />
 

@@ -1,3 +1,5 @@
+import { OUTPUT_KEY_RE } from '../../../../../shared/flowValidation';
+
 const VAR_ONLY = /^\{\{[^}]+\}\}$/;
 const HTTP = /^https?:\/\//i;
 
@@ -56,7 +58,7 @@ export type OutputKeyError = 'format' | 'duplicate' | null;
 
 export function validateOutputKey(key: string, siblingKeys: string[]): OutputKeyError {
   const trimmed = key.trim();
-  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmed)) return 'format';
+  if (!OUTPUT_KEY_RE.test(trimmed)) return 'format';
   if (siblingKeys.includes(trimmed)) return 'duplicate';
   return null;
 }

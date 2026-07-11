@@ -1,11 +1,14 @@
-import { app, BrowserWindow, nativeImage } from 'electron';
+import { app, BrowserWindow, nativeImage, nativeTheme, shell } from 'electron';
 import * as path from 'node:path';
 import { existsSync } from 'node:fs';
 import { sendLog, sendWebNotification, getAssetPath, setWorkerAttention } from './helpers';
+import { toggleTempChatMode } from './tempChat';
 import { getLangCache, t } from './i18n';
 import { CLEAN_UA } from './userAgent';
 import { applyWorkerUserAgent } from './clientHints';
 import { PROVIDER_URLS, isByokTargetUrl } from '../shared/types';
+import { themeBackground } from '../shared/themes';
+import { config } from './config';
 
 const WORKER_PARTITION = 'persist:gemini';
 type WorkerWindowMode = 'automation' | 'interactive';
@@ -62,7 +65,9 @@ export function createMainWindow(): void {
     minHeight: 500,
     title: 'Yobi',
     frame: false,
-    backgroundColor: '#0d1117',
+    // Match the configured theme so light-theme users don't get a dark flash
+    // at startup and during resize.
+    backgroundColor: themeBackground(config.theme, nativeTheme.shouldUseDarkColors),
     icon: getWindowIcon(),
     webPreferences: {
       preload: preloadPath,
@@ -82,6 +87,35 @@ export function createMainWindow(): void {
   }
 
   mainWin.setMenuBarVisibility(false);
+
+  // The main window only ever hosts the local app bundle, which carries the full
+  // electronAPI bridge. Block any attempt to navigate the top-level frame or open
+  // a child window elsewhere: a stray remote/AI-authored link that slipped past
+  // the in-app external-link handling would otherwise load a remote origin with
+  // the bridge attached. Defer real http(s) targets to the OS browser.
+  mainWin.webContents.on('will-navigate', (event, url) => {
+    if (url === mainWin?.webContents.getURL()) return;
+    event.preventDefault();
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+  });
+  mainWin.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
+  // Ctrl+Shift+I (⌘+Shift+I on macOS) toggles temporary chat mode whenever the
+  // app window is focused. Intercepted here rather than in the renderer:
+  // preventDefault() also swallows Electron's default-menu DevTools accelerator
+  // bound to the same combo on Windows/Linux.
+  mainWin.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown' || input.isAutoRepeat) return;
+    const modifier = process.platform === 'darwin' ? input.meta : input.control;
+    // Physical-key code keeps the shortcut working on non-Latin keyboard layouts.
+    if (modifier && input.shift && !input.alt && input.code === 'KeyI') {
+      event.preventDefault();
+      toggleTempChatMode();
+    }
+  });
 
   mainWin.on('close', (event) => {
     if (isAppQuitting) return;
@@ -206,13 +240,32 @@ function rememberWorkerVisibleBounds(): void {
   workerVisibleBounds = workerWin.getBounds();
 }
 
+// Decide whether a live worker whose mode differs from `desired` should be torn
+// down and recreated. Only consulted when the modes actually differ.
+function shouldSwitchWorkerMode(desired: WorkerWindowMode): boolean {
+  // A login / Cloudflare challenge always needs the interactive window now.
+  if (desired === 'interactive') return true;
+  // desired === 'automation': the worker is currently interactive. If it is still
+  // visible the user is mid-login — the page is genuinely on-screen, so automation
+  // works without the hidden-visibility preload; don't yank the window away.
+  // Reclaim it for automation only once it has been hidden again (the degraded
+  // state the automation preload exists to fix). Without this, a single login /
+  // Cloudflare reveal would leave EVERY later automation running in the interactive
+  // window until app restart.
+  if (!workerWin || workerWin.isDestroyed()) return true;
+  return !workerWin.isVisible();
+}
+
 export async function ensureWorkerWindow(
   initialUrl: string,
-  mode?: WorkerWindowMode,
+  mode: WorkerWindowMode = 'automation',
 ): Promise<BrowserWindow | null> {
-  const desiredMode = mode ?? 'automation';
-  if (!workerWin || workerWin.isDestroyed() || (mode && workerWindowMode !== desiredMode)) {
-    createWorkerWindow(initialUrl, desiredMode);
+  const needsRecreate =
+    !workerWin ||
+    workerWin.isDestroyed() ||
+    (workerWindowMode !== mode && shouldSwitchWorkerMode(mode));
+  if (needsRecreate) {
+    createWorkerWindow(initialUrl, mode);
     await new Promise((r) => setTimeout(r, 1_200));
   }
   if (!workerWin || workerWin.isDestroyed()) return null;

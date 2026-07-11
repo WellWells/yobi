@@ -17,6 +17,10 @@ export interface FlowExecutorDeps {
   onSaveHistory?: (info: SaveHistoryInfo) => Promise<void>;
   sendTelegramMessage?: (chatId: number, text: string) => Promise<void>;
   getPairedUsers?: () => Array<{ userId: number; username?: string; firstName?: string }>;
+  sendLineMessage?: (userId: string, text: string) => Promise<void>;
+  // LINE has no upload endpoint: only a public HTTPS image URL can be sent.
+  sendLineImage?: (userId: string, imageUrl: string) => Promise<void>;
+  getLinePairedUsers?: () => Array<{ userId: string; displayName?: string }>;
   captureMarkdown?: (
     payload: MarkdownCapturePayload,
     format: CaptureFormat,

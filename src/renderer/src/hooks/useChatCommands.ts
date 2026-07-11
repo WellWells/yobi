@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useAgentFlowStore } from '../store/useAgentFlowStore';
-import { TELEGRAM_COMMAND_RE } from '../../../shared/types';
+import { BOT_COMMAND_RE } from '../../../shared/types';
 
 export interface ChatCommand {
   flowId: string;
@@ -31,7 +31,7 @@ export function useChatCommands(): ChatCommand[] {
       for (const trigger of [flow.trigger, ...(flow.extraTriggers ?? [])]) {
         if (trigger.type !== 'chat') continue;
         const command = (trigger.chatCommand ?? '').toLowerCase().trim();
-        if (!command || !TELEGRAM_COMMAND_RE.test(command) || seen.has(command)) continue;
+        if (!command || !BOT_COMMAND_RE.test(command) || seen.has(command)) continue;
         seen.add(command);
         commands.push({ flowId: flow.id, command, description: trigger.chatCommandDescription?.trim() ?? '' });
       }

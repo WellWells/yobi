@@ -1,5 +1,6 @@
 import type { FlowDefinition, SkillInstance, TriggerConfig, TriggerType } from '../../../../shared/types';
 import { SKILL_TYPES } from '../../../../shared/flowSkillSchema';
+import { sanitizeFlowVariables } from '../../../../shared/flowVariables';
 import { createId } from '../../store/flowHelpers';
 
 const TRIGGER_TYPES: TriggerType[] = ['hotkey', 'cron', 'manual', 'bot', 'chat'];
@@ -51,14 +52,20 @@ function sanitizeFlow(obj: Record<string, unknown>): FlowDefinition | null {
   const extraTriggers = Array.isArray(obj.extraTriggers)
     ? obj.extraTriggers.filter((tr) => tr && typeof tr === 'object').map(sanitizeTrigger)
     : [];
+  const variables = sanitizeFlowVariables(obj.variables);
   const now = new Date().toISOString();
   return {
     id: typeof obj.id === 'string' && obj.id ? obj.id : createId(),
     name: obj.name as string,
     description: typeof obj.description === 'string' ? obj.description : '',
-    enabled: typeof obj.enabled === 'boolean' ? obj.enabled : false,
+    // An imported flow always lands disabled, whatever the file claims. The user
+    // confirmed the import (they saw what it does); arming its cron/hotkey/bot
+    // trigger is a separate, deliberate act they take afterwards — not something
+    // a downloaded JSON gets to switch on for them.
+    enabled: false,
     trigger: sanitizeTrigger(obj.trigger),
     ...(extraTriggers.length > 0 ? { extraTriggers } : {}),
+    ...(variables.length > 0 ? { variables } : {}),
     steps,
     createdAt: typeof obj.createdAt === 'string' ? obj.createdAt : now,
     updatedAt: typeof obj.updatedAt === 'string' ? obj.updatedAt : now,

@@ -12,11 +12,13 @@ import { config } from '../config';
 import { getOutputDir } from '../files';
 import type { QueueManager } from '../queueManager';
 import type { TelegramRuntime } from '../telegram';
+import type { LineRuntime } from '../line';
 import type { FlowManager } from '../flow';
 
 export interface IpcContext {
   queue: QueueManager;
   telegramRuntime: TelegramRuntime;
+  lineRuntime: LineRuntime;
   telegramSessionId: string;
   getMainWin: () => BrowserWindow | null;
   bindHotkey: () => void;
@@ -35,6 +37,8 @@ export function buildSettingsSnapshot(): SettingsSnapshot {
     theme: config.theme,
     syncSystemLanguageToModel: config.syncSystemLanguageToModel,
     notifyOnComplete: config.notifyOnComplete,
+    notifyEvents: config.notifyEvents,
+    metricsEnabled: config.metricsEnabled,
     promptPreferences: config.promptPreferences,
     youtubePrompt: config.youtubePrompt,
     responseTimeout: config.responseTimeout,

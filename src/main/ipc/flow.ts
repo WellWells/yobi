@@ -5,7 +5,8 @@ import { IPC } from '../../shared/types';
 import type { ChatCommandResult, FlowDefinition, FlowGenerationResult } from '../../shared/types';
 import { config } from '../config';
 import { buildSafeFileNameFromTitle, getOutputDir, listOutputFiles } from '../files';
-import { saveOutput } from '../output';
+import { buildOutputMarkdown, saveOutput } from '../output';
+import { deliverTempChatResult, isTempChatMode } from '../tempChat';
 import { sendLog, sendToRenderer, sendWebNotification } from '../helpers';
 import { loadLanguageData } from '../i18n';
 import { getCheckpointPath } from '../flow';
@@ -56,6 +57,16 @@ export function registerFlowHandlers(ctx: IpcContext): void {
     return flowManager.delete(flowId);
   });
 
+  ipcMain.handle(IPC.FLOW_DELETE_MANY, async (_event, flowIds: string[]) => {
+    if (!flowManager) return false;
+    return flowManager.deleteMany(flowIds);
+  });
+
+  ipcMain.handle(IPC.FLOW_SET_ENABLED_MANY, async (_event, flowIds: string[], enabled: boolean) => {
+    if (!flowManager) return [];
+    return flowManager.setEnabledMany(flowIds, enabled);
+  });
+
   ipcMain.handle(IPC.FLOW_DUPLICATE, async (_event, flowId: string) => {
     if (!flowManager) return null;
     return flowManager.duplicate(flowId);
@@ -93,21 +104,29 @@ export function registerFlowHandlers(ctx: IpcContext): void {
     }
 
     try {
-      const outputDir = await getOutputDir();
       const langData = await loadLanguageData(config.locale);
       const flow = flowManager.getAll().find((f) => f.id === flowId);
       const resolvedCommand = info?.command || command || '';
-      const filePath = await saveOutput({
+      const markdownOptions = {
         prompt: `/${resolvedCommand}${input ? ` ${input}` : ''}`.trim(),
         response: finalOutput,
-        outputDir,
         title: flow?.name?.trim() || (langData?.['agentflow.trigger.chat'] ?? 'Chat Skill'),
         provider: langData?.['chat.command.providerLabel'] ?? 'AgentFlow',
         providerLabel: langData?.['md.provider'] ?? 'Provider',
         promptLabel: langData?.['md.prompt'] ?? 'Prompt',
         responseLabel: langData?.['md.response'] ?? 'Response',
         timestampLabel: langData?.['md.timestamp'] ?? 'Time',
-      });
+      };
+
+      // Temporary chat mode covers slash commands typed into the same chat
+      // input: deliver the reply in memory instead of leaving a .md trace.
+      if (isTempChatMode()) {
+        deliverTempChatResult({ content: buildOutputMarkdown(markdownOptions) });
+        return { result: flowResult };
+      }
+
+      const outputDir = await getOutputDir();
+      const filePath = await saveOutput({ ...markdownOptions, outputDir });
       sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
       return { result: flowResult, filePath };
     } catch (err: unknown) {
@@ -131,9 +150,12 @@ export function registerFlowHandlers(ctx: IpcContext): void {
     const result = await flowManager.queueGeneration(desc, queueLabel);
 
     if (!result.ok) {
+      const compactError = (result.error ?? '').replace(/\s+/g, ' ').trim();
+      const displayError = compactError.length > 140 ? `${compactError.slice(0, 140)}…` : compactError;
       const title = langData?.['agentflow.generate.failed.title'] ?? 'AI generation failed';
-      const body = langData?.['agentflow.generate.failed.body']
-        ?? 'The AI response could not be parsed into a valid flow.';
+      const body = (langData?.['agentflow.generate.failed.body']
+        ?? 'The AI response could not be parsed into a valid flow. Please try again. ({{error}})')
+        .replace(/\{\{error\}\}/g, () => displayError);
       sendWebNotification(title, body, 'error');
     } else {
       const title = langData?.['agentflow.generate.done.title'] ?? 'Flow generated';

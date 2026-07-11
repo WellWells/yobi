@@ -32,12 +32,12 @@ import {
   createMainWindow,
   getMainWin,
   setAppQuitting,
-  isAllWindowsClosed,
 } from './windows';
 import { CLEAN_UA } from './userAgent';
 import { registerWorkerClientHints } from './clientHints';
 import { setupIpcHandlers } from './ipc';
-import { processTask } from './taskProcessor';
+import { classifyFailure, recordTaskOutcome } from './metrics';
+import { notifyQueueLevelFailure, processTask } from './taskProcessor';
 import { bindHotkey as bindHotkeyImpl } from './hotkeyBinding';
 import type { FlowManager } from './flow';
 import { checkForUpdates } from './updater';
@@ -47,6 +47,7 @@ import { setupPlatformIcons, loadInitialLanguages, setupWindows } from './bootst
 import { setupTrayAndCloseBehavior, buildTrayIpcCallbacks } from './bootstrap/traySetup';
 import { initFlowManager, broadcastMergedQueueState } from './bootstrap/flowSetup';
 import { createTelegramRuntime } from './bootstrap/telegramSetup';
+import { createLineRuntime } from './bootstrap/lineSetup';
 
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
@@ -85,9 +86,18 @@ let powerSaveBlockerId: number | null = null;
 
 let flowManager: FlowManager | null = null;
 
-const queue = new QueueManager(async (task: Task) => {
-  await processTask(task, { telegramRuntime });
-});
+const queue = new QueueManager(
+  async (task: Task) => {
+    await processTask(task, { telegramRuntime, lineRuntime });
+  },
+  (task, err) => {
+    // Queue-level rejection (hard timeout) never reaches processTask's own error
+    // handling. Record it, then tell whoever is waiting — notifyQueueLevelFailure
+    // stays silent if processTask already answered them.
+    recordTaskOutcome('chat', classifyFailure(err instanceof Error ? err.message : String(err)), task);
+    void notifyQueueLevelFailure(task, err, { telegramRuntime, lineRuntime });
+  },
+);
 
 const bindHotkey = (): void => bindHotkeyImpl({ queue });
 
@@ -96,6 +106,11 @@ queue.onUpdate(() => {
 });
 
 const telegramRuntime = createTelegramRuntime({
+  queue,
+  getFlowManager: () => flowManager,
+});
+
+const lineRuntime = createLineRuntime({
   queue,
   getFlowManager: () => flowManager,
 });
@@ -123,7 +138,7 @@ app.whenReady().then(async () => {
   await loadInitialLanguages();
   setupWindows();
 
-  flowManager = initFlowManager({ queue, telegramRuntime });
+  flowManager = initFlowManager({ queue, telegramRuntime, lineRuntime });
 
   if (process.platform === 'darwin') {
     getMainWin()?.focus();
@@ -134,6 +149,7 @@ app.whenReady().then(async () => {
   setupIpcHandlers({
     queue,
     telegramRuntime,
+    lineRuntime,
     telegramSessionId: TELEGRAM_SESSION_ID,
     getMainWin,
     bindHotkey,
@@ -144,6 +160,7 @@ app.whenReady().then(async () => {
 
   bindHotkey();
   void telegramRuntime.syncWithConfig();
+  void lineRuntime.syncWithConfig();
   sendLog(`✅ Ready — copy text and press ${config.hotkey}`);
 });
 
@@ -153,6 +170,7 @@ app.on('before-quit', () => {
   destroyTray();
   flowManager?.shutdown();
   void telegramRuntime.shutdown();
+  void lineRuntime.shutdown();
 });
 
 app.on('quit', () => {
@@ -177,7 +195,13 @@ app.on('window-all-closed', () => {
 });
 
 app.on('activate', () => {
-  if (isAllWindowsClosed()) {
+  // Recreate the UI whenever the main window is gone — check ONLY the main
+  // window, never the hidden provider worker. The worker lives for the whole app
+  // lifetime (its close is intercepted into a hide), so gating on "all windows
+  // closed" would leave macOS users unable to reopen the app from the Dock after
+  // red-button-closing the main window.
+  const mainWin = getMainWin();
+  if (!mainWin || mainWin.isDestroyed()) {
     createMainWindow();
     setMainWindow(getMainWin());
   }

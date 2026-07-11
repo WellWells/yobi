@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from 'react';
-import { Button, Group, Modal, Stack, Text } from '@mantine/core';
+import { Button, Group, Stack, Text } from '@mantine/core';
 import { Download, Link } from 'lucide-react';
+import { AppModal } from '../../components/AppModal';
 import { AppTextInput } from '../../components/AppTextInput';
 import { AppButton } from '../../components/AppButton';
 import { systemApi } from '../../api/electronApi';
@@ -26,9 +27,25 @@ export const FlowImportModal: React.FC<FlowImportModalProps> = ({
     const url = urlValue.trim();
     if (!url) return;
     setUrlError('');
+
+    // fetch() honours whatever scheme it is handed. Left open, "import from URL"
+    // reads file:// off the local disk and data: straight out of the box the user
+    // pasted — neither is a remote flow, and both bypass the intent of the field.
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      setUrlError(t('agentflow.import.url.error.scheme'));
+      return;
+    }
+    if (parsed.protocol !== 'https:') {
+      setUrlError(t('agentflow.import.url.error.scheme'));
+      return;
+    }
+
     setUrlLoading(true);
     try {
-      const res = await fetch(url);
+      const res = await fetch(parsed.href);
       if (!res.ok) {
         setUrlError(t('agentflow.import.url.error.fetch'));
         return;
@@ -74,11 +91,11 @@ export const FlowImportModal: React.FC<FlowImportModalProps> = ({
   }, [onImport, t]);
 
   return (
-    <Modal
+    <AppModal
       opened={open}
       onClose={onClose}
       title={t('agentflow.import')}
-      centered
+      icon={<Download size={16} />}
       size="sm"
       zIndex={200}
     >
@@ -121,6 +138,6 @@ export const FlowImportModal: React.FC<FlowImportModalProps> = ({
           </Group>
         </Stack>
       </Stack>
-    </Modal>
+    </AppModal>
   );
 };

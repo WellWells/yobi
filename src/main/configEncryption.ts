@@ -11,19 +11,27 @@ export function encryptToken(token: string): string {
   return token;
 }
 
-export function decryptToken(stored: string): string {
-  if (!stored) return '';
+// `failed` distinguishes "there is a stored ciphertext we could not read right
+// now" (transient keychain/DPAPI outage) from "the field is genuinely empty".
+// Callers use it to avoid overwriting a real stored secret with '' during an
+// outage — see saveConfig's keep-if-blank guards.
+export function decryptTokenChecked(stored: string): { value: string; failed: boolean } {
+  if (!stored) return { value: '', failed: false };
   if (stored.startsWith(ENCRYPTED_PREFIX)) {
     if (!safeStorage.isEncryptionAvailable()) {
       console.warn('[config] safeStorage unavailable — cannot decrypt stored token. Install libsecret on Linux or check OS keychain access.');
-      return '';
+      return { value: '', failed: true };
     }
     try {
-      return safeStorage.decryptString(Buffer.from(stored.slice(ENCRYPTED_PREFIX.length), 'base64'));
+      return { value: safeStorage.decryptString(Buffer.from(stored.slice(ENCRYPTED_PREFIX.length), 'base64')), failed: false };
     } catch {
       console.warn('[config] Failed to decrypt token — OS keychain may have changed. Token will be inaccessible until re-entered.');
-      return '';
+      return { value: '', failed: true };
     }
   }
-  return stored;
+  return { value: stored, failed: false };
+}
+
+export function decryptToken(stored: string): string {
+  return decryptTokenChecked(stored).value;
 }

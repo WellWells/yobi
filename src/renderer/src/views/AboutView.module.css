@@ -98,6 +98,17 @@
 .section2 { animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.26s both; }
 .section3 { animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.34s both; }
 
+/* The view is hidden with `display: none`, which cancels animations and replays
+   them on re-display. Once the entrance has run, drop it so reopening is instant.
+   The ambient icon float/glow keep running. */
+.entered .hero,
+.entered .section0,
+.entered .section1,
+.entered .section2,
+.entered .section3 {
+  animation: none;
+}
+
 /* ── Tech stack row hover ──────────────────────────────────────────────── */
 
 .techRow {

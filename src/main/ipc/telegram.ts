@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import { IPC } from '../../shared/types';
-import { config, saveConfig } from '../config';
-import { normalizeProviderCommands } from '../configNormalizers';
+import { config, saveConfig, markTelegramTokenResolved } from '../config';
+import { normalizeLlmDirect } from '../configNormalizers';
 import { sendLog } from '../helpers';
 import { buildTelegramSettingsSnapshot } from '../telegramBridge';
 import { issuePairingCode, revokePairingCode, unpairUser } from '../telegram';
@@ -42,6 +42,10 @@ export function registerTelegramHandlers(ctx: IpcContext): void {
 
   ipcMain.handle(IPC.UPDATE_TELEGRAM_BOT_TOKEN, async (_event, token: string) => {
     const nextToken = (token ?? '').trim();
+    // The user is deliberately setting/clearing the token, so an empty value is
+    // now intentional — drop the "failed to decrypt at startup" keep-if-blank
+    // guard before persisting, otherwise a genuine clear wouldn't take effect.
+    markTelegramTokenResolved();
     config.telegram.botToken = nextToken;
     saveConfig({ telegram: config.telegram });
     if (!config.telegram.enabled) {
@@ -73,6 +77,12 @@ export function registerTelegramHandlers(ctx: IpcContext): void {
     return true;
   });
 
+  ipcMain.handle(IPC.UPDATE_TELEGRAM_COMPACT_REPLY, (_event, value: unknown) => {
+    config.telegram.compactReply = Boolean(value);
+    saveConfig({ telegram: config.telegram });
+    return true;
+  });
+
   ipcMain.handle(IPC.UPDATE_TELEGRAM_ADMIN_USERS, (_event, userIds: number[]) => {
     const pairedUserIds = new Set(config.telegram.pairing.pairedUsers.map((item) => item.userId));
     const normalized = Array.isArray(userIds)
@@ -87,16 +97,12 @@ export function registerTelegramHandlers(ctx: IpcContext): void {
     return true;
   });
 
-  ipcMain.handle(IPC.UPDATE_TELEGRAM_PROVIDER_COMMANDS, async (_event, value: unknown) => {
-    config.telegram.providerCommands = normalizeProviderCommands(value);
+  // No runtime sync needed: the message handler reads the live config on every
+  // incoming update, so the change takes effect immediately.
+  ipcMain.handle(IPC.UPDATE_TELEGRAM_LLM_DIRECT, (_event, value: unknown) => {
+    config.telegram.llmDirect = normalizeLlmDirect(value);
     saveConfig({ telegram: config.telegram });
-    try {
-      await ctx.telegramRuntime.refreshBotCommands();
-      return true;
-    } catch (err: unknown) {
-      sendLog(`⚠️ Failed to update Telegram provider commands: ${(err as Error).message}`);
-      return false;
-    }
+    return true;
   });
 
   ipcMain.handle(IPC.GENERATE_TELEGRAM_PAIRING_CODE, () => {

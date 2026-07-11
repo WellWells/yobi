@@ -10,9 +10,13 @@ import { executeFlow } from './executor';
 import { closeRunPages } from './skills/browserPages';
 import { generateFlowDefinition } from './flowGenerator';
 import type { FlowExecutorDeps } from './types';
-import { getWorkerAttention, sendLog, sendToRenderer } from '../helpers';
-import { IPC, TELEGRAM_COMMAND_RE } from '../../shared/types';
+import { getWorkerAttention, sendLog, sendToRenderer, sendWebNotification } from '../helpers';
+import { config } from '../config';
+import { getLangCache, t } from '../i18n';
+import { classifyFailure, recordTaskOutcome } from '../metrics';
+import { IPC, BOT_COMMAND_RE } from '../../shared/types';
 import { normalizeCronTrigger, shouldNormalizeCronTrigger } from '../../shared/flowSchedule';
+import { cloneFlowVariables, missingRequiredVariables, sanitizeFlowVariables } from '../../shared/flowVariables';
 import { createEntityId, loadFlowsFromDisk, saveFlowsToDisk } from './flowPersistence';
 import { FlowTriggerRegistry } from './flowTriggers';
 import { FlowQueue } from './flowQueue';
@@ -57,6 +61,22 @@ export class FlowManager {
     sendLog('🛑 [AgentFlow] Shut down — all triggers unregistered');
   }
 
+  // Re-read flows.json from disk (e.g. after a backup restore replaced it) and
+  // re-register every trigger + refresh bot commands. Shares init()'s load path.
+  async reload(): Promise<void> {
+    this.triggers.unregisterAll(this.flows);
+    const loadedFlows = await loadFlowsFromDisk();
+    this.flows = loadedFlows.map((flow) => this.normalizeFlow(flow));
+    // Persist the normalized form back (mirrors init()) so an imported flows.json
+    // that needed normalization doesn't leave disk out of sync with memory.
+    if (JSON.stringify(this.flows) !== JSON.stringify(loadedFlows)) {
+      await saveFlowsToDisk(this.flows);
+    }
+    this.triggers.registerAll(this.flows);
+    this._onBotCommandsChanged?.();
+    sendLog(`📋 [AgentFlow] Reloaded ${this.flows.length} flow(s) from disk`);
+  }
+
   getAll(): FlowDefinition[] {
     return this.flows;
   }
@@ -70,7 +90,7 @@ export class FlowManager {
         if (trigger.type !== 'bot') continue;
         const command = (trigger.botCommand ?? '').toLowerCase().trim();
         if (!command) continue;
-        if (!TELEGRAM_COMMAND_RE.test(command)) {
+        if (!BOT_COMMAND_RE.test(command)) {
           sendLog(`⚠️ [AgentFlow] Bot command "/${command}" is invalid (must start with a letter, ≤32 chars, a–z/0–9/_) — skipping "${f.name}"`);
           continue;
         }
@@ -107,8 +127,21 @@ export class FlowManager {
     };
   }
 
+  // A flow whose required settings are still blank must not arm its triggers:
+  // the cron/hotkey run would interpolate them to '' and quietly misfire (fetch
+  // "", message nobody) rather than fail. Enable is refused rather than
+  // silently honoured, so the returned flow snaps the UI toggle back off.
+  private gateEnabled(flow: FlowDefinition): FlowDefinition {
+    if (!flow.enabled) return flow;
+    const missing = missingRequiredVariables(flow);
+    if (missing.length === 0) return flow;
+    const names = missing.map((v) => v.label || v.key).join(', ');
+    sendLog(`🚫 [AgentFlow] Flow "${flow.name}" cannot be enabled — missing required settings: ${names}`);
+    return { ...flow, enabled: false };
+  }
+
   async save(flow: FlowDefinition): Promise<FlowDefinition> {
-    const normalizedFlow = this.normalizeFlow(flow);
+    const normalizedFlow = this.gateEnabled(this.normalizeFlow(flow));
     const idx = this.flows.findIndex((f) => f.id === flow.id);
     normalizedFlow.updatedAt = new Date().toISOString();
     const hadBotTrigger = idx >= 0 ? this.flowHasBotTrigger(this.flows[idx]) : false;
@@ -147,6 +180,47 @@ export class FlowManager {
     return true;
   }
 
+  async deleteMany(flowIds: string[]): Promise<boolean> {
+    const idSet = new Set(flowIds);
+    const removed = this.flows.filter((f) => idSet.has(f.id));
+    if (removed.length === 0) return false;
+    let hadBotTrigger = false;
+    for (const flow of removed) {
+      if (this.flowHasBotTrigger(flow)) hadBotTrigger = true;
+      this.triggers.unregister(flow);
+    }
+    this.flows = this.flows.filter((f) => !idSet.has(f.id));
+    await saveFlowsToDisk(this.flows);
+    if (hadBotTrigger) {
+      this._onBotCommandsChanged?.();
+    }
+    return true;
+  }
+
+  async setEnabledMany(flowIds: string[], enabled: boolean): Promise<FlowDefinition[]> {
+    const idSet = new Set(flowIds);
+    let hadBotTrigger = false;
+    for (const flow of this.flows) {
+      if (!idSet.has(flow.id) || flow.enabled === enabled) continue;
+      const missing = enabled ? missingRequiredVariables(flow) : [];
+      if (missing.length > 0) {
+        const names = missing.map((v) => v.label || v.key).join(', ');
+        sendLog(`🚫 [AgentFlow] Flow "${flow.name}" cannot be enabled — missing required settings: ${names}`);
+        continue;
+      }
+      this.triggers.unregister(flow);
+      flow.enabled = enabled;
+      flow.updatedAt = new Date().toISOString();
+      if (enabled) this.triggers.register(flow);
+      if (this.flowHasBotTrigger(flow)) hadBotTrigger = true;
+    }
+    await saveFlowsToDisk(this.flows);
+    if (hadBotTrigger) {
+      this._onBotCommandsChanged?.();
+    }
+    return this.flows;
+  }
+
   async duplicate(flowId: string): Promise<FlowDefinition | null> {
     const idx = this.flows.findIndex((f) => f.id === flowId);
     if (idx < 0) return null;
@@ -163,6 +237,7 @@ export class FlowManager {
         ...tr,
         weekdays: tr.weekdays ? [...tr.weekdays] : undefined,
       })),
+      variables: cloneFlowVariables(source.variables),
       steps: source.steps.map((step) => ({
         ...step,
         id: createEntityId(),
@@ -237,14 +312,31 @@ export class FlowManager {
     }
 
     const triggers = [flow.trigger, ...(flow.extraTriggers ?? [])];
-    const isBotOnly = triggers.length > 0 && triggers.every((t) => t.type === 'bot');
+    const isBotOnly = triggers.length > 0 && triggers.every((tr) => tr.type === 'bot');
     if (isBotOnly && source !== 'bot') {
-      sendLog(`🚫 [AgentFlow] Flow "${flow.name}" requires a Telegram trigger — skipped (source: ${source})`);
+      sendLog(`🚫 [AgentFlow] Flow "${flow.name}" requires a bot trigger — skipped (source: ${source})`);
       return {
         taskId,
         result: Promise.resolve(
-          this.failureResult(flowId, 'Bot trigger flows must be invoked from Telegram', flow.steps.length),
+          this.failureResult(flowId, 'Bot trigger flows must be invoked from Telegram or LINE', flow.steps.length),
         ),
+      };
+    }
+
+    // A required variable left blank interpolates to '' — the run would not
+    // fail, it would quietly do the wrong thing (fetch "", message nobody).
+    // Refuse the run instead, naming the fields so the fix is one click away.
+    const missing = missingRequiredVariables(flow);
+    if (missing.length > 0) {
+      const names = missing.map((v) => v.label || v.key).join(', ');
+      sendLog(`🚫 [AgentFlow] Flow "${flow.name}" is missing required settings: ${names}`);
+      return {
+        taskId,
+        result: Promise.resolve(this.failureResult(
+          flowId,
+          t(getLangCache(), 'agentflow.variables.missingRequired', { names }),
+          flow.steps.length,
+        )),
       };
     }
 
@@ -354,7 +446,10 @@ export class FlowManager {
       const onLog = (log: FlowExecutionLog): void => {
         sendToRenderer(IPC.FLOW_EXECUTION_LOG, log);
       };
-      return await executeFlow(flow, this.deps, onLog, extraContext, controller.signal);
+      const result = await executeFlow(flow, this.deps, onLog, extraContext, controller.signal);
+      this.recordRunMetrics(result);
+      this.notifyRunOutcome(flow, result);
+      return result;
     } finally {
       closeRunPages(flowId);
       this._abortControllers.delete(flowId);
@@ -364,16 +459,55 @@ export class FlowManager {
     }
   }
 
+  // Count only real runs (executeFlow completed and produced a result): a
+  // stop-skill end reports success:true, so it counts as success; user aborts
+  // are neither success nor failure and stay out of the stats entirely.
+  private recordRunMetrics(result: FlowExecutionResult): void {
+    if (result.aborted) return;
+    recordTaskOutcome('flow', result.success ? 'success' : classifyFailure(result.error));
+  }
+
+  // Automatic run-outcome notifications, gated by the per-event user switches.
+  // Distinct from the explicit `notify` skill; user aborts stay silent.
+  private notifyRunOutcome(flow: FlowDefinition, result: FlowExecutionResult): void {
+    if (result.aborted) return;
+    const strings = getLangCache();
+    if (result.success && config.notifyEvents.flowSuccess) {
+      sendWebNotification(
+        t(strings, 'notify.flow.success.title'),
+        t(strings, 'notify.flow.success.body', { flow: flow.name }),
+        'success',
+      );
+    } else if (!result.success && config.notifyEvents.flowFailure) {
+      const compactError = (result.error ?? '').replace(/\s+/g, ' ').trim();
+      const displayError = compactError.length > 90 ? `${compactError.slice(0, 90)}…` : compactError;
+      sendWebNotification(
+        t(strings, 'notify.flow.failure.title'),
+        t(strings, 'notify.flow.failure.body', { flow: flow.name, error: displayError }),
+        'error',
+      );
+    }
+  }
+
   private normalizeFlow(flow: FlowDefinition): FlowDefinition {
     const triggerNeedsNorm = shouldNormalizeCronTrigger(flow.trigger);
     const extra = flow.extraTriggers;
     const extraNeedsNorm = Array.isArray(extra) && extra.some(shouldNormalizeCronTrigger);
-    if (!triggerNeedsNorm && !extraNeedsNorm) return flow;
+    // Anything on disk predating flow variables has no `variables` key at all;
+    // a malformed one (hand-edited flows.json, a bad import) is dropped rather
+    // than left to interpolate as an empty string at run time.
+    const rawVariables = flow.variables;
+    const variables = sanitizeFlowVariables(rawVariables);
+    const variablesNeedNorm = rawVariables !== undefined
+      && JSON.stringify(variables) !== JSON.stringify(rawVariables);
+
+    if (!triggerNeedsNorm && !extraNeedsNorm && !variablesNeedNorm) return flow;
     const next: FlowDefinition = { ...flow };
     if (triggerNeedsNorm) next.trigger = normalizeCronTrigger(flow.trigger);
     if (extra) {
       next.extraTriggers = extra.map((t) => (shouldNormalizeCronTrigger(t) ? normalizeCronTrigger(t) : t));
     }
+    if (variablesNeedNorm) next.variables = variables;
     return next;
   }
 }

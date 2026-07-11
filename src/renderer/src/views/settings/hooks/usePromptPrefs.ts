@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { settingsApi } from '../../../api/electronApi';
 import { useI18nStore } from '../../../store/i18nStore';
+import { useAppStore } from '../../../store/appStore';
 import type { PromptLength, PromptPreferences, PromptTone } from '../../../../../shared/types';
 
 export function buildCombinedPrompt(
@@ -44,6 +45,9 @@ export function usePromptPrefs() {
 
   const savePromptPrefs = useCallback(async (prefs: PromptPreferences) => {
     const systemInstruction = buildCombinedPrompt(prefs, t);
+    // Keep the chat welcome greeting in sync with the name the user just set,
+    // mirroring how the hotkey setting pushes into the store on change.
+    useAppStore.getState().setUserNickname(prefs.nickname ?? '');
     await settingsApi.updatePromptPreferences(prefs, systemInstruction);
   }, [t]);
 
@@ -83,6 +87,7 @@ export function usePromptPrefs() {
     setPromptPrefs(prefs);
     setSyncSystemLanguageToModel(syncLang);
     setYoutubePrompt(ytPrompt);
+    useAppStore.getState().setUserNickname(prefs.nickname ?? '');
   }, []);
 
   return {

@@ -1,15 +1,48 @@
-import type { BrowserWindow, WebContents } from 'electron';
+import type { BrowserWindow, Cookie, WebContents } from 'electron';
 import { navigateAndWait, isCloudflareChallengeActive, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
 import { executeAutomationWithTimeout, countElements, dispatchFocusEvents } from './automationExecutor';
-import { showInteractiveWorkerWindow } from '../windows';
+import { isExpiredCookie } from '../helpers';
+import { showInteractiveWorkerWindow, showLoginWindowIfNeeded } from '../windows';
 import { raiseVerificationChallenge, VERIFICATION_CHALLENGE_ERROR_NAME } from './verificationChallenge';
-import { PROVIDER_URLS } from '../../shared/types';
+import { PROVIDER_LABELS, PROVIDER_URLS } from '../../shared/types';
 import { CLEAN_UA } from '../userAgent';
 import { applyWorkerUserAgent } from '../clientHints';
 
 // Backward-compatible alias: consumers (taskProcessor, flow executor) still import
 // this name; it now points at the shared, provider-neutral verification-challenge marker.
 export const PERPLEXITY_CLOUDFLARE_ERROR_NAME = VERIFICATION_CHALLENGE_ERROR_NAME;
+
+const PERPLEXITY_LOGIN_REQUIRED = 'PERPLEXITY_LOGIN_REQUIRED';
+
+// Perplexity signs in through next-auth. The legacy `__Secure-next-auth.session-token` and the
+// newer `__Secure-pplx.session.<id>` carry the same JWT; an anonymous visitor is issued neither
+// (it only gets the `pplx.edge-*` and Cloudflare cookies). Accepting either keeps the check
+// working across the migration.
+const PERPLEXITY_SESSION_COOKIE_PREFIXES = [
+  '__Secure-next-auth.session-token',
+  '__Secure-pplx.session.',
+] as const;
+
+// Single source of truth for "this Perplexity session is signed in" — shared with the account
+// status panel (authStatus) and the post-task storage cleanup (helpers), which must agree or a
+// live session gets wiped as if it were anonymous.
+export function isPerplexitySessionCookie(cookie: Cookie): boolean {
+  return (
+    PERPLEXITY_SESSION_COOKIE_PREFIXES.some((prefix) => cookie.name.startsWith(prefix)) &&
+    Boolean(cookie.value) &&
+    !isExpiredCookie(cookie.expirationDate)
+  );
+}
+
+export function isPerplexityLoginRequiredError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? '');
+  return msg.includes(PERPLEXITY_LOGIN_REQUIRED);
+}
+
+async function hasPerplexitySession(workerWin: BrowserWindow): Promise<boolean> {
+  const cookies = await workerWin.webContents.session.cookies.get({ url: PROVIDER_URLS.perplexity });
+  return cookies.some(isPerplexitySessionCookie);
+}
 
 export async function runPerplexityAutomation(
   workerWin: BrowserWindow,
@@ -34,6 +67,15 @@ export async function runPerplexityAutomation(
       errorKey: 'cloudflare.error.verificationFailed',
       logMessage: '⚠️ Cloudflare security check detected — task marked as FAILED and removed from queue',
     });
+  }
+
+  // Perplexity no longer answers anonymous prompts: a logged-out page still renders the composer,
+  // so the automation would submit and then stall on the sign-in wall instead of failing fast.
+  // Reveal the interactive login window here (provider layer) so both chat and AgentFlow contexts
+  // surface it; orchestration layers only handle messaging.
+  if (!(await hasPerplexitySession(workerWin))) {
+    await showLoginWindowIfNeeded(PROVIDER_LABELS.perplexity, PROVIDER_URLS.perplexity);
+    throw new Error(`${PERPLEXITY_LOGIN_REQUIRED}: Perplexity has no active session cookie`);
   }
 
   await dispatchFocusEvents(wc);
@@ -328,17 +370,11 @@ function buildPerplexityAutomationScript(
 
   // ── Submit ───────────────────────────────────────────────────────────────────
   // The submit button is the primary (bg-button-bg) button inside the ask-input
-  // container; the English aria-label selectors are kept only as a fallback.
   function findSubmitBtn() {
     var container = document.querySelector('[data-ask-input-container="true"]');
     var btn = container ? container.querySelector('button.bg-button-bg') : null;
     if (btn) return btn;
-    var SEND_SELECTORS = ['button[aria-label="Submit"]', 'button[aria-label="Send"]', 'button[data-testid="submit-button"]'];
-    for (var s = 0; s < SEND_SELECTORS.length; s++) {
-      var b = document.querySelector(SEND_SELECTORS[s]);
-      if (b) return b;
-    }
-    return null;
+    return document.querySelector('button[data-testid="submit-button"]');
   }
 
   var sent = false;

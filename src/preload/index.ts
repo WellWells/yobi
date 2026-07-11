@@ -1,13 +1,15 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/types';
 import type {
-  AccountStatus, AuthProvider, ByokConnectionProbe, ByokGroupSaveRequest, ByokInstanceSaveRequest, ByokModelsResult,
+  AccountStatus, AuthProvider, BackupCategoryId, BackupCategoryInfo, BackupExportResult,
+  BackupImportResult, BackupInspectResult, BotLlmDirectConfig, ByokConnectionProbe, ByokGroupSaveRequest, ByokInstanceSaveRequest, ByokModelsResult,
   ByokSettingsSnapshot, ByokTestResult, CaptureSettings, ChatCommandResult, DuckaiModelInfo,
-  FeedCandidate, FlowDefinition, FlowExecutionEvent, FlowExecutionLog, FlowExecutionResult,
-  FlowGenerationResult, MarkdownCaptureRequest, MarkdownCaptureResult, OutputFile, PromptPreferences,
+  FeedCandidate, FlowDefinition, FlowExecutionEvent, FlowExecutionLog, FlowExecutionResult, HiddenSources,
+  FlowGenerationResult, MarkdownCaptureRequest, MarkdownCaptureResult, MetricsSnapshot, NotifyEventPrefs, OutputFile, PromptPreferences,
   PromptTriggerOptions, Provider, QueueState, EmailSettingsSnapshot, SmtpCredentials,
-  SelectPathRequest, SelectPathResult, SettingsSnapshot, TelegramProviderCommand, TelegramRuntimeSnapshot,
-  TelegramSettingsSnapshot, UpdateAvailablePayload, UiNotificationPayload, WorkerAttention,
+  SelectPathRequest, SelectPathResult, SettingsSnapshot, TempChatResult, BotProviderCommand, TelegramRuntimeSnapshot,
+  TelegramSettingsSnapshot, LineSettingsSnapshot, LineRuntimeSnapshot, LineCredentialsUpdate,
+  UpdateAvailablePayload, UpdateSource, UiNotificationPayload,
 } from '../shared/types';
 
 export type ElectronAPI = {
@@ -23,7 +25,7 @@ export type ElectronAPI = {
   onFileListUpdate: (cb: (files: OutputFile[]) => void) => () => void;
   onUiNotification: (cb: (payload: UiNotificationPayload) => void) => () => void;
   onTelegramRuntime: (cb: (snapshot: TelegramRuntimeSnapshot) => void) => () => void;
-  onWorkerStatus: (cb: (state: WorkerAttention) => void) => () => void;
+  onLineRuntime: (cb: (snapshot: LineRuntimeSnapshot) => void) => () => void;
 
   getAccountStatuses: () => Promise<AccountStatus[]>;
   openAccountLogin: (provider: AuthProvider) => Promise<boolean>;
@@ -35,6 +37,7 @@ export type ElectronAPI = {
   searchFileList: (query: string) => Promise<OutputFile[]>;
   getFileContent: (filePath: string) => Promise<string | null>;
   deleteFile: (filePath: string) => Promise<boolean>;
+  deleteFiles: (filePaths: string[]) => Promise<number>;
   deleteAllFiles: () => Promise<number>;
   updateFileTitle: (filePath: string, title: string) => Promise<{ ok: boolean; updatedPath: string }>;
   updateFileH1: (filePath: string, title: string) => Promise<boolean>;
@@ -44,6 +47,8 @@ export type ElectronAPI = {
   setHotkeyPaused: (paused: boolean) => Promise<boolean>;
   getAiUrl: () => Promise<string>;
   updateAiUrl: (url: string) => Promise<boolean>;
+  getHiddenSources: () => Promise<HiddenSources>;
+  updateHiddenSources: (next: HiddenSources) => Promise<{ ok: boolean }>;
 
   getLanguageList: () => Promise<string[]>;
   getLanguageContent: (lang: string) => Promise<Record<string, unknown> | null>;
@@ -51,6 +56,7 @@ export type ElectronAPI = {
   setLocaleAuto: (lang: string) => Promise<boolean>;
 
   checkForUpdates: () => Promise<boolean>;
+  getUpdateSource: () => Promise<UpdateSource>;
   onUpdateAvailable: (cb: (payload: UpdateAvailablePayload) => void) => () => void;
   onUpdateNotAvailable: (cb: () => void) => () => void;
   onUpdateError: (cb: () => void) => () => void;
@@ -62,6 +68,8 @@ export type ElectronAPI = {
   updateSyncSystemLanguageToModel: (enabled: boolean) => Promise<boolean>;
   getNotifyOnComplete: () => Promise<boolean>;
   updateNotifyOnComplete: (enabled: boolean) => Promise<boolean>;
+  getNotifyEvents: () => Promise<NotifyEventPrefs>;
+  updateNotifyEvents: (prefs: NotifyEventPrefs) => Promise<boolean>;
   getPromptPreferences: () => Promise<PromptPreferences>;
   updatePromptPreferences: (prefs: PromptPreferences, builtPrompt: string) => Promise<boolean>;
   getYoutubePrompt: () => Promise<string>;
@@ -82,8 +90,10 @@ export type ElectronAPI = {
   openPath: (filePath: string) => Promise<boolean>;
   openConfigDir: () => Promise<boolean>;
   openThirdPartyLicenses: () => Promise<boolean>;
-  exportConfig: () => Promise<boolean>;
-  importConfig: () => Promise<SettingsSnapshot | null>;
+  backupGetCategories: () => Promise<BackupCategoryInfo[]>;
+  backupExport: (categories: BackupCategoryId[], namePrefix?: string) => Promise<BackupExportResult>;
+  backupInspect: (zipPath: string) => Promise<BackupInspectResult>;
+  backupImport: (zipPath: string, categories: BackupCategoryId[]) => Promise<BackupImportResult>;
   selectPath: (request?: SelectPathRequest) => Promise<SelectPathResult | null>;
   captureMarkdownDocument: (request: MarkdownCaptureRequest) => Promise<MarkdownCaptureResult>;
 
@@ -92,11 +102,24 @@ export type ElectronAPI = {
   updateTelegramBotToken: (token: string) => Promise<{ ok: boolean; message?: string }>;
   updateTelegramAllowGroupCommands: (enabled: boolean) => Promise<boolean>;
   updateTelegramDefaultReplyMode: (mode: 'markdown' | 'png' | 'webp' | 'pdf') => Promise<boolean>;
+  updateTelegramCompactReply: (enabled: boolean) => Promise<boolean>;
   updateTelegramAdminUsers: (userIds: number[]) => Promise<boolean>;
-  updateTelegramProviderCommands: (commands: Record<Provider, TelegramProviderCommand>) => Promise<boolean>;
+  getBotProviderCommands: () => Promise<Record<Provider, BotProviderCommand>>;
+  updateBotProviderCommands: (commands: Record<Provider, BotProviderCommand>) => Promise<boolean>;
+  updateTelegramLlmDirect: (config: BotLlmDirectConfig) => Promise<boolean>;
   generateTelegramPairingCode: () => Promise<{ code: string; expiresAt: string } | null>;
   revokeTelegramPairingCode: (code: string) => Promise<boolean>;
   unpairTelegramUser: (userId: number) => Promise<boolean>;
+
+  getLineSettings: () => Promise<LineSettingsSnapshot>;
+  updateLineEnabled: (enabled: boolean) => Promise<{ ok: boolean; message?: string }>;
+  updateLineCredentials: (creds: LineCredentialsUpdate) => Promise<{ ok: boolean; message?: string }>;
+  updateLinePort: (port: number) => Promise<{ ok: boolean; message?: string }>;
+  updateLineLlmDirect: (config: BotLlmDirectConfig) => Promise<{ ok: boolean; snapshot: LineSettingsSnapshot }>;
+  generateLinePairingCode: () => Promise<{ ok: boolean; snapshot: LineSettingsSnapshot }>;
+  revokeLinePairingCode: (code: string) => Promise<{ ok: boolean; snapshot: LineSettingsSnapshot }>;
+  unpairLineUser: (userId: string) => Promise<{ ok: boolean; snapshot: LineSettingsSnapshot }>;
+  refreshLineAccount: () => Promise<{ ok: boolean; message?: string }>;
 
   getEmailSettings: () => Promise<EmailSettingsSnapshot>;
   updateEmailEnabled: (enabled: boolean) => Promise<{ ok: boolean }>;
@@ -109,6 +132,17 @@ export type ElectronAPI = {
   testByokInstance: (req: ByokConnectionProbe) => Promise<ByokTestResult>;
   saveByokGroup: (req: ByokGroupSaveRequest) => Promise<{ ok: boolean; snapshot: ByokSettingsSnapshot }>;
   deleteByokGroup: (id: string) => Promise<{ ok: boolean; snapshot: ByokSettingsSnapshot }>;
+
+  getTempChatMode: () => Promise<boolean>;
+  setTempChatMode: (enabled: boolean) => Promise<boolean>;
+  onTempChatModeChanged: (cb: (enabled: boolean) => void) => () => void;
+  onTempChatResult: (cb: (payload: TempChatResult) => void) => () => void;
+
+  getMetrics: () => Promise<MetricsSnapshot>;
+  resetMetrics: () => Promise<MetricsSnapshot>;
+  getMetricsEnabled: () => Promise<boolean>;
+  updateMetricsEnabled: (enabled: boolean) => Promise<boolean>;
+  onMetricsChanged: (cb: (snapshot: MetricsSnapshot) => void) => () => void;
 
   getCloseToTray: () => Promise<boolean>;
   updateCloseToTray: (enabled: boolean) => Promise<boolean>;
@@ -140,6 +174,8 @@ export type ElectronAPI = {
   getFlows: () => Promise<FlowDefinition[]>;
   saveFlow: (flow: FlowDefinition) => Promise<FlowDefinition | null>;
   deleteFlow: (flowId: string) => Promise<boolean>;
+  deleteFlows: (flowIds: string[]) => Promise<boolean>;
+  setFlowsEnabled: (flowIds: string[], enabled: boolean) => Promise<FlowDefinition[]>;
   duplicateFlow: (flowId: string) => Promise<FlowDefinition | null>;
   moveFlow: (flowId: string, direction: 'up' | 'down') => Promise<FlowDefinition[]>;
   reorderFlows: (orderedIds: string[]) => Promise<FlowDefinition[]>;
@@ -201,12 +237,11 @@ const api: ElectronAPI = {
     ipcRenderer.on(IPC.TELEGRAM_RUNTIME, handler);
     return () => ipcRenderer.removeListener(IPC.TELEGRAM_RUNTIME, handler);
   },
-  onWorkerStatus: (cb) => {
-    const handler = (_: Electron.IpcRendererEvent, state: WorkerAttention) => cb(state);
-    ipcRenderer.on(IPC.WORKER_STATUS, handler);
-    return () => ipcRenderer.removeListener(IPC.WORKER_STATUS, handler);
+  onLineRuntime: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, snapshot: LineRuntimeSnapshot) => cb(snapshot);
+    ipcRenderer.on(IPC.LINE_RUNTIME, handler);
+    return () => ipcRenderer.removeListener(IPC.LINE_RUNTIME, handler);
   },
-
   getAccountStatuses: () => ipcRenderer.invoke(IPC.GET_ACCOUNT_STATUSES),
   openAccountLogin: (provider) => ipcRenderer.invoke(IPC.OPEN_ACCOUNT_LOGIN, provider),
   logoutAccount: (provider) => ipcRenderer.invoke(IPC.ACCOUNT_LOGOUT, provider),
@@ -221,6 +256,7 @@ const api: ElectronAPI = {
   searchFileList: (query) => ipcRenderer.invoke(IPC.SEARCH_FILE_LIST, query),
   getFileContent: (filePath) => ipcRenderer.invoke(IPC.GET_FILE_CONTENT, filePath),
   deleteFile: (filePath) => ipcRenderer.invoke(IPC.DELETE_FILE, filePath),
+  deleteFiles: (filePaths) => ipcRenderer.invoke(IPC.DELETE_FILES, filePaths),
   deleteAllFiles: () => ipcRenderer.invoke(IPC.DELETE_ALL_FILES),
   updateFileTitle: (filePath, title) => ipcRenderer.invoke(IPC.UPDATE_FILE_TITLE, filePath, title),
   updateFileH1: (filePath, title) => ipcRenderer.invoke(IPC.UPDATE_FILE_H1, filePath, title),
@@ -230,6 +266,8 @@ const api: ElectronAPI = {
   setHotkeyPaused: (paused) => ipcRenderer.invoke(IPC.SET_HOTKEY_PAUSED, paused),
   getAiUrl: () => ipcRenderer.invoke(IPC.GET_AI_URL),
   updateAiUrl: (url) => ipcRenderer.invoke(IPC.UPDATE_AI_URL, url),
+  getHiddenSources: () => ipcRenderer.invoke(IPC.GET_HIDDEN_SOURCES),
+  updateHiddenSources: (next) => ipcRenderer.invoke(IPC.UPDATE_HIDDEN_SOURCES, next),
 
   getLanguageList: () => ipcRenderer.invoke(IPC.GET_LANGUAGE_LIST),
   getLanguageContent: (lang) => ipcRenderer.invoke(IPC.GET_LANGUAGE_CONTENT, lang),
@@ -237,6 +275,7 @@ const api: ElectronAPI = {
   setLocaleAuto: (lang) => ipcRenderer.invoke(IPC.SET_LOCALE_AUTO, lang),
 
   checkForUpdates: () => ipcRenderer.invoke(IPC.UPDATE_CHECK),
+  getUpdateSource: () => ipcRenderer.invoke(IPC.GET_UPDATE_SOURCE),
   onUpdateAvailable: (cb) => {
     const handler = (_: Electron.IpcRendererEvent, payload: UpdateAvailablePayload) => cb(payload);
     ipcRenderer.on(IPC.UPDATE_AVAILABLE, handler);
@@ -260,6 +299,8 @@ const api: ElectronAPI = {
   updateSyncSystemLanguageToModel: (enabled) => ipcRenderer.invoke(IPC.UPDATE_SYNC_SYSTEM_LANGUAGE_TO_MODEL, enabled),
   getNotifyOnComplete: () => ipcRenderer.invoke(IPC.GET_NOTIFY_ON_COMPLETE),
   updateNotifyOnComplete: (enabled) => ipcRenderer.invoke(IPC.UPDATE_NOTIFY_ON_COMPLETE, enabled),
+  getNotifyEvents: () => ipcRenderer.invoke(IPC.GET_NOTIFY_EVENTS),
+  updateNotifyEvents: (prefs) => ipcRenderer.invoke(IPC.UPDATE_NOTIFY_EVENTS, prefs),
   getPromptPreferences: () => ipcRenderer.invoke(IPC.GET_PROMPT_PREFERENCES),
   updatePromptPreferences: (prefs, builtPrompt) => ipcRenderer.invoke(IPC.UPDATE_PROMPT_PREFERENCES, prefs, builtPrompt),
   getYoutubePrompt: () => ipcRenderer.invoke(IPC.GET_YOUTUBE_PROMPT),
@@ -280,8 +321,10 @@ const api: ElectronAPI = {
   openPath: (filePath) => ipcRenderer.invoke(IPC.OPEN_PATH, filePath),
   openConfigDir: () => ipcRenderer.invoke(IPC.OPEN_CONFIG_DIR),
   openThirdPartyLicenses: () => ipcRenderer.invoke(IPC.OPEN_THIRD_PARTY_LICENSES),
-  exportConfig: () => ipcRenderer.invoke(IPC.EXPORT_CONFIG),
-  importConfig: () => ipcRenderer.invoke(IPC.IMPORT_CONFIG),
+  backupGetCategories: () => ipcRenderer.invoke(IPC.BACKUP_CATEGORIES),
+  backupExport: (categories, namePrefix) => ipcRenderer.invoke(IPC.BACKUP_EXPORT, categories, namePrefix),
+  backupInspect: (zipPath) => ipcRenderer.invoke(IPC.BACKUP_INSPECT, zipPath),
+  backupImport: (zipPath, categories) => ipcRenderer.invoke(IPC.BACKUP_IMPORT, zipPath, categories),
   selectPath: (request) => ipcRenderer.invoke(IPC.SELECT_PATH, request),
   captureMarkdownDocument: (request) => ipcRenderer.invoke(IPC.CAPTURE_MARKDOWN_IMAGE, request),
 
@@ -290,11 +333,24 @@ const api: ElectronAPI = {
   updateTelegramBotToken: (token) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_BOT_TOKEN, token),
   updateTelegramAllowGroupCommands: (enabled) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_ALLOW_GROUP_COMMANDS, enabled),
   updateTelegramDefaultReplyMode: (mode) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_DEFAULT_REPLY_MODE, mode),
+  updateTelegramCompactReply: (enabled) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_COMPACT_REPLY, enabled),
   updateTelegramAdminUsers: (userIds) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_ADMIN_USERS, userIds),
-  updateTelegramProviderCommands: (commands) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_PROVIDER_COMMANDS, commands),
+  getBotProviderCommands: () => ipcRenderer.invoke(IPC.GET_BOT_PROVIDER_COMMANDS),
+  updateBotProviderCommands: (commands) => ipcRenderer.invoke(IPC.UPDATE_BOT_PROVIDER_COMMANDS, commands),
+  updateTelegramLlmDirect: (config) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_LLM_DIRECT, config),
   generateTelegramPairingCode: () => ipcRenderer.invoke(IPC.GENERATE_TELEGRAM_PAIRING_CODE),
   revokeTelegramPairingCode: (code) => ipcRenderer.invoke(IPC.REVOKE_TELEGRAM_PAIRING_CODE, code),
   unpairTelegramUser: (userId) => ipcRenderer.invoke(IPC.UNPAIR_TELEGRAM_USER, userId),
+
+  getLineSettings: () => ipcRenderer.invoke(IPC.GET_LINE_SETTINGS),
+  updateLineEnabled: (enabled) => ipcRenderer.invoke(IPC.UPDATE_LINE_ENABLED, enabled),
+  updateLineCredentials: (creds) => ipcRenderer.invoke(IPC.UPDATE_LINE_CREDENTIALS, creds),
+  updateLinePort: (port) => ipcRenderer.invoke(IPC.UPDATE_LINE_PORT, port),
+  updateLineLlmDirect: (config) => ipcRenderer.invoke(IPC.UPDATE_LINE_LLM_DIRECT, config),
+  generateLinePairingCode: () => ipcRenderer.invoke(IPC.GENERATE_LINE_PAIRING_CODE),
+  revokeLinePairingCode: (code) => ipcRenderer.invoke(IPC.REVOKE_LINE_PAIRING_CODE, code),
+  unpairLineUser: (userId) => ipcRenderer.invoke(IPC.UNPAIR_LINE_USER, userId),
+  refreshLineAccount: () => ipcRenderer.invoke(IPC.REFRESH_LINE_ACCOUNT),
 
   getEmailSettings: () => ipcRenderer.invoke(IPC.GET_EMAIL_SETTINGS),
   updateEmailEnabled: (enabled) => ipcRenderer.invoke(IPC.UPDATE_EMAIL_ENABLED, enabled),
@@ -307,6 +363,29 @@ const api: ElectronAPI = {
   testByokInstance: (req) => ipcRenderer.invoke(IPC.BYOK_TEST_INSTANCE, req),
   saveByokGroup: (req) => ipcRenderer.invoke(IPC.BYOK_SAVE_GROUP, req),
   deleteByokGroup: (id) => ipcRenderer.invoke(IPC.BYOK_DELETE_GROUP, id),
+
+  getTempChatMode: () => ipcRenderer.invoke(IPC.TEMP_CHAT_GET_MODE),
+  setTempChatMode: (enabled) => ipcRenderer.invoke(IPC.TEMP_CHAT_SET_MODE, enabled),
+  onTempChatModeChanged: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, enabled: boolean) => cb(enabled);
+    ipcRenderer.on(IPC.TEMP_CHAT_MODE_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.TEMP_CHAT_MODE_CHANGED, handler);
+  },
+  onTempChatResult: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, payload: TempChatResult) => cb(payload);
+    ipcRenderer.on(IPC.TEMP_CHAT_RESULT, handler);
+    return () => ipcRenderer.removeListener(IPC.TEMP_CHAT_RESULT, handler);
+  },
+
+  getMetrics: () => ipcRenderer.invoke(IPC.METRICS_GET),
+  resetMetrics: () => ipcRenderer.invoke(IPC.METRICS_RESET),
+  getMetricsEnabled: () => ipcRenderer.invoke(IPC.GET_METRICS_ENABLED),
+  updateMetricsEnabled: (enabled) => ipcRenderer.invoke(IPC.UPDATE_METRICS_ENABLED, enabled),
+  onMetricsChanged: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, snapshot: MetricsSnapshot) => cb(snapshot);
+    ipcRenderer.on(IPC.METRICS_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.METRICS_CHANGED, handler);
+  },
 
   getCloseToTray: () => ipcRenderer.invoke(IPC.GET_CLOSE_TO_TRAY),
   updateCloseToTray: (enabled) => ipcRenderer.invoke(IPC.UPDATE_CLOSE_TO_TRAY, enabled),
@@ -361,6 +440,8 @@ const api: ElectronAPI = {
   getFlows: () => ipcRenderer.invoke(IPC.FLOW_GET_ALL),
   saveFlow: (flow) => ipcRenderer.invoke(IPC.FLOW_SAVE, flow),
   deleteFlow: (flowId) => ipcRenderer.invoke(IPC.FLOW_DELETE, flowId),
+  deleteFlows: (flowIds) => ipcRenderer.invoke(IPC.FLOW_DELETE_MANY, flowIds),
+  setFlowsEnabled: (flowIds, enabled) => ipcRenderer.invoke(IPC.FLOW_SET_ENABLED_MANY, flowIds, enabled),
   duplicateFlow: (flowId) => ipcRenderer.invoke(IPC.FLOW_DUPLICATE, flowId),
   moveFlow: (flowId, direction) => ipcRenderer.invoke(IPC.FLOW_MOVE, flowId, direction),
   reorderFlows: (orderedIds) => ipcRenderer.invoke(IPC.FLOW_REORDER, orderedIds),

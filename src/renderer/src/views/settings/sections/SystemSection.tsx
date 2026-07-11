@@ -1,8 +1,11 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Box, Group, Stack, Button as MButton } from '@mantine/core';
 import { DatabaseBackup, Download, FolderOpen, History, RotateCcw, ShieldAlert, Trash2, Upload } from 'lucide-react';
 import { SectionCard, GroupHeader, SectionTitle, SettingRow, SettingDivider } from '../components';
 import { WebDialog } from '../../../components/WebDialog';
+import { BackupExportModal } from '../backup/BackupExportModal';
+import { BackupImportModal } from '../backup/BackupImportModal';
+import type { BackupImportResult } from '../../../../../shared/types';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 
 export type DangerAction = 'reset' | 'clear-history' | null;
@@ -12,8 +15,7 @@ interface Props {
   setDangerAction: (action: DangerAction) => void;
   onConfirmDangerAction: () => Promise<void>;
   onOpenConfigDir: () => Promise<void>;
-  onExportConfig: () => Promise<void>;
-  onImportConfig: () => Promise<void>;
+  onBackupRestored: (result: BackupImportResult) => Promise<void> | void;
   t: (key: string) => string;
   showSection: (tags: readonly string[], category: 'system') => boolean;
   isSearching: boolean;
@@ -22,11 +24,14 @@ interface Props {
 
 export const SystemSection: React.FC<Props> = ({
   dangerAction, setDangerAction, onConfirmDangerAction,
-  onOpenConfigDir, onExportConfig, onImportConfig,
+  onOpenConfigDir, onBackupRestored,
   t, showSection, isSearching, sectionGap,
 }) => {
   const isMac = navigator.userAgent.includes('Macintosh');
   const revealLabel = isMac ? t('settings.config.reveal.mac') : t('settings.config.reveal.win');
+
+  const [exportOpen, setExportOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   return (
     <Box>
@@ -34,7 +39,7 @@ export const SystemSection: React.FC<Props> = ({
 
       <Box display={showSection(TAG_SETS.config, 'system') ? 'block' : 'none'}>
         <SectionCard style={{ marginBottom: sectionGap }}>
-          <SectionTitle icon={<FolderOpen size={15} />} label={t('settings.config.title')} />
+          <SectionTitle icon={<DatabaseBackup size={15} />} label={t('settings.group.system')} />
           <Stack gap={12}>
             <SettingRow
               icon={<FolderOpen size={13} />}
@@ -52,21 +57,22 @@ export const SystemSection: React.FC<Props> = ({
             <SettingRow
               icon={<DatabaseBackup size={13} />}
               label={t('settings.config.backupRestore')}
+              hint={t('settings.backup.row.hint')}
               control={
                 <Group gap={8} wrap="nowrap">
                   <MButton
                     variant="default"
                     leftSection={<Download size={13} />}
-                    onClick={() => { void onExportConfig(); }}
+                    onClick={() => setExportOpen(true)}
                   >
-                    {t('settings.config.export')}
+                    {t('settings.backup.export')}
                   </MButton>
                   <MButton
                     variant="default"
                     leftSection={<Upload size={13} />}
-                    onClick={() => { void onImportConfig(); }}
+                    onClick={() => setImportOpen(true)}
                   >
-                    {t('settings.config.import')}
+                    {t('settings.backup.restore')}
                   </MButton>
                 </Group>
               }
@@ -117,6 +123,14 @@ export const SystemSection: React.FC<Props> = ({
           </Stack>
         </SectionCard>
       </Box>
+
+      <BackupExportModal open={exportOpen} t={t} onClose={() => setExportOpen(false)} />
+      <BackupImportModal
+        open={importOpen}
+        t={t}
+        onClose={() => setImportOpen(false)}
+        onImported={onBackupRestored}
+      />
 
       <WebDialog
         open={dangerAction !== null}

@@ -1,23 +1,13 @@
 import type { CSSVariablesResolver } from '@mantine/core';
-import type { Theme } from '../store/themeStore';
-import { lerpHex, hexToRgba } from './colorUtils';
+import { THEME_DEFS, VALID_THEMES, themeDef } from '../../../shared/themes';
+import type { Theme, ThemeColors } from '../../../shared/themes';
+import { lerpHex, hexToRgba, relativeLuminance } from './colorUtils';
 
-interface BaseTheme {
-  bgPrimary: string;
-  bgSurface: string;
-  bgElevated: string;
-  border: string;
-  textPrimary: string;
-  textSecondary: string;
-  textMuted: string;
-  textDisabled: string;
-  accent: string;
-  success: string;
-  warning: string;
-  error: string;
-}
+// Matches Mantine's autoContrast luminanceThreshold (mantineTheme.ts) so text
+// placed on the raw accent flips to dark in the same themes as filled buttons.
+const ON_ACCENT_LUMINANCE_THRESHOLD = 0.3;
 
-interface ThemeColors {
+interface ThemeCssVars {
   '--bg-primary': string;
   '--bg-secondary': string;
   '--bg-tertiary': string;
@@ -36,9 +26,10 @@ interface ThemeColors {
   '--border-hover': string;
   '--code-bg': string;
   '--selection-bg': string;
+  '--on-accent': string;
 }
 
-function expandTheme(base: BaseTheme, isLight: boolean): ThemeColors {
+function expandTheme(base: ThemeColors, isLight: boolean): ThemeCssVars {
   const toward = isLight ? '#000000' : '#ffffff';
   return {
     '--bg-primary': base.bgPrimary,
@@ -57,96 +48,51 @@ function expandTheme(base: BaseTheme, isLight: boolean): ThemeColors {
     '--selection-bg': hexToRgba(base.accent, isLight ? 0.18 : 0.25),
     '--bg-hover': lerpHex(base.bgElevated, toward, 0.12),
     '--border-hover': lerpHex(base.border, toward, 0.25),
-    '--accent-hover': lerpHex(base.accent, '#ffffff', 0.20),
+    '--accent-hover': lerpHex(base.accent, toward, 0.20),
     '--code-bg': base.bgSurface,
+    '--on-accent': relativeLuminance(base.accent) > ON_ACCENT_LUMINANCE_THRESHOLD ? '#1b1b1b' : '#ffffff',
   };
 }
 
-export const LIGHT_THEMES: readonly Theme[] = ['light', 'sepia', 'rosepine'];
+// Swatch data for the theme picker — derived from the same base definitions so
+// the picker can never drift from the actual theme colors.
+export interface ThemeSwatch {
+  theme: Theme;
+  background: string;
+  accent: string;
+  border: string;
+}
 
-const baseThemes: Record<Theme, BaseTheme> = {
-  dark: {
-    bgPrimary: '#0d1117', bgSurface: '#161b22', bgElevated: '#21262d',
-    border: '#30363d',
-    textPrimary: '#e6edf3', textSecondary: '#c9d1d9', textMuted: '#8b949e', textDisabled: '#6e7681',
-    accent: '#58a6ff',
-    success: '#3fb950', warning: '#d29922', error: '#f85149',
-  },
-  light: {
-    bgPrimary: '#ffffff', bgSurface: '#f6f8fa', bgElevated: '#eaeef2',
-    border: '#d0d7de',
-    textPrimary: '#1f2328', textSecondary: '#24292f', textMuted: '#656d76', textDisabled: '#8c959f',
-    accent: '#0969da',
-    success: '#1a7f37', warning: '#9a6700', error: '#d1242f',
-  },
-  dracula: {
-    bgPrimary: '#282a36', bgSurface: '#1e1f29', bgElevated: '#44475a',
-    border: '#6272a4',
-    textPrimary: '#f8f8f2', textSecondary: '#e2e0ff', textMuted: '#8b9ec7', textDisabled: '#6272a4',
-    accent: '#bd93f9',
-    success: '#50fa7b', warning: '#f1fa8c', error: '#ff5555',
-  },
-  nord: {
-    bgPrimary: '#2e3440', bgSurface: '#3b4252', bgElevated: '#434c5e',
-    border: '#4c566a',
-    textPrimary: '#eceff4', textSecondary: '#e5e9f0', textMuted: '#81a1c1', textDisabled: '#d8dee9',
-    accent: '#88c0d0',
-    success: '#a3be8c', warning: '#ebcb8b', error: '#bf616a',
-  },
-  amoled: {
-    bgPrimary: '#000000', bgSurface: '#0a0a0a', bgElevated: '#141414',
-    border: '#222222',
-    textPrimary: '#ffffff', textSecondary: '#e0e0e0', textMuted: '#909090', textDisabled: '#b0b0b0',
-    accent: '#00b4d8',
-    success: '#00e676', warning: '#ffab00', error: '#ff5252',
-  },
-  sepia: {
-    bgPrimary: '#f5f0e8', bgSurface: '#ece7de', bgElevated: '#e0d8cc',
-    border: '#c8bfaf',
-    textPrimary: '#2c2018', textSecondary: '#3d2e20', textMuted: '#7a6a59', textDisabled: '#9b8978',
-    accent: '#b5451b',
-    success: '#4a7c59', warning: '#c07f1f', error: '#a63220',
-  },
-  catppuccin: {
-    bgPrimary: '#1e1e2e', bgSurface: '#181825', bgElevated: '#313244',
-    border: '#45475a',
-    textPrimary: '#cdd6f4', textSecondary: '#bac2de', textMuted: '#a6adc8', textDisabled: '#9399b2',
-    accent: '#cba6f7',
-    success: '#a6e3a1', warning: '#f9e2af', error: '#f38ba8',
-  },
-  everforest: {
-    bgPrimary: '#2d353b', bgSurface: '#272e33', bgElevated: '#343f44',
-    border: '#475258',
-    textPrimary: '#d3c6aa', textSecondary: '#c5b7a3', textMuted: '#7a8478', textDisabled: '#9ca6a3',
-    accent: '#a7c080',
-    success: '#a7c080', warning: '#dbbc7f', error: '#e67e80',
-  },
-  rosepine: {
-    bgPrimary: '#faf4ed', bgSurface: '#fffaf3', bgElevated: '#f2e9e1',
-    border: '#dfd7cc',
-    textPrimary: '#575279', textSecondary: '#4a485b', textMuted: '#9893a5', textDisabled: '#b6b4ba',
-    accent: '#b4637a',
-    success: '#56949f', warning: '#ea9d34', error: '#b4637a',
-  },
-  gruvbox: {
-    bgPrimary: '#282828', bgSurface: '#1d2021', bgElevated: '#3c3836',
-    border: '#504945',
-    textPrimary: '#ebdbb2', textSecondary: '#d5c4a1', textMuted: '#928374', textDisabled: '#a89984',
-    accent: '#fe8019',
-    success: '#b8bb26', warning: '#fabd2f', error: '#fb4934',
-  },
-  cyberpunk: {
-    bgPrimary: '#0d0d1a', bgSurface: '#070711', bgElevated: '#12122a',
-    border: '#1a1a3e',
-    textPrimary: '#e0e0ff', textSecondary: '#c0c0f0', textMuted: '#8080cc', textDisabled: '#a0a0dd',
-    accent: '#00e5ff',
-    success: '#00ff88', warning: '#ffcc00', error: '#ff3355',
-  },
-};
+export const THEME_SWATCHES: readonly ThemeSwatch[] = VALID_THEMES.map((theme) => ({
+  theme,
+  background: THEME_DEFS[theme].colors.bgPrimary,
+  accent: THEME_DEFS[theme].colors.accent,
+  border: THEME_DEFS[theme].colors.border,
+}));
+
+// Half-dark / half-light swatch for the "follow system" picker option.
+export const AUTO_THEME_SWATCH = {
+  background: `linear-gradient(135deg, ${THEME_DEFS.dark.colors.bgPrimary} 50%, ${THEME_DEFS.light.colors.bgPrimary} 50%)`,
+  accent: `linear-gradient(135deg, ${THEME_DEFS.dark.colors.accent} 50%, ${THEME_DEFS.light.colors.accent} 50%)`,
+  border: 'var(--border)',
+} as const;
+
+// Applies the theme's CSS variables as inline styles on <html> so the first
+// paint (before MantineProvider mounts its resolver) already shows the right
+// theme instead of the static dark defaults in globals.css. Values come from
+// the same expandTheme() the resolver uses, so the two can never disagree.
+export function applyRootThemeVars(theme: Theme): void {
+  const def = themeDef(theme);
+  const colors = expandTheme(def.colors, def.light === true);
+  for (const [name, value] of Object.entries(colors)) {
+    document.documentElement.style.setProperty(name, value);
+  }
+}
 
 export function buildCssVariablesResolver(yobiTheme: Theme): CSSVariablesResolver {
-  const isLight = LIGHT_THEMES.includes(yobiTheme);
-  const colors = expandTheme(baseThemes[yobiTheme], isLight);
+  const def = themeDef(yobiTheme);
+  const isLight = def.light === true;
+  const colors = expandTheme(def.colors, isLight);
 
   const allVars = {
     '--bg-primary': colors['--bg-primary'],
@@ -167,6 +113,7 @@ export function buildCssVariablesResolver(yobiTheme: Theme): CSSVariablesResolve
     '--border-hover': colors['--border-hover'],
     '--code-bg': colors['--code-bg'],
     '--selection-bg': colors['--selection-bg'],
+    '--on-accent': colors['--on-accent'],
 
     '--mantine-color-body': colors['--bg-primary'],
     '--mantine-color-text': colors['--text-primary'],
@@ -209,4 +156,3 @@ export function buildCssVariablesResolver(yobiTheme: Theme): CSSVariablesResolve
     dark: !isLight ? { ...allVars, ...paletteHoverOverrides } : {},
   });
 }
-

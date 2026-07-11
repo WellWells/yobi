@@ -10,6 +10,16 @@ const JS_SETTLE_MS = 1_500;
 const JS_EXEC_TIMEOUT_MS = 10_000;
 const URL_PARSER_PARTITION = 'persist:url-parser';
 
+// Prepend https:// to a URL that has no scheme, so a bare domain like
+// "example.com" is fetched over https. An explicit http:// — or any other
+// scheme the user typed — is left exactly as written.
+export function ensureHttpScheme(url: string): string {
+  const trimmed = url.trim();
+  if (!trimmed) return trimmed;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
 export function fetchRawText(url: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(
@@ -17,7 +27,7 @@ export function fetchRawText(url: string): Promise<string> {
       RAW_FETCH_TIMEOUT_MS,
     );
 
-    const request = net.request({ url, method: 'GET' });
+    const request = net.request({ url: ensureHttpScheme(url), method: 'GET' });
     const chunks: Buffer[] = [];
 
     request.on('response', (response) => {

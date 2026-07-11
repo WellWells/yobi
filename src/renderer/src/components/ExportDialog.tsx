@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Button, Box, Flex, Group, Text } from '@mantine/core';
+import { Modal, Button, Box, Flex, Group, Text, Tooltip } from '@mantine/core';
 import 'katex/dist/katex.min.css';
 import type { CaptureFormat, CardTheme, MarkdownCapturePayload } from '../../../shared/types';
 import { Clipboard, Download, Image as ImageIcon, Save, Upload, } from 'lucide-react';
@@ -152,16 +152,20 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
         <Button variant="subtle" onClick={onCancel}>
           {t('dialog.cancel')}
         </Button>
-        <AppButton
-          variant="outline"
-          onClick={onCopy}
-          disabled={busy}
-          loading={busyMode === 'copy'}
-          justify="center"
-          leftSection={isPdf ? <Clipboard size={14} /> : <ImageIcon size={14} />}
-        >
-          {busyMode === 'copy' ? t('capture.copying') : t('capture.copy')}
-        </AppButton>
+        {/* PDF copy places a pastable FILE on the clipboard (not image pixels)
+            — say so, or a paste into an image field looks like a silent failure. */}
+        <Tooltip label={t('capture.copy.pdf.hint')} position="top" disabled={!isPdf} maw={300} multiline>
+          <AppButton
+            variant="outline"
+            onClick={onCopy}
+            disabled={busy}
+            loading={busyMode === 'copy'}
+            justify="center"
+            leftSection={isPdf ? <Clipboard size={14} /> : <ImageIcon size={14} />}
+          >
+            {busyMode === 'copy' ? t('capture.copying') : t('capture.copy')}
+          </AppButton>
+        </Tooltip>
         <AppButton
           variant="filled"
           onClick={onSave}

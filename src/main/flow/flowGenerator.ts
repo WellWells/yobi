@@ -1,15 +1,16 @@
 import type { FlowGenerationResult } from '../../shared/types';
-import { isByokTargetUrl } from '../../shared/types';
+import { PROVIDER_URLS } from '../../shared/types';
 import { buildFlowGenerationPrompt, buildFlowRepairPrompt } from '../../shared/flowSkillSchema';
 import { extractJsonFromLlmResponse, validateFlowCandidate } from '../../shared/flowValidation';
 import { getProviderLabel, preparePromptForProvider, runAutomation } from '../providers';
-import { runByokCompletion } from '../providers/byokClient';
 import { sendLog } from '../helpers';
 import { llmLane } from './lanes';
 import type { FlowExecutorDeps } from './types';
 
 const DEFAULT_GENERATION_TIMEOUT_MS = 120_000;
 const MAX_ATTEMPTS = 2;
+
+const GENERATION_PROVIDER_URL = PROVIDER_URLS.gemini;
 
 export async function generateFlowDefinition(
   description: string,
@@ -18,17 +19,14 @@ export async function generateFlowDefinition(
   const trimmed = description.trim();
   if (!trimmed) return { ok: false, error: 'Empty description' };
 
-  const providerUrl = deps.getTargetUrl();
-  const byokTarget = isByokTargetUrl(providerUrl);
+  const providerUrl = GENERATION_PROVIDER_URL;
 
-  if (!byokTarget) {
-    let workerWin = deps.getWorkerWin();
-    if ((!workerWin || workerWin.isDestroyed()) && deps.ensureWorkerWin) {
-      workerWin = await deps.ensureWorkerWin();
-    }
-    if (!workerWin || workerWin.isDestroyed()) {
-      return { ok: false, error: 'Worker window not available' };
-    }
+  let workerWin = deps.getWorkerWin();
+  if ((!workerWin || workerWin.isDestroyed()) && deps.ensureWorkerWin) {
+    workerWin = await deps.ensureWorkerWin();
+  }
+  if (!workerWin || workerWin.isDestroyed()) {
+    return { ok: false, error: 'Worker window not available' };
   }
 
   const providerLabel = getProviderLabel(providerUrl);
@@ -47,24 +45,25 @@ export async function generateFlowDefinition(
       : `🔁 [AgentFlow] Retrying — asking ${providerLabel} to fix: ${lastError}`);
 
     try {
-      if (byokTarget) {
-        // Direct HTTP call — no worker window, no llmLane, verbatim prompt.
-        const result = await runByokCompletion(providerUrl, promptText, timeoutMs);
-        lastResponse = result.response;
-      } else {
-        const prepared = preparePromptForProvider(promptText, providerUrl);
-        // Generation drives the shared worker window, so it must hold llmLane like
-        // every other automation; the window is re-resolved once the lane is ours.
-        const result = await llmLane.runExclusive(async () => {
-          let win = deps.getWorkerWin();
-          if ((!win || win.isDestroyed()) && deps.ensureWorkerWin) {
-            win = await deps.ensureWorkerWin();
-          }
-          if (!win || win.isDestroyed()) throw new Error('Worker window not available');
-          return runAutomation(win, prepared.prompt, timeoutMs, providerUrl);
-        });
-        lastResponse = result.response;
+      const prepared = preparePromptForProvider(promptText, providerUrl);
+      if (prepared.truncated) {
+        if (attempt > 1) {
+          sendLog(`⚠️ [AgentFlow] Repair prompt exceeds the ${providerLabel} input limit — skipping the retry`);
+          return { ok: false, error: lastError };
+        }
+        const message = `Flow-generation prompt (${prepared.originalLength} chars) exceeds the ${providerLabel} input limit (${prepared.maxChars}) — shorten the description`;
+        sendLog(`❌ [AgentFlow] ${message}`);
+        return { ok: false, error: message };
       }
+      const result = await llmLane.runExclusive(async () => {
+        // Resolve inside the lane via ensureWorkerWin (forces automation mode) so a
+        // worker left interactive after a login is reclaimed rather than degrading
+        // this generation run.
+        const win = deps.ensureWorkerWin ? await deps.ensureWorkerWin() : deps.getWorkerWin();
+        if (!win || win.isDestroyed()) throw new Error('Worker window not available');
+        return runAutomation(win, prepared.prompt, timeoutMs, providerUrl);
+      });
+      lastResponse = result.response;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       sendLog(`❌ [AgentFlow] Flow generation request failed: ${message}`);

@@ -1,6 +1,8 @@
 import { Bot } from 'grammy';
 import type {
+  BotLlmDirectConfig,
   FlowExecutionResult,
+  TelegramOutputChoice,
   TelegramPairingState,
   TelegramReplyMode,
   TelegramReplyTarget,
@@ -14,7 +16,7 @@ import {
   type TelegramContext,
   type TelegramTaskRequest,
 } from './commands';
-import type { ResolvedProviderCommand } from './providerCommands';
+import type { ResolvedProviderCommand } from '../providerCommands';
 import { t } from '../i18n';
 import { getErrorMessage } from './errors';
 import { ExportTokenRegistry } from './exporter';
@@ -28,14 +30,16 @@ export interface TelegramRuntimeDeps {
   getEnabled: () => boolean;
   getToken: () => string;
   getAllowGroupCommands: () => boolean;
+  getLlmDirect: () => BotLlmDirectConfig;
   getDefaultReplyMode: () => TelegramReplyMode;
+  getCompactReply: () => boolean;
   getPairing: () => TelegramPairingState;
   savePairing: (next: TelegramPairingState) => void;
   isAdminUser: (userId: number) => boolean;
   onTaskRequest: (request: TelegramTaskRequest) => Promise<{ taskId: string }>;
   onStatusRequest: () => string;
   onRestartApp?: () => void;
-  onUpdateDefaultReplyMode: (mode: TelegramReplyMode) => boolean;
+  onUpdateOutputChoice: (choice: TelegramOutputChoice) => boolean;
   onExportRequest: (
     request: TelegramExportContext & { format: TelegramExportFormat },
   ) => Promise<{ ok: boolean; filePath?: string; error?: string }>;
@@ -71,6 +75,7 @@ export class TelegramRuntime {
       isPollerActive: () => this.pollerActive,
       getStrings: () => this.deps.getStrings(),
       getDefaultReplyMode: () => this.deps.getDefaultReplyMode(),
+      getCompactReply: () => this.deps.getCompactReply(),
       registry: this.registry,
       onExportRequest: (request) => this.deps.onExportRequest(request),
       onLog: (message) => this.deps.onLog(message),
@@ -136,12 +141,25 @@ export class TelegramRuntime {
     });
   }
 
+  // Handlers resolve commands live (see attachTelegramHandlers), so a new flow
+  // command already works the moment it is saved. All that is left is telling
+  // Telegram what to show in the '/' menu — a plain API call, no restart, which
+  // keeps the poller up and the pending export tokens alive.
   async refreshBotCommands(): Promise<void> {
     await this.runLocked(async () => {
-      if (!this.pollerActive || !this.currentToken) return;
-      const token = this.currentToken;
-      this.deps.onLog('[telegram] restarting bot to register updated flow commands...');
-      await this.startOrReplaceBot(token);
+      const bot = this.bot;
+      if (!bot || !this.pollerActive) return;
+      try {
+        await syncPrivateCommands(
+          bot,
+          this.deps.getAllowGroupCommands(),
+          this.deps.getStrings(),
+          this.deps.getProviderCommands(),
+          this.deps.getFlowCommands?.(),
+        );
+      } catch (err: unknown) {
+        this.deps.onLog(`[telegram] failed to refresh command menu: ${getErrorMessage(err)}`);
+      }
     });
   }
 
@@ -227,9 +245,11 @@ export class TelegramRuntime {
       onTaskRequest: (request) => this.deps.onTaskRequest(request),
       onStatusRequest: () => this.deps.onStatusRequest(),
       onRestartApp: this.deps.onRestartApp,
-      onUpdateOutputMode: (mode) => this.deps.onUpdateDefaultReplyMode(mode),
+      onUpdateOutputMode: (choice) => this.deps.onUpdateOutputChoice(choice),
+      getLlmDirect: () => this.deps.getLlmDirect(),
       onLog: this.deps.onLog,
       getStrings: () => this.deps.getStrings(),
+      getBotUsername: () => this.botUsername,
       getProviderCommands: this.deps.getProviderCommands,
       getFlowCommands: this.deps.getFlowCommands,
       onFlowCommand: this.deps.onFlowCommand,

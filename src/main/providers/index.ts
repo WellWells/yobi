@@ -1,10 +1,10 @@
 import type { BrowserWindow } from 'electron';
 import { runGeminiAutomation } from './gemini';
-import { runPerplexityAutomation } from './perplexity';
-import { CHATGPT_LOGIN_URL, isChatgptLoginRequiredError, runChatgptAutomation } from './chatgpt';
+import { isPerplexityLoginRequiredError, runPerplexityAutomation } from './perplexity';
+import { isChatgptLoginRequiredError, runChatgptAutomation } from './chatgpt';
 import { runDuckaiAutomation } from './duckai';
 import { getByokLabel } from './byokClient';
-import { PROVIDER_LABELS, PROVIDER_URLS, isByokTargetUrl } from '../../shared/types';
+import { PROVIDER_LABELS, isByokTargetUrl } from '../../shared/types';
 import type { Provider } from '../../shared/types';
 
 export type { Provider };
@@ -118,12 +118,8 @@ export function isLoginRequiredError(targetUrl: string, err: unknown): boolean {
     const msg = err instanceof Error ? err.message : String(err ?? '');
     return msg.includes('GEMINI_LOGIN_REQUIRED');
   }
+  if (provider === 'perplexity') {
+    return isPerplexityLoginRequiredError(err);
+  }
   return false;
-}
-
-export function getProviderLoginUrl(targetUrl: string): string | null {
-  const provider = detectProvider(targetUrl);
-  if (provider === 'chatgpt') return CHATGPT_LOGIN_URL;
-  if (provider === 'gemini') return PROVIDER_URLS.gemini;
-  return null;
 }

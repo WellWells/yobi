@@ -1,5 +1,5 @@
 import React from 'react';
-import { Badge, Box, Group, Loader, Stack, Text, Tooltip } from '@mantine/core';
+import { Badge, Box, Checkbox, Group, Loader, Stack, Text, Tooltip } from '@mantine/core';
 import { ToggleSwitch } from '../../components/ToggleSwitch';
 import type { FlowDefinition } from '../../../../shared/types';
 import styles from './FlowSidebarItem.module.css';
@@ -9,22 +9,36 @@ export interface FlowSidebarItemProps {
   selected: boolean;
   isRunning: boolean;
   t: (k: string) => string;
-  onSelect: () => void;
+  selectMode: boolean;
+  checked: boolean;
+  onToggleSelect: () => void;
+  onRowClick: (mods: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => void;
   onContextMenu: (e: React.MouseEvent) => void;
   onToggleEnabled: (enabled: boolean) => void;
 }
 
 export const FlowSidebarItem: React.FC<FlowSidebarItemProps> = ({
-  flow, selected, isRunning, t, onSelect, onContextMenu, onToggleEnabled,
+  flow, selected, isRunning, t, selectMode, checked, onToggleSelect,
+  onRowClick, onContextMenu, onToggleEnabled,
 }) => {
   return (
     <Box
       className={styles.row}
-      data-selected={selected ? 'true' : undefined}
-      onClick={onSelect}
-      onContextMenu={onContextMenu}
+      data-selected={(selectMode ? checked : selected) ? 'true' : undefined}
+      onClick={(e) => onRowClick({ ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey })}
+      onContextMenu={selectMode ? undefined : onContextMenu}
     >
       <Group justify="space-between" wrap="nowrap" gap="xs" align="center">
+        {selectMode && (
+          <Checkbox
+            size="xs"
+            checked={checked}
+            onChange={onToggleSelect}
+            onClick={(e) => e.stopPropagation()}
+            aria-label={flow.name || t('agentflow.flowName')}
+            style={{ flexShrink: 0 }}
+          />
+        )}
         <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
           <Text fz="var(--font-size-xs)" fw={500} lineClamp={1}>
             {flow.name || t('agentflow.flowName')}

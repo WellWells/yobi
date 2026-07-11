@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Group, Stack, Text } from '@mantine/core';
 import {
+  BOT_COMMAND_RE,
   DEFAULT_PROVIDER_COMMANDS,
   PROVIDERS,
   PROVIDER_LABELS,
   PROVIDER_URLS,
-  TELEGRAM_COMMAND_RE,
 } from '../../../../../shared/types';
-import type { DuckaiModelInfo, Provider, TelegramProviderCommand } from '../../../../../shared/types';
+import type { BotProviderCommand, DuckaiModelInfo, Provider } from '../../../../../shared/types';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { SelectDropdown, ToggleSwitch } from '../components';
 import { getModelIconByUrl } from '../../../config/models';
@@ -15,19 +15,19 @@ import { getModelIconByUrl } from '../../../config/models';
 const DUCK_DEFAULT = '__default';
 
 interface Props {
-  providerCommands: Record<Provider, TelegramProviderCommand>;
+  providerCommands: Record<Provider, BotProviderCommand>;
   duckaiModels: DuckaiModelInfo[];
   busy: boolean;
-  onUpdate: (provider: Provider, patch: Partial<TelegramProviderCommand>) => void;
+  onUpdate: (provider: Provider, patch: Partial<BotProviderCommand>) => void;
   t: (key: string) => string;
 }
 
 interface RowProps {
   provider: Provider;
-  cfg: TelegramProviderCommand;
+  cfg: BotProviderCommand;
   duckaiModels: DuckaiModelInfo[];
   busy: boolean;
-  onUpdate: (provider: Provider, patch: Partial<TelegramProviderCommand>) => void;
+  onUpdate: (provider: Provider, patch: Partial<BotProviderCommand>) => void;
   t: (key: string) => string;
 }
 
@@ -37,7 +37,7 @@ const ProviderCommandRow: React.FC<RowProps> = ({ provider, cfg, duckaiModels, b
   useEffect(() => { setName(cfg.command); }, [cfg.command]);
 
   const trimmed = name.trim().toLowerCase();
-  const invalid = trimmed !== '' && !TELEGRAM_COMMAND_RE.test(trimmed);
+  const invalid = trimmed !== '' && !BOT_COMMAND_RE.test(trimmed);
 
   const commit = () => {
     if (invalid || trimmed === cfg.command) return;
@@ -47,7 +47,7 @@ const ProviderCommandRow: React.FC<RowProps> = ({ provider, cfg, duckaiModels, b
   const Icon = getModelIconByUrl(PROVIDER_URLS[provider]);
 
   const modelOptions = [
-    { value: DUCK_DEFAULT, label: t('settings.telegram.commands.modelDefault') },
+    { value: DUCK_DEFAULT, label: t('settings.bot.commands.modelDefault') },
     ...duckaiModels.map((m) => ({ value: m.id, label: m.label })),
   ];
   if (cfg.modelId && !duckaiModels.some((m) => m.id === cfg.modelId)) {
@@ -74,7 +74,7 @@ const ProviderCommandRow: React.FC<RowProps> = ({ provider, cfg, duckaiModels, b
             onBlur={commit}
             placeholder={def}
             disabled={busy || !cfg.enabled}
-            error={invalid ? t('settings.telegram.commands.invalid') : undefined}
+            error={invalid ? t('settings.bot.commands.invalid') : undefined}
           />
           <ToggleSwitch
             checked={cfg.enabled}
@@ -87,7 +87,7 @@ const ProviderCommandRow: React.FC<RowProps> = ({ provider, cfg, duckaiModels, b
       {provider === 'duckai' && cfg.enabled && (
         <Box pl={22} style={{ borderLeft: '2px solid var(--mantine-color-default-border)' }} ml={6}>
           <Text fz="var(--font-size-sm)" fw={600} c="var(--mantine-color-default-color)" mb={4}>
-            {t('settings.telegram.commands.modelLabel')}
+            {t('settings.bot.commands.modelLabel')}
           </Text>
           <SelectDropdown
             value={cfg.modelId ? cfg.modelId : DUCK_DEFAULT}
@@ -96,7 +96,7 @@ const ProviderCommandRow: React.FC<RowProps> = ({ provider, cfg, duckaiModels, b
             disabled={busy}
           />
           <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6} mt={4}>
-            {t('settings.telegram.commands.modelHint')}
+            {t('settings.bot.commands.modelHint')}
           </Text>
         </Box>
       )}
@@ -104,12 +104,12 @@ const ProviderCommandRow: React.FC<RowProps> = ({ provider, cfg, duckaiModels, b
   );
 };
 
-export const TelegramProviderCommands: React.FC<Props> = ({
+export const BotProviderCommands: React.FC<Props> = ({
   providerCommands, duckaiModels, busy, onUpdate, t,
 }) => (
   <Box>
     <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6} mb={10}>
-      {t('settings.telegram.commands.hint')}
+      {t('settings.bot.commands.hint')}
     </Text>
     <Stack gap={12}>
       {PROVIDERS.map((provider) => (

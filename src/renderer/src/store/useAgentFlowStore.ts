@@ -28,6 +28,8 @@ interface ActionState {
   updateFlow: (flow: FlowDefinition) => void;
   saveFlow: (flow: FlowDefinition) => Promise<void>;
   deleteFlow: (flowId: string) => Promise<void>;
+  deleteFlows: (flowIds: string[]) => Promise<void>;
+  setFlowsEnabled: (flowIds: string[], enabled: boolean) => Promise<void>;
   duplicateFlow: (flowId: string) => Promise<FlowDefinition | null>;
   moveFlow: (flowId: string, direction: 'up' | 'down') => Promise<boolean>;
   reorderFlows: (orderedIds: string[]) => Promise<void>;
@@ -115,6 +117,48 @@ export const useAgentFlowStore = create<ActionState>((set, get) => ({
       flows: state.flows.filter((f) => f.id !== flowId),
       selectedFlowId: state.selectedFlowId === flowId ? null : state.selectedFlowId,
       savedFlows: Object.fromEntries(Object.entries(state.savedFlows).filter(([id]) => id !== flowId)),
+    }));
+  },
+
+  deleteFlows: async (flowIds) => {
+    if (flowIds.length === 0) return;
+    const idSet = new Set(flowIds);
+    await flowApi.deleteFlows(flowIds);
+    set((state) => ({
+      flows: state.flows.filter((f) => !idSet.has(f.id)),
+      selectedFlowId: state.selectedFlowId && idSet.has(state.selectedFlowId) ? null : state.selectedFlowId,
+      savedFlows: Object.fromEntries(Object.entries(state.savedFlows).filter(([id]) => !idSet.has(id))),
+    }));
+  },
+
+  setFlowsEnabled: async (flowIds, enabled) => {
+    if (flowIds.length === 0) return;
+    const idSet = new Set(flowIds);
+    set((state) => ({
+      flows: state.flows.map((f) => (idSet.has(f.id) ? { ...f, enabled } : f)),
+      savedFlows: Object.fromEntries(
+        Object.entries(state.savedFlows).map(([id, f]) => (idSet.has(id) ? [id, { ...f, enabled }] : [id, f])),
+      ),
+    }));
+    // Main refuses to enable a flow whose required variables are blank, so the
+    // optimistic flip above can be a lie. Adopt ONLY `enabled` back from what it
+    // actually persisted: setEnabledMany returns the whole flow list, and
+    // swapping those objects in wholesale would replace every open editor draft
+    // with its on-disk copy (and re-clone savedFlows, so the "unsaved" badge
+    // would clear and Restore could not bring the edit back). moveFlow and
+    // reorderFlows keep the in-memory objects for the same reason.
+    const persisted = await flowApi.setFlowsEnabled(flowIds, enabled);
+    if (!persisted || persisted.length === 0) return;
+    const enabledById = new Map(persisted.map((f) => [f.id, f.enabled]));
+    const adopt = (flow: FlowDefinition): FlowDefinition => {
+      const next = enabledById.get(flow.id);
+      return next === undefined || next === flow.enabled ? flow : { ...flow, enabled: next };
+    };
+    set((state) => ({
+      flows: state.flows.map(adopt),
+      savedFlows: Object.fromEntries(
+        Object.entries(state.savedFlows).map(([id, f]) => [id, adopt(f)]),
+      ),
     }));
   },
 

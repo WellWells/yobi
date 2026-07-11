@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import * as path from 'node:path';
 import { getOutputDir } from '../../files';
 import { sendLog } from '../../helpers';
+import { ensureHttpScheme } from '../../urlParser';
 
 function pad(value: number): string {
   return String(value).padStart(2, '0');
@@ -145,7 +146,7 @@ function autoDownloadName(ext: string): string {
 }
 
 export async function execFileDownload(config: Record<string, string>, timeoutMs: number): Promise<string> {
-  const url = (config.url ?? '').trim();
+  const url = ensureHttpScheme(config.url ?? '');
   if (!url) return '';
   if (!/^https:\/\//i.test(url)) throw new Error(`file_download: only https:// URLs are allowed (got "${url}")`);
 

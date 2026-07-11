@@ -1,27 +1,14 @@
 import React, { useCallback, useMemo } from 'react';
-import { ActionIcon, Box, Button, Code, CopyButton, Group, Spoiler, Stack, Text, Tooltip } from '@mantine/core';
+import { Box, Button, Code, CopyButton, Group, Spoiler, Stack, Text, Tooltip } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
-import { Check, CheckCircle2, ClipboardCopy, Copy, Download, History, XCircle } from 'lucide-react';
+import { Check, CheckCircle2, ClipboardCopy, Download, History, XCircle } from 'lucide-react';
 import { SectionCard } from '../../components/SectionCard';
+import { CopyIconButton } from '../../components/CopyIconButton';
 import { flowApi } from '../../api/electronApi';
 import { stepHasOutput } from './StepCard';
 import { buildFlowRunMarkdown } from './flowRunExport';
 import { useAgentFlowStore } from '../../store/useAgentFlowStore';
 import type { FlowExecutionLog, SkillInstance } from '../../../../shared/types';
-
-const CopyIconButton: React.FC<{ value: string; copyLabel: string; copiedLabel: string }> = ({
-  value, copyLabel, copiedLabel,
-}) => (
-  <CopyButton value={value}>
-    {({ copied, copy }) => (
-      <Tooltip label={copied ? copiedLabel : copyLabel} position="left">
-        <ActionIcon variant="subtle" size="sm" color={copied ? 'teal' : 'gray'} onClick={copy} aria-label={copyLabel}>
-          {copied ? <Check size={13} /> : <Copy size={13} />}
-        </ActionIcon>
-      </Tooltip>
-    )}
-  </CopyButton>
-);
 
 export interface ExecutionResultPanelProps {
   steps: SkillInstance[];
@@ -106,20 +93,20 @@ export const ExecutionResultPanel: React.FC<ExecutionResultPanelProps> = React.m
                   <Group gap={4} wrap="nowrap" align="flex-start" mt={2}>
                     <Box style={{ flex: 1, minWidth: 0 }}>
                       <Spoiler maxHeight={72} showLabel={t('common.showMore')} hideLabel={t('common.showLess')}>
-                        <Text fz="xs" c="dimmed" ff="monospace" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                        <Text className="selectable" fz="xs" c="dimmed" ff="monospace" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                           {log.output}
                         </Text>
                       </Spoiler>
                     </Box>
-                    <CopyIconButton value={log.output} copyLabel={copyLabel} copiedLabel={copiedLabel} />
+                    <CopyIconButton value={log.output} copyLabel={copyLabel} copiedLabel={copiedLabel} size="sm" />
                   </Group>
                 )}
                 {log.error && (
                   <Group gap={4} wrap="nowrap" align="flex-start" mt={2}>
-                    <Text fz="xs" c="red" style={{ flex: 1, minWidth: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                    <Text className="selectable" fz="xs" c="red" style={{ flex: 1, minWidth: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                       {log.error}
                     </Text>
-                    <CopyIconButton value={log.error} copyLabel={copyLabel} copiedLabel={copiedLabel} />
+                    <CopyIconButton value={log.error} copyLabel={copyLabel} copiedLabel={copiedLabel} size="sm" />
                   </Group>
                 )}
               </Box>

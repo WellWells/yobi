@@ -1,12 +1,12 @@
 import { load } from 'cheerio';
 import { PROVIDER_URLS } from '../shared/types';
 import type { FeedCandidate } from '../shared/types';
-import { loadPageHtml, fetchRawText } from './pageLoader';
+import { loadPageHtml, fetchRawText, ensureHttpScheme } from './pageLoader';
 import { runParserBlocks, runCssSelector, parseRssFeed, extractFeedLinks } from './parserBlocks';
 import type { ParserBlock, ParserBlockType, RssFeedItem } from './parserBlocks';
 import { isYoutubeUrl, fetchYoutubeVideo } from './youtubeTranscript';
 
-export { fetchRawText, runParserBlocks, runCssSelector, parseRssFeed, extractFeedLinks };
+export { fetchRawText, ensureHttpScheme, runParserBlocks, runCssSelector, parseRssFeed, extractFeedLinks };
 export type { ParserBlock, ParserBlockType, RssFeedItem };
 
 const MAX_CONTENT_CHARS = 80_000;
@@ -21,6 +21,7 @@ export interface UrlParseResult {
 
 export interface FetchAndParseOptions {
   rawHtml?: boolean;
+  bodyText?: boolean;
   xmlMode?: boolean;
   parserBlocks?: ParserBlock[];
 }
@@ -104,9 +105,14 @@ export async function fetchAndParse(url: string, options?: FetchAndParseOptions)
     return { title: url, url, cleanedText: raw, truncated: html.length > MAX_CONTENT_CHARS };
   }
 
+  if (options?.bodyText) return bodyTextOf(html, url);
+
   if (options?.rawHtml) {
+    // Extract the cover image from the FULL html before truncation — a late
+    // <head> on heavy pages must not cost the og:image.
+    const image = extractCoverImage(html, url);
     const raw = html.length > MAX_CONTENT_CHARS ? html.slice(0, MAX_CONTENT_CHARS) : html;
-    return { title: url, url, cleanedText: raw, truncated: html.length > MAX_CONTENT_CHARS };
+    return { title: url, url, cleanedText: raw, truncated: html.length > MAX_CONTENT_CHARS, image };
   }
 
   return parseHtml(html, url);
@@ -134,10 +140,15 @@ export function buildUrlAnalysisPrompt(
     ? `${result.cleanedText}\n\n${truncatedLabel}`
     : result.cleanedText;
 
+  // Function replacers: title/body are remote page content and may contain `$&`,
+  // `$'`, `` $` `` or `$$`, which are special in a String.replace replacement
+  // string (they would splice template fragments into the prompt or collapse
+  // `$$`→`$`). A replacer function inserts the value verbatim (matches
+  // buildYoutubePrompt below).
   return promptTemplate
-    .replace(/\{\{title\}\}/g, result.title)
-    .replace(/\{\{url\}\}/g, result.url)
-    .replace(/\{\{cleaned_text\}\}/g, body);
+    .replace(/\{\{title\}\}/g, () => result.title)
+    .replace(/\{\{url\}\}/g, () => result.url)
+    .replace(/\{\{cleaned_text\}\}/g, () => body);
 }
 
 export function buildYoutubePrompt(
@@ -161,14 +172,14 @@ function absoluteHttpUrl(raw: string | undefined, base: string): string {
   }
 }
 
+// Meta tags only — no in-page <img> fallback: it grabs avatars/ads/logos when
+// the meta is missing, and a wrong cover is worse than none.
 function pickCoverImage($: ReturnType<typeof load>, sourceUrl: string): string {
   const candidates = [
     $('meta[property="og:image"]').attr('content'),
     $('meta[property="og:image:url"]').attr('content'),
     $('meta[name="twitter:image"]').attr('content'),
     $('meta[name="twitter:image:src"]').attr('content'),
-    $('article img, main img, [role="main"] img').first().attr('src'),
-    $('img').first().attr('src'),
   ];
   for (const raw of candidates) {
     const abs = absoluteHttpUrl(raw, sourceUrl);
@@ -177,12 +188,40 @@ function pickCoverImage($: ReturnType<typeof load>, sourceUrl: string): string {
   return '';
 }
 
-export function extractCoverImage(html: string, sourceUrl: string): string {
+function extractCoverImage(html: string, sourceUrl: string): string {
   try {
     return pickCoverImage(load(`<html>${html}</html>`), sourceUrl);
   } catch {
     return '';
   }
+}
+
+// The whole <body> as text, with only the non-rendering elements dropped. Unlike
+// parseHtml it keeps navigation, sidebars and footers: the caller wants every
+// word the page shows, so no <article>/<main> selector gets to decide what counts
+// as the content. The MAX_CONTENT_CHARS budget is spent on *text* — truncating
+// the html first (as the rawHtml path must, to keep the markup parseable) would
+// blow most of that budget on tags and cut the body off on a heavy page.
+function bodyTextOf(html: string, sourceUrl: string): UrlParseResult {
+  const $ = load(`<html>${html}</html>`);
+  const image = pickCoverImage($, sourceUrl);
+  const title = $('title').first().text().trim() || sourceUrl;
+
+  $('script, style, noscript, iframe').remove();
+
+  const text = ($('body').text() || $.text() || '')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  const truncated = text.length > MAX_CONTENT_CHARS;
+  return {
+    title,
+    url: sourceUrl,
+    cleanedText: truncated ? text.slice(0, MAX_CONTENT_CHARS) : text,
+    truncated,
+    image,
+  };
 }
 
 function parseHtml(html: string, sourceUrl: string): UrlParseResult {
@@ -240,7 +279,7 @@ export async function resolveUrlPrompt(text: string, ctx: UrlPromptContext): Pro
 
   const logFetching = ctx.langData['urlParser.log.fetching'] ?? '🔗 URL detected — fetching page content...';
   const notifyTitle = ctx.langData['urlParser.notify.title'] ?? 'Yobi';
-  const notifyBody = (ctx.langData['urlParser.notify.body'] ?? 'Fetching: {{url}}').replace('{{url}}', text);
+  const notifyBody = (ctx.langData['urlParser.notify.body'] ?? 'Fetching: {{url}}').replace('{{url}}', () => text);
   ctx.onLog(logFetching);
   ctx.onNotify(notifyTitle, notifyBody);
 

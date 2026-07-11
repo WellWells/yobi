@@ -8,6 +8,7 @@ import {
 import type { FlowDefinition } from '../../../../shared/types';
 import { FlowSidebarItem } from './FlowSidebarItem';
 import { useFlowSensors } from './dnd';
+import styles from './FlowSidebarItem.module.css';
 
 const LONG_PRESS_MS = 500;
 
@@ -18,7 +19,10 @@ export interface FlowSidebarListProps {
   selectedFlowId: string | null;
   runningFlowIds: string[];
   t: (k: string) => string;
-  onSelect: (flowId: string) => void;
+  selectMode: boolean;
+  isSelected: (flowId: string) => boolean;
+  onToggleSelect: (flowId: string) => void;
+  onRowClick: (flowId: string, mods: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => void;
   onContextMenu: (e: React.MouseEvent, flowId: string) => void;
   onToggleEnabled: (flow: FlowDefinition, enabled: boolean) => void;
   onReorder: (orderedIds: string[]) => void;
@@ -36,6 +40,7 @@ const SortableFlowRow: React.FC<{
       ref={setNodeRef}
       {...attributes}
       {...listeners}
+      className={styles.sortableWrap}
       style={{
         transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
         transition,
@@ -51,7 +56,8 @@ const SortableFlowRow: React.FC<{
 
 export const FlowSidebarList: React.FC<FlowSidebarListProps> = ({
   flows, visibleFlows, isSearching, selectedFlowId, runningFlowIds, t,
-  onSelect, onContextMenu, onToggleEnabled, onReorder,
+  selectMode, isSelected, onToggleSelect,
+  onRowClick, onContextMenu, onToggleEnabled, onReorder,
 }) => {
   const sensors = useFlowSensors({ delay: LONG_PRESS_MS });
   const ids = useMemo(() => flows.map((f) => f.id), [flows]);
@@ -62,7 +68,10 @@ export const FlowSidebarList: React.FC<FlowSidebarListProps> = ({
       selected={selectedFlowId === flow.id}
       isRunning={runningFlowIds.includes(flow.id)}
       t={t}
-      onSelect={() => onSelect(flow.id)}
+      selectMode={selectMode}
+      checked={isSelected(flow.id)}
+      onToggleSelect={() => onToggleSelect(flow.id)}
+      onRowClick={(mods) => onRowClick(flow.id, mods)}
       onContextMenu={(e) => onContextMenu(e, flow.id)}
       onToggleEnabled={(enabled) => onToggleEnabled(flow, enabled)}
     />
@@ -77,10 +86,18 @@ export const FlowSidebarList: React.FC<FlowSidebarListProps> = ({
     onReorder(arrayMove(ids, from, to));
   };
 
+  const plainFlows = isSearching ? visibleFlows : flows;
+
   return (
     <Box flex={1} style={{ overflowY: 'auto', padding: '4px 0' }}>
       {flows.length === 0 ? (
         <Text p="20px 14px" c="dimmed" fz="sm" ta="center">{t('agentflow.flowList.empty')}</Text>
+      ) : selectMode ? (
+        plainFlows.length === 0 ? (
+          <Text p="20px 14px" c="dimmed" fz="sm" ta="center">{t('agentflow.search.empty')}</Text>
+        ) : (
+          plainFlows.map((flow) => <React.Fragment key={flow.id}>{renderItem(flow)}</React.Fragment>)
+        )
       ) : isSearching ? (
         visibleFlows.length === 0 ? (
           <Text p="20px 14px" c="dimmed" fz="sm" ta="center">{t('agentflow.search.empty')}</Text>

@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from 'react';
-import { Button, Group, Modal, Stack, Text } from '@mantine/core';
+import { Button, Group, Stack, Text } from '@mantine/core';
 import { Sparkles } from 'lucide-react';
+import { AppModal } from '../../components/AppModal';
 import { AppTextarea } from '../../components/AppTextarea';
 import { AppButton } from '../../components/AppButton';
 import type { FlowGenerationResult } from '../../../../shared/types';
@@ -26,11 +27,11 @@ export const FlowGenerateModal: React.FC<FlowGenerateModalProps> = ({
   }, [description, onGenerate, onClose]);
 
   return (
-    <Modal
+    <AppModal
       opened={open}
       onClose={onClose}
       title={t('agentflow.generate.modal.title')}
-      centered
+      icon={<Sparkles size={16} />}
       size="md"
       zIndex={200}
     >
@@ -60,6 +61,6 @@ export const FlowGenerateModal: React.FC<FlowGenerateModalProps> = ({
           </AppButton>
         </Group>
       </Stack>
-    </Modal>
+    </AppModal>
   );
 };
