@@ -83,6 +83,14 @@ npm run dev
 
 <div align="center">
 
+![以 /agent 執行並用工具作答](assets/screenshots/agent-command-result.png)
+
+**`/agent`** — 交代一個目標，它自己挑工具、動手執行，再把答案帶回來
+
+</div>
+
+<div align="center">
+
 ![流程編輯器（RSS 步驟）](assets/screenshots/flow-editor-rss-step.png)
 
 **流程** — 排程擷取內容、用 AI 摘要、再送到 Telegram——全程零程式碼

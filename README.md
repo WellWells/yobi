@@ -83,6 +83,14 @@ npm run dev
 
 <div align="center">
 
+![An /agent run answering with tools](assets/screenshots/agent-command-result.png)
+
+**`/agent`** — give it a goal, and it picks the tools, runs them, and comes back with an answer
+
+</div>
+
+<div align="center">
+
 ![Flow editor with RSS step](assets/screenshots/flow-editor-rss-step.png)
 
 **Flows** — fetch, summarize with AI, and send to Telegram, on a schedule — no code
