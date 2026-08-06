@@ -56,7 +56,8 @@ app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 
 if (!app.isPackaged) {
-  app.commandLine.appendSwitch('remote-debugging-port', '9222');
+  // Overridable so a second dev instance can run alongside `npm run dev` on the default port.
+  app.commandLine.appendSwitch('remote-debugging-port', process.env['YOBI_CDP_PORT'] || '9222');
 }
 app.userAgentFallback = CLEAN_UA;
 
