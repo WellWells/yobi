@@ -17,8 +17,6 @@ export function hasLinePairedUser(state: LinePairingState, userId: string): bool
   return state.pairedUsers.some((item) => item.userId === userId);
 }
 
-// LINE webhooks carry only a userId, so the display name has to come from what
-// pairing captured. Refreshing it would cost a getProfile call per message.
 export function findLinePairedDisplayName(state: LinePairingState, userId: string): string | undefined {
   return state.pairedUsers.find((item) => item.userId === userId)?.displayName;
 }
@@ -97,9 +95,6 @@ export function createLinePairingBridge(
     consumePairingCode: (code, user) => {
       const current = getPairing();
       const result = consumeLinePairingCode(current, code, user);
-      // A wrong guess changes nothing but the pruning of expired codes. Persist
-      // only when something actually moved, so remote input cannot drive a full
-      // config rewrite on every failed attempt.
       const pruned = result.nextState.pendingCodes.length !== current.pendingCodes.length;
       if (result.ok || pruned) savePairing(result.nextState);
       return { ok: result.ok, reason: result.reason };

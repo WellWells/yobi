@@ -50,8 +50,12 @@
   background: transparent;
 }
 
+/* The stripe used to be a hardcoded white wash, which is invisible on the light
+   and sepia themes — the zebra silently did nothing there. --bg-secondary is the
+   themed surface one step above the list background, so it reads the same way
+   whichever direction the theme runs. */
 .logEntry.odd {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--bg-secondary);
 }
 
 .logEntry.odd:hover,
@@ -59,11 +63,109 @@
   background: var(--mantine-color-default-hover);
 }
 
+/* A run boundary — a flow starting, or the app itself. Padding only, never
+   margin: the virtualizer measures each row's own border box, and a top margin
+   would collapse out through the positioned wrapper and go unmeasured, leaving
+   the following rows overlapping by exactly that much. */
+.logEntry.runStart {
+  border-top: 1px solid var(--mantine-color-default-border);
+  padding-top: 13px;
+}
+
+/* The line's severity, in a fixed column so the tags stack into a scannable
+   stripe down the left instead of drifting with the text. Fixed width rather
+   than intrinsic: a language whose word for "warning" is longer than the others
+   would otherwise ragged the whole column, so it clips instead. Clickable —
+   hence the pointer and the hover lift, same as .scope below. */
+.level {
+  flex-shrink: 0;
+  width: 54px;
+  padding: 0 3px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: 1.9;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: none;
+  cursor: pointer;
+  border-radius: var(--mantine-radius-sm);
+  transition: background 0.12s ease, opacity 0.12s ease;
+}
+
+/* Only the two that mean something is wrong get a wash behind them, so a red or
+   amber block is findable while scrolling a log that is otherwise all info. The
+   info tag stays flat and quiet — it is the background noise, not the signal. */
+.level.levelError {
+  color: var(--mantine-color-error);
+  background: color-mix(in srgb, var(--error) 16%, transparent);
+}
+
+.level.levelWarning {
+  color: var(--mantine-color-warning);
+  background: color-mix(in srgb, var(--warning) 16%, transparent);
+}
+
+.level.levelInfo {
+  color: var(--text-muted);
+}
+
+.level:hover {
+  background: var(--mantine-color-accent-dim);
+  color: var(--mantine-color-accent);
+}
+
+/* Fixed-width dimmed column: the stamp is the same shape on every line, so
+   giving it its own quiet column lets the eye jump straight to the message
+   instead of re-reading "[20:14:07]" 500 times. */
+.logTime {
+  flex-shrink: 0;
+  color: var(--mantine-color-dimmed);
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+  user-select: text;
+}
+
+/* Who this line belongs to: flow name + loop position, or a task id. Quiet
+   enough to skip when following the message column, and clickable to narrow the
+   panel to that run — hence the pointer and the hover lift. */
+.scope {
+  flex-shrink: 0;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: 1.9;
+  color: var(--mantine-color-dimmed);
+  opacity: 0.8;
+  cursor: pointer;
+  border-radius: var(--mantine-radius-sm);
+  padding: 0 4px;
+  transition: color 0.12s ease, background 0.12s ease, opacity 0.12s ease;
+}
+
+.scope:hover {
+  color: var(--mantine-color-accent);
+  background: var(--mantine-color-accent-dim);
+  opacity: 1;
+}
+
+/* One row per entry, whatever the line carries. A wrapped line pushed everything
+   below it down and cost the time and level columns the alignment that makes
+   them scannable — one percent-encoded URL was three rows on its own. The panel
+   only has to show enough to recognise a line by; the untruncated text is still
+   in the export and in the rotating file on disk. min-width:0 is what lets a
+   flex child shrink far enough to ellipsis at all. */
 .logText {
   line-height: 1.6;
-  word-break: break-word;
-  white-space: pre-wrap;
   flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   user-select: text;
 }
 

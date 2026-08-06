@@ -1,8 +1,14 @@
 import type { Context, SessionFlavor } from 'grammy';
 import type { ConversationFlavor } from '@grammyjs/conversations';
 import type { PairingUserProfile } from './dmPolicy';
-import type { BotLlmDirectConfig, FlowExecutionResult, TelegramOutputChoice, TelegramReplyTarget } from '../../shared/types';
-import type { ResolvedProviderCommand } from '../providerCommands';
+import type {
+  BotBuiltinCommandKey,
+  BotLlmDirectConfig,
+  FlowExecutionResult,
+  TelegramOutputChoice,
+  TelegramReplyTarget,
+} from '../../shared/types';
+import type { ResolvedBuiltinCommand, ResolvedProviderCommand } from '../providerCommands';
 import { t } from '../i18n';
 
 type TelegramSessionData = Record<string, never>;
@@ -14,6 +20,18 @@ export interface TelegramTaskRequest {
   targetUrl: string;
   replyTarget: TelegramReplyTarget;
   requesterName?: string;
+}
+
+export interface TelegramBuiltinRequest {
+  key: BotBuiltinCommandKey;
+  input: string;
+  targetUrl: string;
+  replyTarget: TelegramReplyTarget;
+}
+
+export interface TelegramAgentAnswerRequest {
+  answer: string;
+  replyTarget: TelegramReplyTarget;
 }
 
 export interface TelegramCommandOptions {
@@ -28,15 +46,21 @@ export interface TelegramCommandOptions {
   onStatusRequest: () => string;
   onRestartApp?: () => void;
   onUpdateOutputMode: (choice: TelegramOutputChoice) => boolean;
-  // Read on every message, never cached, so a settings change applies without
-  // restarting the bot.
   getLlmDirect: () => BotLlmDirectConfig;
   onLog: (message: string) => void;
   getStrings: () => Record<string, string>;
-  // Empty until getMe() resolves; only used to reject commands aimed at another
-  // bot, so an empty value simply means "do not reject".
   getBotUsername?: () => string;
   getProviderCommands: () => ResolvedProviderCommand[];
+  getBuiltinCommands: () => ResolvedBuiltinCommand[];
+  /** Runs the built-in command and delivers its reply through the ordinary task reply path. */
+  onBuiltinCommand?: (request: TelegramBuiltinRequest) => Promise<void>;
+  /** True while an agent question from this chat is still open for an answer. */
+  hasPendingAgentAsk?: (chatId: number, userId: number) => boolean;
+  /** Feeds a plain message back into the agent run that asked this chat a question. */
+  onAgentAnswer?: (request: TelegramAgentAnswerRequest) => Promise<void>;
+  onDropAgentAsk?: (chatId: number, userId: number) => void;
+  /** Drops this chat's running conversation. Resolves true when there was one to drop. */
+  onNewConversation?: (chatId: number, userId: number) => Promise<boolean>;
   getFlowCommands?: () => Array<{ flowId: string; command: string; description: string; inputVariable: string }>;
   onFlowCommand?: (
     flowId: string,
@@ -72,8 +96,105 @@ export async function handleProviderCommand(
   await queueTaskWithAck(ctx, options, { command: spec.command, prompt, targetUrl: spec.targetUrl });
 }
 
-// The shared ack path for anything that becomes an AI task: reply "queued",
-// submit, then edit the ack with the task id (or a failure notice).
+/** Ends the running conversation for this chat, so the next message opens a fresh one. */
+export async function handleNewCommand(
+  ctx: TelegramContext,
+  options: TelegramCommandOptions,
+): Promise<void> {
+  if (!isProviderChatAllowed(ctx, options)) {
+    await ctx.reply(t(options.getStrings(), 'telegram.cmd.providerPrivateOnly'));
+    return;
+  }
+  if (!ctx.from || !options.isPairedUser(ctx.from.id)) {
+    await ctx.reply(t(options.getStrings(), 'telegram.cmd.accessDenied'));
+    return;
+  }
+  if (!ctx.chat) return;
+  const had = (await options.onNewConversation?.(ctx.chat.id, ctx.from.id)) ?? false;
+  await ctx.reply(t(options.getStrings(), had ? 'bot.session.cleared' : 'bot.session.alreadyNew'));
+}
+
+export async function handleBuiltinCommand(
+  ctx: TelegramContext,
+  spec: ResolvedBuiltinCommand,
+  options: TelegramCommandOptions,
+): Promise<void> {
+  if (!isProviderChatAllowed(ctx, options)) {
+    await ctx.reply(t(options.getStrings(), 'telegram.cmd.providerPrivateOnly'));
+    return;
+  }
+  if (!ctx.from || !options.isPairedUser(ctx.from.id)) {
+    await ctx.reply(t(options.getStrings(), 'telegram.cmd.accessDenied'));
+    return;
+  }
+  if (!ctx.chat || !options.onBuiltinCommand) return;
+
+  const input = extractCommandPrompt(ctx.message?.text || '');
+  if (!input) {
+    await ctx.reply(t(options.getStrings(), 'telegram.cmd.usage', { command: spec.command }));
+    return;
+  }
+
+  const s = options.getStrings();
+  let queuedMessageId: number | undefined;
+  try {
+    const queuedMessage = await ctx.reply(t(s, 'telegram.cmd.queued'));
+    queuedMessageId = queuedMessage.message_id;
+    await options.onBuiltinCommand({
+      key: spec.key,
+      input,
+      targetUrl: spec.targetUrl,
+      replyTarget: {
+        chatId: ctx.chat.id,
+        userId: ctx.from.id,
+        requestMessageId: ctx.message?.message_id,
+        queuedMessageId: queuedMessage.message_id,
+        command: spec.command,
+      },
+    });
+  } catch (err: unknown) {
+    options.onLog(`[telegram] built-in /${spec.command} failed: ${(err as Error).message}`);
+    if (queuedMessageId) {
+      try {
+        await ctx.api.editMessageText(ctx.chat.id, queuedMessageId, t(s, 'telegram.cmd.queueFailed'));
+        return;
+      } catch {
+      }
+    }
+    await ctx.reply(t(s, 'telegram.cmd.queueFailed'));
+  }
+}
+
+async function handleAgentAnswer(ctx: TelegramContext, options: TelegramCommandOptions, answer: string): Promise<void> {
+  if (!ctx.chat || !ctx.from || !options.onAgentAnswer) return;
+  const s = options.getStrings();
+  let queuedMessageId: number | undefined;
+  try {
+    const queuedMessage = await ctx.reply(t(s, 'telegram.cmd.queued'));
+    queuedMessageId = queuedMessage.message_id;
+    await options.onAgentAnswer({
+      answer,
+      replyTarget: {
+        chatId: ctx.chat.id,
+        userId: ctx.from.id,
+        requestMessageId: ctx.message?.message_id,
+        queuedMessageId: queuedMessage.message_id,
+        command: 'agent',
+      },
+    });
+  } catch (err: unknown) {
+    options.onLog(`[telegram] agent answer failed: ${(err as Error).message}`);
+    if (queuedMessageId) {
+      try {
+        await ctx.api.editMessageText(ctx.chat.id, queuedMessageId, t(s, 'telegram.cmd.queueFailed'));
+        return;
+      } catch {
+      }
+    }
+    await ctx.reply(t(s, 'telegram.cmd.queueFailed'));
+  }
+}
+
 async function queueTaskWithAck(
   ctx: TelegramContext,
   options: TelegramCommandOptions,
@@ -95,8 +216,6 @@ async function queueTaskWithAck(
         queuedMessageId: queuedMessage.message_id,
         command: params.command,
       },
-      // Read off the live update rather than the pairing snapshot: `first_name`
-      // rides along on every message, so it can never go stale here.
       requesterName: ctx.from.first_name,
     };
     const queued = await options.onTaskRequest(request);
@@ -114,20 +233,23 @@ async function queueTaskWithAck(
   }
 }
 
-// Command-free chat: a plain (non-command) text message. Private chats forward
-// it when the feature is on; groups additionally require the sender to have
-// tagged the bot ('@botname …'), so the bot never butts into a conversation.
 export async function handleDirectMessage(ctx: TelegramContext, options: TelegramCommandOptions): Promise<void> {
-  // Entity offsets index the raw text — mention extraction must see it untrimmed.
   const rawText = ctx.message?.text ?? '';
   const text = rawText.trim();
   if (!text || !ctx.from || !ctx.chat) return;
   const s = options.getStrings();
   const direct = options.getLlmDirect();
 
+  // An open agent question is answered by plain text, so this has to come before the
+  // command-free chat gate — otherwise nobody with that switch off could ever reply.
+  const answersAgent = options.hasPendingAgentAsk?.(ctx.chat.id, ctx.from.id) ?? false;
+
   if (ctx.chat.type === 'private') {
-    // Unpaired users have the /start pairing path; plain text stays quiet.
     if (!options.isPairedUser(ctx.from.id)) return;
+    if (answersAgent) {
+      await handleAgentAnswer(ctx, options, text);
+      return;
+    }
     if (!direct.enabled) {
       await ctx.reply(t(s, 'telegram.direct.disabledHint'));
       return;
@@ -137,34 +259,28 @@ export async function handleDirectMessage(ctx: TelegramContext, options: Telegra
   }
 
   if (ctx.chat.type !== 'group' && ctx.chat.type !== 'supergroup') return;
-  // The group-commands switch stays the operator's master "may act in groups"
-  // gate; command-free chat does not widen it.
   if (!options.allowGroupCommands()) return;
   const match = extractBotMention(rawText, ctx.message?.entities, options.getBotUsername?.() ?? '');
   if (!match.mentioned) return;
-  // Silent drop: replying would let anyone unpaired make the bot spam the group.
   if (!options.isPairedUser(ctx.from.id)) {
     options.onLog(`[telegram] group mention from unpaired user ${ctx.from.id} — ignored`);
+    return;
+  }
+  if (!match.prompt || match.prompt.startsWith('/')) {
+    await ctx.reply(t(s, direct.enabled ? 'telegram.direct.mentionUsage' : 'telegram.direct.disabledHint'));
+    return;
+  }
+  if (answersAgent) {
+    await handleAgentAnswer(ctx, options, match.prompt);
     return;
   }
   if (!direct.enabled) {
     await ctx.reply(t(s, 'telegram.direct.disabledHint'));
     return;
   }
-  // Slash commands already have their own group form ('/gemini@botname …'); a
-  // tagged command would otherwise reach the AI as a literal prompt.
-  if (!match.prompt || match.prompt.startsWith('/')) {
-    await ctx.reply(t(s, 'telegram.direct.mentionUsage'));
-    return;
-  }
   await queueTaskWithAck(ctx, options, { command: 'direct', prompt: match.prompt, targetUrl: direct.targetUrl });
 }
 
-// Finds '@botUsername' mention entities and strips them so the rest of the text
-// can be used verbatim as a prompt. Entity offsets are UTF-16 code units,
-// matching JS string slicing. Case-insensitive: Telegram usernames are.
-//
-// Exported for the test suite: pure, offline, deterministic.
 export function extractBotMention(
   text: string,
   entities: Array<{ type: string; offset: number; length: number }> | undefined,

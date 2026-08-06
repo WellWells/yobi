@@ -1,11 +1,17 @@
 import { PROVIDER_URLS } from '../shared/types';
-import type { BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureSettings, LinePairingState, NotifyEventPrefs, PromptPreferences, Provider, TelegramPairingState } from '../shared/types';
+import { DEFAULT_CAPTURE_WIDTH, defaultMainHotkey, defaultQuickExportHotkey } from '../shared/types';
+import { DEFAULT_SHARE_INSTANCE } from '../shared/types';
+import { DEFAULT_CAPTURE_BACKGROUND_STYLE, DEFAULT_CAPTURE_PALETTE } from '../shared/capturePalettes';
+import { DEFAULT_AGENT_ASK_TTL_MINUTES } from '../shared/types';
+import type { BotBuiltinCommands, BotByokCommands, BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureRange, CaptureSettings, CardLayout, QuickExportSettings, LinePairingState, McpServerConfig, NotifyEventPrefs, PromptPreferences, Provider, ShareSettings, TelegramChannel, TelegramPairingState } from '../shared/types';
 
 export interface Config {
   targetUrl: string;
   hotkey: string;
+  hotkeyEnabled: boolean;
   debounceMs: number;
   responseTimeout: number;
+  byokContextBudgetChars: number;
   locale: string;
   localeSetByUser: boolean;
   theme: string;
@@ -15,14 +21,15 @@ export interface Config {
   metricsEnabled: boolean;
   promptPreferences: PromptPreferences;
   youtubePrompt: string;
-  // Slash commands for the built-in AI providers, shared by every bot platform.
   providerCommands: Record<Provider, BotProviderCommand>;
+  builtinCommands: BotBuiltinCommands;
+  botByokCommands: BotByokCommands;
   telegram: TelegramConfig;
   line: LineConfig;
   smtp: SmtpConfig;
   byokInstances: ByokInstance[];
   byokGroups: ByokGroup[];
-  // Model sources hidden from the pickers. Display-only; no execution path reads these.
+  mcpServers: McpServerConfig[];
   hiddenProviders: Provider[];
   hiddenDuckaiModelIds: string[];
   hiddenByokIds: string[];
@@ -32,7 +39,10 @@ export interface Config {
   launchAtStartup: boolean;
   layoutMode: 'stacked' | 'side-by-side';
   markdownZoom: number;
+  showTokenUsage: boolean;
   captureSettings: CaptureSettings;
+  quickExport: QuickExportSettings;
+  share: ShareSettings;
 }
 
 export interface ByokInstance {
@@ -49,17 +59,13 @@ export interface TelegramConfig {
   botToken: string;
   allowGroupCommands: boolean;
   defaultReplyMode: 'markdown' | 'png' | 'webp' | 'pdf';
-  // Reply with the AI answer alone — no header, no saved-file line, no export
-  // buttons — the way the LINE bot always answers. Overrides defaultReplyMode.
   compactReply: boolean;
   adminUserIds: number[];
   llmDirect: BotLlmDirectConfig;
   pairing: TelegramPairingState;
+  channels: TelegramChannel[];
 }
 
-// LINE bot config. Two secrets: channelAccessToken (calling the Messaging API to
-// push) and channelSecret (verifying X-Line-Signature on incoming webhooks). Both
-// held in memory as plaintext, persisted encrypted (StoredLineConfig).
 export interface LineConfig {
   enabled: boolean;
   channelAccessToken: string;
@@ -99,16 +105,16 @@ export type StoredConfig = Omit<Config, 'telegram' | 'line' | 'smtp' | 'byokInst
 
 export const defaultStored: StoredConfig = {
   targetUrl: PROVIDER_URLS.gemini,
-  hotkey: process.platform === 'darwin' ? 'Command+G' : 'Alt+G',
+  hotkey: defaultMainHotkey(process.platform === 'darwin'),
+  hotkeyEnabled: true,
   debounceMs: 1000,
   responseTimeout: 120_000,
+  byokContextBudgetChars: 32_000,
   locale: 'en-US',
   localeSetByUser: false,
   theme: 'auto',
   syncSystemLanguageToModel: true,
   notifyOnComplete: true,
-  // Flow success is opt-in by default: cron-triggered flows would otherwise
-  // spam a notification on every scheduled run.
   notifyEvents: {
     chatComplete: true,
     chatFailure: true,
@@ -121,13 +127,33 @@ export const defaultStored: StoredConfig = {
   launchAtStartup: false,
   layoutMode: 'stacked',
   markdownZoom: 100,
+  showTokenUsage: true,
   captureSettings: {
-    palette: 'aurora',
+    palette: DEFAULT_CAPTURE_PALETTE,
+    backgroundStyle: DEFAULT_CAPTURE_BACKGROUND_STYLE,
     direction: 'se',
-    showPrompt: false,
+    showPrompt: true,
     showProvider: true,
     showTimestamp: true,
+    showTokens: true,
     format: 'png' as CaptureFormat,
+    cardLayout: 'document' as CardLayout,
+    range: 'all' as CaptureRange,
+    width: DEFAULT_CAPTURE_WIDTH,
+    pixelRatio: 1,
+    zip: false,
+  },
+  share: {
+    instanceUrl: DEFAULT_SHARE_INSTANCE,
+    expire: '1week',
+    burnAfterReading: false,
+    consentedAt: '',
+  },
+  quickExport: {
+    enabled: true,
+    hotkey: defaultQuickExportHotkey(process.platform === 'darwin'),
+    format: 'png' as CaptureFormat,
+    zip: false,
   },
   youtubePrompt: '',
   promptPreferences: {
@@ -143,6 +169,12 @@ export const defaultStored: StoredConfig = {
     perplexity: { enabled: true, command: '' },
     duckai: { enabled: true, command: '', modelId: '' },
   },
+  builtinCommands: {
+    agent: { enabled: true, command: '', targetUrl: '' },
+    search: { enabled: true, command: '', targetUrl: '' },
+    askTtlMinutes: DEFAULT_AGENT_ASK_TTL_MINUTES,
+  },
+  botByokCommands: {},
   telegram: {
     enabled: false,
     botTokenEncrypted: '',
@@ -152,6 +184,7 @@ export const defaultStored: StoredConfig = {
     adminUserIds: [],
     llmDirect: { enabled: false, targetUrl: '' },
     pairing: { pendingCodes: [], pairedUsers: [] },
+    channels: [],
   },
   line: {
     enabled: false,
@@ -170,6 +203,7 @@ export const defaultStored: StoredConfig = {
   },
   byokInstances: [],
   byokGroups: [],
+  mcpServers: [],
   hiddenProviders: [],
   hiddenDuckaiModelIds: [],
   hiddenByokIds: [],

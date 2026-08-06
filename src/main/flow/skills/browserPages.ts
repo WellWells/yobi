@@ -3,6 +3,7 @@ import type { WebContents } from 'electron';
 import * as path from 'node:path';
 import { createEntityId } from '../flowPersistence';
 import { CLEAN_UA } from '../../userAgent';
+import { SILENT_WEB_PREFERENCES, muteWindow } from '../../silentWindow';
 import { executeAutomationWithTimeout } from '../../providers/automationExecutor';
 import { BROWSER_HELPER_PREAMBLE } from '../../providers/browserHelpers';
 
@@ -39,6 +40,8 @@ function safeDestroy(win: BrowserWindow): void {
 
 function revealPage(win: BrowserWindow): void {
   if (win.isDestroyed()) return;
+  // On screen the page is no longer "background": let the user hear what they click.
+  muteWindow(win, false);
   win.setBounds({ x: 100, y: 100, width: 1_280, height: 900 });
   if (process.platform !== 'darwin') win.setSkipTaskbar(false);
   win.setOpacity(1);
@@ -87,9 +90,11 @@ export async function openPage(url: string, opts: OpenPageOptions): Promise<Open
       nodeIntegration: false,
       sandbox: false,
       backgroundThrottling: false,
+      ...SILENT_WEB_PREFERENCES,
     },
   });
   win.webContents.setUserAgent(CLEAN_UA);
+  muteWindow(win);
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e, navUrl) => {
     if (!/^https?:\/\//i.test(navUrl) && !navUrl.startsWith('about:')) e.preventDefault();

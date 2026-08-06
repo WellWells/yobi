@@ -2,9 +2,6 @@ import type { QueueState, QueueTaskItem, Task } from '../shared/types';
 
 type QueueListener = (state: QueueState) => void;
 
-// Rejects the drain loop's race, so it never reaches processTask's own error
-// handling. Typed so the queue-level handler can tell a timeout apart from any
-// other rejection and tell the remote caller which one happened.
 export class TaskHardTimeoutError extends Error {
   constructor(taskId: string, readonly timeoutMinutes: number) {
     super(`Task ${taskId} exceeded hard timeout of ${timeoutMinutes} min`);
@@ -112,8 +109,6 @@ export class QueueManager {
           this.skipCurrentTask = null;
         });
       } catch (err) {
-        // Only the hard timeout rejects in practice (the worker handles its own
-        // errors internally) — surface it so callers can account for the task.
         this.onTaskError?.(task, err);
       }
       this.running = false;

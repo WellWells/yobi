@@ -7,11 +7,6 @@ export interface AttemptLimiter {
   reset: (key: string) => void;
 }
 
-// Throttles pairing-code guesses per LINE userId. The real defence is the code
-// itself (8 chars of a 32-symbol alphabet, 60-minute TTL, reachable only through
-// a signature-verified webhook from a user who already added the bot); this just
-// stops a script from grinding through guesses. In-memory on purpose — a restart
-// clearing the counters is harmless.
 export function createAttemptLimiter(): AttemptLimiter {
   const failures = new Map<string, number[]>();
 

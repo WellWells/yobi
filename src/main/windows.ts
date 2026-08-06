@@ -6,6 +6,7 @@ import { toggleTempChatMode } from './tempChat';
 import { getLangCache, t } from './i18n';
 import { CLEAN_UA } from './userAgent';
 import { applyWorkerUserAgent } from './clientHints';
+import { SILENT_WEB_PREFERENCES, muteWindow } from './silentWindow';
 import { PROVIDER_URLS, isByokTargetUrl } from '../shared/types';
 import { themeBackground } from '../shared/themes';
 import { config } from './config';
@@ -65,8 +66,6 @@ export function createMainWindow(): void {
     minHeight: 500,
     title: 'Yobi',
     frame: false,
-    // Match the configured theme so light-theme users don't get a dark flash
-    // at startup and during resize.
     backgroundColor: themeBackground(config.theme, nativeTheme.shouldUseDarkColors),
     icon: getWindowIcon(),
     webPreferences: {
@@ -88,11 +87,6 @@ export function createMainWindow(): void {
 
   mainWin.setMenuBarVisibility(false);
 
-  // The main window only ever hosts the local app bundle, which carries the full
-  // electronAPI bridge. Block any attempt to navigate the top-level frame or open
-  // a child window elsewhere: a stray remote/AI-authored link that slipped past
-  // the in-app external-link handling would otherwise load a remote origin with
-  // the bridge attached. Defer real http(s) targets to the OS browser.
   mainWin.webContents.on('will-navigate', (event, url) => {
     if (url === mainWin?.webContents.getURL()) return;
     event.preventDefault();
@@ -103,14 +97,9 @@ export function createMainWindow(): void {
     return { action: 'deny' };
   });
 
-  // Ctrl+Shift+I (⌘+Shift+I on macOS) toggles temporary chat mode whenever the
-  // app window is focused. Intercepted here rather than in the renderer:
-  // preventDefault() also swallows Electron's default-menu DevTools accelerator
-  // bound to the same combo on Windows/Linux.
   mainWin.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown' || input.isAutoRepeat) return;
     const modifier = process.platform === 'darwin' ? input.meta : input.control;
-    // Physical-key code keeps the shortcut working on non-Latin keyboard layouts.
     if (modifier && input.shift && !input.alt && input.code === 'KeyI') {
       event.preventDefault();
       toggleTempChatMode();
@@ -143,8 +132,6 @@ function destroyWorkerWindowForModeSwitch(): void {
 }
 
 export function createWorkerWindow(initialUrl: string, mode: WorkerWindowMode = 'automation'): void {
-  // BYOK targets are HTTP API endpoints, not loadable pages; boot the worker on
-  // the default provider so browser automations passing their own URL still work.
   const bootUrl = isByokTargetUrl(initialUrl) ? PROVIDER_URLS.gemini : initialUrl;
   destroyWorkerWindowForModeSwitch();
   const workerPreload = path.join(__dirname, '../preload/worker.js');
@@ -156,6 +143,7 @@ export function createWorkerWindow(initialUrl: string, mode: WorkerWindowMode = 
         sandbox: false,
         backgroundThrottling: false,
         preload: workerPreload,
+        ...SILENT_WEB_PREFERENCES,
       }
     : {
         partition: WORKER_PARTITION,
@@ -163,6 +151,7 @@ export function createWorkerWindow(initialUrl: string, mode: WorkerWindowMode = 
         nodeIntegration: false,
         sandbox: true,
         backgroundThrottling: false,
+        ...SILENT_WEB_PREFERENCES,
       };
 
   workerWin = new BrowserWindow({
@@ -190,6 +179,8 @@ export function createWorkerWindow(initialUrl: string, mode: WorkerWindowMode = 
   workerWin.on('resize', () => rememberWorkerVisibleBounds());
 
   applyWorkerUserAgent(workerWin.webContents, CLEAN_UA);
+  // Mapped-but-offscreen for its whole life unless revealed — provider pages stay silent there.
+  muteWindow(workerWin);
   workerWin.loadURL(bootUrl);
 
   workerWin.on('close', (event) => {
@@ -214,6 +205,7 @@ export function revealWorkerWindow(): void {
     workerWin.setSkipTaskbar(false);
   }
   workerWin.setOpacity(1);
+  muteWindow(workerWin, false);
   workerWin.show();
   workerWin.focus();
   if (!app.isPackaged) workerWin.webContents.openDevTools({ mode: 'detach' });
@@ -224,6 +216,7 @@ export function revealWorkerWindow(): void {
 export function hideWorkerWindow(): void {
   if (!workerWin || workerWin.isDestroyed()) return;
   rememberWorkerVisibleBounds();
+  muteWindow(workerWin);
   workerWin.setSkipTaskbar(true);
   if (workerWin.isVisible()) {
     workerWin.setOpacity(0);
@@ -240,18 +233,8 @@ function rememberWorkerVisibleBounds(): void {
   workerVisibleBounds = workerWin.getBounds();
 }
 
-// Decide whether a live worker whose mode differs from `desired` should be torn
-// down and recreated. Only consulted when the modes actually differ.
 function shouldSwitchWorkerMode(desired: WorkerWindowMode): boolean {
-  // A login / Cloudflare challenge always needs the interactive window now.
   if (desired === 'interactive') return true;
-  // desired === 'automation': the worker is currently interactive. If it is still
-  // visible the user is mid-login — the page is genuinely on-screen, so automation
-  // works without the hidden-visibility preload; don't yank the window away.
-  // Reclaim it for automation only once it has been hidden again (the degraded
-  // state the automation preload exists to fix). Without this, a single login /
-  // Cloudflare reveal would leave EVERY later automation running in the interactive
-  // window until app restart.
   if (!workerWin || workerWin.isDestroyed()) return true;
   return !workerWin.isVisible();
 }

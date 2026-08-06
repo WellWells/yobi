@@ -3,8 +3,6 @@ import { THEME_DEFS, VALID_THEMES, themeDef } from '../../../shared/themes';
 import type { Theme, ThemeColors } from '../../../shared/themes';
 import { lerpHex, hexToRgba, relativeLuminance } from './colorUtils';
 
-// Matches Mantine's autoContrast luminanceThreshold (mantineTheme.ts) so text
-// placed on the raw accent flips to dark in the same themes as filled buttons.
 const ON_ACCENT_LUMINANCE_THRESHOLD = 0.3;
 
 interface ThemeCssVars {
@@ -54,8 +52,6 @@ function expandTheme(base: ThemeColors, isLight: boolean): ThemeCssVars {
   };
 }
 
-// Swatch data for the theme picker — derived from the same base definitions so
-// the picker can never drift from the actual theme colors.
 export interface ThemeSwatch {
   theme: Theme;
   background: string;
@@ -70,17 +66,12 @@ export const THEME_SWATCHES: readonly ThemeSwatch[] = VALID_THEMES.map((theme) =
   border: THEME_DEFS[theme].colors.border,
 }));
 
-// Half-dark / half-light swatch for the "follow system" picker option.
 export const AUTO_THEME_SWATCH = {
   background: `linear-gradient(135deg, ${THEME_DEFS.dark.colors.bgPrimary} 50%, ${THEME_DEFS.light.colors.bgPrimary} 50%)`,
   accent: `linear-gradient(135deg, ${THEME_DEFS.dark.colors.accent} 50%, ${THEME_DEFS.light.colors.accent} 50%)`,
   border: 'var(--border)',
 } as const;
 
-// Applies the theme's CSS variables as inline styles on <html> so the first
-// paint (before MantineProvider mounts its resolver) already shows the right
-// theme instead of the static dark defaults in globals.css. Values come from
-// the same expandTheme() the resolver uses, so the two can never disagree.
 export function applyRootThemeVars(theme: Theme): void {
   const def = themeDef(theme);
   const colors = expandTheme(def.colors, def.light === true);

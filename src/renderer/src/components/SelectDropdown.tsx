@@ -1,6 +1,7 @@
 import React from 'react';
 import { Select } from '@mantine/core';
 import type { SelectProps } from '@mantine/core';
+import { Z_POPOVER } from '../config/zLayers';
 
 type SelectOption = { value: string; label: string };
 type SelectOptionGroup = { group: string; items: SelectOption[] };
@@ -25,9 +26,7 @@ export const SelectDropdown: React.FC<SelectDropdownProps> = ({
     disabled={disabled}
     allowDeselect={false}
     withCheckIcon
-    comboboxProps={{ zIndex: 200 }}
-    // Mantine's default ScrollArea type is 'scroll', which only reveals the
-    // scrollbar once you already scroll — an overflowing list reads as complete.
+    comboboxProps={{ zIndex: Z_POPOVER }}
     scrollAreaProps={{ type: 'auto' }}
     styles={{
       input: {

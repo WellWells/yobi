@@ -29,7 +29,7 @@ export async function execEmailSend(skillConfig: Record<string, string>): Promis
       subject,
       text: body,
     });
-    sendLog(`✉️ [AgentFlow] Email sent to: ${to}`);
+    sendLog(`✉️ [Flow] Email sent to: ${to}`);
     return '';
   } catch (err) {
     throw new Error(`email_send: ${err instanceof Error ? err.message : String(err)}`);

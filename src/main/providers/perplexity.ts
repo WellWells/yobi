@@ -1,6 +1,7 @@
 import type { BrowserWindow, Cookie, WebContents } from 'electron';
 import { navigateAndWait, isCloudflareChallengeActive, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
-import { executeAutomationWithTimeout, countElements, dispatchFocusEvents } from './automationExecutor';
+import { executeAutomationWithTimeout, dispatchFocusEvents, settledElementCount } from './automationExecutor';
+import { INJECTED_PPLX_READ_JS, PPLX_RESPONSE_SELECTOR } from './perplexityReadScript';
 import { isExpiredCookie } from '../helpers';
 import { showInteractiveWorkerWindow, showLoginWindowIfNeeded } from '../windows';
 import { raiseVerificationChallenge, VERIFICATION_CHALLENGE_ERROR_NAME } from './verificationChallenge';
@@ -8,24 +9,15 @@ import { PROVIDER_LABELS, PROVIDER_URLS } from '../../shared/types';
 import { CLEAN_UA } from '../userAgent';
 import { applyWorkerUserAgent } from '../clientHints';
 
-// Backward-compatible alias: consumers (taskProcessor, flow executor) still import
-// this name; it now points at the shared, provider-neutral verification-challenge marker.
 export const PERPLEXITY_CLOUDFLARE_ERROR_NAME = VERIFICATION_CHALLENGE_ERROR_NAME;
 
 const PERPLEXITY_LOGIN_REQUIRED = 'PERPLEXITY_LOGIN_REQUIRED';
 
-// Perplexity signs in through next-auth. The legacy `__Secure-next-auth.session-token` and the
-// newer `__Secure-pplx.session.<id>` carry the same JWT; an anonymous visitor is issued neither
-// (it only gets the `pplx.edge-*` and Cloudflare cookies). Accepting either keeps the check
-// working across the migration.
 const PERPLEXITY_SESSION_COOKIE_PREFIXES = [
   '__Secure-next-auth.session-token',
   '__Secure-pplx.session.',
 ] as const;
 
-// Single source of truth for "this Perplexity session is signed in" — shared with the account
-// status panel (authStatus) and the post-task storage cleanup (helpers), which must agree or a
-// live session gets wiped as if it were anonymous.
 export function isPerplexitySessionCookie(cookie: Cookie): boolean {
   return (
     PERPLEXITY_SESSION_COOKIE_PREFIXES.some((prefix) => cookie.name.startsWith(prefix)) &&
@@ -57,8 +49,6 @@ export async function runPerplexityAutomation(
   await navigateAndWait(wc, targetUrl);
 
   if (await isCloudflareChallengeActive(wc)) {
-    // Cloudflare re-challenges on a fresh load, so reloading into the interactive
-    // window reliably re-shows the challenge for the user to solve.
     await showInteractiveWorkerWindow(targetUrl);
     throw raiseVerificationChallenge({
       titleKey: 'cloudflare.notify.title',
@@ -69,10 +59,6 @@ export async function runPerplexityAutomation(
     });
   }
 
-  // Perplexity no longer answers anonymous prompts: a logged-out page still renders the composer,
-  // so the automation would submit and then stall on the sign-in wall instead of failing fast.
-  // Reveal the interactive login window here (provider layer) so both chat and AgentFlow contexts
-  // surface it; orchestration layers only handle messaging.
   if (!(await hasPerplexitySession(workerWin))) {
     await showLoginWindowIfNeeded(PROVIDER_LABELS.perplexity, PROVIDER_URLS.perplexity);
     throw new Error(`${PERPLEXITY_LOGIN_REQUIRED}: Perplexity has no active session cookie`);
@@ -80,7 +66,7 @@ export async function runPerplexityAutomation(
 
   await dispatchFocusEvents(wc);
 
-  const baseline = await countElements(wc, '[id^="markdown-content-"]');
+  const baseline = await settledElementCount(wc, PPLX_RESPONSE_SELECTOR);
 
   type PplxResult = { response: string; title: string; isImageOnly?: boolean };
   let fullyNavigated = false;
@@ -99,7 +85,13 @@ export async function runPerplexityAutomation(
 
   if (!result && fullyNavigated) {
     await waitForPageLoad(wc, 30_000);
-    const readScript = buildPerplexityReadScript(0, timeoutMs);
+    /*
+     * The pre-send count, not 0. Reading with 0 accepts whatever answer is already rendered,
+     * and when targetUrl was a thread being continued the reloaded page still shows the
+     * PREVIOUS reply — which the caller then receives as if it were the answer to this prompt.
+     * `baseline` is already 0 for a fresh chat, so this is strictly the safer number.
+     */
+    const readScript = buildPerplexityReadScript(baseline, timeoutMs);
     result = await executeAutomationWithTimeout<PplxResult>(wc, readScript, timeoutMs, 'Perplexity');
   }
 
@@ -126,174 +118,6 @@ async function waitForPageLoad(wc: WebContents, timeoutMs: number): Promise<void
     wc.once('did-finish-load', () => { clearTimeout(timer); resolve(); });
   });
 }
-
-const INJECTED_PPLX_READ_JS = `
-  // Perplexity renders response blocks as div[id^="markdown-content-"], NOT article.
-  // Matching any element (tag-agnostic) is required.
-  function getResponseNodes() {
-    return document.querySelectorAll('[id^="markdown-content-"]');
-  }
-
-  function getUseHref(useEl) {
-    if (!useEl) return '';
-    return useEl.getAttribute('href') || useEl.getAttribute('xlink:href') || '';
-  }
-
-  function buttonHasIcon(button, iconName) {
-    if (!button || !iconName) return false;
-    var uses = button.querySelectorAll('use');
-    for (var i = 0; i < uses.length; i++) {
-      var href = getUseHref(uses[i]);
-      if (href && href.indexOf(iconName) !== -1) return true;
-    }
-    return false;
-  }
-
-  function collectCopyIconButtons(root) {
-    if (!root) return [];
-    var allButtons = root.querySelectorAll('button');
-    var matches = [];
-    for (var i = 0; i < allButtons.length; i++) {
-      if (buttonHasIcon(allButtons[i], 'pplx-icon-copy')) matches.push(allButtons[i]);
-    }
-    return matches;
-  }
-
-  function isNodeAfterResponse(node, responseEl) {
-    if (!node || !responseEl) return false;
-    if (responseEl.contains(node)) return false;
-    return (responseEl.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
-  }
-
-  // Prefer copy buttons that belong to the response action toolbar
-  // (same cluster as share/download/rewrite icons), then fall back
-  // to any copy-icon button rendered after the response block.
-  function findCopyButtonFor(responseEl) {
-    var el = responseEl;
-    for (var i = 0; i < 12 && el && el !== document.body; i++) {
-      var copyButtons = collectCopyIconButtons(el);
-      for (var b = 0; b < copyButtons.length; b++) {
-        var candidate = copyButtons[b];
-        if (responseEl.contains(candidate)) continue;
-        var container = candidate.parentElement;
-        for (var depth = 0; depth < 6 && container && container !== document.body; depth++) {
-          var hasCopy = false;
-          var hasShare = false;
-          var hasDownload = false;
-          var hasRewrite = false;
-          var toolbarButtons = container.querySelectorAll('button');
-          for (var k = 0; k < toolbarButtons.length; k++) {
-            if (buttonHasIcon(toolbarButtons[k], 'pplx-icon-copy')) hasCopy = true;
-            if (buttonHasIcon(toolbarButtons[k], 'pplx-icon-share')) hasShare = true;
-            if (buttonHasIcon(toolbarButtons[k], 'pplx-icon-download')) hasDownload = true;
-            if (buttonHasIcon(toolbarButtons[k], 'pplx-icon-repeat')) hasRewrite = true;
-          }
-          if (hasCopy && (hasShare || hasDownload || hasRewrite) && isNodeAfterResponse(container, responseEl)) {
-            return candidate;
-          }
-          container = container.parentElement;
-        }
-      }
-      for (var c = 0; c < copyButtons.length; c++) {
-        if (!responseEl.contains(copyButtons[c]) && isNodeAfterResponse(copyButtons[c], responseEl)) {
-          return copyButtons[c];
-        }
-      }
-      el = el.parentElement;
-    }
-    return null;
-  }
-
-  function hasButtonIcon(root, iconName) {
-    if (!root) return false;
-    var buttons = root.querySelectorAll('button');
-    for (var i = 0; i < buttons.length; i++) {
-      if (buttonHasIcon(buttons[i], iconName)) return true;
-    }
-    return false;
-  }
-
-  function findImageActionToolbarFor(responseEl) {
-    var el = responseEl;
-    for (var i = 0; i < 12 && el && el !== document.body; i++) {
-      var hasDownload = hasButtonIcon(el, 'pplx-icon-download');
-      var hasRegenerate = hasButtonIcon(el, 'pplx-icon-repeat');
-      if (hasDownload && hasRegenerate && isNodeAfterResponse(el, responseEl)) return el;
-      el = el.parentElement;
-    }
-    return null;
-  }
-
-  function hasGeneratedImageAsset(responseEl) {
-    if (!responseEl) return false;
-    var images = responseEl.querySelectorAll('img[src]');
-    for (var i = 0; i < images.length; i++) {
-      var src = (images[i].getAttribute('src') || '').toLowerCase();
-      if (!src) continue;
-      if (src.indexOf('user-gen-media-assets') !== -1 || src.indexOf('gemini_images') !== -1) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  // Waits for the latest response to finish generating, then extracts its text.
-  async function perplexityWaitAndRead(baseline) {
-    await waitFor(function() {
-      return getResponseNodes().length > baseline;
-    }, 'new Perplexity response node', TIMEOUT, 350);
-
-    await waitFor(function() {
-      var nodes = getResponseNodes();
-      var el = nodes[nodes.length - 1];
-      return el && ((el.innerText || '').trim().length > 0 || hasGeneratedImageAsset(el));
-    }, 'Perplexity AI response content', TIMEOUT, 350);
-
-    // Generation complete = the action toolbar (copy / image actions) appeared.
-    // Idle timeout only starts after response content stops changing; window = the configured
-    // response timeout (reset on every content change).
-    var NO_CHANGE_LIMIT = TIMEOUT;
-    var pplxLastLen = -1;
-    var pplxLastChangeAt = null;
-    while (true) {
-      var nodes = getResponseNodes();
-      var el = nodes[nodes.length - 1];
-      if (el && (findCopyButtonFor(el) !== null || findImageActionToolbarFor(el) !== null)) break;
-      var curLen = el ? (el.innerText || '').length : 0;
-      if (el && hasGeneratedImageAsset(el)) curLen += 1;
-      if (curLen !== pplxLastLen) {
-        pplxLastLen = curLen;
-        pplxLastChangeAt = Date.now();
-      }
-      if (pplxLastChangeAt !== null && Date.now() - pplxLastChangeAt > NO_CHANGE_LIMIT) {
-        throw new Error('Timeout: Perplexity response stopped updating');
-      }
-      await sleep(400);
-    }
-
-    // Brief settle delay for any trailing DOM updates
-    await sleep(300);
-
-    var allResponses = getResponseNodes();
-    var targetResponse = allResponses[allResponses.length - 1];
-    if (!targetResponse) throw new Error('Perplexity response block not found');
-
-    var copyBtn = findCopyButtonFor(targetResponse);
-    var hasGeneratedImage = hasGeneratedImageAsset(targetResponse);
-    var hasImageToolbar = findImageActionToolbarFor(targetResponse) !== null;
-    var isImageOnly = hasGeneratedImage && !copyBtn && hasImageToolbar;
-    var copiedText = copyBtn ? ((await interceptCopy(copyBtn)) || '').trim() : '';
-    var answerText = (targetResponse.innerText || '').trim();
-    var finalAnswer = isImageOnly ? '' : (copiedText || answerText);
-
-    if (!finalAnswer && !isImageOnly) throw new Error('Perplexity response is empty');
-
-    // User query title lives in a [role="heading"][aria-level="1"] block (not an <h1>).
-    var queryEl = document.querySelector('[role="heading"][aria-level="1"] span.select-text, [role="heading"][aria-level="1"] span, h1 span');
-    var queryText = queryEl ? (queryEl.innerText || '').trim() : '';
-
-    return { response: finalAnswer, title: queryText, isImageOnly: isImageOnly };
-  }`;
 
 function buildPerplexityReadScript(
   baselineMessageCount: number,

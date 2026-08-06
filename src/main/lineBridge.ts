@@ -51,10 +51,6 @@ export function getLinePairedDisplayName(userId: string): string | undefined {
   return findLinePairedDisplayName(config.line.pairing, id);
 }
 
-// The deep link needs the account's basicId, which only the runtime knows, so it
-// is assembled here rather than duplicated in the renderer. Expired codes are
-// pruned for display too — config is only pruned on mutation, so a code that
-// aged out would otherwise sit in the UI at 0:00 with a dead link.
 function buildLinePairingSnapshot(): LinePairingSnapshot {
   const basicId = _lineRuntimeSnapshot.account?.basicId ?? '';
   const { pendingCodes, pairedUsers } = normalizeLinePairingState(config.line.pairing);

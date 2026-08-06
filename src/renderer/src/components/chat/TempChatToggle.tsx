@@ -6,9 +6,6 @@ import { useI18nStore } from '../../store/i18nStore';
 import { tempChatApi } from '../../api/electronApi';
 import { TEMP_CHAT_SHORTCUT_HINT } from '../../utils/keyLabels';
 
-// Toggle for temporary chat mode. The mode itself lives in the main process
-// (taskProcessor consults it); this only requests the change — the store is
-// updated by the TEMP_CHAT_MODE_CHANGED broadcast, same as the keyboard path.
 export const TempChatToggle: React.FC = () => {
   const tempChatMode = useAppStore((s) => s.tempChatMode);
   const { t } = useI18nStore();

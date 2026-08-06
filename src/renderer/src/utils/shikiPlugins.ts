@@ -27,7 +27,6 @@ export function loadShiki(): Promise<Highlighter | null> {
     try {
       const { createHighlighter } = await import('shiki');
       _highlighter = await createHighlighter({
-        // Other app themes load their Shiki theme on demand (ensureShikiTheme).
         themes: [SHIKI_FALLBACK_THEME, 'github-light'],
         langs: [
           'typescript', 'tsx', 'javascript', 'jsx',
@@ -44,7 +43,6 @@ export function loadShiki(): Promise<Highlighter | null> {
 
 const _themeLoads = new Map<string, Promise<string>>();
 
-/** Loads a bundled Shiki theme on demand; falls back to github-dark on failure. */
 export function ensureShikiTheme(highlighter: Highlighter, theme: string): Promise<string> {
   if (highlighter.getLoadedThemes().includes(theme)) return Promise.resolve(theme);
   const pending = _themeLoads.get(theme);

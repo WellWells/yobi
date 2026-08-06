@@ -24,13 +24,14 @@ interface FileItemProps {
   onCommitEdit: () => Promise<void>;
   onCancelEdit: () => void;
   formatTime: (ts: string) => string;
+  turnsLabel: string;
   registerItemRef: (path: string, node: HTMLDivElement | null) => void;
 }
 
 export const FileItem: React.FC<FileItemProps> = React.memo(({
   file, selected, unread, unreadLabel, isEditing, editingMode, editingText, setEditingText,
   selectMode, checked, onToggleSelect,
-  onRowClick, onOpenMenu, onCommitEdit, onCancelEdit, formatTime, registerItemRef,
+  onRowClick, onOpenMenu, onCommitEdit, onCancelEdit, formatTime, turnsLabel, registerItemRef,
 }) => {
   const highlighted = selectMode ? checked : selected;
   const body = (
@@ -57,6 +58,18 @@ export const FileItem: React.FC<FileItemProps> = React.memo(({
         >
           {formatTime(file.timestamp)}
         </Text>
+        {
+}
+        {(file.turns ?? 1) > 1 && (
+          <Text
+            component="span"
+            fz="var(--font-size-xs)"
+            data-selected={String(highlighted)}
+            className={styles.timestamp}
+          >
+            {turnsLabel.replace('{{count}}', String(file.turns))}
+          </Text>
+        )}
         {unread && (
           <Box ml="auto">
             <Circle size={9} fill="var(--mantine-color-accent)" stroke="var(--mantine-color-accent)" strokeWidth={1.5} aria-label={unreadLabel} />

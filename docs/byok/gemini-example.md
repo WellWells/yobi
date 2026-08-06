@@ -25,7 +25,7 @@ Yobi appends `/chat/completions` to the Base URL automatically. Any current mode
 
 ## 3. Use it
 
-Pick the instance in the chat model menu or in an AgentFlow LLM step — see [Switching providers](switch-provider.md).
+Pick the instance in the chat model menu or in a flow LLM step — see [Switching providers](switch-provider.md).
 
 ## Troubleshooting
 

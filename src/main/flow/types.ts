@@ -1,5 +1,8 @@
 import type { BrowserWindow } from 'electron';
-import type { CaptureFormat, CardTheme, FlowExecutionLog, MarkdownCapturePayload } from '../../shared/types';
+import type {
+  AgentStageLabel, CaptureFormat, CardTheme, FlowExecutionLog, MarkdownCapturePayload,
+  ShareExpire, ShareSettings,
+} from '../../shared/types';
 
 export type LogCallback = (log: FlowExecutionLog) => void;
 
@@ -11,6 +14,11 @@ export interface SaveHistoryInfo {
 
 export interface FlowExecutorDeps {
   getWorkerWin: () => BrowserWindow | null;
+  /**
+   * Reports a stage inside the running skill. Injected per tool call by the agent loop and
+   * absent everywhere else, so a skill's stage reporting costs nothing in a normal flow.
+   */
+  onStage?: (label: AgentStageLabel, detail?: string) => void;
   ensureWorkerWin?: () => Promise<BrowserWindow | null>;
   getTargetUrl: () => string;
   getResponseTimeoutMs?: () => number;
@@ -18,7 +26,6 @@ export interface FlowExecutorDeps {
   sendTelegramMessage?: (chatId: number, text: string) => Promise<void>;
   getPairedUsers?: () => Array<{ userId: number; username?: string; firstName?: string }>;
   sendLineMessage?: (userId: string, text: string) => Promise<void>;
-  // LINE has no upload endpoint: only a public HTTPS image URL can be sent.
   sendLineImage?: (userId: string, imageUrl: string) => Promise<void>;
   getLinePairedUsers?: () => Array<{ userId: string; displayName?: string }>;
   captureMarkdown?: (
@@ -32,9 +39,20 @@ export interface FlowExecutorDeps {
       showPrompt?: boolean;
       showContent?: boolean;
       cardTheme?: CardTheme;
+      width?: number;
+      zip?: boolean;
     },
   ) => Promise<string>;
   captureScreen?: (format: 'png' | 'jpg', targetDir?: string) => Promise<string>;
+  /*
+   * Injected rather than imported so the share skill's link branch can be unit-tested
+   * without a network — and so the consent check reads one settings object, not two.
+   */
+  getShareSettings?: () => ShareSettings;
+  createShareLink?: (
+    markdown: string,
+    opts: { expire: ShareExpire; burnAfterReading: boolean },
+  ) => Promise<{ url: string; deleteUrl: string }>;
   sendTelegramFile?: (
     chatId: number,
     filePath: string,

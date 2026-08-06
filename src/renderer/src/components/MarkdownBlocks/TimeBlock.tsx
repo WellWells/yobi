@@ -6,7 +6,6 @@ import dayjs from 'dayjs';
 interface TimeBlockProps {
   time: string;
   provider?: string | null;
-  action?: React.ReactNode;
 }
 
 function formatDisplayTime(raw: string): string {
@@ -18,7 +17,7 @@ function formatDisplayTime(raw: string): string {
   return fallbackParsed.isValid() ? fallbackParsed.format('YYYY-MM-DD HH:mm:ss') : normalized;
 }
 
-export const TimeBlock = React.memo<TimeBlockProps>(({ time, provider, action }) => {
+export const TimeBlock = React.memo<TimeBlockProps>(({ time, provider }) => {
   const displayTime = formatDisplayTime(time);
   return (
     <Group
@@ -59,11 +58,6 @@ export const TimeBlock = React.memo<TimeBlockProps>(({ time, provider, action })
             {displayTime}
           </Text>
         </>
-      )}
-      {action && (
-        <Box style={{ marginLeft: 10, display: 'inline-flex', alignItems: 'center' }}>
-          {action}
-        </Box>
       )}
     </Group>
   );

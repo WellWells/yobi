@@ -16,8 +16,6 @@ export function useTelegramSettings() {
     setTelegramSettings(snapshot);
   }, []);
 
-  // Every mutating handler runs through this so telegramBusy always resets, even
-  // when the IPC call rejects (otherwise a single failure freezes the controls).
   const runBusy = useCallback(async (action: () => Promise<void>) => {
     setTelegramBusy(true);
     try {
@@ -157,6 +155,13 @@ export function useTelegramSettings() {
     });
   }, [runBusy, loadTelegramSettings]);
 
+  const handleForgetTelegramChannel = useCallback(async (chatId: number) => {
+    await runBusy(async () => {
+      await telegramApi.forgetChannel(chatId);
+      await loadTelegramSettings();
+    });
+  }, [runBusy, loadTelegramSettings]);
+
   return {
     telegramSettings,
     telegramTokenInput,
@@ -176,5 +181,6 @@ export function useTelegramSettings() {
     handleCopyTelegramStartUrl,
     handleOpenTelegramStart,
     handleUnpairTelegramUser,
+    handleForgetTelegramChannel,
   };
 }

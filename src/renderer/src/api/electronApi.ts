@@ -1,22 +1,32 @@
 import type {
   AccountStatus,
+  AgentConfirmChoice,
+  AgentConfirmPayload,
   AuthProvider,
   BackupCategoryId,
   BackupCategoryInfo,
   BackupExportResult,
   BackupImportResult,
   BackupInspectResult,
+  BotBuiltinCommands,
+  BotByokCommandInfo,
   BotLlmDirectConfig,
   ByokConnectionProbe,
   ByokGroupSaveRequest,
   ByokInstanceSaveRequest,
   ByokModelsResult,
   ByokSettingsSnapshot,
+  McpServerView,
+  McpServerSaveRequest,
+  McpServerActionResult,
   ByokTestResult,
   CaptureSettings,
+  QuickExportSettings,
   ChatCommandResult,
   DuckaiModelInfo,
   FeedCandidate,
+  ScraperPickRequest,
+  ScraperPickResult,
   FlowDefinition,
   FlowExecutionEvent,
   FlowExecutionLog,
@@ -24,13 +34,23 @@ import type {
   FlowGenerationResult,
   HiddenSources,
   MarkdownCaptureRequest,
+  ShareLinkRequest,
+  ShareLinkResult,
+  ShareSettings,
   MetricsSnapshot,
   NotifyEventPrefs,
   OutputFile,
+  StartedConversation,
   PromptPreferences,
+  ChatTurnEvent,
   PromptTriggerOptions,
   Provider,
   QueueState,
+  AgentCommandResult,
+  AgentRunSummary,
+  AgentTracePayload,
+  SearchCommandResult,
+  SearchMode,
   SelectPathRequest,
   SelectPathResult,
   TempChatResult,
@@ -41,11 +61,14 @@ import type {
   LineRuntimeSnapshot,
   LineCredentialsUpdate,
   EmailSettingsSnapshot,
+  DataKeyStatus,
   SmtpCredentials,
   UpdateAvailablePayload,
   UpdateSource,
   UiNotificationPayload,
+  HotkeyBindResult,
 } from '../../../shared/types';
+import type { ConversationTokenStats } from '../../../shared/tokenEstimate';
 
 export const fileApi = {
   getList: (): Promise<OutputFile[]> => window.electronAPI.getFileList(),
@@ -56,14 +79,19 @@ export const fileApi = {
   deleteAll: (): Promise<number> => window.electronAPI.deleteAllFiles(),
   updateTitle: (filePath: string, title: string) => window.electronAPI.updateFileTitle(filePath, title),
   updateH1: (filePath: string, title: string): Promise<boolean> => window.electronAPI.updateFileH1(filePath, title),
+  startConversation: (prompt: string): Promise<StartedConversation | null> =>
+    window.electronAPI.startConversation(prompt),
   showInFolder: (filePath: string): Promise<void> => window.electronAPI.showInFolder(filePath),
   openPath: (filePath: string): Promise<boolean> => window.electronAPI.openPath(filePath),
 };
 
 export const settingsApi = {
+  openLanguagesFolder: (): Promise<boolean> => window.electronAPI.openLanguagesFolder(),
   getHotkey: (): Promise<string> => window.electronAPI.getHotkey(),
-  updateHotkey: (hotkey: string): Promise<boolean> => window.electronAPI.updateHotkey(hotkey),
+  updateHotkey: (hotkey: string): Promise<HotkeyBindResult> => window.electronAPI.updateHotkey(hotkey),
   setHotkeyPaused: (paused: boolean): Promise<boolean> => window.electronAPI.setHotkeyPaused(paused),
+  getHotkeyEnabled: (): Promise<boolean> => window.electronAPI.getHotkeyEnabled(),
+  setHotkeyEnabled: (enabled: boolean): Promise<HotkeyBindResult> => window.electronAPI.setHotkeyEnabled(enabled),
   getAiUrl: (): Promise<string> => window.electronAPI.getAiUrl(),
   updateAiUrl: (url: string): Promise<boolean> => window.electronAPI.updateAiUrl(url),
   getHiddenSources: (): Promise<HiddenSources> => window.electronAPI.getHiddenSources(),
@@ -97,10 +125,14 @@ export const settingsApi = {
   updateTheme: (theme: string): Promise<boolean> => window.electronAPI.updateTheme(theme),
   getLayoutMode: (): Promise<string> => window.electronAPI.getLayoutMode(),
   updateLayoutMode: (mode: string): Promise<boolean> => window.electronAPI.updateLayoutMode(mode),
+  getShowTokenUsage: (): Promise<boolean> => window.electronAPI.getShowTokenUsage(),
+  updateShowTokenUsage: (show: boolean): Promise<boolean> => window.electronAPI.updateShowTokenUsage(show),
   getMarkdownZoom: (): Promise<number> => window.electronAPI.getMarkdownZoom(),
   updateMarkdownZoom: (zoom: number): Promise<boolean> => window.electronAPI.updateMarkdownZoom(zoom),
   getCaptureSettings: (): Promise<CaptureSettings> => window.electronAPI.getCaptureSettings(),
   updateCaptureSettings: (settings: CaptureSettings): Promise<boolean> => window.electronAPI.updateCaptureSettings(settings),
+  getQuickExport: (): Promise<QuickExportSettings> => window.electronAPI.getQuickExport(),
+  updateQuickExport: (settings: QuickExportSettings): Promise<HotkeyBindResult> => window.electronAPI.updateQuickExport(settings),
   fetchDuckaiModels: (): Promise<DuckaiModelInfo[]> => window.electronAPI.fetchDuckaiModels(),
 };
 
@@ -111,6 +143,7 @@ export const tempChatApi = {
 
 export const metricsApi = {
   get: (): Promise<MetricsSnapshot> => window.electronAPI.getMetrics(),
+  getConversationTokens: (): Promise<ConversationTokenStats> => window.electronAPI.getConversationTokenStats(),
   reset: (): Promise<MetricsSnapshot> => window.electronAPI.resetMetrics(),
   getEnabled: (): Promise<boolean> => window.electronAPI.getMetricsEnabled(),
   updateEnabled: (enabled: boolean): Promise<boolean> => window.electronAPI.updateMetricsEnabled(enabled),
@@ -134,16 +167,24 @@ export const telegramApi = {
   revokePairingCode: (code: string): Promise<boolean> =>
     window.electronAPI.revokeTelegramPairingCode(code),
   unpairUser: (userId: number): Promise<boolean> => window.electronAPI.unpairTelegramUser(userId),
+  forgetChannel: (chatId: number): Promise<boolean> => window.electronAPI.forgetTelegramChannel(chatId),
   onRuntime: (cb: (snapshot: TelegramRuntimeSnapshot) => void) =>
     window.electronAPI.onTelegramRuntime(cb),
 };
 
-// AI provider slash commands, shared by the Telegram and LINE bots.
 export const botApi = {
   getProviderCommands: (): Promise<Record<Provider, BotProviderCommand>> =>
     window.electronAPI.getBotProviderCommands(),
   updateProviderCommands: (commands: Record<Provider, BotProviderCommand>): Promise<boolean> =>
     window.electronAPI.updateBotProviderCommands(commands),
+  getBuiltinCommands: (): Promise<BotBuiltinCommands> =>
+    window.electronAPI.getBotBuiltinCommands(),
+  updateBuiltinCommands: (commands: BotBuiltinCommands): Promise<boolean> =>
+    window.electronAPI.updateBotBuiltinCommands(commands),
+  getByokCommands: (): Promise<BotByokCommandInfo[]> =>
+    window.electronAPI.getBotByokCommands(),
+  setByokCommandEnabled: (id: string, enabled: boolean): Promise<boolean> =>
+    window.electronAPI.updateBotByokCommand(id, enabled),
 };
 
 export const lineApi = {
@@ -168,6 +209,11 @@ export const lineApi = {
     window.electronAPI.onLineRuntime(cb),
 };
 
+export const dataKeyApi = {
+  getStatus: (name: string): Promise<DataKeyStatus> => window.electronAPI.getDataKeyStatus(name),
+  update: (name: string, value: string): Promise<{ ok: boolean }> => window.electronAPI.updateDataKey(name, value),
+};
+
 export const emailApi = {
   getSettings: (): Promise<EmailSettingsSnapshot> => window.electronAPI.getEmailSettings(),
   updateEnabled: (enabled: boolean): Promise<{ ok: boolean }> => window.electronAPI.updateEmailEnabled(enabled),
@@ -187,6 +233,15 @@ export const byokApi = {
     window.electronAPI.saveByokGroup(req),
   deleteGroup: (id: string): Promise<{ ok: boolean; snapshot: ByokSettingsSnapshot }> =>
     window.electronAPI.deleteByokGroup(id),
+};
+
+export const mcpApi = {
+  list: (): Promise<McpServerView[]> => window.electronAPI.getMcpServers(),
+  save: (req: McpServerSaveRequest): Promise<McpServerActionResult> => window.electronAPI.saveMcpServer(req),
+  remove: (id: string): Promise<McpServerActionResult> => window.electronAPI.deleteMcpServer(id),
+  connect: (id: string): Promise<McpServerActionResult> => window.electronAPI.connectMcpServer(id),
+  disconnect: (id: string): Promise<McpServerActionResult> => window.electronAPI.disconnectMcpServer(id),
+  onServerStatus: (cb: (servers: McpServerView[]) => void): (() => void) => window.electronAPI.onMcpServerStatus(cb),
 };
 
 export const accountApi = {
@@ -217,11 +272,22 @@ export const updateApi = {
   openExternal: (url: string): Promise<boolean> => window.electronAPI.openExternalUrl(url),
 };
 
+export const shareApi = {
+  getSettings: (): Promise<ShareSettings> => window.electronAPI.getShareSettings(),
+  updateSettings: (patch: Partial<ShareSettings>): Promise<ShareSettings> =>
+    window.electronAPI.updateShareSettings(patch),
+  createLink: (request: ShareLinkRequest): Promise<ShareLinkResult> =>
+    window.electronAPI.shareCreateLink(request),
+  revokeLink: (deleteUrl: string): Promise<ShareLinkResult> =>
+    window.electronAPI.shareRevokeLink(deleteUrl),
+};
+
 export const systemApi = {
   captureMarkdownDocument: (request: MarkdownCaptureRequest) =>
     window.electronAPI.captureMarkdownDocument(request),
   showWorker: (): void => window.electronAPI.showWorker(),
   openConfigDir: (): Promise<boolean> => window.electronAPI.openConfigDir(),
+  openLogDir: (): Promise<boolean> => window.electronAPI.openLogDir(),
   selectPath: (request?: SelectPathRequest): Promise<SelectPathResult | null> =>
     window.electronAPI.selectPath(request),
   getPathForFile: (file: File): string => window.electronAPI.getPathForFile(file),
@@ -242,6 +308,8 @@ export const windowApi = {
   close: (): void => window.electronAPI.closeWindow(),
   respondCloseDialog: (action: 'quit' | 'hide', remember: boolean): void =>
     window.electronAPI.respondCloseDialog(action, remember),
+  respondAgentConfirm: (id: string, choice: AgentConfirmChoice): void =>
+    window.electronAPI.respondAgentConfirm(id, choice),
 };
 
 export const ipcEvents = {
@@ -249,10 +317,13 @@ export const ipcEvents = {
   onStatus: (cb: (status: string) => void) => window.electronAPI.onStatus(cb),
   onQueueUpdate: (cb: (state: QueueState) => void) => window.electronAPI.onQueueUpdate(cb),
   onFileListUpdate: (cb: (files: OutputFile[]) => void) => window.electronAPI.onFileListUpdate(cb),
+  onChatTurn: (cb: (event: ChatTurnEvent) => void) => window.electronAPI.onChatTurn(cb),
   onUiNotification: (cb: (payload: UiNotificationPayload) => void) =>
     window.electronAPI.onUiNotification(cb),
   onNavigateSettings: (cb: () => void) => window.electronAPI.onNavigateSettings(cb),
   onShowCloseDialog: (cb: () => void) => window.electronAPI.onShowCloseDialog(cb),
+  onAgentConfirm: (cb: (payload: AgentConfirmPayload) => void) => window.electronAPI.onAgentConfirm(cb),
+  onFlowCreated: (cb: (flow: FlowDefinition) => void) => window.electronAPI.onFlowCreated(cb),
   onNotifyOnCompleteChanged: (cb: (enabled: boolean) => void) =>
     window.electronAPI.onNotifyOnCompleteChanged(cb),
   onLaunchAtStartupChanged: (cb: (enabled: boolean) => void) =>
@@ -286,13 +357,29 @@ export const flowApi = {
   reorderFlows: (orderedIds: string[]): Promise<FlowDefinition[]> =>
     window.electronAPI.reorderFlows(orderedIds),
   execute: (flowId: string): Promise<FlowExecutionResult> => window.electronAPI.executeFlow(flowId),
-  runChatCommand: (flowId: string, command: string, input: string): Promise<ChatCommandResult> =>
-    window.electronAPI.runChatCommand(flowId, command, input),
+  runChatCommand: (flowId: string, command: string, input: string, conversationPath?: string): Promise<ChatCommandResult> =>
+    window.electronAPI.runChatCommand(flowId, command, input, conversationPath),
   abort: (flowId: string): Promise<boolean> => window.electronAPI.abortFlow(flowId),
   generate: (description: string): Promise<FlowGenerationResult> => window.electronAPI.generateFlow(description),
   exportFlow: (flow: FlowDefinition): Promise<boolean> => window.electronAPI.exportFlow(flow),
   exportFlowResult: (content: string, defaultFileName: string): Promise<boolean> =>
     window.electronAPI.exportFlowResult(content, defaultFileName),
+};
+
+export const searchApi = {
+  run: (query: string, targetUrl: string, mode?: SearchMode, conversationPath?: string, clientToken?: string): Promise<SearchCommandResult> =>
+    window.electronAPI.runSearchCommand(query, targetUrl, mode, conversationPath, clientToken),
+};
+
+export const agentApi = {
+  run: (goal: string, targetUrl: string, runId: string, conversationPath?: string): Promise<AgentCommandResult> =>
+    window.electronAPI.runAgentCommand(goal, targetUrl, runId, conversationPath),
+  resume: (runId: string, answer?: string): Promise<AgentCommandResult> =>
+    window.electronAPI.resumeAgentRun(runId, answer),
+  cancel: (runId: string): Promise<boolean> => window.electronAPI.cancelAgentRun(runId),
+  listResumable: (): Promise<AgentRunSummary[]> => window.electronAPI.listResumableAgentRuns(),
+  discard: (runId: string): Promise<boolean> => window.electronAPI.discardAgentRun(runId),
+  onTrace: (cb: (payload: AgentTracePayload) => void): (() => void) => window.electronAPI.onAgentTrace(cb),
 };
 
 export const rssApi = {
@@ -304,6 +391,8 @@ export const rssApi = {
 export const scraperApi = {
   hasCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.scraperHasCheckpoint(stepId),
   clearCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.scraperClearCheckpoint(stepId),
+  pickSelector: (args: ScraperPickRequest): Promise<ScraperPickResult | null> =>
+    window.electronAPI.scraperPickSelector(args),
 };
 
 export const ytSubsApi = {

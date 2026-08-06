@@ -28,6 +28,7 @@ import { config, initSensitiveConfig } from './config';
 import { QueueManager } from './queueManager';
 import type { Task } from '../shared/types';
 import { sendLog, setMainWindow } from './helpers';
+import { flushLogFileSync, initLogFile } from './logFile';
 import {
   createMainWindow,
   getMainWin,
@@ -38,7 +39,7 @@ import { registerWorkerClientHints } from './clientHints';
 import { setupIpcHandlers } from './ipc';
 import { classifyFailure, recordTaskOutcome } from './metrics';
 import { notifyQueueLevelFailure, processTask } from './taskProcessor';
-import { bindHotkey as bindHotkeyImpl } from './hotkeyBinding';
+import { bindHotkey as bindHotkeyImpl, bindQuickExportHotkey } from './hotkeyBinding';
 import type { FlowManager } from './flow';
 import { checkForUpdates } from './updater';
 import { destroyTray, isTrayCreated } from './tray';
@@ -48,6 +49,7 @@ import { setupTrayAndCloseBehavior, buildTrayIpcCallbacks } from './bootstrap/tr
 import { initFlowManager, broadcastMergedQueueState } from './bootstrap/flowSetup';
 import { createTelegramRuntime } from './bootstrap/telegramSetup';
 import { createLineRuntime } from './bootstrap/lineSetup';
+import { initMcp } from './bootstrap/mcpSetup';
 
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
@@ -91,15 +93,12 @@ const queue = new QueueManager(
     await processTask(task, { telegramRuntime, lineRuntime });
   },
   (task, err) => {
-    // Queue-level rejection (hard timeout) never reaches processTask's own error
-    // handling. Record it, then tell whoever is waiting — notifyQueueLevelFailure
-    // stays silent if processTask already answered them.
     recordTaskOutcome('chat', classifyFailure(err instanceof Error ? err.message : String(err)), task);
     void notifyQueueLevelFailure(task, err, { telegramRuntime, lineRuntime });
   },
 );
 
-const bindHotkey = (): void => bindHotkeyImpl({ queue });
+const bindHotkey = (): boolean => bindHotkeyImpl({ queue });
 
 queue.onUpdate(() => {
   broadcastMergedQueueState(queue, flowManager);
@@ -119,11 +118,9 @@ app.whenReady().then(async () => {
   app.setAppUserModelId('com.wellstsai.yobi');
   powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension');
 
-  // Apply a scheduled factory reset (from RESET_SETTINGS) here — before any
-  // window, the task queue, the flow manager or the Telegram bot exist — so the
-  // wipe runs in a pristine process with no in-flight work to resurrect deleted
-  // files or re-persist provider cookies. Must precede initSensitiveConfig() and
-  // setupWindows() below.
+  initLogFile();
+  sendLog(`🚀 Yobi ${app.getVersion()} starting (${process.platform}, electron ${process.versions.electron})`);
+
   await applyPendingFactoryReset();
 
   session.fromPartition('persist:gemini').setUserAgent(CLEAN_UA);
@@ -139,6 +136,7 @@ app.whenReady().then(async () => {
   setupWindows();
 
   flowManager = initFlowManager({ queue, telegramRuntime, lineRuntime });
+  initMcp();
 
   if (process.platform === 'darwin') {
     getMainWin()?.focus();
@@ -153,15 +151,19 @@ app.whenReady().then(async () => {
     telegramSessionId: TELEGRAM_SESSION_ID,
     getMainWin,
     bindHotkey,
+    bindQuickExportHotkey,
     checkForUpdates,
     flowManager: flowManager!,
     ...buildTrayIpcCallbacks(),
   });
 
   bindHotkey();
+  bindQuickExportHotkey();
   void telegramRuntime.syncWithConfig();
   void lineRuntime.syncWithConfig();
-  sendLog(`✅ Ready — copy text and press ${config.hotkey}`);
+  sendLog(config.hotkeyEnabled
+    ? `✅ Ready — copy text and press ${config.hotkey}`
+    : '✅ Ready — the ask hotkey is switched off');
 });
 
 app.on('before-quit', () => {
@@ -181,6 +183,7 @@ app.on('quit', () => {
     powerSaveBlockerId = null;
   }
   sendLog('✅ Cleanup complete — app exit');
+  flushLogFileSync();
 });
 
 app.on('will-quit', () => {
@@ -195,11 +198,6 @@ app.on('window-all-closed', () => {
 });
 
 app.on('activate', () => {
-  // Recreate the UI whenever the main window is gone — check ONLY the main
-  // window, never the hidden provider worker. The worker lives for the whole app
-  // lifetime (its close is intercepted into a hide), so gating on "all windows
-  // closed" would leave macOS users unable to reopen the app from the Dock after
-  // red-button-closing the main window.
   const mainWin = getMainWin();
   if (!mainWin || mainWin.isDestroyed()) {
     createMainWindow();

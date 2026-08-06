@@ -24,8 +24,6 @@ function formatRemaining(expiresAt: string, now: number): string {
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
-// A pairing code is short-lived, so the countdown ticks locally rather than
-// waiting for the next settings refresh.
 export const LinePairingPanel: React.FC<Props> = ({ pendingCodes, account, busy, onGenerate, onRevoke, t }) => {
   const [now, setNow] = useState(() => Date.now());
 

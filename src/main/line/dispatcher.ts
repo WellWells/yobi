@@ -1,6 +1,9 @@
 import { t } from '../i18n';
-import type { BotLlmDirectConfig } from '../../shared/types';
+import { BUILTIN_NEW_COMMAND } from '../../shared/types';
+import type { BotBuiltinCommandKey, BotLlmDirectConfig } from '../../shared/types';
+import type { BotBuiltinRunResult } from '../botBuiltinCommands';
 import type { ByokCommandDef } from '../byokCommands';
+import { formatLineReply } from './format';
 import { createAttemptLimiter } from './attemptLimiter';
 import type { LineClient } from './client';
 import {
@@ -12,19 +15,15 @@ import {
   resolveProviderTarget,
 } from './commands';
 import type { LineCommand } from './commands';
-import type { ResolvedProviderCommand } from '../providerCommands';
+import type { ResolvedBuiltinCommand, ResolvedProviderCommand } from '../providerCommands';
 import type { LineTextEvent } from './events';
 import { respond, safePush } from './messaging';
 import type { LinePairingUserProfile } from './pairing';
 
 export interface LineTaskRequest {
   userId: string;
-  // Where the async result is pushed: the userId in a 1:1 chat, the
-  // groupId/roomId when triggered by tagging the bot in a group.
   chatId: string;
   text: string;
-  // Set when the message named a provider ('/gemini hi') or command-free chat
-  // picked one; otherwise the default provider from config is used.
   targetUrl?: string;
 }
 
@@ -42,17 +41,22 @@ export interface LineDispatcherDeps {
   onTaskRequest: (request: LineTaskRequest) => Promise<{ taskId: string }>;
   onLog: (message: string) => void;
   getStrings: () => Record<string, string>;
-  // Read on every message, never cached, so a settings change applies without
-  // restarting the webhook server.
   getLlmDirect: () => BotLlmDirectConfig;
-  // The AI provider commands as configured in the shared bot-command settings.
-  // Read per message like the rest: renaming '/gemini' takes effect at once.
   getProviderCommands: () => ResolvedProviderCommand[];
-  // Read on every message, never cached: a flow command saved a second ago must
-  // answer without restarting anything. LINE has no command-registration API, so
-  // there is nothing to sync — resolving late is the whole mechanism.
+  getBuiltinCommands: () => ResolvedBuiltinCommand[];
+  onBuiltinCommand: (
+    key: BotBuiltinCommandKey,
+    input: string,
+    targetUrl: string,
+    chatId: string,
+    userId: string,
+  ) => Promise<BotBuiltinRunResult>;
+  onAgentAnswer: (answer: string, chatId: string, userId: string) => Promise<BotBuiltinRunResult | null>;
+  hasPendingAgentAsk: (chatId: string, userId: string) => boolean;
+  onDropAgentAsk: (chatId: string, userId: string) => void;
+  /** Drops this chat's running conversation. Resolves true when there was one to drop. */
+  onNewConversation: (chatId: string, userId: string) => Promise<boolean>;
   getFlowCommands?: () => LineFlowCommandDef[];
-  // Same live resolution for BYOK key/group commands ('/mykey …').
   getByokCommands?: () => ByokCommandDef[];
   onFlowCommand?: (
     flowId: string,
@@ -62,8 +66,6 @@ export interface LineDispatcherDeps {
   ) => Promise<{ taskId: string; result: Promise<{ success: boolean }> }>;
 }
 
-// Routes verified webhook events: pairing, bot-owned commands, provider commands
-// and plain prompts. Everything it answers goes out on the event's reply token.
 export class LineDispatcher {
   private readonly pairAttempts = createAttemptLimiter();
 
@@ -99,8 +101,12 @@ export class LineDispatcher {
       await this.handleCommand(event, command);
       return;
     }
-    // Plain text reaches the AI only when command-free chat is on; otherwise the
-    // reply teaches the commands so the bot never looks dead.
+    // An open agent question is answered by plain text, so this has to come before the
+    // command-free chat gate — otherwise nobody with that switch off could ever reply.
+    if (this.deps.hasPendingAgentAsk(event.chatId, event.userId)) {
+      await this.runAgentAnswer(event, event.text);
+      return;
+    }
     const direct = this.deps.getLlmDirect();
     if (!direct.enabled) {
       await this.reply(event, t(this.deps.getStrings(), 'line.direct.disabledHint', {
@@ -111,9 +117,6 @@ export class LineDispatcher {
     await this.enqueueTask(event, event.text, direct.targetUrl || undefined);
   }
 
-  // Group/room messages are ignored unless the sender explicitly tagged the bot;
-  // an untagged conversation is none of the bot's business. Unpaired senders are
-  // dropped silently — a reply would let anyone make the bot spam the group.
   private async dispatchGroupMessage(event: LineTextEvent): Promise<void> {
     if (!event.mentionsBot) return;
     if (!this.deps.isPairedUser(event.userId)) {
@@ -122,33 +125,46 @@ export class LineDispatcher {
     }
     const s = this.deps.getStrings();
     const direct = this.deps.getLlmDirect();
-    if (!direct.enabled) {
-      // Not the 1:1 hint: it suggests slash commands, which are 1:1-only.
-      await this.reply(event, t(s, 'line.direct.disabledHintGroup'));
+    if (!event.text || event.text.startsWith('/')) {
+      await this.reply(event, t(s, direct.enabled ? 'line.direct.mentionUsage' : 'line.direct.disabledHintGroup'));
       return;
     }
-    // Slash commands are 1:1-only; a tagged '/gemini hi' would otherwise go to
-    // the AI as a literal prompt, which reads like the command silently worked.
-    if (!event.text || event.text.startsWith('/')) {
-      await this.reply(event, t(s, 'line.direct.mentionUsage'));
+    if (this.deps.hasPendingAgentAsk(event.chatId, event.userId)) {
+      await this.runAgentAnswer(event, event.text);
+      return;
+    }
+    if (!direct.enabled) {
+      await this.reply(event, t(s, 'line.direct.disabledHintGroup'));
       return;
     }
     await this.enqueueTask(event, event.text, direct.targetUrl || undefined);
   }
 
-  // A paired user's slash command either names a provider, a flow, a BYOK key or
-  // is unknown — it is never forwarded to the AI verbatim, which would silently
-  // answer '/gemini hi' on whatever the default provider happens to be.
   private async handleCommand(event: LineTextEvent, command: LineCommand): Promise<void> {
     const s = this.deps.getStrings();
     if (isHelpCommand(command)) {
       await this.reply(event, this.usageText());
       return;
     }
+    // Any command means the user moved on from whatever the agent last asked them.
+    this.deps.onDropAgentAsk(event.chatId, event.userId);
+
+    if (command.name === BUILTIN_NEW_COMMAND) {
+      const had = await this.deps.onNewConversation(event.chatId, event.userId);
+      await this.reply(event, t(s, had ? 'bot.session.cleared' : 'bot.session.alreadyNew'));
+      return;
+    }
+
     const providers = this.deps.getProviderCommands();
     const target = resolveProviderTarget(command, providers);
     if (target) {
       await this.enqueueProviderTask(event, command, target.targetUrl);
+      return;
+    }
+
+    const builtin = this.deps.getBuiltinCommands().find((bc) => bc.command === command.name);
+    if (builtin) {
+      await this.runBuiltinCommand(event, command, builtin);
       return;
     }
 
@@ -164,8 +180,6 @@ export class LineDispatcher {
       return;
     }
 
-    // Last: a provider's own name ('/chatgpt') after it was renamed. Resolved
-    // here so a flow or BYOK command owning that name always wins.
     const alias = resolveProviderAlias(command, providers);
     if (alias) {
       await this.enqueueProviderTask(event, command, alias.targetUrl);
@@ -190,8 +204,56 @@ export class LineDispatcher {
     await this.enqueueTask(event, command.argument, targetUrl);
   }
 
-  // The flow's own `bot` step delivers the result, so this only acknowledges the
-  // request and reports the case where the flow never got that far.
+  private async runBuiltinCommand(
+    event: LineTextEvent,
+    command: LineCommand,
+    builtin: ResolvedBuiltinCommand,
+  ): Promise<void> {
+    const s = this.deps.getStrings();
+    if (!command.argument) {
+      await this.reply(event, t(s, 'line.cmd.usage', { command: command.name }));
+      return;
+    }
+    await this.reply(event, t(s, 'line.cmd.queued'));
+    try {
+      const result = await this.deps.onBuiltinCommand(
+        builtin.key,
+        command.argument,
+        builtin.targetUrl,
+        event.chatId,
+        event.userId,
+      );
+      await this.pushResult(event, result);
+    } catch (err: unknown) {
+      this.deps.onLog(`[line] built-in /${command.name} failed: ${err instanceof Error ? err.message : String(err)}`);
+      await safePush(this.deps.getClient(), event.chatId, t(s, 'line.cmd.queueFailed'), this.deps.onLog);
+    }
+  }
+
+  private async runAgentAnswer(event: LineTextEvent, answer: string): Promise<void> {
+    const s = this.deps.getStrings();
+    await this.reply(event, t(s, 'line.cmd.queued'));
+    try {
+      const result = await this.deps.onAgentAnswer(answer, event.chatId, event.userId);
+      if (!result) {
+        await safePush(this.deps.getClient(), event.chatId, t(s, 'bot.builtin.notResumable'), this.deps.onLog);
+        return;
+      }
+      await this.pushResult(event, result);
+    } catch (err: unknown) {
+      this.deps.onLog(`[line] agent answer failed: ${err instanceof Error ? err.message : String(err)}`);
+      await safePush(this.deps.getClient(), event.chatId, t(s, 'line.cmd.queueFailed'), this.deps.onLog);
+    }
+  }
+
+  private async pushResult(event: LineTextEvent, result: BotBuiltinRunResult): Promise<void> {
+    const s = this.deps.getStrings();
+    const text = result.ok
+      ? formatLineReply(result.text, t(s, 'line.msg.emptyResponse'))
+      : `${t(s, 'line.msg.failed', { provider: result.providerLabel })}\n${result.text}`;
+    await safePush(this.deps.getClient(), event.chatId, text, this.deps.onLog);
+  }
+
   private async runFlowCommand(
     event: LineTextEvent,
     flow: LineFlowCommandDef,
@@ -228,8 +290,6 @@ export class LineDispatcher {
   private async handlePairCommand(event: LineTextEvent, code: string): Promise<void> {
     const s = this.deps.getStrings();
     const { userId } = event;
-    // Paired users are checked first: they have nothing left to guess, so the
-    // throttle must never lock them out of their own bot.
     if (this.deps.isPairedUser(userId)) {
       await this.reply(event, t(s, 'line.pair.alreadyPaired'));
       return;
@@ -239,8 +299,6 @@ export class LineDispatcher {
       await this.reply(event, t(s, 'line.pair.tooManyAttempts'));
       return;
     }
-    // The name has to be known when the paired-user record is written, and
-    // getDisplayName resolves to undefined rather than throwing.
     const displayName = await this.deps.getClient()?.getDisplayName(userId);
     const result = this.deps.consumePairingCode(code, { userId, displayName });
     if (!result.ok) {
@@ -251,15 +309,9 @@ export class LineDispatcher {
     }
     this.pairAttempts.reset(userId);
     this.deps.onLog(`[line] paired user ${userId}${displayName ? ` (${displayName})` : ''}`);
-    // A freshly paired user has never seen the bot's usage notes, so the
-    // confirmation carries them; /help repeats them on demand.
     await this.reply(event, `${t(s, 'line.pair.completed')}\n\n${this.usageText()}`);
   }
 
-  // The acknowledgement goes out before the request is resolved: onTaskRequest
-  // may fetch a linked page or a video transcript first, which can outlive the
-  // reply token's ~30s life. Spending it here also keeps the ack free — a push
-  // would bill the account's monthly quota for every message the bot receives.
   private async enqueueTask(event: LineTextEvent, text: string, targetUrl?: string): Promise<void> {
     const s = this.deps.getStrings();
     await this.reply(event, t(s, 'line.cmd.queued'));
@@ -277,19 +329,23 @@ export class LineDispatcher {
     }
   }
 
-  // LINE has no '/' menu, so the help text is the only place a user can discover
-  // commands — flow and BYOK commands included, or a new one would stay invisible.
   private commandList(): string {
+    const builtinCommands = [
+      `/${BUILTIN_NEW_COMMAND}`,
+      ...this.deps.getBuiltinCommands().map((bc) => `/${bc.command}`),
+    ];
     const flowCommands = (this.deps.getFlowCommands?.() ?? []).map((fc) => `/${fc.command}`);
     const byokCommands = (this.deps.getByokCommands?.() ?? []).map((bc) => `/${bc.command}`);
-    return [listProviderCommands(this.deps.getProviderCommands()), ...flowCommands, ...byokCommands]
+    return [
+      listProviderCommands(this.deps.getProviderCommands()),
+      ...builtinCommands,
+      ...flowCommands,
+      ...byokCommands,
+    ]
       .filter(Boolean)
       .join('  ');
   }
 
-  // Two variants: with command-free chat on, plain text goes to the AI; with it
-  // off, only commands work — the old single text promised the first behavior
-  // unconditionally, which is no longer true.
   private usageText(): string {
     const key = this.deps.getLlmDirect().enabled ? 'line.help.usageDirect' : 'line.help.usageCommands';
     return t(this.deps.getStrings(), key, { commands: this.commandList() });

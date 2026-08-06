@@ -17,10 +17,6 @@ function pushResolved(items: Array<{ title: string; link: string }>, title: stri
   }
 }
 
-// Feeds hand back the new items only — `{title, link}` per item, the list shape
-// every loop-feeding skill uses. Fetching each article's body is a separate step
-// downstream (`browser` inside a `loop`), so one article's failure costs one
-// article, and one LLM call sees one article instead of five spliced together.
 export async function execRss(
   config: Record<string, string>,
   stepId: string,
@@ -28,30 +24,22 @@ export async function execRss(
   const url = config.url ?? '';
   if (!url) return '[]';
 
-  // Removed in the loop refactor. Left flows would otherwise hand their LLM step a
-  // JSON list of links where it expects article bodies — garbage in, plausible
-  // garbage out. Fail loudly instead.
   if (config.fetchContent === 'true') {
     throw new Error(
       'The RSS "fetch linked content" option has been removed. Feed the RSS output into a loop and fetch each article with a browser step. See the "RSS Article Summary" template.',
     );
   }
 
-  // On a first run every item in the feed is "new". Seeding with just the latest
-  // one keeps the flow from firing a burst of briefings the moment it is created;
-  // the rest are still written to the checkpoint, so they are never revisited.
   const FIRST_RUN_COUNT = 1;
-  // A later run that finds a pile of new items (a slow cron, a feed that dumped a
-  // backlog) is still capped, or a single tick could sit in the queue for an hour.
   const BURST_CAP = 5;
 
-  sendLog(`📡 [AgentFlow] RSS step — fetching feed: ${url}`);
+  sendLog(`📡 [Flow] RSS step — fetching feed: ${url}`);
 
   const rawXml = await fetchRawText(url);
   const allItems = parseRssFeed(rawXml);
 
   if (allItems.length === 0) {
-    sendLog('📡 [AgentFlow] RSS: feed returned 0 items');
+    sendLog('📡 [Flow] RSS: feed returned 0 items');
     return '[]';
   }
 
@@ -60,18 +48,18 @@ export async function execRss(
     rssCheckpoints,
     stepId,
     allItems.map((item) => item.link),
-    config.cacheDays,
+    undefined,
   );
 
   let newLinks = fresh;
   if (isFirstRun) {
-    sendLog(`📡 [AgentFlow] RSS: first run — seeding the checkpoint, returning the latest ${FIRST_RUN_COUNT} item`);
+    sendLog(`📡 [Flow] RSS: first run — seeding the checkpoint, returning the latest ${FIRST_RUN_COUNT} item`);
     newLinks = allItems.slice(0, FIRST_RUN_COUNT).map((item) => item.link);
   } else if (newLinks.length > BURST_CAP) {
-    sendLog(`📡 [AgentFlow] RSS: burst of ${newLinks.length} — returning latest ${BURST_CAP}`);
+    sendLog(`📡 [Flow] RSS: burst of ${newLinks.length} — returning latest ${BURST_CAP}`);
     newLinks = allItems.slice(0, BURST_CAP).map((item) => item.link);
   } else {
-    sendLog(`📡 [AgentFlow] RSS: found ${newLinks.length} new items since checkpoint`);
+    sendLog(`📡 [Flow] RSS: found ${newLinks.length} new items since checkpoint`);
   }
 
   if (newLinks.length === 0) return '[]';
@@ -85,6 +73,8 @@ export async function execRss(
 
 const scraperCheckpoints = makeCheckpointStore<SeenCheckpoint>('scraper');
 
+const SCRAPER_MAX_HTML_CHARS = 2_000_000;
+
 export async function execScraper(
   config: Record<string, string>,
   stepId: string,
@@ -92,8 +82,8 @@ export async function execScraper(
   const url = config.url ?? '';
   if (!url) return '[]';
 
-  sendLog(`🔍 [AgentFlow] Web Scraper step — fetching page: ${url}`);
-  const result = await pageFetchLane.runExclusive(() => fetchAndParse(url, { rawHtml: true }));
+  sendLog(`🔍 [Flow] Web Scraper step — fetching page: ${url}`);
+  const result = await pageFetchLane.runExclusive(() => fetchAndParse(url, { rawHtml: true, maxChars: SCRAPER_MAX_HTML_CHARS }));
   const html = result.cleanedText;
 
   const $ = load(`<html>${html}</html>`);
@@ -111,17 +101,22 @@ export async function execScraper(
   const linkSel = (config.linkSelector ?? '').trim();
 
   if (!titleSel && !linkSel) {
-    sendLog(`⚠️ [AgentFlow] Scraper: Both titleSelector and linkSelector are empty!`);
+    sendLog(`⚠️ [Flow] Scraper: Both titleSelector and linkSelector are empty!`);
     return '[]';
   }
 
   if (itemSel) {
+    // The row element itself can BE the match — card lists wrap the whole row in one
+    // <a>, and find() only ever looks at descendants, so it would miss every link.
+    const within = (row: ReturnType<typeof $>, sel: string): ReturnType<typeof $> =>
+      (row.is(sel) ? row : row.find(sel).first());
+
     $(itemSel).each((_, el) => {
       const $el = $(el);
-      const title = titleSel ? $el.find(titleSel).first().text().trim() : $el.text().trim();
+      const title = titleSel ? within($el, titleSel).text().trim() : $el.text().trim();
       let rawLink = '';
       if (linkSel) {
-        const linkEl = $el.find(linkSel).first();
+        const linkEl = within($el, linkSel);
         rawLink = linkEl.attr('href') ?? linkEl.text().trim();
       } else {
         rawLink = $el.attr('href') ?? '';
@@ -129,32 +124,43 @@ export async function execScraper(
 
       pushResolved(items, title, rawLink, baseOrigin || url);
     });
-  } else {
-    const titles: string[] = [];
-    if (titleSel) {
-      $(titleSel).each((_, el) => {
-        titles.push($(el).text().trim());
-      });
-    }
+  } else if (titleSel && linkSel) {
+    const titleEls = $(titleSel).toArray();
+    const paired = titleEls.map((tEl) => {
+      const $t = $(tEl);
+      let rawLink = '';
+      let $node = $t;
+      for (let depth = 0; depth < 8 && $node.length; depth++) {
+        if ($node.is(linkSel)) { rawLink = $node.attr('href') ?? $node.text().trim(); break; }
+        const $link = $node.find(linkSel).first();
+        if ($link.length) { rawLink = $link.attr('href') ?? $link.text().trim(); break; }
+        $node = $node.parent();
+      }
+      return { title: $t.text().trim(), link: rawLink };
+    });
 
-    const rawLinks: string[] = [];
-    if (linkSel) {
-      $(linkSel).each((_, el) => {
-        const $el = $(el);
-        const l = $el.attr('href') ?? $el.text().trim();
-        rawLinks.push(l);
-      });
-    }
+    const resolvedLinks = paired.map((p) => p.link).filter(Boolean);
+    const degenerate = resolvedLinks.length > 1 && new Set(resolvedLinks).size < resolvedLinks.length;
 
-    const maxLen = Math.max(titles.length, rawLinks.length);
-    for (let i = 0; i < maxLen; i++) {
-      const title = titles[i] ?? '';
-      const rawLink = rawLinks[i] ?? '';
-      pushResolved(items, title, rawLink, baseOrigin || url);
+    if (degenerate) {
+      const linkEls = $(linkSel).toArray();
+      titleEls.forEach((tEl, i) => {
+        const $link = linkEls[i] ? $(linkEls[i]) : null;
+        const rawLink = $link ? ($link.attr('href') ?? $link.text().trim()) : '';
+        pushResolved(items, $(tEl).text().trim(), rawLink, baseOrigin || url);
+      });
+    } else {
+      for (const p of paired) pushResolved(items, p.title, p.link, baseOrigin || url);
     }
+  } else if (linkSel) {
+    $(linkSel).each((_, el) => {
+      const $el = $(el);
+      const rawLink = $el.attr('href') ?? $el.text().trim();
+      pushResolved(items, $el.text().trim(), rawLink, baseOrigin || url);
+    });
   }
 
-  sendLog(`🔍 [AgentFlow] Scraper: Found ${items.length} total items on page`);
+  sendLog(`🔍 [Flow] Scraper: Found ${items.length} total items on page`);
 
   if (items.length === 0) {
     return '[]';
@@ -164,23 +170,19 @@ export async function execScraper(
     scraperCheckpoints,
     stepId,
     items.map((item) => item.link),
-    config.cacheDays,
+    undefined,
   );
   const freshSet = new Set(fresh);
   const newItems = items.filter((item) => freshSet.has(item.link.trim()));
 
-  // Guard against a cleared field: the UI stores '' (not undefined) when the max
-  // is blanked, so `?? '5'` doesn't help and parseInt('') is NaN → slice(0, NaN)
-  // returns []. reconcileSeenCache already marked every item seen above, so a NaN
-  // here would silently consume the whole page and never emit anything again.
   const parsedMax = parseInt(config.maxItems ?? '', 10);
   const INITIAL_FETCH_COUNT = Number.isFinite(parsedMax) && parsedMax > 0 ? parsedMax : 5;
   const itemsToReturn = newItems.slice(0, INITIAL_FETCH_COUNT);
 
   if (isFirstRun) {
-    sendLog(`🔍 [AgentFlow] Scraper: First run — returning ${itemsToReturn.length} latest items`);
+    sendLog(`🔍 [Flow] Scraper: First run — returning ${itemsToReturn.length} latest items`);
   } else {
-    sendLog(`🔍 [AgentFlow] Scraper: Found ${itemsToReturn.length} new items out of ${newItems.length} total unseen items`);
+    sendLog(`🔍 [Flow] Scraper: Found ${itemsToReturn.length} new items out of ${newItems.length} total unseen items`);
   }
 
   return JSON.stringify(itemsToReturn);
@@ -222,7 +224,7 @@ async function resolveChannelFeedUrl(entry: string): Promise<string | null> {
     html = await fetchRawText(pageUrl);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    sendLog(`📺 [AgentFlow] YT Subs: failed to load channel page ${pageUrl}: ${msg}`);
+    sendLog(`📺 [Flow] YT Subs: failed to load channel page ${pageUrl}: ${msg}`);
     return null;
   }
 
@@ -235,7 +237,7 @@ async function resolveChannelFeedUrl(entry: string): Promise<string | null> {
     ?? html.match(/<meta\s+itemprop="(?:channelId|identifier)"\s+content="(UC[\w-]+)"/i);
   if (idMatch) return `${YT_RSS_BASE}${idMatch[1]}`;
 
-  sendLog(`📺 [AgentFlow] YT Subs: could not resolve an RSS feed for ${pageUrl}`);
+  sendLog(`📺 [Flow] YT Subs: could not resolve an RSS feed for ${pageUrl}`);
   return null;
 }
 
@@ -251,17 +253,17 @@ export async function execYoutubeSubs(
     .filter(Boolean);
 
   if (channels.length === 0) {
-    sendLog('📺 [AgentFlow] YT Subs: no channels configured');
+    sendLog('📺 [Flow] YT Subs: no channels configured');
     return '[]';
   }
 
   const perChannel = Math.max(1, parseInt(config.perChannel ?? '3', 10) || 3);
   const skipShorts = config.skipShorts !== 'false';
-  sendLog(`📺 [AgentFlow] YouTube Subscriptions step — ${channels.length} channel(s), latest ${perChannel} each${skipShorts ? ' (Shorts excluded)' : ''}`);
+  sendLog(`📺 [Flow] YouTube Subscriptions step — ${channels.length} channel(s), latest ${perChannel} each${skipShorts ? ' (Shorts excluded)' : ''}`);
 
   const nowIso = new Date().toISOString();
   const now = Date.parse(nowIso);
-  const windowMs = cacheWindowMs(config.cacheDays);
+  const windowMs = cacheWindowMs(undefined);
   const checkpoint = await ytSubsCheckpoints.load(stepId);
   const seen = new Set(
     readSeenEntries(checkpoint, nowIso)
@@ -286,7 +288,7 @@ export async function execYoutubeSubs(
       latest = sortByPubDateDesc(videos).slice(0, perChannel);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      sendLog(`📺 [AgentFlow] YT Subs: failed to read feed for ${entry}: ${msg}`);
+      sendLog(`📺 [Flow] YT Subs: failed to read feed for ${entry}: ${msg}`);
       continue;
     }
     if (latest.length === 0) continue;
@@ -295,24 +297,24 @@ export async function execYoutubeSubs(
 
     if (!seen.has(feedUrl)) {
       if (isFresh(latest[0])) {
-        sendLog(`📺 [AgentFlow] YT Subs: ${entry} — new channel, seeding latest 1`);
+        sendLog(`📺 [Flow] YT Subs: ${entry} — new channel, seeding latest 1`);
         emitted.push(latest[0]);
       } else {
-        sendLog(`📺 [AgentFlow] YT Subs: ${entry} — new channel, latest upload older than the freshness window — seeding none`);
+        sendLog(`📺 [Flow] YT Subs: ${entry} — new channel, latest upload older than the freshness window — seeding none`);
       }
     } else {
       const fresh = latest.filter((v) => !seen.has(v.link.trim()) && isFresh(v));
-      sendLog(`📺 [AgentFlow] YT Subs: ${entry} — ${fresh.length} new video(s)`);
+      sendLog(`📺 [Flow] YT Subs: ${entry} — ${fresh.length} new video(s)`);
       emitted.push(...fresh);
     }
   }
 
   if (allKeys.length > 0) {
-    await reconcileSeenCache(ytSubsCheckpoints, stepId, allKeys, config.cacheDays);
+    await reconcileSeenCache(ytSubsCheckpoints, stepId, allKeys, undefined);
   }
 
   if (emitted.length === 0) {
-    sendLog('📺 [AgentFlow] YT Subs: no new videos since last run');
+    sendLog('📺 [Flow] YT Subs: no new videos since last run');
     return '[]';
   }
 
@@ -322,7 +324,7 @@ export async function execYoutubeSubs(
   }
   let out = [...byLink.values()];
   if (out.length > MAX_NEW_PER_RUN) {
-    sendLog(`📺 [AgentFlow] YT Subs: capping to the latest ${MAX_NEW_PER_RUN} new video(s)`);
+    sendLog(`📺 [Flow] YT Subs: capping to the latest ${MAX_NEW_PER_RUN} new video(s)`);
     out = out.slice(0, MAX_NEW_PER_RUN);
   }
 
@@ -331,7 +333,6 @@ export async function execYoutubeSubs(
   );
 }
 
-// Exported for the test suite.
 export function buildYoutubeEnvelope(result: YoutubeVideoResult, image = ''): string {
   return JSON.stringify({
     transcript: result.transcript,
@@ -344,25 +345,25 @@ export function buildYoutubeEnvelope(result: YoutubeVideoResult, image = ''): st
 export async function execYoutube(config: Record<string, string>): Promise<string> {
   const url = ensureHttpScheme(config.url ?? '');
   if (!url) {
-    sendLog('▶️ [AgentFlow] YouTube: no URL provided (isFailed=1)');
+    sendLog('▶️ [Flow] YouTube: no URL provided (isFailed=1)');
     return buildYoutubeEnvelope({ title: '', transcript: '', ok: false });
   }
 
   const image = youtubeThumbnailUrl(url);
 
-  sendLog(`▶️ [AgentFlow] YouTube step — fetching transcript: ${url}`);
+  sendLog(`▶️ [Flow] YouTube step — fetching transcript: ${url}`);
   const result = await fetchYoutubeVideo(url, {
-    onLog: (message) => sendLog(`📺 [AgentFlow] ${message}`),
+    onLog: (message) => sendLog(`📺 [Flow] ${message}`),
     show: process.env.YOBI_YT_DEBUG === '1',
   }).catch(
     (): YoutubeVideoResult => ({ title: '', transcript: '', ok: false }),
   );
 
   if (result.ok) {
-    sendLog(`✅ [AgentFlow] YouTube: transcript fetched — ${result.transcript.length} chars (${result.title || 'untitled'}, isFailed=0)`);
+    sendLog(`✅ [Flow] YouTube: transcript fetched — ${result.transcript.length} chars (${result.title || 'untitled'}, isFailed=0)`);
   } else {
     const titleNote = result.title ? ` — "${result.title}"` : '';
-    sendLog(`▶️ [AgentFlow] YouTube: no transcript available${titleNote} (isFailed=1)`);
+    sendLog(`▶️ [Flow] YouTube: no transcript available${titleNote} (isFailed=1)`);
   }
   return buildYoutubeEnvelope(result, image);
 }

@@ -18,6 +18,7 @@ import { IPC, BOT_COMMAND_RE } from '../../shared/types';
 import { normalizeCronTrigger, shouldNormalizeCronTrigger } from '../../shared/flowSchedule';
 import { cloneFlowVariables, missingRequiredVariables, sanitizeFlowVariables } from '../../shared/flowVariables';
 import { createEntityId, loadFlowsFromDisk, saveFlowsToDisk } from './flowPersistence';
+import { pruneOrphanCheckpoints } from './checkpoint';
 import { FlowTriggerRegistry } from './flowTriggers';
 import { FlowQueue } from './flowQueue';
 import { llmLane } from './lanes';
@@ -53,32 +54,41 @@ export class FlowManager {
       await saveFlowsToDisk(this.flows);
     }
     this.triggers.registerAll(this.flows);
-    sendLog(`📋 [AgentFlow] Loaded ${this.flows.length} flow(s)`);
+    if (this.flows.length > 0) this.pruneCheckpoints();
+    sendLog(`📋 [Flow] Loaded ${this.flows.length} flow(s)`);
   }
 
   shutdown(): void {
     this.triggers.unregisterAll(this.flows);
-    sendLog('🛑 [AgentFlow] Shut down — all triggers unregistered');
+    sendLog('🛑 [Flow] Shut down — all triggers unregistered');
   }
 
-  // Re-read flows.json from disk (e.g. after a backup restore replaced it) and
-  // re-register every trigger + refresh bot commands. Shares init()'s load path.
+  private pruneCheckpoints(): void {
+    const activeStepIds = new Set<string>();
+    for (const flow of this.flows) {
+      for (const step of flow.steps) activeStepIds.add(step.id);
+    }
+    void pruneOrphanCheckpoints(activeStepIds);
+  }
+
   async reload(): Promise<void> {
     this.triggers.unregisterAll(this.flows);
     const loadedFlows = await loadFlowsFromDisk();
     this.flows = loadedFlows.map((flow) => this.normalizeFlow(flow));
-    // Persist the normalized form back (mirrors init()) so an imported flows.json
-    // that needed normalization doesn't leave disk out of sync with memory.
     if (JSON.stringify(this.flows) !== JSON.stringify(loadedFlows)) {
       await saveFlowsToDisk(this.flows);
     }
     this.triggers.registerAll(this.flows);
     this._onBotCommandsChanged?.();
-    sendLog(`📋 [AgentFlow] Reloaded ${this.flows.length} flow(s) from disk`);
+    sendLog(`📋 [Flow] Reloaded ${this.flows.length} flow(s) from disk`);
   }
 
   getAll(): FlowDefinition[] {
     return this.flows;
+  }
+
+  getExecutorDeps(): FlowExecutorDeps {
+    return this.deps;
   }
 
   getBotCommands(): FlowBotCommandDef[] {
@@ -91,11 +101,11 @@ export class FlowManager {
         const command = (trigger.botCommand ?? '').toLowerCase().trim();
         if (!command) continue;
         if (!BOT_COMMAND_RE.test(command)) {
-          sendLog(`⚠️ [AgentFlow] Bot command "/${command}" is invalid (must start with a letter, ≤32 chars, a–z/0–9/_) — skipping "${f.name}"`);
+          sendLog(`⚠️ [Flow] Bot command "/${command}" is invalid (must start with a letter, ≤32 chars, a–z/0–9/_) — skipping "${f.name}"`);
           continue;
         }
         if (seen.has(command)) {
-          sendLog(`⚠️ [AgentFlow] Bot command "/${command}" is used more than once — keeping the first, skipping "${f.name}"`);
+          sendLog(`⚠️ [Flow] Bot command "/${command}" is used more than once — keeping the first, skipping "${f.name}"`);
           continue;
         }
         seen.add(command);
@@ -127,16 +137,12 @@ export class FlowManager {
     };
   }
 
-  // A flow whose required settings are still blank must not arm its triggers:
-  // the cron/hotkey run would interpolate them to '' and quietly misfire (fetch
-  // "", message nobody) rather than fail. Enable is refused rather than
-  // silently honoured, so the returned flow snaps the UI toggle back off.
   private gateEnabled(flow: FlowDefinition): FlowDefinition {
     if (!flow.enabled) return flow;
     const missing = missingRequiredVariables(flow);
     if (missing.length === 0) return flow;
     const names = missing.map((v) => v.label || v.key).join(', ');
-    sendLog(`🚫 [AgentFlow] Flow "${flow.name}" cannot be enabled — missing required settings: ${names}`);
+    sendLog(`🚫 [Flow] Flow "${flow.name}" cannot be enabled — missing required settings: ${names}`);
     return { ...flow, enabled: false };
   }
 
@@ -164,6 +170,7 @@ export class FlowManager {
       this._onBotCommandsChanged?.();
     }
 
+    this.pruneCheckpoints();
     return normalizedFlow;
   }
 
@@ -177,6 +184,7 @@ export class FlowManager {
     if (hadBotTrigger) {
       this._onBotCommandsChanged?.();
     }
+    this.pruneCheckpoints();
     return true;
   }
 
@@ -194,6 +202,7 @@ export class FlowManager {
     if (hadBotTrigger) {
       this._onBotCommandsChanged?.();
     }
+    this.pruneCheckpoints();
     return true;
   }
 
@@ -205,7 +214,7 @@ export class FlowManager {
       const missing = enabled ? missingRequiredVariables(flow) : [];
       if (missing.length > 0) {
         const names = missing.map((v) => v.label || v.key).join(', ');
-        sendLog(`🚫 [AgentFlow] Flow "${flow.name}" cannot be enabled — missing required settings: ${names}`);
+        sendLog(`🚫 [Flow] Flow "${flow.name}" cannot be enabled — missing required settings: ${names}`);
         continue;
       }
       this.triggers.unregister(flow);
@@ -288,6 +297,25 @@ export class FlowManager {
     return this.queue.getPendingItems();
   }
 
+  enqueueExternalTask<T>(
+    name: string,
+    run: (taskId: string) => Promise<T>,
+    makeErrorResult: (err: unknown) => T,
+    agentRunId?: string,
+    clientToken?: string,
+  ): Promise<T> {
+    const taskId = createEntityId();
+    return this.queue.enqueue(taskId, name, () => run(taskId), makeErrorResult, undefined, agentRunId, clientToken);
+  }
+
+  setQueueTaskProgress(taskId: string, progress: string): void {
+    this.queue.setProgress(taskId, progress);
+  }
+
+  cancelQueuedTask(taskId: string): boolean {
+    return this.queue.cancelQueued(taskId);
+  }
+
   private failureResult(flowId: string, error: string, totalSteps: number): FlowExecutionResult {
     return {
       flowId,
@@ -314,7 +342,7 @@ export class FlowManager {
     const triggers = [flow.trigger, ...(flow.extraTriggers ?? [])];
     const isBotOnly = triggers.length > 0 && triggers.every((tr) => tr.type === 'bot');
     if (isBotOnly && source !== 'bot') {
-      sendLog(`🚫 [AgentFlow] Flow "${flow.name}" requires a bot trigger — skipped (source: ${source})`);
+      sendLog(`🚫 [Flow] Flow "${flow.name}" requires a bot trigger — skipped (source: ${source})`);
       return {
         taskId,
         result: Promise.resolve(
@@ -323,18 +351,15 @@ export class FlowManager {
       };
     }
 
-    // A required variable left blank interpolates to '' — the run would not
-    // fail, it would quietly do the wrong thing (fetch "", message nobody).
-    // Refuse the run instead, naming the fields so the fix is one click away.
     const missing = missingRequiredVariables(flow);
     if (missing.length > 0) {
       const names = missing.map((v) => v.label || v.key).join(', ');
-      sendLog(`🚫 [AgentFlow] Flow "${flow.name}" is missing required settings: ${names}`);
+      sendLog(`🚫 [Flow] Flow "${flow.name}" is missing required settings: ${names}`);
       return {
         taskId,
         result: Promise.resolve(this.failureResult(
           flowId,
-          t(getLangCache(), 'agentflow.variables.missingRequired', { names }),
+          t(getLangCache(), 'flow.variables.missingRequired', { names }),
           flow.steps.length,
         )),
       };
@@ -342,7 +367,7 @@ export class FlowManager {
 
     const result = this.queue.enqueue(
       taskId,
-      flow.name || flowId,
+      `[Flow] ${flow.name || flowId}`,
       () => this.execute(flowId, extraContext),
       (err) => this.failureResult(
         flowId,
@@ -370,25 +395,40 @@ export class FlowManager {
     return this.createQueueExecution(flowId, extraContext, source);
   }
 
+  /**
+   * Persists a freshly generated flow, always DISABLED so no trigger is registered until the
+   * user has read it. Shared by the AI-generate button and the agent's `build_flow` tool —
+   * the agent path calls it directly rather than through `queueGeneration`, because an agent
+   * run is already a queued task and re-enqueueing would be the queue waiting on itself.
+   */
+  async saveGeneratedFlow(candidate: FlowDefinition): Promise<FlowDefinition> {
+    const now = new Date().toISOString();
+    const saved = await this.save({
+      ...candidate,
+      id: createEntityId(),
+      enabled: false,
+      steps: candidate.steps.map((step) => ({ ...step, id: createEntityId() })),
+      createdAt: now,
+      updatedAt: now,
+    });
+    // The renderer mirrors the flow list in its own store and only reloads on demand, so a flow
+    // created outside a renderer-initiated call — by the agent, mid-conversation — would sit on
+    // disk invisible until the next restart. The button path also receives this and de-dupes on
+    // id, so one broadcast serves both.
+    sendToRenderer(IPC.FLOW_CREATED, saved);
+    return saved;
+  }
+
   async queueGeneration(description: string, queueLabel = 'AI Flow'): Promise<FlowGenerationResult> {
     const taskId = createEntityId();
     return this.queue.enqueue<FlowGenerationResult>(
       taskId,
-      queueLabel,
+      `[Flow] ${queueLabel}`,
       async () => {
         try {
           const outcome = await generateFlowDefinition(description, this.deps);
           if (!outcome.ok) return outcome;
-          const now = new Date().toISOString();
-          const flow: FlowDefinition = {
-            ...outcome.flow,
-            id: createEntityId(),
-            enabled: false,
-            steps: outcome.flow.steps.map((step) => ({ ...step, id: createEntityId() })),
-            createdAt: now,
-            updatedAt: now,
-          };
-          const saved = await this.save(flow);
+          const saved = await this.saveGeneratedFlow(outcome.flow);
           return { ok: true, flow: saved };
         } finally {
           this.blankWorkerWhenIdle();
@@ -398,10 +438,6 @@ export class FlowManager {
     );
   }
 
-  // Reset the shared worker window to about:blank, but only once nothing is
-  // driving it. Routed through llmLane so it queues behind any in-flight
-  // automation (flow LLM step / prompt task / generation) rather than tearing
-  // the page out mid-response; the guard is re-checked after acquiring the lane.
   private blankWorkerWhenIdle(): void {
     void llmLane.runExclusive(async () => {
       if (this._running.size !== 0 || getWorkerAttention() !== 'idle') return;
@@ -417,11 +453,11 @@ export class FlowManager {
     const controller = this._abortControllers.get(flowId);
     if (controller && !controller.signal.aborted) {
       controller.abort();
-      sendLog(`⏹️ [AgentFlow] Abort requested for running flow: ${flowId}`);
+      sendLog(`⏹️ [Flow] Abort requested for running flow: ${flowId}`);
       return true;
     }
     if (removedFromQueue) {
-      sendLog(`⏹️ [AgentFlow] Removed queued flow (not yet running): ${flowId}`);
+      sendLog(`⏹️ [Flow] Removed queued flow (not yet running): ${flowId}`);
     }
     return removedFromQueue;
   }
@@ -459,16 +495,11 @@ export class FlowManager {
     }
   }
 
-  // Count only real runs (executeFlow completed and produced a result): a
-  // stop-skill end reports success:true, so it counts as success; user aborts
-  // are neither success nor failure and stay out of the stats entirely.
   private recordRunMetrics(result: FlowExecutionResult): void {
     if (result.aborted) return;
     recordTaskOutcome('flow', result.success ? 'success' : classifyFailure(result.error));
   }
 
-  // Automatic run-outcome notifications, gated by the per-event user switches.
-  // Distinct from the explicit `notify` skill; user aborts stay silent.
   private notifyRunOutcome(flow: FlowDefinition, result: FlowExecutionResult): void {
     if (result.aborted) return;
     const strings = getLangCache();
@@ -493,9 +524,6 @@ export class FlowManager {
     const triggerNeedsNorm = shouldNormalizeCronTrigger(flow.trigger);
     const extra = flow.extraTriggers;
     const extraNeedsNorm = Array.isArray(extra) && extra.some(shouldNormalizeCronTrigger);
-    // Anything on disk predating flow variables has no `variables` key at all;
-    // a malformed one (hand-edited flows.json, a bad import) is dropped rather
-    // than left to interpolate as an empty string at run time.
     const rawVariables = flow.variables;
     const variables = sanitizeFlowVariables(rawVariables);
     const variablesNeedNorm = rawVariables !== undefined

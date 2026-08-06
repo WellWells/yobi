@@ -2,9 +2,6 @@ import React from 'react';
 import { Group, Kbd } from '@mantine/core';
 import { isMac } from '../utils/keyLabels';
 
-// On macOS, modifier keys are conventionally shown as glyphs; on Windows/Linux the
-// spelled-out word reads more clearly (mirrors utils/keyLabels.ts). Non-modifier
-// tokens (F2, D, Del…) pass through unchanged.
 const MAC_MODIFIER_GLYPH: Record<string, string> = {
   ctrl: '⌘',
   cmd: '⌘',
@@ -34,15 +31,9 @@ const capStyle: React.CSSProperties = {
 };
 
 interface ShortcutHintProps {
-  /** A shortcut combo such as "F2", "Del", "Ctrl+D" or "Alt + R". */
   combo: string;
 }
 
-// Renders a keyboard shortcut as one small keycap per key. Splitting on `+` gives
-// each key its own cap (["Alt","R"] → two caps) so a combo reads like physical
-// keys; modifier words become platform glyphs on macOS. Wraps Mantine <Kbd> to
-// keep the semantic <kbd> element, tuned down to a subtle chip that sits neatly
-// in a dense context menu's rightSection.
 export const ShortcutHint: React.FC<ShortcutHintProps> = ({ combo }) => {
   const keys = combo.split('+').map((key) => key.trim()).filter(Boolean);
   return (

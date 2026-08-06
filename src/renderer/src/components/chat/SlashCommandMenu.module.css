@@ -1,0 +1,40 @@
+/* SlashCommandMenu row highlight.
+   The highlight is driven entirely by NavLink's `active` prop, which
+   PromptInputArea keeps in sync with the pointer via onMouseEnter. Mantine's
+   built-in :hover background paints a light grey instantly, one frame before
+   React commits `active` (a near-black fill) — so every row the pointer
+   crosses does a grey -> active swap that reads as flicker. Suppress the hover
+   background on non-active rows so `active` stays the single, consistent
+   highlight (the active row keeps its own background when hovered). */
+.item:not([data-active]):hover {
+  background-color: transparent;
+}
+
+/* The menu is only 340px wide, so a long description (the English /agent and
+   /quicksearch blurbs both run past 60 characters) would wrap to three or four
+   lines and push the rest of the list out of the 320px viewport. Cap it at two
+   lines — the command name already carries the identity. */
+.description {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+/* NavLink emits the description element even when the prop is undefined, and
+   most flow commands carry no description. Left as an empty -webkit-box it
+   would still occupy a slot in the row; drop it so those rows stay single-line. */
+.description:empty {
+  display: none;
+}
+
+/* Icon column: dimmed while resting so the command name stays the dominant
+   element in the row, then adopts the active foreground on the selected row. */
+.section {
+  color: var(--mantine-color-dimmed);
+}
+
+.item[data-active] .section {
+  color: inherit;
+}

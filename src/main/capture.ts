@@ -1,7 +1,14 @@
 import { app, BrowserWindow } from 'electron';
 import * as path from 'node:path';
-import type { MarkdownCaptureRequest, CaptureFormat, CaptureMode } from '../shared/types';
+import type { MarkdownCaptureRequest, CaptureFormat, CaptureMode, CaptureTurn, CardLayout } from '../shared/types';
+import { DEFAULT_CAPTURE_WIDTH, MAX_CAPTURE_HEIGHT, MAX_CAPTURE_WIDTH, MIN_CAPTURE_WIDTH } from '../shared/types';
+import { stripConversationMarkers } from '../shared/conversationDoc';
+import { captureBackgroundCss, DEFAULT_CAPTURE_PALETTE } from '../shared/capturePalettes';
+import { isSafeCaptureBackground } from '../shared/captureBackgroundGuard';
+import { brandPdfMetadata } from './pdfMetadata';
+import { flattenPdfBackdrop } from './capturePdfBackdrop';
 import { sendLog } from './helpers';
+import { SILENT_WEB_PREFERENCES, muteWindow } from './silentWindow';
 
 const CAPTURE_TIMEOUT_MS = 30_000;
 
@@ -27,21 +34,30 @@ export function normalizeCaptureRequest(request: MarkdownCaptureRequest): Markdo
     : request?.options?.format === 'webp'
       ? 'webp'
       : 'png';
-  const width = Math.max(860, Math.min(1_600, Math.round(request?.options?.width || 1_200)));
+  const width = Math.max(MIN_CAPTURE_WIDTH, Math.min(MAX_CAPTURE_WIDTH, Math.round(request?.options?.width || DEFAULT_CAPTURE_WIDTH)));
   const background = (request?.options?.background ?? '').trim();
-  const safeBackground = /^(linear-gradient|radial-gradient)\(.+\)$/i.test(background)
+  const safeBackground = isSafeCaptureBackground(background)
     ? background
-    : 'linear-gradient(140deg, #0f172a 0%, #1e293b 55%, #334155 100%)';
+    : captureBackgroundCss(DEFAULT_CAPTURE_PALETTE);
   const cardTheme = request?.options?.cardTheme === 'light' ? 'light' : 'dark';
+  const cardLayout: CardLayout = request?.options?.cardLayout === 'bubble' ? 'bubble' : 'document';
+  const rawTurns = Array.isArray(request?.payload?.turns) ? request.payload.turns : [];
+  const turns: CaptureTurn[] = rawTurns.map((turn) => ({
+    prompt: String(turn?.prompt ?? ''),
+    response: String(turn?.response ?? ''),
+    provider: String(turn?.provider ?? ''),
+    timestamp: String(turn?.timestamp ?? ''),
+  }));
 
   return {
     payload: {
       title: (payload.title ?? fallback.title) as string,
-      prompt: (payload.prompt ?? '') as string,
-      content: (payload.content ?? '') as string,
+      prompt: stripConversationMarkers((payload.prompt ?? '') as string),
+      content: stripConversationMarkers((payload.content ?? '') as string),
       summary: (payload.summary ?? '') as string,
       provider: (payload.provider ?? '') as string,
       timestamp: (payload.timestamp ?? '') as string,
+      turns,
     },
     options: {
       mode,
@@ -51,9 +67,13 @@ export function normalizeCaptureRequest(request: MarkdownCaptureRequest): Markdo
       showContent: Boolean(request?.options?.showContent),
       showProvider: Boolean(request?.options?.showProvider),
       showTimestamp: Boolean(request?.options?.showTimestamp),
+      showTokens: Boolean(request?.options?.showTokens),
       width,
       background: safeBackground,
       cardTheme,
+      cardLayout,
+      pixelRatio: request?.options?.pixelRatio === 2 ? 2 : 1,
+      zip: request?.options?.zip === true,
     },
   };
 }
@@ -100,8 +120,10 @@ export async function captureMarkdownDocument(
       nodeIntegration: false,
       sandbox: false,
       backgroundThrottling: false,
+      ...SILENT_WEB_PREFERENCES,
     },
   });
+  muteWindow(captureWin);
   attachCaptureConsoleForwarder(captureWin);
 
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -121,6 +143,18 @@ export async function captureMarkdownDocument(
     if (timeoutId) clearTimeout(timeoutId);
     if (!captureWin.isDestroyed()) captureWin.destroy();
   }
+}
+
+async function applyPdfDocumentTitle(
+  captureWin: BrowserWindow,
+  request: ReturnType<typeof normalizeCaptureRequest>,
+): Promise<void> {
+  const docTitle = (request.options.fileName ?? '').trim() || request.payload.title.trim();
+  if (!docTitle) return;
+  await captureWin.webContents.executeJavaScript(
+    `document.title = ${JSON.stringify(docTitle)}, true`,
+    true,
+  );
 }
 
 async function captureMarkdownDocumentCore(
@@ -144,15 +178,17 @@ async function captureMarkdownDocumentCore(
   )) as { logicalHeight?: number } | null;
 
   const logicalHeight = Math.max(1, Math.ceil(renderResult?.logicalHeight ?? 1));
-  const imageLogicalHeight = logicalHeight;
+  const imageLogicalHeight = Math.max(1, Math.floor(renderResult?.logicalHeight ?? 1));
   const pdfHeight = logicalHeight - 1;
 
-  if (request.options.format !== 'pdf' && logicalHeight > 20_000) {
+  if (request.options.format !== 'pdf' && logicalHeight > MAX_CAPTURE_HEIGHT) {
     throw new Error('Image height exceeds limits. Please use PDF format.');
   }
 
   if (request.options.format === 'pdf') {
+    await applyPdfDocumentTitle(captureWin, request);
     captureWin.setContentSize(logicalWidth, logicalHeight);
+    await flattenPdfBackdrop(captureWin, logicalWidth, logicalHeight);
     const cssKey = await captureWin.webContents.insertCSS(
       `@page { size: ${logicalWidth}px ${pdfHeight}px; margin: 0; }` +
       `html, body { margin: 0 !important; padding: 0 !important; width: ${logicalWidth}px !important; height: ${pdfHeight}px !important; overflow: hidden !important; box-sizing: border-box !important; }`,
@@ -167,14 +203,14 @@ async function captureMarkdownDocumentCore(
         margins: { top: 0, bottom: 0, left: 0, right: 0 },
         preferCSSPageSize: true,
       });
-      return { buffer: Buffer.from(pdf), ext: 'pdf', mode: request.options.mode };
+      return { buffer: brandPdfMetadata(Buffer.from(pdf)), ext: 'pdf', mode: request.options.mode };
     } finally {
       await captureWin.webContents.removeInsertedCSS(cssKey).catch(() => undefined);
     }
   }
 
   const imageBuffer = await captureScreenshotCdp(
-    captureWin, logicalWidth, imageLogicalHeight, request.options.format,
+    captureWin, logicalWidth, imageLogicalHeight, request.options.format, request.options.pixelRatio,
   );
   return { buffer: imageBuffer, ext: request.options.format, mode: request.options.mode };
 }
@@ -184,6 +220,7 @@ async function captureScreenshotCdp(
   logicalWidth: number,
   logicalHeight: number,
   format: 'png' | 'webp',
+  pixelRatio: number,
 ): Promise<Buffer> {
   const debuggerSession = win.webContents.debugger;
   const alreadyAttached = debuggerSession.isAttached();
@@ -195,7 +232,7 @@ async function captureScreenshotCdp(
     await debuggerSession.sendCommand('Emulation.setDeviceMetricsOverride', {
       width: logicalWidth,
       height: logicalHeight,
-      deviceScaleFactor: 1,
+      deviceScaleFactor: pixelRatio,
       mobile: false,
     });
 

@@ -1,12 +1,14 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
-import { IPC } from '../../shared/types';
+import { DEFAULT_CAPTURE_WIDTH, IPC } from '../../shared/types';
 import type { QueueState } from '../../shared/types';
 import { config } from '../config';
 import { sendToRenderer } from '../helpers';
 import { getWorkerWin, ensureWorkerWindow } from '../windows';
 import { captureMarkdownDocument } from '../capture';
+import { zipSingleFile } from '../captureClipboard';
 import { captureScreenToFile } from '../screenCapture';
+import { createPaste } from '../share/privatebin';
 import { saveOutput } from '../output';
 import {
   listOutputFiles,
@@ -67,32 +69,42 @@ export function initFlowManager(deps: {
     },
     getLinePairedUsers: () => config.line.pairing.pairedUsers,
     captureMarkdown: async (payload, format, background, options) => {
+      const requestedFileName = (options?.fileName ?? '').trim();
+      const fileStem = requestedFileName ? buildSafeFileNameFromTitle(requestedFileName) : buildSnapshotFileName();
       const resultDoc = await captureMarkdownDocument({
         payload,
         options: {
           mode: 'save',
           format,
-          fileName: options?.fileName ?? '',
+          fileName: fileStem,
           showPrompt: options?.showPrompt ?? false,
           showContent: options?.showContent ?? true,
           showProvider: options?.showProvider ?? false,
           showTimestamp: options?.showTimestamp ?? false,
-          width: 1_200,
+          showTokens: false,
+          cardLayout: 'document',
+          pixelRatio: 1,
+          zip: options?.zip === true,
+          width: options?.width ?? DEFAULT_CAPTURE_WIDTH,
           background,
           cardTheme: options?.cardTheme ?? 'dark',
         },
       });
       const outputDir = await getOutputDir();
-      const requestedFileName = (options?.fileName ?? '').trim();
-      const fileStem = requestedFileName ? buildSafeFileNameFromTitle(requestedFileName) : buildSnapshotFileName();
+      const wantsZip = options?.zip === true;
       const filePath = await getUniquePath(
-        path.join(outputDir, `${fileStem}.${resultDoc.ext}`),
+        path.join(outputDir, `${fileStem}.${wantsZip ? 'zip' : resultDoc.ext}`),
         '',
       );
-      await fs.writeFile(filePath, resultDoc.buffer);
+      await fs.writeFile(
+        filePath,
+        wantsZip ? zipSingleFile(resultDoc.buffer, `${fileStem}.${resultDoc.ext}`) : resultDoc.buffer,
+      );
       return filePath;
     },
     captureScreen: (format, targetDir) => captureScreenToFile(format, targetDir),
+    getShareSettings: () => config.share,
+    createShareLink: (markdown, opts) => createPaste(config.share.instanceUrl, markdown, opts),
     getPairedUsers: () => config.telegram.pairing.pairedUsers,
     onSaveHistory: async ({ prompt, response, providerLabel }) => {
       const outputDir = await getOutputDir();
@@ -106,7 +118,7 @@ export function initFlowManager(deps: {
         prompt,
         response,
         outputDir,
-        title: fallbackTitle || 'AgentFlow',
+        title: fallbackTitle || 'Flow',
         provider: providerLabel,
         promptLabel,
         responseLabel,

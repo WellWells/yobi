@@ -1,0 +1,368 @@
+/*
+ * The exported card. Colours come from `--cap-*` CSS variables set on the card
+ * root (see hooks/captureTheme.ts); the fallbacks are the original dark values,
+ * so a caller that sets none of them still renders the dark card unchanged.
+ * Code-block panels intentionally stay dark in both light and dark cards.
+ *
+ * Imported by BOTH the offscreen capture window and the export dialog's preview
+ * — every selector is class-scoped so it is safe inside the app. The preview
+ * renders the very same markup at the export's logical width and scales it down,
+ * which is what makes the preview WYSIWYG rather than a lookalike.
+ */
+.capture-scene {
+  padding: 40px;
+}
+
+.capture-card {
+  background: var(--cap-card-bg, rgba(13, 17, 23, 0.94));
+  border: 1px solid var(--cap-card-border, rgba(201, 209, 217, 0.2));
+  border-radius: 20px;
+  box-shadow: var(--cap-card-shadow, 0 14px 42px rgba(0, 0, 0, 0.36));
+  padding: 28px 30px;
+}
+
+.capture-title {
+  margin: 0;
+  font-size: 31px;
+  line-height: 1.3;
+  color: var(--cap-title, #f0f6fc);
+}
+
+/* Sits directly under the title in both layouts, quiet enough not to compete with
+   it. Shown for the whole export; the per-turn counts live in each meta row. */
+.capture-total-tokens {
+  margin-top: 6px;
+  font-family: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  color: var(--cap-muted, #8b949e);
+}
+
+.capture-meta {
+  margin-top: 10px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--cap-muted, #8b949e);
+  font-size: 15px;
+}
+
+.capture-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--cap-chip-border, rgba(201, 209, 217, 0.25));
+  background: var(--cap-chip-bg, rgba(33, 38, 45, 0.9));
+  color: var(--cap-chip-text, #c9d1d9);
+  font-weight: 700;
+  font-size: 13px;
+  padding: 2px 10px;
+}
+
+.capture-time {
+  font-family: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+}
+
+/* Tabular figures so a column of exported turns lines its counts up. Sits quieter
+   than the time: it is the least important thing in the row. */
+.capture-tokens {
+  font-family: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  opacity: 0.8;
+}
+
+.capture-section {
+  margin-top: 16px;
+}
+
+.capture-section-title {
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  font-size: 12px;
+  color: var(--cap-muted, #8b949e);
+  font-weight: 700;
+}
+
+.capture-prompt {
+  background: var(--cap-prompt-bg, rgba(33, 38, 45, 0.8));
+  border: 1px solid var(--cap-prompt-border, rgba(201, 209, 217, 0.18));
+  border-radius: 12px;
+  padding: 10px 14px;
+}
+
+.capture-summary {
+  margin: 0;
+  color: var(--cap-text-secondary, #c9d1d9);
+  font-size: 17px;
+  line-height: 1.85;
+  white-space: pre-wrap;
+}
+
+.capture-md-content {
+  margin: 0;
+  color: var(--cap-text, #e6edf3);
+  font-size: 17px;
+  line-height: 1.85;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* Block spacing is declared here rather than left to the browser default,
+   because this card renders in two hosts with different resets: the capture
+   window loads nothing but these stylesheets, while the export dialog's preview
+   sits inside the app, where Mantine's reset zeroes every margin. Relying on the
+   UA default made the preview a cramped version of the same document. These are
+   the UA values, so the exported file is unchanged. */
+.capture-md-content p {
+  margin: 1em 0;
+}
+
+.capture-md-content h1 {
+  margin: 0.67em 0;
+}
+
+.capture-md-content h2 {
+  margin: 0.83em 0;
+}
+
+.capture-md-content h3 {
+  margin: 1em 0;
+}
+
+.capture-md-content h4 {
+  margin: 1.33em 0;
+}
+
+.capture-md-content ul,
+.capture-md-content ol {
+  margin: 1em 0;
+  padding-left: 40px;
+}
+
+.capture-md-content li {
+  margin: 0;
+}
+
+.capture-md-content hr {
+  margin: 0.5em auto;
+  border-style: inset;
+  border-width: 1px;
+}
+
+.capture-md-content > :first-child {
+  margin-top: 0;
+}
+
+.capture-md-content > :last-child {
+  margin-bottom: 0;
+}
+
+.capture-md-content code {
+  background: var(--cap-code-bg, rgba(33, 38, 45, 0.95));
+  color: var(--cap-code-text, #7ee787);
+  padding: 0.15em 0.35em;
+  border-radius: 4px;
+  font-family: 'Cascadia Code', 'Consolas', monospace;
+  font-size: 0.87em;
+}
+
+.capture-md-content pre {
+  margin: 0.9em 0;
+  padding: 1.25rem 1.5rem;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(201, 209, 217, 0.2);
+}
+
+.capture-md-content pre code {
+  padding: 0;
+  background: transparent;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.capture-md-content h1,
+.capture-md-content h2,
+.capture-md-content h3,
+.capture-md-content h4 {
+  color: var(--cap-title, #f0f6fc);
+  line-height: 1.35;
+}
+
+.capture-md-content a {
+  color: var(--cap-link, #58a6ff);
+}
+
+.capture-md-content blockquote {
+  margin: 0.9em 0;
+  border-left: 3px solid var(--cap-quote-border, rgba(88, 166, 255, 0.85));
+  padding: 0.5em 1em;
+  background: var(--cap-quote-bg, rgba(88, 166, 255, 0.09));
+  border-radius: 0 8px 8px 0;
+  color: var(--cap-quote-text, #c9d1d9);
+}
+
+.capture-md-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.9em 0;
+}
+
+.capture-md-content th,
+.capture-md-content td {
+  border: 1px solid var(--cap-table-border, rgba(201, 209, 217, 0.2));
+  padding: 0.45em 0.65em;
+}
+
+.capture-md-content th {
+  background: var(--cap-table-head-bg, rgba(33, 38, 45, 0.8));
+}
+
+/* ── Document layout, multi-turn ───────────────────────────────────────── */
+.capture-doc {
+  margin-top: 20px;
+}
+
+.capture-doc-turn + .capture-doc-turn {
+  border-top: 1px solid var(--cap-card-border, rgba(201, 209, 217, 0.2));
+  margin-top: 26px;
+  padding-top: 26px;
+}
+
+/* The question panel leads its answer, so it only needs a small gap below. */
+.capture-doc-turn .capture-prompt {
+  margin-bottom: 14px;
+}
+
+/* ── Bubble layout ─────────────────────────────────────────────────────── */
+/* A two-sided transcript: the question sits in a neutral bubble on the right,
+   the answer in an accent-tinted one on the left. The card keeps a tighter
+   horizontal padding than the document layout so the bubbles, not the sheet,
+   frame the content. */
+.capture-card-bubble {
+  padding: 28px 26px;
+}
+
+.capture-thread {
+  margin-top: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+
+.capture-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.capture-bubble-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.capture-bubble-user {
+  max-width: 80%;
+  background: var(--cap-prompt-bg, rgba(33, 38, 45, 0.8));
+  border: 1px solid var(--cap-prompt-border, rgba(201, 209, 217, 0.18));
+  border-radius: 18px;
+  padding: 12px 18px;
+}
+
+/* A question is usually a line or two; the answer is the body text. */
+.capture-bubble-user .capture-md-content {
+  font-size: 16px;
+  line-height: 1.7;
+  color: var(--cap-text-secondary, #c9d1d9);
+}
+
+/* The answer's own bubble, tinted with the card's accent so the two sides are
+   told apart at a glance. The tint is kept faint because a reply is many times
+   longer than its question and a saturated block that size would fight the text
+   inside it. Wider than the question, too: answers carry headings, lists and
+   code that a narrow bubble would crush. */
+.capture-bubble-ai {
+  max-width: 92%;
+  background: var(--cap-assistant-bg, rgba(88, 166, 255, 0.12));
+  border: 1px solid var(--cap-assistant-border, rgba(88, 166, 255, 0.32));
+  border-radius: 18px;
+  padding: 14px 18px;
+}
+
+.capture-bubble-ai .capture-meta {
+  margin-top: 0;
+  margin-bottom: 10px;
+}
+
+/* Both sides are bubbles now, so the pairs already read as separate exchanges;
+   the gap alone separates them and a rule on top would only add noise. */
+.capture-turn + .capture-turn {
+  padding-top: 4px;
+}
+
+/* ── Shiki code blocks in capture export────────────────────────────────── */
+/* Code panels stay dark in both card themes — define the dark theme values used
+   by ShikiCodeBlock inline styles. Not driven by --cap-* on purpose. */
+.capture-md-content .code-block-wrapper {
+  --bg-tertiary: #21262d;
+  --border: #30363d;
+  --text-muted: #8b949e;
+  --code-bg: #161b22;
+  --radius-sm: 4px;
+  --radius-lg: 12px;
+  --font-mono: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+}
+
+/* Strip Shiki's inline background; mimic globals.css rules */
+.capture-md-content .code-block-wrapper .shiki,
+.capture-md-content .code-block-wrapper .shiki pre {
+  background: transparent !important;
+  margin: 0 !important;
+  padding: 36px 1rem 1rem !important;
+  border-radius: 0 !important;
+  border: none !important;
+  font-size: 13px !important;
+  font-family: var(--font-mono) !important;
+  line-height: 1.6 !important;
+}
+
+.capture-md-content .code-block-wrapper .shiki code {
+  background: transparent !important;
+  color: inherit !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  font-size: inherit !important;
+  font-family: inherit !important;
+}
+
+/* Hide copy button in export */
+.capture-md-content .code-block-wrapper button {
+  display: none !important;
+}
+
+/* ── Mermaid diagrams in capture export ─────────────────────────────────── */
+/* Unlike the code panels above, diagram chrome follows the card theme via the
+   --cap-* tokens: a dark slab inside a light card reads as a rendering bug. */
+.capture-md-content .mermaid-block {
+  position: relative;
+  margin: 0.75em 0;
+  border-radius: 12px;
+  background: var(--cap-code-bg, rgba(33, 38, 45, 0.95));
+  box-shadow: 0 0 0 1px var(--cap-table-border, rgba(201, 209, 217, 0.2));
+}
+
+/* No toolbar in an export, so no room needs reserving for it */
+.capture-md-content .mermaid-figure {
+  overflow-x: hidden;
+  padding: 14px;
+  text-align: center;
+}
+
+.capture-md-content .mermaid-figure svg {
+  display: inline-block;
+  height: auto;
+  vertical-align: middle;
+}

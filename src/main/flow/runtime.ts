@@ -3,9 +3,6 @@ import type { FlowExecutorDeps, LogCallback } from './types';
 
 const DEFAULT_STEP_TIMEOUT_MS = 60_000;
 const BROWSER_STEP_TIMEOUT_MS = 300_000;
-// LLM steps follow the configured Model Response Timeout; this is only the
-// fallback used when that value is unavailable, kept in sync with the shipped
-// `responseTimeout` default (see configTypes).
 const DEFAULT_LLM_TIMEOUT_MS = 120_000;
 const MAX_DELAY_MS = 3_600_000;
 
@@ -29,7 +26,12 @@ export function resolveStepTimeoutMs(
   if (type === 'delay') {
     return resolveDelayMs(config) + 10_000;
   }
-  if (type === 'browser' || type === 'rss' || type === 'scraper' || type === 'youtube' || type === 'youtube_subs' || type === 'browser_js' || type === 'file_download') {
+  /*
+   * `share` joins this tier because it drives a hidden render window (twice, when an over-tall
+   * image falls back to PDF) or uploads over the network. The engine's own 30s guard still
+   * bounds each render — 60s was close enough to two of them to kill the fallback mid-flight.
+   */
+  if (type === 'browser' || type === 'rss' || type === 'scraper' || type === 'research' || type === 'gmap_reviews' || type === 'youtube' || type === 'youtube_subs' || type === 'browser_js' || type === 'file_download' || type === 'share') {
     return BROWSER_STEP_TIMEOUT_MS;
   }
   return DEFAULT_STEP_TIMEOUT_MS;
@@ -86,14 +88,10 @@ export function withStepTimeout<T>(
   });
 }
 
-// Reject as soon as `signal` aborts, without ever starting a timeout clock.
-// Used to wait on the app-wide llmLane: a flow aborted while its llm step is
-// still queued must bail promptly, yet queue-wait time must NOT count against
-// the model response timeout (that clock only starts once the lane is held).
 export function withAbort<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return work;
   if (signal.aborted) {
-    work.then(undefined, () => {}); // observe to avoid an unhandled rejection
+    work.then(undefined, () => {});
     return Promise.reject(new FlowAbortError());
   }
   return new Promise<T>((resolve, reject) => {
@@ -141,8 +139,6 @@ export function execStop(config: Record<string, string>): string {
   return value;
 }
 
-// Loop-control signals thrown by the compact break/continue skills and caught by
-// the executor's loop handling (runRange catch + expandLoop). They carry no data.
 export class BreakLoopSignal extends Error {
   constructor() {
     super('Break from loop');

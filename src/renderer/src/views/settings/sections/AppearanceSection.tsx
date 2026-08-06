@@ -1,8 +1,8 @@
 import React from 'react';
 import { ActionIcon, Box, Group, Text, Tooltip } from '@mantine/core';
 import { useShallow } from 'zustand/react/shallow';
-import { BookOpen, Minus, Palette, Plus, RotateCcw, ZoomIn } from 'lucide-react';
-import { SectionCard, SettingRow, GroupHeader, SectionTitle, SettingDivider, SegmentedControl } from '../components';
+import { BookOpen, Coins, Minus, Palette, Plus, RotateCcw, ZoomIn } from 'lucide-react';
+import { SectionCard, SettingRow, SectionTitle, SettingDivider, SegmentedControl, ToggleSwitch } from '../components';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import { useAppStore } from '../../../store/appStore';
 import { useThemeStore } from '../../../store/themeStore';
@@ -17,10 +17,8 @@ interface SwatchButtonProps {
   accent: string;
   border: string;
   selected: boolean;
-  /** Ring color when selected — must be a solid color (accent may be a gradient). */
   ring: string;
   onClick: () => void;
-  /** Fires on hover/focus to live-preview this theme (Word-style). */
   onPreview: () => void;
 }
 
@@ -51,22 +49,24 @@ const SwatchButton: React.FC<SwatchButtonProps> = ({ label, background, accent, 
 interface Props {
   t: (key: string) => string;
   showSection: (tags: readonly string[], category: 'appearance') => boolean;
-  isSearching: boolean;
   sectionGap: number;
 }
 
-export const AppearanceSection: React.FC<Props> = ({ t, showSection, isSearching, sectionGap }) => {
+export const AppearanceSection: React.FC<Props> = ({ t, showSection, sectionGap }) => {
   const { preference, setTheme, previewTheme } = useThemeStore();
-  // A hover preview restores on mouse-leave, but leaving Settings by keyboard or
-  // the sidebar can skip that event; snap back whenever Settings goes hidden.
   const settingsVisible = useAppStore((s) => s.currentView === 'settings');
   React.useEffect(() => {
     if (!settingsVisible) previewTheme(null);
   }, [settingsVisible, previewTheme]);
-  const { layoutMode, markdownZoom, setLayoutMode, zoomInMarkdown, zoomOutMarkdown, resetMarkdownZoom } = useAppStore(
+  const {
+    layoutMode, markdownZoom, showTokenUsage,
+    setLayoutMode, zoomInMarkdown, zoomOutMarkdown, resetMarkdownZoom, setShowTokenUsage,
+  } = useAppStore(
     useShallow((s) => ({
       layoutMode: s.layoutMode,
       markdownZoom: s.markdownZoom,
+      showTokenUsage: s.showTokenUsage,
+      setShowTokenUsage: s.setShowTokenUsage,
       setLayoutMode: s.setLayoutMode,
       zoomInMarkdown: s.zoomInMarkdown,
       zoomOutMarkdown: s.zoomOutMarkdown,
@@ -76,14 +76,10 @@ export const AppearanceSection: React.FC<Props> = ({ t, showSection, isSearching
 
   return (
     <Box display={showSection(TAG_SETS.theme, 'appearance') || showSection(TAG_SETS.reading, 'appearance') ? 'block' : 'none'}>
-      {isSearching && <GroupHeader label={t('settings.group.appearance')} />}
-
       <SectionCard style={{ marginBottom: sectionGap, display: showSection(TAG_SETS.theme, 'appearance') ? 'block' : 'none' }}>
         <SectionTitle icon={<Palette size={15} />} label={t('settings.theme')} />
-        {/* Edge-style swatches: outer circle = theme background, inner dot =
-            accent. Hovering live-previews a theme across the whole app; clicking
-            commits it. Restoring on leave is bound to the Group (not each swatch)
-            so sweeping the pointer across the gaps doesn't flicker back. */}
+        {
+}
         <Group
           gap={10}
           wrap="wrap"
@@ -164,6 +160,13 @@ export const AppearanceSection: React.FC<Props> = ({ t, showSection, isSearching
               </Tooltip>
             </Group>
           }
+        />
+        <SettingDivider my={14} />
+        <SettingRow
+          icon={<Coins size={13} />}
+          label={t('settings.appearance.tokenUsage')}
+          hint={t('settings.appearance.tokenUsage.hint')}
+          control={<ToggleSwitch checked={showTokenUsage} onChange={() => setShowTokenUsage(!showTokenUsage)} />}
         />
       </SectionCard>
     </Box>

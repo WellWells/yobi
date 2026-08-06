@@ -205,6 +205,40 @@ textarea:focus-visible {
 }
 
 
+/* ── Mermaid diagram block ──────────────────────────────────────────────── */
+/* Same panel chrome as a code block: a mermaid fence is one or the other. */
+.mermaid-block {
+  position: relative;
+  margin: 0.75em 0;
+  border-radius: var(--radius-lg);
+  background: var(--code-bg);
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+/* Top padding clears the toolbar; wide diagrams scroll instead of clipping */
+.mermaid-figure {
+  overflow-x: auto;
+  padding: 38px 14px 14px;
+  text-align: center;
+}
+
+.mermaid-figure svg {
+  display: inline-block;
+  height: auto;
+  vertical-align: middle;
+}
+
+/* Source view: the inner code panel supplies the chrome and MermaidBlock
+   already owns copy, so drop the duplicate frame and button */
+.mermaid-block > .code-block-wrapper {
+  margin: 0;
+  box-shadow: none;
+}
+
+.mermaid-block .code-block-wrapper button {
+  display: none;
+}
+
 /* ── Markdown content ────────────────────────────────────────────────────── */
 .md-content {
   line-height: 1.75;

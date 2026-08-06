@@ -2,10 +2,12 @@ import type { CardTheme } from '../../../shared/types';
 
 export {
   CAPTURE_PALETTES,
-  buildCaptureBackground,
+  CAPTURE_BACKGROUND_STYLES,
+  DEFAULT_CAPTURE_BACKGROUND_STYLE,
+  captureBackgroundCss,
   paletteCardTheme,
 } from '../../../shared/capturePalettes';
-export type { CaptureDirection } from '../../../shared/capturePalettes';
+export type { CaptureDirection, CaptureBackgroundStyle } from '../../../shared/capturePalettes';
 
 export interface CaptureCardTokens {
   cardBg: string;
@@ -20,6 +22,8 @@ export interface CaptureCardTokens {
   chipText: string;
   promptBg: string;
   promptBorder: string;
+  assistantBg: string;
+  assistantBorder: string;
   link: string;
   quoteBorder: string;
   quoteBg: string;
@@ -44,6 +48,8 @@ export const CAPTURE_CARD_TOKENS: Record<CardTheme, CaptureCardTokens> = {
     chipText: '#c9d1d9',
     promptBg: 'rgba(33, 38, 45, 0.8)',
     promptBorder: 'rgba(201, 209, 217, 0.18)',
+    assistantBg: 'rgba(88, 166, 255, 0.12)',
+    assistantBorder: 'rgba(88, 166, 255, 0.32)',
     link: '#58a6ff',
     quoteBorder: 'rgba(88, 166, 255, 0.85)',
     quoteBg: 'rgba(88, 166, 255, 0.09)',
@@ -66,6 +72,8 @@ export const CAPTURE_CARD_TOKENS: Record<CardTheme, CaptureCardTokens> = {
     chipText: '#334155',
     promptBg: 'rgba(15, 23, 42, 0.04)',
     promptBorder: 'rgba(15, 23, 42, 0.10)',
+    assistantBg: 'rgba(37, 99, 235, 0.06)',
+    assistantBorder: 'rgba(37, 99, 235, 0.22)',
     link: '#2563eb',
     quoteBorder: '#2563eb',
     quoteBg: 'rgba(37, 99, 235, 0.07)',
@@ -90,6 +98,8 @@ const CARD_TOKEN_CSS_VARS: Record<keyof CaptureCardTokens, string> = {
   chipText: '--cap-chip-text',
   promptBg: '--cap-prompt-bg',
   promptBorder: '--cap-prompt-border',
+  assistantBg: '--cap-assistant-bg',
+  assistantBorder: '--cap-assistant-border',
   link: '--cap-link',
   quoteBorder: '--cap-quote-border',
   quoteBg: '--cap-quote-bg',

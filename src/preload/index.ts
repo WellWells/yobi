@@ -2,13 +2,20 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/types';
 import type {
   AccountStatus, AuthProvider, BackupCategoryId, BackupCategoryInfo, BackupExportResult,
-  BackupImportResult, BackupInspectResult, BotLlmDirectConfig, ByokConnectionProbe, ByokGroupSaveRequest, ByokInstanceSaveRequest, ByokModelsResult,
-  ByokSettingsSnapshot, ByokTestResult, CaptureSettings, ChatCommandResult, DuckaiModelInfo,
+  BackupImportResult, BackupInspectResult, BotBuiltinCommands, BotByokCommandInfo, BotLlmDirectConfig, ByokConnectionProbe, ByokGroupSaveRequest, ByokInstanceSaveRequest, ByokModelsResult,
+  ByokSettingsSnapshot, ByokTestResult, CaptureSettings, ChatCommandResult, ChatTurnEvent, HotkeyBindResult,
+  QuickExportSettings, DuckaiModelInfo,
   FeedCandidate, FlowDefinition, FlowExecutionEvent, FlowExecutionLog, FlowExecutionResult, HiddenSources,
-  FlowGenerationResult, MarkdownCaptureRequest, MarkdownCaptureResult, MetricsSnapshot, NotifyEventPrefs, OutputFile, PromptPreferences,
-  PromptTriggerOptions, Provider, QueueState, EmailSettingsSnapshot, SmtpCredentials,
+  ScraperPickRequest, ScraperPickResult,
+  FlowGenerationResult, MarkdownCaptureRequest, MarkdownCaptureResult, MetricsSnapshot, NotifyEventPrefs, OutputFile, PromptPreferences, StartedConversation,
+  ShareLinkRequest, ShareLinkResult, ShareSettings,
+} from '../shared/types';
+import type { ConversationTokenStats } from '../shared/tokenEstimate';
+import type {
+  PromptTriggerOptions, Provider, QueueState, EmailSettingsSnapshot, DataKeyStatus, AgentCommandResult, AgentRunSummary, AgentTracePayload, AgentConfirmPayload, AgentConfirmChoice, SearchCommandResult, SearchMode, SmtpCredentials,
   SelectPathRequest, SelectPathResult, SettingsSnapshot, TempChatResult, BotProviderCommand, TelegramRuntimeSnapshot,
   TelegramSettingsSnapshot, LineSettingsSnapshot, LineRuntimeSnapshot, LineCredentialsUpdate,
+  McpServerView, McpServerSaveRequest, McpServerActionResult,
   UpdateAvailablePayload, UpdateSource, UiNotificationPayload,
 } from '../shared/types';
 
@@ -23,6 +30,7 @@ export type ElectronAPI = {
   onStatus: (cb: (status: string) => void) => () => void;
   onQueueUpdate: (cb: (state: QueueState) => void) => () => void;
   onFileListUpdate: (cb: (files: OutputFile[]) => void) => () => void;
+  onChatTurn: (cb: (event: ChatTurnEvent) => void) => () => void;
   onUiNotification: (cb: (payload: UiNotificationPayload) => void) => () => void;
   onTelegramRuntime: (cb: (snapshot: TelegramRuntimeSnapshot) => void) => () => void;
   onLineRuntime: (cb: (snapshot: LineRuntimeSnapshot) => void) => () => void;
@@ -41,10 +49,13 @@ export type ElectronAPI = {
   deleteAllFiles: () => Promise<number>;
   updateFileTitle: (filePath: string, title: string) => Promise<{ ok: boolean; updatedPath: string }>;
   updateFileH1: (filePath: string, title: string) => Promise<boolean>;
+  startConversation: (prompt: string) => Promise<StartedConversation | null>;
 
   getHotkey: () => Promise<string>;
-  updateHotkey: (hotkey: string) => Promise<boolean>;
+  updateHotkey: (hotkey: string) => Promise<HotkeyBindResult>;
   setHotkeyPaused: (paused: boolean) => Promise<boolean>;
+  getHotkeyEnabled: () => Promise<boolean>;
+  setHotkeyEnabled: (enabled: boolean) => Promise<HotkeyBindResult>;
   getAiUrl: () => Promise<string>;
   updateAiUrl: (url: string) => Promise<boolean>;
   getHiddenSources: () => Promise<HiddenSources>;
@@ -52,6 +63,7 @@ export type ElectronAPI = {
 
   getLanguageList: () => Promise<string[]>;
   getLanguageContent: (lang: string) => Promise<Record<string, unknown> | null>;
+  openLanguagesFolder: () => Promise<boolean>;
   getCurrentLocale: () => Promise<{ locale: string; setByUser: boolean }>;
   setLocaleAuto: (lang: string) => Promise<boolean>;
 
@@ -89,6 +101,7 @@ export type ElectronAPI = {
   showInFolder: (filePath: string) => Promise<void>;
   openPath: (filePath: string) => Promise<boolean>;
   openConfigDir: () => Promise<boolean>;
+  openLogDir: () => Promise<boolean>;
   openThirdPartyLicenses: () => Promise<boolean>;
   backupGetCategories: () => Promise<BackupCategoryInfo[]>;
   backupExport: (categories: BackupCategoryId[], namePrefix?: string) => Promise<BackupExportResult>;
@@ -96,6 +109,10 @@ export type ElectronAPI = {
   backupImport: (zipPath: string, categories: BackupCategoryId[]) => Promise<BackupImportResult>;
   selectPath: (request?: SelectPathRequest) => Promise<SelectPathResult | null>;
   captureMarkdownDocument: (request: MarkdownCaptureRequest) => Promise<MarkdownCaptureResult>;
+  getShareSettings: () => Promise<ShareSettings>;
+  updateShareSettings: (patch: Partial<ShareSettings>) => Promise<ShareSettings>;
+  shareCreateLink: (request: ShareLinkRequest) => Promise<ShareLinkResult>;
+  shareRevokeLink: (deleteUrl: string) => Promise<ShareLinkResult>;
 
   getTelegramSettings: () => Promise<TelegramSettingsSnapshot>;
   updateTelegramEnabled: (enabled: boolean) => Promise<boolean>;
@@ -106,10 +123,15 @@ export type ElectronAPI = {
   updateTelegramAdminUsers: (userIds: number[]) => Promise<boolean>;
   getBotProviderCommands: () => Promise<Record<Provider, BotProviderCommand>>;
   updateBotProviderCommands: (commands: Record<Provider, BotProviderCommand>) => Promise<boolean>;
+  getBotBuiltinCommands: () => Promise<BotBuiltinCommands>;
+  updateBotBuiltinCommands: (commands: BotBuiltinCommands) => Promise<boolean>;
+  getBotByokCommands: () => Promise<BotByokCommandInfo[]>;
+  updateBotByokCommand: (id: string, enabled: boolean) => Promise<boolean>;
   updateTelegramLlmDirect: (config: BotLlmDirectConfig) => Promise<boolean>;
   generateTelegramPairingCode: () => Promise<{ code: string; expiresAt: string } | null>;
   revokeTelegramPairingCode: (code: string) => Promise<boolean>;
   unpairTelegramUser: (userId: number) => Promise<boolean>;
+  forgetTelegramChannel: (chatId: number) => Promise<boolean>;
 
   getLineSettings: () => Promise<LineSettingsSnapshot>;
   updateLineEnabled: (enabled: boolean) => Promise<{ ok: boolean; message?: string }>;
@@ -121,6 +143,8 @@ export type ElectronAPI = {
   unpairLineUser: (userId: string) => Promise<{ ok: boolean; snapshot: LineSettingsSnapshot }>;
   refreshLineAccount: () => Promise<{ ok: boolean; message?: string }>;
 
+  getDataKeyStatus: (name: string) => Promise<DataKeyStatus>;
+  updateDataKey: (name: string, value: string) => Promise<{ ok: boolean }>;
   getEmailSettings: () => Promise<EmailSettingsSnapshot>;
   updateEmailEnabled: (enabled: boolean) => Promise<{ ok: boolean }>;
   updateEmailCredentials: (creds: SmtpCredentials) => Promise<{ ok: boolean; message?: string }>;
@@ -132,6 +156,12 @@ export type ElectronAPI = {
   testByokInstance: (req: ByokConnectionProbe) => Promise<ByokTestResult>;
   saveByokGroup: (req: ByokGroupSaveRequest) => Promise<{ ok: boolean; snapshot: ByokSettingsSnapshot }>;
   deleteByokGroup: (id: string) => Promise<{ ok: boolean; snapshot: ByokSettingsSnapshot }>;
+  getMcpServers: () => Promise<McpServerView[]>;
+  saveMcpServer: (req: McpServerSaveRequest) => Promise<McpServerActionResult>;
+  deleteMcpServer: (id: string) => Promise<McpServerActionResult>;
+  connectMcpServer: (id: string) => Promise<McpServerActionResult>;
+  disconnectMcpServer: (id: string) => Promise<McpServerActionResult>;
+  onMcpServerStatus: (cb: (servers: McpServerView[]) => void) => () => void;
 
   getTempChatMode: () => Promise<boolean>;
   setTempChatMode: (enabled: boolean) => Promise<boolean>;
@@ -139,6 +169,7 @@ export type ElectronAPI = {
   onTempChatResult: (cb: (payload: TempChatResult) => void) => () => void;
 
   getMetrics: () => Promise<MetricsSnapshot>;
+  getConversationTokenStats: () => Promise<ConversationTokenStats>;
   resetMetrics: () => Promise<MetricsSnapshot>;
   getMetricsEnabled: () => Promise<boolean>;
   updateMetricsEnabled: (enabled: boolean) => Promise<boolean>;
@@ -158,16 +189,23 @@ export type ElectronAPI = {
   onShowCloseDialog: (cb: () => void) => () => void;
   respondCloseDialog: (action: 'quit' | 'hide', remember: boolean) => void;
 
+  onAgentConfirm: (cb: (payload: AgentConfirmPayload) => void) => () => void;
+  respondAgentConfirm: (id: string, choice: AgentConfirmChoice) => void;
+
   onCloseToTrayChanged: (cb: (enabled: boolean) => void) => () => void;
 
   getTheme: () => Promise<string>;
   updateTheme: (theme: string) => Promise<boolean>;
   getLayoutMode: () => Promise<string>;
   updateLayoutMode: (mode: string) => Promise<boolean>;
+  getShowTokenUsage: () => Promise<boolean>;
+  updateShowTokenUsage: (show: boolean) => Promise<boolean>;
   getMarkdownZoom: () => Promise<number>;
   updateMarkdownZoom: (zoom: number) => Promise<boolean>;
   getCaptureSettings: () => Promise<CaptureSettings>;
   updateCaptureSettings: (settings: CaptureSettings) => Promise<boolean>;
+  getQuickExport: () => Promise<QuickExportSettings>;
+  updateQuickExport: (settings: QuickExportSettings) => Promise<HotkeyBindResult>;
 
   fetchDuckaiModels: () => Promise<DuckaiModelInfo[]>;
 
@@ -180,7 +218,14 @@ export type ElectronAPI = {
   moveFlow: (flowId: string, direction: 'up' | 'down') => Promise<FlowDefinition[]>;
   reorderFlows: (orderedIds: string[]) => Promise<FlowDefinition[]>;
   executeFlow: (flowId: string) => Promise<FlowExecutionResult>;
-  runChatCommand: (flowId: string, command: string, input: string) => Promise<ChatCommandResult>;
+  runChatCommand: (flowId: string, command: string, input: string, conversationPath?: string) => Promise<ChatCommandResult>;
+  runSearchCommand: (query: string, targetUrl: string, mode?: SearchMode, conversationPath?: string, clientToken?: string) => Promise<SearchCommandResult>;
+  runAgentCommand: (goal: string, targetUrl: string, runId: string, conversationPath?: string) => Promise<AgentCommandResult>;
+  resumeAgentRun: (runId: string, answer?: string) => Promise<AgentCommandResult>;
+  cancelAgentRun: (runId: string) => Promise<boolean>;
+  listResumableAgentRuns: () => Promise<AgentRunSummary[]>;
+  discardAgentRun: (runId: string) => Promise<boolean>;
+  onAgentTrace: (cb: (payload: AgentTracePayload) => void) => () => void;
   abortFlow: (flowId: string) => Promise<boolean>;
   generateFlow: (description: string) => Promise<FlowGenerationResult>;
   exportFlow: (flow: FlowDefinition) => Promise<boolean>;
@@ -188,6 +233,7 @@ export type ElectronAPI = {
   onFlowExecutionLog: (cb: (log: FlowExecutionLog) => void) => () => void;
   onFlowExecutionStarted: (cb: (event: FlowExecutionEvent) => void) => () => void;
   onFlowExecutionEnded: (cb: (event: FlowExecutionEvent) => void) => () => void;
+  onFlowCreated: (cb: (flow: FlowDefinition) => void) => () => void;
 
   rssHasCheckpoint: (stepId: string) => Promise<boolean>;
   rssClearCheckpoint: (stepId: string) => Promise<boolean>;
@@ -195,6 +241,7 @@ export type ElectronAPI = {
 
   scraperHasCheckpoint: (stepId: string) => Promise<boolean>;
   scraperClearCheckpoint: (stepId: string) => Promise<boolean>;
+  scraperPickSelector: (args: ScraperPickRequest) => Promise<ScraperPickResult | null>;
 
   ytSubsHasCheckpoint: (stepId: string) => Promise<boolean>;
   ytSubsClearCheckpoint: (stepId: string) => Promise<boolean>;
@@ -226,6 +273,16 @@ const api: ElectronAPI = {
     const handler = (_: Electron.IpcRendererEvent, files: OutputFile[]) => cb(files);
     ipcRenderer.on(IPC.FILE_LIST, handler);
     return () => ipcRenderer.removeListener(IPC.FILE_LIST, handler);
+  },
+  onChatTurn: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, event: ChatTurnEvent) => cb(event);
+    ipcRenderer.on(IPC.CHAT_TURN, handler);
+    return () => ipcRenderer.removeListener(IPC.CHAT_TURN, handler);
+  },
+  onAgentTrace: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, payload: AgentTracePayload) => cb(payload);
+    ipcRenderer.on(IPC.AGENT_TRACE, handler);
+    return () => ipcRenderer.removeListener(IPC.AGENT_TRACE, handler);
   },
   onUiNotification: (cb) => {
     const handler = (_: Electron.IpcRendererEvent, payload: UiNotificationPayload) => cb(payload);
@@ -260,10 +317,13 @@ const api: ElectronAPI = {
   deleteAllFiles: () => ipcRenderer.invoke(IPC.DELETE_ALL_FILES),
   updateFileTitle: (filePath, title) => ipcRenderer.invoke(IPC.UPDATE_FILE_TITLE, filePath, title),
   updateFileH1: (filePath, title) => ipcRenderer.invoke(IPC.UPDATE_FILE_H1, filePath, title),
+  startConversation: (prompt) => ipcRenderer.invoke(IPC.START_CONVERSATION, prompt),
 
   getHotkey: () => ipcRenderer.invoke(IPC.GET_HOTKEY),
   updateHotkey: (hotkey) => ipcRenderer.invoke(IPC.UPDATE_HOTKEY, hotkey),
   setHotkeyPaused: (paused) => ipcRenderer.invoke(IPC.SET_HOTKEY_PAUSED, paused),
+  getHotkeyEnabled: () => ipcRenderer.invoke(IPC.GET_HOTKEY_ENABLED),
+  setHotkeyEnabled: (enabled) => ipcRenderer.invoke(IPC.SET_HOTKEY_ENABLED, enabled),
   getAiUrl: () => ipcRenderer.invoke(IPC.GET_AI_URL),
   updateAiUrl: (url) => ipcRenderer.invoke(IPC.UPDATE_AI_URL, url),
   getHiddenSources: () => ipcRenderer.invoke(IPC.GET_HIDDEN_SOURCES),
@@ -271,6 +331,7 @@ const api: ElectronAPI = {
 
   getLanguageList: () => ipcRenderer.invoke(IPC.GET_LANGUAGE_LIST),
   getLanguageContent: (lang) => ipcRenderer.invoke(IPC.GET_LANGUAGE_CONTENT, lang),
+  openLanguagesFolder: () => ipcRenderer.invoke(IPC.OPEN_LANGUAGES_FOLDER),
   getCurrentLocale: () => ipcRenderer.invoke(IPC.GET_CURRENT_LOCALE),
   setLocaleAuto: (lang) => ipcRenderer.invoke(IPC.SET_LOCALE_AUTO, lang),
 
@@ -320,6 +381,7 @@ const api: ElectronAPI = {
   showInFolder: (filePath) => ipcRenderer.invoke(IPC.SHOW_IN_FOLDER, filePath),
   openPath: (filePath) => ipcRenderer.invoke(IPC.OPEN_PATH, filePath),
   openConfigDir: () => ipcRenderer.invoke(IPC.OPEN_CONFIG_DIR),
+  openLogDir: () => ipcRenderer.invoke(IPC.OPEN_LOG_DIR),
   openThirdPartyLicenses: () => ipcRenderer.invoke(IPC.OPEN_THIRD_PARTY_LICENSES),
   backupGetCategories: () => ipcRenderer.invoke(IPC.BACKUP_CATEGORIES),
   backupExport: (categories, namePrefix) => ipcRenderer.invoke(IPC.BACKUP_EXPORT, categories, namePrefix),
@@ -327,6 +389,10 @@ const api: ElectronAPI = {
   backupImport: (zipPath, categories) => ipcRenderer.invoke(IPC.BACKUP_IMPORT, zipPath, categories),
   selectPath: (request) => ipcRenderer.invoke(IPC.SELECT_PATH, request),
   captureMarkdownDocument: (request) => ipcRenderer.invoke(IPC.CAPTURE_MARKDOWN_IMAGE, request),
+  getShareSettings: () => ipcRenderer.invoke(IPC.GET_SHARE_SETTINGS),
+  updateShareSettings: (patch) => ipcRenderer.invoke(IPC.UPDATE_SHARE_SETTINGS, patch),
+  shareCreateLink: (request) => ipcRenderer.invoke(IPC.SHARE_CREATE_LINK, request),
+  shareRevokeLink: (deleteUrl) => ipcRenderer.invoke(IPC.SHARE_REVOKE_LINK, deleteUrl),
 
   getTelegramSettings: () => ipcRenderer.invoke(IPC.GET_TELEGRAM_SETTINGS),
   updateTelegramEnabled: (enabled) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_ENABLED, enabled),
@@ -337,10 +403,15 @@ const api: ElectronAPI = {
   updateTelegramAdminUsers: (userIds) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_ADMIN_USERS, userIds),
   getBotProviderCommands: () => ipcRenderer.invoke(IPC.GET_BOT_PROVIDER_COMMANDS),
   updateBotProviderCommands: (commands) => ipcRenderer.invoke(IPC.UPDATE_BOT_PROVIDER_COMMANDS, commands),
+  getBotBuiltinCommands: () => ipcRenderer.invoke(IPC.GET_BOT_BUILTIN_COMMANDS),
+  updateBotBuiltinCommands: (commands) => ipcRenderer.invoke(IPC.UPDATE_BOT_BUILTIN_COMMANDS, commands),
+  getBotByokCommands: () => ipcRenderer.invoke(IPC.GET_BOT_BYOK_COMMANDS),
+  updateBotByokCommand: (id, enabled) => ipcRenderer.invoke(IPC.UPDATE_BOT_BYOK_COMMANDS, id, enabled),
   updateTelegramLlmDirect: (config) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_LLM_DIRECT, config),
   generateTelegramPairingCode: () => ipcRenderer.invoke(IPC.GENERATE_TELEGRAM_PAIRING_CODE),
   revokeTelegramPairingCode: (code) => ipcRenderer.invoke(IPC.REVOKE_TELEGRAM_PAIRING_CODE, code),
   unpairTelegramUser: (userId) => ipcRenderer.invoke(IPC.UNPAIR_TELEGRAM_USER, userId),
+  forgetTelegramChannel: (chatId) => ipcRenderer.invoke(IPC.FORGET_TELEGRAM_CHANNEL, chatId),
 
   getLineSettings: () => ipcRenderer.invoke(IPC.GET_LINE_SETTINGS),
   updateLineEnabled: (enabled) => ipcRenderer.invoke(IPC.UPDATE_LINE_ENABLED, enabled),
@@ -352,6 +423,8 @@ const api: ElectronAPI = {
   unpairLineUser: (userId) => ipcRenderer.invoke(IPC.UNPAIR_LINE_USER, userId),
   refreshLineAccount: () => ipcRenderer.invoke(IPC.REFRESH_LINE_ACCOUNT),
 
+  getDataKeyStatus: (name) => ipcRenderer.invoke(IPC.GET_DATA_KEY_STATUS, name),
+  updateDataKey: (name, value) => ipcRenderer.invoke(IPC.UPDATE_DATA_KEY, name, value),
   getEmailSettings: () => ipcRenderer.invoke(IPC.GET_EMAIL_SETTINGS),
   updateEmailEnabled: (enabled) => ipcRenderer.invoke(IPC.UPDATE_EMAIL_ENABLED, enabled),
   updateEmailCredentials: (creds) => ipcRenderer.invoke(IPC.UPDATE_EMAIL_CREDENTIALS, creds),
@@ -363,6 +436,16 @@ const api: ElectronAPI = {
   testByokInstance: (req) => ipcRenderer.invoke(IPC.BYOK_TEST_INSTANCE, req),
   saveByokGroup: (req) => ipcRenderer.invoke(IPC.BYOK_SAVE_GROUP, req),
   deleteByokGroup: (id) => ipcRenderer.invoke(IPC.BYOK_DELETE_GROUP, id),
+  getMcpServers: () => ipcRenderer.invoke(IPC.MCP_LIST_SERVERS),
+  saveMcpServer: (req) => ipcRenderer.invoke(IPC.MCP_SAVE_SERVER, req),
+  deleteMcpServer: (id) => ipcRenderer.invoke(IPC.MCP_DELETE_SERVER, id),
+  connectMcpServer: (id) => ipcRenderer.invoke(IPC.MCP_CONNECT_SERVER, id),
+  disconnectMcpServer: (id) => ipcRenderer.invoke(IPC.MCP_DISCONNECT_SERVER, id),
+  onMcpServerStatus: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, servers: McpServerView[]) => cb(servers);
+    ipcRenderer.on(IPC.MCP_SERVER_STATUS, handler);
+    return () => ipcRenderer.removeListener(IPC.MCP_SERVER_STATUS, handler);
+  },
 
   getTempChatMode: () => ipcRenderer.invoke(IPC.TEMP_CHAT_GET_MODE),
   setTempChatMode: (enabled) => ipcRenderer.invoke(IPC.TEMP_CHAT_SET_MODE, enabled),
@@ -378,6 +461,7 @@ const api: ElectronAPI = {
   },
 
   getMetrics: () => ipcRenderer.invoke(IPC.METRICS_GET),
+  getConversationTokenStats: () => ipcRenderer.invoke(IPC.METRICS_CONVERSATION_TOKENS),
   resetMetrics: () => ipcRenderer.invoke(IPC.METRICS_RESET),
   getMetricsEnabled: () => ipcRenderer.invoke(IPC.GET_METRICS_ENABLED),
   updateMetricsEnabled: (enabled) => ipcRenderer.invoke(IPC.UPDATE_METRICS_ENABLED, enabled),
@@ -407,6 +491,14 @@ const api: ElectronAPI = {
   respondCloseDialog: (action, remember) => {
     ipcRenderer.send(IPC.RESPOND_CLOSE_DIALOG, action, remember);
   },
+  onAgentConfirm: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, payload: AgentConfirmPayload) => cb(payload);
+    ipcRenderer.on(IPC.AGENT_CONFIRM_SHOW, handler);
+    return () => ipcRenderer.removeListener(IPC.AGENT_CONFIRM_SHOW, handler);
+  },
+  respondAgentConfirm: (id, choice) => {
+    ipcRenderer.send(IPC.AGENT_CONFIRM_RESPOND, id, choice);
+  },
 
   onNotifyOnCompleteChanged: (cb) => {
     const handler = (_: Electron.IpcRendererEvent, enabled: boolean) => cb(enabled);
@@ -429,11 +521,15 @@ const api: ElectronAPI = {
 
   getLayoutMode: () => ipcRenderer.invoke(IPC.GET_LAYOUT_MODE),
   updateLayoutMode: (mode) => ipcRenderer.invoke(IPC.UPDATE_LAYOUT_MODE, mode),
+  getShowTokenUsage: () => ipcRenderer.invoke(IPC.GET_SHOW_TOKEN_USAGE),
+  updateShowTokenUsage: (show) => ipcRenderer.invoke(IPC.UPDATE_SHOW_TOKEN_USAGE, show),
   getMarkdownZoom: () => ipcRenderer.invoke(IPC.GET_MARKDOWN_ZOOM),
   updateMarkdownZoom: (zoom) => ipcRenderer.invoke(IPC.UPDATE_MARKDOWN_ZOOM, zoom),
 
   getCaptureSettings: () => ipcRenderer.invoke(IPC.GET_CAPTURE_SETTINGS),
   updateCaptureSettings: (settings) => ipcRenderer.invoke(IPC.UPDATE_CAPTURE_SETTINGS, settings),
+  getQuickExport: () => ipcRenderer.invoke(IPC.GET_QUICK_EXPORT),
+  updateQuickExport: (settings) => ipcRenderer.invoke(IPC.UPDATE_QUICK_EXPORT, settings),
 
   fetchDuckaiModels: () => ipcRenderer.invoke(IPC.DUCKAI_FETCH_MODELS),
 
@@ -446,7 +542,16 @@ const api: ElectronAPI = {
   moveFlow: (flowId, direction) => ipcRenderer.invoke(IPC.FLOW_MOVE, flowId, direction),
   reorderFlows: (orderedIds) => ipcRenderer.invoke(IPC.FLOW_REORDER, orderedIds),
   executeFlow: (flowId) => ipcRenderer.invoke(IPC.FLOW_EXECUTE, flowId),
-  runChatCommand: (flowId, command, input) => ipcRenderer.invoke(IPC.FLOW_RUN_CHAT_COMMAND, flowId, command, input),
+  runChatCommand: (flowId, command, input, conversationPath) =>
+    ipcRenderer.invoke(IPC.FLOW_RUN_CHAT_COMMAND, flowId, command, input, conversationPath),
+  runSearchCommand: (query, targetUrl, mode, conversationPath, clientToken) =>
+    ipcRenderer.invoke(IPC.SEARCH_RUN, query, targetUrl, mode, conversationPath, clientToken),
+  runAgentCommand: (goal, targetUrl, runId, conversationPath) =>
+    ipcRenderer.invoke(IPC.AGENT_RUN, goal, targetUrl, runId, conversationPath),
+  resumeAgentRun: (runId, answer) => ipcRenderer.invoke(IPC.AGENT_RESUME, runId, answer),
+  cancelAgentRun: (runId) => ipcRenderer.invoke(IPC.AGENT_CANCEL, runId),
+  listResumableAgentRuns: () => ipcRenderer.invoke(IPC.AGENT_LIST_RESUMABLE),
+  discardAgentRun: (runId) => ipcRenderer.invoke(IPC.AGENT_DISCARD, runId),
   abortFlow: (flowId) => ipcRenderer.invoke(IPC.FLOW_ABORT, flowId),
   generateFlow: (description) => ipcRenderer.invoke(IPC.FLOW_GENERATE, description),
   exportFlow: (flow) => ipcRenderer.invoke(IPC.FLOW_EXPORT, flow),
@@ -455,6 +560,11 @@ const api: ElectronAPI = {
     const handler = (_: Electron.IpcRendererEvent, log: FlowExecutionLog) => cb(log);
     ipcRenderer.on(IPC.FLOW_EXECUTION_LOG, handler);
     return () => ipcRenderer.removeListener(IPC.FLOW_EXECUTION_LOG, handler);
+  },
+  onFlowCreated: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, flow: FlowDefinition) => cb(flow);
+    ipcRenderer.on(IPC.FLOW_CREATED, handler);
+    return () => ipcRenderer.removeListener(IPC.FLOW_CREATED, handler);
   },
   onFlowExecutionStarted: (cb) => {
     const handler = (_: Electron.IpcRendererEvent, event: FlowExecutionEvent) => cb(event);
@@ -473,6 +583,7 @@ const api: ElectronAPI = {
 
   scraperHasCheckpoint: (stepId) => ipcRenderer.invoke(IPC.SCRAPER_HAS_CHECKPOINT, stepId),
   scraperClearCheckpoint: (stepId) => ipcRenderer.invoke(IPC.SCRAPER_CLEAR_CHECKPOINT, stepId),
+  scraperPickSelector: (args) => ipcRenderer.invoke(IPC.SCRAPER_PICK_SELECTOR, args),
 
   ytSubsHasCheckpoint: (stepId) => ipcRenderer.invoke(IPC.YT_SUBS_HAS_CHECKPOINT, stepId),
   ytSubsClearCheckpoint: (stepId) => ipcRenderer.invoke(IPC.YT_SUBS_CLEAR_CHECKPOINT, stepId),

@@ -1,0 +1,27 @@
+/* AssistantTurn.module.css */
+
+/* The action row stays laid out but invisible until the pointer is on this reply,
+   so a long conversation is not a column of repeated buttons. Space is reserved
+   (opacity, not display) so revealing one never shifts the turns below it. */
+.actions {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+/* :focus-within keeps it reachable by keyboard, and the copied state holds it
+   visible long enough for the check mark to register after the pointer leaves. */
+.turn:hover .actions,
+.turn:focus-within .actions,
+.actions[data-copied='true'] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Touch input has no hover to reveal it with. */
+@media (hover: none) {
+  .actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}

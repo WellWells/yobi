@@ -7,7 +7,7 @@ import {
 import { AppTextarea } from '../../../components/AppTextarea';
 import { AppTextInput } from '../../../components/AppTextInput';
 import {
-  SectionCard, SettingRow, SettingField, SettingDivider, SegmentedControl, ToggleSwitch, GroupHeader, SectionTitle,
+  SectionCard, SettingRow, SettingField, SettingDivider, SegmentedControl, ToggleSwitch, SectionTitle,
 } from '../components';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import {
@@ -25,16 +25,13 @@ interface Props {
   t: (key: string) => string;
   locale: string;
   showSection: (tags: readonly string[], category: 'ai') => boolean;
-  isSearching: boolean;
   sectionGap: number;
 }
 
 export const AiSection: React.FC<Props> = ({
-  system, prefs, t, locale, showSection, isSearching, sectionGap,
+  system, prefs, t, locale, showSection, sectionGap,
 }) => (
   <Box>
-    {isSearching && <GroupHeader label={t('settings.group.ai')} />}
-
     <SectionCard style={{ marginBottom: sectionGap, display: showSection(TAG_SETS.timeout, 'ai') ? 'block' : 'none' }}>
       <SectionTitle icon={<Timer size={15} />} label={t('settings.responseTimeout.title')} />
       <Group gap={10} align="center">

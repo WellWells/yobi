@@ -20,10 +20,6 @@ export function truncateText(text: string, maxLength: number): string {
   return `${text.slice(0, cut).trimEnd()}…`;
 }
 
-// Splits the *source* markdown, never the rendered HTML: cutting HTML risks
-// slicing a tag pair in half, while each markdown chunk renders into a complete,
-// self-contained message. Cuts on a blank line, else a line break, else mid-line.
-// Text past `maxChunks` chunks is dropped, with the last chunk marked truncated.
 export function splitMarkdownIntoChunks(
   text: string,
   maxChunkChars: number,
@@ -41,8 +37,6 @@ export function splitMarkdownIntoChunks(
       break;
     }
     const window = rest.slice(0, maxChunkChars);
-    // `lastIndexOf` on the window, not a regex scan: the cut has to be the last
-    // boundary that still fits, not the first one found.
     let cut = window.lastIndexOf('\n\n');
     if (cut < maxChunkChars / 2) cut = window.lastIndexOf('\n');
     if (cut < maxChunkChars / 2) cut = maxChunkChars;

@@ -5,8 +5,14 @@ import { execRss, execScraper, execYoutube, execYoutubeSubs } from './feeds';
 import { execJs, execRandom, execRun, execText } from './compute';
 import { execHttp, execPower, execRestartApp, execSysInfo } from './system';
 import { execForex, execStock, execWeather } from './dataSources';
+import { execAirQuality } from './airQuality';
 import { execFileDelete, execFileDownload, execFileList, execFileRead, execFileWrite } from './fileOps';
+import { execShare } from './share';
 import { execEmailSend } from './email';
+import { execOnChange } from './stateGate';
+import { execSearch } from './search';
+import { execResearch } from './research';
+import { execGmapReviews } from './mapReviews';
 import {
   execBot,
   execBrowser,
@@ -60,12 +66,20 @@ export async function executeSkill(
       return execNotify(config);
     case 'capture':
       return execCapture(config, deps);
+    case 'share':
+      return execShare(config, deps);
     case 'bot':
       return execBot(config, deps);
     case 'rss':
       return execRss(config, stepId);
     case 'scraper':
       return execScraper(config, stepId);
+    case 'search':
+      return execSearch(config);
+    case 'research':
+      return execResearch(config, deps);
+    case 'gmap_reviews':
+      return execGmapReviews(config);
     case 'youtube':
       return execYoutube(config);
     case 'youtube_subs':
@@ -94,6 +108,8 @@ export async function executeSkill(
       return execForex(config, timeoutMs);
     case 'weather':
       return execWeather(config, timeoutMs);
+    case 'air_quality':
+      return execAirQuality(config, timeoutMs);
     case 'email_send':
       return execEmailSend(config);
     case 'stop':
@@ -108,6 +124,8 @@ export async function executeSkill(
       return execIf(config);
     case 'end_if':
       return '';
+    case 'on_change':
+      return execOnChange(config, stepId);
     case 'break':
       return execBreak();
     case 'continue':

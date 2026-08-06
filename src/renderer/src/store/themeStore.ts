@@ -6,20 +6,15 @@ import type { Theme, ThemePreference } from '../../../shared/themes';
 
 export type { Theme, ThemePreference };
 
-// Mirrors the config-store value so the first paint (before the async IPC read
-// in initThemeFromConfig resolves) already uses the configured theme.
 const THEME_STORAGE_KEY = 'yobi-theme';
 
 interface ThemeState {
-  /** What the user picked — 'auto' follows the OS scheme. */
   preference: ThemePreference;
-  /** Concrete theme currently applied. */
   theme: Theme;
   colorScheme: 'light' | 'dark';
   mantineTheme: MantineThemeOverride;
   cssVariablesResolver: CSSVariablesResolver;
   setTheme: (preference: ThemePreference) => void;
-  /** Paint a theme without committing it (Word-style live preview); null restores the committed one. */
   previewTheme: (preference: ThemePreference | null) => void;
 }
 
@@ -57,7 +52,6 @@ function writeStoredPreference(preference: ThemePreference): void {
   try {
     localStorage.setItem(THEME_STORAGE_KEY, preference);
   } catch {
-    // Mirror is best-effort; the config store remains the source of truth.
   }
 }
 
@@ -72,14 +66,10 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
 
   previewTheme: (preference: ThemePreference | null) => {
     const committed = get().preference;
-    // Repaint to the hovered theme (or back to `committed` on leave) without
-    // persisting. `preference` is kept as-is so the selected ring and summary
-    // text keep pointing at the real choice while the preview is showing.
     set({ ...applyTheme(preference ?? committed), preference: committed });
   },
 }));
 
-// Re-resolve when the OS scheme changes while following the system.
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
   if (useThemeStore.getState().preference !== 'auto') return;
   useThemeStore.setState(applyTheme('auto'));

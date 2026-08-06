@@ -97,8 +97,6 @@ export function useByokSettings() {
   }, [resetProbeState]);
 
   const updateForm = useCallback((patch: Partial<ByokFormState>) => {
-    // A loaded model list / test result belongs to the previous endpoint;
-    // changing where or how we connect invalidates it.
     if (patch.baseUrl !== undefined || patch.providerType !== undefined) {
       setModels([]);
       setModelsError(null);
@@ -111,8 +109,6 @@ export function useByokSettings() {
     setForm((prev) => {
       if (!prev) return prev;
       const next = { ...prev, ...patch };
-      // Switching provider type swaps in the matching default base URL, but
-      // only when the field still holds a default (never clobber a custom URL).
       if (patch.providerType && patch.providerType !== prev.providerType) {
         const defaults = Object.values(BYOK_DEFAULT_BASE_URLS) as string[];
         if (!prev.baseUrl.trim() || defaults.includes(prev.baseUrl.trim())) {
@@ -123,8 +119,6 @@ export function useByokSettings() {
     });
   }, []);
 
-  // A probe can run before saving: needs a valid base URL plus a key (typed, or
-  // the stored key of the instance being edited).
   const canProbe = form !== null
     && isValidBaseUrl(form.baseUrl)
     && (form.apiKey.trim().length > 0 || form.id !== null);

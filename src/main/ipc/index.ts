@@ -1,7 +1,8 @@
 import { ipcMain, nativeImage, shell } from 'electron';
 import * as fs from 'node:fs/promises';
 import { IPC, PROVIDER_URLS } from '../../shared/types';
-import type { PromptTriggerOptions, SelectPathRequest, SelectPathResult } from '../../shared/types';
+import type { AgentConfirmChoice, PromptTriggerOptions, SelectPathRequest, SelectPathResult } from '../../shared/types';
+import { resolveAgentConfirm } from '../chat/agentConfirmBridge';
 import { config, saveConfig } from '../config';
 import { getProviderLabel } from '../providers';
 import { fetchDuckaiModels } from '../providers/duckai';
@@ -15,6 +16,7 @@ import {
   getAssetPath,
 } from '../helpers';
 import { loadLanguageData } from '../i18n';
+import { titleFromPrompt } from '../output';
 import { resolveUrlPrompt } from '../urlParser';
 import {
   revealWorkerWindow,
@@ -36,9 +38,14 @@ import { registerLocaleHandlers } from './locale';
 import { registerSettingsHandlers } from './settings';
 import { registerBackupHandlers } from './backup';
 import { registerFlowHandlers } from './flow';
+import { registerSearchHandlers } from './search';
+import { registerAgentHandlers } from './agent';
 import { registerAccountHandlers } from './account';
 import { registerEmailHandlers } from './email';
+import { registerDataKeyHandlers } from './dataKeys';
 import { registerByokHandlers } from './byok';
+import { registerMcpHandlers } from './mcp';
+import { registerShareHandlers } from './share';
 
 let duckaiModelsCache: DuckaiModelInfo[] | null = null;
 
@@ -50,7 +57,8 @@ interface SetupDeps {
   lineRuntime: LineRuntime;
   telegramSessionId: string;
   getMainWin: () => import('electron').BrowserWindow | null;
-  bindHotkey: () => void;
+  bindHotkey: () => boolean;
+  bindQuickExportHotkey: () => boolean;
   checkForUpdates: () => Promise<boolean>;
   onTraySettingsChanged?: () => void;
   onTrayMenuRebuild?: () => void;
@@ -69,7 +77,12 @@ export function setupIpcHandlers(deps: SetupDeps): void {
   const { queue, getMainWin, checkForUpdates } = deps;
   const ctx: IpcContext = deps;
 
-  async function enqueuePromptFromUi(rawPrompt: string, targetUrl?: string, attachments?: string[]): Promise<string | null> {
+  async function enqueuePromptFromUi(
+    rawPrompt: string,
+    targetUrl?: string,
+    attachments?: string[],
+    conversation?: { conversationPath?: string; sendId?: string },
+  ): Promise<string | null> {
     const text = (rawPrompt ?? '').trim();
     if (!text) {
       sendLog('⚠️ Empty UI prompt ignored');
@@ -93,10 +106,14 @@ export function setupIpcHandlers(deps: SetupDeps): void {
     queue.enqueue({
       id,
       prompt: resolved.prompt,
+      displayPrompt: resolved.displayPrompt,
       targetUrl: finalTargetUrl,
       title: resolved.title,
       source: 'ui',
       attachments,
+      conversationPath: conversation?.conversationPath,
+      placeholderTitle: titleFromPrompt(text),
+      sendId: conversation?.sendId,
     });
     sendLog(`[${id}] 🎯 UI prompt queued for ${getProviderLabel(finalTargetUrl)}`);
     return id;
@@ -165,13 +182,17 @@ export function setupIpcHandlers(deps: SetupDeps): void {
   });
 
   ipcMain.handle(IPC.TRIGGER_PROMPT_WITH_OPTIONS, (_event, options: PromptTriggerOptions) =>
-    enqueuePromptFromUi(options?.prompt ?? '', options?.targetUrl, options?.attachments),
+    enqueuePromptFromUi(options?.prompt ?? '', options?.targetUrl, options?.attachments, {
+      conversationPath: options?.conversationPath,
+      sendId: options?.sendId,
+    }),
   );
 
   ipcMain.handle(IPC.CANCEL_QUEUE_TASK, (_event, taskId: string) => {
     const normalizedTaskId = (taskId ?? '').trim();
     if (!normalizedTaskId) return false;
-    const cancelled = queue.cancel(normalizedTaskId);
+    const cancelled = queue.cancel(normalizedTaskId)
+      || (deps.flowManager?.cancelQueuedTask(normalizedTaskId) ?? false);
     if (cancelled) sendLog(`[${normalizedTaskId}] 🛑 Queue item cancelled`);
     return cancelled;
   });
@@ -180,6 +201,10 @@ export function setupIpcHandlers(deps: SetupDeps): void {
     const skipped = queue.forceSkipActive();
     if (skipped) sendLog('⏭️ Active task force-skipped by user');
     return skipped;
+  });
+
+  ipcMain.on(IPC.AGENT_CONFIRM_RESPOND, (_event, id: string, choice: AgentConfirmChoice) => {
+    resolveAgentConfirm(id, choice);
   });
 
   ipcMain.on(IPC.RESPOND_CLOSE_DIALOG, (_event, action: 'quit' | 'hide', remember: boolean) => {
@@ -219,7 +244,12 @@ export function setupIpcHandlers(deps: SetupDeps): void {
   registerSettingsHandlers(ctx);
   registerBackupHandlers(ctx);
   registerFlowHandlers(ctx);
+  registerSearchHandlers(ctx);
+  registerAgentHandlers(ctx);
   registerAccountHandlers();
   registerEmailHandlers();
+  registerDataKeyHandlers();
   registerByokHandlers(ctx);
+  registerMcpHandlers();
+  registerShareHandlers();
 }

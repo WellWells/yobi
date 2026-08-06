@@ -15,9 +15,6 @@ function emptyGroupForm(): ByokGroupFormState {
   return { id: null, name: '', memberIds: [] };
 }
 
-// Group CRUD sits in its own hook (kept out of the already-large useByokSettings)
-// but shares that hook's snapshot: `applySnapshot` is the same setter, so a group
-// save/delete refreshes the key list, group list, and both picker model sets at once.
 export function useByokGroups(
   snapshot: ByokSettingsSnapshot | null,
   applySnapshot: (next: ByokSettingsSnapshot) => void,

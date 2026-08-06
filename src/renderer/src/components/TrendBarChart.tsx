@@ -14,6 +14,7 @@ interface Props {
   height?: number;
   viewWidth?: number;
   axisMax?: number;
+  formatValue?: (value: number) => string;
 }
 
 const PAD_LEFT = 24;
@@ -25,7 +26,14 @@ function formatTick(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
-export const TrendBarChart: React.FC<Props> = ({ labels, series, height = 150, viewWidth = 520, axisMax }) => {
+export const TrendBarChart: React.FC<Props> = ({
+  labels,
+  series,
+  height = 150,
+  viewWidth = 520,
+  axisMax,
+  formatValue = formatTick,
+}) => {
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const count = labels.length;
 
@@ -115,7 +123,7 @@ export const TrendBarChart: React.FC<Props> = ({ labels, series, height = 150, v
             fill="var(--mantine-color-dimmed)"
             textAnchor="end"
           >
-            {formatTick(tickValue)}
+            {formatValue(tickValue)}
           </text>
         ))}
         {labelIndexes.map((index) => (
@@ -159,7 +167,7 @@ export const TrendBarChart: React.FC<Props> = ({ labels, series, height = 150, v
                   <Text fz="var(--font-size-sm)" c="dimmed">{s.label}</Text>
                 </Group>
                 <Text fz="var(--font-size-sm)" fw={600} style={{ fontVariantNumeric: 'tabular-nums' }}>
-                  {s.values[hoverIndex] ?? 0}
+                  {formatValue(s.values[hoverIndex] ?? 0)}
                 </Text>
               </Group>
             ))}

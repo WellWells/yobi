@@ -1,25 +1,45 @@
 import React, { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Menu as MMenu, Stack, Text } from '@mantine/core';
-import { useVirtualizer } from '@tanstack/react-virtual';
+import { Box, Menu as MMenu, Stack, Text, Tooltip } from '@mantine/core';
+import { useVirtualizer, observeElementRect, measureElement } from '@tanstack/react-virtual';
 import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import type { OutputFile } from '../../../shared/types';
-import { AppTextInput } from './AppTextInput';
+import { PanelToolbar, ToolbarButton, ToolbarIconButton } from './PanelToolbar';
 import { WebDialog } from './WebDialog';
 import { ContextMenuPortal } from './ContextMenuPortal';
 import { ShortcutHint } from './ShortcutHint';
 import { SelectionActionBar } from './SelectionActionBar';
-import { Edit3, FolderOpen, ListChecks, Search, Trash2 } from 'lucide-react';
+import { Edit3, FolderOpen, ListChecks, Search, SquarePen, Trash2 } from 'lucide-react';
 import { fileApi } from '../api/electronApi';
 import { FileItem } from './sidebar/FileItem';
 import { useSidebarFileActions } from './sidebar/useSidebarFileActions';
 import { createSidebarKeyDownHandler } from './sidebar/sidebarKeyNav';
 import { useMultiSelect } from '../hooks/useMultiSelect';
 import { useFormatTime } from '../hooks/useFormatTime';
-import { isTypingTarget } from '../utils/domUtils';
+import { containsActiveElement, isTypingTarget } from '../utils/domUtils';
+import { NEW_CHAT_SHORTCUT_HINT } from '../utils/keyLabels';
 
-export const Sidebar: React.FC = () => {
+interface SidebarProps {
+  onNewConversation: () => void;
+  onOpenSearch: () => void;
+}
+
+const observeRectKeepLast: typeof observeElementRect = (instance, cb) =>
+  observeElementRect(instance, (rect) => {
+    if (rect.height === 0) return;
+    cb(rect);
+  });
+
+const measureElementKeepLast: typeof measureElement = (element, entry, instance) => {
+  const size = measureElement(element, entry, instance);
+  if (size > 0) return size;
+  const index = instance.indexFromElement(element);
+  return instance.itemSizeCache.get(instance.options.getItemKey(index))
+    ?? instance.options.estimateSize(index);
+};
+
+export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearch }) => {
   const { files, selectedFile, selectFile, setFileContent, setFiles, unreadFilePaths } = useAppStore(
     useShallow((s) => ({
       files: s.files,
@@ -31,12 +51,8 @@ export const Sidebar: React.FC = () => {
     })),
   );
   const { t } = useI18nStore();
-  const [query, setQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<OutputFile[] | null>(null);
   const selection = useMultiSelect();
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-  const searchSeqRef = useRef(0);
-  const searchInputRef = useRef<HTMLInputElement>(null);
   const fileItemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const prevDeleteDialogOpenRef = useRef(false);
   const sidebarViewportRef = useRef<HTMLDivElement>(null);
@@ -55,25 +71,6 @@ export const Sidebar: React.FC = () => {
     return unsub;
   }, [loadFiles, setFiles]);
 
-  // Ctrl/Cmd+F jumps focus to the file search box. The sidebar stays mounted
-  // behind other views (display toggling), so gate on the active view.
-  useEffect(() => {
-    const onSearchHotkey = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
-      if (event.key.toLowerCase() !== 'f') return;
-      if (useAppStore.getState().currentView !== 'chat') return;
-      // Don't hijack Ctrl+F while typing, or steal focus from an open dialog's trap.
-      if (isTypingTarget(event.target) || document.querySelector('[aria-modal="true"]')) return;
-      const input = searchInputRef.current;
-      if (!input) return;
-      event.preventDefault();
-      input.focus();
-      input.select();
-    };
-    window.addEventListener('keydown', onSearchHotkey);
-    return () => window.removeEventListener('keydown', onSearchHotkey);
-  }, []);
-
   useEffect(() => {
     if (!selection.selectMode) return;
     const onDeleteKey = (event: KeyboardEvent) => {
@@ -88,35 +85,16 @@ export const Sidebar: React.FC = () => {
     return () => window.removeEventListener('keydown', onDeleteKey);
   }, [selection.selectMode, selection.count]);
 
-  useEffect(() => {
-    const keyword = query.trim();
-    if (!keyword) {
-      searchSeqRef.current += 1;
-      setSearchResults(null);
-      return;
-    }
-    const seq = ++searchSeqRef.current;
-    const timer = setTimeout(async () => {
-      const result = await fileApi.search(keyword);
-      if (seq === searchSeqRef.current) {
-        setSearchResults(result);
-      }
-    }, 80);
-    return () => clearTimeout(timer);
-  }, [query, files]);
-
-  const visibleFiles = searchResults ?? files;
-  const isSearching = query.trim().length > 0;
+  const visibleFiles = files;
   const selectableIds = useMemo(() => visibleFiles.map((f) => f.path), [visibleFiles]);
-  const countLabel = isSearching
-    ? `${visibleFiles.length} / ${files.length}`
-    : `${files.length}`;
 
   const rowVirtualizer = useVirtualizer({
     count: visibleFiles.length,
     getScrollElement: () => sidebarViewportRef.current,
     estimateSize: () => 72,
     overscan: 5,
+    observeElementRect: observeRectKeepLast,
+    measureElement: measureElementKeepLast,
   });
 
   const getFocusedFile = useCallback((): OutputFile | null => {
@@ -140,8 +118,6 @@ export const Sidebar: React.FC = () => {
     });
   }, [selectFile, setFileContent]);
 
-  // File-manager click handling: Ctrl toggles, Shift ranges, a plain click
-  // collapses back to a single selection and opens the file.
   const handleRowClick = useCallback((file: OutputFile, mods: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => {
     const result = selection.selectClick(file.path, {
       ctrlKey: mods.ctrlKey || mods.metaKey,
@@ -151,8 +127,6 @@ export const Sidebar: React.FC = () => {
     if (result === 'open') void handleSelect(file);
   }, [selection, selectableIds, handleSelect]);
 
-  // Keep the range-selection anchor pinned to the open file while not in
-  // multi-select, so the first Ctrl/Shift-click builds on what's already open.
   useEffect(() => {
     if (!selection.selectMode) selection.setAnchor(selectedFile?.path ?? null);
   }, [selectedFile?.path, selection.selectMode, selection.setAnchor]);
@@ -183,8 +157,6 @@ export const Sidebar: React.FC = () => {
   const handleStartSelection = useCallback((file: OutputFile) => {
     selection.enter();
     selection.toggle(file.path);
-    // Pin the anchor to the item that started the selection so a following
-    // Shift-click ranges from here.
     selection.setAnchor(file.path);
     setContextMenu(null);
   }, [selection, setContextMenu]);
@@ -201,6 +173,7 @@ export const Sidebar: React.FC = () => {
     if (!selectedFile?.path || pendingDeleteFile || editingPath) return;
     const idx = visibleFiles.findIndex((f) => f.path === selectedFile.path);
     if (idx >= 0) rowVirtualizer.scrollToIndex(idx, { align: 'auto' });
+    if (!containsActiveElement(sidebarViewportRef.current)) return;
     const activeItem = fileItemRefs.current.get(selectedFile.path);
     if (!activeItem || document.activeElement === activeItem) return;
     window.requestAnimationFrame(() => {
@@ -224,6 +197,7 @@ export const Sidebar: React.FC = () => {
 
   const formatTime = useFormatTime();
   const unreadLabel = t('sidebar.unread');
+  const turnsLabel = t('chat.turns');
 
   const handleListKeyDown = createSidebarKeyDownHandler({
     editingPath,
@@ -249,25 +223,12 @@ export const Sidebar: React.FC = () => {
       bg="var(--mantine-color-default)"
       style={{ borderRight: '1px solid var(--mantine-color-default-border)', overflow: 'hidden', position: 'relative' }}
     >
-      <Box style={{ flexShrink: 0 }} px="10px" pt="10px" pb="8px">
-        <AppTextInput
-          ref={searchInputRef}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder={t('sidebar.searchPlaceholder')}
-          tone="tertiary"
-          leftSection={<Search size={13} />}
-          rightSection={isSearching ? (
-            <Text component="span" fz="var(--font-size-xs)" c="dimmed" ff="var(--font-mono)" pr={6}>
-              {countLabel}
-            </Text>
-          ) : undefined}
-          rightSectionWidth={isSearching ? 64 : undefined}
-          variant="default"
-          size="xs"
-          radius="sm"
-        />
-      </Box>
+      <PanelToolbar>
+        <Tooltip label={NEW_CHAT_SHORTCUT_HINT} position="bottom">
+          <ToolbarButton icon={SquarePen} label={t('chat.new')} onClick={onNewConversation} />
+        </Tooltip>
+        <ToolbarIconButton icon={Search} label={t('sidebar.search.tooltip')} onClick={onOpenSearch} />
+      </PanelToolbar>
 
       <Box ref={sidebarViewportRef} flex={1} style={{ overflowY: 'auto', padding: '6px 0' }} onKeyDown={selection.selectMode ? undefined : handleListKeyDown}>
         {visibleFiles.length === 0 ? (
@@ -277,9 +238,7 @@ export const Sidebar: React.FC = () => {
             fz="var(--font-size-base)"
             ta="center"
           >
-            {query
-              ? t('sidebar.emptyFiltered')
-              : t('sidebar.empty')}
+            {t('sidebar.empty')}
           </Text>
         ) : (
           <Box style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>
@@ -316,6 +275,7 @@ export const Sidebar: React.FC = () => {
                     onCommitEdit={handleCommitEdit}
                     onCancelEdit={handleCancelEdit}
                     formatTime={formatTime}
+                    turnsLabel={turnsLabel}
                     registerItemRef={registerItemRef}
                   />
                 </Box>

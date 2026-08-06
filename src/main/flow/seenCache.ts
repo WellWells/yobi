@@ -10,7 +10,7 @@ export interface SeenCheckpoint {
   updatedAt: string;
 }
 
-export const DEFAULT_CACHE_DAYS = 3;
+export const DEFAULT_CACHE_DAYS = 5;
 const DAY_MS = 86_400_000;
 const MAX_ENTRIES = 2_000;
 
@@ -36,7 +36,6 @@ export function readSeenEntries(raw: unknown, nowIso: string): SeenEntry[] {
   return entries;
 }
 
-// Exported for the test suite.
 export function dedupeLinks(
   current: string[],
   prev: SeenEntry[],

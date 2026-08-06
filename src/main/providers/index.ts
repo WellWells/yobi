@@ -4,14 +4,30 @@ import { isPerplexityLoginRequiredError, runPerplexityAutomation } from './perpl
 import { isChatgptLoginRequiredError, runChatgptAutomation } from './chatgpt';
 import { runDuckaiAutomation } from './duckai';
 import { getByokLabel } from './byokClient';
+import { navigateAndWait } from './common';
+import { meterText } from '../tokenMeter';
 import { PROVIDER_LABELS, isByokTargetUrl } from '../../shared/types';
 import type { Provider } from '../../shared/types';
+import { utf8Len, truncateToBytes, charsPlusBreaks, truncateToCharsPlusBreaks } from '../../shared/textBudget';
 
 export type { Provider };
 
 const PROVIDER_RUNNER: Record<
   Provider,
-  (workerWin: BrowserWindow, prompt: string, timeoutMs: number, targetUrl: string, attachments?: string[]) => Promise<{ response: string; title: string }>
+  (
+    workerWin: BrowserWindow,
+    prompt: string,
+    timeoutMs: number,
+    targetUrl: string,
+    attachments?: string[],
+    wantTitle?: boolean,
+    /**
+     * The caller navigated to an existing thread to continue it, so the page's own history
+     * is the point of the run. Only the caller can know this — the page looks the same as a
+     * reused window that reloaded a stale conversation.
+     */
+    continuingThread?: boolean,
+  ) => Promise<{ response: string; title: string }>
 > = {
   gemini: runGeminiAutomation,
   perplexity: runPerplexityAutomation,
@@ -19,15 +35,16 @@ const PROVIDER_RUNNER: Record<
   duckai: runDuckaiAutomation,
 };
 
-interface ProviderPromptPolicy {
-  maxChars: number | null;
+export interface ProviderPromptPolicy {
+  maxBytes: number | null;
+  maxCharsPlusBreaks: number | null;
 }
 
-const PROVIDER_PROMPT_POLICIES: Record<Provider, ProviderPromptPolicy> = {
-  chatgpt: { maxChars: 65_535 },
-  perplexity: { maxChars: 40_000 },
-  gemini: { maxChars: 200_000 },
-  duckai: { maxChars: 16_000 },
+export const PROVIDER_PROMPT_POLICIES: Record<Provider, ProviderPromptPolicy> = {
+  chatgpt: { maxBytes: 65_535, maxCharsPlusBreaks: null },
+  perplexity: { maxBytes: 40_000, maxCharsPlusBreaks: null },
+  gemini: { maxBytes: null, maxCharsPlusBreaks: 33_499 },
+  duckai: { maxBytes: 12_000, maxCharsPlusBreaks: null },
 };
 
 export interface PreparedPromptInfo {
@@ -35,7 +52,7 @@ export interface PreparedPromptInfo {
   prompt: string;
   originalLength: number;
   finalLength: number;
-  maxChars: number | null;
+  capLabel: string | null;
   removedBlankLines: boolean;
   truncated: boolean;
 }
@@ -76,9 +93,19 @@ export function preparePromptForProvider(prompt: string, targetUrl: string): Pre
   const removedBlankLines = removed.removed;
 
   let truncated = false;
-  if (typeof policy.maxChars === 'number' && policy.maxChars > 0 && nextPrompt.length > policy.maxChars) {
-    nextPrompt = nextPrompt.slice(0, policy.maxChars);
+  let capLabel: string | null = null;
+  if (typeof policy.maxBytes === 'number' && policy.maxBytes > 0 && utf8Len(nextPrompt) > policy.maxBytes) {
+    nextPrompt = truncateToBytes(nextPrompt, policy.maxBytes);
     truncated = true;
+    capLabel = `${policy.maxBytes} bytes`;
+  }
+  if (
+    typeof policy.maxCharsPlusBreaks === 'number' && policy.maxCharsPlusBreaks > 0
+    && charsPlusBreaks(nextPrompt) > policy.maxCharsPlusBreaks
+  ) {
+    nextPrompt = truncateToCharsPlusBreaks(nextPrompt, policy.maxCharsPlusBreaks);
+    truncated = true;
+    capLabel = `${policy.maxCharsPlusBreaks} chars+line-breaks`;
   }
 
   return {
@@ -86,10 +113,62 @@ export function preparePromptForProvider(prompt: string, targetUrl: string): Pre
     prompt: nextPrompt,
     originalLength,
     finalLength: nextPrompt.length,
-    maxChars: policy.maxChars,
+    capLabel,
     removedBlankLines,
     truncated,
   };
+}
+
+const THREAD_PATH_PATTERNS: Record<Provider, RegExp | null> = {
+  gemini: /^\/app\/[^/]+\/?$/,
+  chatgpt: /^\/c\/[^/]+\/?$/,
+  perplexity: /^\/search\/[^/]+\/?$/,
+  duckai: null,
+};
+
+function parseUrlOrNull(url: string): URL | null {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function threadIdentity(parsed: URL): string {
+  return `${parsed.origin}${parsed.pathname.replace(/\/+$/, '')}`;
+}
+
+export function extractThreadUrl(provider: Provider, url: string): string | null {
+  const pattern = THREAD_PATH_PATTERNS[provider];
+  if (!pattern) return null;
+  const parsed = parseUrlOrNull(url);
+  if (!parsed) return null;
+  if (detectProvider(parsed.href) !== provider) return null;
+  if (!pattern.test(parsed.pathname)) return null;
+  return threadIdentity(parsed);
+}
+
+export function isSameThread(a: string, b: string): boolean {
+  const left = parseUrlOrNull(a);
+  const right = parseUrlOrNull(b);
+  if (!left || !right) return false;
+  return threadIdentity(left) === threadIdentity(right);
+}
+
+export interface AutomationResult {
+  response: string;
+  title: string;
+  threadUrl: string | null;
+  threadLost?: true;
+}
+
+function currentUrl(workerWin: BrowserWindow): string {
+  try {
+    return workerWin.isDestroyed() ? '' : workerWin.webContents.getURL();
+  } catch {
+    return '';
+  }
 }
 
 export async function runAutomation(
@@ -98,15 +177,31 @@ export async function runAutomation(
   timeoutMs: number,
   targetUrl: string,
   attachments?: string[],
-): Promise<{ response: string; title: string }> {
-  // Guard against the hostname-sniff fallback: an unrouted BYOK url would
-  // otherwise silently run Gemini browser automation. Callers must branch to
-  // runByokCompletion before reaching here.
+  expectThreadUrl?: string,
+  wantTitle = false,
+): Promise<AutomationResult> {
   if (isByokTargetUrl(targetUrl)) {
     throw new Error('BYOK targets must not reach browser automation');
   }
   const provider = detectProvider(targetUrl);
-  return PROVIDER_RUNNER[provider](workerWin, prompt, timeoutMs, targetUrl, attachments);
+
+  if (expectThreadUrl) {
+    try {
+      await navigateAndWait(workerWin.webContents, expectThreadUrl);
+    } catch {
+      return { response: '', title: '', threadUrl: null, threadLost: true };
+    }
+    if (!isSameThread(currentUrl(workerWin), expectThreadUrl)) {
+      return { response: '', title: '', threadUrl: null, threadLost: true };
+    }
+  }
+
+  const navigationTarget = expectThreadUrl ?? targetUrl;
+  const result = await PROVIDER_RUNNER[provider](
+    workerWin, prompt, timeoutMs, navigationTarget, attachments, wantTitle, Boolean(expectThreadUrl),
+  );
+  meterText(prompt, result.response);
+  return { ...result, threadUrl: extractThreadUrl(provider, currentUrl(workerWin)) };
 }
 
 export function isLoginRequiredError(targetUrl: string, err: unknown): boolean {

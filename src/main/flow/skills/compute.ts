@@ -2,7 +2,6 @@ import { spawn } from 'node:child_process';
 import { Worker } from 'node:worker_threads';
 import { sendLog } from '../../helpers';
 
-// Exported for the test suite.
 export function parseArgs(input: string): string[] {
   const out: string[] = [];
   const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
@@ -25,25 +24,21 @@ export async function execRun(config: Record<string, string>): Promise<string> {
       const openArgs = argv.length > 0 ? ['-a', path, '--args', ...argv] : ['-a', path];
       child = spawn('open', openArgs, { detached: true, stdio: 'ignore' });
     } else if (process.platform === 'win32' && /\.(bat|cmd)$/i.test(path)) {
-      // Node >= 20.12 refuses to spawn .bat/.cmd directly (CVE-2024-27980); run
-      // them through cmd.exe instead of letting spawn throw a cryptic EINVAL.
       child = spawn('cmd.exe', ['/c', path, ...argv], { detached: true, stdio: 'ignore', windowsHide: false });
     } else {
       child = spawn(path, argv, { detached: true, stdio: 'ignore', windowsHide: false });
     }
 
     child.on('error', (err: Error) => {
-      sendLog(`⚠️ [AgentFlow] Launch failed for "${path}": ${err.message}`);
+      sendLog(`⚠️ [Flow] Launch failed for "${path}": ${err.message}`);
     });
     child.unref();
   } catch (err) {
-    // spawn can throw synchronously; run is fire-and-forget, so log and continue
-    // rather than aborting the flow.
-    sendLog(`⚠️ [AgentFlow] Launch failed for "${path}": ${err instanceof Error ? err.message : String(err)}`);
+    sendLog(`⚠️ [Flow] Launch failed for "${path}": ${err instanceof Error ? err.message : String(err)}`);
     return commandLine;
   }
 
-  sendLog(`🚀 [AgentFlow] Launched: ${commandLine}`);
+  sendLog(`🚀 [Flow] Launched: ${commandLine}`);
   return commandLine;
 }
 
@@ -65,7 +60,7 @@ export function execRandom(config: Record<string, string>): string {
 
   let count = Math.max(1, parseIntOr(config.count, 1));
   if (count > RANDOM_MAX_COUNT) {
-    sendLog(`⚠️ [AgentFlow] random: count ${count} exceeds ${RANDOM_MAX_COUNT}, capping to ${RANDOM_MAX_COUNT}`);
+    sendLog(`⚠️ [Flow] random: count ${count} exceeds ${RANDOM_MAX_COUNT}, capping to ${RANDOM_MAX_COUNT}`);
     count = RANDOM_MAX_COUNT;
   }
 
@@ -77,7 +72,7 @@ export function execRandom(config: Record<string, string>): string {
   if (config.unique === 'true') {
     const target = Math.min(count, rangeSize);
     if (target < count) {
-      sendLog(`⚠️ [AgentFlow] random: cannot pick ${count} unique numbers from ${min}–${max}, capping to ${target}`);
+      sendLog(`⚠️ [Flow] random: cannot pick ${count} unique numbers from ${min}–${max}, capping to ${target}`);
     }
     const picked = new Set<number>();
     while (picked.size < target) picked.add(pick());
@@ -89,7 +84,6 @@ export function execRandom(config: Record<string, string>): string {
   return JSON.stringify(out);
 }
 
-// Exported for the test suite.
 export function coerceJsOutput(value: unknown): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'string') return value;
@@ -109,7 +103,6 @@ const JS_RESERVED = new Set([
   'this', 'throw', 'true', 'try', 'typeof', 'var', 'void', 'while', 'with', 'yield', 'vars',
 ]);
 
-// Exported for the test suite.
 export function isInjectableIdentifier(key: string): boolean {
   return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) && !JS_RESERVED.has(key);
 }
@@ -131,9 +124,6 @@ const JS_PARAM_NAMES = [
   'TextEncoder', 'TextDecoder', 'Buffer', 'structuredClone', 'crypto',
 ] as const;
 
-// Runs user/AI-authored code in a worker thread so a synchronous busy-loop or
-// catastrophic regex cannot freeze the Electron main process, and the step
-// timeout can actually terminate it.
 const JS_WORKER_SOURCE = `
 const { parentPort, workerData } = require('node:worker_threads');
 const coerceJsOutput = ${coerceJsOutput.toString()};

@@ -1,10 +1,20 @@
 import { IPC } from '../../shared/types';
-import { config, saveConfig } from '../config';
+import { config, getHiddenSources, saveConfig } from '../config';
+import { resolveLlmDirectTarget } from '../providerCommands';
 import { relaunchApp, sendLog, sendToRenderer, sendWebNotification, createTaskId } from '../helpers';
 import { getLangCache } from '../i18n';
 import { resolveUrlPrompt } from '../urlParser';
 import { TelegramRuntime, normalizePairingState } from '../telegram';
+import { clearBotConversation, getBotConversation } from '../botConversations';
 import { resolveBotCommands } from './botCommands';
+import {
+  botChatKey,
+  clearPendingAgentAsk,
+  hasPendingAgentAsk,
+  resumeBotAgentAsk,
+  runBotBuiltinCommand,
+  takePendingAgentAsk,
+} from '../botBuiltinCommands';
 import {
   isTelegramAdminUser,
   buildTelegramStatusText,
@@ -25,12 +35,18 @@ export function createTelegramRuntime(deps: {
     getEnabled: () => config.telegram.enabled,
     getToken: () => config.telegram.botToken,
     getAllowGroupCommands: () => config.telegram.allowGroupCommands,
-    getLlmDirect: () => config.telegram.llmDirect,
+    getLlmDirect: () => resolveLlmDirectTarget(config.telegram.llmDirect, getHiddenSources()),
     getDefaultReplyMode: () => config.telegram.defaultReplyMode,
     getCompactReply: () => config.telegram.compactReply,
     getPairing: () => config.telegram.pairing,
     savePairing: (next) => {
       config.telegram.pairing = normalizePairingState(next);
+      saveConfig({ telegram: config.telegram });
+      sendToRenderer(IPC.TELEGRAM_RUNTIME, getTelegramRuntimeSnapshot());
+    },
+    getChannels: () => config.telegram.channels,
+    saveChannels: (next) => {
+      config.telegram.channels = next;
       saveConfig({ telegram: config.telegram });
       sendToRenderer(IPC.TELEGRAM_RUNTIME, getTelegramRuntimeSnapshot());
     },
@@ -43,23 +59,29 @@ export function createTelegramRuntime(deps: {
         onNotify: (title, body) => sendWebNotification(title, body, 'info'),
       });
       const id = createTaskId();
+      const sessionKey = botChatKey(
+        'telegram',
+        String(request.replyTarget.chatId),
+        String(request.replyTarget.userId),
+      );
+      const conversationPath = await getBotConversation(sessionKey);
       queue.enqueue({
         id,
         prompt: resolved.prompt,
-        // Command-free chat sends '' when set to follow the app default.
+        displayPrompt: resolved.displayPrompt,
         targetUrl: resolved.forceProviderUrl ?? (request.targetUrl || config.targetUrl),
         title: resolved.title,
         source: 'telegram',
         replyTarget: request.replyTarget,
         requesterName: request.requesterName,
+        sessionKey,
+        ...(conversationPath ? { conversationPath } : {}),
       });
       sendLog(`[${id}] Telegram /${request.command} queued`);
       return { taskId: id };
     },
     onStatusRequest: () => buildTelegramStatusText(queue),
     onRestartApp: () => relaunchApp('Telegram /restart'),
-    // '/output compact' flips the switch; naming any real format turns it off —
-    // asking for a PDF and getting plain text would be the command lying.
     onUpdateOutputChoice: (choice) => {
       if (choice === 'compact') {
         config.telegram.compactReply = true;
@@ -79,7 +101,6 @@ export function createTelegramRuntime(deps: {
       sendToRenderer(IPC.TELEGRAM_RUNTIME, snapshot);
     },
     getStrings: () => getLangCache(),
-    // Providers first, then BYOK keys/groups; BYOK yields on any name collision.
     getProviderCommands: () => {
       const { providers, byok } = resolveBotCommands(getFlowManager);
       return [
@@ -92,6 +113,35 @@ export function createTelegramRuntime(deps: {
         })),
       ];
     },
+    getBuiltinCommands: () => resolveBotCommands(getFlowManager).builtins,
+    onBuiltinCommand: (key, input, targetUrl, chatId, userId, onProgressText) => runBotBuiltinCommand(
+      { getFlowManager, getStrings: getLangCache },
+      {
+        key,
+        input,
+        targetUrl,
+        chatKey: botChatKey('telegram', String(chatId), String(userId)),
+        onProgressText,
+      },
+    ),
+    onAgentAnswer: async (answer, chatId, userId, onProgressText) => {
+      const chatKey = botChatKey('telegram', String(chatId), String(userId));
+      const runId = takePendingAgentAsk(chatKey);
+      if (!runId) return null;
+      return resumeBotAgentAsk(
+        { getFlowManager, getStrings: getLangCache },
+        { runId, answer, chatKey, onProgressText },
+      );
+    },
+    hasPendingAgentAsk: (chatId, userId) => hasPendingAgentAsk(
+      botChatKey('telegram', String(chatId), String(userId)),
+    ),
+    onDropAgentAsk: (chatId, userId) => clearPendingAgentAsk(
+      botChatKey('telegram', String(chatId), String(userId)),
+    ),
+    onNewConversation: (chatId, userId) => clearBotConversation(
+      botChatKey('telegram', String(chatId), String(userId)),
+    ),
     getFlowCommands: () => getFlowManager()?.getBotCommands() ?? [],
     onFlowCommand: async (flowId, inputVariable, input, userId, chatId) => {
       const extraContext: Record<string, string> = {
@@ -116,7 +166,7 @@ export function createTelegramRuntime(deps: {
         };
       }
       const execution = flowManager.queueExecutionWithId(flowId, extraContext, 'bot');
-      sendLog(`[AgentFlow] Bot command triggered flow ${flowId} for user ${userId} with input: ${input}`);
+      sendLog(`[Flow] Bot command triggered flow ${flowId} for user ${userId} with input: ${input}`);
       return execution;
     },
   });

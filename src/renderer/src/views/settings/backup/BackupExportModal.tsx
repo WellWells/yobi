@@ -6,6 +6,7 @@ import { AppModal } from '../../../components/AppModal';
 import { backupApi } from '../../../api/electronApi';
 import { BACKUP_CATEGORY_IDS } from '../../../../../shared/types';
 import type { BackupCategoryId, BackupCategoryInfo } from '../../../../../shared/types';
+import { Z_MODAL } from '../../../config/zLayers';
 
 interface Props {
   open: boolean;
@@ -13,8 +14,6 @@ interface Props {
   onClose: () => void;
 }
 
-// Right-aligned count with a per-category unit. "Settings" is a single profile,
-// so a raw "1" is meaningless — show nothing. Unavailable categories say so.
 function countLabel(t: (key: string) => string, id: BackupCategoryId, info?: BackupCategoryInfo): string {
   if (!info?.available) return t('settings.backup.unavailable');
   if (id === 'config') return '';
@@ -72,7 +71,7 @@ export const BackupExportModal: React.FC<Props> = ({ open, t, onClose }) => {
       title={t('settings.backup.export.title')}
       icon={<Download size={16} />}
       size="md"
-      zIndex={200}
+      zIndex={Z_MODAL}
     >
       <Stack gap="md">
         <Text fz="sm" c="dimmed">{t('settings.backup.export.desc')}</Text>

@@ -18,7 +18,7 @@ BYOK is an *addition*, not a replacement: browser mode stays the default, and no
    | **Model** | The model id the API expects (e.g. `gpt-4o-mini`, `google/gemini-2.5-flash` on OpenRouter, `gemini-2.5-flash` on the Gemini API) |
    | **API key** | Your key. Required when creating an instance |
 
-4. Click **Save**. The instance immediately shows up in the chat model menu and in AgentFlow LLM steps — see [Switching providers](switch-provider.md).
+4. Click **Save**. The instance immediately shows up in the chat model menu and in flow LLM steps — see [Switching providers](switch-provider.md).
 
 For copy-paste examples, see the [OpenAI-compatible example](openai-compatible-example.md) (with a base-URL table for OpenAI, OpenRouter, Together, Groq, DeepSeek, local, and more) and the [Gemini API example](gemini-example.md).
 

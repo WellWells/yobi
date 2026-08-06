@@ -29,7 +29,6 @@ export const WebDialog: React.FC<WebDialogProps> = ({
     centered
     size="md"
     zIndex={60}
-    overlayProps={{ backgroundOpacity: 0.45 }}
     styles={{
       content: {
         background: 'var(--bg-secondary)',

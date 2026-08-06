@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ActionIcon, Autocomplete, Badge, Box, Group, Stack, Text } from '@mantine/core';
 import { CheckCircle2, KeyRound, ListChecks, Pencil, Plus, Trash2, XCircle, Zap } from 'lucide-react';
-import { SectionCard, SectionTitle, SelectDropdown, VisibilityCheckbox } from '../components';
+import { SectionCard, SectionTitle, SelectDropdown, VisibilityToggle } from '../components';
 import { useHiddenSources } from '../hooks/useHiddenSources';
 import { AppButton } from '../../../components/AppButton';
 import { AppTextInput } from '../../../components/AppTextInput';
@@ -9,7 +9,7 @@ import { AppPasswordInput } from '../../../components/AppPasswordInput';
 import { buildInputStyles } from '../../../components/inputStyles';
 import { WebDialog } from '../../../components/WebDialog';
 import type { useByokSettings } from '../hooks/useByokSettings';
-import { BYOK_PROVIDER_TYPES, BYOK_PROVIDER_TYPE_LABELS } from '../../../../../shared/types';
+import { BYOK_MODEL_EXAMPLES, BYOK_PROVIDER_TYPES, BYOK_PROVIDER_TYPE_LABELS } from '../../../../../shared/types';
 import type { ByokInstanceSnapshot, ByokProviderType } from '../../../../../shared/types';
 
 const MODEL_INPUT_STYLES = {
@@ -33,6 +33,12 @@ const PROVIDER_TYPE_OPTIONS = BYOK_PROVIDER_TYPES.map((type) => ({
   value: type,
   label: BYOK_PROVIDER_TYPE_LABELS[type],
 }));
+
+function modelPlaceholder(type: ByokProviderType, t: (key: string) => string): string {
+  const example = BYOK_MODEL_EXAMPLES[type];
+  if (!example) return t('settings.byok.model.placeholder.custom');
+  return `${t('settings.byok.model.placeholder.prefix')} ${example}`;
+}
 
 export const ByokKeysCard: React.FC<Props> = ({ byok, t, sectionGap }) => {
   const [confirmDelete, setConfirmDelete] = useState<ByokInstanceSnapshot | null>(null);
@@ -64,39 +70,32 @@ export const ByokKeysCard: React.FC<Props> = ({ byok, t, sectionGap }) => {
               style={index > 0 ? { borderTop: '1px solid var(--mantine-color-default-border)' } : undefined}
             >
               <Group justify="space-between" align="center" wrap="nowrap" gap={12}>
-                <Group gap={10} align="flex-start" wrap="nowrap" flex={1} miw={0}>
-                  <Box mt={2}>
-                    <VisibilityCheckbox
-                      checked={!hiddenNow(instance.id)}
-                      blocked={!hiddenNow(instance.id) && !sources.canApply({
-                        ...sources.hidden,
-                        byokIds: [...sources.hidden.byokIds, instance.id],
-                      })}
-                      busy={sources.busy}
-                      onToggle={() => sources.toggleByok(instance.id)}
-                      t={t}
-                    />
+                <Group
+                  gap={10}
+                  align="flex-start"
+                  wrap="nowrap"
+                  flex={1}
+                  miw={0}
+                  opacity={hiddenNow(instance.id) ? 0.55 : 1}
+                >
+                  <Box c="var(--mantine-color-default-color)" mt={2} style={{ flexShrink: 0 }}>
+                    <KeyRound size={16} />
                   </Box>
-                  <Group gap={10} align="flex-start" wrap="nowrap" miw={0} opacity={hiddenNow(instance.id) ? 0.55 : 1}>
-                    <Box c="var(--mantine-color-default-color)" mt={2} style={{ flexShrink: 0 }}>
-                      <KeyRound size={16} />
-                    </Box>
-                    <Stack gap={4} miw={0}>
-                      <Group gap={8} wrap="nowrap">
-                        <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-default-color)" truncate>
-                          {instance.name}
-                        </Text>
-                        <Badge variant="light" color="gray" radius="sm" size="sm" tt="none" fw={500}>
-                          {BYOK_PROVIDER_TYPE_LABELS[instance.providerType]}
-                        </Badge>
-                      </Group>
-                      <Text fz="var(--font-size-sm)" c="dimmed" lh={1.5} truncate>
-                        {instance.model}
-                        {' · '}
-                        {instance.hasKey ? instance.keyPreview : t('settings.byok.keyNotSet')}
+                  <Stack gap={4} miw={0}>
+                    <Group gap={8} wrap="nowrap">
+                      <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-default-color)" truncate>
+                        {instance.name}
                       </Text>
-                    </Stack>
-                  </Group>
+                      <Badge variant="light" color="gray" radius="sm" size="sm" tt="none" fw={500}>
+                        {BYOK_PROVIDER_TYPE_LABELS[instance.providerType]}
+                      </Badge>
+                    </Group>
+                    <Text fz="var(--font-size-sm)" c="dimmed" lh={1.5} truncate>
+                      {instance.model}
+                      {' · '}
+                      {instance.hasKey ? instance.keyPreview : t('settings.byok.keyNotSet')}
+                    </Text>
+                  </Stack>
                 </Group>
 
                 <Group gap={6} align="center" wrap="nowrap" style={{ flexShrink: 0 }}>
@@ -117,6 +116,17 @@ export const ByokKeysCard: React.FC<Props> = ({ byok, t, sectionGap }) => {
                   >
                     <Trash2 size={14} />
                   </ActionIcon>
+                  <VisibilityToggle
+                    label={instance.name}
+                    checked={!hiddenNow(instance.id)}
+                    blocked={!hiddenNow(instance.id) && !sources.canApply({
+                      ...sources.hidden,
+                      byokIds: [...sources.hidden.byokIds, instance.id],
+                    })}
+                    busy={sources.busy}
+                    onToggle={() => sources.toggleByok(instance.id)}
+                    t={t}
+                  />
                 </Group>
               </Group>
             </Box>
@@ -177,7 +187,7 @@ export const ByokKeysCard: React.FC<Props> = ({ byok, t, sectionGap }) => {
                 <Autocomplete
                   flex={1}
                   label={t('settings.byok.model')}
-                  placeholder={t(`settings.byok.model.placeholder.${form.providerType}`)}
+                  placeholder={modelPlaceholder(form.providerType, t)}
                   value={form.model}
                   onChange={(value) => byok.updateForm({ model: value })}
                   data={byok.models}

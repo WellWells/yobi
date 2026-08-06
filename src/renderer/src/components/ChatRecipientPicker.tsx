@@ -1,17 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Button, Chip, Group, Stack, Text } from '@mantine/core';
+import { Button, Chip, Group, Stack, Text, Tooltip } from '@mantine/core';
 import { Settings } from 'lucide-react';
 import { AppTextInput } from './AppTextInput';
 import { lineApi, telegramApi } from '../api/electronApi';
 import { useI18nStore } from '../store/i18nStore';
 import { useAppStore } from '../store/appStore';
-import type { BotPlatform, LinePairedUser, TelegramPairedUser } from '../../../shared/types';
-
-// The one place that turns "who should this message go to?" into a control the
-// user can answer without knowing what a chat ID is: the bot's already-paired
-// contacts are offered as chips, and clicking one fills the field. Shared by the
-// bot step's editor and the flow-variable field of type 'chat' so the two can
-// never drift into different pickers.
+import type { BotPlatform, LinePairedUser, TelegramChannel, TelegramPairedUser } from '../../../shared/types';
 
 interface RecipientChoice {
   id: string;
@@ -30,23 +24,22 @@ function lineChoice(user: LinePairedUser): RecipientChoice {
   return { id: user.userId, label: user.displayName || user.userId };
 }
 
+function channelChoice(channel: TelegramChannel): RecipientChoice {
+  const name = channel.title || (channel.username ? `@${channel.username}` : String(channel.chatId));
+  return { id: String(channel.chatId), label: name };
+}
+
 export interface ChatRecipientPickerProps {
-  /** Comma-separated chat IDs. */
   value: string;
   onChange: (value: string) => void;
-  /** Which bot's roster to offer. 'auto' resolves to Telegram (see the bot skill). */
   platform?: BotPlatform | 'auto';
   label?: string;
   hint?: string;
   placeholder?: string;
-  /** Shown when the bot has no paired contacts yet. */
   emptyHint?: string;
-  /** Shown when the field is left blank and paired contacts exist. */
   blankHint?: string;
   error?: string;
   multiple?: boolean;
-  /** Run before navigating to settings — a modal host passes its onClose so the
-   *  portaled modal doesn't strand over the Settings view. */
   onBeforeNavigate?: () => void;
 }
 
@@ -58,15 +51,15 @@ export const ChatRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
   const setView = useAppStore((s) => s.setView);
   const currentView = useAppStore((s) => s.currentView);
   const [telegramUsers, setTelegramUsers] = useState<TelegramPairedUser[]>([]);
+  const [telegramChannels, setTelegramChannels] = useState<TelegramChannel[]>([]);
   const [lineUsers, setLineUsers] = useState<LinePairedUser[]>([]);
 
-  // Re-read the roster every time the flow view becomes active, not just on
-  // mount: the "Open settings" guidance sends the user off to pair a chat, and
-  // the picker stays mounted (views are display-toggled) — without this refresh
-  // the newly paired chat would never appear on their return.
   useEffect(() => {
-    if (currentView !== 'agentflow') return;
-    void telegramApi.getSettings().then((s) => setTelegramUsers(s.pairing.pairedUsers));
+    if (currentView !== 'flow') return;
+    void telegramApi.getSettings().then((s) => {
+      setTelegramUsers(s.pairing.pairedUsers);
+      setTelegramChannels(s.channels);
+    });
     void lineApi.getSettings().then((s) => setLineUsers(s.pairing.pairedUsers));
   }, [currentView]);
 
@@ -75,26 +68,75 @@ export const ChatRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
     setView('settings');
   };
 
-  // 'auto' resolves to Telegram whenever the run was not bot-triggered, so the
-  // Telegram roster is what an author picking recipients by hand needs to see.
+  const isLine = platform === 'line';
   const pairedUsers: RecipientChoice[] = useMemo(() => (
-    platform === 'line' ? lineUsers.map(lineChoice) : telegramUsers.map(telegramChoice)
-  ), [platform, lineUsers, telegramUsers]);
+    isLine ? lineUsers.map(lineChoice) : telegramUsers.map(telegramChoice)
+  ), [isLine, lineUsers, telegramUsers]);
+  // Channels are a Telegram-only concept; LINE has no broadcast target of this shape.
+  const channels = useMemo(() => (isLine ? [] : telegramChannels), [isLine, telegramChannels]);
 
   const raw = value.trim();
-  const pairedIdSet = useMemo(() => new Set(pairedUsers.map((u) => u.id)), [pairedUsers]);
+  const knownIdSet = useMemo(
+    () => new Set([...pairedUsers.map((u) => u.id), ...channels.map((c) => String(c.chatId))]),
+    [pairedUsers, channels],
+  );
   const parsedIds = useMemo(
     () => (raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : []),
     [raw],
   );
-  // IDs typed by hand stay in the field even though no chip represents them —
-  // dropping them on the next chip click would silently discard the user's input.
-  const selectedIds = useMemo(() => parsedIds.filter((id) => pairedIdSet.has(id)), [parsedIds, pairedIdSet]);
-  const unpairedIds = useMemo(() => parsedIds.filter((id) => !pairedIdSet.has(id)), [parsedIds, pairedIdSet]);
+  const selectedIds = useMemo(() => parsedIds.filter((id) => knownIdSet.has(id)), [parsedIds, knownIdSet]);
+  const unknownIds = useMemo(() => parsedIds.filter((id) => !knownIdSet.has(id)), [parsedIds, knownIdSet]);
+  const hasChoices = pairedUsers.length > 0 || channels.length > 0;
 
   const handleMultiple = (next: string[]) => {
-    onChange([...new Set([...next, ...unpairedIds])].join(','));
+    onChange([...new Set([...next, ...unknownIds])].join(','));
   };
+
+  const renderChannelChip = (channel: TelegramChannel) => {
+    const choice = channelChoice(channel);
+    const isSelected = selectedIds.includes(choice.id);
+    const chip = (
+      <Chip
+        key={choice.id}
+        value={choice.id}
+        size="xs"
+        variant="light"
+        color={channel.canPost ? undefined : 'gray'}
+        disabled={!channel.canPost && !isSelected}
+      >
+        {choice.label}
+      </Chip>
+    );
+    if (channel.canPost) return chip;
+    return (
+      <Tooltip key={choice.id} label={t('flow.recipient.channelLost')} position="top">
+        <Group gap={0}>{chip}</Group>
+      </Tooltip>
+    );
+  };
+
+  const chips = (
+    <Stack gap={6}>
+      {pairedUsers.length > 0 && (
+        <Stack gap={4}>
+          {channels.length > 0 && <Text fz="xs" c="dimmed">{t('flow.recipient.users')}</Text>}
+          <Group gap={4} wrap="wrap">
+            {pairedUsers.map((u) => (
+              <Chip key={u.id} value={u.id} size="xs" variant="light">{u.label}</Chip>
+            ))}
+          </Group>
+        </Stack>
+      )}
+      {channels.length > 0 && (
+        <Stack gap={4}>
+          <Text fz="xs" c="dimmed">{t('flow.recipient.channels')}</Text>
+          <Group gap={4} wrap="wrap">
+            {channels.map(renderChannelChip)}
+          </Group>
+        </Stack>
+      )}
+    </Stack>
+  );
 
   return (
     <Stack gap={4}>
@@ -108,9 +150,7 @@ export const ChatRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
         tone="body"
         mono
       />
-      {pairedUsers.length === 0 ? (
-        // No bot paired a chat yet — the chips would be empty with no way
-        // forward, so point the user straight at the settings that fix it.
+      {!hasChoices ? (
         <Group gap="xs" align="center" wrap="nowrap">
           {emptyHint && <Text fz="xs" c="dimmed" fs="italic" style={{ flex: 1 }}>{emptyHint}</Text>}
           <Button
@@ -120,27 +160,19 @@ export const ChatRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
             onClick={goToSettings}
             style={{ flexShrink: 0 }}
           >
-            {t('agentflow.setup.openSettings')}
+            {t('flow.setup.openSettings')}
           </Button>
         </Group>
       ) : multiple ? (
         <Chip.Group multiple value={selectedIds} onChange={handleMultiple}>
-          <Group gap={4} wrap="wrap">
-            {pairedUsers.map((u) => (
-              <Chip key={u.id} value={u.id} size="xs" variant="light">{u.label}</Chip>
-            ))}
-          </Group>
+          {chips}
         </Chip.Group>
       ) : (
         <Chip.Group value={raw} onChange={(next) => onChange(typeof next === 'string' ? next : '')}>
-          <Group gap={4} wrap="wrap">
-            {pairedUsers.map((u) => (
-              <Chip key={u.id} value={u.id} size="xs" variant="light">{u.label}</Chip>
-            ))}
-          </Group>
+          {chips}
         </Chip.Group>
       )}
-      {raw.length === 0 && pairedUsers.length > 0 && blankHint && (
+      {raw.length === 0 && hasChoices && blankHint && (
         <Text fz="xs" c="dimmed" fs="italic">{blankHint}</Text>
       )}
     </Stack>

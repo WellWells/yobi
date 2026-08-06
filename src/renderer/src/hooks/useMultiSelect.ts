@@ -1,19 +1,11 @@
 import { useCallback, useMemo, useState } from 'react';
 
-/** Mouse-click intent for {@link MultiSelect.selectClick}. `ctrlKey` should already
- * fold in `metaKey` (Cmd on macOS); `orderedIds` is the visible list order used to
- * resolve a Shift range. */
 export interface ClickModifiers {
   ctrlKey: boolean;
   shiftKey: boolean;
   orderedIds: string[];
 }
 
-/**
- * Generic multi-selection state for a togglable "selection mode" over a list of
- * string ids. Shared by the AgentFlow flow list and the chat output sidebar so
- * both bulk-delete UIs behave identically.
- */
 export interface MultiSelect {
   selectMode: boolean;
   selectedIds: Set<string>;
@@ -24,10 +16,7 @@ export interface MultiSelect {
   isSelected: (id: string) => boolean;
   toggleAll: (ids: string[]) => void;
   allSelected: (ids: string[]) => boolean;
-  /** Pivot for Shift-range selection — kept in sync with the single selection. */
   setAnchor: (id: string | null) => void;
-  /** File-manager click handling: Ctrl toggles, Shift ranges, plain collapses.
-   * Returns `'open'` when the caller should open/load the item (plain click). */
   selectClick: (id: string, mods: ClickModifiers) => 'open' | 'multi';
 }
 
@@ -71,8 +60,6 @@ export function useMultiSelect(): MultiSelect {
   const selectClick = useCallback((id: string, mods: ClickModifiers): 'open' | 'multi' => {
     const { ctrlKey, shiftKey, orderedIds } = mods;
 
-    // Shift+click → contiguous range between the anchor and the clicked item.
-    // The anchor stays put so consecutive Shift-clicks re-range from the same pivot.
     if (shiftKey && anchorId) {
       const from = orderedIds.indexOf(anchorId);
       const to = orderedIds.indexOf(id);
@@ -84,12 +71,8 @@ export function useMultiSelect(): MultiSelect {
       }
     }
 
-    // Ctrl/Cmd+click (or Shift with no usable anchor) → toggle the item, seeding
-    // from the current single selection (anchor) the first time we enter mode.
     if (ctrlKey || shiftKey) {
       setSelectedIds((prev) => {
-        // Only seed the anchor when it's actually visible — otherwise a filtered-out
-        // open item would be silently added to the selection (and bulk-deleted).
         const seedable = anchorId !== null && orderedIds.includes(anchorId);
         const base = selectMode ? new Set(prev) : new Set(seedable ? [anchorId] : []);
         if (base.has(id)) base.delete(id);
@@ -101,7 +84,6 @@ export function useMultiSelect(): MultiSelect {
       return 'multi';
     }
 
-    // Plain click → collapse to a single selection; the caller opens the item.
     setSelectMode(false);
     setSelectedIds(new Set());
     setAnchorId(id);

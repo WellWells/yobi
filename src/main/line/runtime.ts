@@ -21,8 +21,6 @@ export interface LineRuntimeDeps extends Omit<LineDispatcherDeps, 'getClient'> {
 
 const MAX_ERROR_TEXT = 4_900;
 
-// Owns the webhook server's lifecycle and the account diagnostics. Message
-// routing lives in LineDispatcher.
 export class LineRuntime {
   private server: LineWebhookServer | null = null;
   private client: LineClient | null = null;
@@ -68,8 +66,6 @@ export class LineRuntime {
         return;
       }
 
-      // Server verifies against the live config secret, so a same-port/same-secret
-      // credential change only needs the push client rebuilt — no server restart.
       if (this.server?.isListening() && this.currentSecret === secret && this.currentPort === port) {
         if (this.currentToken !== token) {
           this.client = createLineClient(token);
@@ -91,16 +87,11 @@ export class LineRuntime {
     });
   }
 
-  // Reads the Official Account's settings back from the Messaging API so the UI
-  // can flag the two silent misconfigurations (Chat mode on, webhook disabled).
-  // Diagnostics are a bonus, never a prerequisite: failures only log.
   async refreshAccount(): Promise<void> {
     const client = this.client;
     if (!client) return;
     try {
       const [info, webhookActive] = await Promise.all([client.getBotInfo(), client.getWebhookActive()]);
-      // The fetch runs outside syncWithConfig's lock, so a credential change may
-      // have replaced the client meanwhile — never let a stale reply win.
       if (this.client !== client) return;
       this.account = {
         basicId: info.basicId,
@@ -116,8 +107,6 @@ export class LineRuntime {
     }
   }
 
-  // `to` is any push destination: a userId, or the groupId/roomId of the chat
-  // the task was triggered from.
   async sendTaskSuccess(to: string, response: string): Promise<void> {
     const s = this.deps.getStrings();
     await this.push(to, formatLineReply(response, t(s, 'line.msg.emptyResponse')));
@@ -130,8 +119,6 @@ export class LineRuntime {
     await this.push(to, text.slice(0, MAX_ERROR_TEXT));
   }
 
-  // Flow `bot` steps need a failed send to surface (step error, emitFailFlag),
-  // so these throw where safePush deliberately swallows.
   async sendProactive(userId: string, text: string): Promise<void> {
     const client = this.requireClient();
     await client.pushText(userId, truncateLineText(text));
@@ -180,8 +167,6 @@ export class LineRuntime {
     void this.refreshAccount();
   }
 
-  // Task results always push: the reply token from the triggering message is long
-  // expired (~30s) by the time the AI answers.
   private push(to: string, text: string): Promise<void> {
     return safePush(this.client, to, text, this.deps.onLog);
   }

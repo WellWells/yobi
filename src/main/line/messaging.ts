@@ -3,9 +3,6 @@ import type { LineTextEvent } from './events';
 
 export type LogFn = (message: string) => void;
 
-// Pushes are metered against the Official Account's monthly quota; a failure is
-// never worth crashing a dispatch loop or a task result over. `to` is any push
-// destination the Messaging API accepts: a userId, groupId or roomId.
 export async function safePush(
   client: LineClient | null,
   to: string,
@@ -23,10 +20,6 @@ export async function safePush(
   }
 }
 
-// Answers an inbound event on its reply token. Replies are free, pushes are not,
-// so anything an unpaired user can trigger must go through here — otherwise
-// flooding the bot with messages would drain the account's push quota. Falls
-// back to push only when the token is missing or already spent.
 export async function respond(
   client: LineClient | null,
   event: LineTextEvent,

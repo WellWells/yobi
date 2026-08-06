@@ -1,10 +1,10 @@
 import React from 'react';
 import { ActionIcon, Box, Button, Group, Menu as MMenu, Stack, Text, Tooltip } from '@mantine/core';
-import { ChevronDown, Copy, Download, FileText, FolderOpen, Menu, Minus, Pencil, Plus, ZoomIn } from 'lucide-react';
+import { Copy, Download, FileText, FolderOpen, Link2, Minus, MoreVertical, Pencil, Plus, RefreshCw, ZoomIn } from 'lucide-react';
 import type { LayoutMode } from '../../store/appStore';
 import { AppTextInput } from '../AppTextInput';
 import { AppSegmentedControl } from '../AppSegmentedControl';
-import { TempChatToggle } from './TempChatToggle';
+import { ModelMenuItems } from './ModelMenuItems';
 
 interface FileHeaderBarProps {
   fileName: string;
@@ -29,8 +29,10 @@ interface FileHeaderBarProps {
   onSetLayoutMode: (mode: LayoutMode) => void;
   onCopyFullText: () => void;
   onOpenCaptureDialog: () => void;
+  onOpenShareDialog: () => void;
   captureBusy: boolean;
   onShowInFolder: () => void;
+  onStartRewrite: (url: string) => void;
 }
 
 export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
@@ -56,8 +58,10 @@ export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
   onSetLayoutMode,
   onCopyFullText,
   onOpenCaptureDialog,
+  onOpenShareDialog,
   captureBusy,
   onShowInFolder,
+  onStartRewrite,
 }) => {
   const zoomPercentText = `${markdownZoom}%`;
 
@@ -114,93 +118,81 @@ export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
         </Group>
       )}
 
-      <Box ml="auto" style={{ flexShrink: 0 }}>
-        <TempChatToggle />
-      </Box>
+      {
+}
+      <Group gap={6} wrap="nowrap" ml="auto" style={{ flexShrink: 0 }}>
+        {fileContentExists && (
+          <Button
+            onClick={onOpenShareDialog}
+            variant="default"
+            size="compact-sm"
+            radius="xl"
+            leftSection={<Link2 size={14} />}
+          >
+            {t('share.menu.open')}
+          </Button>
+        )}
 
-      <Box ref={viewMenuRef} pos="relative" style={{ flexShrink: 0 }}>
-        <MMenu
-          opened={viewMenuOpen}
-          onChange={(opened) => { if (!opened) onCloseViewMenu(); }}
-          position="bottom-end"
-          offset={8}
-          withinPortal
-          zIndex={120}
-          styles={{
-            dropdown: {
-              background: 'var(--mantine-color-default)',
-              borderColor: 'var(--mantine-color-default-border)',
-              minWidth: 280,
-              padding: 10,
-            },
-          }}
-        >
-          <MMenu.Target>
-            <Button
-              onClick={onToggleViewMenu}
-              variant="default"
-              size="compact-sm"
-              radius="xl"
-              rightSection={<ChevronDown size={12} style={{ transform: viewMenuOpen ? 'rotate(180deg)' : 'none' }} />}
-              leftSection={<Menu size={14} />}
-            >
-              {t('header.viewMenu')}
-            </Button>
-          </MMenu.Target>
+        <Box ref={viewMenuRef} pos="relative">
+          <MMenu
+            opened={viewMenuOpen}
+            onChange={(opened) => { if (!opened) onCloseViewMenu(); }}
+            position="bottom-end"
+            offset={8}
+            withinPortal
+            zIndex={120}
+            styles={{
+              dropdown: {
+                background: 'var(--mantine-color-default)',
+                borderColor: 'var(--mantine-color-default-border)',
+                minWidth: 232,
+              },
+              item: {
+                fontSize: 'var(--font-size-md)',
+              },
+            }}
+          >
+            <MMenu.Target>
+              <Tooltip label={t('header.moreActions')} position="bottom">
+                <ActionIcon
+                  onClick={onToggleViewMenu}
+                  aria-label={t('header.moreActions')}
+                  variant="subtle"
+                  size="md"
+                  radius="xl"
+                  c="dimmed"
+                >
+                  <MoreVertical size={16} />
+                </ActionIcon>
+              </Tooltip>
+            </MMenu.Target>
 
-          <MMenu.Dropdown>
-            <Stack gap={10}>
-              <Group justify="space-between" gap={10}>
-                <Group gap={6} fw={700} fz="var(--font-size-base)" c="var(--mantine-color-default-color)" align="center">
-                  <ZoomIn size={14} />
-                  {t('zoom.label')}
-                </Group>
-                <Group gap={6}>
-                  <Tooltip label={t('zoom.out')} position="top">
-                    <ActionIcon variant="default" size={28} radius={6} onClick={onZoomOut} aria-label={t('zoom.out')}>
-                      <Minus size={14} />
-                    </ActionIcon>
-                  </Tooltip>
-                  <Tooltip label={t('zoom.reset')} position="top">
-                    <Button variant="subtle" size="compact-xs" radius={6} onClick={onZoomReset} miw={56} fw={700}>
-                      {zoomPercentText}
-                    </Button>
-                  </Tooltip>
-                  <Tooltip label={t('zoom.in')} position="top">
-                    <ActionIcon variant="default" size={28} radius={6} onClick={onZoomIn} aria-label={t('zoom.in')}>
-                      <Plus size={14} />
-                    </ActionIcon>
-                  </Tooltip>
-                </Group>
-              </Group>
-
+            <MMenu.Dropdown>
               {fileContentExists && (
-                <AppSegmentedControl
-                  value={layoutMode}
-                  onChange={(value) => {
-                    onSetLayoutMode(value as LayoutMode);
-                    onCloseViewMenu();
-                  }}
-                  options={[
-                    { label: t('layout.stacked'), value: 'stacked' },
-                    { label: t('layout.sideBySide'), value: 'side-by-side' },
-                  ]}
-                  size="xs"
-                  fullWidth
-                />
+                <MMenu.Sub>
+                  <MMenu.Sub.Target>
+                    <MMenu.Sub.Item leftSection={<RefreshCw size={14} />}>
+                      {t('rewrite.open')}
+                    </MMenu.Sub.Item>
+                  </MMenu.Sub.Target>
+                  <MMenu.Sub.Dropdown
+                    style={{ maxHeight: 320, overflowY: 'auto' }}
+                  >
+                    {
+}
+                    <ModelMenuItems
+                      value=""
+                      onChange={(url) => {
+                        onStartRewrite(url);
+                        onCloseViewMenu();
+                      }}
+                    />
+                  </MMenu.Sub.Dropdown>
+                </MMenu.Sub>
               )}
-            </Stack>
 
-            <MMenu.Divider my={10} />
-
-            <Stack gap={8}>
               {fileContentExists && (
-                <Button
-                  variant="default"
-                  size="sm"
-                  fullWidth
-                  justify="flex-start"
-                  py={8}
+                <MMenu.Item
                   leftSection={<Copy size={14} />}
                   onClick={() => {
                     onCopyFullText();
@@ -208,16 +200,11 @@ export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
                   }}
                 >
                   {t('header.copyFull')}
-                </Button>
+                </MMenu.Item>
               )}
 
               {fileContentExists && (
-                <Button
-                  variant="default"
-                  size="sm"
-                  fullWidth
-                  justify="flex-start"
-                  py={8}
+                <MMenu.Item
                   leftSection={<Download size={14} />}
                   disabled={captureBusy}
                   onClick={() => {
@@ -226,15 +213,10 @@ export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
                   }}
                 >
                   {captureBusy ? t('capture.exporting') : t('capture.export.open')}
-                </Button>
+                </MMenu.Item>
               )}
 
-              <Button
-                variant="default"
-                size="sm"
-                fullWidth
-                justify="flex-start"
-                py={8}
+              <MMenu.Item
                 leftSection={<FolderOpen size={14} />}
                 onClick={() => {
                   onShowInFolder();
@@ -242,12 +224,59 @@ export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
                 }}
               >
                 {t('header.showInFolder')}
-              </Button>
-            </Stack>
-          </MMenu.Dropdown>
-        </MMenu>
-      </Box>
+              </MMenu.Item>
+
+              <MMenu.Divider />
+
+              {
+}
+              <Box px={10} py={6}>
+                <Stack gap={8}>
+                  <Group justify="space-between" gap={10} wrap="nowrap">
+                    <Group gap={6} fz="var(--font-size-md)" c="dimmed" align="center" wrap="nowrap">
+                      <ZoomIn size={14} />
+                      {t('zoom.label')}
+                    </Group>
+                    <Group gap={4} wrap="nowrap">
+                      <Tooltip label={t('zoom.out')} position="top">
+                        <ActionIcon variant="default" size={26} radius={6} onClick={onZoomOut} aria-label={t('zoom.out')}>
+                          <Minus size={13} />
+                        </ActionIcon>
+                      </Tooltip>
+                      <Tooltip label={t('zoom.reset')} position="top">
+                        <Button variant="subtle" size="compact-xs" radius={6} onClick={onZoomReset} miw={52} fw={700}>
+                          {zoomPercentText}
+                        </Button>
+                      </Tooltip>
+                      <Tooltip label={t('zoom.in')} position="top">
+                        <ActionIcon variant="default" size={26} radius={6} onClick={onZoomIn} aria-label={t('zoom.in')}>
+                          <Plus size={13} />
+                        </ActionIcon>
+                      </Tooltip>
+                    </Group>
+                  </Group>
+
+                  {fileContentExists && (
+                    <AppSegmentedControl
+                      value={layoutMode}
+                      onChange={(value) => {
+                        onSetLayoutMode(value as LayoutMode);
+                        onCloseViewMenu();
+                      }}
+                      options={[
+                        { label: t('layout.stacked'), value: 'stacked' },
+                        { label: t('layout.sideBySide'), value: 'side-by-side' },
+                      ]}
+                      size="xs"
+                      fullWidth
+                    />
+                  )}
+                </Stack>
+              </Box>
+            </MMenu.Dropdown>
+          </MMenu>
+        </Box>
+      </Group>
     </Group>
   );
 };
-

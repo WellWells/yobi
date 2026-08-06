@@ -9,7 +9,7 @@ function getPlatformToken(): string {
 }
 
 export function buildCleanChromiumUserAgent(): string {
-  const chromeVersion = process.versions.chrome;
+  const chromeVersion = process.versions.chrome ?? '140.0.0.0';
   return `Mozilla/5.0 (${getPlatformToken()}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`;
 }
 

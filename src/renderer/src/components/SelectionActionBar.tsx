@@ -10,7 +10,6 @@ interface SelectionActionBarProps {
   onDelete: () => void;
   onCancel: () => void;
   t: (key: string) => string;
-  /** Type-specific bulk actions rendered before Delete (e.g. Enable/Disable for flows). */
   extraActions?: React.ReactNode;
 }
 

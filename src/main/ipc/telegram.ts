@@ -4,7 +4,7 @@ import { config, saveConfig, markTelegramTokenResolved } from '../config';
 import { normalizeLlmDirect } from '../configNormalizers';
 import { sendLog } from '../helpers';
 import { buildTelegramSettingsSnapshot } from '../telegramBridge';
-import { issuePairingCode, revokePairingCode, unpairUser } from '../telegram';
+import { forgetChannel, issuePairingCode, revokePairingCode, unpairUser } from '../telegram';
 import type { IpcContext } from './context';
 
 function registerSyncSetting(
@@ -42,9 +42,6 @@ export function registerTelegramHandlers(ctx: IpcContext): void {
 
   ipcMain.handle(IPC.UPDATE_TELEGRAM_BOT_TOKEN, async (_event, token: string) => {
     const nextToken = (token ?? '').trim();
-    // The user is deliberately setting/clearing the token, so an empty value is
-    // now intentional — drop the "failed to decrypt at startup" keep-if-blank
-    // guard before persisting, otherwise a genuine clear wouldn't take effect.
     markTelegramTokenResolved();
     config.telegram.botToken = nextToken;
     saveConfig({ telegram: config.telegram });
@@ -97,8 +94,6 @@ export function registerTelegramHandlers(ctx: IpcContext): void {
     return true;
   });
 
-  // No runtime sync needed: the message handler reads the live config on every
-  // incoming update, so the change takes effect immediately.
   ipcMain.handle(IPC.UPDATE_TELEGRAM_LLM_DIRECT, (_event, value: unknown) => {
     config.telegram.llmDirect = normalizeLlmDirect(value);
     saveConfig({ telegram: config.telegram });
@@ -124,6 +119,14 @@ export function registerTelegramHandlers(ctx: IpcContext): void {
     if (!Number.isFinite(numericUserId) || numericUserId <= 0) return false;
     config.telegram.pairing = unpairUser(config.telegram.pairing, numericUserId);
     config.telegram.adminUserIds = config.telegram.adminUserIds.filter((id) => id !== numericUserId);
+    saveConfig({ telegram: config.telegram });
+    return true;
+  });
+
+  ipcMain.handle(IPC.FORGET_TELEGRAM_CHANNEL, (_event, chatId: number) => {
+    const numericChatId = Number(chatId);
+    if (!Number.isFinite(numericChatId) || numericChatId === 0) return false;
+    config.telegram.channels = forgetChannel(config.telegram.channels, numericChatId);
     saveConfig({ telegram: config.telegram });
     return true;
   });

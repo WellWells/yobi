@@ -17,8 +17,6 @@ interface Props {
   sectionGap: number;
 }
 
-// The BYOK key pool and the rotation groups share the same search visibility and
-// live side by side; each card owns its own list/form/delete-dialog.
 export const ByokSection: React.FC<Props> = ({ byok, byokGroups, t, showSection, sectionGap }) => (
   <Box display={showSection(TAG_SETS.byok, 'accounts') ? 'block' : 'none'}>
     <ByokKeysCard byok={byok} t={t} sectionGap={sectionGap} />

@@ -1,6 +1,8 @@
 import { clipboard } from 'electron';
 import type { FlowDefinition, FlowExecutionResult, SkillInstance, SkillType } from '../../shared/types';
 import { sendLog } from '../helpers';
+import { getLangCache, t } from '../i18n';
+import { measureTokens } from '../tokenMeter';
 import type { FlowExecutorDeps, LogCallback } from './types';
 import {
   escapeRegExp,
@@ -24,6 +26,7 @@ import {
 } from './runtime';
 import { executeSkill } from './skills';
 import { navigatePageBlank } from './skills/browserPages';
+import { getProviderLabel } from '../providers';
 import { PERPLEXITY_CLOUDFLARE_ERROR_NAME } from '../providers/perplexity';
 import { FLOW_VAR_PREFIX } from '../../shared/flowVariables';
 
@@ -33,9 +36,25 @@ interface RunProgress {
   aborted: boolean;
   error?: string;
   finalOutput?: string;
+  lastLlmProvider?: string;
+  titleHint?: string;
 }
 
-const NON_RESULT_STEP_TYPES = new Set<SkillType>(['loop', 'end_loop', 'if', 'end_if', 'comment', 'bot', 'break', 'continue']);
+export function titleHintFor(type: SkillType, subVars: Record<string, string>): string {
+  const place = (subVars.place ?? '').trim();
+  if (type === 'gmap_reviews' && place) return t(getLangCache(), 'mapReviews.title', { place });
+  if (type === 'youtube') return (subVars.title ?? '').trim();
+  return '';
+}
+
+const NON_RESULT_STEP_TYPES = new Set<SkillType>(['loop', 'end_loop', 'if', 'end_if', 'comment', 'bot', 'break', 'continue', 'stop']);
+
+const MAX_TRACE_NAME_CHARS = 28;
+
+function flowTrace(flow: FlowDefinition): string {
+  const name = (flow.name ?? '').trim() || 'Flow';
+  return name.length > MAX_TRACE_NAME_CHARS ? `${name.slice(0, MAX_TRACE_NAME_CHARS)}…` : name;
+}
 
 interface StepOutput {
   output: string;
@@ -72,7 +91,7 @@ export function unwrapStepOutput(type: SkillType, raw: string): StepOutput {
     }
     return { output: raw, subVars: {} };
   }
-  if (type === 'stock' || type === 'forex' || type === 'weather') {
+  if (type === 'stock' || type === 'forex' || type === 'weather' || type === 'air_quality' || type === 'gmap_reviews' || type === 'research' || type === 'sysinfo' || type === 'share') {
     try {
       const env = JSON.parse(raw) as Record<string, unknown>;
       if (env && typeof env.output === 'string') {
@@ -122,8 +141,6 @@ async function resolveStepConfig(
     }
     resolvedConfig.__originalChatIdsTemplate = (step.config.chatIds ?? step.config.chatId ?? '').trim();
     resolvedConfig.__attachmentAllowlist = JSON.stringify(getProducedFiles(context));
-    // Lets a step configured as platform='auto' reply on whichever platform
-    // triggered this run. Absent for cron/hotkey/manual runs.
     resolvedConfig.__triggerPlatform = context.get('bot.triggerPlatform') ?? '';
   }
   if (step.type === 'js') {
@@ -133,6 +150,8 @@ async function resolveStepConfig(
   }
   if (step.type === 'llm') {
     resolvedConfig.__flowId = flowId;
+    /* Same gate as the bot step: only files this run produced may leave the machine. */
+    resolvedConfig.__attachmentAllowlist = JSON.stringify(getProducedFiles(context));
   }
   if (step.type === 'browser_open' || step.type === 'browser_close') {
     resolvedConfig.__flowId = flowId;
@@ -147,11 +166,6 @@ async function runStep(
   signal?: AbortSignal,
 ): Promise<string> {
   const stepTimeoutMs = resolveStepTimeoutMs(step.type, deps, resolvedConfig);
-  // The llm step serializes on the app-wide llmLane and owns its response
-  // timeout + about:blank interrupt internally, starting the clock only once it
-  // holds the shared worker window (see execLlm). Wrapping it in withStepTimeout
-  // here as well would re-count llmLane queue-wait against the response budget —
-  // exactly the starvation bug — so pass the signal straight through instead.
   if (step.type === 'llm') {
     return executeSkill(step.type, step.id, resolvedConfig, deps, stepTimeoutMs, signal);
   }
@@ -181,6 +195,7 @@ async function expandLoop(
   onLog: LogCallback | undefined,
   progress: RunProgress,
   depth: number,
+  trace: string,
   signal?: AbortSignal,
 ): Promise<number> {
   const loopVar = (step.config.loopVar ?? 'item').trim() || 'item';
@@ -203,10 +218,10 @@ async function expandLoop(
   const nested = depth > 0;
 
   if (items.length > 0) {
-    sendLog(`🔄 [AgentFlow] Looping subsequent steps for ${items.length} items${nested ? ' (nested)' : ''} using variable "${loopVar}"`);
+    sendLog(`🔄 [${trace}] Looping ${items.length} items${nested ? ' (nested)' : ''} as "{{${loopVar}}}"`);
     for (let j = 0; j < items.length; j++) {
       const item = items[j];
-      sendLog(`🔄 [AgentFlow] Loop iteration ${j + 1}/${items.length}${nested ? ' (nested)' : ''}`);
+      const iterationTrace = `${trace} ▸ ${j + 1}/${items.length}`;
       const loopContext = new Map(context);
       if (typeof item === 'object' && item !== null) {
         for (const [k, v] of Object.entries(item)) {
@@ -229,11 +244,10 @@ async function expandLoop(
         loopContext.set(loopVar, valStr);
       }
       try {
-        await runRange(flow, loopIndex + 1, bodyEnd, loopContext, deps, onLog, progress, depth + 1, signal);
+        await runRange(flow, loopIndex + 1, bodyEnd, loopContext, deps, onLog, progress, depth + 1, iterationTrace, signal);
       } catch (err) {
         if (err instanceof BreakLoopSignal) break;
         if (!(err instanceof ContinueLoopSignal)) throw err;
-        // ContinueLoopSignal: fall through to the next item.
       }
       if (progress.aborted) break;
     }
@@ -248,13 +262,13 @@ async function expandLoop(
         }
       }
     }
-    if (!nested) sendLog(`🔄 [AgentFlow] Loop complete`);
+    sendLog(`🔄 [${trace}] Loop complete (${items.length} items)`);
   } else {
     for (let j = loopIndex + 1; j < bodyEnd; j++) {
       emitLog(onLog, flow.id, flow.steps[j].id, j, 'skipped');
       if (depth === 0) progress.completed++;
     }
-    if (!nested) sendLog(`🔄 [AgentFlow] No items to loop, skipped loop body steps`);
+    sendLog(`🔄 [${trace}] No items to loop — skipped ${Math.max(0, bodyEnd - loopIndex - 1)} body step(s)`);
   }
 
   return bodyEnd - 1;
@@ -271,7 +285,7 @@ function markAbortedFromHere(
     for (let j = fromIndex; j < flow.steps.length; j++) {
       emitLog(onLog, flow.id, flow.steps[j].id, j, 'skipped');
     }
-    sendLog(`⏹️ [AgentFlow] Flow "${flow.name}" aborted by user (${progress.completed}/${flow.steps.length} steps)`);
+    sendLog(`⏹️ [${flowTrace(flow)}] Aborted by user (${progress.completed}/${flow.steps.length} steps)`);
   }
   progress.aborted = true;
 }
@@ -285,6 +299,7 @@ async function runRange(
   onLog: LogCallback | undefined,
   progress: RunProgress,
   depth: number,
+  trace: string,
   signal?: AbortSignal,
 ): Promise<void> {
   for (let i = startIndex; i < endIndex; i++) {
@@ -293,9 +308,10 @@ async function runRange(
       return;
     }
     const step = flow.steps[i];
+    const stepLabel = `Step ${i + 1}/${flow.steps.length} [${step.type}] ${step.label}`;
     emitLog(onLog, flow.id, step.id, i, 'running');
     if (depth === 0) {
-      sendLog(`⏳ Step ${i + 1}/${flow.steps.length}: [${step.type}] ${step.label}`);
+      sendLog(`⏳ [${trace}] ${stepLabel}`);
     }
 
     try {
@@ -317,18 +333,25 @@ async function runRange(
       if (output && step.outputKey && !NON_RESULT_STEP_TYPES.has(step.type)) {
         progress.finalOutput = output;
       }
-      if ((step.type === 'llm' || step.type === 'browser_js' || step.type === 'bot') && step.config.emitFailFlag === 'true' && step.outputKey) {
+      if (depth === 0) {
+        const titleHint = titleHintFor(step.type, subVars);
+        if (titleHint) progress.titleHint = titleHint;
+      }
+      if (step.type === 'llm' && output) {
+        progress.lastLlmProvider = getProviderLabel((resolvedConfig.provider ?? '').trim() || deps.getTargetUrl());
+      }
+      if ((step.type === 'llm' || step.type === 'browser_js' || step.type === 'bot' || step.type === 'research' || step.type === 'share') && step.config.emitFailFlag === 'true' && step.outputKey) {
         context.set(`${step.outputKey}.isFailed`, '0');
       }
 
       if (depth === 0) {
         progress.completed++;
         emitLog(onLog, flow.id, step.id, i, 'completed', output);
-        sendLog(`✅ Step ${i + 1} completed (${output.length} chars)`);
       }
+      sendLog(`✅ [${trace}] ${stepLabel} — ${output.length} chars`);
 
       if (step.type === 'loop' && i + 1 < endIndex) {
-        i = await expandLoop(flow, i, endIndex, step, output, context, deps, onLog, progress, depth, signal);
+        i = await expandLoop(flow, i, endIndex, step, output, context, deps, onLog, progress, depth, trace, signal);
       }
 
       if (step.type === 'if') {
@@ -339,19 +362,19 @@ async function runRange(
             emitLog(onLog, flow.id, flow.steps[j].id, j, 'skipped');
             if (depth === 0) progress.completed++;
           }
-          if (depth === 0) sendLog(`↪️ [AgentFlow] If condition false — skipped ${Math.max(0, bodyEnd - i - 1)} step(s)`);
+          sendLog(`↪️ [${trace}] If condition false — skipped ${Math.max(0, bodyEnd - i - 1)} step(s)`);
           i = bodyEnd - 1;
         }
       }
     } catch (err) {
       if (err instanceof StopFlowSignal) {
         emitLog(onLog, flow.id, step.id, i, 'skipped', undefined, err.message);
-        if (depth === 0) sendLog(`⏹️ Step ${i + 1} stopped flow: ${err.message}`);
+        sendLog(`⏹️ [${trace}] ${stepLabel} stopped this run: ${err.message}`);
         for (let j = i + 1; j < flow.steps.length; j++) {
           emitLog(onLog, flow.id, flow.steps[j].id, j, 'skipped');
         }
         if (depth === 0) {
-          sendLog(`⏹️ [AgentFlow] Flow "${flow.name}" stopped early (${progress.completed}/${flow.steps.length} steps)`);
+          sendLog(`⏹️ [${trace}] Stopped early (${progress.completed}/${flow.steps.length} steps)`);
           progress.stopped = true;
           return;
         }
@@ -361,11 +384,13 @@ async function runRange(
       if (err instanceof BreakLoopSignal || err instanceof ContinueLoopSignal) {
         const kind = err instanceof BreakLoopSignal ? 'break' : 'continue';
         if (depth === 0) {
-          // No enclosing loop — nothing to break/continue; log and carry on.
           emitLog(onLog, flow.id, step.id, i, 'skipped', undefined, `${kind} (no loop)`);
-          sendLog(`⚠️ [AgentFlow] "${kind}" ignored — not inside a loop`);
+          sendLog(`⚠️ [${trace}] "${kind}" ignored — not inside a loop`);
           continue;
         }
+        sendLog(kind === 'break'
+          ? `↪️ [${trace}] break — leaving the loop`
+          : `↪️ [${trace}] continue — skipping to the next item`);
         emitLog(onLog, flow.id, step.id, i, 'skipped', undefined, kind);
         for (let j = i + 1; j < endIndex; j++) {
           emitLog(onLog, flow.id, flow.steps[j].id, j, 'skipped');
@@ -385,7 +410,9 @@ async function runRange(
       const canFailSoft = step.type === 'llm'
         || step.type === 'browser'
         || step.type === 'browser_js'
-        || step.type === 'bot';
+        || step.type === 'bot'
+        || step.type === 'research'
+        || step.type === 'share';
 
       if (canFailSoft && step.config.emitFailFlag === 'true' && !isVerificationChallenge) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -395,16 +422,14 @@ async function runRange(
         }
         context.set(`${step.id}.output`, '');
         emitLog(onLog, flow.id, step.id, i, 'completed', '', msg);
-        if (depth === 0) {
-          progress.completed++;
-          sendLog(`⚠️ Step ${i + 1} ${step.type} failed (isFailed=1), continuing: ${msg}`);
-        }
+        if (depth === 0) progress.completed++;
+        sendLog(`⚠️ [${trace}] ${stepLabel} failed (isFailed=1), continuing: ${msg}`);
         continue;
       }
 
       const errorMsg = err instanceof Error ? err.message : String(err);
       emitLog(onLog, flow.id, step.id, i, 'error', undefined, errorMsg);
-      if (depth === 0) sendLog(`❌ Step ${i + 1} failed: ${errorMsg}`);
+      sendLog(`❌ [${trace}] ${stepLabel} failed: ${errorMsg}`);
 
       for (let j = i + 1; j < flow.steps.length; j++) {
         emitLog(onLog, flow.id, flow.steps[j].id, j, 'skipped');
@@ -426,15 +451,25 @@ export async function executeFlow(
   initialContext?: Record<string, string>,
   signal?: AbortSignal,
 ): Promise<FlowExecutionResult> {
+  const { result, usage } = await measureTokens(
+    () => runFlowSteps(flow, deps, onLog, initialContext, signal),
+  );
+  return { ...result, tokenUsage: usage };
+}
+
+async function runFlowSteps(
+  flow: FlowDefinition,
+  deps: FlowExecutorDeps,
+  onLog?: LogCallback,
+  initialContext?: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<FlowExecutionResult> {
   const context = new Map<string, string>();
 
   context.set('clipboard', clipboard.readText());
   context.set('timestamp', new Date().toISOString());
   context.set('flow.name', flow.name);
 
-  // Flow variables are in scope from step 0. The context is a flat map whose
-  // keys already carry dots ("browser_1.image"), so the {{var.<key>}} namespace
-  // needs nothing from the interpolator beyond being seeded here.
   for (const variable of flow.variables ?? []) {
     context.set(`${FLOW_VAR_PREFIX}.${variable.key}`, variable.value);
   }
@@ -447,9 +482,10 @@ export async function executeFlow(
 
   const progress: RunProgress = { completed: 0, stopped: false, aborted: false };
 
-  sendLog(`▶️ [AgentFlow] Executing flow: ${flow.name} (${flow.steps.length} steps)`);
+  const trace = flowTrace(flow);
+  sendLog(`▶️ [${trace}] Executing flow (${flow.steps.length} steps)`);
 
-  await runRange(flow, 0, flow.steps.length, context, deps, onLog, progress, 0, signal);
+  await runRange(flow, 0, flow.steps.length, context, deps, onLog, progress, 0, trace, signal);
 
   if (progress.aborted) {
     return {
@@ -465,6 +501,7 @@ export async function executeFlow(
   }
 
   if (progress.error) {
+    sendLog(`❌ [${trace}] Flow failed after ${progress.completed}/${flow.steps.length} steps — ${progress.error}`);
     return {
       flowId: flow.id,
       success: false,
@@ -477,7 +514,7 @@ export async function executeFlow(
   }
 
   if (!progress.stopped) {
-    sendLog(`✅ [AgentFlow] Flow "${flow.name}" completed (${progress.completed}/${flow.steps.length} steps)`);
+    sendLog(`✅ [${trace}] Flow completed (${progress.completed}/${flow.steps.length} steps)`);
   }
 
   return {
@@ -488,5 +525,7 @@ export async function executeFlow(
     totalSteps: flow.steps.length,
     completedAt: new Date().toISOString(),
     finalOutput: progress.finalOutput,
+    lastLlmProvider: progress.lastLlmProvider,
+    titleHint: progress.titleHint,
   };
 }

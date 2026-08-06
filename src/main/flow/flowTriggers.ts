@@ -37,7 +37,7 @@ export class FlowTriggerRegistry {
   private registerHotkey(flow: FlowDefinition, keys: string): void {
     for (const [existingFlowId, existingKeys] of this.flowHotkeys) {
       if (existingFlowId !== flow.id && existingKeys.includes(keys)) {
-        sendLog(`⚠️ [AgentFlow] Hotkey "${keys}" already used by another flow — skipping for "${flow.name}"`);
+        sendLog(`⚠️ [Flow] Hotkey "${keys}" already used by another flow — skipping for "${flow.name}"`);
         return;
       }
     }
@@ -47,18 +47,18 @@ export class FlowTriggerRegistry {
       });
       if (ok) {
         this.appendEntry(this.flowHotkeys, flow.id, keys);
-        sendLog(`⌨️ [AgentFlow] Hotkey "${keys}" registered for "${flow.name}"`);
+        sendLog(`⌨️ [Flow] Hotkey "${keys}" registered for "${flow.name}"`);
       } else {
-        sendLog(`❌ [AgentFlow] Failed to register hotkey "${keys}" for "${flow.name}"`);
+        sendLog(`❌ [Flow] Failed to register hotkey "${keys}" for "${flow.name}"`);
       }
     } catch (err) {
-      sendLog(`❌ [AgentFlow] Hotkey error for "${flow.name}": ${err instanceof Error ? err.message : String(err)}`);
+      sendLog(`❌ [Flow] Hotkey error for "${flow.name}": ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
   private registerCron(flow: FlowDefinition, trigger: TriggerConfig): void {
     if (!trigger.cronExpression || !cron.validate(trigger.cronExpression)) {
-      sendLog(`❌ [AgentFlow] Invalid cron expression "${trigger.cronExpression ?? ''}" for "${flow.name}"`);
+      sendLog(`❌ [Flow] Invalid cron expression "${trigger.cronExpression ?? ''}" for "${flow.name}"`);
       return;
     }
     const task = cron.schedule(trigger.cronExpression, () => {
@@ -66,7 +66,7 @@ export class FlowTriggerRegistry {
       this.onTrigger(flow.id);
     });
     this.appendEntry(this.cronJobs, flow.id, task);
-    sendLog(`⏰ [AgentFlow] Cron "${trigger.cronExpression}" scheduled for "${flow.name}"`);
+    sendLog(`⏰ [Flow] Cron "${trigger.cronExpression}" scheduled for "${flow.name}"`);
   }
 
   private appendEntry<T>(map: Map<string, T[]>, flowId: string, entry: T): void {

@@ -26,9 +26,6 @@ export function registerLineHandlers(ctx: IpcContext): void {
   });
 
   ipcMain.handle(IPC.UPDATE_LINE_CREDENTIALS, async (_event, creds: LineCredentialsUpdate) => {
-    // Keep-if-blank: only overwrite a secret when a non-empty value is supplied,
-    // so a blank field in the form preserves the stored credential (the form
-    // never echoes secrets back).
     const nextToken = typeof creds?.channelAccessToken === 'string' ? creds.channelAccessToken.trim() : '';
     const nextSecret = typeof creds?.channelSecret === 'string' ? creds.channelSecret.trim() : '';
     if (nextToken) config.line.channelAccessToken = nextToken;
@@ -66,8 +63,6 @@ export function registerLineHandlers(ctx: IpcContext): void {
     }
   });
 
-  // No runtime sync needed: the dispatcher reads the live config on every
-  // incoming message, so the change takes effect immediately.
   ipcMain.handle(IPC.UPDATE_LINE_LLM_DIRECT, (_event, value: unknown) => {
     config.line.llmDirect = normalizeLlmDirect(value);
     saveConfig({ line: config.line });
@@ -94,8 +89,6 @@ export function registerLineHandlers(ctx: IpcContext): void {
     return { ok: true as const, snapshot: buildLineSettingsSnapshot() };
   });
 
-  // Re-reads the Official Account settings. The result reaches the renderer via
-  // the LINE_RUNTIME broadcast, so nothing but success/failure is returned here.
   ipcMain.handle(IPC.REFRESH_LINE_ACCOUNT, async () => {
     try {
       await ctx.lineRuntime.refreshAccount();

@@ -4,8 +4,6 @@ import { MessageSquareDashed } from 'lucide-react';
 import { useI18nStore } from '../../store/i18nStore';
 import { TEMP_CHAT_SHORTCUT_HINT } from '../../utils/keyLabels';
 
-// Empty-state welcome for temporary chat mode — the incognito counterpart of
-// WelcomeScreen, shown while the mode is on and no reply is displayed yet.
 export const IncognitoWelcome: React.FC = () => {
   const { t } = useI18nStore();
 

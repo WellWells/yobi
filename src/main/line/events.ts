@@ -4,23 +4,13 @@ export type LineChatKind = 'user' | 'group' | 'room';
 
 export interface LineTextEvent {
   userId: string;
-  // Push destination for replies: the userId in a 1:1 chat, the groupId/roomId
-  // in a multi-person chat.
   chatId: string;
   chatKind: LineChatKind;
   replyToken?: string;
-  // Message text with the bot's own @-mentions already stripped.
   text: string;
-  // True when the sender explicitly tagged this bot (mention.mentionees[].isSelf).
   mentionsBot: boolean;
 }
 
-// Extract text messages from a parsed webhook body. 1:1, group and room sources
-// are handled; group/room events without a sender userId are dropped (LINE omits
-// it when the sender never friended the bot — such a sender cannot be paired
-// anyway). Stickers/images, follow/unfollow and other event types are ignored.
-//
-// Exported for the test suite: pure, offline, deterministic.
 export function parseTextEvents(body: webhook.CallbackRequest): LineTextEvent[] {
   const out: LineTextEvent[] = [];
   for (const event of body.events ?? []) {
@@ -50,18 +40,6 @@ export function parseTextEvents(body: webhook.CallbackRequest): LineTextEvent[] 
   return out;
 }
 
-// Removes the '@Bot' substrings that tag this bot (isSelf mentionees) so the
-// remaining text can be used verbatim as a prompt.
-//
-// Ranges resolve defensively: observed payloads use UTF-16 code-unit offsets
-// (matching JS slicing), but LINE's docs only say "index of a character" — if
-// astral characters (emoji) precede the mention and the platform counted code
-// points, the raw offsets would cut real prompt text. A range is only removed
-// when its resolved slice starts at a mention's '@'; an unresolvable range is
-// left in place (a literal '@Bot' in the prompt is harmless, a corrupted
-// prompt is not).
-//
-// Exported for the test suite: pure, offline, deterministic.
 export function stripBotMentions(
   rawText: string,
   mention?: webhook.Mention,
@@ -85,7 +63,6 @@ export function stripBotMentions(
 
 function resolveMentionRange(text: string, index: number, length: number): { start: number; end: number } | null {
   if (text.charAt(index) === '@') return { start: index, end: index + length };
-  // Fallback: interpret index/length as code-point counts.
   const start = codePointsToUtf16(text, index);
   const end = codePointsToUtf16(text, index + length);
   if (start !== null && end !== null && text.charAt(start) === '@') return { start, end };

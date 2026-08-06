@@ -1,105 +1,41 @@
-import React from 'react';
-import ReactMarkdown from 'react-markdown';
-import { Box, Group, Stack, Text } from '@mantine/core';
-import { Clock3, Cpu } from 'lucide-react';
-import type { CardTheme, MarkdownCapturePayload } from '../../../../shared/types';
-import { REHYPE_PLUGINS } from '../../utils/shikiPlugins';
-import { ExternalLink, SharedCodeBlock, SharedPreBlock, remarkPlugins } from '../../utils/markdownConfig';
-import { CAPTURE_CARD_TOKENS, captureCardCssVars } from '../../hooks/captureTheme';
-import { ForcedCodeThemeContext } from '../../utils/forcedCodeTheme';
+import React, { useState } from 'react';
+import { Box, Stack, Text } from '@mantine/core';
+import type { MarkdownCaptureRequest } from '../../../../shared/types';
+import { MAX_CAPTURE_HEIGHT } from '../../../../shared/types';
+import { ScaledCardFrame } from '../capture/ScaledCardFrame';
 import { SectionLabel } from './SectionLabel';
-import './exportPreview.css';
 
 export interface ExportPreviewPanelProps {
-  background: string;
-  cardTheme: CardTheme;
-  showPrompt: boolean;
-  showProvider: boolean;
-  showTimestamp: boolean;
-  preview: MarkdownCapturePayload | null;
+  request: MarkdownCaptureRequest | null;
   t: (key: string) => string;
 }
 
-const previewMdComponents = { a: ExternalLink, pre: SharedPreBlock, code: SharedCodeBlock } as const;
+export const ExportPreviewPanel: React.FC<ExportPreviewPanelProps> = ({ request, t }) => {
+  const [logicalHeight, setLogicalHeight] = useState(0);
 
-const PreviewMarkdown: React.FC<{ children: string }> = ({ children }) => (
-  <ReactMarkdown
-    remarkPlugins={remarkPlugins}
-    rehypePlugins={REHYPE_PLUGINS}
-    components={previewMdComponents}
-  >
-    {children}
-  </ReactMarkdown>
-);
+  const turnCount = request?.options.cardLayout === 'bubble'
+    ? (request.payload.turns?.length ?? 0)
+    : 0;
+  const tooTall = request?.options.format !== 'pdf' && logicalHeight > MAX_CAPTURE_HEIGHT;
+  const pixelHeight = logicalHeight * (request?.options.pixelRatio ?? 1);
 
-export const ExportPreviewPanel: React.FC<ExportPreviewPanelProps> = ({
-  background,
-  cardTheme,
-  showPrompt,
-  showProvider,
-  showTimestamp,
-  preview,
-  t,
-}) => {
-  const tokens = CAPTURE_CARD_TOKENS[cardTheme];
   return (
-    <Stack
-      gap={12}
-      p={16}
-      flex={1}
-      bg="var(--bg-tertiary)"
-      style={{ minHeight: 0, overflowY: 'auto' }}
-    >
+    <Stack gap={12} p={16} flex={1} bg="var(--bg-tertiary)" style={{ minHeight: 0, overflowY: 'auto' }}>
       <SectionLabel>{t('capture.preview')}</SectionLabel>
-      {/* 'safe center': short previews float mid-pane, tall ones start at the
-          top and scroll instead of clipping. */}
+      {
+}
       <Box flex={1} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'safe center' }}>
-      <Box style={{ borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '1px solid var(--border)', flexShrink: 0 }}>
-        <Box p={10} style={{ background }}>
-          <ForcedCodeThemeContext.Provider value="dark">
-          <Box
-            className="export-preview-card"
-            p={12}
-            style={{ ...captureCardCssVars(cardTheme), background: tokens.cardBg, border: `1px solid ${tokens.cardBorder}`, borderRadius: 10, color: tokens.text, fontSize: 'var(--font-size-sm)', lineHeight: 1.5 } as React.CSSProperties}
-          >
-            <Text fw={700} mb={6} fz="var(--font-size-base)" style={{ color: tokens.title }}>
-              {preview?.title || t('capture.noTitle')}
-            </Text>
-            {(showProvider || showTimestamp) && (
-              <Group gap={8} wrap="wrap" mb={6} fz="var(--font-size-xs)" style={{ color: tokens.muted }}>
-                {showProvider && preview?.provider && (
-                  <Group component="span" gap={4}>
-                    <Cpu size={10} />
-                    {preview.provider}
-                  </Group>
-                )}
-                {showTimestamp && preview?.timestamp && (
-                  <Group component="span" gap={4}>
-                    <Clock3 size={10} />
-                    {preview.timestamp}
-                  </Group>
-                )}
-              </Group>
-            )}
-            {showPrompt && preview?.prompt && (
-              <Box
-                p="5px 8px"
-                mb={6}
-                style={{ background: tokens.promptBg, border: `1px solid ${tokens.promptBorder}`, borderRadius: 6, fontSize: 'var(--font-size-xs)' }}
-              >
-                <Box className="md-content" style={{ maxHeight: 96, overflowY: 'auto', lineHeight: 1.5, color: tokens.textSecondary }}>
-                  <PreviewMarkdown>{preview.prompt}</PreviewMarkdown>
-                </Box>
-              </Box>
-            )}
-            <Box className="md-content" style={{ color: tokens.text, fontSize: 'var(--font-size-xs)' }}>
-              <PreviewMarkdown>{preview?.content || preview?.summary || ''}</PreviewMarkdown>
-            </Box>
-          </Box>
-          </ForcedCodeThemeContext.Provider>
-        </Box>
+        <ScaledCardFrame request={request} onMeasure={setLogicalHeight} />
       </Box>
-      </Box>
+      {logicalHeight > 0 && (
+        <Text fz="var(--font-size-sm)" c={tooTall ? 'var(--mantine-color-orange-5)' : 'var(--text-muted)'} ta="center">
+          {[
+            turnCount > 0 ? t('capture.turnCount').replace('{{count}}', String(turnCount)) : '',
+            `${request?.options.width ?? 0} × ${Math.round(pixelHeight)} px`,
+          ].filter(Boolean).join(' · ')}
+          {tooTall && ` — ${t('capture.tooTall')}`}
+        </Text>
+      )}
     </Stack>
   );
 };

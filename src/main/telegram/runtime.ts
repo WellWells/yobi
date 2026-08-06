@@ -2,6 +2,7 @@ import { Bot } from 'grammy';
 import type {
   BotLlmDirectConfig,
   FlowExecutionResult,
+  TelegramChannel,
   TelegramOutputChoice,
   TelegramPairingState,
   TelegramReplyMode,
@@ -10,13 +11,16 @@ import type {
   TelegramRuntimeStatus,
 } from '../../shared/types';
 import { createPairingBridge } from './dmPolicy';
+import { attachChannelDiscovery } from './channels';
 import {
   attachTelegramHandlers,
   syncPrivateCommands,
   type TelegramContext,
   type TelegramTaskRequest,
 } from './commands';
-import type { ResolvedProviderCommand } from '../providerCommands';
+import type { ResolvedBuiltinCommand, ResolvedProviderCommand } from '../providerCommands';
+import type { BotBuiltinCommandKey } from '../../shared/types';
+import type { BotBuiltinRunResult } from '../botBuiltinCommands';
 import { t } from '../i18n';
 import { getErrorMessage } from './errors';
 import { ExportTokenRegistry } from './exporter';
@@ -35,6 +39,8 @@ export interface TelegramRuntimeDeps {
   getCompactReply: () => boolean;
   getPairing: () => TelegramPairingState;
   savePairing: (next: TelegramPairingState) => void;
+  getChannels: () => TelegramChannel[];
+  saveChannels: (next: TelegramChannel[]) => void;
   isAdminUser: (userId: number) => boolean;
   onTaskRequest: (request: TelegramTaskRequest) => Promise<{ taskId: string }>;
   onStatusRequest: () => string;
@@ -47,6 +53,24 @@ export interface TelegramRuntimeDeps {
   onRuntime: (snapshot: TelegramRuntimeSnapshot) => void;
   getStrings: () => Record<string, string>;
   getProviderCommands: () => ResolvedProviderCommand[];
+  getBuiltinCommands: () => ResolvedBuiltinCommand[];
+  onBuiltinCommand: (
+    key: BotBuiltinCommandKey,
+    input: string,
+    targetUrl: string,
+    chatId: number,
+    userId: number,
+    onProgressText: (text: string) => void,
+  ) => Promise<BotBuiltinRunResult>;
+  onAgentAnswer: (
+    answer: string,
+    chatId: number,
+    userId: number,
+    onProgressText: (text: string) => void,
+  ) => Promise<BotBuiltinRunResult | null>;
+  hasPendingAgentAsk: (chatId: number, userId: number) => boolean;
+  onDropAgentAsk: (chatId: number, userId: number) => void;
+  onNewConversation: (chatId: number, userId: number) => Promise<boolean>;
   getFlowCommands?: () => Array<{ flowId: string; command: string; description: string; inputVariable: string }>;
   onFlowCommand?: (
     flowId: string,
@@ -123,7 +147,14 @@ export class TelegramRuntime {
       if (this.pollerActive && this.currentToken === token && this.currentAllowGroupCommands === allowGroupCommands) {
         if (this.bot) {
           try {
-            await syncPrivateCommands(this.bot, allowGroupCommands, s, this.deps.getProviderCommands(), this.deps.getFlowCommands?.());
+            await syncPrivateCommands(
+              this.bot,
+              allowGroupCommands,
+              s,
+              this.deps.getProviderCommands(),
+              this.deps.getFlowCommands?.(),
+              this.deps.getBuiltinCommands(),
+            );
           } catch (err: unknown) {
             this.deps.onLog(`[telegram] failed to refresh localized commands: ${getErrorMessage(err)}`);
           }
@@ -141,10 +172,6 @@ export class TelegramRuntime {
     });
   }
 
-  // Handlers resolve commands live (see attachTelegramHandlers), so a new flow
-  // command already works the moment it is saved. All that is left is telling
-  // Telegram what to show in the '/' menu — a plain API call, no restart, which
-  // keeps the poller up and the pending export tokens alive.
   async refreshBotCommands(): Promise<void> {
     await this.runLocked(async () => {
       const bot = this.bot;
@@ -156,6 +183,7 @@ export class TelegramRuntime {
           this.deps.getStrings(),
           this.deps.getProviderCommands(),
           this.deps.getFlowCommands?.(),
+          this.deps.getBuiltinCommands(),
         );
       } catch (err: unknown) {
         this.deps.onLog(`[telegram] failed to refresh command menu: ${getErrorMessage(err)}`);
@@ -177,6 +205,29 @@ export class TelegramRuntime {
     await messaging.sendTaskError(this.msgCtx, target, payload);
   }
 
+  /** Built-in results reuse the ordinary reply path, so output modes and exports still apply. */
+  private async deliverBuiltinResult(
+    target: TelegramReplyTarget,
+    prompt: string,
+    result: BotBuiltinRunResult,
+  ): Promise<void> {
+    if (!result.ok) {
+      await messaging.sendTaskError(this.msgCtx, target, {
+        providerLabel: result.providerLabel,
+        message: result.text,
+      });
+      return;
+    }
+    await messaging.sendTaskSuccess(this.msgCtx, target, {
+      providerLabel: result.providerLabel,
+      savedFileName: result.savedFileName,
+      response: result.text,
+      prompt,
+      title: result.title,
+      elapsedSeconds: result.elapsedSeconds,
+    });
+  }
+
   private async startOrReplaceBot(token: string): Promise<void> {
     this.updateStatus('starting');
     this.errorMessage = '';
@@ -195,7 +246,14 @@ export class TelegramRuntime {
     }
 
     try {
-      await syncPrivateCommands(candidate, this.deps.getAllowGroupCommands(), s, this.deps.getProviderCommands(), this.deps.getFlowCommands?.());
+      await syncPrivateCommands(
+        candidate,
+        this.deps.getAllowGroupCommands(),
+        s,
+        this.deps.getProviderCommands(),
+        this.deps.getFlowCommands?.(),
+        this.deps.getBuiltinCommands(),
+      );
     } catch (err: unknown) {
       this.deps.onLog(`[telegram] failed to sync command scope: ${getErrorMessage(err)}`);
     }
@@ -237,6 +295,14 @@ export class TelegramRuntime {
       () => this.deps.getPairing(),
       (next) => this.deps.savePairing(next),
     );
+    // Registered ahead of the command handlers: discovery needs neither session nor conversation
+    // state, so it must not sit behind that middleware stack.
+    attachChannelDiscovery(bot, {
+      isPairedUser: pairingBridge.isPairedUser,
+      getChannels: () => this.deps.getChannels(),
+      saveChannels: (next) => this.deps.saveChannels(next),
+      onLog: this.deps.onLog,
+    });
     attachTelegramHandlers(bot, {
       isPairedUser: pairingBridge.isPairedUser,
       consumePairingCode: pairingBridge.consumePairingCode,
@@ -251,6 +317,49 @@ export class TelegramRuntime {
       getStrings: () => this.deps.getStrings(),
       getBotUsername: () => this.botUsername,
       getProviderCommands: this.deps.getProviderCommands,
+      getBuiltinCommands: this.deps.getBuiltinCommands,
+      onBuiltinCommand: async (request) => {
+        const progress = messaging.createProgressEditor(this.msgCtx, request.replyTarget);
+        let result: BotBuiltinRunResult;
+        try {
+          result = await this.deps.onBuiltinCommand(
+            request.key,
+            request.input,
+            request.targetUrl,
+            request.replyTarget.chatId,
+            request.replyTarget.userId,
+            progress.push,
+          );
+        } finally {
+          progress.stop();
+        }
+        await this.deliverBuiltinResult(request.replyTarget, request.input, result);
+      },
+      hasPendingAgentAsk: (chatId, userId) => this.deps.hasPendingAgentAsk(chatId, userId),
+      onDropAgentAsk: (chatId, userId) => this.deps.onDropAgentAsk(chatId, userId),
+      onNewConversation: (chatId, userId) => this.deps.onNewConversation(chatId, userId),
+      onAgentAnswer: async (request) => {
+        const progress = messaging.createProgressEditor(this.msgCtx, request.replyTarget);
+        let result: BotBuiltinRunResult | null;
+        try {
+          result = await this.deps.onAgentAnswer(
+            request.answer,
+            request.replyTarget.chatId,
+            request.replyTarget.userId,
+            progress.push,
+          );
+        } finally {
+          progress.stop();
+        }
+        if (!result) {
+          await messaging.sendTaskError(this.msgCtx, request.replyTarget, {
+            providerLabel: '',
+            message: t(this.deps.getStrings(), 'bot.builtin.notResumable'),
+          });
+          return;
+        }
+        await this.deliverBuiltinResult(request.replyTarget, request.answer, result);
+      },
       getFlowCommands: this.deps.getFlowCommands,
       onFlowCommand: this.deps.onFlowCommand,
     });

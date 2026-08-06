@@ -66,8 +66,6 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       }),
     ];
 
-    // Store builds auto-update through the Microsoft Store — never run the yml-based
-    // electron-updater check (it would only ever report a misleading "up to date").
     void updateApi
       .getUpdateSource()
       .then((source) => {

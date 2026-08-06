@@ -1,15 +1,25 @@
 import React from 'react';
-import { ActionIcon, Box, Flex, Group, Stack, Switch, Text } from '@mantine/core';
-import { Check } from 'lucide-react';
-import type { CaptureFormat, CardTheme } from '../../../../shared/types';
+import { Box, Collapse, Group, Stack, Switch, Text, UnstyledButton } from '@mantine/core';
+import { ChevronRight } from 'lucide-react';
+import type { CaptureFormat, CaptureRange, CardLayout } from '../../../../shared/types';
+import { CAPTURE_WIDTHS, captureWidthLabelKey } from '../../../../shared/types';
 import { AppSegmentedControl } from '../AppSegmentedControl';
 import { AppTextInput } from '../AppTextInput';
+import { BackgroundStylePicker, DirectionGrid, PaletteSwatchGrid } from '../capture/PalettePicker';
+import type {
+  CaptureBackgroundStyle,
+  CaptureDirection,
+  CapturePalette,
+} from '../../../../shared/capturePalettes';
+import { mustShowPrompt } from '../../hooks/captureRequest';
 import { SectionLabel } from './SectionLabel';
 
 export interface ExportSettingsPanelProps {
-  palettes: readonly { key: string; from: string; to: string; label: string; card: CardTheme }[];
+  palettes: readonly CapturePalette[];
   selectedPalette: string;
   setSelectedPalette: (value: string) => void;
+  backgroundStyle: CaptureBackgroundStyle;
+  setBackgroundStyle: (value: CaptureBackgroundStyle) => void;
   direction: string;
   setDirection: (value: string) => void;
   showPrompt: boolean;
@@ -18,12 +28,26 @@ export interface ExportSettingsPanelProps {
   setShowProvider: (value: boolean) => void;
   showTimestamp: boolean;
   setShowTimestamp: (value: boolean) => void;
+  showTokens: boolean;
+  setShowTokens: (value: boolean) => void;
   title: string;
   setTitle: (value: string) => void;
   fileName: string;
   setFileName: (value: string) => void;
   format: CaptureFormat;
   setFormat: (value: CaptureFormat) => void;
+  cardLayout: CardLayout;
+  setCardLayout: (value: CardLayout) => void;
+  range: CaptureRange;
+  setRange: (value: CaptureRange) => void;
+  turnCount: number;
+  width: number;
+  setWidth: (value: number) => void;
+  hiDpi: boolean;
+  setHiDpi: (value: boolean) => void;
+  zip: boolean;
+  setZip: (value: boolean) => void;
+  onHoverPalette: (key: string | null) => void;
   t: (key: string) => string;
 }
 
@@ -31,11 +55,13 @@ const ToggleChip: React.FC<{
   checked: boolean;
   onChange: (value: boolean) => void;
   label: string;
-}> = ({ checked, onChange, label }) => (
+  description?: string;
+}> = ({ checked, onChange, label, description }) => (
   <Switch
     checked={checked}
     onChange={(e) => onChange(e.currentTarget.checked)}
     label={label}
+    description={description}
     size="sm"
     withThumbIndicator={false}
   />
@@ -47,16 +73,12 @@ const FORMAT_OPTIONS: Array<{ value: CaptureFormat; label: string }> = [
   { value: 'pdf', label: 'PDF' },
 ];
 
-const directionButtons: Array<[string, string]> = [
-  ['nw', '↖'], ['n', '↑'], ['ne', '↗'],
-  ['w', '←'], ['c', '●'], ['e', '→'],
-  ['sw', '↙'], ['s', '↓'], ['se', '↘'],
-];
-
 export const ExportSettingsPanel: React.FC<ExportSettingsPanelProps> = ({
   palettes,
   selectedPalette,
   setSelectedPalette,
+  backgroundStyle,
+  setBackgroundStyle,
   direction,
   setDirection,
   showPrompt,
@@ -65,154 +87,192 @@ export const ExportSettingsPanel: React.FC<ExportSettingsPanelProps> = ({
   setShowProvider,
   showTimestamp,
   setShowTimestamp,
+  showTokens,
+  setShowTokens,
   title,
   setTitle,
   fileName,
   setFileName,
   format,
   setFormat,
+  cardLayout,
+  setCardLayout,
+  range,
+  setRange,
+  turnCount,
+  width,
+  setWidth,
+  hiDpi,
+  setHiDpi,
+  zip,
+  setZip,
+  onHoverPalette,
   t,
-}) => (
-  <Stack
-    gap={16}
-    p={16}
-    w={300}
-    style={{ borderRight: '1px solid var(--border)', overflowY: 'auto', flexShrink: 0 }}
-  >
+}) => {
+  const [advancedOpen, setAdvancedOpen] = React.useState(false);
 
-    <Box>
-      <SectionLabel>{t('capture.format')}</SectionLabel>
-      <AppSegmentedControl
-        value={format}
-        onChange={(value) => setFormat(value as CaptureFormat)}
-        options={FORMAT_OPTIONS}
-      />
-      <Text fz="var(--font-size-sm)" c="var(--text-muted)" mt={6}>
-        {t(`capture.format.${format}.desc`)}
-      </Text>
-    </Box>
+  return (
+    <Stack
+      gap={16}
+      p={16}
+      w={300}
+      style={{ borderRight: '1px solid var(--border)', overflowY: 'auto', flexShrink: 0 }}
+    >
+      <Box>
+        <SectionLabel>{t('capture.layout')}</SectionLabel>
+        <AppSegmentedControl
+          value={cardLayout}
+          onChange={(value) => setCardLayout(value as CardLayout)}
+          options={[
+            { value: 'document', label: t('capture.layout.document') },
+            { value: 'bubble', label: t('capture.layout.bubble') },
+          ]}
+        />
+        <Text fz="var(--font-size-sm)" c="var(--text-muted)" mt={6}>
+          {t(`capture.layout.${cardLayout}.desc`)}
+        </Text>
+      </Box>
 
-    <Box>
-      <SectionLabel>{t('capture.cardTitle')}</SectionLabel>
-      <AppTextInput
-        value={title}
-        onChange={(e) => setTitle(e.currentTarget.value)}
-        size="sm"
-      />
-    </Box>
+      {turnCount > 1 && (
+        <Box>
+          <SectionLabel>{t('capture.range')}</SectionLabel>
+          <AppSegmentedControl
+            value={range}
+            onChange={(value) => setRange(value as CaptureRange)}
+            options={[
+              { value: 'all', label: t('capture.range.all') },
+              { value: 'last', label: t('capture.range.last') },
+            ]}
+          />
+        </Box>
+      )}
 
-    <Box>
-      <SectionLabel>{t('capture.fileName')}</SectionLabel>
-      <AppTextInput
-        value={fileName}
-        onChange={(e) => setFileName(e.currentTarget.value)}
-        size="sm"
-        rightSection={
-          <Text fz="var(--font-size-sm)" c="var(--text-muted)" pr={4}>{`.${format}`}</Text>
-        }
-        rightSectionWidth={54}
-        rightSectionPointerEvents="none"
-      />
-    </Box>
+      <Box>
+        <SectionLabel>{t('capture.size')}</SectionLabel>
+        <AppSegmentedControl
+          value={String(width)}
+          onChange={(value) => setWidth(Number(value))}
+          options={CAPTURE_WIDTHS.map((value) => ({
+            value: String(value),
+            label: t(captureWidthLabelKey(value)),
+          }))}
+        />
+        <Text fz="var(--font-size-sm)" c="var(--text-muted)" mt={6}>
+          {hiDpi ? `${width} px · 2× → ${width * 2} px` : `${width} px`}
+        </Text>
+      </Box>
 
-    <Box>
-      <SectionLabel>{t('capture.visible')}</SectionLabel>
-      <Stack gap={10}>
-        <ToggleChip checked={showPrompt}    onChange={setShowPrompt}    label={t('capture.showPrompt')} />
-        <ToggleChip checked={showProvider}  onChange={setShowProvider}  label={t('capture.showProvider')} />
-        <ToggleChip checked={showTimestamp} onChange={setShowTimestamp} label={t('capture.showTimestamp')} />
-      </Stack>
-    </Box>
+      <Box>
+        <SectionLabel>{t('capture.format')}</SectionLabel>
+        <AppSegmentedControl
+          value={format}
+          onChange={(value) => setFormat(value as CaptureFormat)}
+          options={FORMAT_OPTIONS}
+        />
+        <Text fz="var(--font-size-sm)" c="var(--text-muted)" mt={6}>
+          {t(`capture.format.${format}.desc`)}
+        </Text>
+      </Box>
 
-    <Box>
-      <SectionLabel>{t('common.background')}</SectionLabel>
-      <Stack gap={12}>
-        {(['dark', 'light'] as const).map((group) => {
-          const items = palettes.filter((p) => p.card === group);
-          if (items.length === 0) return null;
-          return (
-            <Box key={group}>
-              <Text
-                fz="var(--font-size-xs)"
-                fw={600}
-                c="var(--text-muted)"
-                mb={6}
-                tt="uppercase"
-                style={{ letterSpacing: '0.04em' }}
-              >
-                {t(`capture.palette.${group}`)}
-              </Text>
-              <Group gap={6} wrap="wrap">
-                {items.map((item) => {
-                  const active = selectedPalette === item.key;
-                  return (
-                    <ActionIcon
-                      key={item.key}
-                      onClick={() => setSelectedPalette(item.key)}
-                      title={item.label}
-                      aria-label={item.label}
-                      variant="transparent"
-                      radius="xl"
-                      size={32}
-                      style={{
-                        position: 'relative',
-                        padding: 0,
-                        border: active ? '2px solid var(--accent)' : '2px solid var(--border)',
-                        overflow: 'hidden',
-                        boxShadow: active ? '0 0 0 3px var(--accent-dim)' : 'none',
-                        transition: 'box-shadow 0.15s ease, border-color 0.15s ease',
-                        flexShrink: 0,
-                      }}
-                    >
-                      <Box
-                        component="span"
-                        style={{ position: 'absolute', inset: 0, clipPath: 'inset(0 50% 0 0)', background: item.from }}
-                      />
-                      <Box
-                        component="span"
-                        style={{ position: 'absolute', inset: 0, clipPath: 'inset(0 0 0 50%)', background: item.to }}
-                      />
-                      {active && (
-                        <Flex
-                          pos="absolute"
-                          align="center"
-                          justify="center"
-                          c="#fff"
-                          style={{ inset: 0, textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}
-                        >
-                          <Check size={12} strokeWidth={3} />
-                        </Flex>
-                      )}
-                    </ActionIcon>
-                  );
-                })}
-              </Group>
-            </Box>
-          );
-        })}
-      </Stack>
-    </Box>
+      <Box>
+        <SectionLabel>{t('capture.cardTitle')}</SectionLabel>
+        <AppTextInput
+          value={title}
+          onChange={(e) => setTitle(e.currentTarget.value)}
+          size="sm"
+        />
+      </Box>
 
-    <Box>
-      <SectionLabel>{t('capture.direction')}</SectionLabel>
-      <Box style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 32px)', gap: 4 }}>
-        {directionButtons.map(([key, icon]) => (
-          <ActionIcon
-            key={key}
-            onClick={() => setDirection(key)}
-            variant={direction === key ? 'light' : 'default'}
-            radius="sm"
-            size={32}
+      <Box>
+        <SectionLabel>{t('capture.fileName')}</SectionLabel>
+        <AppTextInput
+          value={fileName}
+          onChange={(e) => setFileName(e.currentTarget.value)}
+          size="sm"
+          rightSection={
+            <Text fz="var(--font-size-sm)" c="var(--text-muted)" pr={4}>{`.${zip ? 'zip' : format}`}</Text>
+          }
+          rightSectionWidth={54}
+          rightSectionPointerEvents="none"
+        />
+      </Box>
+
+      <UnstyledButton onClick={() => setAdvancedOpen((open) => !open)} aria-expanded={advancedOpen}>
+        <Group gap={4} align="center">
+          <Box
+            c="var(--text-muted)"
             style={{
-              fontSize: 'var(--font-size-md)',
-              fontWeight: 700,
-              color: direction === key ? 'var(--accent)' : 'var(--text-secondary)',
+              display: 'flex',
+              transform: advancedOpen ? 'rotate(90deg)' : undefined,
+              transition: 'transform 0.15s ease',
             }}
           >
-            {icon}
-          </ActionIcon>
-        ))}
-      </Box>
-    </Box>
-  </Stack>
-);
+            <ChevronRight size={14} />
+          </Box>
+          <SectionLabel>{t('capture.advanced')}</SectionLabel>
+        </Group>
+      </UnstyledButton>
+
+      <Collapse expanded={advancedOpen}>
+        <Stack gap={16}>
+          <Box>
+            <SectionLabel>{t('capture.output')}</SectionLabel>
+            <Stack gap={10}>
+              <ToggleChip
+                checked={hiDpi}
+                onChange={setHiDpi}
+                label={t('capture.hiDpi')}
+                description={t('capture.hiDpi.desc')}
+              />
+              <ToggleChip
+                checked={zip}
+                onChange={setZip}
+                label={t('capture.zip')}
+                description={t('capture.zip.desc')}
+              />
+            </Stack>
+          </Box>
+
+          <Box>
+            <SectionLabel>{t('capture.visible')}</SectionLabel>
+            <Stack gap={10}>
+              {
+}
+              {!mustShowPrompt(cardLayout, range === 'last' ? 1 : turnCount) && (
+                <ToggleChip checked={showPrompt} onChange={setShowPrompt} label={t('capture.showPrompt')} />
+              )}
+              <ToggleChip checked={showProvider} onChange={setShowProvider} label={t('capture.showProvider')} />
+              <ToggleChip checked={showTimestamp} onChange={setShowTimestamp} label={t('capture.showTimestamp')} />
+              <ToggleChip checked={showTokens} onChange={setShowTokens} label={t('capture.showTokens')} />
+            </Stack>
+          </Box>
+
+          <Box>
+            <SectionLabel>{t('common.background')}</SectionLabel>
+            <Stack gap={10}>
+              <BackgroundStylePicker value={backgroundStyle} onChange={setBackgroundStyle} t={t} />
+              <PaletteSwatchGrid
+                palettes={palettes}
+                value={selectedPalette}
+                onChange={setSelectedPalette}
+                style={backgroundStyle}
+                direction={direction as CaptureDirection}
+                onHover={onHoverPalette}
+                t={t}
+              />
+            </Stack>
+          </Box>
+
+          {
+}
+          {backgroundStyle === 'gradient' && (
+            <Box>
+              <SectionLabel>{t('capture.direction')}</SectionLabel>
+              <DirectionGrid value={direction} onChange={setDirection} />
+            </Box>
+          )}
+        </Stack>
+      </Collapse>
+    </Stack>
+  );
+};

@@ -5,6 +5,7 @@ import type { UiNotificationPayload, WorkerAttention } from '../shared/types';
 import { IPC, PROVIDER_URLS } from '../shared/types';
 import { detectProvider, getProviderLabel } from './providers';
 import { isPerplexitySessionCookie } from './providers/perplexity';
+import { appendLogLine } from './logFile';
 
 let _mainWin: BrowserWindow | null = null;
 let _notifyEnabled = true;
@@ -45,11 +46,22 @@ export function relaunchApp(reason = 'restart requested'): void {
   setTimeout(() => app.quit(), 600);
 }
 
+function pad(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
+function fileStamp(now: Date): string {
+  const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  return `${date} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+}
+
 export function sendLog(msg: string): void {
-  const time = new Date().toLocaleTimeString('en-GB', { hour12: false });
+  const now = new Date();
+  const time = now.toLocaleTimeString('en-GB', { hour12: false });
   const line = `[${time}] ${msg}`;
   console.log(line);
   sendToRenderer(IPC.LOG, line);
+  appendLogLine(`[${fileStamp(now)}] ${msg}`);
 }
 
 export function sendToRenderer(channel: string, ...args: unknown[]): void {
@@ -58,15 +70,14 @@ export function sendToRenderer(channel: string, ...args: unknown[]): void {
   }
 }
 
-// For senders that must know whether a push can actually be delivered (e.g.
-// temporary-chat replies, whose payload exists nowhere else).
+export function getMainWindow(): BrowserWindow | null {
+  return _mainWin !== null && !_mainWin.isDestroyed() ? _mainWin : null;
+}
+
 export function isMainWindowAlive(): boolean {
   return _mainWin !== null && !_mainWin.isDestroyed();
 }
 
-// Main-process only: the flow manager reads this to avoid navigating the worker to
-// about:blank while a sign-in or a human-verification challenge is on screen. It is not
-// surfaced in the UI — revealing the worker window already tells the user what to do.
 export function setWorkerAttention(state: WorkerAttention): void {
   _workerAttention = state;
 }
@@ -163,14 +174,9 @@ export function maskToken(token: string): string {
 
 const MAX_REQUESTER_NAME_CHARS = 64;
 
-// Bot display names are free text the sender controls, and they get spliced into
-// the system instruction. Collapsing whitespace denies a name any newline it
-// could use to forge an extra instruction line; the cap keeps the prompt sane.
 export function sanitizeRequesterName(raw: string | undefined): string {
   if (!raw) return '';
   const collapsed = raw.replace(/\s+/g, ' ').trim();
-  // Cap by code point, not UTF-16 unit: emoji are ordinary in LINE display
-  // names, and a plain slice can cut a surrogate pair into a lone half.
   const chars = Array.from(collapsed);
   return chars.length <= MAX_REQUESTER_NAME_CHARS
     ? collapsed

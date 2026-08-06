@@ -1,7 +1,11 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { getLanguageDir } from './files';
+import { getLanguageDir, getUserLanguageDir } from './files';
 import type { PromptPreferences } from '../shared/types';
+
+export function isValidLocaleTag(tag: string): boolean {
+  return /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(tag);
+}
 
 let langCache: Record<string, string> = {};
 let enCache: Record<string, string> = {};
@@ -19,14 +23,18 @@ export function setEnCache(data: Record<string, string>): void {
 }
 
 export async function loadLanguageData(lang: string): Promise<Record<string, string> | null> {
-  const langDir = getLanguageDir();
-  const filePath = path.join(langDir, `${lang}.json`);
-  try {
-    const raw = await fs.readFile(filePath, 'utf-8');
-    return JSON.parse(raw);
-  } catch {
-    return null;
+  if (!isValidLocaleTag(lang)) return null;
+  for (const dir of [getUserLanguageDir(), getLanguageDir()]) {
+    try {
+      const raw = await fs.readFile(path.join(dir, `${lang}.json`), 'utf-8');
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, string>;
+      }
+    } catch {
+    }
   }
+  return null;
 }
 
 export function t(
@@ -37,8 +45,6 @@ export function t(
   let result = strings[key] ?? enCache[key] ?? key;
   if (vars) {
     for (const [k, v] of Object.entries(vars)) {
-      // Function replacement keeps `$&`/`$'`-style patterns in user-controlled
-      // values (flow names, error text) literal instead of regex-expanded.
       result = result.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), () => v);
     }
   }
@@ -87,10 +93,11 @@ export function buildTaskInstruction(
   customInstruction: string | undefined,
   syncEnabled: boolean,
   locale: string,
+  extraRules: string[] = [],
 ): string {
   const manualInstruction = (customInstruction ?? '').trim();
   const localeInstruction = buildLocaleSystemInstruction(syncEnabled, locale);
-  const parts = [manualInstruction, localeInstruction].filter(Boolean);
+  const parts = [manualInstruction, localeInstruction, ...extraRules.map((rule) => rule.trim())].filter(Boolean);
   if (parts.length === 0) return '';
   return `System Instruction: ${parts.join('\n')}`;
 }
@@ -103,8 +110,6 @@ export function buildCombinedPromptFromPrefs(
   const nickname = (prefs.nickname ?? '').trim();
   if (nickname) {
     const nicknameTemplate = t(strings, 'settings.prompt.built.nickname');
-    // Function replacer: a name carrying `$&` or `$'` must not be read as a
-    // replacement pattern. Bot-sourced names make this reachable from outside.
     parts.push(nicknameTemplate.replace(/\{\{name\}\}/g, () => nickname));
   }
   if (prefs.tone !== 'default') {

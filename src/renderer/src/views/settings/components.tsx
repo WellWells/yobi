@@ -6,10 +6,12 @@ export { SectionCard } from '../../components/SectionCard';
 export { GroupHeader } from '../../components/GroupHeader';
 export { SelectDropdown } from '../../components/SelectDropdown';
 export { SettingRow } from '../../components/SettingRow';
+export { AppTextInput } from '../../components/AppTextInput';
 export { SettingField } from '../../components/SettingField';
 export { SettingDivider } from '../../components/SettingDivider';
 export { SectionTitle } from '../../components/SectionTitle';
-export { VisibilityCheckbox } from '../../components/VisibilityCheckbox';
+export { HotkeyField } from '../../components/HotkeyField';
+export { VisibilityToggle } from '../../components/VisibilityToggle';
 
 export { AppSegmentedControl as SegmentedControl } from '../../components/AppSegmentedControl';
 

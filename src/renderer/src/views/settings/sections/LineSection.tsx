@@ -4,8 +4,9 @@ import { KeyRound, Lock, MessageSquare, Plug, RefreshCw, Server, Users } from 'l
 import { AppPasswordInput } from '../../../components/AppPasswordInput';
 import { AppButton } from '../../../components/AppButton';
 import { AppNumberInput } from '../../../components/AppNumberInput';
-import { SectionCard, SettingRow, SettingField, SettingDivider, ToggleSwitch, GroupHeader, SectionTitle } from '../components';
+import { SectionCard, SettingRow, SettingField, SettingDivider, ToggleSwitch, SectionTitle } from '../components';
 import { BotLlmDirectSetting } from './BotLlmDirectSetting';
+import { BotReplyPreview } from './BotReplyPreview';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import { LineAccountAlerts } from './LineAccountAlerts';
 import { LinePairingPanel } from './LinePairingPanel';
@@ -46,6 +47,8 @@ export const LineSection: React.FC<Props> = ({ line, t, showSection, isSearching
   const runtimeStatus = settings?.runtime.status;
   const account = settings?.runtime.account;
   const [portDraft, setPortDraft] = useState<number | string>(settings?.port ?? 3007);
+  // Same rule as the Telegram card: off collapses to the switch, search still reaches in.
+  const expanded = (settings?.enabled ?? false) || isSearching;
 
   useEffect(() => {
     if (settings?.port !== undefined) setPortDraft(settings.port);
@@ -53,8 +56,6 @@ export const LineSection: React.FC<Props> = ({ line, t, showSection, isSearching
 
   return (
     <Box display={showSection(TAG_SETS.bots, 'bots') ? 'block' : 'none'}>
-      {isSearching && <GroupHeader label={t('settings.group.bots')} />}
-
       <SectionCard style={{ marginBottom: sectionGap }}>
         <Group justify="space-between" align="center">
           <Group gap={8} align="center">
@@ -71,165 +72,187 @@ export const LineSection: React.FC<Props> = ({ line, t, showSection, isSearching
 
         <SettingDivider my={16} />
 
-        <SectionTitle icon={<Plug size={15} />} label={t('settings.line.section.connection')} />
-        <Text fz="var(--font-size-base)" c="dimmed" lh={1.6} mb={12}>
-          {t('settings.line.hint')}
-        </Text>
+        {expanded && (
+          <>
+            <SectionTitle icon={<Plug size={15} />} label={t('settings.line.section.connection')} />
+            <Text fz="var(--font-size-base)" c="dimmed" lh={1.6} mb={12}>
+              {t('settings.line.hint')}
+            </Text>
+          </>
+        )}
 
-        <Stack gap={12}>
-          <SettingRow
-            icon={<MessageSquare size={13} />}
-            label={t('settings.line.enabled')}
-            control={
-              <ToggleSwitch
-                checked={settings?.enabled ?? false}
-                onChange={() => { void line.handleToggleLineEnabled(); }}
-              />
-            }
-          />
-
-          <SettingField icon={<KeyRound size={13} />} label={t('settings.line.tokenLabel')}>
-            <AppPasswordInput
-              tone="body"
-              mono
-              value={line.lineTokenInput}
-              onChange={(e) => line.setLineTokenInput(e.target.value)}
-              placeholder={t('settings.line.tokenPlaceholder')}
+        <SettingRow
+          icon={<MessageSquare size={13} />}
+          label={t('settings.line.enabled')}
+          hint={expanded ? undefined : t('settings.line.enabled.offHint')}
+          control={
+            <ToggleSwitch
+              checked={settings?.enabled ?? false}
+              onChange={() => { void line.handleToggleLineEnabled(); }}
             />
-            <Text fz="var(--font-size-sm)" c="dimmed">
-              {t('settings.line.tokenCurrent')}:{' '}
-              {settings?.hasChannelAccessToken
-                ? (settings.channelAccessTokenPreview || '****')
-                : t('settings.line.notSet')}
-            </Text>
-          </SettingField>
+          }
+        />
 
-          <SettingField icon={<Lock size={13} />} label={t('settings.line.secretLabel')}>
-            <Group gap={8} align="center">
-              <AppPasswordInput
-                flex={1}
-                tone="body"
-                mono
-                value={line.lineSecretInput}
-                onChange={(e) => line.setLineSecretInput(e.target.value)}
-                placeholder={t('settings.line.secretPlaceholder')}
-              />
-              <MButton
-                variant="default"
-                leftSection={<KeyRound size={13} />}
-                onClick={() => { void line.handleSaveLineCredentials(); }}
-                disabled={line.lineBusy || (!line.lineTokenInput.trim() && !line.lineSecretInput.trim())}
-              >
-                {t('settings.line.saveCredentials')}
-              </MButton>
-            </Group>
-            <Text fz="var(--font-size-sm)" c="dimmed">
-              {t('settings.line.secretCurrent')}:{' '}
-              {settings?.hasChannelSecret
-                ? (settings.channelSecretPreview || '****')
-                : t('settings.line.notSet')}
-            </Text>
-          </SettingField>
+        {expanded && (
+          <>
+            <Stack gap={12} mt={12}>
+              <SettingField icon={<KeyRound size={13} />} label={t('settings.line.tokenLabel')}>
+                <AppPasswordInput
+                  tone="body"
+                  mono
+                  value={line.lineTokenInput}
+                  onChange={(e) => line.setLineTokenInput(e.target.value)}
+                  placeholder={t('settings.line.tokenPlaceholder')}
+                />
+                <Text fz="var(--font-size-sm)" c="dimmed">
+                  {t('settings.line.tokenCurrent')}:{' '}
+                  {settings?.hasChannelAccessToken
+                    ? (settings.channelAccessTokenPreview || '****')
+                    : t('settings.line.notSet')}
+                </Text>
+              </SettingField>
 
-          {settings?.runtime.errorMessage && (
-            <Box
-              p="8px 10px"
-              bg="var(--mantine-color-bg-tertiary)"
-              style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 'var(--radius-sm)' }}
-            >
-              <Text fz="var(--font-size-sm)" c="var(--mantine-color-error)">
-                {settings.runtime.errorMessage}
-              </Text>
-            </Box>
-          )}
-        </Stack>
+              <SettingField icon={<Lock size={13} />} label={t('settings.line.secretLabel')}>
+                <AppPasswordInput
+                  tone="body"
+                  mono
+                  value={line.lineSecretInput}
+                  onChange={(e) => line.setLineSecretInput(e.target.value)}
+                  placeholder={t('settings.line.secretPlaceholder')}
+                />
+                <Text fz="var(--font-size-sm)" c="dimmed">
+                  {t('settings.line.secretCurrent')}:{' '}
+                  {settings?.hasChannelSecret
+                    ? (settings.channelSecretPreview || '****')
+                    : t('settings.line.notSet')}
+                </Text>
+              </SettingField>
 
-        <SettingDivider my={16} />
+              {/* One button for both fields: the API stores the token and the secret together. */}
+              <Group justify="flex-end">
+                <MButton
+                  variant="default"
+                  leftSection={<KeyRound size={13} />}
+                  onClick={() => { void line.handleSaveLineCredentials(); }}
+                  disabled={line.lineBusy || (!line.lineTokenInput.trim() && !line.lineSecretInput.trim())}
+                >
+                  {t('settings.line.saveCredentials')}
+                </MButton>
+              </Group>
 
-        <SectionTitle icon={<Server size={15} />} label={t('settings.line.section.webhook')} />
-        <Stack gap={12}>
-          <SettingField icon={<Server size={13} />} label={t('settings.line.portLabel')}>
-            <Group gap={8} align="center">
-              <AppNumberInput
-                w={140}
-                tone="body"
-                min={1}
-                max={65535}
-                allowDecimal={false}
-                value={portDraft}
-                onChange={setPortDraft}
-              />
-              <MButton
-                variant="default"
-                onClick={() => { void line.handleUpdateLinePort(Number(portDraft)); }}
-                disabled={line.lineBusy || !Number(portDraft)}
-              >
-                {t('settings.line.savePort')}
-              </MButton>
-            </Group>
-          </SettingField>
+              {settings?.runtime.errorMessage && (
+                <Box
+                  p="8px 10px"
+                  bg="var(--mantine-color-bg-tertiary)"
+                  style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 'var(--radius-sm)' }}
+                >
+                  <Text fz="var(--font-size-sm)" c="var(--mantine-color-error)">
+                    {settings.runtime.errorMessage}
+                  </Text>
+                </Box>
+              )}
+            </Stack>
 
-          {settings && (
-            <LineWebhookGuide port={settings.port} webhookPath={settings.webhookPath} t={t} />
-          )}
-        </Stack>
+            <SettingDivider my={16} />
 
-        <SettingDivider my={16} />
+            <SectionTitle icon={<Server size={15} />} label={t('settings.line.section.webhook')} />
+            <Stack gap={12}>
+              <SettingField icon={<Server size={13} />} label={t('settings.line.portLabel')}>
+                <Group gap={8} align="center">
+                  <AppNumberInput
+                    w={140}
+                    tone="body"
+                    min={1}
+                    max={65535}
+                    allowDecimal={false}
+                    value={portDraft}
+                    onChange={setPortDraft}
+                  />
+                  <MButton
+                    variant="default"
+                    onClick={() => { void line.handleUpdateLinePort(Number(portDraft)); }}
+                    disabled={line.lineBusy || !Number(portDraft)}
+                  >
+                    {t('settings.line.savePort')}
+                  </MButton>
+                </Group>
+              </SettingField>
 
-        <SectionTitle icon={<Users size={15} />} label={t('settings.line.section.access')} />
-        <Stack gap={12}>
-          {settings && (
-            <>
-              <BotLlmDirectSetting
-                value={settings.llmDirect}
-                busy={line.lineBusy}
-                hint={t('settings.line.llmDirect.hint')}
-                onUpdate={(patch) => { void line.handleUpdateLineLlmDirect(patch); }}
+              {settings && (
+                <LineWebhookGuide port={settings.port} webhookPath={settings.webhookPath} t={t} />
+              )}
+            </Stack>
+
+            <SettingDivider my={16} />
+
+            <SectionTitle icon={<MessageSquare size={15} />} label={t('settings.line.section.reply')} />
+            <Stack gap={12}>
+              <BotReplyPreview
+                compactReply
+                mode="markdown"
+                note={t('settings.line.reply.note')}
                 t={t}
               />
+
               <SettingDivider my={4} />
-            </>
-          )}
-          <Group justify="space-between" align="center" gap={8}>
-            <Text fz="var(--font-size-sm)" c="var(--mantine-color-default-color)">
-              {account
-                ? `${account.displayName} · ${account.basicId}`
-                : t('settings.line.account.unknown')}
-            </Text>
-            <AppButton
-              variant="default"
-              size="compact-sm"
-              leftSection={<RefreshCw size={13} />}
-              loading={line.lineAccountBusy}
-              onClick={() => { void line.handleRefreshLineAccount(); }}
-              disabled={runtimeStatus !== 'running'}
-            >
-              {t('settings.line.account.refresh')}
-            </AppButton>
-          </Group>
 
-          <LineAccountAlerts account={account} t={t} />
+              {settings && (
+                <BotLlmDirectSetting
+                  value={settings.llmDirect}
+                  busy={line.lineBusy}
+                  hint={t('settings.line.llmDirect.hint')}
+                  onUpdate={(patch) => { void line.handleUpdateLineLlmDirect(patch); }}
+                  t={t}
+                />
+              )}
+            </Stack>
 
-          <LinePairingPanel
-            pendingCodes={settings?.pairing.pendingCodes ?? []}
-            account={account}
-            busy={line.lineBusy}
-            onGenerate={() => { void line.handleGenerateLinePairingCode(); }}
-            onRevoke={(code) => { void line.handleRevokeLinePairingCode(code); }}
-            t={t}
-          />
+            <SettingDivider my={16} />
 
-          <SettingDivider my={4} />
+            <SectionTitle icon={<Users size={15} />} label={t('settings.line.section.access')} />
+            <Stack gap={12}>
+              <Group justify="space-between" align="center" gap={8}>
+                <Text fz="var(--font-size-sm)" c="var(--mantine-color-default-color)">
+                  {account
+                    ? `${account.displayName} · ${account.basicId}`
+                    : t('settings.line.account.unknown')}
+                </Text>
+                <AppButton
+                  variant="default"
+                  size="compact-sm"
+                  leftSection={<RefreshCw size={13} />}
+                  loading={line.lineAccountBusy}
+                  onClick={() => { void line.handleRefreshLineAccount(); }}
+                  disabled={runtimeStatus !== 'running'}
+                >
+                  {t('settings.line.account.refresh')}
+                </AppButton>
+              </Group>
 
-          <Text fz="var(--font-size-sm)" fw={600} c="var(--mantine-color-default-color)">
-            {t('settings.line.paired.title')}
-          </Text>
-          <LinePairedUsers
-            pairedUsers={settings?.pairing.pairedUsers ?? []}
-            onUnpair={(userId) => { void line.handleUnpairLineUser(userId); }}
-            t={t}
-          />
-        </Stack>
+              <LineAccountAlerts account={account} t={t} />
+
+              <LinePairingPanel
+                pendingCodes={settings?.pairing.pendingCodes ?? []}
+                account={account}
+                busy={line.lineBusy}
+                onGenerate={() => { void line.handleGenerateLinePairingCode(); }}
+                onRevoke={(code) => { void line.handleRevokeLinePairingCode(code); }}
+                t={t}
+              />
+
+              <SettingDivider my={4} />
+
+              <Text fz="var(--font-size-sm)" fw={600} c="var(--mantine-color-default-color)">
+                {t('settings.line.paired.title')}
+              </Text>
+              <LinePairedUsers
+                pairedUsers={settings?.pairing.pairedUsers ?? []}
+                onUnpair={(userId) => { void line.handleUnpairLineUser(userId); }}
+                t={t}
+              />
+            </Stack>
+          </>
+        )}
       </SectionCard>
     </Box>
   );

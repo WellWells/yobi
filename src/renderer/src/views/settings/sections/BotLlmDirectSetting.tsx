@@ -1,33 +1,32 @@
 import React from 'react';
 import { Box, Stack } from '@mantine/core';
+import { useShallow } from 'zustand/react/shallow';
 import { MessageCircle } from 'lucide-react';
 import { SelectDropdown, SettingRow, ToggleSwitch } from '../components';
 import { PROVIDER_DROPDOWN_MAX_HEIGHT, providerSectionsToSelectData } from '../../../config/models';
 import { useProviderModels } from '../../../hooks/useProviderModels';
+import { selectHiddenSources, useAppStore } from '../../../store/appStore';
+import { isModelUrlHidden } from '../../../../../shared/types';
 import type { BotLlmDirectConfig } from '../../../../../shared/types';
 
 interface Props {
   value: BotLlmDirectConfig;
   busy: boolean;
-  // Platform-specific explanation (Telegram adds the BotFather privacy note).
   hint: string;
   onUpdate: (patch: Partial<BotLlmDirectConfig>) => void;
   t: (key: string) => string;
 }
 
-// The command-free chat block shared by the Telegram and LINE sections: an
-// enable switch plus the provider plain messages are handed to ('' = follow the
-// app's default model).
 export const BotLlmDirectSetting: React.FC<Props> = ({ value, busy, hint, onUpdate, t }) => {
-  const { sections, allModels, hiddenSuffix } = useProviderModels(value.targetUrl);
+  const hidden = useAppStore(useShallow(selectHiddenSources));
+  const targetHidden = value.targetUrl !== '' && isModelUrlHidden(value.targetUrl, hidden);
+  const { sections, allModels } = useProviderModels(targetHidden ? '' : value.targetUrl);
   const options = [
     { value: '', label: t('settings.llmDirect.appDefault') },
-    ...providerSectionsToSelectData(sections, hiddenSuffix),
+    ...providerSectionsToSelectData(sections),
   ];
-  // A dangling target (a BYOK key deleted since) displays as the app default; the
-  // stored value only changes when the user picks something. allModels is unfiltered,
-  // so a merely hidden target still counts as known and stays selected.
-  const known = value.targetUrl === '' || allModels.some((model) => model.url === value.targetUrl);
+  const known = !targetHidden
+    && (value.targetUrl === '' || allModels.some((model) => model.url === value.targetUrl));
 
   return (
     <Stack gap={8}>

@@ -9,7 +9,9 @@ import {
 } from './clipboard';
 import { getLangCache } from './i18n';
 import { resolveUrlPrompt } from './urlParser';
+import { runQuickExport } from './quickExport';
 import type { QueueManager } from './queueManager';
+import type { QuickExportSettings } from '../shared/types';
 
 export interface HotkeyDeps {
   queue: QueueManager;
@@ -17,9 +19,15 @@ export interface HotkeyDeps {
 
 let _accessibilityPrompted = false;
 
-export function bindHotkey(deps: HotkeyDeps): void {
+/**
+ * Reports whether the accelerator actually took. The capture hotkey used to swallow this —
+ * a combination another app owned was logged and nothing else, so the settings field showed
+ * a binding that never fired. Quick export already warned; both now behave the same.
+ */
+export function bindHotkey(deps: HotkeyDeps): boolean {
   const { queue } = deps;
-  const ok = registerHotkey(config.hotkey, async () => {
+  const accelerator = mainAccelerator(config);
+  const ok = registerHotkey('main', accelerator, async () => {
     if (process.platform === 'darwin' && !checkMacosAccessibility()) {
       const langData = getLangCache();
       const errorMsg = langData['hotkey.error.accessibility'] ??
@@ -53,6 +61,7 @@ export function bindHotkey(deps: HotkeyDeps): void {
     queue.enqueue({
       id,
       prompt,
+      displayPrompt: resolved.displayPrompt,
       targetUrl,
       title: resolved.title,
       source: 'hotkey',
@@ -68,9 +77,58 @@ export function bindHotkey(deps: HotkeyDeps): void {
     sendWebNotification(notifyTitle, notifyBodyTemplate.replace('{{prompt}}', displayPrompt), 'info');
   });
 
-  if (ok) {
-    sendLog(`⌨️  Hotkey registered: ${config.hotkey}`);
-  } else {
-    sendLog(`❌ Failed to register hotkey ${config.hotkey}`);
+  if (!accelerator) {
+    sendLog('⌨️  Ask hotkey disabled');
+    return true;
   }
+  if (ok) {
+    sendLog(`⌨️  Hotkey registered: ${accelerator}`);
+    return true;
+  }
+  sendLog(`❌ Failed to register hotkey ${accelerator} — another app may already use it`);
+  notifyHotkeyFailed(accelerator);
+  return false;
+}
+
+function notifyHotkeyFailed(accelerator: string): void {
+  const langData = getLangCache();
+  sendWebNotification(
+    langData['hotkey.notify.title'] ?? 'Yobi',
+    (langData['hotkey.notify.failed'] ?? 'Could not register {{hotkey}} — another app may already use it')
+      .replace('{{hotkey}}', accelerator),
+    'warning',
+  );
+}
+
+/**
+ * Both slots are bound from TWO values — the combination and its on/off switch — so the
+ * derivation lives in one place per slot and every "did the binding change?" comparison goes
+ * through it. Switching off must yield blank (how registerHotkey releases a slot) while the
+ * recorded combination stays in config, so flicking the switch back is all it takes.
+ */
+export function mainAccelerator(settings: { hotkey: string; hotkeyEnabled: boolean }): string {
+  return settings.hotkeyEnabled ? settings.hotkey : '';
+}
+
+export function quickExportAccelerator(settings: QuickExportSettings): string {
+  return settings.enabled ? settings.hotkey : '';
+}
+
+export function bindQuickExportHotkey(): boolean {
+  const accelerator = quickExportAccelerator(config.quickExport);
+  const ok = registerHotkey('quickExport', accelerator, () => {
+    void runQuickExport();
+  });
+
+  if (!accelerator) {
+    sendLog('⌨️  Quick export hotkey disabled');
+    return true;
+  }
+  if (ok) {
+    sendLog(`⌨️  Quick export hotkey registered: ${accelerator}`);
+    return true;
+  }
+  sendLog(`❌ Failed to register quick export hotkey ${accelerator} — another app may already use it`);
+  notifyHotkeyFailed(accelerator);
+  return false;
 }

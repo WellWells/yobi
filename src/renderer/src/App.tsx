@@ -2,16 +2,17 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { AppWindow, LogOut } from 'lucide-react';
 import { Modal, Button, Group, Text, Checkbox, Box, Flex, Stack, Loader } from '@mantine/core';
 import { TitleBar } from './components/TitleBar';
+import { AgentConfirmDialog } from './components/AgentConfirmDialog';
 import { ChatView } from './views/ChatView';
 import { SettingsView } from './views/SettingsView';
 import { AboutView } from './views/AboutView';
 import { LogView } from './views/LogView';
-import { AgentFlowView } from './views/AgentFlowView';
+import { FlowView } from './views/FlowView';
 
 const MemoSettingsView = React.memo(SettingsView);
 const MemoAboutView = React.memo(AboutView);
 const MemoLogView = React.memo(LogView);
-const MemoAgentFlowView = React.memo(AgentFlowView);
+const MemoFlowView = React.memo(FlowView);
 import { useAppStore } from './store/appStore';
 import { useI18nStore } from './store/i18nStore';
 import { useAppBootstrap } from './hooks/useAppBootstrap';
@@ -65,10 +66,12 @@ export const App: React.FC = () => {
         <Box display={currentView === 'about' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
           <MemoAboutView />
         </Box>
-        <Box display={currentView === 'agentflow' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
-          <MemoAgentFlowView />
+        <Box display={currentView === 'flow' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
+          <MemoFlowView />
         </Box>
       </Flex>
+
+      <AgentConfirmDialog />
 
       <Modal
         opened={showCloseDialog}
@@ -77,7 +80,6 @@ export const App: React.FC = () => {
         centered
         size="sm"
         zIndex={100}
-        overlayProps={{ backgroundOpacity: 0.55 }}
         styles={{
           content: {
             background: 'var(--mantine-color-default)',

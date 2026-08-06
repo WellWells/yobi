@@ -36,9 +36,6 @@ const StepBox: React.FC<{ step: number; label: string; children: React.ReactNode
   </Box>
 );
 
-// The tunnel takes the bare origin, while LINE needs that origin's public
-// counterpart with the webhook path appended. Showing one merged URL invites
-// pasting the wrong half into either field, so each step exposes only its own.
 export const LineWebhookGuide: React.FC<Props> = ({ port, webhookPath, t }) => {
   const originUrl = `http://127.0.0.1:${port}`;
   const tunnelCommand = `cloudflared tunnel --url ${originUrl}`;

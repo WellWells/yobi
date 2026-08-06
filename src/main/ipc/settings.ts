@@ -1,39 +1,41 @@
 import { ipcMain, app, shell } from 'electron';
 import * as fs from 'node:fs/promises';
 import { IPC, isByokTargetUrl } from '../../shared/types';
-import type { CaptureSettings, HiddenSources } from '../../shared/types';
+import type { CaptureSettings, QuickExportSettings, HiddenSources, HotkeyBindResult } from '../../shared/types';
 import { isThemePreference } from '../../shared/themes';
 import { getProviderLabel } from '../providers';
 import {
   config,
   saveConfig,
+  getHiddenSources,
   normalizePromptPreferences,
   normalizeCaptureSettings,
+  normalizeQuickExport,
   normalizeHiddenSources,
   normalizeNotifyEvents,
 } from '../config';
 import type { Config } from '../config';
 import { sendLog, normalizeAiUrl, applyLaunchAtStartup, relaunchApp } from '../helpers';
+import { getLogDir } from '../logFile';
 import { getMetricsSnapshot, resetMetrics } from '../metrics';
+import { getConversationTokenStats } from '../conversationTokenStats';
 import { loadLanguageData, setLangCache, setEnCache } from '../i18n';
 import { requestFactoryReset } from '../factoryReset';
 import { flushPendingTempChatResult, isTempChatMode, setTempChatMode } from '../tempChat';
 import { getWorkerWin } from '../windows';
-import { setHotkeyPaused } from '../hotkey';
+import { llmLane } from '../flow/lanes';
+import { setHotkeyPaused, wouldCollide } from '../hotkey';
+import { quickExportAccelerator } from '../hotkeyBinding';
 import { buildSettingsSnapshot } from './context';
 import type { IpcContext } from './context';
 
-// Re-apply everything that must react to a freshly imported config (used by the
-// backup restore path once the config category is written). Mirrors what the old
-// standalone config-import handler did inline.
 export function applyImportedConfigLiveEffects(importedConfig: Config, ctx: IpcContext): void {
   ctx.bindHotkey();
+  ctx.bindQuickExportHotkey();
   applyLaunchAtStartup(importedConfig.launchAtStartup, importedConfig.closeToTray);
   ctx.onTraySettingsChanged?.();
   ctx.onTrayMenuRebuild?.();
 
-  // BYOK targets are HTTP API endpoints, not loadable pages — same guard as
-  // UPDATE_AI_URL.
   if (!isByokTargetUrl(importedConfig.targetUrl)) {
     const worker = getWorkerWin();
     if (worker && !worker.isDestroyed()) {
@@ -56,12 +58,14 @@ export function applyImportedConfigLiveEffects(importedConfig: Config, ctx: IpcC
 
 export function registerSettingsHandlers(ctx: IpcContext): void {
   ipcMain.handle(IPC.GET_HOTKEY, () => config.hotkey);
-  ipcMain.handle(IPC.UPDATE_HOTKEY, (_event, newHotkey: string) => {
+  ipcMain.handle(IPC.UPDATE_HOTKEY, (_event, newHotkey: string): HotkeyBindResult => {
+    if (wouldCollide(newHotkey, config.hotkey, config.quickExport.hotkey)) return 'conflict';
+
     saveConfig({ hotkey: newHotkey });
     config.hotkey = newHotkey;
-    ctx.bindHotkey();
+    const ok = ctx.bindHotkey();
     sendLog(`⌨️  Hotkey updated to: ${newHotkey}`);
-    return true;
+    return ok ? 'ok' : 'taken';
   });
 
   ipcMain.handle(IPC.SET_HOTKEY_PAUSED, (_event, paused: boolean) => {
@@ -69,27 +73,36 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
     return true;
   });
 
+  ipcMain.handle(IPC.GET_HOTKEY_ENABLED, () => config.hotkeyEnabled);
+  ipcMain.handle(IPC.SET_HOTKEY_ENABLED, (_event, enabled: boolean): HotkeyBindResult => {
+    // The combination stays in config while it is off, so switching back on is all it takes.
+    config.hotkeyEnabled = Boolean(enabled);
+    saveConfig({ hotkeyEnabled: config.hotkeyEnabled });
+    const ok = ctx.bindHotkey();
+    sendLog(`⌨️  Ask hotkey ${config.hotkeyEnabled ? 'enabled' : 'disabled'}`);
+    return ok ? 'ok' : 'taken';
+  });
+
   ipcMain.handle(IPC.GET_AI_URL, () => config.targetUrl);
-  ipcMain.handle(IPC.UPDATE_AI_URL, async (_event, nextUrl: string) => {
+  ipcMain.handle(IPC.UPDATE_AI_URL, (_event, nextUrl: string) => {
     const normalized = normalizeAiUrl(nextUrl);
     config.targetUrl = normalized;
     saveConfig({ targetUrl: normalized });
-    // BYOK targets are HTTP API endpoints — leave the worker window on its
-    // current page instead of navigating it to an unloadable byok:// url.
+    // Pointing the worker at the new provider only saves the next send a navigation,
+    // so it queues behind whatever automation is already driving that window rather
+    // than loading a page out from under it — and is skipped once a later pick wins.
     if (!isByokTargetUrl(normalized)) {
-      const worker = getWorkerWin();
-      if (worker && !worker.isDestroyed()) await worker.loadURL(normalized);
+      void llmLane.runExclusive(async () => {
+        const worker = getWorkerWin();
+        if (!worker || worker.isDestroyed() || config.targetUrl !== normalized) return;
+        await worker.loadURL(normalized).catch(() => undefined);
+      });
     }
     sendLog(`🌐 AI target updated: ${getProviderLabel(normalized)}`);
     return true;
   });
 
-  ipcMain.handle(IPC.GET_HIDDEN_SOURCES, (): HiddenSources => ({
-    providers: config.hiddenProviders,
-    duckaiModelIds: config.hiddenDuckaiModelIds,
-    byokIds: config.hiddenByokIds,
-    byokGroupIds: config.hiddenByokGroupIds,
-  }));
+  ipcMain.handle(IPC.GET_HIDDEN_SOURCES, (): HiddenSources => getHiddenSources());
 
   ipcMain.handle(IPC.UPDATE_HIDDEN_SOURCES, (_event, raw: unknown) => {
     const next = normalizeHiddenSources(raw);
@@ -103,6 +116,7 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
       hiddenByokIds: config.hiddenByokIds,
       hiddenByokGroupIds: config.hiddenByokGroupIds,
     });
+    void ctx.telegramRuntime.refreshBotCommands();
     return { ok: true as const };
   });
 
@@ -175,6 +189,13 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
     return error === '';
   });
 
+  ipcMain.handle(IPC.OPEN_LOG_DIR, async () => {
+    const logDir = getLogDir();
+    await fs.mkdir(logDir, { recursive: true });
+    const error = await shell.openPath(logDir);
+    return error === '';
+  });
+
   ipcMain.handle(IPC.GET_APP_VERSION, () => app.getVersion());
   ipcMain.handle(IPC.GET_UPDATE_SOURCE, () => (process.windowsStore ? 'store' : 'github'));
 
@@ -191,6 +212,12 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
     saveConfig({ layoutMode: normalized });
     return true;
   });
+  ipcMain.handle(IPC.GET_SHOW_TOKEN_USAGE, () => config.showTokenUsage);
+  ipcMain.handle(IPC.UPDATE_SHOW_TOKEN_USAGE, (_event, show: boolean) => {
+    config.showTokenUsage = Boolean(show);
+    saveConfig({ showTokenUsage: config.showTokenUsage });
+    return true;
+  });
   ipcMain.handle(IPC.GET_MARKDOWN_ZOOM, () => config.markdownZoom);
   ipcMain.handle(IPC.UPDATE_MARKDOWN_ZOOM, (_event, zoom: number) => {
     const clamped = Math.min(200, Math.max(70, Math.round(Number(zoom) / 10) * 10));
@@ -205,7 +232,21 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
     return true;
   });
 
+  ipcMain.handle(IPC.GET_QUICK_EXPORT, () => config.quickExport);
+  ipcMain.handle(IPC.UPDATE_QUICK_EXPORT, (_event, settings: QuickExportSettings): HotkeyBindResult => {
+    const next = normalizeQuickExport(settings);
+    // Judged only when the combination moves, so a format or ZIP change can never be refused.
+    if (wouldCollide(next.hotkey, config.quickExport.hotkey, config.hotkey)) return 'conflict';
+
+    const previous = quickExportAccelerator(config.quickExport);
+    config.quickExport = next;
+    saveConfig({ quickExport: config.quickExport });
+    if (quickExportAccelerator(config.quickExport) === previous) return 'ok';
+    return ctx.bindQuickExportHotkey() ? 'ok' : 'taken';
+  });
+
   ipcMain.handle(IPC.METRICS_GET, () => getMetricsSnapshot());
+  ipcMain.handle(IPC.METRICS_CONVERSATION_TOKENS, () => getConversationTokenStats());
   ipcMain.handle(IPC.METRICS_RESET, () => {
     sendLog('📊 Usage statistics cleared');
     return resetMetrics();
@@ -219,8 +260,6 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
   });
 
   ipcMain.handle(IPC.TEMP_CHAT_GET_MODE, () => {
-    // A (re)booted renderer is attaching — hand over any reply that completed
-    // while no window existed, after this reply returns.
     setImmediate(flushPendingTempChatResult);
     return isTempChatMode();
   });

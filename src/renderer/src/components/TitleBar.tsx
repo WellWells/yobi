@@ -6,9 +6,11 @@ import { useI18nStore } from '../store/i18nStore';
 import { useUpdateStore } from '../store/useUpdateStore';
 import { useAltKeyHeld } from '../hooks/useAltKeyHeld';
 import type { View } from '../store/appStore';
-import { AgentFlowIcon } from './AgentFlowIcon';
+// Same glyph the chat slash-command menu uses for a flow, so the two can never drift.
+import { FLOW_COMMAND_ICON as FlowIcon } from '../config/chatModes';
 import { AppWindow, Info, ListOrdered, MessageSquare, ScrollText, Settings } from 'lucide-react';
-import { systemApi } from '../api/electronApi';
+import { agentApi, systemApi } from '../api/electronApi';
+import { useAgentRunStore } from '../store/useAgentRunStore';
 import {
   isMac,
   navScrollStyle,
@@ -21,7 +23,7 @@ import styles from './TitleBar.module.css';
 
 const NAV_META: Record<View, { labelKey: string; icon: React.ReactNode }> = {
   chat: { labelKey: 'nav.chat', icon: <MessageSquare size={13} /> },
-  agentflow: { labelKey: 'nav.agentflow', icon: <AgentFlowIcon size={15} /> },
+  flow: { labelKey: 'nav.flow', icon: <FlowIcon size={13} /> },
   logs: { labelKey: 'nav.logs', icon: <ScrollText size={13} /> },
   settings: { labelKey: 'nav.settings', icon: <Settings size={13} /> },
   about: { labelKey: 'nav.about', icon: <Info size={13} /> },
@@ -38,6 +40,10 @@ export const TitleBar: React.FC = () => {
   );
   const { t, locale } = useI18nStore();
   const hasUpdate = useUpdateStore((state) => state.hasUpdate);
+  const agentTraces = useAgentRunStore((state) => state.traces);
+
+  useEffect(() => agentApi.onTrace((payload) => useAgentRunStore.getState().applyTrace(payload)), []);
+  const handleCancelAgent = useCallback((runId: string): void => { void agentApi.cancel(runId); }, []);
   const barRef = useRef<HTMLDivElement>(null);
   const navRef = useRef<HTMLDivElement>(null);
   const tightThresholdRef = useRef(0);
@@ -151,8 +157,8 @@ export const TitleBar: React.FC = () => {
 
   const statusLabel = hasQueueItems
     ? isProcessing
-      ? `${t('status.processing')} ${queue.current}/${queue.total}`
-      : `${t('status.queuePending')}: ${queuePending}`
+      ? t('status.processing').replace('{{count}}', String(queue.total))
+      : t('status.queuePending').replace('{{count}}', String(queuePending))
     : t('status.ready');
 
   const statusColor = hasQueueItems
@@ -167,9 +173,6 @@ export const TitleBar: React.FC = () => {
     ? isProcessing ? 'rgba(210,153,34,0.32)' : 'rgba(56,139,253,0.35)'
     : 'rgba(63,185,80,0.32)';
 
-  // Sign-in and human-verification both reveal the worker window on the spot and fire a
-  // system notification, so an extra "needs attention" state here would only restate what
-  // the user is already looking at.
   const workerIcon = <AppWindow size={15} />;
   const workerTitle = t('titlebar.worker.open');
 
@@ -288,6 +291,8 @@ export const TitleBar: React.FC = () => {
             isForceSkipping={isForceSkipping}
             onCancelTask={handleCancelQueueTask}
             onForceSkip={handleForceSkipActiveTask}
+            agentTraces={agentTraces}
+            onCancelAgent={handleCancelAgent}
             onMouseEnter={openQueuePopover}
             onMouseLeave={closeQueuePopoverSoon}
             t={t}

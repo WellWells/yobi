@@ -1,9 +1,26 @@
 import React from 'react';
+import type { Options } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
+import remarkBreaks from 'remark-breaks';
 import { ShikiCodeBlock } from '../components/ShikiCodeBlock';
+import { MermaidBlock } from '../components/chat/MermaidBlock';
+import { isMermaidLanguage } from '../../../shared/mermaidFences';
 
-export const remarkPlugins = [remarkGfm, remarkMath];
+/**
+ * Single-dollar text math stays off. With it on, any two `$` in one block pair up, so an
+ * answer quoting prices — "$549 … HK$4,282 … NT$19,990 … AI TOPS/$" — turns the prose
+ * between them into math: KaTeX prints CJK in an italic math font, or fails outright and
+ * paints the raw source red, taking the citation links this app injects with it. Those
+ * links are consumed while parsing, so nothing downstream can put them back.
+ *
+ * `$$…$$` still renders, inline and display alike, which is what real math arrives as.
+ */
+export const remarkPlugins: NonNullable<Options['remarkPlugins']> = [
+  remarkGfm,
+  [remarkMath, { singleDollarTextMath: false }],
+  remarkBreaks,
+];
 
 export const SharedCodeBlock: React.FC<{
   className?: string;
@@ -13,7 +30,11 @@ export const SharedCodeBlock: React.FC<{
   if (!match) {
     return <code className={className}>{children}</code>;
   }
-  return <ShikiCodeBlock lang={match[1]} code={String(children).replace(/\n$/, '')} />;
+  const code = String(children).replace(/\n$/, '');
+  if (isMermaidLanguage(match[1])) {
+    return <MermaidBlock code={code} />;
+  }
+  return <ShikiCodeBlock lang={match[1]} code={code} />;
 };
 
 function hasLanguageCodeClass(children?: React.ReactNode): boolean {
@@ -39,11 +60,6 @@ function isHttpUrl(href?: string): boolean {
   }
 }
 
-// Route every markdown link through the OS browser instead of the app's own
-// BrowserWindow. A remote- or AI-authored href must never navigate the renderer
-// top-level frame: that would hand the full electronAPI bridge to the loaded
-// page. Shared by every markdown surface (chat view, export preview) so none of
-// them can regress into default same-window navigation.
 export const ExternalLink: React.FC<React.ComponentPropsWithoutRef<'a'>> = ({ href, onClick, ...props }) => {
   const handleClick: React.MouseEventHandler<HTMLAnchorElement> = (event) => {
     onClick?.(event);

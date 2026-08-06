@@ -2,8 +2,8 @@ import type { FlowGenerationResult, SkillInstance, SkillType, TriggerConfig } fr
 import {
   DEFAULT_SKILL_CONFIG,
   SKILL_SPECS,
-  SKILL_TYPES,
   SKILLS_WITHOUT_OUTPUT_KEY,
+  canonicalSkillType,
 } from './flowSkillSchema';
 import { validateTrigger } from './flowTriggerValidation';
 import { checkVariableReferences } from './flowReferenceCheck';
@@ -15,7 +15,6 @@ type StepValidationResult =
   | { ok: true; step: SkillInstance }
   | { ok: false; error: string };
 
-// Canonical outputKey grammar — shared with the renderer step editor.
 export const OUTPUT_KEY_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
 const REQUIRED_KEYS: Partial<Record<SkillType, string[]>> = Object.fromEntries(
@@ -53,10 +52,11 @@ function validateStep(raw: unknown, index: number): StepValidationResult {
   }
   const s = raw as Record<string, unknown>;
   const type = s.type;
-  if (typeof type !== 'string' || !SKILL_TYPES.includes(type as SkillType)) {
+  /* Resolves renamed types too, so a flow exported before a rename still imports. */
+  const skillType = typeof type === 'string' ? canonicalSkillType(type) : null;
+  if (!skillType) {
     return { ok: false, error: `Step ${index + 1} has unknown type "${String(type)}"` };
   }
-  const skillType = type as SkillType;
 
   const config: Record<string, string> = { ...DEFAULT_SKILL_CONFIG[skillType] };
   if (typeof s.config === 'object' && s.config !== null) {
@@ -65,9 +65,6 @@ function validateStep(raw: unknown, index: number): StepValidationResult {
     }
   }
 
-  // The runtime's file-export gate (isCaptureFormat) is an exact lowercase
-  // match, so normalize here and reject unknown formats instead of letting
-  // "PNG"/"jpg" silently skip the export at execution time.
   if (skillType === 'llm') {
     const exportFormat = (config.exportFormat ?? '').trim().toLowerCase();
     if (exportFormat && !LLM_EXPORT_FORMATS.includes(exportFormat)) {
@@ -125,8 +122,6 @@ function checkDuplicateOutputKeys(steps: SkillInstance[]): string | null {
   return null;
 }
 
-// Runs after the explicit-duplicate check so an auto-assigned key can never
-// collide with (or be blamed for) a key the model chose.
 function assignFallbackOutputKeys(steps: SkillInstance[]): void {
   const used = new Set(steps.map((s) => s.outputKey).filter(Boolean));
   steps.forEach((step, i) => {

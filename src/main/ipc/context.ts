@@ -21,7 +21,8 @@ export interface IpcContext {
   lineRuntime: LineRuntime;
   telegramSessionId: string;
   getMainWin: () => BrowserWindow | null;
-  bindHotkey: () => void;
+  bindHotkey: () => boolean;
+  bindQuickExportHotkey: () => boolean;
   checkForUpdates: () => Promise<boolean>;
   onTraySettingsChanged?: () => void;
   onTrayMenuRebuild?: () => void;
@@ -33,6 +34,7 @@ export interface IpcContext {
 export function buildSettingsSnapshot(): SettingsSnapshot {
   return {
     hotkey: config.hotkey,
+    hotkeyEnabled: config.hotkeyEnabled,
     locale: config.locale,
     theme: config.theme,
     syncSystemLanguageToModel: config.syncSystemLanguageToModel,

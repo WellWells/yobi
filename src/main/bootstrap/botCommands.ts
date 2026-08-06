@@ -1,28 +1,57 @@
-import { config } from '../config';
-import { BOT_STATIC_COMMANDS, PROVIDER_ALIASES, resolveProviderCommands } from '../providerCommands';
-import type { ResolvedProviderCommand } from '../providerCommands';
-import { resolveByokCommands } from '../byokCommands';
-import type { ByokCommandDef } from '../byokCommands';
+import { buildByokGroupUrl, buildByokUrl, isModelUrlHidden } from '../../shared/types';
+import type { BotByokCommandInfo } from '../../shared/types';
+import { config, getHiddenSources } from '../config';
+import { resolveBotCommandSet } from '../providerCommands';
+import type { BotCommandSet } from '../providerCommands';
 import type { FlowManager } from '../flow';
 
-// Telegram and LINE share one provider-command config, so they must also share
-// the resolution: the same settings resolving to different command names per
-// platform is exactly the divergence this replaced. Called on every incoming
-// message, never cached — a renamed command answers without a restart.
-export function resolveBotCommands(getFlowManager: () => FlowManager | null): {
-  providers: ResolvedProviderCommand[];
-  byok: ByokCommandDef[];
-} {
-  const flowCommands = (getFlowManager()?.getBotCommands() ?? []).map((fc) => fc.command);
-  const providers = resolveProviderCommands(config.providerCommands, flowCommands);
-  // Both provider spellings stay reserved even when unclaimed here: LINE also
-  // answers the alias, so a BYOK key named 'ChatGPT' would otherwise mean the
-  // API key on Telegram and the web provider on LINE.
-  const byok = resolveByokCommands(config.byokInstances, config.byokGroups, [
-    ...BOT_STATIC_COMMANDS,
-    ...Object.keys(PROVIDER_ALIASES),
-    ...providers.map((pc) => pc.command),
-    ...flowCommands,
-  ]);
-  return { providers, byok };
+export function resolveBotCommands(getFlowManager: () => FlowManager | null): BotCommandSet {
+  return resolveBotCommandSet({
+    providerCommands: config.providerCommands,
+    builtinCommands: config.builtinCommands,
+    byokInstances: config.byokInstances,
+    byokGroups: config.byokGroups,
+    byokEnabled: config.botByokCommands,
+    flowCommands: (getFlowManager()?.getBotCommands() ?? []).map((fc) => fc.command),
+    hidden: getHiddenSources(),
+  });
+}
+
+/**
+ * Every BYOK key and group as the settings page needs to show it. The command name is the
+ * one the bots really registered — resolved here rather than in the renderer, which cannot
+ * see flow commands and so would preview names that clash. Switched-off entries get the
+ * name they would take, from a second pass that ignores the opt-outs.
+ */
+export function listBotByokCommands(getFlowManager: () => FlowManager | null): BotByokCommandInfo[] {
+  const hidden = getHiddenSources();
+  const live = new Map(resolveBotCommands(getFlowManager).byok.map((bc) => [bc.targetUrl, bc.command]));
+  // Ignoring both the opt-outs and the hiding gives a switched-off or hidden entry the name
+  // it would take, so its row reads as a name rather than as a blank.
+  const previewSet = resolveBotCommandSet({
+    providerCommands: config.providerCommands,
+    builtinCommands: config.builtinCommands,
+    byokInstances: config.byokInstances,
+    byokGroups: config.byokGroups,
+    flowCommands: (getFlowManager()?.getBotCommands() ?? []).map((fc) => fc.command),
+    hidden: { providers: [], duckaiModelIds: [], byokIds: [], byokGroupIds: [] },
+  });
+  const preview = new Map(previewSet.byok.map((bc) => [bc.targetUrl, bc.command]));
+
+  const row = (id: string, name: string, kind: 'key' | 'group', targetUrl: string): BotByokCommandInfo => ({
+    id,
+    kind,
+    name,
+    command: live.get(targetUrl) ?? preview.get(targetUrl) ?? '',
+    enabled: config.botByokCommands[id] !== false,
+    hidden: isModelUrlHidden(targetUrl, hidden),
+  });
+
+  return [
+    ...config.byokInstances.map((instance) =>
+      row(instance.id, instance.name, 'key', buildByokUrl(instance.id))),
+    ...config.byokGroups
+      .filter((group) => group.memberIds.length > 0)
+      .map((group) => row(group.id, group.name, 'group', buildByokGroupUrl(group.id))),
+  ];
 }

@@ -3,11 +3,11 @@ import { sendLog } from '../../helpers';
 const BROWSER_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
-function envelope(output: string, subVars: Record<string, string>): string {
+export function envelope(output: string, subVars: Record<string, string>): string {
   return JSON.stringify({ output, ...subVars });
 }
 
-async function fetchJson(url: string, timeoutMs: number, headers?: Record<string, string>): Promise<unknown> {
+export async function fetchJson(url: string, timeoutMs: number, headers?: Record<string, string>): Promise<unknown> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1_000, timeoutMs));
   try {
@@ -30,12 +30,22 @@ function clampInt(raw: string | undefined, fallback: number, min: number, max: n
   return Math.min(max, Math.max(min, Math.floor(n)));
 }
 
-interface ForexResult { base: string; target: string; rate: number; amount: number; converted: number; asOf: string }
+interface ForexResult {
+  base: string; target: string; rate: number; amount: number; converted: number; asOf: string;
+  previousClose: number | null;
+}
 
 function buildForexEnvelope(r: ForexResult, precision: number): string {
   const rate = Number(r.rate.toFixed(precision));
   const converted = Number(r.converted.toFixed(precision));
-  const json = JSON.stringify({ base: r.base, target: r.target, rate, amount: r.amount, converted, asOf: r.asOf });
+  const hasPrev = r.previousClose !== null && r.previousClose > 0;
+  const previousClose = hasPrev ? String(Number(r.previousClose!.toFixed(precision))) : '';
+  const changePct = hasPrev
+    ? String(Number((((r.rate - r.previousClose!) / r.previousClose!) * 100).toFixed(4)))
+    : '';
+  const json = JSON.stringify({
+    base: r.base, target: r.target, rate, amount: r.amount, converted, asOf: r.asOf, previousClose, changePct,
+  });
   return envelope(json, {
     rate: String(rate),
     converted: String(converted),
@@ -43,8 +53,37 @@ function buildForexEnvelope(r: ForexResult, precision: number): string {
     base: r.base,
     target: r.target,
     asOf: r.asOf,
+    previousClose,
+    changePct,
     isFailed: '0',
   });
+}
+
+interface ForexQuote { rate: number; asOf: string; previousClose: number | null }
+
+async function fetchYahooRate(base: string, target: string, timeoutMs: number): Promise<ForexQuote | null> {
+  for (const host of ['query1', 'query2']) {
+    try {
+      const symbol = encodeURIComponent(`${base}${target}=X`);
+      const url = `https://${host}.finance.yahoo.com/v8/finance/chart/${symbol}?range=1d&interval=1d`;
+      const data = await fetchJson(url, timeoutMs, { 'User-Agent': BROWSER_UA }) as {
+        chart?: { error?: unknown; result?: Array<{ meta?: Record<string, unknown> }> };
+      };
+      const meta = data.chart?.result?.[0]?.meta;
+      if (data.chart?.error || !meta) continue;
+      const rate = Number(meta.regularMarketPrice);
+      if (!Number.isFinite(rate) || rate <= 0) continue;
+      const prev = Number(meta.chartPreviousClose ?? meta.previousClose ?? NaN);
+      const marketTime = Number(meta.regularMarketTime);
+      return {
+        rate,
+        asOf: Number.isFinite(marketTime) ? new Date(marketTime * 1_000).toUTCString() : '',
+        previousClose: Number.isFinite(prev) && prev > 0 ? prev : null,
+      };
+    } catch {
+    }
+  }
+  return null;
 }
 
 export async function execForex(config: Record<string, string>, timeoutMs: number): Promise<string> {
@@ -54,15 +93,33 @@ export async function execForex(config: Record<string, string>, timeoutMs: numbe
   const precision = clampInt(config.precision, 4, 0, 12);
 
   const fail = (message: string): string => {
-    sendLog(`💱 [AgentFlow] Forex: ${message}`);
-    return envelope(message, { rate: '0', converted: '0', amount: amountRaw || '1', base, target, asOf: '', isFailed: '1' });
+    sendLog(`💱 [Flow] Forex: ${message}`);
+    return envelope(message, {
+      rate: '0', converted: '0', amount: amountRaw || '1', base, target,
+      asOf: '', previousClose: '', changePct: '', isFailed: '1',
+    });
   };
 
   if (!base || !target) return fail('forex: base and target are required');
   const amount = amountRaw === '' ? 1 : Number(amountRaw);
   if (!Number.isFinite(amount)) return fail(`forex: invalid amount "${amountRaw}"`);
-  if (base === target) return buildForexEnvelope({ base, target, rate: 1, amount, converted: amount, asOf: '' }, precision);
+  if (base === target) {
+    return buildForexEnvelope(
+      { base, target, rate: 1, amount, converted: amount, asOf: '', previousClose: null },
+      precision,
+    );
+  }
 
+  const live = await fetchYahooRate(base, target, timeoutMs);
+  if (live) {
+    sendLog(`💱 [Flow] Forex: 1 ${base} = ${live.rate} ${target} (live)`);
+    return buildForexEnvelope(
+      { base, target, rate: live.rate, amount, converted: amount * live.rate, asOf: live.asOf, previousClose: live.previousClose },
+      precision,
+    );
+  }
+
+  sendLog(`💱 [Flow] Forex: live quote unavailable for ${base}/${target}, falling back to the daily rate table`);
   try {
     const data = await fetchJson(`https://open.er-api.com/v6/latest/${encodeURIComponent(base)}`, timeoutMs) as {
       result?: string; 'error-type'?: string; rates?: Record<string, number>; time_last_update_utc?: string;
@@ -70,8 +127,11 @@ export async function execForex(config: Record<string, string>, timeoutMs: numbe
     if (data.result === 'error') return fail(`forex: unknown currency ${base} (${data['error-type'] ?? 'error'})`);
     const rate = data.rates?.[target];
     if (typeof rate !== 'number') return fail(`forex: unknown currency ${target}`);
-    sendLog(`💱 [AgentFlow] Forex: 1 ${base} = ${rate} ${target}`);
-    return buildForexEnvelope({ base, target, rate, amount, converted: amount * rate, asOf: data.time_last_update_utc ?? '' }, precision);
+    sendLog(`💱 [Flow] Forex: 1 ${base} = ${rate} ${target} (daily)`);
+    return buildForexEnvelope(
+      { base, target, rate, amount, converted: amount * rate, asOf: data.time_last_update_utc ?? '', previousClose: null },
+      precision,
+    );
   } catch (err) {
     return fail(`forex source unavailable: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -84,7 +144,6 @@ interface Quote {
   marketTime: string;
 }
 
-// Exported for tests.
 export function computeChange(price: number, previousClose: number): { change: number; changePct: string } {
   const change = price - previousClose;
   const changePct = previousClose ? String(Number((change / previousClose * 100).toFixed(4))) : '';
@@ -164,22 +223,22 @@ export async function execStock(config: Record<string, string>, timeoutMs: numbe
   const symbols = (config.symbol ?? '').split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
 
   if (symbols.length === 0) {
-    sendLog('📈 [AgentFlow] Stock: no symbol');
+    sendLog('📈 [Flow] Stock: no symbol');
     return envelope('(no symbol)', { isFailed: '1' });
   }
 
   if (symbols.length === 1) {
     const q = await fetchQuote(symbols[0], timeoutMs);
     if (!q) {
-      sendLog(`📈 [AgentFlow] Stock: quote unavailable for ${symbols[0]}`);
+      sendLog(`📈 [Flow] Stock: quote unavailable for ${symbols[0]}`);
       return envelope(`(quote unavailable: ${symbols[0]})`, { symbol: symbols[0], isFailed: '1' });
     }
-    sendLog(`📈 [AgentFlow] Stock: ${q.symbol} ${q.price} ${q.currency}`);
+    sendLog(`📈 [Flow] Stock: ${q.symbol} ${q.price} ${q.currency}`);
     return buildStockEnvelope(q);
   }
 
   const quotes = await Promise.all(symbols.map((s) => fetchQuote(s, timeoutMs).then((q) => ({ s, q }))));
-  sendLog(`📈 [AgentFlow] Stock: ${quotes.filter((x) => x.q).length}/${symbols.length} quotes`);
+  sendLog(`📈 [Flow] Stock: ${quotes.filter((x) => x.q).length}/${symbols.length} quotes`);
   return JSON.stringify(quotes.map(({ s, q }) => (q ? stockJson(q) : { symbol: s, isFailed: 1 })));
 }
 
@@ -196,9 +255,30 @@ const WMO_CODE_TEXT: Record<number, string> = {
   95: 'Thunderstorm', 96: 'Thunderstorm with slight hail', 99: 'Thunderstorm with heavy hail',
 };
 
-// Exported for tests.
 export function wmoText(code: number): string {
   return WMO_CODE_TEXT[code] ?? `code ${code}`;
+}
+
+export interface GeocodedPlace {
+  displayName: string;
+  countryCode: string;
+  latitude: number;
+  longitude: number;
+}
+
+export async function geocodePlace(location: string, timeoutMs: number): Promise<GeocodedPlace | null> {
+  const geo = await fetchJson(
+    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`,
+    timeoutMs,
+  ) as { results?: Array<{ name?: string; country?: string; country_code?: string; latitude?: number; longitude?: number }> };
+  const place = geo.results?.[0];
+  if (!place || typeof place.latitude !== 'number' || typeof place.longitude !== 'number') return null;
+  return {
+    displayName: place.country ? `${place.name}, ${place.country}` : String(place.name ?? location),
+    countryCode: (place.country_code ?? '').toUpperCase(),
+    latitude: place.latitude,
+    longitude: place.longitude,
+  };
 }
 
 export async function execWeather(config: Record<string, string>, timeoutMs: number): Promise<string> {
@@ -206,22 +286,16 @@ export async function execWeather(config: Record<string, string>, timeoutMs: num
   const units = config.units === 'imperial' ? 'imperial' : 'metric';
 
   const fail = (message: string): string => {
-    sendLog(`🌦️ [AgentFlow] Weather: ${message}`);
+    sendLog(`🌦️ [Flow] Weather: ${message}`);
     return envelope(message, { location, isFailed: '1' });
   };
 
   if (!location) return fail('weather: a location is required');
 
   try {
-    const geo = await fetchJson(
-      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`,
-      timeoutMs,
-    ) as { results?: Array<{ name?: string; country?: string; latitude?: number; longitude?: number }> };
-    const place = geo.results?.[0];
-    if (!place || typeof place.latitude !== 'number' || typeof place.longitude !== 'number') {
-      return fail(`weather: location not found "${location}"`);
-    }
-    const displayName = place.country ? `${place.name}, ${place.country}` : String(place.name ?? location);
+    const place = await geocodePlace(location, timeoutMs);
+    if (!place) return fail(`weather: location not found "${location}"`);
+    const { displayName } = place;
 
     const tempUnit = units === 'imperial' ? 'fahrenheit' : 'celsius';
     const windUnit = units === 'imperial' ? 'mph' : 'kmh';
@@ -259,7 +333,7 @@ export async function execWeather(config: Record<string, string>, timeoutMs: num
       isFailed: '0',
     };
     const json = JSON.stringify({ ...subVars, isFailed: undefined });
-    sendLog(`🌦️ [AgentFlow] Weather: ${displayName} ${cur.temperature_2m}${unit} ${condition}`);
+    sendLog(`🌦️ [Flow] Weather: ${displayName} ${cur.temperature_2m}${unit} ${condition}`);
     return envelope(json, subVars);
   } catch (err) {
     return fail(`weather source unavailable: ${err instanceof Error ? err.message : String(err)}`);

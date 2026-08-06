@@ -1,16 +1,19 @@
 import { ipcMain, app } from 'electron';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
-import { IPC } from '../../shared/types';
-import type { ChatCommandResult, FlowDefinition, FlowGenerationResult } from '../../shared/types';
+import { FLOW_EXPORT_TYPE, IPC } from '../../shared/types';
+import type { ChatCommandResult, FlowDefinition, FlowGenerationResult, ScraperPickRequest } from '../../shared/types';
+import { cleanTitle } from '../../shared/conversationTitle';
 import { config } from '../config';
-import { buildSafeFileNameFromTitle, getOutputDir, listOutputFiles } from '../files';
-import { buildOutputMarkdown, saveOutput } from '../output';
+import { buildSafeFileNameFromTitle, listOutputFiles } from '../files';
+import { buildOutputMarkdown } from '../output';
+import { saveCommandOutput } from '../chat/commandOutput';
 import { deliverTempChatResult, isTempChatMode } from '../tempChat';
 import { sendLog, sendToRenderer, sendWebNotification } from '../helpers';
 import { loadLanguageData } from '../i18n';
 import { getCheckpointPath } from '../flow';
 import { discoverFeeds } from '../urlParser';
+import { pickSelector } from '../selectorPicker';
 import { showSaveDialogForWin } from './context';
 import type { IpcContext } from './context';
 
@@ -32,7 +35,7 @@ function registerCheckpointHandlers(
   ipcMain.handle(clearChannel, async (_event, stepId: string) => {
     try {
       await fs.unlink(getCheckpointPath(kind, stepId));
-      sendLog(`📡 [AgentFlow] ${logTag} checkpoint cleared for step: ${stepId}`);
+      sendLog(`📡 [Flow] ${logTag} checkpoint cleared for step: ${stepId}`);
       return true;
     } catch {
       return false;
@@ -87,7 +90,13 @@ export function registerFlowHandlers(ctx: IpcContext): void {
     return flowManager.queueExecution(flowId);
   });
 
-  ipcMain.handle(IPC.FLOW_RUN_CHAT_COMMAND, async (_event, flowId: string, command: string, input: string): Promise<ChatCommandResult> => {
+  ipcMain.handle(IPC.FLOW_RUN_CHAT_COMMAND, async (
+    _event,
+    flowId: string,
+    command: string,
+    input: string,
+    conversationPath?: string,
+  ): Promise<ChatCommandResult> => {
     const failed = (error: string): ChatCommandResult => ({
       result: { flowId, success: false, outputs: {}, error, completedSteps: 0, totalSteps: 0, completedAt: new Date().toISOString() },
     });
@@ -95,11 +104,16 @@ export function registerFlowHandlers(ctx: IpcContext): void {
 
     const info = flowManager.getChatCommandInfo(flowId, command);
     const inputVariable = info?.inputVariable ?? 'input';
+    const inputPreview = (input ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    sendLog(`💬 [Flow] Chat command /${info?.command || command} → {{${inputVariable}}}="${inputPreview}"`);
     const { result } = flowManager.queueExecutionWithId(flowId, { [inputVariable]: input ?? '' }, 'chat');
     const flowResult = await result;
 
     const finalOutput = (flowResult.finalOutput ?? '').trim();
     if (!flowResult.success || !finalOutput) {
+      sendLog(flowResult.success
+        ? `⚠️ [Flow] Chat command /${info?.command || command} produced no final output — nothing to show in chat`
+        : `❌ [Flow] Chat command /${info?.command || command} failed: ${flowResult.error ?? 'unknown error'}`);
       return { result: flowResult };
     }
 
@@ -110,27 +124,33 @@ export function registerFlowHandlers(ctx: IpcContext): void {
       const markdownOptions = {
         prompt: `/${resolvedCommand}${input ? ` ${input}` : ''}`.trim(),
         response: finalOutput,
-        title: flow?.name?.trim() || (langData?.['agentflow.trigger.chat'] ?? 'Chat Skill'),
-        provider: langData?.['chat.command.providerLabel'] ?? 'AgentFlow',
+        title: cleanTitle(flowResult.titleHint ?? '')
+          || cleanTitle(flow?.name ?? '')
+          || (langData?.['flow.trigger.chat'] ?? 'Chat Skill'),
+        provider: flowResult.lastLlmProvider || (langData?.['chat.command.providerLabel'] ?? 'Flow'),
         providerLabel: langData?.['md.provider'] ?? 'Provider',
         promptLabel: langData?.['md.prompt'] ?? 'Prompt',
         responseLabel: langData?.['md.response'] ?? 'Response',
         timestampLabel: langData?.['md.timestamp'] ?? 'Time',
       };
 
-      // Temporary chat mode covers slash commands typed into the same chat
-      // input: deliver the reply in memory instead of leaving a .md trace.
       if (isTempChatMode()) {
         deliverTempChatResult({ content: buildOutputMarkdown(markdownOptions) });
         return { result: flowResult };
       }
 
-      const outputDir = await getOutputDir();
-      const filePath = await saveOutput({ ...markdownOptions, outputDir });
+      const filePath = await saveCommandOutput({
+        conversationPath,
+        markdownOptions,
+        prompt: markdownOptions.prompt,
+        response: markdownOptions.response,
+        providerLabel: markdownOptions.provider,
+        usage: flowResult.tokenUsage,
+      });
       sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
       return { result: flowResult, filePath };
     } catch (err: unknown) {
-      sendLog(`⚠️ [AgentFlow] Failed to save chat-skill result: ${err instanceof Error ? err.message : String(err)}`);
+      sendLog(`⚠️ [Flow] Failed to save chat-skill result: ${err instanceof Error ? err.message : String(err)}`);
       return { result: flowResult };
     }
   });
@@ -146,20 +166,20 @@ export function registerFlowHandlers(ctx: IpcContext): void {
     if (!desc) return { ok: false, error: 'Empty description' };
 
     const langData = await loadLanguageData(config.locale);
-    const queueLabel = langData?.['agentflow.generate.queueLabel'] ?? 'AI Flow';
+    const queueLabel = langData?.['flow.generate.queueLabel'] ?? 'AI Flow';
     const result = await flowManager.queueGeneration(desc, queueLabel);
 
     if (!result.ok) {
       const compactError = (result.error ?? '').replace(/\s+/g, ' ').trim();
       const displayError = compactError.length > 140 ? `${compactError.slice(0, 140)}…` : compactError;
-      const title = langData?.['agentflow.generate.failed.title'] ?? 'AI generation failed';
-      const body = (langData?.['agentflow.generate.failed.body']
+      const title = langData?.['flow.generate.failed.title'] ?? 'AI generation failed';
+      const body = (langData?.['flow.generate.failed.body']
         ?? 'The AI response could not be parsed into a valid flow. Please try again. ({{error}})')
         .replace(/\{\{error\}\}/g, () => displayError);
       sendWebNotification(title, body, 'error');
     } else {
-      const title = langData?.['agentflow.generate.done.title'] ?? 'Flow generated';
-      const body = (langData?.['agentflow.generate.done.body']
+      const title = langData?.['flow.generate.done.title'] ?? 'Flow generated';
+      const body = (langData?.['flow.generate.done.body']
         ?? 'AI created the flow {{name}}. Review and enable it when ready.')
         .replace(/\{\{name\}\}/g, () => result.flow.name);
       sendWebNotification(title, body, 'success');
@@ -176,7 +196,7 @@ export function registerFlowHandlers(ctx: IpcContext): void {
         filters: [{ name: 'JSON', extensions: ['json'] }],
       });
       if (result.canceled || !result.filePath) return false;
-      const payload = { type: 'agentflow-export', version: 1, flow };
+      const payload = { type: FLOW_EXPORT_TYPE, version: 1, flow };
       await fs.writeFile(result.filePath, JSON.stringify(payload, null, 2), 'utf-8');
       return true;
     } catch (err: unknown) {
@@ -210,6 +230,15 @@ export function registerFlowHandlers(ctx: IpcContext): void {
       return await discoverFeeds(siteUrl ?? '');
     } catch {
       return [];
+    }
+  });
+
+  ipcMain.handle(IPC.SCRAPER_PICK_SELECTOR, async (_event, args: ScraperPickRequest) => {
+    try {
+      return await pickSelector(args);
+    } catch (err: unknown) {
+      sendLog(`⚠️ [Flow] Selector picker failed: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
     }
   });
 

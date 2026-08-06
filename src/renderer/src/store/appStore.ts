@@ -1,13 +1,13 @@
 import { create } from 'zustand';
 import { AUTH_PROVIDERS } from '../../../shared/types';
 import type { AccountStatus, AuthProvider, HiddenSources, OutputFile, Provider, QueueState } from '../../../shared/types';
-import { parseMarkdownBlocks } from '../utils/parseMarkdownBlocks';
+import { parseMarkdownBlocks, conversationAliases } from '../utils/parseMarkdownBlocks';
 import type { MarkdownBlocks } from '../utils/parseMarkdownBlocks';
+import { parseConversationDoc } from '../../../shared/conversationDoc';
+import type { ConversationDoc } from '../../../shared/conversationDoc';
 import { DEFAULT_MODEL_URL } from '../config/models';
 import type { ModelOption } from '../config/models';
 
-// The store keeps the four hidden lists flat; every consumer wants them as one
-// HiddenSources object. Pair with useShallow, or call on a getState() snapshot.
 export function selectHiddenSources(s: {
   hiddenProviders: Provider[];
   hiddenDuckaiModelIds: string[];
@@ -22,11 +22,23 @@ export function selectHiddenSources(s: {
   };
 }
 
-export type View = 'chat' | 'settings' | 'about' | 'logs' | 'agentflow';
+export const NEW_CONVERSATION_KEY = '';
 
-export const NAV_ORDER: View[] = ['chat', 'agentflow', 'logs', 'settings', 'about'];
+export interface PendingTurn {
+  sendId: string;
+  prompt: string;
+  runId?: string;
+}
+
+export type View = 'chat' | 'settings' | 'about' | 'logs' | 'flow';
+
+export const NAV_ORDER: View[] = ['chat', 'flow', 'logs', 'settings', 'about'];
 
 export type LayoutMode = 'stacked' | 'side-by-side';
+
+export const LOG_BUFFER_CAP = 5_000;
+const LOG_BUFFER_TRIM = Math.floor(LOG_BUFFER_CAP * 0.1);
+
 type FileUpdateOptions = { markUnread?: boolean };
 const MD_ZOOM_STEP = 10;
 const MD_ZOOM_MIN = 70;
@@ -44,8 +56,6 @@ function createMarkdownZoomUpdate(nextZoom: number): { markdownZoom: number } {
   return { markdownZoom };
 }
 
-// null = not checked yet. Consumers must treat it as "assume usable" rather than
-// "logged out", so a slow first check never blocks a model the user is entitled to.
 export type AccountStatusMap = Record<AuthProvider, boolean | null>;
 
 function initAccountStatuses(): AccountStatusMap {
@@ -65,22 +75,26 @@ interface AppState {
   selectedFile: OutputFile | null;
   fileContent: string | null;
   parsedBlocks: MarkdownBlocks | null;
+  conversation: ConversationDoc | null;
+  pendingTurns: Record<string, PendingTurn[]>;
   unreadFilePaths: Record<string, true>;
 
-  // Temporary chat mode: session-only, replies live in memory and vanish when
-  // the mode is exited.
   tempChatMode: boolean;
   tempChatContent: string | null;
   tempChatBlocks: MarkdownBlocks | null;
+  tempChatConversation: ConversationDoc | null;
 
   currentView: View;
 
   layoutMode: LayoutMode;
   markdownZoom: number;
+  showTokenUsage: boolean;
 
   hotkey: string;
+  hotkeyEnabled: boolean;
   userNickname: string;
   aiUrl: string;
+  aiUrlLoaded: boolean;
   duckaiModels: ModelOption[];
   byokModels: ModelOption[];
   byokGroupModels: ModelOption[];
@@ -89,8 +103,6 @@ interface AppState {
   hiddenDuckaiModelIds: string[];
   hiddenByokIds: string[];
   hiddenByokGroupIds: string[];
-  // Gates ChatView's auto-reselect: before the first fetch lands, "nothing is
-  // hidden" and "not fetched yet" are both an empty array.
   hiddenSourcesLoaded: boolean;
 
   setStatus: (status: 'idle' | 'processing') => void;
@@ -102,6 +114,8 @@ interface AppState {
   setFiles: (files: OutputFile[], options?: FileUpdateOptions) => void;
   selectFile: (file: OutputFile | null) => void;
   setFileContent: (content: string | null) => void;
+  addPendingTurn: (conversationPath: string, turn: PendingTurn) => void;
+  clearPendingTurn: (sendId: string) => void;
   setTempChatMode: (enabled: boolean) => void;
   setTempChatResult: (content: string) => void;
   setView: (view: View) => void;
@@ -109,9 +123,12 @@ interface AppState {
   zoomInMarkdown: () => void;
   zoomOutMarkdown: () => void;
   resetMarkdownZoom: () => void;
+  setShowTokenUsage: (show: boolean) => void;
   setHotkey: (hotkey: string) => void;
+  setHotkeyEnabled: (enabled: boolean) => void;
   setUserNickname: (nickname: string) => void;
   setAiUrl: (url: string) => void;
+  hydrateAiUrl: (url: string) => void;
   setDuckaiModels: (models: ModelOption[]) => void;
   setByokModels: (models: ModelOption[]) => void;
   setByokGroupModels: (models: ModelOption[]) => void;
@@ -127,14 +144,19 @@ export const useAppStore = create<AppState>((set) => ({
   selectedFile: null,
   fileContent: null,
   parsedBlocks: null,
+  conversation: null,
+  pendingTurns: {},
   unreadFilePaths: {},
   tempChatMode: false,
   tempChatContent: null,
   tempChatBlocks: null,
+  tempChatConversation: null,
   currentView: 'chat',
   hotkey: 'Alt+G',
+  hotkeyEnabled: true,
   userNickname: '',
   aiUrl: DEFAULT_MODEL_URL,
+  aiUrlLoaded: false,
   duckaiModels: [],
   byokModels: [],
   byokGroupModels: [],
@@ -146,7 +168,7 @@ export const useAppStore = create<AppState>((set) => ({
   hiddenSourcesLoaded: false,
   layoutMode: 'stacked',
   markdownZoom: 100,
-
+  showTokenUsage: true,
 
   setStatus: (status) => set({ status }),
   setQueue: (queue) => set({ queue }),
@@ -162,12 +184,9 @@ export const useAppStore = create<AppState>((set) => ({
     })),
   appendLog: (msg) =>
     set((state) => {
-      if (state.logs.length < 500) {
-        return { logs: [...state.logs, msg] };
-      }
-      const logs = state.logs.slice(-499);
-      logs.push(msg);
-      return { logs };
+      const logs = [...state.logs, msg];
+      if (logs.length <= LOG_BUFFER_CAP) return { logs };
+      return { logs: logs.slice(LOG_BUFFER_TRIM) };
     }),
   clearLogs: () => set({ logs: [] }),
   setFiles: (files, options) => set((state) => {
@@ -192,28 +211,47 @@ export const useAppStore = create<AppState>((set) => ({
     return { files, unreadFilePaths: nextUnread };
   }),
   selectFile: (selectedFile) => set((state) => {
+    const samePath = Boolean(selectedFile?.path) && selectedFile?.path === state.selectedFile?.path;
+    const content = samePath
+      ? { fileContent: state.fileContent, parsedBlocks: state.parsedBlocks, conversation: state.conversation }
+      : { fileContent: null, parsedBlocks: null, conversation: null };
     if (!selectedFile?.path || !state.unreadFilePaths[selectedFile.path]) {
-      return { selectedFile, fileContent: null, parsedBlocks: null };
+      return { selectedFile, ...content };
     }
     const nextUnread = { ...state.unreadFilePaths };
     delete nextUnread[selectedFile.path];
-    return { selectedFile, fileContent: null, parsedBlocks: null, unreadFilePaths: nextUnread };
+    return { selectedFile, ...content, unreadFilePaths: nextUnread };
   }),
   setFileContent: (fileContent) => set({
     fileContent,
     parsedBlocks: fileContent !== null ? parseMarkdownBlocks(fileContent) : null,
+    conversation: fileContent !== null ? parseConversationDoc(fileContent, conversationAliases()) : null,
   }),
-  // Leaving the mode drops the in-memory reply — no local trace remains.
+  addPendingTurn: (conversationPath, turn) => set((state) => ({
+    pendingTurns: {
+      ...state.pendingTurns,
+      [conversationPath]: [...(state.pendingTurns[conversationPath] ?? []), turn],
+    },
+  })),
+  clearPendingTurn: (sendId) => set((state) => {
+    const pendingTurns: Record<string, PendingTurn[]> = {};
+    for (const [key, turns] of Object.entries(state.pendingTurns)) {
+      const remaining = turns.filter((turn) => turn.sendId !== sendId);
+      if (remaining.length > 0) pendingTurns[key] = remaining;
+    }
+    return { pendingTurns };
+  }),
   setTempChatMode: (tempChatMode) => set(tempChatMode
     ? { tempChatMode }
-    : { tempChatMode, tempChatContent: null, tempChatBlocks: null }),
-  // Deselect any open file so the fresh temporary reply is what the user sees.
+    : { tempChatMode, tempChatContent: null, tempChatBlocks: null, tempChatConversation: null }),
   setTempChatResult: (content) => set({
     tempChatContent: content,
     tempChatBlocks: parseMarkdownBlocks(content),
+    tempChatConversation: parseConversationDoc(content, conversationAliases()),
     selectedFile: null,
     fileContent: null,
     parsedBlocks: null,
+    conversation: null,
   }),
   setView: (currentView) => set({ currentView }),
   setLayoutMode: (layoutMode) => {
@@ -223,9 +261,17 @@ export const useAppStore = create<AppState>((set) => ({
   zoomInMarkdown: () => set((state) => createMarkdownZoomUpdate(state.markdownZoom + MD_ZOOM_STEP)),
   zoomOutMarkdown: () => set((state) => createMarkdownZoomUpdate(state.markdownZoom - MD_ZOOM_STEP)),
   resetMarkdownZoom: () => set(createMarkdownZoomUpdate(100)),
+  setShowTokenUsage: (showTokenUsage) => {
+    window.electronAPI.updateShowTokenUsage(showTokenUsage).catch(() => {});
+    set({ showTokenUsage });
+  },
   setHotkey: (hotkey) => set({ hotkey }),
+  setHotkeyEnabled: (hotkeyEnabled) => set({ hotkeyEnabled }),
   setUserNickname: (userNickname) => set({ userNickname }),
-  setAiUrl: (aiUrl) => set({ aiUrl }),
+  setAiUrl: (aiUrl) => set({ aiUrl, aiUrlLoaded: true }),
+  // Startup's stored value. It arrives a moment after the window does, so a model
+  // picked in the meantime has to outrank it rather than be reverted by it.
+  hydrateAiUrl: (aiUrl) => set((s) => (s.aiUrlLoaded ? s : { aiUrl, aiUrlLoaded: true })),
   setDuckaiModels: (duckaiModels) => set({ duckaiModels }),
   setByokModels: (byokModels) => set({ byokModels, byokModelsLoaded: true }),
   setByokGroupModels: (byokGroupModels) => set({ byokGroupModels }),

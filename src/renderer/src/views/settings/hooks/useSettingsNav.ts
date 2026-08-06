@@ -1,50 +1,54 @@
-import React, { useMemo, useState } from 'react';
-import { Bell, Bot, ChartLine, CircleUserRound, DatabaseBackup, MessageSquare, Palette, SlidersHorizontal } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Bot, ChartLine, CircleUserRound, DatabaseBackup, ImageDown, MessageSquare, Palette, Plug, SlidersHorizontal } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import { useI18nStore } from '../../../store/i18nStore';
+import { useAppStore } from '../../../store/appStore';
+import { buildHaystacks, CATEGORY_TAG_MAP, TAG_SETS } from './settingsSearch';
+import type { Category } from './settingsSearch';
 
-export type Category = 'general' | 'appearance' | 'notify' | 'ai' | 'accounts' | 'bots' | 'stats' | 'system';
-
-export const TAG_SETS = {
-  hotkey: ['hotkey', 'keyboard', 'shortcut', 'key', 'binding', 'settings.hotkey'],
-  language: ['language', 'locale', 'translation', 'i18n', 'zh', 'en', 'settings.language'],
-  notify: ['notification', 'bell', 'notify', 'alert', 'settings.notifications'],
-  theme: ['theme', 'dark', 'light', 'dracula', 'nord', 'amoled', 'sepia', 'appearance', 'color', 'oled', 'settings.theme'],
-  reading: ['layout', 'zoom', 'markdown', 'reading', 'stacked', 'side by side', 'scale', 'settings.appearance.reading'],
-  timeout: ['timeout', 'timer', 'response', 'time', 'settings.responseTimeout.title'],
-  prompt: ['prompt', 'persona', 'template', 'tone', 'length', 'nickname', 'settings.prompt.persona.title', 'settings.prompt.templates.title', 'settings.youtube.prompt.title', 'settings.prompt.preview.title'],
-  accounts: ['account', 'accounts', 'login', 'logout', 'sign in', 'sign out', 'signin', 'session', 'chatgpt', 'gemini', 'perplexity', 'hide', 'hidden', 'visible', 'source', 'model source', 'settings.group.accounts', 'settings.accounts.title'],
-  byok: ['byok', 'api key', 'apikey', 'key', 'token', 'openrouter', 'openai', 'gemini api', 'base url', 'model', 'group', 'pool', 'rotate', 'rotation', 'round robin', 'load balance', 'settings.byok.title', 'settings.byok.group.title'],
-  bots: ['bot', 'telegram', 'line', 'token', 'pairing', 'group', 'command', 'duck', 'direct', 'mention', 'tag', 'compact', 'settings.group.bots', 'settings.bot.commands.title', 'settings.telegram.section.connection', 'settings.telegram.section.reply', 'settings.telegram.compactReply', 'settings.telegram.section.access', 'settings.llmDirect.label'],
-  stats: ['stats', 'statistics', 'usage', 'metrics', 'chart', 'trend', 'counter', 'success', 'failure', 'timeout', 'settings.stats.title'],
-  config: ['config', 'configuration', 'backup', 'restore', 'import', 'export', 'zip', 'markdown', 'json', 'folder', 'directory', 'settings.config.title'],
-  danger: ['danger', 'reset', 'clear', 'delete', 'restore', 'settings.danger.title'],
-  tray: ['tray', 'system tray', 'menu bar', 'close', 'hide', 'startup', 'minimize', 'settings.tray.title', 'settings.tray.title.mac'],
-} as const;
-
-const CATEGORY_TAG_MAP: Record<Category, (keyof typeof TAG_SETS)[]> = {
-  general: ['hotkey', 'language', 'tray'],
-  appearance: ['theme', 'reading'],
-  notify: ['notify'],
-  ai: ['timeout', 'prompt'],
-  accounts: ['accounts', 'byok'],
-  bots: ['bots'],
-  stats: ['stats'],
-  system: ['config', 'danger'],
-};
+export { TAG_SETS } from './settingsSearch';
+export type { Category } from './settingsSearch';
 
 export function useSettingsNav() {
-  const { t, locale } = useI18nStore();
+  const { t, locale, translations, enTranslations } = useI18nStore(
+    useShallow((s) => ({
+      t: s.t,
+      locale: s.locale,
+      translations: s.translations,
+      enTranslations: s.enTranslations,
+    })),
+  );
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState<Category>('general');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const onFindHotkey = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+      if (event.key.toLowerCase() !== 'f') return;
+      if (useAppStore.getState().currentView !== 'settings') return;
+      if (document.querySelector('[aria-modal="true"]')) return;
+      event.preventDefault();
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    };
+    window.addEventListener('keydown', onFindHotkey);
+    return () => window.removeEventListener('keydown', onFindHotkey);
+  }, []);
+
+  // English stays searchable in every locale — brand and jargon queries ("mcp", "byok") are typed as-is.
+  const haystacks = useMemo(
+    () => buildHaystacks(
+      translations === enTranslations ? [translations] : [translations, enTranslations],
+      (category) => t(`settings.group.${category}`),
+    ),
+    [translations, enTranslations, t],
+  );
 
   const q = searchQuery.trim().toLowerCase();
   const isSearching = q.length > 0;
 
-  const sectionVisible = (tags: readonly string[]): boolean =>
-    tags.some((tag) => {
-      const text = tag.includes('.') ? t(tag) : tag;
-      return text.toLowerCase().includes(q);
-    });
+  const sectionVisible = (tags: readonly string[]): boolean => haystacks.get(tags)?.includes(q) ?? false;
 
   const showSection = (tags: readonly string[], category: Category): boolean =>
     isSearching ? sectionVisible(tags) : activeCategory === category;
@@ -58,9 +62,10 @@ export function useSettingsNav() {
   const navCategoryDefs = useMemo(() => [
     { id: 'general' as Category, label: t('settings.group.general'), icon: React.createElement(SlidersHorizontal, { size: 14 }) },
     { id: 'appearance' as Category, label: t('settings.group.appearance'), icon: React.createElement(Palette, { size: 14 }) },
-    { id: 'notify' as Category, label: t('settings.group.notify'), icon: React.createElement(Bell, { size: 14 }) },
+    { id: 'export' as Category, label: t('settings.group.export'), icon: React.createElement(ImageDown, { size: 14 }) },
     { id: 'ai' as Category, label: t('settings.group.ai'), icon: React.createElement(Bot, { size: 14 }) },
     { id: 'accounts' as Category, label: t('settings.group.accounts'), icon: React.createElement(CircleUserRound, { size: 14 }) },
+    { id: 'connectors' as Category, label: t('settings.group.connectors'), icon: React.createElement(Plug, { size: 14 }) },
     { id: 'bots' as Category, label: t('settings.group.bots'), icon: React.createElement(MessageSquare, { size: 14 }) },
     { id: 'stats' as Category, label: t('settings.group.stats'), icon: React.createElement(ChartLine, { size: 14 }) },
     { id: 'system' as Category, label: t('settings.group.system'), icon: React.createElement(DatabaseBackup, { size: 14 }) },
@@ -70,6 +75,7 @@ export function useSettingsNav() {
   return {
     searchQuery,
     setSearchQuery,
+    searchInputRef,
     activeCategory,
     setActiveCategory,
     isSearching,

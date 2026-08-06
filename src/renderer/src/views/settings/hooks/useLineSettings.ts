@@ -8,8 +8,6 @@ export function useLineSettings() {
   const [lineTokenInput, setLineTokenInput] = useState('');
   const [lineSecretInput, setLineSecretInput] = useState('');
   const [lineBusy, setLineBusy] = useState(false);
-  // The account re-check is the only LINE action that waits on the network, so
-  // it gets its own flag and is the only button that shows a spinner.
   const [lineAccountBusy, setLineAccountBusy] = useState(false);
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
   const lineSettingsRef = useRef<LineSettingsSnapshot | null>(null);
@@ -20,8 +18,6 @@ export function useLineSettings() {
     setLineSettings(snapshot);
   }, []);
 
-  // Every mutating handler runs through this so lineBusy always resets, even when
-  // the IPC call rejects (otherwise a single failure freezes the controls).
   const runBusy = useCallback(async (action: () => Promise<void>) => {
     setLineBusy(true);
     try {
@@ -112,8 +108,6 @@ export function useLineSettings() {
     });
   }, [runBusy]);
 
-  // The refreshed account arrives through the LINE_RUNTIME broadcast, which the
-  // effect above already turns into a settings reload.
   const handleRefreshLineAccount = useCallback(async () => {
     setLineAccountBusy(true);
     try {

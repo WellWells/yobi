@@ -1,57 +1,69 @@
-import { startTransition, useCallback, useState } from 'react';
-import { useShallow } from 'zustand/react/shallow';
+import { useCallback } from 'react';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
-import { flowApi, fileApi } from '../api/electronApi';
+import { flowApi, searchApi } from '../api/electronApi';
+import { BUILTIN_QUICKSEARCH_FLOW_ID, BUILTIN_SEARCH_FLOW_ID } from '../../../shared/types';
+import { useCommandTurn } from './useCommandTurn';
 import type { ChatCommand } from './useChatCommands';
 import type { ExportToast } from './useCaptureExport';
 
 export function useChatCommandRunner(setToast: (toast: ExportToast) => void) {
-  const { setFiles, selectFile, setFileContent } = useAppStore(
-    useShallow((s) => ({
-      setFiles: s.setFiles,
-      selectFile: s.selectFile,
-      setFileContent: s.setFileContent,
-    })),
-  );
   const { t } = useI18nStore();
-  const [runningCommand, setRunningCommand] = useState<string | null>(null);
+  const { begin, finish, fail } = useCommandTurn();
 
-  const runCommand = useCallback(async (cmd: ChatCommand, input: string): Promise<void> => {
-    setRunningCommand(cmd.command);
-    try {
-      const { result, filePath } = await flowApi.runChatCommand(cmd.flowId, cmd.command, input);
-      if (!result.success) {
-        setToast({
-          id: Date.now(),
-          message: t('chat.command.error').replace('{{command}}', cmd.command).replace('{{error}}', result.error ?? ''),
-        });
+  const failToast = useCallback((command: string, error: string): void => {
+    setToast({
+      id: Date.now(),
+      message: t('chat.command.error').replace('{{command}}', command).replace('{{error}}', error),
+    });
+  }, [setToast, t]);
+
+  const doneToast = useCallback((command: string): void => {
+    setToast({ id: Date.now(), message: t('chat.command.done').replace('{{command}}', command) });
+  }, [setToast, t]);
+
+  const runCommand = useCallback(async (cmd: ChatCommand, input: string, targetUrl?: string): Promise<void> => {
+    const conversationPath = useAppStore.getState().selectedFile?.path;
+
+    if (cmd.flowId === BUILTIN_SEARCH_FLOW_ID || cmd.flowId === BUILTIN_QUICKSEARCH_FLOW_ID) {
+      if (!input.trim()) {
+        setToast({ id: Date.now(), message: t('search.error.empty') });
         return;
       }
-      if (!filePath) {
-        setToast({ id: Date.now(), message: t('chat.command.done').replace('{{command}}', cmd.command) });
-        return;
+      const mode = cmd.flowId === BUILTIN_QUICKSEARCH_FLOW_ID ? 'quick' : 'standard';
+      const clientToken = crypto.randomUUID();
+      const sendId = begin(input, clientToken);
+      try {
+        const { success, error, filePath } = await searchApi.run(input, targetUrl ?? '', mode, conversationPath, clientToken);
+        if (!success) {
+          fail(sendId);
+          failToast(cmd.command, error ?? '');
+          return;
+        }
+        await finish(sendId, filePath);
+        if (!filePath) doneToast(cmd.command);
+      } catch (err: unknown) {
+        fail(sendId);
+        failToast(cmd.command, err instanceof Error ? err.message : String(err));
       }
-      const latest = await fileApi.getList();
-      setFiles(latest);
-      const file = latest.find((f) => f.path === filePath) ?? null;
-      if (file) {
-        selectFile(file);
-        const content = await fileApi.getContent(file.path);
-        startTransition(() => setFileContent(content));
-      }
-      setToast(null);
-    } catch (err: unknown) {
-      setToast({
-        id: Date.now(),
-        message: t('chat.command.error')
-          .replace('{{command}}', cmd.command)
-          .replace('{{error}}', err instanceof Error ? err.message : String(err)),
-      });
-    } finally {
-      setRunningCommand(null);
+      return;
     }
-  }, [setToast, t, setFiles, selectFile, setFileContent]);
 
-  return { runCommand, runningCommand };
+    const sendId = begin(input);
+    try {
+      const { result, filePath } = await flowApi.runChatCommand(cmd.flowId, cmd.command, input, conversationPath);
+      if (!result.success) {
+        fail(sendId);
+        failToast(cmd.command, result.error ?? '');
+        return;
+      }
+      await finish(sendId, filePath);
+      if (!filePath) doneToast(cmd.command);
+    } catch (err: unknown) {
+      fail(sendId);
+      failToast(cmd.command, err instanceof Error ? err.message : String(err));
+    }
+  }, [begin, finish, fail, failToast, doneToast, setToast, t]);
+
+  return { runCommand };
 }

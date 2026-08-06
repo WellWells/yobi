@@ -1,4 +1,6 @@
 import { useI18nStore } from '../store/i18nStore';
+import { stripConversationMarkers } from '../../../shared/conversationDoc';
+import type { ConversationHeadingAliases } from '../../../shared/conversationDoc';
 
 export interface MarkdownBlocks {
   title: string | null;
@@ -48,6 +50,16 @@ export function getResponseAliases(): Set<string> {
   return buildHeadingAliasSet(HEADING_KEY_BY_KIND.response);
 }
 
+export function conversationAliases(): ConversationHeadingAliases {
+  const aliases = buildHeadingAliases();
+  return {
+    provider: aliases.provider,
+    time: aliases.time,
+    prompt: aliases.prompt,
+    response: aliases.response,
+  };
+}
+
 function classifyHeading(heading: string, headingAliases: HeadingAliases): HeadingKind | null {
   if (headingAliases.provider.has(heading)) return 'provider';
   if (headingAliases.time.has(heading)) return 'time';
@@ -57,7 +69,7 @@ function classifyHeading(heading: string, headingAliases: HeadingAliases): Headi
 }
 
 export function parseMarkdownBlocks(raw: string): MarkdownBlocks {
-  const lines = raw.split('\n');
+  const lines = stripConversationMarkers(raw).split('\n');
   const headingAliases = buildHeadingAliases();
 
   let title: string | null = null;

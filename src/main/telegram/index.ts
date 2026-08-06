@@ -5,3 +5,4 @@ export {
   unpairUser,
   normalizePairingState,
 } from './dmPolicy';
+export { forgetChannel, reduceChannelState } from './channels';

@@ -17,7 +17,6 @@ export function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-/** WCAG relative luminance (0 = black, 1 = white). */
 export function relativeLuminance(hex: string): number {
   const [r, g, b] = hexToRgb(hex).map((channel) => {
     const srgb = channel / 255;

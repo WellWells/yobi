@@ -20,10 +20,6 @@ interface ProviderStorage {
   resetOrigins: string[];
 }
 
-// resetOrigins are wiped on account reset. clearData() removes cookies at the
-// registrable-domain level per origin, so one Google/YouTube origin clears that
-// whole domain's cookie jar — Gemini lists the connected Google surfaces so a reset
-// makes the entire Google session (Gemini + Account + YouTube) look like a first visit.
 const STORAGE_CONFIG: Record<Provider, ProviderStorage> = {
   chatgpt: {
     cookieUrls: ['https://chatgpt.com/', 'https://chat.openai.com/'],

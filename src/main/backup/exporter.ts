@@ -13,8 +13,6 @@ import {
 import type { BackupManifest } from './manifest';
 import { countCategoryItems, walkDirFiles } from './fsUtils';
 
-// Availability + item counts for every category — drives the export modal
-// (empty categories render disabled so they can never be selected).
 export async function getCategoryInfos(): Promise<BackupCategoryInfo[]> {
   return Promise.all(
     BACKUP_CATEGORY_IDS.map(async (id) => {
@@ -24,9 +22,6 @@ export async function getCategoryInfos(): Promise<BackupCategoryInfo[]> {
   );
 }
 
-// Build a backup zip from the selected categories and write it to `targetPath`.
-// Categories with no items are skipped so a restore never wipes-to-empty. Returns
-// the categories actually written.
 export async function buildBackupZip(
   requested: BackupCategoryId[],
   targetPath: string,
@@ -61,8 +56,6 @@ export async function buildBackupZip(
         zip.addLocalFile(file.abs, slash >= 0 ? zipRel.slice(0, slash) : '');
         added += 1;
       } catch {
-        // File vanished or got locked between the walk and the add (e.g. a
-        // running flow rotating a checkpoint) — skip it, keep the rest.
       }
     }
     if (added === 0) continue;

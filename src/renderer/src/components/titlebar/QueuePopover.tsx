@@ -2,6 +2,8 @@ import React from 'react';
 import { Box, Button as MButton, Text } from '@mantine/core';
 import { ListChecks, LoaderCircle, SkipForward, X } from 'lucide-react';
 import type { QueueTaskItem } from '../../../../shared/types';
+import type { AgentTraceTurn } from '../../store/useAgentRunStore';
+import { AgentTraceRows } from '../AgentTraceRows';
 import styles from '../TitleBar.module.css';
 
 export interface QueuePopoverProps {
@@ -11,13 +13,15 @@ export interface QueuePopoverProps {
   isForceSkipping: boolean;
   onCancelTask: (taskId: string) => Promise<void>;
   onForceSkip: () => Promise<void>;
+  agentTraces: Record<string, AgentTraceTurn[]>;
+  onCancelAgent: (runId: string) => void;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
   t: (k: string) => string;
 }
 
 export const QueuePopover: React.FC<QueuePopoverProps> = ({
-  pos, items, cancelingTaskIds, isForceSkipping, onCancelTask, onForceSkip, onMouseEnter, onMouseLeave, t,
+  pos, items, cancelingTaskIds, isForceSkipping, onCancelTask, onForceSkip, agentTraces, onCancelAgent, onMouseEnter, onMouseLeave, t,
 }) => (
   <Box
     className={styles.popover}
@@ -36,42 +40,62 @@ export const QueuePopover: React.FC<QueuePopoverProps> = ({
       {items.map((item) => {
         const isRunningItem = item.status === 'running';
         const isCanceling = Boolean(cancelingTaskIds[item.id]);
+        const trail = item.agentRunId ? agentTraces[item.agentRunId] : undefined;
         return (
-          <Box key={`${item.status}-${item.id}`} className={styles.queueItem}>
-            <Box className={styles.queueItemTitleWrapper}>
-              <Text className={styles.queueItemTitle}>{item.promptSummary}</Text>
-              <Text className={styles.queueItemId}>#{item.id}</Text>
-            </Box>
-            <Box className={styles.queueItemRight}>
-              <Box className={`${styles.queueItemStatusBadge} ${isRunningItem ? styles.running : styles.queued}`}>
-                {isRunningItem ? t('queue.item.running') : t('queue.item.queued')}
+          <Box key={`${item.status}-${item.id}`} className={styles.queueItem} style={{ flexDirection: 'column', alignItems: 'stretch', gap: 6 }}>
+            <Box style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <Box className={styles.queueItemTitleWrapper}>
+                <Text className={styles.queueItemTitle}>{item.promptSummary}</Text>
+                {isRunningItem && item.progress && (
+                  <Text className={styles.queueItemProgress}>{item.progress}</Text>
+                )}
+                <Text className={styles.queueItemId}>#{item.id}</Text>
               </Box>
-              {isRunningItem ? (
-                <MButton
-                  onClick={() => { void onForceSkip(); }}
-                  disabled={isForceSkipping}
-                  variant="light"
-                  size="xs"
-                  color="orange"
-                  leftSection={isForceSkipping ? <LoaderCircle size={12} /> : <SkipForward size={12} />}
-                  styles={{ root: { height: 22, fontSize: 'var(--font-size-xs)', fontWeight: 600, padding: '0 8px' } }}
-                >
-                  {isForceSkipping ? t('queue.forceSkipping') : t('queue.forceSkip')}
-                </MButton>
-              ) : (
-                <MButton
-                  onClick={() => { void onCancelTask(item.id); }}
-                  disabled={isCanceling}
-                  variant="light"
-                  size="xs"
-                  color="red"
-                  leftSection={isCanceling ? <LoaderCircle size={12} /> : <X size={12} />}
-                  styles={{ root: { height: 22, fontSize: 'var(--font-size-xs)', fontWeight: 600, padding: '0 8px' } }}
-                >
-                  {isCanceling ? t('queue.canceling') : t('queue.cancel')}
-                </MButton>
-              )}
+              <Box className={styles.queueItemRight}>
+                <Box className={`${styles.queueItemStatusBadge} ${isRunningItem ? styles.running : styles.queued}`}>
+                  {isRunningItem ? t('queue.item.running') : t('queue.item.queued')}
+                </Box>
+                {isRunningItem && item.agentRunId ? (
+                  <MButton
+                    onClick={() => onCancelAgent(item.agentRunId as string)}
+                    variant="light"
+                    size="xs"
+                    color="red"
+                    leftSection={<X size={12} />}
+                    styles={{ root: { height: 22, fontSize: 'var(--font-size-xs)', fontWeight: 600, padding: '0 8px' } }}
+                  >
+                    {t('queue.cancel')}
+                  </MButton>
+                ) : isRunningItem ? (
+                  <MButton
+                    onClick={() => { void onForceSkip(); }}
+                    disabled={isForceSkipping}
+                    variant="light"
+                    size="xs"
+                    color="orange"
+                    leftSection={isForceSkipping ? <LoaderCircle size={12} /> : <SkipForward size={12} />}
+                    styles={{ root: { height: 22, fontSize: 'var(--font-size-xs)', fontWeight: 600, padding: '0 8px' } }}
+                  >
+                    {isForceSkipping ? t('queue.forceSkipping') : t('queue.forceSkip')}
+                  </MButton>
+                ) : (
+                  <MButton
+                    onClick={() => { void onCancelTask(item.id); }}
+                    disabled={isCanceling}
+                    variant="light"
+                    size="xs"
+                    color="red"
+                    leftSection={isCanceling ? <LoaderCircle size={12} /> : <X size={12} />}
+                    styles={{ root: { height: 22, fontSize: 'var(--font-size-xs)', fontWeight: 600, padding: '0 8px' } }}
+                  >
+                    {isCanceling ? t('queue.canceling') : t('queue.cancel')}
+                  </MButton>
+                )}
+              </Box>
             </Box>
+            {trail && trail.length > 0 && (
+              <AgentTraceRows trace={trail} />
+            )}
           </Box>
         );
       })}

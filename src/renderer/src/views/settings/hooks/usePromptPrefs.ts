@@ -45,8 +45,6 @@ export function usePromptPrefs() {
 
   const savePromptPrefs = useCallback(async (prefs: PromptPreferences) => {
     const systemInstruction = buildCombinedPrompt(prefs, t);
-    // Keep the chat welcome greeting in sync with the name the user just set,
-    // mirroring how the hotkey setting pushes into the store on change.
     useAppStore.getState().setUserNickname(prefs.nickname ?? '');
     await settingsApi.updatePromptPreferences(prefs, systemInstruction);
   }, [t]);

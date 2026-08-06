@@ -1,5 +1,6 @@
 import { BrowserWindow, session } from 'electron';
 import { CLEAN_UA } from './userAgent';
+import { SILENT_WEB_PREFERENCES, muteWindow } from './silentWindow';
 
 const LOAD_TIMEOUT_MS = 25_000;
 
@@ -97,12 +98,12 @@ export function fetchYoutubeVideo(
         sandbox: false,
         backgroundThrottling: false,
         disableDialogs: true,
-        autoplayPolicy: 'document-user-activation-required',
+        ...SILENT_WEB_PREFERENCES,
       },
     });
 
     win.webContents.setUserAgent(CLEAN_UA);
-    win.webContents.setAudioMuted(true);
+    muteWindow(win);
 
     const finish = (result: YoutubeVideoResult): void => {
       if (settled) return;
@@ -195,7 +196,6 @@ export async function fetchYoutubeTranscript(url: string): Promise<YoutubeTransc
   return result.ok ? { title: result.title, transcript: result.transcript } : null;
 }
 
-/** Exported for the deterministic test suite (test/youtubeTranscript.test.ts). */
 export function parseVideoResult(raw: string | null): YoutubeVideoResult {
   if (!raw) return FAILED_VIDEO_RESULT;
   try {
@@ -208,7 +208,6 @@ export function parseVideoResult(raw: string | null): YoutubeVideoResult {
   }
 }
 
-/** Exported for the deterministic test suite (test/youtubeTranscript.test.ts). */
 export function parseExtractionResult(raw: string | null): YoutubeTranscriptResult | null {
   const result = parseVideoResult(raw);
   return result.ok ? { title: result.title, transcript: result.transcript } : null;
@@ -221,7 +220,6 @@ function safeDestroy(win: BrowserWindow): void {
   }
 }
 
-/** Exported so the test suite can run the exact shipped script against a synthetic DOM (test/youtubeTranscript.test.ts). */
 export const EXTRACTION_SCRIPT = `(async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const TRANSCRIPT_RE = /transcript|顯示轉錄|轉錄稿|逐字稿|文字稿|字幕記錄|文字起こし|スクリプト|대본|스크립트|자막 기록|transcripci|transcription|transkript|trascrizione|расшифровка|стенограмма/i;

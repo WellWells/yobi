@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import { once } from 'node:events';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import { getOutputDir } from '../../files';
 import { sendLog } from '../../helpers';
 import { ensureHttpScheme } from '../../urlParser';
@@ -22,7 +23,7 @@ function randToken(): string {
   return Math.random().toString(36).slice(2, 8);
 }
 
-function expandFilenameTokens(name: string): string {
+export function expandFilenameTokens(name: string): string {
   const d = new Date();
   return name
     .replace(/\{datetime\}/g, `${dateToken(d)}-${timeToken(d)}`)
@@ -40,11 +41,19 @@ function ensureTxtExt(name: string): string {
   return path.extname(name) ? name : `${name}.txt`;
 }
 
+export function expandHome(p: string): string {
+  if (p === '~') return os.homedir();
+  if (p.startsWith('~/') || p.startsWith('~\\')) return path.join(os.homedir(), p.slice(2));
+  return p;
+}
+
+export async function resolveUserPath(raw: string): Promise<string> {
+  const expanded = expandHome(raw);
+  return path.isAbsolute(expanded) ? expanded : path.join(await getOutputDir(), expanded);
+}
+
 async function resolveWritePath(folderRaw: string, filenameRaw: string): Promise<string> {
   const expanded = filenameRaw ? expandFilenameTokens(filenameRaw) : autoFileName();
-  // Sanitize per segment: interpolated names may carry Windows-invalid chars, but
-  // legitimate subfolders (e.g. "{{item}}/report.txt") must be preserved while
-  // traversal (".." / leading separators) is dropped.
   if (path.isAbsolute(expanded)) {
     const base = sanitizeDownloadName(path.basename(expanded)) || autoFileName();
     return path.join(path.dirname(expanded), ensureTxtExt(base));
@@ -55,9 +64,7 @@ async function resolveWritePath(folderRaw: string, filenameRaw: string): Promise
     .map((s) => sanitizeDownloadName(s))
     .filter(Boolean);
   const relative = segments.length > 0 ? ensureTxtExt(segments.join(path.sep)) : autoFileName();
-  const dir = folderRaw
-    ? (path.isAbsolute(folderRaw) ? folderRaw : path.join(await getOutputDir(), folderRaw))
-    : await getOutputDir();
+  const dir = folderRaw ? await resolveUserPath(folderRaw) : await getOutputDir();
   return path.join(dir, relative);
 }
 
@@ -67,7 +74,7 @@ export async function execFileWrite(config: Record<string, string>): Promise<str
     const resolved = await resolveWritePath((config.folder ?? '').trim(), (config.filename ?? '').trim());
     await fs.mkdir(path.dirname(resolved), { recursive: true });
     await fs.writeFile(resolved, content, 'utf-8');
-    sendLog(`📝 [AgentFlow] File written: ${resolved}`);
+    sendLog(`📝 [Flow] File written: ${resolved}`);
     return resolved;
   } catch (err) {
     throw new Error(`file_write: ${err instanceof Error ? err.message : String(err)}`);
@@ -78,9 +85,9 @@ export async function execFileRead(config: Record<string, string>): Promise<stri
   const filePath = (config.path ?? '').trim();
   if (!filePath) return '';
   try {
-    const resolved = path.isAbsolute(filePath) ? filePath : path.join(await getOutputDir(), filePath);
+    const resolved = await resolveUserPath(filePath);
     const content = await fs.readFile(resolved, 'utf-8');
-    sendLog(`📖 [AgentFlow] File read: ${resolved} (${content.length} chars)`);
+    sendLog(`📖 [Flow] File read: ${resolved} (${content.length} chars)`);
     return content;
   } catch (err) {
     throw new Error(`file_read: ${err instanceof Error ? err.message : String(err)}`);
@@ -91,12 +98,12 @@ export async function execFileList(config: Record<string, string>): Promise<stri
   const dir = (config.directory ?? '').trim();
   if (!dir) return '[]';
   try {
-    const resolved = path.isAbsolute(dir) ? dir : path.join(await getOutputDir(), dir);
+    const resolved = await resolveUserPath(dir);
     const entries = await fs.readdir(resolved, { withFileTypes: true });
     const items = entries
       .filter((entry) => entry.isFile())
       .map((entry) => ({ title: entry.name, link: path.join(resolved, entry.name) }));
-    sendLog(`📁 [AgentFlow] Listed ${items.length} files in: ${resolved}`);
+    sendLog(`📁 [Flow] Listed ${items.length} files in: ${resolved}`);
     return JSON.stringify(items);
   } catch (err) {
     throw new Error(`file_list: ${err instanceof Error ? err.message : String(err)}`);
@@ -107,9 +114,9 @@ export async function execFileDelete(config: Record<string, string>): Promise<st
   const target = (config.path ?? '').trim();
   if (!target) return '';
   try {
-    const resolved = path.isAbsolute(target) ? target : path.join(await getOutputDir(), target);
+    const resolved = await resolveUserPath(target);
     await fs.rm(resolved, { force: true });
-    sendLog(`🗑️ [AgentFlow] File deleted: ${resolved}`);
+    sendLog(`🗑️ [Flow] File deleted: ${resolved}`);
     return '';
   } catch (err) {
     throw new Error(`file_delete: ${err instanceof Error ? err.message : String(err)}`);
@@ -123,7 +130,6 @@ const MIME_EXT: Record<string, string> = {
   'video/mp4': '.mp4', 'audio/mpeg': '.mp3',
 };
 
-// Exported for tests.
 export function deriveDownloadExt(finalUrl: string, contentType: string): string {
   const mime = contentType.split(';')[0].trim().toLowerCase();
   if (MIME_EXT[mime]) return MIME_EXT[mime];
@@ -135,7 +141,6 @@ export function deriveDownloadExt(finalUrl: string, contentType: string): string
   return '.bin';
 }
 
-// Exported for tests.
 export function sanitizeDownloadName(name: string): string {
   return path.basename(name).replace(/[<>:"/\\|?*]/g, '_').replace(/^\.+/, '').trim();
 }
@@ -174,9 +179,7 @@ export async function execFileDownload(config: Record<string, string>, timeoutMs
     if (!baseName) baseName = autoDownloadName(deriveDownloadExt(finalUrl, contentType));
 
     const folderRaw = (config.folder ?? '').trim();
-    const dir = folderRaw
-      ? (path.isAbsolute(folderRaw) ? folderRaw : path.join(await getOutputDir(), folderRaw))
-      : await getOutputDir();
+    const dir = folderRaw ? await resolveUserPath(folderRaw) : await getOutputDir();
     await fs.mkdir(dir, { recursive: true });
     const resolved = path.join(dir, baseName);
     partPath = `${resolved}.part`;
@@ -197,7 +200,7 @@ export async function execFileDownload(config: Record<string, string>, timeoutMs
 
     await fs.rename(partPath, resolved);
     partPath = '';
-    sendLog(`⬇️ [AgentFlow] Downloaded ${(bytes / 1024).toFixed(0)} KB → ${resolved}`);
+    sendLog(`⬇️ [Flow] Downloaded ${(bytes / 1024).toFixed(0)} KB → ${resolved}`);
     return resolved;
   } catch (err) {
     if (partPath) await fs.rm(partPath, { force: true }).catch(() => { });

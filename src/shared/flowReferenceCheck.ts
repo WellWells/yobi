@@ -1,11 +1,6 @@
 import type { FlowVariable, SkillInstance, TriggerConfig } from './types';
 import { FLOW_VAR_PREFIX } from './flowVariables';
-
-// Validates every {{variable}} reference in a generated flow against what the
-// executor can actually resolve. The runtime silently interpolates unknown
-// variables to '' (interpolation.ts), so a hallucinated or forward reference
-// would otherwise produce a silently-broken flow; rejecting here feeds a
-// precise error back into the LLM repair loop instead.
+import { isShareLinkFormat } from './shareFormat';
 
 const FILE_PRODUCER_TYPES = new Set<string>(['capture', 'file_write', 'file_download']);
 const LLM_EXPORT_FORMATS = new Set<string>(['png', 'webp', 'pdf']);
@@ -14,8 +9,8 @@ const VAR_REF_RE = /\{\{([^{}]+)\}\}/g;
 
 function isFileProducer(step: SkillInstance): boolean {
   if (FILE_PRODUCER_TYPES.has(step.type)) return true;
-  // exportFormat is normalized to lowercase by flowValidation, matching the
-  // runtime's exact-match isCaptureFormat gate.
+  /* A share step writes a file for every format except "text", which hands back a link. */
+  if (step.type === 'share') return !isShareLinkFormat(step.config.format);
   return step.type === 'llm' && LLM_EXPORT_FORMATS.has(step.config.exportFormat ?? '');
 }
 
@@ -28,9 +23,6 @@ function triggerInputVariables(triggers: TriggerConfig[]): string[] {
   return vars;
 }
 
-// The executor runs each loop iteration on a COPY of the outer context, so
-// body outputs (including {{file}}) are gone after end_loop; each frame
-// records what to roll back when its loop closes.
 interface LoopFrame {
   loopVar: string;
   addedKeys: string[];
@@ -43,12 +35,8 @@ export function checkVariableReferences(
   variables: FlowVariable[] = [],
 ): string | null {
   const hasBotTrigger = triggers.some((t) => t.type === 'bot');
-  // Exact-name variables: plain strings with no sub-fields.
   const exactVars = new Set<string>(['clipboard', 'timestamp', 'flow.name', ...triggerInputVariables(triggers)]);
   if (hasBotTrigger) BOT_TRIGGER_VARS.forEach((v) => exactVars.add(v));
-  // Flow variables are seeded before step 0, so every declared one resolves
-  // everywhere. Registering the root as well turns a typo into "{{var}} has no
-  // 'feedUrls' sub-variable" rather than the generic unknown-variable error.
   for (const variable of variables) exactVars.add(`${FLOW_VAR_PREFIX}.${variable.key}`);
   const exactRoots = new Set<string>(['clipboard', 'timestamp', 'flow', FLOW_VAR_PREFIX]);
 
@@ -65,8 +53,6 @@ export function checkVariableReferences(
     const step = steps[i];
     const at = `Step ${i + 1} ("${step.type}")`;
 
-    // Comment steps are documentation — their note is never used at runtime,
-    // so a {{placeholder}} inside one must not fail the flow.
     if (step.type !== 'comment') {
       for (const value of Object.values(step.config)) {
         for (const match of value.matchAll(VAR_REF_RE)) {
@@ -79,7 +65,7 @@ export function checkVariableReferences(
 
           if (root === 'file') {
             if (fileAvailable) continue;
-            return `${at} references {{file}}, but no file-producing step (capture, file_write, file_download, or llm with exportFormat) runs before it in the same scope — a file produced inside a loop is not available after end_loop`;
+            return `${at} references {{file}}, but no file-producing step (capture, file_write, file_download, share with a file format, or llm with exportFormat) runs before it in the same scope — a file produced inside a loop is not available after end_loop`;
           }
           if (root === 'bot') {
             if (!hasBotTrigger) return `${at} references {{${name}}}, but the flow has no bot trigger`;
@@ -99,9 +85,6 @@ export function checkVariableReferences(
       }
     }
 
-    // A step's output enters scope only after it. A loop step's own outputKey
-    // is written to the OUTER context before the body expands, so it belongs
-    // to the enclosing frame and survives its end_loop.
     if (step.outputKey) {
       availableKeys.add(step.outputKey);
       frames[frames.length - 1]?.addedKeys.push(step.outputKey);

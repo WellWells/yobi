@@ -1,11 +1,12 @@
 import type { BrowserWindow } from 'electron';
 import { navigateAndWait, sleep, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
-import { executeAutomationWithTimeout, countElements, dispatchFocusEvents } from './automationExecutor';
+import { executeAutomationWithTimeout, dispatchFocusEvents, settledElementCount } from './automationExecutor';
 import { isExpiredCookie } from '../helpers';
 import { showLoginWindowIfNeeded } from '../windows';
 import { PROVIDER_URLS } from '../../shared/types';
 import { CLEAN_UA } from '../userAgent';
 import { applyWorkerUserAgent } from '../clientHints';
+import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_SUBMIT_JS } from './chatgptSendScript';
 
 const CHATGPT_HOME = PROVIDER_URLS.chatgpt;
 export const CHATGPT_LOGIN_URL = 'https://auth.openai.com/log-in-or-create-account';
@@ -125,9 +126,6 @@ export async function runChatgptAutomation(
   const authSignals = await getChatgptAuthSignals(workerWin);
   const pageSignals = await getChatgptPageSignals(workerWin);
   if (isLoginRequiredFromSignals(authSignals, pageSignals)) {
-    // Reveal the interactive login window here (provider layer) so both chat and
-    // AgentFlow contexts surface it; orchestration layers only handle messaging.
-    // showLoginWindowIfNeeded navigates the interactive worker to the login URL.
     await showLoginWindowIfNeeded('ChatGPT', CHATGPT_LOGIN_URL);
     throw new Error(
       `${CHATGPT_LOGIN_REQUIRED}: ChatGPT page indicates logged-out state (session=${authSignals.hasSessionCookie}, logoutDebug=${authSignals.hasLogoutDebugCookie}, composer=${pageSignals.hasComposer})`,
@@ -136,7 +134,7 @@ export async function runChatgptAutomation(
 
   await dispatchFocusEvents(wc);
 
-  const baseline = await countElements(wc, '[data-message-author-role="assistant"]');
+  const baseline = await settledElementCount(wc, CHATGPT_ASSISTANT_TURN_SELECTOR);
 
   const autoScript = buildChatgptAutomationScript(prompt, baseline, timeoutMs);
   const result = await executeAutomationWithTimeout<{ response: string; title: string }>(
@@ -171,7 +169,7 @@ function buildChatgptAutomationScript(
   ${INJECTED_WAIT_FOR_JS}
 
   function getAssistantTurns() {
-    return document.querySelectorAll('[data-message-author-role="assistant"]');
+    return document.querySelectorAll(${JSON.stringify(CHATGPT_ASSISTANT_TURN_SELECTOR)});
   }
 
   function getLatestAssistantTurn() {
@@ -211,93 +209,15 @@ function buildChatgptAutomationScript(
 
   ${INJECTED_INTERCEPT_COPY_JS}
 
-  var INPUT_SELECTORS = [
-    '#prompt-textarea[contenteditable="true"]',
-    'form[data-type="unified-composer"] #prompt-textarea',
-    'div[contenteditable="true"]#prompt-textarea',
-    'div[contenteditable="true"][role="textbox"][aria-multiline="true"]',
-  ];
+  ${CHATGPT_SUBMIT_JS}
 
-  var input = null;
-  await waitFor(function() {
-    for (var i = 0; i < INPUT_SELECTORS.length; i++) {
-      var el = document.querySelector(INPUT_SELECTORS[i]);
-      if (el) { input = el; return true; }
-    }
-    return false;
-  }, 'ChatGPT input area', 15000, 200);
-
-  if (!input) throw new Error('ChatGPT input area not found');
-
-  input.focus();
-  input.textContent = '';
-  input.dispatchEvent(new InputEvent('input', {
-    bubbles: true, cancelable: true, inputType: 'deleteContent'
-  }));
-  await sleep(80);
-  var dt = new DataTransfer();
-  dt.setData('text/plain', ${escapedPrompt});
-  input.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-  if (!(input.innerText || '').trim()) {
-    document.execCommand('insertText', false, ${escapedPrompt});
-  }
-  input.dispatchEvent(new InputEvent('input', {
-    bubbles: true, cancelable: true, inputType: 'insertText'
-  }));
-  await sleep(250);
-
-  var SEND_SELECTORS = [
-    'button[data-testid="send-button"]',
-  ];
-
-  function findEnabledSendBtn() {
-    for (var s = 0; s < SEND_SELECTORS.length; s++) {
-      var b = document.querySelector(SEND_SELECTORS[s]);
-      if (b && !b.disabled && b.getAttribute('aria-disabled') !== 'true') return b;
-    }
-    return null;
-  }
-
-  // After clicking, poll until the button changes state (disabled / gone → stop
-  // button) rather than sleeping a fixed delay. Returns true when confirmed.
-  async function verifySendLanded() {
-    var deadline = Date.now() + 2000;
-    while (Date.now() < deadline) {
-      await sleep(40);
-      var btn = document.querySelector('[data-testid="send-button"]');
-      // Click registered: button gone, disabled, or aria-disabled
-      if (!btn || btn.disabled || btn.getAttribute('aria-disabled') === 'true') {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  // Wait up to 30 s — handles the delay when ChatGPT converts a long paste to
-  // a TXT attachment and the send button stays disabled until upload finishes.
-  var sent = false;
-  var SEND_DEADLINE = Date.now() + 30000;
-  while (!sent && Date.now() < SEND_DEADLINE) {
-    var sendBtn = findEnabledSendBtn();
-    if (sendBtn) {
-      sendBtn.click();
-      if (await verifySendLanded()) {
-        sent = true;
-      }
-      // Button still active — click didn't register, retry.
-    }
-    if (!sent) await sleep(150);
-  }
-
-  if (!sent) {
-    input.dispatchEvent(new KeyboardEvent('keydown', {
-      key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true, cancelable: true
-    }));
-    await sleep(40);
-    input.dispatchEvent(new KeyboardEvent('keyup', {
-      key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true
-    }));
-  }
+  // chatgptSubmit throws unless a new USER turn appeared, so reaching this line
+  // means the question really went in. It also hands back the assistant count as
+  // it stood immediately before the send: the Node-side baseline is taken before
+  // this script runs, which on a resumed thread is early enough for late history
+  // to push past it and make the PREVIOUS answer look like a new one.
+  var submitted = await chatgptSubmit(${escapedPrompt});
+  BASELINE = submitted.assistantBaseline;
 
   await waitFor(function() {
     return getAssistantTurns().length > BASELINE;

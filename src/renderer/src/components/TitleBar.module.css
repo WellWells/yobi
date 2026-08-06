@@ -214,6 +214,15 @@
   white-space: nowrap;
 }
 
+.queueItemProgress {
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--mantine-color-warning);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .queueItemSummary {
   font-size: var(--font-size-sm);
   color: var(--mantine-color-text-secondary);

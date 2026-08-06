@@ -30,6 +30,6 @@ export async function captureScreenToFile(format: ScreenCaptureFormat, targetDir
   await fs.mkdir(outputDir, { recursive: true });
   const filePath = await getUniquePath(path.join(outputDir, `${buildSnapshotFileName()}.${format}`), '');
   await fs.writeFile(filePath, buffer);
-  sendLog(`🖼️ [AgentFlow] Screen captured: ${path.basename(filePath)}`);
+  sendLog(`🖼️ [Flow] Screen captured: ${path.basename(filePath)}`);
   return filePath;
 }

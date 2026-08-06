@@ -8,15 +8,10 @@ import { SectionCard } from '../components/SectionCard';
 import { GroupHeader } from '../components/GroupHeader';
 import styles from './AboutView.module.css';
 
-// Store builds update through Microsoft Store; this deep-links to the Store app on Windows.
 const MICROSOFT_STORE_URL = 'https://apps.microsoft.com/detail/9nnx8prfstc9';
 
-// Longest staggered entrance ends at 0.34s delay + 0.5s duration.
 const ENTRANCE_ANIMATION_MS = 900;
 
-// Each translated README carries its own "How Yobi Works" section under a
-// localized anchor. Locales without a translation fall back to README.md, which
-// GitHub renders on the repo root.
 const HOW_IT_WORKS_URLS: Record<string, string> = {
   'zh-TW': 'https://github.com/WellWells/yobi/blob/main/README.zh-TW.md#-yobi-如何運作',
   'zh-CN': 'https://github.com/WellWells/yobi/blob/main/README.zh-CN.md#-yobi-如何运作',
@@ -24,13 +19,6 @@ const HOW_IT_WORKS_URLS: Record<string, string> = {
 };
 const HOW_IT_WORKS_FALLBACK = 'https://github.com/WellWells/yobi#-how-yobi-works';
 
-// A colophon, not an attribution list — the authoritative notice for every
-// bundled package is THIRD-PARTY-LICENSES.txt (openThirdPartyLicenses).
-// A row earns its place only if it names the app's stack or touches the user's
-// content, accounts, or credentials; implementation details stay out. Never list
-// a dependency that a proprietary-only feature pulls in, or this list forks
-// between the official build and the public release.
-// `id` resolves the row's description via `about.stack.item.<id>`.
 const TECH_STACK: Array<{ id: string; name: string; url: string }> = [
   { id: 'electron', name: 'Electron', url: 'https://www.electronjs.org/' },
   { id: 'react', name: 'React + TypeScript', url: 'https://react.dev/' },
@@ -49,8 +37,6 @@ export const AboutView: React.FC = () => {
   const [appVersion, setAppVersion] = useState('');
   const [appIconDataUrl, setAppIconDataUrl] = useState('');
 
-  // The view stays mounted and is toggled via `display`, which cancels and then
-  // restarts CSS animations. Freeze the entrance stagger after it has played once.
   const isVisible = useAppStore((s) => s.currentView === 'about');
   const [hasEntered, setHasEntered] = useState(false);
 

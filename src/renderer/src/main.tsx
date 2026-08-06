@@ -2,10 +2,6 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 import { ModalsProvider } from '@mantine/modals';
-// Must load before any app CSS. Mantine's component root classes (e.g. UnstyledButton's
-// background/border/padding reset) collide with our CSS-module classes at equal
-// specificity, so the sheet that lands last wins the tie. Imported last, Mantine
-// silently beat every module rule it touched; imported first, app styles win.
 import '@mantine/core/styles.css';
 import { App } from './App';
 import { useThemeStore } from './store/themeStore';

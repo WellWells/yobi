@@ -35,5 +35,7 @@ Thumbs.db
 
 config.json
 metrics.json
+mcp-auth.json
+bot-conversations.json
 
 flow-checkpoints

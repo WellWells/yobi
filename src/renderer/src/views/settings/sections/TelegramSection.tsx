@@ -1,12 +1,14 @@
 import React from 'react';
-import { ActionIcon, Box, Group, Stack, Text, Tooltip, Button as MButton } from '@mantine/core';
-import {
-  Bot, Copy, ExternalLink, KeyRound, Link, MessageSquare, Plug, Send, ShieldAlert, Unlink, Users,
-} from 'lucide-react';
+import { Badge, Box, Group, Stack, Text, Button as MButton } from '@mantine/core';
+import { Bot, KeyRound, Link, Megaphone, MessageSquare, Plug, Send, Users } from 'lucide-react';
 import dayjs from 'dayjs';
 import { AppPasswordInput } from '../../../components/AppPasswordInput';
-import { SectionCard, SettingRow, SettingField, SettingDivider, SelectDropdown, ToggleSwitch, GroupHeader, SectionTitle } from '../components';
+import { SectionCard, SettingRow, SettingField, SettingDivider, SelectDropdown, ToggleSwitch, SectionTitle } from '../components';
 import { BotLlmDirectSetting } from './BotLlmDirectSetting';
+import { BotReplyPreview } from './BotReplyPreview';
+import { TelegramChannels } from './TelegramChannels';
+import { TelegramPairingPanel } from './TelegramPairingPanel';
+import { TelegramPairedUsers } from './TelegramPairedUsers';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import type { useTelegramSettings } from '../hooks/useTelegramSettings';
 
@@ -45,11 +47,16 @@ export const TelegramSection: React.FC<Props> = ({
 }) => {
   const settings = telegram.telegramSettings;
   const runtimeStatus = settings?.runtime.status;
+  const channels = settings?.channels ?? [];
+  const pendingCodes = settings?.pairing.pendingCodes ?? [];
+  const pairedUsers = settings?.pairing.pairedUsers ?? [];
+  const adminUserIds = settings?.adminUserIds ?? [];
+  // Switched off, every row below it is inert — the card collapses to the one switch that
+  // brings them back. Search has to reach those rows either way, so it wins.
+  const expanded = (settings?.enabled ?? false) || isSearching;
 
   return (
     <Box display={showSection(TAG_SETS.bots, 'bots') ? 'block' : 'none'}>
-      {isSearching && <GroupHeader label={t('settings.group.bots')} />}
-
       <SectionCard style={{ marginBottom: sectionGap }}>
         <Group justify="space-between" align="center">
           <Group gap={8} align="center">
@@ -66,242 +73,221 @@ export const TelegramSection: React.FC<Props> = ({
 
         <SettingDivider my={16} />
 
-        <SectionTitle icon={<Plug size={15} />} label={t('settings.telegram.section.connection')} />
-        <Text fz="var(--font-size-base)" c="dimmed" lh={1.6} mb={12}>
-          {t('settings.telegram.hint')}
-        </Text>
-        <Stack gap={12}>
-          <SettingRow
-            icon={<Bot size={13} />}
-            label={t('settings.telegram.enabled')}
-            control={
-              <ToggleSwitch
-                checked={settings?.enabled ?? false}
-                onChange={() => { void telegram.handleToggleTelegramEnabled(); }}
-              />
-            }
-          />
-
-          <SettingField icon={<KeyRound size={13} />} label={t('settings.telegram.tokenLabel')}>
-            <Group gap={8} align="center">
-              <AppPasswordInput
-                flex={1}
-                tone="body"
-                mono
-                value={telegram.telegramTokenInput}
-                onChange={(e) => telegram.setTelegramTokenInput(e.target.value)}
-                placeholder={t('settings.telegram.tokenPlaceholder')}
-              />
-              <MButton
-                variant="default"
-                leftSection={<KeyRound size={13} />}
-                onClick={() => { void telegram.handleSaveTelegramToken(); }}
-                disabled={telegram.telegramBusy || !telegram.telegramTokenInput.trim()}
-              >
-                {t('settings.telegram.saveToken')}
-              </MButton>
-            </Group>
-            <Text fz="var(--font-size-sm)" c="dimmed">
-              {t('settings.telegram.tokenCurrent')}:{' '}
-              {settings?.hasToken
-                ? (settings.tokenPreview ?? '****')
-                : t('settings.telegram.tokenNotSet')}
+        {expanded && (
+          <>
+            <SectionTitle icon={<Plug size={15} />} label={t('settings.telegram.section.connection')} />
+            <Text fz="var(--font-size-base)" c="dimmed" lh={1.6} mb={12}>
+              {t('settings.telegram.hint')}
             </Text>
-          </SettingField>
+          </>
+        )}
 
-          {(settings?.runtime.botUsername || settings?.runtime.errorMessage) && (
-            <Box
-              p="8px 10px"
-              bg="var(--mantine-color-bg-tertiary)"
-              style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 'var(--radius-sm)' }}
-            >
-              {settings?.runtime.botUsername && (
-                <Text fz="var(--font-size-sm)" c="dimmed">
-                  @{settings.runtime.botUsername}
-                </Text>
-              )}
-              {settings?.runtime.errorMessage && (
-                <Text fz="var(--font-size-sm)" c="var(--mantine-color-error)" mt={settings?.runtime.botUsername ? 4 : 0}>
-                  {settings.runtime.errorMessage}
-                </Text>
-              )}
-            </Box>
-          )}
-        </Stack>
-
-        <SettingDivider my={16} />
-
-        <SectionTitle icon={<MessageSquare size={15} />} label={t('settings.telegram.section.reply')} />
-        <Stack gap={12}>
-          <SettingRow
-            icon={<MessageSquare size={13} />}
-            label={t('settings.telegram.compactReply')}
-            hint={t('settings.telegram.compactReply.hint')}
-            control={
-              <ToggleSwitch
-                checked={settings?.compactReply ?? false}
-                onChange={() => { void telegram.handleToggleTelegramCompactReply(); }}
-              />
-            }
-          />
-
-          {/* A compact reply is plain text by definition — there is no format to pick. */}
-          {!settings?.compactReply && (
-            <Box>
-              <Text fz="var(--font-size-base)" c="var(--mantine-color-default-color)" mb={6}>
-                {t('settings.telegram.defaultReply')}
-              </Text>
-              <SelectDropdown
-                value={settings?.defaultReplyMode ?? 'markdown'}
-                options={[
-                  { value: 'markdown', label: t('settings.telegram.reply.markdown') },
-                  { value: 'png', label: t('settings.telegram.reply.png') },
-                  { value: 'webp', label: t('settings.telegram.reply.webp') },
-                  { value: 'pdf', label: t('settings.telegram.reply.pdf') },
-                ]}
-                onChange={(v) => { void telegram.handleTelegramDefaultReplyMode(v as 'markdown' | 'png' | 'webp' | 'pdf'); }}
-                disabled={telegram.telegramBusy}
-              />
-            </Box>
-          )}
-        </Stack>
-
-        <SettingDivider my={16} />
-
-        <SectionTitle icon={<Users size={15} />} label={t('settings.telegram.section.access')} />
-        <Stack gap={12}>
-          <SettingRow
-            icon={<Users size={13} />}
-            label={t('settings.telegram.allowGroup')}
-            control={
-              <ToggleSwitch
-                checked={settings?.allowGroupCommands ?? false}
-                onChange={() => { void telegram.handleToggleTelegramGroupCommands(); }}
-              />
-            }
-          />
-
-          {settings && (
-            <BotLlmDirectSetting
-              value={settings.llmDirect}
-              busy={telegram.telegramBusy}
-              hint={t('settings.telegram.llmDirect.hint')}
-              onUpdate={(patch) => { void telegram.handleUpdateTelegramLlmDirect(patch); }}
-              t={t}
+        <SettingRow
+          icon={<Bot size={13} />}
+          label={t('settings.telegram.enabled')}
+          hint={expanded ? undefined : t('settings.telegram.enabled.offHint')}
+          control={
+            <ToggleSwitch
+              checked={settings?.enabled ?? false}
+              onChange={() => { void telegram.handleToggleTelegramEnabled(); }}
             />
-          )}
+          }
+        />
 
-          <SettingDivider />
+        {expanded && (
+          <>
+            <Stack gap={12} mt={12}>
+              <SettingField icon={<KeyRound size={13} />} label={t('settings.telegram.tokenLabel')}>
+                <Group gap={8} align="center">
+                  <AppPasswordInput
+                    flex={1}
+                    tone="body"
+                    mono
+                    value={telegram.telegramTokenInput}
+                    onChange={(e) => telegram.setTelegramTokenInput(e.target.value)}
+                    placeholder={t('settings.telegram.tokenPlaceholder')}
+                  />
+                  <MButton
+                    variant="default"
+                    leftSection={<KeyRound size={13} />}
+                    onClick={() => { void telegram.handleSaveTelegramToken(); }}
+                    disabled={telegram.telegramBusy || !telegram.telegramTokenInput.trim()}
+                  >
+                    {t('settings.telegram.saveToken')}
+                  </MButton>
+                </Group>
+                <Text fz="var(--font-size-sm)" c="dimmed">
+                  {t('settings.telegram.tokenCurrent')}:{' '}
+                  {settings?.hasToken
+                    ? (settings.tokenPreview ?? '****')
+                    : t('settings.telegram.tokenNotSet')}
+                </Text>
+              </SettingField>
 
-          <Group justify="space-between" align="center">
-            <Text fz="var(--font-size-base)" fw={700} c="var(--mantine-color-default-color)">
-              {t('settings.telegram.pairing.title')}
-            </Text>
-            <MButton
-              variant="default"
-              leftSection={<Link size={13} />}
-              onClick={() => { void telegram.handleGeneratePairingCode(); }}
-              disabled={telegram.telegramBusy}
-            >
-              {t('settings.telegram.pairing.generate')}
-            </MButton>
-          </Group>
-
-          <Text fz="var(--font-size-sm)" c="dimmed">
-            {t('settings.telegram.pairing.pending')}: {settings?.pairing.pendingCodes.length ?? 0}
-            {' · '}
-            {t('settings.telegram.pairing.paired')}: {settings?.pairing.pairedUsers.length ?? 0}
-            {' · '}
-            {t('settings.telegram.admin.count')}: {settings?.adminUserIds.length ?? 0}
-          </Text>
-          <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6} mt={0}>
-            {t('settings.telegram.pairing.howto')}
-          </Text>
-
-          {(settings?.pairing.pendingCodes.length ?? 0) > 0 && (
-            <Stack gap={6}>
-              {settings!.pairing.pendingCodes.map((item) => (
-                <Group
-                  key={item.code}
-                  justify="space-between"
-                  align="center"
-                  gap={8}
-                  p="6px 8px"
+              {(settings?.runtime.botUsername || settings?.runtime.errorMessage) && (
+                <Box
+                  p="8px 10px"
                   bg="var(--mantine-color-bg-tertiary)"
                   style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 'var(--radius-sm)' }}
                 >
-                  <Text fz="var(--font-size-sm)" c="var(--mantine-color-default-color)" ff="var(--font-mono)">
-                    {item.code}
-                    {' · '}
-                    {t('settings.telegram.pairing.expires')}
-                    {': '}
-                    {dayjs(item.expiresAt).format('HH:mm:ss')}
-                  </Text>
-                  <Group gap={4}>
-                    <Tooltip label={t('settings.telegram.pairing.copy')} position="top">
-                      <ActionIcon variant="subtle" size={26} onClick={() => { void telegram.handleCopyPairingCode(item.code); }} aria-label={t('settings.telegram.pairing.copy')}><Copy size={13} /></ActionIcon>
-                    </Tooltip>
-                    <Tooltip label={t('settings.telegram.pairing.openLink')} position="top">
-                      <ActionIcon variant="subtle" size={26} onClick={() => { void telegram.handleOpenTelegramStart(item.code); }} aria-label={t('settings.telegram.pairing.openLink')}><ExternalLink size={13} /></ActionIcon>
-                    </Tooltip>
-                    <Tooltip label={t('settings.telegram.pairing.copyLink')} position="top">
-                      <ActionIcon variant="subtle" size={26} onClick={() => { void telegram.handleCopyTelegramStartUrl(item.code); }} aria-label={t('settings.telegram.pairing.copyLink')}><Link size={13} /></ActionIcon>
-                    </Tooltip>
-                    <Tooltip label={t('settings.telegram.pairing.revoke')} position="top">
-                      <ActionIcon variant="subtle" size={26} onClick={() => { void telegram.handleRevokePairingCode(item.code); }} aria-label={t('settings.telegram.pairing.revoke')}><ShieldAlert size={13} /></ActionIcon>
-                    </Tooltip>
-                  </Group>
-                </Group>
-              ))}
-            </Stack>
-          )}
-
-          {(settings?.pairing.pairedUsers.length ?? 0) > 0 && (
-            <Stack gap={6}>
-              {settings!.pairing.pairedUsers.map((user) => {
-                const isAdmin = settings!.adminUserIds.includes(user.userId);
-                return (
-                  <Group
-                    key={user.userId}
-                    justify="space-between"
-                    align="center"
-                    gap={8}
-                    p="6px 8px"
-                    bg="var(--mantine-color-bg-tertiary)"
-                    style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 'var(--radius-sm)' }}
-                  >
-                    <Text fz="var(--font-size-sm)" c="var(--mantine-color-default-color)">
-                      {user.firstName || user.lastName ? (
-                        `${[user.firstName, user.lastName].filter(Boolean).join(' ')}${user.username ? ` (@${user.username})` : ''}`
-                      ) : (
-                        user.username ? `@${user.username}` : `ID ${user.userId}`
-                      )}
-                      {isAdmin ? ` · ${t('settings.telegram.admin.badge')}` : ''}
+                  {settings?.runtime.botUsername && (
+                    <Text fz="var(--font-size-sm)" c="dimmed">
+                      @{settings.runtime.botUsername}
                     </Text>
-                    <Group gap={4}>
-                      <Tooltip
-                        label={isAdmin ? t('settings.telegram.admin.remove') : t('settings.telegram.admin.add')}
-                        position="top"
-                      >
-                        <ActionIcon
-                          variant="subtle" size={26}
-                          onClick={() => { void telegram.handleToggleTelegramAdmin(user.userId); }}
-                          aria-label={isAdmin ? t('settings.telegram.admin.remove') : t('settings.telegram.admin.add')}
-                          c={isAdmin ? 'var(--mantine-color-accent)' : undefined}
-                        >
-                          <ShieldAlert size={13} />
-                        </ActionIcon>
-                      </Tooltip>
-                      <Tooltip label={t('settings.telegram.pairing.unpair')} position="top">
-                        <ActionIcon variant="subtle" size={26} onClick={() => { void telegram.handleUnpairTelegramUser(user.userId); }} aria-label={t('settings.telegram.pairing.unpair')}><Unlink size={13} /></ActionIcon>
-                      </Tooltip>
-                    </Group>
-                  </Group>
-                );
-              })}
+                  )}
+                  {settings?.runtime.errorMessage && (
+                    <Text fz="var(--font-size-sm)" c="var(--mantine-color-error)" mt={settings?.runtime.botUsername ? 4 : 0}>
+                      {settings.runtime.errorMessage}
+                    </Text>
+                  )}
+                </Box>
+              )}
             </Stack>
-          )}
-        </Stack>
+
+            <SettingDivider my={16} />
+
+            <SectionTitle icon={<MessageSquare size={15} />} label={t('settings.telegram.section.reply')} />
+            <Stack gap={12}>
+              <SettingRow
+                icon={<MessageSquare size={13} />}
+                label={t('settings.telegram.compactReply')}
+                hint={t('settings.telegram.compactReply.hint')}
+                control={
+                  <ToggleSwitch
+                    checked={settings?.compactReply ?? false}
+                    onChange={() => { void telegram.handleToggleTelegramCompactReply(); }}
+                  />
+                }
+              />
+
+              {!settings?.compactReply && (
+                <Box maw={300}>
+                  <Text fz="var(--font-size-base)" c="var(--mantine-color-default-color)" mb={6}>
+                    {t('settings.telegram.defaultReply')}
+                  </Text>
+                  <SelectDropdown
+                    value={settings?.defaultReplyMode ?? 'markdown'}
+                    options={[
+                      { value: 'markdown', label: t('settings.telegram.reply.markdown') },
+                      { value: 'png', label: t('settings.telegram.reply.png') },
+                      { value: 'webp', label: t('settings.telegram.reply.webp') },
+                      { value: 'pdf', label: t('settings.telegram.reply.pdf') },
+                    ]}
+                    onChange={(v) => { void telegram.handleTelegramDefaultReplyMode(v as 'markdown' | 'png' | 'webp' | 'pdf'); }}
+                    disabled={telegram.telegramBusy}
+                  />
+                </Box>
+              )}
+
+              <BotReplyPreview
+                compactReply={settings?.compactReply ?? false}
+                mode={settings?.defaultReplyMode ?? 'markdown'}
+                t={t}
+              />
+
+              <SettingDivider my={4} />
+
+              {settings && (
+                <BotLlmDirectSetting
+                  value={settings.llmDirect}
+                  busy={telegram.telegramBusy}
+                  hint={t('settings.telegram.llmDirect.hint')}
+                  onUpdate={(patch) => { void telegram.handleUpdateTelegramLlmDirect(patch); }}
+                  t={t}
+                />
+              )}
+            </Stack>
+
+            <SettingDivider my={16} />
+
+            <Group justify="space-between" align="center" gap={8} wrap="nowrap" mb={10}>
+              <SectionTitle icon={<Megaphone size={15} />} label={t('settings.telegram.channels.title')} mb={0} />
+              {channels.length > 0 && (
+                <Badge size="sm" variant="light" style={{ flexShrink: 0 }}>{channels.length}</Badge>
+              )}
+            </Group>
+            <TelegramChannels
+              channels={channels}
+              onForget={(chatId) => { void telegram.handleForgetTelegramChannel(chatId); }}
+              t={t}
+            />
+
+            <SettingDivider my={16} />
+
+            <SectionTitle icon={<Users size={15} />} label={t('settings.telegram.section.access')} />
+            <Stack gap={12}>
+              <SettingRow
+                icon={<Users size={13} />}
+                label={t('settings.telegram.allowGroup')}
+                control={
+                  <ToggleSwitch
+                    checked={settings?.allowGroupCommands ?? false}
+                    onChange={() => { void telegram.handleToggleTelegramGroupCommands(); }}
+                  />
+                }
+              />
+
+              <SettingDivider my={4} />
+
+              <Group justify="space-between" align="center">
+                <Text fz="var(--font-size-base)" fw={700} c="var(--mantine-color-default-color)">
+                  {t('settings.telegram.pairing.title')}
+                </Text>
+                <MButton
+                  variant="default"
+                  leftSection={<Link size={13} />}
+                  onClick={() => { void telegram.handleGeneratePairingCode(); }}
+                  disabled={telegram.telegramBusy}
+                >
+                  {t('settings.telegram.pairing.generate')}
+                </MButton>
+              </Group>
+
+              <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>
+                {t('settings.telegram.pairing.howto')}
+              </Text>
+
+              <TelegramPairingPanel
+                pendingCodes={pendingCodes}
+                formatExpiry={(expiresAt) => dayjs(expiresAt).format('HH:mm:ss')}
+                onOpen={(code) => { void telegram.handleOpenTelegramStart(code); }}
+                onCopyCode={(code) => { void telegram.handleCopyPairingCode(code); }}
+                onCopyLink={(code) => { void telegram.handleCopyTelegramStartUrl(code); }}
+                onRevoke={(code) => { void telegram.handleRevokePairingCode(code); }}
+                t={t}
+              />
+
+              <Group justify="space-between" align="center" gap={8} wrap="nowrap">
+                <Text fz="var(--font-size-sm)" fw={600} c="var(--mantine-color-default-color)">
+                  {t('settings.telegram.paired.title')}
+                </Text>
+                <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+                  {pendingCodes.length > 0 && (
+                    <Badge size="xs" variant="light" color="gray">
+                      {t('settings.telegram.pairing.pending')} {pendingCodes.length}
+                    </Badge>
+                  )}
+                  <Badge size="xs" variant="light" color="gray">
+                    {t('settings.telegram.pairing.paired')} {pairedUsers.length}
+                  </Badge>
+                  {adminUserIds.length > 0 && (
+                    <Badge size="xs" variant="light">
+                      {t('settings.telegram.admin.count')} {adminUserIds.length}
+                    </Badge>
+                  )}
+                </Group>
+              </Group>
+
+              <TelegramPairedUsers
+                pairedUsers={pairedUsers}
+                adminUserIds={adminUserIds}
+                onToggleAdmin={(userId) => { void telegram.handleToggleTelegramAdmin(userId); }}
+                onUnpair={(userId) => { void telegram.handleUnpairTelegramUser(userId); }}
+                t={t}
+              />
+            </Stack>
+          </>
+        )}
       </SectionCard>
     </Box>
   );

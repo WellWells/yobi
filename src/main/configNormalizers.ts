@@ -1,7 +1,23 @@
-import type { BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureSettings, CustomTemplate, HiddenSources, LinePairedUser, LinePairingState, LinePendingCode, NotifyEventPrefs, Provider, PromptLength, PromptPreferences, PromptTone, TelegramPairedUser, TelegramPairingState, TelegramPendingCode } from '../shared/types';
-import { BYOK_PROVIDER_TYPES, PROVIDERS } from '../shared/types';
+import { DEFAULT_CAPTURE_WIDTH, DEFAULT_SHARE_INSTANCE, MAX_CAPTURE_WIDTH, MIN_CAPTURE_WIDTH, SHARE_EXPIRE_VALUES, defaultQuickExportHotkey } from '../shared/types';
+import type { BotBuiltinCommand, BotBuiltinCommands, BotByokCommands, BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureSettings, QuickExportFormat, QuickExportSettings, CustomTemplate, HiddenSources, LinePairedUser, LinePairingState, LinePendingCode, McpServerConfig, NotifyEventPrefs, Provider, PromptLength, PromptPreferences, PromptTone, ShareExpire, ShareSettings, TelegramChannel, TelegramPairedUser, TelegramPairingState, TelegramPendingCode } from '../shared/types';
+import {
+  AGENT_ASK_TTL_MAX_MINUTES,
+  AGENT_ASK_TTL_MIN_MINUTES,
+  BOT_BUILTIN_COMMAND_KEYS,
+  BYOK_PROVIDER_TYPES,
+  DEFAULT_AGENT_ASK_TTL_MINUTES,
+  PROVIDERS,
+  detectByokProviderType,
+} from '../shared/types';
 import { isThemePreference } from '../shared/themes';
+import {
+  CAPTURE_BACKGROUND_STYLES,
+  DEFAULT_CAPTURE_BACKGROUND_STYLE,
+  DEFAULT_CAPTURE_PALETTE,
+  type CaptureBackgroundStyle,
+} from '../shared/capturePalettes';
 import { defaultStored } from './configTypes';
+import { normalizeInstanceUrl } from './share/privatebin';
 import type { ByokInstance, Config, LineConfig, SmtpConfig, TelegramConfig } from './configTypes';
 
 type LegacyTelegramConfig = TelegramConfig & { providerCommands?: unknown };
@@ -17,9 +33,6 @@ export function normalizeConfig(raw: unknown): Config {
     ? obj.localeSetByUser
     : (typeof obj.locale === 'string' && obj.locale !== 'zh-TW' && obj.locale !== 'en-US');
 
-  // The config stores the two lists flat; normalizeHiddenSources speaks the
-  // HiddenSources shape the IPC payload uses. Adapt rather than spread — `obj`
-  // carries no `providers` key, so a spread would silently wipe the settings.
   const hidden = normalizeHiddenSources({
     providers: obj.hiddenProviders,
     duckaiModelIds: obj.hiddenDuckaiModelIds,
@@ -32,23 +45,27 @@ export function normalizeConfig(raw: unknown): Config {
     ...obj,
     localeSetByUser: inferredLocaleSetByUser,
     metricsEnabled: obj.metricsEnabled !== false,
+    hotkeyEnabled: obj.hotkeyEnabled !== false,
     notifyEvents: normalizeNotifyEvents(obj.notifyEvents),
     youtubePrompt: typeof obj.youtubePrompt === 'string' ? obj.youtubePrompt : defaultStored.youtubePrompt,
     theme: isThemePreference(obj.theme) ? obj.theme : defaultStored.theme,
     layoutMode: obj.layoutMode === 'side-by-side' ? 'side-by-side' : 'stacked',
     markdownZoom: clampedZoom,
     captureSettings: normalizeCaptureSettings(obj.captureSettings),
+    quickExport: normalizeQuickExport(obj.quickExport),
+    share: normalizeShareSettings(obj.share),
     promptPreferences: normalizePromptPreferences(obj.promptPreferences),
-    // Provider commands used to live under `telegram` before LINE shared them.
-    // Configs written by an older build still carry them there.
     providerCommands: normalizeProviderCommands(
       obj.providerCommands ?? (obj.telegram as LegacyTelegramConfig | undefined)?.providerCommands,
     ),
+    builtinCommands: normalizeBuiltinCommands(obj.builtinCommands),
+    botByokCommands: normalizeBotByokCommands(obj.botByokCommands),
     telegram: deserializePairingConfig(obj.telegram),
     line: normalizeLine(obj.line),
     smtp: normalizeSmtp(obj.smtp),
     byokInstances: normalizeByokInstances(obj.byokInstances),
     byokGroups: normalizeByokGroups(obj.byokGroups),
+    mcpServers: normalizeMcpServers(obj.mcpServers),
     hiddenProviders: hidden.providers,
     hiddenDuckaiModelIds: hidden.duckaiModelIds,
     hiddenByokIds: hidden.byokIds,
@@ -67,10 +84,6 @@ function normalizeStringList(raw: unknown): string[] {
   return [...seen];
 }
 
-// Blocklist semantics: an absent key means nothing is hidden, so a config written
-// before this feature needs no migration, and duck.ai models added later show up
-// by default. Unknown ids survive — the duck.ai list is fetched at runtime, so an
-// id we cannot see right now is not necessarily stale.
 export function normalizeHiddenSources(raw: unknown): HiddenSources {
   const obj = (raw && typeof raw === 'object') ? (raw as Partial<HiddenSources>) : {};
   const known = new Set<string>(PROVIDERS);
@@ -80,6 +93,17 @@ export function normalizeHiddenSources(raw: unknown): HiddenSources {
     byokIds: normalizeStringList(obj.byokIds),
     byokGroupIds: normalizeStringList(obj.byokGroupIds),
   };
+}
+
+function resolveStoredProviderType(rawType: unknown, baseUrl: string): ByokProviderType {
+  const known = BYOK_PROVIDER_TYPES.includes(rawType as ByokProviderType)
+    ? (rawType as ByokProviderType)
+    : null;
+  if (!known) return detectByokProviderType(baseUrl);
+  if (known === 'openai' && detectByokProviderType(baseUrl) !== 'openai') {
+    return detectByokProviderType(baseUrl);
+  }
+  return known;
 }
 
 export function normalizeByokInstances(raw: unknown): ByokInstance[] {
@@ -92,18 +116,42 @@ export function normalizeByokInstances(raw: unknown): ByokInstance[] {
     const name = typeof entry.name === 'string' ? entry.name.trim() : '';
     if (!id || !name || seen.has(id)) continue;
     seen.add(id);
+    const baseUrl = typeof entry.baseUrl === 'string' ? entry.baseUrl.trim() : '';
     instances.push({
       id,
       name,
-      providerType: BYOK_PROVIDER_TYPES.includes(entry.providerType as ByokProviderType)
-        ? (entry.providerType as ByokProviderType)
-        : 'openai',
+      providerType: resolveStoredProviderType(entry.providerType, baseUrl),
       apiKey: typeof entry.apiKey === 'string' ? entry.apiKey.trim() : '',
-      baseUrl: typeof entry.baseUrl === 'string' ? entry.baseUrl.trim() : '',
+      baseUrl,
       model: typeof entry.model === 'string' ? entry.model.trim() : '',
     });
   }
   return instances;
+}
+
+export function normalizeMcpServers(raw: unknown): McpServerConfig[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const servers: McpServerConfig[] = [];
+  for (const item of raw) {
+    const entry = (item && typeof item === 'object') ? (item as Partial<McpServerConfig>) : {};
+    const id = typeof entry.id === 'string' ? entry.id.trim() : '';
+    const url = typeof entry.url === 'string' ? entry.url.trim() : '';
+    if (!id || !url || seen.has(id) || !/^https:\/\//i.test(url)) continue;
+    seen.add(id);
+    const headerName = typeof entry.headerName === 'string' && entry.headerName.trim() ? entry.headerName.trim() : undefined;
+    servers.push({
+      id,
+      name: typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : url,
+      url,
+      enabled: entry.enabled !== false,
+      agentEnabled: entry.agentEnabled !== false,
+      autoApproveWrites: entry.autoApproveWrites === true,
+      createdAt: typeof entry.createdAt === 'string' && entry.createdAt ? entry.createdAt : new Date().toISOString(),
+      ...(headerName ? { headerName } : {}),
+    });
+  }
+  return servers;
 }
 
 export function normalizeByokGroups(raw: unknown): ByokGroup[] {
@@ -116,8 +164,6 @@ export function normalizeByokGroups(raw: unknown): ByokGroup[] {
     const name = typeof entry.name === 'string' ? entry.name.trim() : '';
     if (!id || !name || seen.has(id)) continue;
     seen.add(id);
-    // Dangling members (a key deleted while still listed here) are tolerated:
-    // kept as-is on disk, skipped at resolution time. Dedup within a group.
     const memberSeen = new Set<string>();
     const memberIds: string[] = [];
     if (Array.isArray(entry.memberIds)) {
@@ -156,8 +202,6 @@ export function normalizeLine(raw: unknown): LineConfig {
   };
 }
 
-// Shared by the Telegram and LINE configs; pre-feature stored configs have no
-// llmDirect key at all and must come back disabled.
 export function normalizeLlmDirect(raw: unknown): BotLlmDirectConfig {
   const obj = (raw && typeof raw === 'object') ? (raw as Partial<BotLlmDirectConfig>) : {};
   return {
@@ -169,8 +213,6 @@ export function normalizeLlmDirect(raw: unknown): BotLlmDirectConfig {
 function deserializeLinePairingState(raw: unknown, legacyAllowedUserIds: unknown): LinePairingState {
   const obj = (raw && typeof raw === 'object') ? (raw as Partial<LinePairingState>) : {};
   const pairedUsers = normalizeLinePairedUsers(obj.pairedUsers);
-  // Migration: line.allowedUserIds predates pairing. Fold any id that is not
-  // already paired into pairedUsers so upgrading never locks the bot's users out.
   const seen = new Set(pairedUsers.map((user) => user.userId));
   for (const userId of normalizeLineUserIds(legacyAllowedUserIds)) {
     if (seen.has(userId)) continue;
@@ -239,16 +281,57 @@ export function normalizeSmtp(raw: unknown): SmtpConfig {
   };
 }
 
+function clampCaptureWidth(raw: unknown): number {
+  const value = Math.round(Number(raw));
+  if (!Number.isFinite(value)) return DEFAULT_CAPTURE_WIDTH;
+  return Math.max(MIN_CAPTURE_WIDTH, Math.min(MAX_CAPTURE_WIDTH, value));
+}
+
 export function normalizeCaptureSettings(raw: unknown): CaptureSettings {
   const obj = (raw && typeof raw === 'object') ? (raw as Partial<CaptureSettings>) : {};
   const validFormats: CaptureFormat[] = ['png', 'webp', 'pdf'];
   return {
-    palette: typeof obj.palette === 'string' && obj.palette ? obj.palette : 'aurora',
+    palette: typeof obj.palette === 'string' && obj.palette ? obj.palette : DEFAULT_CAPTURE_PALETTE,
+    backgroundStyle: CAPTURE_BACKGROUND_STYLES.includes(obj.backgroundStyle as CaptureBackgroundStyle)
+      ? (obj.backgroundStyle as CaptureBackgroundStyle)
+      : DEFAULT_CAPTURE_BACKGROUND_STYLE,
     direction: typeof obj.direction === 'string' && obj.direction ? obj.direction : 'se',
-    showPrompt: obj.showPrompt === true,
+    showPrompt: obj.showPrompt !== false,
     showProvider: obj.showProvider !== false,
     showTimestamp: obj.showTimestamp !== false,
+    showTokens: obj.showTokens !== false,
     format: validFormats.includes(obj.format as CaptureFormat) ? (obj.format as CaptureFormat) : 'png',
+    cardLayout: obj.cardLayout === 'bubble' ? 'bubble' : 'document',
+    range: obj.range === 'last' ? 'last' : 'all',
+    width: clampCaptureWidth(obj.width),
+    pixelRatio: obj.pixelRatio === 2 ? 2 : 1,
+    zip: obj.zip === true,
+  };
+}
+
+export function normalizeShareSettings(raw: unknown): ShareSettings {
+  const obj = (raw && typeof raw === 'object') ? (raw as Partial<ShareSettings>) : {};
+  const rawUrl = typeof obj.instanceUrl === 'string' ? obj.instanceUrl : '';
+  return {
+    instanceUrl: normalizeInstanceUrl(rawUrl) ?? DEFAULT_SHARE_INSTANCE,
+    expire: SHARE_EXPIRE_VALUES.includes(obj.expire as ShareExpire)
+      ? (obj.expire as ShareExpire)
+      : '1week',
+    burnAfterReading: obj.burnAfterReading === true,
+    consentedAt: typeof obj.consentedAt === 'string' ? obj.consentedAt.trim() : '',
+  };
+}
+
+export function normalizeQuickExport(raw: unknown): QuickExportSettings {
+  const obj = (raw && typeof raw === 'object') ? (raw as Partial<QuickExportSettings>) : null;
+  const validFormats: QuickExportFormat[] = ['png', 'webp', 'pdf', 'text'];
+  return {
+    enabled: obj?.enabled !== false,
+    hotkey: typeof obj?.hotkey === 'string'
+      ? obj.hotkey.trim()
+      : defaultQuickExportHotkey(process.platform === 'darwin'),
+    format: validFormats.includes(obj?.format as QuickExportFormat) ? (obj!.format as QuickExportFormat) : 'png',
+    zip: obj?.zip === true,
   };
 }
 
@@ -265,7 +348,31 @@ export function deserializePairingConfig(raw: unknown): TelegramConfig {
     adminUserIds: normalizeAdminUserIds(obj.adminUserIds),
     llmDirect: normalizeLlmDirect(obj.llmDirect),
     pairing: deserializePairingState(obj.pairing),
+    channels: normalizeTelegramChannels(obj.channels),
   };
+}
+
+export function normalizeTelegramChannels(raw: unknown): TelegramChannel[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<number>();
+  const channels: TelegramChannel[] = [];
+  for (const item of raw) {
+    const entry = (item && typeof item === 'object') ? (item as Partial<TelegramChannel>) : {};
+    const chatId = Number(entry.chatId);
+    if (!Number.isFinite(chatId) || chatId === 0 || seen.has(chatId)) continue;
+    seen.add(chatId);
+    const username = typeof entry.username === 'string' ? entry.username.replace(/^@/, '').trim() : '';
+    const lostAt = typeof entry.lostAt === 'string' ? entry.lostAt.trim() : '';
+    channels.push({
+      chatId,
+      title: typeof entry.title === 'string' ? entry.title.trim() : '',
+      ...(username ? { username } : {}),
+      canPost: entry.canPost === true,
+      discoveredAt: typeof entry.discoveredAt === 'string' ? entry.discoveredAt : new Date().toISOString(),
+      ...(lostAt ? { lostAt } : {}),
+    });
+  }
+  return channels;
 }
 
 export function normalizeProviderCommands(raw: unknown): Record<Provider, BotProviderCommand> {
@@ -283,6 +390,38 @@ export function normalizeProviderCommands(raw: unknown): Record<Provider, BotPro
       command.modelId = typeof entry.modelId === 'string' ? entry.modelId.trim() : '';
     }
     result[provider] = command;
+  }
+  return result;
+}
+
+export function normalizeBuiltinCommands(raw: unknown): BotBuiltinCommands {
+  const obj = (raw && typeof raw === 'object') ? (raw as Record<string, unknown>) : {};
+  const ttl = Number((obj as Partial<BotBuiltinCommands>).askTtlMinutes);
+  const result = {
+    askTtlMinutes: Number.isFinite(ttl)
+      ? Math.min(AGENT_ASK_TTL_MAX_MINUTES, Math.max(AGENT_ASK_TTL_MIN_MINUTES, Math.round(ttl)))
+      : DEFAULT_AGENT_ASK_TTL_MINUTES,
+  } as BotBuiltinCommands;
+  for (const key of BOT_BUILTIN_COMMAND_KEYS) {
+    const entry = (obj[key] && typeof obj[key] === 'object')
+      ? (obj[key] as Partial<BotBuiltinCommand>)
+      : {};
+    result[key] = {
+      enabled: entry.enabled !== false,
+      command: typeof entry.command === 'string' ? entry.command.trim() : '',
+      targetUrl: typeof entry.targetUrl === 'string' ? entry.targetUrl.trim() : '',
+    };
+  }
+  return result;
+}
+
+/** Only the "off" entries are worth keeping — a missing id already means "on". */
+export function normalizeBotByokCommands(raw: unknown): BotByokCommands {
+  if (!raw || typeof raw !== 'object') return {};
+  const result: BotByokCommands = {};
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    const trimmed = id.trim();
+    if (trimmed && value === false) result[trimmed] = false;
   }
   return result;
 }

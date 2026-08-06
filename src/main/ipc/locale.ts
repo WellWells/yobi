@@ -1,10 +1,22 @@
-import { ipcMain } from 'electron';
+import { ipcMain, shell } from 'electron';
 import * as fs from 'node:fs/promises';
 import { IPC } from '../../shared/types';
 import { config, saveConfig } from '../config';
-import { loadLanguageData, setLangCache } from '../i18n';
-import { getLanguageDir } from '../files';
+import { isValidLocaleTag, loadLanguageData, setLangCache } from '../i18n';
+import { getLanguageDir, getUserLanguageDir } from '../files';
 import type { IpcContext } from './context';
+
+async function listPacksIn(dir: string): Promise<string[]> {
+  try {
+    const files = await fs.readdir(dir);
+    return files
+      .filter((f) => f.endsWith('.json'))
+      .map((f) => f.replace(/\.json$/, ''))
+      .filter(isValidLocaleTag);
+  } catch {
+    return [];
+  }
+}
 
 function applyLocaleChange(ctx: IpcContext, lang: string, markUserSet: boolean): boolean {
   const nextLocale = (lang ?? '').trim();
@@ -23,13 +35,19 @@ function applyLocaleChange(ctx: IpcContext, lang: string, markUserSet: boolean):
 
 export function registerLocaleHandlers(ctx: IpcContext): void {
   ipcMain.handle(IPC.GET_LANGUAGE_LIST, async () => {
-    const langDir = getLanguageDir();
-    try {
-      const files = await fs.readdir(langDir);
-      return files.filter((f) => f.endsWith('.json')).map((f) => f.replace('.json', ''));
-    } catch {
-      return ['en-US', 'zh-TW'];
-    }
+    const [builtIn, user] = await Promise.all([
+      listPacksIn(getLanguageDir()),
+      listPacksIn(getUserLanguageDir()),
+    ]);
+    const merged = [...new Set([...builtIn, ...user])].sort();
+    return merged.length > 0 ? merged : ['en-US', 'zh-TW'];
+  });
+
+  ipcMain.handle(IPC.OPEN_LANGUAGES_FOLDER, async () => {
+    const dir = getUserLanguageDir();
+    await fs.mkdir(dir, { recursive: true });
+    const error = await shell.openPath(dir);
+    return !error;
   });
 
   ipcMain.handle(IPC.GET_CURRENT_LOCALE, () => ({

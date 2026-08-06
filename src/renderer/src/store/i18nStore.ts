@@ -48,12 +48,10 @@ interface I18nState {
   isReady: boolean;
   setLocale: (locale: string, options?: { persist?: boolean }) => Promise<void>;
   loadLocales: () => Promise<void>;
+  refreshLocales: () => Promise<void>;
   t: (key: string) => string;
 }
 
-// Rebuilt whenever the active translations change so its identity changes on a
-// locale switch — this is what lets React.memo/useMemo consumers that receive t
-// as a prop or dependency actually re-render into the new language.
 function makeT(translations: Translations, enTranslations: Translations) {
   return (key: string): string =>
     (translations[key] as string | undefined)
@@ -119,6 +117,25 @@ export const useI18nStore = create<I18nState>((set, get) => ({
     });
     await get().setLocale(resolvedLocale, { persist: false });
     set({ isReady: true });
+  },
+
+  refreshLocales: async () => {
+    const list = await window.electronAPI.getLanguageList();
+    const known = get().localeTranslations;
+    const missing = list.filter((locale) => !known[locale]);
+    const loaded = await Promise.all(
+      missing.map(async (locale) => {
+        const content = await window.electronAPI.getLanguageContent(locale);
+        return [locale, content as Translations | null] as const;
+      }),
+    );
+    set((state) => {
+      const localeTranslations = { ...state.localeTranslations };
+      for (const [locale, content] of loaded) {
+        if (content) localeTranslations[locale] = content;
+      }
+      return { availableLocales: list, localeTranslations };
+    });
   },
 
   setLocale: async (locale: string, options?: { persist?: boolean }) => {

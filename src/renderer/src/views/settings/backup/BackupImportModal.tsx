@@ -11,6 +11,7 @@ import type {
   BackupImportResult,
   BackupInspectResult,
 } from '../../../../../shared/types';
+import { Z_MODAL } from '../../../config/zLayers';
 
 interface Props {
   open: boolean;
@@ -19,8 +20,6 @@ interface Props {
   onImported: (result: BackupImportResult) => Promise<void> | void;
 }
 
-// Overwrite-impact line for one category; outputs is destructive (deletes current
-// markdown), config is a flat overwrite, the rest are count-based replacements.
 function impactText(
   t: (key: string) => string,
   id: BackupCategoryId,
@@ -110,12 +109,9 @@ export const BackupImportModal: React.FC<Props> = ({ open, t, onClose, onImporte
         setError(t('settings.backup.import.failed'));
         return;
       }
-      // The restore itself succeeded; a post-restore UI refresh failing must not
-      // leave the modal stuck open with an unhandled rejection.
       try {
         await onImported(result);
       } catch {
-        // ignore — data is already restored on disk
       }
       onClose();
     } finally {
@@ -136,7 +132,7 @@ export const BackupImportModal: React.FC<Props> = ({ open, t, onClose, onImporte
       title={inspect ? t('settings.backup.import.warningTitle') : t('settings.backup.import.title')}
       icon={<Upload size={16} />}
       size="md"
-      zIndex={200}
+      zIndex={Z_MODAL}
     >
       {!inspect ? (
         <Stack gap="md">

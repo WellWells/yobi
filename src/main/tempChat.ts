@@ -1,15 +1,15 @@
 import { IPC } from '../shared/types';
 import type { TempChatResult } from '../shared/types';
+import { appendTurn, parseConversationDoc } from '../shared/conversationDoc';
+import type { ConversationDoc, TurnMeta } from '../shared/conversationDoc';
+import { conversationAliases } from './chat/conversationStore';
+import { getLangCache, t } from './i18n';
 import { isMainWindowAlive, sendLog, sendToRenderer } from './helpers';
 
-// Session-only incognito flag: deliberately never persisted, so every launch
-// starts with temporary chat mode off and no trace of previous sessions.
 let _tempChatMode = false;
 
-// A temporary reply exists ONLY in its IPC payload (no file is written). If the
-// main window happens to be destroyed at completion time (macOS red-button
-// close keeps the app and hotkeys alive), hold the latest reply here until a
-// renderer reattaches instead of silently dropping it.
+let _conversationRaw = '';
+
 let _pendingResult: TempChatResult | null = null;
 
 export function isTempChatMode(): boolean {
@@ -19,7 +19,10 @@ export function isTempChatMode(): boolean {
 export function setTempChatMode(enabled: boolean): void {
   if (_tempChatMode === enabled) return;
   _tempChatMode = enabled;
-  if (!enabled) _pendingResult = null;
+  if (!enabled) {
+    _pendingResult = null;
+    _conversationRaw = '';
+  }
   sendLog(enabled
     ? '👻 Temporary chat mode enabled — replies will not be saved'
     : '👻 Temporary chat mode disabled');
@@ -30,16 +33,35 @@ export function toggleTempChatMode(): void {
   setTempChatMode(!_tempChatMode);
 }
 
-export function deliverTempChatResult(payload: TempChatResult): void {
-  if (isMainWindowAlive()) {
-    sendToRenderer(IPC.TEMP_CHAT_RESULT, payload);
-    return;
-  }
-  _pendingResult = payload;
+export async function getTempChatConversation(): Promise<ConversationDoc | null> {
+  if (!_conversationRaw) return null;
+  return parseConversationDoc(_conversationRaw, await conversationAliases());
 }
 
-// Called when a (re)booted renderer attaches (it always fetches the mode on
-// bootstrap) — deliver a reply produced while no window existed.
+function turnLabels(): { prompt: string; response: string } {
+  const strings = getLangCache();
+  const pick = (key: string, fallback: string): string => {
+    const value = t(strings, key);
+    return value && value !== key ? value : fallback;
+  };
+  return { prompt: pick('md.prompt', 'Prompt'), response: pick('md.response', 'Response') };
+}
+
+export function deliverTempChatResult(payload: TempChatResult & {
+  turn?: { prompt: string; response: string; meta: TurnMeta };
+}): void {
+  _conversationRaw = _conversationRaw && payload.turn
+    ? appendTurn(_conversationRaw, payload.turn, turnLabels())
+    : payload.content;
+
+  const result: TempChatResult = { content: _conversationRaw };
+  if (isMainWindowAlive()) {
+    sendToRenderer(IPC.TEMP_CHAT_RESULT, result);
+    return;
+  }
+  _pendingResult = result;
+}
+
 export function flushPendingTempChatResult(): void {
   if (!_pendingResult || !isMainWindowAlive()) return;
   sendToRenderer(IPC.TEMP_CHAT_RESULT, _pendingResult);

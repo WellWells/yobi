@@ -10,13 +10,13 @@
 [![Electron](https://img.shields.io/badge/Electron-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen.svg)](https://github.com/WellWells/yobi/pulls)
 
-**[English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md)**
+**[English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md)**
 
 </div>
 
 ---
 
-**Yobi** turns the AI sites you already use — **ChatGPT, Gemini, Perplexity, and Duck.ai** — into a desktop assistant you trigger from a global hotkey, and a no-code automation engine you can put on a schedule or run from Telegram. No API key and no extra fee: it drives the providers' own web pages in a built-in browser, exactly the way you would yourself.
+**Yobi** turns the AI sites you already use — **ChatGPT, Gemini, Perplexity, and Duck.ai** — into a desktop assistant you trigger from a global hotkey, and a no-code automation engine you can put on a schedule or run from Telegram or LINE. No API key and no extra fee: it drives the providers' own web pages in a built-in browser, exactly the way you would yourself.
 
 > ℹ️ Good to know: automating these sites isn't officially supported by the providers and falls outside their terms of service. Yobi bypasses nothing — if a site shows a CAPTCHA, it pauses and hands control back to you. Just use it responsibly. [How it works →](#-how-yobi-works)
 
@@ -29,11 +29,12 @@
 | ⌨️   | **One hotkey**       | Select text anywhere, press `Alt+G` (`⌘G` on macOS), get an answer — saved automatically            |
 | 🔑   | **No API key**       | Uses the providers' web pages, not paid APIs — nothing to sign up or pay for. Have a key anyway? An optional BYOK mode supports it |
 | 🤖   | **Every major AI**   | ChatGPT · Gemini · Perplexity · Duck.ai, switchable in one click                                    |
+| 🧠   | **Agent & search**   | `/agent` takes a goal and works at it until it's done; `/search` answers from the web with clickable sources |
 | 🔁   | **No-code automation** | Build workflows by dragging steps — or just describe one and let AI assemble it                   |
-| 📱   | **Runs from Telegram** | Fire your AI and your automations from your phone                                                  |
-| 🎨   | **Share-ready output** | Export any answer as a styled PNG, WebP, or PDF                                                    |
-| 🔒   | **Yours alone**      | Runs entirely on your machine — no telemetry, no tracking, open source                              |
-| 🌍   | **9 languages**      | English · 繁中 · 简中 · 日本語 · 한국어 · Deutsch · Español · Français · Português                  |
+| 📱   | **Telegram & LINE**  | Fire your AI and your automations from your phone                                                  |
+| 🎨   | **Share-ready output** | Export any answer as a styled PNG, WebP, or PDF — or an encrypted share link                      |
+| 🔒   | **No middleman**     | Yobi runs no server of its own: prompts go straight to the AI site you picked, everything else stays on your disk |
+| 🌍   | **Multilingual**      | English · 繁體中文 · 简体中文 built in — add any language yourself with a drop-in pack ([guide](language/README.md)) |
 
 ---
 
@@ -82,15 +83,30 @@ npm run dev
 
 <div align="center">
 
-![AgentFlow editor with RSS step](assets/screenshots/agentflow-editor-rss-step.png)
+![Flow editor with RSS step](assets/screenshots/flow-editor-rss-step.png)
 
-**AgentFlow** — fetch, summarize with AI, and send to Telegram, on a schedule — no code
+**Flows** — fetch, summarize with AI, and send to Telegram, on a schedule — no code
 
 </div>
 
 ---
 
-## 🔗 AgentFlow — Automate Without Code
+## 💬 Ask, Search, or Hand Over the Whole Job
+
+Type `/` in the chat box to pick a mode — or just talk:
+
+| Mode        | What it does                                                                                              |
+| ----------- | --------------------------------------------------------------------------------------------------------- |
+| **Chat**    | A normal multi-turn conversation. Each one is a Markdown file you can close, reopen, and carry on.        |
+| `/agent`    | Give it a goal. It plans, reads pages, calls tools, checks its own work, and can build you a flow.        |
+| `/search`   | Researches the web and answers with numbered sources you can click.                                       |
+| `/yours`    | Any flow you built, as your own slash command.                                                            |
+
+Answers render as they arrive — **Mermaid diagrams**, math, and code included — and each conversation tracks its token usage. Turn any of them into a **PNG, PDF, or an end-to-end encrypted share link** in one click.
+
+---
+
+## 🔗 Flows — Automate Without Code
 
 Chain AI, data, and actions into automations that run on a **hotkey, a schedule, a Telegram command, or an in-app `/command`** — and one flow can use several at once.
 
@@ -102,14 +118,16 @@ Want to fine-tune it? Every step is editable — or drag your own together from 
 
 **What you can wire together:**
 
-- 📥 **Pull data** — web pages, RSS, HTTP APIs, YouTube transcripts, even live stock / forex / weather — no API key
+- 📥 **Pull data** — web pages, RSS, HTTP APIs, YouTube transcripts, web search, Google Maps reviews, even live stock / forex / weather / air quality — no API key
+- 🕸️ **Scrape a list** — click one headline on the real page and Yobi works out the selectors for the whole list
 - 🌐 **Drive a browser** — open tabs, click, fill forms, take screenshots
 - 🧠 **Ask AI** — ChatGPT · Gemini · Perplexity · Duck.ai — or your own API key via BYOK
-- 📤 **Send results** — Telegram, email, a file, or the clipboard
+- 🔌 **Bring your own tools** — connect remote MCP servers and let `/agent` call them
+- 📤 **Send results** — Telegram, LINE, email, a file, a share link, or the clipboard
 - 🛠️ **Run anything** — programs, JavaScript, shell, plus system & power controls
-- 🔀 **Control flow** — loops, conditions, scheduling
+- 🔀 **Control flow** — loops, conditions, scheduling, and "only tell me when it changes"
 
-…**35+ skills and growing**, all wired together with simple `{{variables}}` — each step's output feeds the next.
+…**46 skills and growing**, all wired together with simple `{{variables}}` — each step's output feeds the next.
 
 **Start from a template** and customize:
 
@@ -123,12 +141,12 @@ Flows are plain `.json` — export, share, and import them in a click.
 
 ---
 
-## 📱 Run It From Telegram
+## 📱 Run It From Telegram or LINE
 
-Want to use your AI from your phone? Connect a Telegram bot — about two minutes:
+Want to use your AI from your phone? Connect a bot — about two minutes:
 
-1. **Create a bot** — message [@BotFather](https://t.me/BotFather) and copy the token it gives you.
-2. **Paste the token** in **Settings → Telegram**.
+1. **Create a bot** — message [@BotFather](https://t.me/BotFather) and copy the token it gives you. (For LINE, create a Messaging API channel instead.)
+2. **Paste the token** in **Settings → Telegram** (or **LINE**).
 3. **Say `/start`** to your bot and follow the pairing prompt. Done.
 
 Now message your bot from anywhere:
@@ -136,11 +154,15 @@ Now message your bot from anywhere:
 | Command            | Does                                                  |
 | ------------------ | ---------------------------------------------------- |
 | `/gpt` · `/gemini` · `/pplx` · `/duck` | Ask that provider (commands are customizable)  |
+| `/agent` · `/search` | Hand it a goal, or search the web — same as in the app |
+| `/new`             | Start a fresh conversation                           |
 | `/output <mode>`   | Set reply format — `md` · `png` · `webp` · `pdf`     |
 | `/status`          | Check the agent                                      |
 | `/restart`         | Restart Yobi (admin)                                 |
 
-Build your own commands in AgentFlow with the **Telegram trigger** — any message can kick off a flow.
+Prefer no commands at all? Turn on **direct chat** in the bot's settings and plain messages go straight to your AI as a normal conversation.
+
+Build your own commands in Flows with the **Bot trigger** — any message can kick off a flow, on either platform.
 
 ---
 
@@ -149,8 +171,9 @@ Build your own commands in AgentFlow with the **Telegram trigger** — any messa
 - **Prompt preferences** — set a default tone and length, and prepend your own instructions to every prompt.
 - **Capture & export** — turn any answer into a styled PNG / WebP / PDF (light or dark card, gradient palette, your choice of metadata).
 - **Email (SMTP)** — let flows send results by mail; the password is stored in your OS keychain, never in a flow file.
+- **MCP servers** — add remote Model Context Protocol servers so `/agent` can use their tools; anything that writes asks you first.
 - **Accounts** — sign in or out per provider, and reset a provider's data in one click to fix a stuck session.
-- **Bring Your Own Key (BYOK)** — optionally add your own OpenAI-compatible (OpenAI, OpenRouter, Together, Groq, a local server, …) or Gemini API key as an extra provider: choose the type, set the base URL, model, and key, then use **Load models** to pick from what the endpoint offers and **Test** to confirm it works. BYOK instances are selectable in chat and AgentFlow like any other; browser mode stays the default, and keys are encrypted with your OS keychain.
+- **Bring Your Own Key (BYOK)** — optionally add your own OpenAI-compatible (OpenAI, OpenRouter, Together, Groq, a local server, …) or Gemini API key as an extra provider: choose the type, set the base URL, model, and key, then use **Load models** to pick from what the endpoint offers and **Test** to confirm it works. BYOK instances are selectable in chat and flows like any other; browser mode stays the default, and keys are encrypted with your OS keychain.
 - **Appearance & behavior** — 11 themes, stacked or side-by-side layout, launch at startup, close-to-tray, response timeout, text zoom.
 - **Backup** — export and import all settings as a single JSON file.
 
@@ -168,9 +191,11 @@ Since it uses the web pages rather than official APIs, this falls outside the pr
 
 ## 🔒 Security & Privacy
 
-- **No telemetry** — zero analytics or tracking; your queries go only to the AI providers you pick (subject to their own privacy policies).
-- **Local & open source** — every bit of automation logic runs on your machine and is auditable in `src/main/`.
-- **Encrypted credentials** — your Telegram token, SMTP password, and BYOK API keys are encrypted with the OS keychain (Electron `safeStorage`) before touching disk.
+- **Where your prompts go** — to the AI site you picked, typed into its own web page, exactly as if you'd typed them there yourself. That's the one place your text goes, and it's subject to that provider's privacy policy.
+- **No middleman, no telemetry** — Yobi has no server and no account: nothing is proxied through us, and there's zero analytics or tracking.
+- **Your stuff stays yours** — conversations, flows, and exports are plain files on your disk. The automation logic is auditable in `src/main/`.
+- **Anything else that leaves your machine is opt-in** — share links are encrypted in the app before upload, and the key lives in the link's `#fragment`, which browsers never send to the host (you can delete the paste at any time). MCP talks only to servers you add yourself.
+- **Encrypted credentials** — your Telegram/LINE tokens, SMTP password, and BYOK API keys are encrypted with the OS keychain (Electron `safeStorage`) before touching disk.
 
 ---
 
@@ -184,7 +209,7 @@ npm run build:win   # build Windows (NSIS installer)
 npm run build:mac   # build macOS (DMG)
 ```
 
-**Stack:** Electron · React + TypeScript · Mantine · Zustand · Vite + electron-builder · grammY · LINE Bot SDK
+**Stack:** Electron · React + TypeScript · Mantine · Zustand · Vite + electron-builder · grammY · LINE Bot SDK · MCP SDK
 
 ---
 

@@ -5,11 +5,19 @@ import { existsSync } from 'node:fs';
 import { fdir } from 'fdir';
 import dayjs from 'dayjs';
 import type { OutputFile } from '../shared/types';
+import { parseConversationDoc } from '../shared/conversationDoc';
+import type { ConversationHeadingAliases } from '../shared/conversationDoc';
 
-type MarkdownHeadingAliases = {
-  provider: Set<string>;
-  timestamp: Set<string>;
-};
+type MarkdownHeadingAliases = ConversationHeadingAliases;
+
+function createEmptyHeadingAliases(): MarkdownHeadingAliases {
+  return {
+    provider: new Set<string>(),
+    time: new Set<string>(),
+    prompt: new Set<string>(),
+    response: new Set<string>(),
+  };
+}
 
 export async function getOutputDir(): Promise<string> {
   const dir = app.isPackaged
@@ -24,14 +32,16 @@ export function getLanguageDir(): string {
   return path.join(__dirname, '..', 'language');
 }
 
+export function getUserLanguageDir(): string {
+  return path.join(app.getPath('userData'), 'languages');
+}
+
 type OutputFileCacheEntry = {
   mtimeMs: number;
   size: number;
   file: OutputFile;
 };
 
-// Metadata cache keyed by path; entries are reused while mtime+size match so
-// the FILE_LIST broadcast fired after every task doesn't re-read every file.
 const outputFileCache = new Map<string, OutputFileCacheEntry>();
 
 export async function listOutputFiles(): Promise<OutputFile[]> {
@@ -92,7 +102,7 @@ export async function searchOutputFiles(query: string): Promise<OutputFile[]> {
   }
 }
 
-function getOutputMarkdownPaths(dir: string): string[] {
+export function getOutputMarkdownPaths(dir: string): string[] {
   if (!existsSync(dir)) return [];
   return new fdir()
     .withFullPaths()
@@ -102,13 +112,6 @@ function getOutputMarkdownPaths(dir: string): string[] {
     .sort((a, b) => path.basename(b).localeCompare(path.basename(a)));
 }
 
-function createEmptyHeadingAliases(): MarkdownHeadingAliases {
-  return {
-    provider: new Set<string>(),
-    timestamp: new Set<string>(),
-  };
-}
-
 function addHeadingAlias(aliasSet: Set<string>, value: unknown): void {
   if (typeof value !== 'string') return;
   const normalized = value.trim();
@@ -116,14 +119,24 @@ function addHeadingAlias(aliasSet: Set<string>, value: unknown): void {
   aliasSet.add(normalized);
 }
 
-// Aliases come from every locale at once, so one successful load serves the
-// whole app lifetime (no locale-change invalidation needed).
 let headingAliasesCache: MarkdownHeadingAliases | null = null;
 
-async function loadMarkdownHeadingAliases(): Promise<MarkdownHeadingAliases> {
+export async function loadMarkdownHeadingAliases(): Promise<MarkdownHeadingAliases> {
   if (headingAliasesCache) return headingAliasesCache;
   const aliases = createEmptyHeadingAliases();
-  const langDir = getLanguageDir();
+  const dirs = [
+    getLanguageDir(),
+    path.join(getLanguageDir(), 'community'),
+    getUserLanguageDir(),
+  ];
+  await Promise.all(dirs.map((dir) => collectHeadingAliases(dir, aliases)));
+  if (aliases.provider.size > 0 || aliases.time.size > 0) {
+    headingAliasesCache = aliases;
+  }
+  return aliases;
+}
+
+async function collectHeadingAliases(langDir: string, aliases: MarkdownHeadingAliases): Promise<void> {
   try {
     const files = await fs.readdir(langDir);
     const langFiles = files.filter((fileName) => fileName.endsWith('.json'));
@@ -134,17 +147,15 @@ async function loadMarkdownHeadingAliases(): Promise<MarkdownHeadingAliases> {
           const raw = await fs.readFile(filePath, 'utf-8');
           const translations = JSON.parse(raw) as Record<string, unknown>;
           addHeadingAlias(aliases.provider, translations['md.provider']);
-          addHeadingAlias(aliases.timestamp, translations['md.timestamp']);
+          addHeadingAlias(aliases.time, translations['md.timestamp']);
+          addHeadingAlias(aliases.prompt, translations['md.prompt']);
+          addHeadingAlias(aliases.response, translations['md.response']);
         } catch {
         }
       }),
     );
   } catch {
   }
-  if (aliases.provider.size > 0 || aliases.timestamp.size > 0) {
-    headingAliasesCache = aliases;
-  }
-  return aliases;
 }
 
 function extractMetaByAliases(content: string, headingAliases: Set<string>): string | null {
@@ -172,10 +183,11 @@ function buildOutputFile(filePath: string, content: string, headingAliases: Mark
   const h1Match = firstLine.match(/^#\s+(.+)$/);
   const provider = extractMetaByAliases(content, headingAliases.provider);
   const timestampFromName = extractTimestampFromFileName(name);
-  const timestampFromContent = extractTimestampFromContent(content, headingAliases.timestamp);
+  const timestampFromContent = extractTimestampFromContent(content, headingAliases.time);
   const preview = h1Match
     ? h1Match[1]
     : (content.slice(0, 200).replace(/\n/g, ' ').trim() || name);
+  const turns = content ? parseConversationDoc(content, headingAliases).turns.length : 0;
 
   return {
     name,
@@ -183,6 +195,7 @@ function buildOutputFile(filePath: string, content: string, headingAliases: Mark
     timestamp: timestampFromContent || timestampFromName,
     preview,
     provider: provider || undefined,
+    turns: Math.max(1, turns),
   };
 }
 

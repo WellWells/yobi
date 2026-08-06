@@ -1,12 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import { Box, Group, SimpleGrid, Stack, Text, Tooltip, Button as MButton } from '@mantine/core';
 import dayjs from 'dayjs';
-import { Activity, ChartLine, CircleHelp, ListChecks, TrendingUp, Trash2 } from 'lucide-react';
-import { SectionCard, GroupHeader, SectionTitle, SettingRow, SettingDivider, ToggleSwitch } from '../components';
+import { Activity, ChartLine, CircleHelp, Coins, ListChecks, MessagesSquare, TrendingUp, Trash2 } from 'lucide-react';
+import { SectionCard, SectionTitle, SettingRow, SettingDivider, ToggleSwitch } from '../components';
 import { AppSegmentedControl } from '../../../components/AppSegmentedControl';
 import { TrendBarChart } from '../../../components/TrendBarChart';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import type { useMetrics } from '../hooks/useMetrics';
+import { formatTokenCount, meanTokens } from '../../../../../shared/tokenEstimate';
 import type { MetricOutcome } from '../../../../../shared/types';
 
 type Metrics = ReturnType<typeof useMetrics>;
@@ -21,6 +22,11 @@ const OUTCOME_COLORS: Record<MetricOutcome, string> = {
   failure: 'var(--mantine-color-red-5)',
   timeout: 'var(--mantine-color-orange-5)',
 };
+
+const TOKEN_COLORS = {
+  input: 'var(--mantine-color-blue-5)',
+  output: 'var(--mantine-color-violet-5)',
+} as const;
 
 function niceAxisMax(value: number): number {
   if (value <= 0) return 1;
@@ -105,11 +111,10 @@ interface Props {
   metrics: Metrics;
   t: (key: string) => string;
   showSection: (tags: readonly string[], category: 'stats') => boolean;
-  isSearching: boolean;
   sectionGap: number;
 }
 
-export const StatsSection: React.FC<Props> = ({ metrics, t, showSection, isSearching, sectionGap }) => {
+export const StatsSection: React.FC<Props> = ({ metrics, t, showSection, sectionGap }) => {
   const { snapshot } = metrics;
   const [rangeDays, setRangeDays] = useState<number>(DEFAULT_RANGE_DAYS);
 
@@ -133,11 +138,41 @@ export const StatsSection: React.FC<Props> = ({ metrics, t, showSection, isSearc
     return { labels, values, sums, totalSum, axisMax };
   }, [snapshot, rangeDays]);
 
+  const tokenTrend = useMemo(() => {
+    const input: number[] = [];
+    const output: number[] = [];
+    for (let offset = rangeDays - 1; offset >= 0; offset--) {
+      const entry = snapshot?.daily[dayjs().subtract(offset, 'day').format('YYYY-MM-DD')];
+      input.push(entry?.tokens.input ?? 0);
+      output.push(entry?.tokens.output ?? 0);
+    }
+    const sum = (values: number[]): number => values.reduce((acc, value) => acc + value, 0);
+    return {
+      input,
+      output,
+      inputSum: sum(input),
+      outputSum: sum(output),
+      axisMax: niceAxisMax(Math.max(0, ...input, ...output)),
+    };
+  }, [snapshot, rangeDays]);
+
+  const conversationAverages = useMemo(() => {
+    const stats = metrics.conversationTokens;
+    if (!stats || stats.conversations === 0) return null;
+    const total = stats.input + stats.output;
+    const mark = (value: number | null): string =>
+      value === null ? '—' : `${stats.exact ? '' : '~'}${formatTokenCount(value)}`;
+    return {
+      conversations: stats.conversations,
+      perConversation: mark(meanTokens(total, stats.conversations)),
+      perTurn: mark(meanTokens(total, stats.turns)),
+    };
+  }, [metrics.conversationTokens]);
+
   const successRateText = formatShare(trend.sums.success, trend.totalSum) ?? '—';
 
   return (
     <Box display={showSection(TAG_SETS.stats, 'stats') ? 'block' : 'none'}>
-      {isSearching && <GroupHeader label={t('settings.group.stats')} />}
 
       <SectionCard style={{ marginBottom: sectionGap }}>
         <SectionTitle icon={<ChartLine size={15} />} label={t('settings.stats.title')} />
@@ -218,6 +253,72 @@ export const StatsSection: React.FC<Props> = ({ metrics, t, showSection, isSearc
               />
             </Box>
           </SectionCard>
+
+          <SectionCard style={{ marginBottom: sectionGap }}>
+            <SectionTitle icon={<Coins size={15} />} label={t('settings.stats.tokens')} />
+            <Stack gap={12}>
+              <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>
+                {t('settings.stats.tokens.hint')}
+              </Text>
+              <TrendBarChart
+                labels={trend.labels}
+                series={[
+                  { id: 'input', label: t('settings.stats.tokens.input'), color: TOKEN_COLORS.input, values: tokenTrend.input },
+                  { id: 'output', label: t('settings.stats.tokens.output'), color: TOKEN_COLORS.output, values: tokenTrend.output },
+                ]}
+                height={132}
+                axisMax={tokenTrend.axisMax}
+                formatValue={formatTokenCount}
+              />
+              <Box>
+                <StatTableRow
+                  first
+                  label={t('settings.stats.tokens.input')}
+                  hint={t('settings.stats.tokens.input.hint')}
+                  value={tokenTrend.inputSum.toLocaleString()}
+                />
+                <StatTableRow
+                  label={t('settings.stats.tokens.output')}
+                  hint={t('settings.stats.tokens.output.hint')}
+                  value={tokenTrend.outputSum.toLocaleString()}
+                />
+                <StatTableRow
+                  label={t('settings.stats.tokens.total')}
+                  hint={t('settings.stats.tokens.total.hint')}
+                  value={(tokenTrend.inputSum + tokenTrend.outputSum).toLocaleString()}
+                />
+              </Box>
+            </Stack>
+          </SectionCard>
+
+          {conversationAverages && (
+            <SectionCard style={{ marginBottom: sectionGap }}>
+              <SectionTitle icon={<MessagesSquare size={15} />} label={t('settings.stats.tokens.average')} />
+              <Stack gap={12}>
+                <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>
+                  {t('settings.stats.tokens.average.hint')}
+                </Text>
+                <Box>
+                  <StatTableRow
+                    first
+                    label={t('settings.stats.tokens.average.conversations')}
+                    hint={t('settings.stats.tokens.average.conversations.hint')}
+                    value={conversationAverages.conversations.toLocaleString()}
+                  />
+                  <StatTableRow
+                    label={t('settings.stats.tokens.average.perConversation')}
+                    hint={t('settings.stats.tokens.average.perConversation.hint')}
+                    value={conversationAverages.perConversation}
+                  />
+                  <StatTableRow
+                    label={t('settings.stats.tokens.average.perTurn')}
+                    hint={t('settings.stats.tokens.average.perTurn.hint')}
+                    value={conversationAverages.perTurn}
+                  />
+                </Box>
+              </Stack>
+            </SectionCard>
+          )}
         </>
       )}
     </Box>

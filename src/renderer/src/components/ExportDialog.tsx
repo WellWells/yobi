@@ -1,19 +1,25 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { Modal, Button, Box, Flex, Group, Text, Tooltip } from '@mantine/core';
 import 'katex/dist/katex.min.css';
-import type { CaptureFormat, CardTheme, MarkdownCapturePayload } from '../../../shared/types';
+import type { CaptureFormat, CaptureRange, CardLayout, MarkdownCaptureRequest } from '../../../shared/types';
 import { Clipboard, Download, Image as ImageIcon, Save, Upload, } from 'lucide-react';
 import { ExportSettingsPanel } from './exportDialog/ExportSettingsPanel';
 import { ExportPreviewPanel } from './exportDialog/ExportPreviewPanel';
 import { AppButton } from './AppButton';
+import { captureBackgroundCss, paletteCardTheme } from '../../../shared/capturePalettes';
+import type {
+  CaptureBackgroundStyle,
+  CaptureDirection,
+  CapturePalette,
+} from '../../../shared/capturePalettes';
 
 interface ExportDialogProps {
   open: boolean;
-  background: string;
-  cardTheme: CardTheme;
-  palettes: readonly { key: string; from: string; to: string; label: string; card: CardTheme }[];
+  palettes: readonly CapturePalette[];
   selectedPalette: string;
   setSelectedPalette: (value: string) => void;
+  backgroundStyle: CaptureBackgroundStyle;
+  setBackgroundStyle: (value: CaptureBackgroundStyle) => void;
   direction: string;
   setDirection: (value: string) => void;
   showPrompt: boolean;
@@ -22,13 +28,26 @@ interface ExportDialogProps {
   setShowProvider: (value: boolean) => void;
   showTimestamp: boolean;
   setShowTimestamp: (value: boolean) => void;
+  showTokens: boolean;
+  setShowTokens: (value: boolean) => void;
   title: string;
   setTitle: (value: string) => void;
   fileName: string;
   setFileName: (value: string) => void;
   format: CaptureFormat;
   setFormat: (value: CaptureFormat) => void;
-  preview: MarkdownCapturePayload | null;
+  cardLayout: CardLayout;
+  setCardLayout: (value: CardLayout) => void;
+  range: CaptureRange;
+  setRange: (value: CaptureRange) => void;
+  turnCount: number;
+  width: number;
+  setWidth: (value: number) => void;
+  hiDpi: boolean;
+  setHiDpi: (value: boolean) => void;
+  zip: boolean;
+  setZip: (value: boolean) => void;
+  request: MarkdownCaptureRequest | null;
   t: (key: string) => string;
   busy: boolean;
   busyMode: 'copy' | 'save' | null;
@@ -39,11 +58,11 @@ interface ExportDialogProps {
 
 export const ExportDialog: React.FC<ExportDialogProps> = ({
   open,
-  background,
-  cardTheme,
   palettes,
   selectedPalette,
   setSelectedPalette,
+  backgroundStyle,
+  setBackgroundStyle,
   direction,
   setDirection,
   showPrompt,
@@ -52,13 +71,26 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
   setShowProvider,
   showTimestamp,
   setShowTimestamp,
+  showTokens,
+  setShowTokens,
   title,
   setTitle,
   fileName,
   setFileName,
   format,
   setFormat,
-  preview,
+  cardLayout,
+  setCardLayout,
+  range,
+  setRange,
+  turnCount,
+  width,
+  setWidth,
+  hiDpi,
+  setHiDpi,
+  zip,
+  setZip,
+  request,
   t,
   busy,
   busyMode,
@@ -66,11 +98,25 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
   onSave,
   onCancel,
 }) => {
+  const [hoveredPalette, setHoveredPalette] = useState<string | null>(null);
+  const previewRequest = useMemo(() => {
+    if (!request) return null;
+    const hovered = hoveredPalette ? palettes.find((p) => p.key === hoveredPalette) : undefined;
+    if (!hovered) return request;
+    return {
+      ...request,
+      options: {
+        ...request.options,
+        background: captureBackgroundCss(hovered.key, backgroundStyle, direction as CaptureDirection),
+        cardTheme: paletteCardTheme(hovered.key),
+      },
+    };
+  }, [request, hoveredPalette, palettes, backgroundStyle, direction]);
+
   const isPdf = format === 'pdf';
   const saveLabel = isPdf
     ? t('capture.savePdf')
     : t('capture.saveImage');
-
 
   return (
     <Modal
@@ -112,6 +158,8 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
       <Flex flex={1} style={{ minHeight: 0, overflow: 'hidden' }}>
         <ExportSettingsPanel
           palettes={palettes}
+          backgroundStyle={backgroundStyle}
+          setBackgroundStyle={setBackgroundStyle}
           selectedPalette={selectedPalette}
           setSelectedPalette={setSelectedPalette}
           direction={direction}
@@ -122,24 +170,30 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
           setShowProvider={setShowProvider}
           showTimestamp={showTimestamp}
           setShowTimestamp={setShowTimestamp}
+          showTokens={showTokens}
+          setShowTokens={setShowTokens}
           title={title}
           setTitle={setTitle}
           fileName={fileName}
           setFileName={setFileName}
           format={format}
           setFormat={setFormat}
+          cardLayout={cardLayout}
+          setCardLayout={setCardLayout}
+          range={range}
+          setRange={setRange}
+          turnCount={turnCount}
+          width={width}
+          setWidth={setWidth}
+          hiDpi={hiDpi}
+          setHiDpi={setHiDpi}
+          zip={zip}
+          setZip={setZip}
+          onHoverPalette={setHoveredPalette}
           t={t}
         />
 
-        <ExportPreviewPanel
-          background={background}
-          cardTheme={cardTheme}
-          showPrompt={showPrompt}
-          showProvider={showProvider}
-          showTimestamp={showTimestamp}
-          preview={preview}
-          t={t}
-        />
+        <ExportPreviewPanel request={previewRequest} t={t} />
       </Flex>
 
       <Group
@@ -152,8 +206,8 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
         <Button variant="subtle" onClick={onCancel}>
           {t('dialog.cancel')}
         </Button>
-        {/* PDF copy places a pastable FILE on the clipboard (not image pixels)
-            — say so, or a paste into an image field looks like a silent failure. */}
+        {
+}
         <Tooltip label={t('capture.copy.pdf.hint')} position="top" disabled={!isPdf} maw={300} multiline>
           <AppButton
             variant="outline"

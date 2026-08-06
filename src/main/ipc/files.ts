@@ -1,11 +1,13 @@
-import { ipcMain, clipboard, nativeImage, shell } from 'electron';
+import { ipcMain, clipboard, shell } from 'electron';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
-import * as os from 'node:os';
-import { execFile } from 'node:child_process';
 import { IPC } from '../../shared/types';
-import type { MarkdownCaptureRequest, MarkdownCaptureResult } from '../../shared/types';
-import { sendLog, sendToRenderer } from '../helpers';
+import type {
+  MarkdownCaptureRequest,
+  MarkdownCaptureResult,
+  StartedConversation,
+} from '../../shared/types';
+import { getMainWindow, sendLog, sendToRenderer } from '../helpers';
 import {
   listOutputFiles,
   searchOutputFiles,
@@ -14,8 +16,10 @@ import {
   getOutputDir,
   getUniquePath,
 } from '../files';
+import { createConversationPlaceholder } from '../output';
 import { captureMarkdownDocument } from '../capture';
-import { isAllowedFilePath } from './context';
+import { writeCaptureToClipboard, zipSingleFile } from '../captureClipboard';
+import { isAllowedFilePath, showSaveDialogForWin } from './context';
 import { isManagedPageWebContents } from '../flow/skills/browserPages';
 
 export function registerFileHandlers(): void {
@@ -69,6 +73,23 @@ export function registerFileHandlers(): void {
     }
   });
 
+  ipcMain.handle(IPC.START_CONVERSATION, async (_event, prompt: string): Promise<StartedConversation | null> => {
+    try {
+      const { path: filePath, content } = await createConversationPlaceholder({
+        outputDir: await getOutputDir(),
+        prompt,
+      });
+      const files = await listOutputFiles();
+      const file = files.find((candidate) => candidate.path === filePath);
+      if (!file) return null;
+      sendToRenderer(IPC.FILE_LIST, files);
+      return { path: filePath, file, content, files };
+    } catch (err: unknown) {
+      sendLog(`⚠️ Could not open a conversation file up front: ${(err as Error).message}`);
+      return null;
+    }
+  });
+
   ipcMain.handle(IPC.DELETE_FILE, async (_event, filePath: string) => {
     if (!await isAllowedFilePath(filePath)) return false;
     try {
@@ -112,53 +133,41 @@ export function registerFileHandlers(): void {
 
   ipcMain.handle(IPC.CAPTURE_MARKDOWN_IMAGE, async (_event, request: MarkdownCaptureRequest) => {
     try {
-      const resultDoc = await captureMarkdownDocument(request);
       const requestedFileName = (request?.options?.fileName ?? '').trim();
       const fileStem = requestedFileName ? buildSafeFileNameFromTitle(requestedFileName) : buildSnapshotFileName();
+      const resultDoc = await captureMarkdownDocument({
+        ...request,
+        options: { ...request.options, fileName: fileStem },
+      });
       if (resultDoc.mode === 'copy') {
-        if (resultDoc.ext === 'pdf' || resultDoc.ext === 'webp') {
-          const tmpDir = os.tmpdir();
-          const tmpPath = path.join(tmpDir, `${fileStem}.${resultDoc.ext}`);
-          await fs.writeFile(tmpPath, resultDoc.buffer);
-
-          if (process.platform === 'win32') {
-            await new Promise<void>((resolve) => {
-              // Pass the path through an env var referenced as $env:YOBI_CLIP_PATH
-              // rather than interpolating it into the -Command string. buildSafe-
-              // FileNameFromTitle keeps '$', backticks and parens, so a filename
-              // like "a$(calc)" interpolated into a double-quoted PowerShell string
-              // would run as a subexpression. As an env-var value it is never parsed
-              // as code, and -LiteralPath disables wildcard expansion.
-              execFile(
-                'powershell.exe',
-                ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', 'Set-Clipboard -LiteralPath $env:YOBI_CLIP_PATH'],
-                { env: { ...process.env, YOBI_CLIP_PATH: tmpPath } },
-                () => resolve(),
-              );
-            });
-          } else if (process.platform === 'darwin') {
-            clipboard.writeBuffer('public.file-url', Buffer.from(`file://${tmpPath}`, 'utf-8'));
-          } else {
-            clipboard.writeBuffer('text/uri-list', Buffer.from(`file://${tmpPath}`, 'utf-8'));
-          }
-          sendLog(`📋 ${resultDoc.ext.toUpperCase()} copied as temp file: ${tmpPath}`);
-        } else {
-          const image = nativeImage.createFromBuffer(resultDoc.buffer);
-          clipboard.writeImage(image);
-          sendLog('📋 Image copied to clipboard');
-        }
+        await writeCaptureToClipboard(
+          resultDoc.buffer,
+          resultDoc.ext,
+          fileStem,
+          request?.options?.zip === true,
+        );
         const result: MarkdownCaptureResult = { ok: true };
         return result;
       }
 
       const outputDir = await getOutputDir();
       await fs.mkdir(outputDir, { recursive: true });
-      const filePath = await getUniquePath(
-        path.join(outputDir, `${fileStem}.${resultDoc.ext}`),
-        '',
+      const zipped = request?.options?.zip === true;
+      const ext = zipped ? 'zip' : resultDoc.ext;
+      const dialogResult = await showSaveDialogForWin(getMainWindow(), {
+        defaultPath: await getUniquePath(path.join(outputDir, `${fileStem}.${ext}`), ''),
+        filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
+      });
+      if (dialogResult.canceled || !dialogResult.filePath) {
+        const canceledResult: MarkdownCaptureResult = { ok: false, canceled: true };
+        return canceledResult;
+      }
+      const filePath = dialogResult.filePath;
+      await fs.writeFile(
+        filePath,
+        zipped ? zipSingleFile(resultDoc.buffer, `${fileStem}.${resultDoc.ext}`) : resultDoc.buffer,
       );
-      await fs.writeFile(filePath, resultDoc.buffer);
-      sendLog(`🖼️ Snapshot saved: ${path.basename(filePath)}`);
+      sendLog(`🖼️ Snapshot saved: ${filePath}`);
       const result: MarkdownCaptureResult = { ok: true, filePath };
       return result;
     } catch (err: unknown) {
@@ -176,7 +185,7 @@ export function registerFileHandlers(): void {
 
   ipcMain.handle(IPC.CAPTURE_PAGE, async (event, args: { name?: string }): Promise<string> => {
     if (!isManagedPageWebContents(event.sender)) {
-      throw new Error('CAPTURE_PAGE is only available to AgentFlow browser pages');
+      throw new Error('CAPTURE_PAGE is only available to flow browser pages');
     }
     const image = await event.sender.capturePage();
     const buffer = image.toPNG();
@@ -186,7 +195,7 @@ export function registerFileHandlers(): void {
     const fileStem = rawName ? buildSafeFileNameFromTitle(rawName) : buildSnapshotFileName();
     const filePath = await getUniquePath(path.join(outputDir, `${fileStem}.png`), '');
     await fs.writeFile(filePath, buffer);
-    sendLog(`🖼️ [AgentFlow] Page screenshot saved: ${path.basename(filePath)}`);
+    sendLog(`🖼️ [Flow] Page screenshot saved: ${path.basename(filePath)}`);
     return filePath;
   });
 

@@ -11,10 +11,6 @@ export function encryptToken(token: string): string {
   return token;
 }
 
-// `failed` distinguishes "there is a stored ciphertext we could not read right
-// now" (transient keychain/DPAPI outage) from "the field is genuinely empty".
-// Callers use it to avoid overwriting a real stored secret with '' during an
-// outage — see saveConfig's keep-if-blank guards.
 export function decryptTokenChecked(stored: string): { value: string; failed: boolean } {
   if (!stored) return { value: '', failed: false };
   if (stored.startsWith(ENCRYPTED_PREFIX)) {

@@ -1,9 +1,3 @@
-// Single source of truth for every app theme. The renderer derives CSS
-// variables, the Mantine palette, picker swatches and the Shiki code theme
-// from THEME_DEFS; the main process reads window background colors from it.
-// Adding a theme = one entry here + a `settings.theme.<name>` key in every
-// language/*.json file.
-
 export interface ThemeColors {
   bgPrimary: string;
   bgSurface: string;
@@ -21,19 +15,11 @@ export interface ThemeColors {
 
 export interface ThemeDef {
   colors: ThemeColors;
-  /** Light color scheme (drives Mantine colorScheme and hover lerp direction). */
   light?: boolean;
-  /** Shiki bundled theme id used to highlight code blocks. */
   shiki: string;
-  /**
-   * Darker accent used for the Mantine brand tuple when `colors.accent` is too
-   * bright to carry white button text. Omit to reuse `colors.accent`.
-   */
   buttonAccent?: string;
 }
 
-// Text ordering contract: textPrimary > textSecondary > textMuted > textDisabled
-// (disabled must read dimmer than muted, or disabled controls look enabled).
 export const THEME_DEFS = {
   dark: {
     colors: {
@@ -230,18 +216,15 @@ export const THEME_DEFS = {
 
 export type Theme = keyof typeof THEME_DEFS;
 
-/** Stored preference: a concrete theme, or 'auto' to follow the OS scheme. */
 export type ThemePreference = Theme | 'auto';
 
 export const VALID_THEMES = Object.keys(THEME_DEFS) as readonly Theme[];
 
-/** Widens the per-entry literal types so optional fields are accessible. */
 export function themeDef(theme: Theme): ThemeDef {
   return THEME_DEFS[theme];
 }
 
 export function isTheme(value: unknown): value is Theme {
-  // Object.hasOwn (not `in`): guards against prototype keys like 'toString'.
   return typeof value === 'string' && Object.hasOwn(THEME_DEFS, value);
 }
 
@@ -249,8 +232,10 @@ export function isThemePreference(value: unknown): value is ThemePreference {
   return value === 'auto' || isTheme(value);
 }
 
-/** Window background for a stored preference ('auto'/invalid → system scheme). */
+export function effectiveTheme(preference: string, prefersDark: boolean): Theme {
+  return isTheme(preference) ? preference : prefersDark ? 'dark' : 'light';
+}
+
 export function themeBackground(preference: string, prefersDark: boolean): string {
-  const theme: Theme = isTheme(preference) ? preference : prefersDark ? 'dark' : 'light';
-  return themeDef(theme).colors.bgPrimary;
+  return themeDef(effectiveTheme(preference, prefersDark)).colors.bgPrimary;
 }

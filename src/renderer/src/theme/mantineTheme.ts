@@ -18,9 +18,6 @@ function generateColors(accent: string): MantineColorsTuple {
 }
 
 const baseTheme: MantineThemeOverride = {
-  // Pale accents (catppuccin, everforest, amoled) get dark text on filled
-  // buttons instead of unreadable white-on-pastel. Threshold must stay in sync
-  // with ON_ACCENT_LUMINANCE_THRESHOLD in cssVariablesResolver.ts.
   autoContrast: true,
   luminanceThreshold: 0.3,
   fontFamily: 'var(--font-sans)',
@@ -32,6 +29,11 @@ const baseTheme: MantineThemeOverride = {
     Tooltip: {
       defaultProps: {
         openDelay: 450,
+      },
+    },
+    Modal: {
+      defaultProps: {
+        overlayProps: { backgroundOpacity: 0.5, blur: 3 },
       },
     },
     ScrollArea: {

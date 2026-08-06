@@ -1,14 +1,9 @@
 import type { WebContents } from 'electron';
 import { INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS } from './common';
+import { truncateToBytes } from '../../shared/textBudget';
 
-const DUCKAI_MAX_PROMPT_CHARS = 16_000;
+const DUCKAI_MAX_PROMPT_BYTES = 12_000;
 
-// DuckDuckGo shows a human-verification "anomaly" overlay ("select all squares with
-// ducks") when it flags automated / idle-then-burst traffic. It is identified by these
-// language-independent selectors — DuckDuckGo's own testids plus the /assets/anomaly/
-// asset path — so detection never depends on the user's locale. None of these appear on
-// a normal duck.ai page. Single calibration point; consumed both in-page
-// (buildDuckaiAutomationScript) and Node-side (isDuckaiChallengeActive).
 export const DUCKAI_CHALLENGE_SELECTOR =
   '[data-testid^="anomaly-modal-"], img[src*="assets/anomaly"], [style*="assets/anomaly"]';
 
@@ -33,15 +28,32 @@ export function setupDuckaiLocalStorageOnDomReady(wc: WebContents): Promise<void
   });
 }
 
+export const DUCKAI_PRESERVED_KEYS = ['duckaiHasAgreedToTerms', 'isRecentChatsOn'] as const;
+
+export function buildDuckaiResetScript(): string {
+  const preserved = JSON.stringify(DUCKAI_PRESERVED_KEYS);
+  return `(function duckaiReset() {
+    var PRESERVED = ${preserved};
+    try {
+      var doomed = [];
+      for (var i = 0; i < localStorage.length; i++) {
+        var key = localStorage.key(i);
+        if (key && PRESERVED.indexOf(key) === -1) doomed.push(key);
+      }
+      for (var j = 0; j < doomed.length; j++) localStorage.removeItem(doomed[j]);
+    } catch (e) {}
+    try { sessionStorage.clear(); } catch (e) {}
+    return true;
+  })();`;
+}
+
 export function buildDuckaiAutomationScript(
   prompt: string,
   baselineMessageCount: number,
   timeoutMs: number,
   modelId: string,
 ): string {
-  const clippedPrompt = prompt.length > DUCKAI_MAX_PROMPT_CHARS
-    ? prompt.slice(0, DUCKAI_MAX_PROMPT_CHARS)
-    : prompt;
+  const clippedPrompt = truncateToBytes(prompt, DUCKAI_MAX_PROMPT_BYTES);
   const escapedPrompt = JSON.stringify(clippedPrompt);
 
   return `

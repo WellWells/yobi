@@ -2,18 +2,11 @@ import type { TriggerConfig } from './types';
 import { BOT_COMMAND_RE } from './types';
 import { parseCronToScheduleFields } from './flowSchedule';
 
-// Trigger grammar validation for AI-generated flows. Policy: an ABSENT trigger
-// (or explicit "manual") is fine, but a trigger of a declared type that is
-// missing or mangling its discriminating field returns an error — silently
-// degrading to manual would drop the user's requested trigger AND break any
-// step referencing the trigger-seeded input variable with a confusing message.
-
 export type TriggerValidationResult =
   | { ok: true; trigger: TriggerConfig }
   | { ok: false; error: string };
 
 const ACCEL_MODIFIER_RE = /^(commandorcontrol|cmdorctrl|command|cmd|control|ctrl|alt|option|altgr|shift|super|meta)$/i;
-// Keys that Electron registers without a modifier (function + media/volume keys).
 const ACCEL_BARE_KEY_RE = /^(f([1-9]|1[0-9]|2[0-4])|volumeup|volumedown|volumemute|mediaplaypause|medianexttrack|mediaprevioustrack|mediastop)$/i;
 const ACCEL_KEY_RE = /^([0-9a-z]|f([1-9]|1[0-9]|2[0-4])|plus|space|tab|capslock|numlock|scrolllock|backspace|delete|insert|return|enter|up|down|left|right|home|end|pageup|pagedown|escape|esc|printscreen|volumeup|volumedown|volumemute|mediaplaypause|medianexttrack|mediaprevioustrack|mediastop|num[0-9]|numdec|numadd|numsub|nummult|numdiv|[`~!@#$%^&*()\-_=[\]{};:'",.<>/?\\|])$/i;
 
@@ -27,9 +20,6 @@ function isValidAccelerator(keys: string): boolean {
   return modifiers.length > 0 || ACCEL_BARE_KEY_RE.test(key);
 }
 
-// Sanity check only — node-cron does the authoritative validation at
-// registration time; this catches LLM output that is not cron syntax at all.
-// node-cron also accepts a 6-field form with a leading seconds field.
 function isPlausibleCronExpression(expression: string): boolean {
   const parts = expression.split(/\s+/);
   if (parts.length !== 5 && parts.length !== 6) return false;
@@ -51,7 +41,9 @@ export function validateTrigger(raw: unknown): TriggerValidationResult {
     const keys = typeof tr.keys === 'string' ? tr.keys.trim() : '';
     if (!keys) return { ok: false, error: 'Hotkey trigger is missing "keys"' };
     if (!isValidAccelerator(keys)) {
-      return { ok: false, error: `Invalid hotkey "${keys}" — use an Electron accelerator like "CommandOrControl+Shift+Y" (modifiers joined with "+", one key at the end) or a bare media/volume/function key` };
+      // Validation errors are fed BACK to the model in the repair prompt, so this string is
+      // sent to a third party as surely as the prompt itself is — it names no framework.
+      return { ok: false, error: `Invalid hotkey "${keys}" — use a keyboard accelerator like "CommandOrControl+Shift+Y" (modifiers joined with "+", one key at the end) or a bare media/volume/function key` };
     }
     return { ok: true, trigger: { type: 'hotkey', keys } };
   }

@@ -2,11 +2,12 @@ import { clipboard } from 'electron';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { MarkdownCapturePayload } from '../../../shared/types';
-import { paletteBackground, paletteCardTheme } from '../../../shared/capturePalettes';
+import { captureBackgroundCss, paletteCardTheme } from '../../../shared/capturePalettes';
 import { getProviderLabel, preparePromptForProvider, runAutomation } from '../../providers';
 import { runByokCompletion } from '../../providers/byokClient';
-import { isBotPlatform, isByokTargetUrl } from '../../../shared/types';
+import { PROVIDER_ATTACHMENT_POLICIES, isBotPlatform, isByokTargetUrl, providerFromUrl } from '../../../shared/types';
 import type { BotPlatform } from '../../../shared/types';
+import { parseAttachmentList, resolveSafeLocalAttachment } from '../../attachmentGuard';
 import { ensureHttpScheme, fetchAndParse } from '../../urlParser';
 import { sendLog, sendWebNotification } from '../../helpers';
 import { clipboardLane, llmLane, pageFetchLane } from '../lanes';
@@ -51,7 +52,7 @@ export async function execBrowser(config: Record<string, string>): Promise<strin
   const includeImage = config.includeImage === 'true';
 
   const urlPreview = url.length > 120 ? `${url.slice(0, 120)}…` : url;
-  sendLog(`🌐 [AgentFlow] Browser step URL: ${urlPreview}`);
+  sendLog(`🌐 [Flow] Browser step URL: ${urlPreview}`);
 
   let urlArray: string[] | null = null;
   try {
@@ -65,8 +66,8 @@ export async function execBrowser(config: Record<string, string>): Promise<strin
   }
 
   if (urlArray && urlArray.length > 0) {
-    if (includeImage) sendLog('🖼️ [AgentFlow] Browser: cover image is single-URL only — skipped for batch input');
-    sendLog(`🌐 [AgentFlow] Batch URL input: ${urlArray.length} URLs detected`);
+    if (includeImage) sendLog('🖼️ [Flow] Browser: cover image is single-URL only — skipped for batch input');
+    sendLog(`🌐 [Flow] Batch URL input: ${urlArray.length} URLs detected`);
     const parts: string[] = [];
     for (let i = 0; i < urlArray.length; i++) {
       const batchUrl = urlArray[i];
@@ -81,15 +82,15 @@ export async function execBrowser(config: Record<string, string>): Promise<strin
       }
     }
     if (parts.length === 0) return '';
-    sendLog(`🌐 [AgentFlow] Batch complete: ${parts.length}/${urlArray.length} succeeded`);
+    sendLog(`🌐 [Flow] Batch complete: ${parts.length}/${urlArray.length} succeeded`);
     return parts.join('\n\n---\n\n');
   }
 
   const { text, image } = await fetchPage(url);
-  sendLog(`✅ [AgentFlow] Browser: ${text.length} chars`);
+  sendLog(`✅ [Flow] Browser: ${text.length} chars`);
 
   if (includeImage) {
-    sendLog(`🖼️ [AgentFlow] Browser: cover image ${image ? `→ ${image}` : 'not found'}`);
+    sendLog(`🖼️ [Flow] Browser: cover image ${image ? `→ ${image}` : 'not found'}`);
     return JSON.stringify({ output: text, image });
   }
 
@@ -102,7 +103,7 @@ export async function execBrowserOpen(config: Record<string, string>): Promise<s
   const flowId = (config.__flowId ?? '').trim();
   const show = config.show === 'true';
   const { id, title, url: finalUrl } = await openPage(url, { show, flowId });
-  sendLog(`🌐 [AgentFlow] Opened page ${id} → ${finalUrl}${show ? ' (visible)' : ''}`);
+  sendLog(`🌐 [Flow] Opened page ${id} → ${finalUrl}${show ? ' (visible)' : ''}`);
   return JSON.stringify({ id, title, url: finalUrl });
 }
 
@@ -119,12 +120,59 @@ export function execBrowserClose(config: Record<string, string>): string {
   const flowId = (config.__flowId ?? '').trim();
   if (handle.toLowerCase() === 'all') {
     closeRunPages(flowId);
-    sendLog('🧹 [AgentFlow] Closed all pages opened by this run');
+    sendLog('🧹 [Flow] Closed all pages opened by this run');
     return '';
   }
   const ok = closePage(handle);
-  sendLog(ok ? `🧹 [AgentFlow] Closed page ${handle}` : `⚠️ [AgentFlow] No live page for handle ${handle}`);
+  sendLog(ok ? `🧹 [Flow] Closed page ${handle}` : `⚠️ [Flow] No live page for handle ${handle}`);
   return '';
+}
+
+/*
+ * Turns the `attachments` field into paths the provider may actually be handed. Three gates,
+ * in order: the provider must support uploads at all, each path must clear the same guard the
+ * bot step uses, and the provider's own file cap trims the rest. Every rejection is a log line
+ * and a smaller list — never a thrown error, because an attachment is an enhancement to a
+ * prompt that would otherwise send fine on its own.
+ */
+async function resolveLlmAttachments(
+  config: Record<string, string>,
+  providerUrl: string,
+): Promise<string[]> {
+  const raw = (config.attachments ?? '').trim();
+  if (!raw) return [];
+
+  const providerLabel = getProviderLabel(providerUrl);
+  if (isByokTargetUrl(providerUrl)) {
+    sendLog(`⚠️ [Flow] ${providerLabel} cannot take file attachments — sending the prompt as text only`);
+    return [];
+  }
+  const maxFiles = PROVIDER_ATTACHMENT_POLICIES[providerFromUrl(providerUrl)].maxFiles;
+  if (maxFiles <= 0) {
+    sendLog(`⚠️ [Flow] ${providerLabel} cannot take file attachments — sending the prompt as text only`);
+    return [];
+  }
+
+  let authorizedPaths: string[] = [];
+  try {
+    const parsed: unknown = JSON.parse(config.__attachmentAllowlist ?? '[]');
+    if (Array.isArray(parsed)) authorizedPaths = parsed.filter((v): v is string => typeof v === 'string');
+  } catch {}
+
+  const candidates = parseAttachmentList(raw);
+  const resolved: string[] = [];
+  for (const candidate of candidates) {
+    try {
+      resolved.push(await resolveSafeLocalAttachment(candidate, authorizedPaths));
+    } catch (err) {
+      sendLog(`⚠️ [Flow] Attachment skipped (${candidate}): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  if (resolved.length > maxFiles) {
+    sendLog(`⚠️ [Flow] ${providerLabel} accepts at most ${maxFiles} file(s) — dropping ${resolved.length - maxFiles}`);
+    return resolved.slice(0, maxFiles);
+  }
+  return resolved;
 }
 
 export async function execLlm(
@@ -145,28 +193,26 @@ export async function execLlm(
     try {
       effectivePrompt = buildMemoryAugmentedPrompt(prompt, await readMemory(flowId));
     } catch (err) {
-      sendLog(`⚠️ [AgentFlow] Flow memory read failed, continuing without memory: ${err instanceof Error ? err.message : String(err)}`);
+      sendLog(`⚠️ [Flow] Flow memory read failed, continuing without memory: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
-  // BYOK targets go through verbatim: API calls need none of the input-box
-  // shaping (blank-line removal, char truncation) the browser path relies on.
   let promptForModel = effectivePrompt;
   if (!isByokTarget) {
     const preparedPrompt = preparePromptForProvider(effectivePrompt, providerUrl);
     if (preparedPrompt.removedBlankLines) {
-      sendLog(`✂️ [AgentFlow] Removed blank lines for ${getProviderLabel(providerUrl)} input`);
+      sendLog(`✂️ [Flow] Removed blank lines for ${getProviderLabel(providerUrl)} input`);
     }
     if (preparedPrompt.truncated) {
-      sendLog(`✂️ [AgentFlow] Truncated ${getProviderLabel(providerUrl)} input to ${preparedPrompt.maxChars} chars`);
+      sendLog(`✂️ [Flow] Truncated ${getProviderLabel(providerUrl)} input to ${preparedPrompt.capLabel}`);
     }
     promptForModel = preparedPrompt.prompt;
   }
 
+  const attachments = await resolveLlmAttachments(config, providerUrl);
+
   let response: string;
   if (isByokTarget) {
-    // Direct HTTP call — no shared worker window, so no llmLane serialization;
-    // the abort controller cancels the in-flight fetch on timeout or user abort.
     const byokAbort = new AbortController();
     const result = await withStepTimeout(
       runByokCompletion(providerUrl, promptForModel, timeoutMs, byokAbort.signal),
@@ -177,24 +223,13 @@ export async function execLlm(
     );
     response = result.response;
   } else {
-    // LLM automation is serialized app-wide by llmLane, so many concurrent flows
-    // pile up here. The response-timeout clock must only start once THIS step owns
-    // the shared worker window — otherwise time spent queued behind other flows is
-    // wrongly counted against the budget and later steps time out before they ever
-    // run. withAbort lets a queued step bail promptly on user abort; the in-lane
-    // guard stops it from firing stale automation once the lane frees; and the
-    // about:blank interrupt only runs while we hold the lane, so it can never nuke
-    // another flow's in-progress response. The worker is resolved INSIDE the lane
-    // (via ensureWorkerWin, which forces automation mode) so a login/Cloudflare
-    // mode switch can't swap the window mid-run and a worker left interactive after
-    // a prior login is reclaimed instead of silently degrading this step.
     const result = await withAbort(
       llmLane.runExclusive(async () => {
         if (signal?.aborted) throw new FlowAbortError();
         const workerWin = deps.ensureWorkerWin ? await deps.ensureWorkerWin() : deps.getWorkerWin();
         if (!workerWin || workerWin.isDestroyed()) throw new Error('Worker window not available');
         return withStepTimeout(
-          runAutomation(workerWin, promptForModel, timeoutMs, providerUrl),
+          runAutomation(workerWin, promptForModel, timeoutMs, providerUrl, attachments),
           timeoutMs,
           'llm',
           () => { workerWin.webContents.loadURL('about:blank').catch(() => {}); },
@@ -213,9 +248,9 @@ export async function execLlm(
     if (newMemory) {
       try {
         await appendMemory(flowId, newMemory);
-        sendLog(`🧠 [AgentFlow] Flow memory updated (+1 entry)`);
+        sendLog(`🧠 [Flow] Flow memory updated (+1 entry)`);
       } catch (err) {
-        sendLog(`⚠️ [AgentFlow] Flow memory write failed: ${err instanceof Error ? err.message : String(err)}`);
+        sendLog(`⚠️ [Flow] Flow memory write failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
   }
@@ -234,14 +269,13 @@ export async function execLlm(
   if (!deps.captureMarkdown) {
     throw new Error('LLM export requires captureMarkdown dependency');
   }
-  const title = config.exportTitle || 'AgentFlow LLM Export';
-  const background = config.background
-    || paletteBackground(config.palette ?? '')
-    || 'linear-gradient(135deg, #0f172a 0%, #1e293b 55%, #334155 100%)';
+  const title = config.exportTitle || 'Yobi LLM Export';
+  const background = config.background || captureBackgroundCss(config.palette ?? '');
   const exportOptions = {
     fileName: (config.exportFileName ?? '').trim(),
     showProvider: config.exportShowProvider !== 'false',
     showTimestamp: config.exportShowTimestamp !== 'false',
+    showTokens: false,
     cardTheme: paletteCardTheme(config.palette ?? ''),
   };
   const payload: MarkdownCapturePayload = {
@@ -253,7 +287,7 @@ export async function execLlm(
     timestamp: new Date().toISOString(),
   };
   const filePath = await deps.captureMarkdown(payload, exportFormat, background, exportOptions);
-  sendLog(`🖼️ [AgentFlow] LLM export generated: ${filePath}`);
+  sendLog(`🖼️ [Flow] LLM export generated: ${filePath}`);
   return filePath;
 }
 
@@ -279,10 +313,10 @@ export async function execDelay(config: Record<string, string>): Promise<string>
 }
 
 export function execNotify(config: Record<string, string>): string {
-  const title = config.title || 'AgentFlow';
+  const title = config.title || 'Yobi';
   const body = config.body ?? '';
   sendWebNotification(title, body, 'info');
-  sendLog(`📢 [AgentFlow] ${title}: ${body}`);
+  sendLog(`📢 [Flow] ${title}: ${body}`);
   return body;
 }
 
@@ -304,10 +338,6 @@ function resolveAttachmentSendAs(
   return inferTelegramSendAs(attachment);
 }
 
-// A step's `platform` is authored in the editor. 'auto' — the default, and what
-// every flow written before LINE existed carries — follows whichever platform
-// triggered this run, falling back to Telegram for cron/hotkey/manual runs so
-// those flows keep behaving exactly as they did.
 function resolveBotPlatform(config: Record<string, string>): BotPlatform {
   const choice = (config.platform ?? 'auto').trim().toLowerCase();
   if (isBotPlatform(choice)) return choice;
@@ -317,8 +347,6 @@ function resolveBotPlatform(config: Record<string, string>): BotPlatform {
 
 const LINE_IMAGE_PATH_RE = /\.(?:jpe?g|png)$/i;
 
-// LINE fetches the image itself over HTTPS; there is no upload endpoint, and it
-// accepts only JPEG/PNG. Everything else has to degrade to text.
 function isLineSendableImage(attachment: string): boolean {
   if (!/^https:\/\//i.test(attachment)) return false;
   try {
@@ -358,6 +386,15 @@ export async function execBot(
     .map(Number)
     .filter((n) => Number.isFinite(n) && n !== 0);
 
+  // Telegram targets must be numeric ids; @handles silently resolve to nothing, so say so out loud.
+  const invalidTargets = rawTargets.filter((value) => {
+    const numeric = Number(value);
+    return !Number.isFinite(numeric) || numeric === 0;
+  });
+  if (invalidTargets.length > 0) {
+    sendLog(`⚠️ [Bot] Ignoring non-numeric Telegram recipient(s): ${invalidTargets.join(', ')} — pick the target from the recipient picker`);
+  }
+
   const chatIdsWereConfiguredButEmpty = originalChatIdsTemplate !== '' && explicitIds.length === 0;
 
   if (chatIdsWereConfiguredButEmpty) {
@@ -393,11 +430,6 @@ export async function execBot(
       if (Array.isArray(parsed)) authorizedPaths = parsed.filter((v): v is string => typeof v === 'string');
     } catch {}
 
-    // Telegram downloads remote media on its own servers; some hosts (hotlink
-    // protection / WAF) serve an HTML page instead of the image to that fetcher, so
-    // sendPhoto/sendDocument by URL fail ("failed to get HTTP URL content" / "wrong
-    // type of the web page content"). When that happens, drop the image and deliver
-    // the caption as text so the step still succeeds instead of aborting.
     const sendToTarget = async (target: number, label: string): Promise<void> => {
       try {
         await sendFile(target, attachment, sendAs, caption, authorizedPaths);
@@ -459,8 +491,6 @@ async function sendLineTextToAll(
   }
 }
 
-// LINE recipients are opaque userId strings ('U' + 32 hex), never the numeric
-// chat ids Telegram uses, so they are passed through untouched.
 async function execBotLine(
   deps: FlowExecutorDeps,
   parts: BotSendParts,

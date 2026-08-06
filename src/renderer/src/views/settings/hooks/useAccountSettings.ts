@@ -13,15 +13,10 @@ function initBusy(): BusyMap {
   }, {} as BusyMap);
 }
 
-// Login state lives in appStore because the chat model picker reads it too; the bootstrap
-// subscription keeps it fresh. This hook only owns the per-provider busy flags, which are
-// local to this panel's buttons.
 export function useAccountSettings() {
   const statuses = useAppStore((state) => state.accountStatuses);
   const [busy, setBusy] = useState<BusyMap>(initBusy);
 
-  // A status push means the provider settled (login window closed, logout finished), so
-  // whichever button was spinning for it is done. The status value itself lands in the store.
   useEffect(() => {
     return accountApi.onStatusChanged((status) => {
       setBusy((prev) => ({ ...prev, [status.provider]: false }));

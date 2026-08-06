@@ -8,7 +8,7 @@ Open the **model menu** in the chat composer — BYOK instances are listed under
 
 The model you pick in chat is the **app-wide default target**, so global-hotkey captures use it too. Switch back to a browser provider from the same menu at any time — browser mode is untouched by BYOK and keeps working exactly as before.
 
-## In AgentFlow
+## In Flows
 
 Every **LLM step** has a provider dropdown. BYOK instances appear there next to the browser providers:
 

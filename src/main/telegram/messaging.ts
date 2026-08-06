@@ -1,8 +1,7 @@
-import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { InputFile } from 'grammy';
 import type { TelegramReplyMode, TelegramReplyTarget } from '../../shared/types';
-import { getOutputDir } from '../files';
+import { resolveSafeLocalAttachment } from '../attachmentGuard';
 import { getLangCache, t } from '../i18n';
 import { getErrorMessage } from './errors';
 import {
@@ -24,8 +23,6 @@ import {
 const TELEGRAM_MSG_LIMIT = 4096;
 const TELEGRAM_CAPTION_LIMIT = 1024;
 const TELEGRAM_RESULT_MAX = 2600;
-// Compact replies carry no header, so a chunk gets the whole message budget
-// minus room for the HTML tags markdown rendering adds.
 const COMPACT_CHUNK_CHARS = 3000;
 const COMPACT_MAX_MESSAGES = 3;
 
@@ -77,30 +74,6 @@ export async function sendProactive(
     mctx.onLog(`[telegram] sendProactive failed for chat ${chatId}: ${String(err)}`);
     throw err;
   }
-}
-
-async function resolveSafeLocalAttachment(
-  filePath: string,
-  authorizedPaths: string[] = [],
-): Promise<string> {
-  if (filePath.includes('\0')) {
-    throw new Error('Attachment path is invalid (contains a NUL byte)');
-  }
-  const resolved = await fs.realpath(filePath).catch(() => path.resolve(filePath));
-
-  for (const candidate of authorizedPaths) {
-    const authResolved = await fs.realpath(candidate).catch(() => path.resolve(candidate));
-    if (authResolved === resolved) return resolved;
-  }
-
-  if (/^[\\/]{2}/.test(filePath)) {
-    throw new Error('Attachment must be a local file or an http(s) URL, not a network path');
-  }
-  const root = await fs.realpath(await getOutputDir()).catch(() => path.resolve('.'));
-  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
-    throw new Error('Attachment is outside the Yobi output folder and was blocked');
-  }
-  return resolved;
 }
 
 async function fileLooksLikeImage(resolvedPath: string): Promise<boolean> {
@@ -165,10 +138,6 @@ export async function sendProactiveFile(
       mode = (await fileLooksLikeImage(resolvedLocal)) ? 'photo' : 'document';
     }
 
-    // Telegram downloads remote media on its own servers; hotlink-protected hosts
-    // serve HTML to that fetcher, so sendPhoto/sendDocument by URL fail. For remote
-    // photos, download + optimize the image ourselves (in memory, never on disk) and
-    // upload the bytes so Telegram receives a valid, size-optimized image.
     if (isRemote && mode === 'photo') {
       const optimized = await fetchOptimizedImage(filePath, mctx.onLog);
       if (optimized) {
@@ -198,10 +167,80 @@ export async function sendProactiveFile(
   }
 }
 
-// 'direct' is the synthetic command that command-free chat queues under — not a
-// slash command the user typed — so headers show a localized label instead.
 function commandLabel(s: Record<string, string>, command: string): string {
   return command === 'direct' ? t(s, 'telegram.msg.directLabel') : command;
+}
+
+/** Minimum gap between progress edits — Telegram rate-limits edits to a chat. */
+const PROGRESS_EDIT_INTERVAL_MS = 4_000;
+
+export interface ProgressEditor {
+  push: (text: string) => void;
+  /**
+   * Must be called before the final reply is sent: a trailing edit that lands afterwards
+   * would overwrite the answer with a stale "thinking…".
+   */
+  stop: () => void;
+}
+
+/**
+ * Rewrites the "queued" acknowledgement in place as the run reports progress. A bot user has
+ * no queue panel to look at, so without this a long run is indistinguishable from a hung one.
+ * Best-effort throughout: a failed edit is never worth failing the run over.
+ */
+export function createProgressEditor(
+  mctx: TelegramMessagingContext,
+  target: TelegramReplyTarget,
+  minIntervalMs: number = PROGRESS_EDIT_INTERVAL_MS,
+): ProgressEditor {
+  const messageId = target.queuedMessageId;
+  let lastSent = '';
+  let lastAt = 0;
+  let queued: string | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let stopped = false;
+
+  const send = async (text: string): Promise<void> => {
+    lastSent = text;
+    lastAt = Date.now();
+    const bot = mctx.getBot();
+    if (!bot || !messageId) return;
+    try {
+      await bot.api.editMessageText(target.chatId, messageId, text);
+    } catch {
+      // Rate limited, unchanged, or the message is gone — progress is decoration.
+    }
+  };
+
+  const push = (text: string): void => {
+    if (stopped || !messageId || !text || text === lastSent) return;
+    const wait = minIntervalMs - (Date.now() - lastAt);
+    if (wait <= 0) {
+      queued = null;
+      void send(text);
+      return;
+    }
+    // Too soon: hold the newest update and let the timer deliver it.
+    queued = text;
+    if (timer) return;
+    timer = setTimeout(() => {
+      timer = null;
+      const next = queued;
+      queued = null;
+      if (next && !stopped && next !== lastSent) void send(next);
+    }, wait);
+  };
+
+  const stop = (): void => {
+    stopped = true;
+    queued = null;
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+  };
+
+  return { push, stop };
 }
 
 export async function sendTaskSuccess(
@@ -213,8 +252,6 @@ export async function sendTaskSuccess(
   const s = mctx.getStrings();
   const responseSection = extractResponseSection(payload.response, s);
 
-  // Compact: the answer and nothing else. The markdown file is still written to
-  // the output folder, it just goes unannounced, and no export token is issued.
   if (mctx.getCompactReply()) {
     await sendCompactReply(mctx, target, responseSection);
     await deleteQueuedMessage(mctx, target);
@@ -282,8 +319,6 @@ export async function sendTaskSuccess(
   await deleteQueuedMessage(mctx, target);
 }
 
-// An answer longer than one Telegram message continues into the next one, the
-// way a person sends a long thought. Only the first message quotes the request.
 async function sendCompactReply(
   mctx: TelegramMessagingContext,
   target: TelegramReplyTarget,
@@ -296,17 +331,12 @@ async function sendCompactReply(
     await safeSendMessage(mctx, target.chatId, emptyBody, target.requestMessageId);
     return;
   }
-  // Sequential: Telegram orders messages by call order, and a reply chain that
-  // starts with its second half reads backwards.
   for (const [index, chunk] of chunks.entries()) {
     const body = renderCompactChunk(chunk) || emptyBody;
     await safeSendMessage(mctx, target.chatId, body, index === 0 ? target.requestMessageId : undefined);
   }
 }
 
-// Rendering grows the source (entity escapes, <a href="…">), so a chunk that fit
-// as markdown can still overflow as HTML. Shorten the source and re-render
-// rather than cutting the HTML, which would leave a tag unclosed.
 function renderCompactChunk(chunk: string): string {
   let source = chunk;
   let html = formatResponseForTelegramHtml(source);

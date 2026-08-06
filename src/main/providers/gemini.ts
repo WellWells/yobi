@@ -1,18 +1,19 @@
 import type { BrowserWindow, WebContents } from 'electron';
 import { sleep, navigateAndWait, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
-import { executeAutomationWithTimeout, countElements } from './automationExecutor';
+import { executeAutomationWithTimeout, countElements, settledElementCount } from './automationExecutor';
 import { PROVIDER_URLS } from '../../shared/types';
 import { FIREFOX_UA } from '../userAgent';
 import { applyWorkerUserAgent } from '../clientHints';
 import { sendLog } from '../helpers';
 import { showLoginWindowIfNeeded } from '../windows';
 import { uploadFilesToGemini } from './geminiUpload';
+import {
+  GEMINI_COPY_BTN_SELECTOR as COPY_BTN_SELECTOR,
+  GEMINI_INPUT_SELECTOR as INPUT_SELECTOR,
+  INJECTED_GEMINI_WAIT_AND_READ_JS,
+} from './geminiReadScript';
 
-const COPY_BTN_SELECTOR =
-  'copy-button gem-icon-button[data-test-id="copy-button"] button';
-
-const INPUT_SELECTOR =
-  'rich-textarea div[contenteditable="true"], div.ql-editor[contenteditable="true"], div[contenteditable="true"][role="textbox"]';
+const MAX_BOUNCE_ATTEMPTS = 5;
 
 export async function runGeminiAutomation(
   workerWin: BrowserWindow,
@@ -20,6 +21,31 @@ export async function runGeminiAutomation(
   timeoutMs = 60_000,
   targetUrl: string = PROVIDER_URLS.gemini,
   attachments?: string[],
+  wantTitle = false,
+  continuingThread = false,
+): Promise<{ response: string; title: string }> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await runGeminiAttempt(workerWin, prompt, timeoutMs, targetUrl, attachments, wantTitle, continuingThread);
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('GEMINI_BOUNCED') && attempt < MAX_BOUNCE_ATTEMPTS) {
+        const where = continuingThread ? 'the same thread' : 'a fresh chat';
+        sendLog(`⚠️ Gemini aborted mid-generation and bounced the prompt back to the composer — retrying in ${where} (attempt ${attempt + 1}/${MAX_BOUNCE_ATTEMPTS})`);
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+async function runGeminiAttempt(
+  workerWin: BrowserWindow,
+  prompt: string,
+  timeoutMs: number,
+  targetUrl: string,
+  attachments?: string[],
+  wantTitle = false,
+  continuingThread = false,
 ): Promise<{ response: string; title: string }> {
   const wc = workerWin.webContents;
 
@@ -35,7 +61,7 @@ export async function runGeminiAutomation(
     for (const line of uploadLog) sendLog(`[gemini-upload] ${line}`);
   }
 
-  const baseline = await countElements(wc, COPY_BTN_SELECTOR);
+  const baseline = await settledElementCount(wc, COPY_BTN_SELECTOR);
 
   wc.focus();
 
@@ -43,7 +69,7 @@ export async function runGeminiAutomation(
   const onFullNavigate = () => { fullyNavigated = true; };
   wc.on('did-navigate', onFullNavigate);
 
-  const autoScript = buildGeminiAutomationScript(prompt, baseline, timeoutMs, COPY_BTN_SELECTOR);
+  const autoScript = buildGeminiAutomationScript(prompt, baseline, timeoutMs, COPY_BTN_SELECTOR, wantTitle, continuingThread);
   let result: { response: string; title: string } | null = null;
 
   try {
@@ -65,7 +91,15 @@ export async function runGeminiAutomation(
       await waitForInputArea(wc, 15_000);
       await applyVisibilityPatch(wc);
 
-      const readScript = buildGeminiReadScript(0, timeoutMs, COPY_BTN_SELECTOR);
+      /*
+       * The baseline has to survive the reload. Reading with 0 accepts whatever answer is
+       * already on the page, which in a CONTINUING thread is the PREVIOUS turn's answer — the
+       * reloaded conversation still shows it. The caller then receives the last turn's reply
+       * as if it were a fresh one, and an agent loop re-runs the decision it already made,
+       * forever. Zero is correct only for a fresh chat, where a reload leaves nothing behind.
+       */
+      const recoveryBaseline = continuingThread ? baseline : 0;
+      const readScript = buildGeminiReadScript(recoveryBaseline, timeoutMs, COPY_BTN_SELECTOR, wantTitle);
       result = await executeAutomationWithTimeout<{ response: string; title: string }>(
         wc,
         readScript,
@@ -83,9 +117,6 @@ export async function runGeminiAutomation(
       title: (result.title || '').trim(),
     };
   } catch (err) {
-    // A logged-out Gemini streams no answer, surfacing as GEMINI_LOGIN_REQUIRED from the
-    // browser-side script. Reveal the interactive login window here (provider layer) so
-    // both chat and AgentFlow contexts surface it; orchestration only handles messaging.
     if (err instanceof Error && err.message.includes('GEMINI_LOGIN_REQUIRED')) {
       await showLoginWindowIfNeeded('Gemini', PROVIDER_URLS.gemini);
     }
@@ -139,11 +170,14 @@ async function waitForPageLoad(wc: WebContents, timeoutMs: number): Promise<void
   });
 }
 
-function buildGeminiAutomationScript(
+/** Exported for the test suite. */
+export function buildGeminiAutomationScript(
   prompt: string,
   baselineCopyCount: number,
   timeoutMs: number,
   copyBtnSelector: string,
+  wantTitle: boolean,
+  continuingThread = false,
 ): string {
   const escapedPrompt = JSON.stringify(prompt);
   const escapedSelector = JSON.stringify(copyBtnSelector);
@@ -156,6 +190,8 @@ function buildGeminiAutomationScript(
   var COPY_SEL = ${escapedSelector};
   var INPUT_SEL = ${escapedInputSelector};
   var PROMPT = ${escapedPrompt};
+  var WANT_TITLE = ${wantTitle};
+  var CONTINUING = ${continuingThread};
   ${INJECTED_SLEEP_JS}
   ${INJECTED_WAIT_FOR_JS}
   ${INJECTED_INTERCEPT_COPY_JS}
@@ -208,7 +244,13 @@ function buildGeminiAutomationScript(
   // earlier context into the answer. Best-effort: when a prior response is on the
   // page, start a fresh chat so this run takes the same reliable new-conversation
   // path (full-frame nav -> recovery) as the very first run.
-  if (countResponses() > 0) {
+  //
+  // Never when the caller is continuing a thread on purpose. The page looks identical
+  // in both cases — a conversation with answers on it — so only the caller can tell a
+  // stale window from a deliberate follow-up, and resetting a deliberate one throws away
+  // the very history the caller navigated here for. It stays silent, too: the reply that
+  // comes back is fluent and confident and has no context behind it.
+  if (!CONTINUING && countResponses() > 0) {
     var newChatBtn = document.querySelector('[data-test-id="new-chat-button"]');
     if (newChatBtn) {
       newChatBtn.click();
@@ -376,11 +418,17 @@ function buildGeminiAutomationScript(
   }
 
   if (!started) {
+    // Prompt still (or again) in the composer with nothing generating: either an
+    // immediate server-side bounce or a send that never registered — a fresh-chat
+    // re-run (node-side GEMINI_BOUNCED retry) is the right recovery for both.
+    if (composerText()) {
+      throw new Error('GEMINI_BOUNCED: prompt bounced back to the composer without starting a generation');
+    }
     throw new Error('Gemini accepted the prompt but never started generating a response (reused conversation or rate limit)');
   }
 
   // No fixed post-send sleep — geminiWaitAndRead polls immediately.
-  return await geminiWaitAndRead(BASELINE, COPY_SEL);
+  return await geminiWaitAndRead(BASELINE, COPY_SEL, { idleMs: TIMEOUT, wantTitle: WANT_TITLE });
 })()`;
 }
 
@@ -388,6 +436,7 @@ function buildGeminiReadScript(
   baselineCopyCount: number,
   timeoutMs: number,
   copyBtnSelector: string,
+  wantTitle: boolean,
 ): string {
   const escapedSelector = JSON.stringify(copyBtnSelector);
 
@@ -395,104 +444,11 @@ function buildGeminiReadScript(
 (async function geminiRead() {
   var TIMEOUT  = ${timeoutMs};
   var BASELINE = ${baselineCopyCount};
+  var WANT_TITLE = ${wantTitle};
   ${INJECTED_SLEEP_JS}
   ${INJECTED_INTERCEPT_COPY_JS}
   ${INJECTED_GEMINI_WAIT_AND_READ_JS}
 
-  return await geminiWaitAndRead(BASELINE, ${escapedSelector});
+  return await geminiWaitAndRead(BASELINE, ${escapedSelector}, { idleMs: TIMEOUT, wantTitle: WANT_TITLE });
 })()`;
 }
-
-const INJECTED_GEMINI_WAIT_AND_READ_JS = `async function geminiWaitAndRead(baseline, copyBtnSel) {
-  var IDLE_LIMIT = TIMEOUT;      // reset on any answer change or while still generating; give up only after
-                                 // this long with no activity (idle window = the configured response timeout)
-  var STABLE_MS = 2500;          // answer text unchanged AND generation stopped, continuously, this long -> done
-
-  // Newest answer's clean text (no "Gemini said" screen-reader prefix). Selects the LAST
-  // model-response in document order — ':last-of-type' would match every per-turn node and
-  // return the OLDEST. The markdown node only exists once content renders, so this returns
-  // '' until the first token — callers use that to tell "answer present" from "nothing yet".
-  function readAnswerText() {
-    var responses = document.querySelectorAll('model-response');
-    if (responses.length > 0) {
-      var last = responses[responses.length - 1];
-      var md = last.querySelector('message-content .markdown, .markdown');
-      if (md && (md.innerText || '').trim()) return (md.innerText || '').trim();
-      var mc = last.querySelector('message-content');
-      if (mc && (mc.innerText || '').trim()) return (mc.innerText || '').trim();
-      return '';
-    }
-    var allMc = document.querySelectorAll('message-content');
-    if (allMc.length > 0) return (allMc[allMc.length - 1].innerText || '').trim();
-    return '';
-  }
-  function isGenerating() {
-    var c = document.querySelector('[data-test-id="send-button-container"]');
-    if (c && c.querySelector('mat-icon[fonticon="stop"]')) return true;
-    return !!document.querySelector('[data-test-id="stop-button"]');
-  }
-  function copyButtonReady() {
-    return document.querySelectorAll(copyBtnSel).length > baseline;
-  }
-
-  // Completion is signalled by EITHER the copy button appearing (preferred: clicking it
-  // yields real Markdown with tables/code intact) OR the answer text staying unchanged while
-  // generation is no longer active for a continuous STABLE_MS. The second path is essential
-  // where Gemini renders no copy toolbar (observed on some logged-out locales) — the answer
-  // is in the DOM either way, so gating solely on the copy button is what made those cases
-  // time out.
-  var lastLen = -1;
-  var lastChangeAt = null;
-  var stableSince = null;
-  var sawAnswer = false;
-
-  while (true) {
-    if (copyButtonReady()) break;
-    var text = readAnswerText();
-    if (text.length > 0) sawAnswer = true;
-    if (text.length !== lastLen) {
-      lastLen = text.length;
-      lastChangeAt = Date.now();
-      stableSince = null;
-    } else if (isGenerating()) {
-      // Still generating (Stop button present): only suppress the stable-text completion path so a
-      // mid-stream pause isn't mistaken for "done". Do NOT reset the idle timer here — the idle guard
-      // below must still fire on a truly frozen page (e.g. a Stop button that never clears) so an
-      // answer already in the DOM is returned instead of hanging to the ~10-min outer backstop.
-      stableSince = null;
-    } else if (text.length > 0) {
-      if (stableSince === null) stableSince = Date.now();
-      if (Date.now() - stableSince >= STABLE_MS) break;
-    }
-    // Idle timeout: the answer text has not changed for IDLE_LIMIT (reset on every change above),
-    // independent of the Stop button — so a page that finished but left its Stop button stuck still
-    // returns its answer here rather than hanging. With an answer in hand, return it; with none,
-    // surface sign-in required (a login wall streams nothing).
-    if (lastChangeAt !== null && Date.now() - lastChangeAt > IDLE_LIMIT) {
-      if (sawAnswer && lastLen > 0) break;
-      throw new Error('GEMINI_LOGIN_REQUIRED: Gemini produced no answer (sign-in required or blocked)');
-    }
-    await sleep(400);
-  }
-
-  await sleep(150);
-
-  var title = '';
-  try {
-    var titleEl = document.querySelector('span[data-test-id="conversation-title"]');
-    if (titleEl) title = titleEl.innerText;
-  } catch(e) {}
-
-  // Prefer the copy button (keeps Markdown formatting); fall back to the rendered text
-  // when it is absent. This fallback is now always reachable — previously the loop above
-  // could only exit once the copy button existed, so it never ran.
-  var response = '';
-  var allCopyBtns = document.querySelectorAll(copyBtnSel);
-  var lastCopyBtn = allCopyBtns[allCopyBtns.length - 1];
-  if (lastCopyBtn) {
-    response = (await interceptCopy(lastCopyBtn)) || '';
-  }
-  if (!response) response = readAnswerText();
-  if (!response) throw new Error('Gemini answer element present but its text was empty');
-  return { response: response, title: title };
-}`;

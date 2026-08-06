@@ -19,12 +19,6 @@ export interface BackupManifest {
   counts: Partial<Record<BackupCategoryId, number>>;
 }
 
-// How a category maps to disk + its layout inside the zip.
-// - kind 'file'  → a single file placed at the zip root.
-// - kind 'dir'   → a directory tree placed under `zipPrefix/`.
-// - replaceMode  → on restore, 'whole-dir' wipes the target dir; 'by-filter'
-//   removes only files matching `fileFilter` (keeps unrelated files, e.g. images
-//   sitting next to markdown in the outputs folder).
 export interface CategoryDef {
   id: BackupCategoryId;
   kind: 'file' | 'dir';
@@ -83,8 +77,6 @@ export function isValidManifest(raw: unknown): raw is BackupManifest {
   const manifest = raw as Record<string, unknown>;
   if (manifest.type !== BACKUP_TYPE) return false;
   if (typeof manifest.version !== 'number') return false;
-  // Reject archives newer than we understand — a future format may lay data out
-  // differently and applying it as v1 could corrupt or mis-place files.
   if (manifest.version > BACKUP_VERSION) return false;
   if (!Array.isArray(manifest.categories)) return false;
   return true;
@@ -97,8 +89,6 @@ export function manifestCategories(manifest: BackupManifest): BackupCategoryId[]
   return orderCategories(declared);
 }
 
-// Default file name stem (without extension); the save dialog appends nothing —
-// the caller adds `.zip`. Format e.g. `backup-yobi-2026-07-07`.
 export function buildBackupBaseName(prefix = 'backup-yobi'): string {
   const now = new Date();
   const pad = (n: number): string => String(n).padStart(2, '0');

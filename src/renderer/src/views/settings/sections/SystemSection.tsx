@@ -35,8 +35,6 @@ export const SystemSection: React.FC<Props> = ({
 
   return (
     <Box>
-      {isSearching && <GroupHeader label={t('settings.group.system')} />}
-
       <Box display={showSection(TAG_SETS.config, 'system') ? 'block' : 'none'}>
         <SectionCard style={{ marginBottom: sectionGap }}>
           <SectionTitle icon={<DatabaseBackup size={15} />} label={t('settings.group.system')} />

@@ -1,18 +1,22 @@
-import React, { useCallback, useState } from 'react';
-import { ActionIcon, Box, Flex, Stack, Text } from '@mantine/core';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Box, Flex, Stack } from '@mantine/core';
 
-import { Search, X } from 'lucide-react';
-import { AppTextInput } from '../components/AppTextInput';
+import { Search } from 'lucide-react';
+import { PanelToolbar, ToolbarSearchInput } from '../components/PanelToolbar';
+import { EmptyState } from '../components/EmptyState';
 import { useShallow } from 'zustand/react/shallow';
 import { useI18nStore } from '../store/i18nStore';
 import { useAppStore } from '../store/appStore';
-import { useAgentFlowStore } from '../store/useAgentFlowStore';
+import { useFlowStore } from '../store/useFlowStore';
 import { useThemeStore, resolveThemePreference } from '../store/themeStore';
 import { settingsApi, fileApi, systemApi } from '../api/electronApi';
 import type { BackupImportResult, SettingsSnapshot } from '../../../shared/types';
 
-import { NavItem } from './settings/components';
+import { GroupHeader, NavItem } from './settings/components';
 import { useHotkeyRecorder } from './settings/hooks/useHotkeyRecorder';
+import { useQuickExportRecorder } from './settings/hooks/useQuickExportRecorder';
+import { useExportPreferences } from './settings/hooks/useExportPreferences';
+import { useShareSettings } from './settings/hooks/useShareSettings';
 import { useMetrics } from './settings/hooks/useMetrics';
 import { usePromptPrefs } from './settings/hooks/usePromptPrefs';
 import { useSystemSettings } from './settings/hooks/useSystemSettings';
@@ -22,13 +26,17 @@ import { useBotCommands } from './settings/hooks/useBotCommands';
 import { useAccountSettings } from './settings/hooks/useAccountSettings';
 import { useByokSettings } from './settings/hooks/useByokSettings';
 import { useByokGroups } from './settings/hooks/useByokGroups';
+import { useMcpServers } from './settings/hooks/useMcpServers';
 import { useSettingsNav } from './settings/hooks/useSettingsNav';
+import type { Category } from './settings/hooks/useSettingsNav';
 import { GeneralSection } from './settings/sections/GeneralSection';
 import { AppearanceSection } from './settings/sections/AppearanceSection';
+import { ExportSection } from './settings/sections/ExportSection';
 import { NotificationsSection } from './settings/sections/NotificationsSection';
 import { AiSection } from './settings/sections/AiSection';
 import { ModelSourcesSection } from './settings/sections/ModelSourcesSection';
 import { ByokSection } from './settings/sections/ByokSection';
+import { McpSection } from './settings/sections/McpSection';
 import { BotCommandsSection } from './settings/sections/BotCommandsSection';
 import { TelegramSection } from './settings/sections/TelegramSection';
 import { LineSection } from './settings/sections/LineSection';
@@ -39,7 +47,7 @@ import type { DangerAction } from './settings/sections/SystemSection';
 const SECTION_GAP = 12;
 
 export const SettingsView: React.FC = () => {
-  const { t, locale, setLocale, availableLocales } = useI18nStore();
+  const { t, locale, setLocale, availableLocales, localeTranslations, refreshLocales } = useI18nStore();
   const { setFiles, selectFile, setFileContent } = useAppStore(
     useShallow((s) => ({
       setFiles: s.setFiles,
@@ -50,6 +58,9 @@ export const SettingsView: React.FC = () => {
   const setTheme = useThemeStore((s) => s.setTheme);
 
   const hotkey = useHotkeyRecorder();
+  const quickExport = useQuickExportRecorder();
+  const exportPreferences = useExportPreferences();
+  const shareSettings = useShareSettings();
   const prefs = usePromptPrefs();
   const system = useSystemSettings();
   const metrics = useMetrics();
@@ -59,11 +70,12 @@ export const SettingsView: React.FC = () => {
   const account = useAccountSettings();
   const byok = useByokSettings();
   const byokGroups = useByokGroups(byok.snapshot, byok.applySnapshot);
+  const mcp = useMcpServers();
   const nav = useSettingsNav();
 
   const [dangerAction, setDangerAction] = useState<DangerAction>(null);
   const applySettingsSnapshot = useCallback(async (snapshot: SettingsSnapshot) => {
-    hotkey.applyHotkeyReset(snapshot.hotkey);
+    hotkey.applyHotkeyReset(snapshot.hotkey, snapshot.hotkeyEnabled);
     prefs.applyPromptReset(snapshot.promptPreferences, snapshot.syncSystemLanguageToModel, snapshot.youtubePrompt);
     system.applySystemReset(
       snapshot.notifyOnComplete,
@@ -81,21 +93,20 @@ export const SettingsView: React.FC = () => {
     await byok.reload();
   }, [hotkey, prefs, system, metrics, telegram, line, botCommands, byok, setTheme, setLocale]);
 
-  const localeKeyMap: Record<string, string> = {
-    'en-US': 'language.name.enUS',
-    'zh-TW': 'language.name.zhTW',
-    'zh-CN': 'language.name.zhCN',
-    'es':    'language.name.es',
-    'ja':    'language.name.ja',
-    'pt-BR': 'language.name.ptBR',
-    'de':    'language.name.de',
-    'fr':    'language.name.fr',
-    'ko':    'language.name.ko',
-  };
   const getLocaleLabel = useCallback((localeCode: string): string => {
-    const key = localeKeyMap[localeCode];
-    return key ? t(key) : localeCode;
-  }, [t]);
+    const selfName = localeTranslations[localeCode]?.['language.name.self'];
+    return typeof selfName === 'string' && selfName.trim() ? selfName : localeCode;
+  }, [localeTranslations]);
+
+  const currentView = useAppStore((s) => s.currentView);
+  useEffect(() => {
+    if (currentView === 'settings') void refreshLocales();
+  }, [currentView, refreshLocales]);
+
+  const handleOpenLanguagesFolder = useCallback(async (): Promise<void> => {
+    await settingsApi.openLanguagesFolder();
+    await refreshLocales();
+  }, [refreshLocales]);
 
   const handleResetSettings = useCallback(async () => {
     await settingsApi.resetSettings();
@@ -108,7 +119,7 @@ export const SettingsView: React.FC = () => {
   const handleBackupRestored = useCallback(async (result: BackupImportResult) => {
     if (result.snapshot) await applySettingsSnapshot(result.snapshot);
     if (result.restored.includes('flows')) {
-      await useAgentFlowStore.getState().loadFlows();
+      await useFlowStore.getState().loadFlows();
     }
   }, [applySettingsSnapshot]);
 
@@ -127,8 +138,21 @@ export const SettingsView: React.FC = () => {
     else if (action === 'clear-history') await handleClearHistory();
   }, [dangerAction, handleResetSettings, handleClearHistory]);
 
-  const showCategoryBlock = (category: 'general' | 'appearance' | 'notify' | 'ai' | 'accounts' | 'bots' | 'stats' | 'system'): string =>
-    nav.showCategory(category) ? 'block' : 'none';
+  /*
+   * The category heading is owned here rather than by each section, because a category can be
+   * made of several sections: a query matching Telegram and LINE used to print "Bot" twice.
+   * Called as a function, not rendered as a component — a component declared during render is a
+   * fresh type every keystroke, which would remount the sections and drop their in-progress forms.
+   */
+  const categoryBlock = (category: Category, content: React.ReactNode): React.ReactNode => (
+    <Box display={nav.showCategory(category) ? 'block' : 'none'}>
+      {nav.isSearching && <GroupHeader label={t(`settings.group.${category}`)} />}
+      {content}
+    </Box>
+  );
+
+  // The shared command cards only mean something once a bot can actually receive a command.
+  const anyBotEnabled = (telegram.telegramSettings?.enabled ?? false) || (line.lineSettings?.enabled ?? false);
 
   return (
     <Flex flex={1} bg="var(--mantine-color-body)" style={{ overflow: 'hidden' }}>
@@ -139,26 +163,20 @@ export const SettingsView: React.FC = () => {
         w={240}
         miw={160}
         bg="var(--mantine-color-default)"
-        style={{ borderRight: '1px solid var(--mantine-color-default-border)', overflowY: 'auto', flexShrink: 0 }}
+        style={{ borderRight: '1px solid var(--mantine-color-default-border)', overflow: 'hidden', flexShrink: 0 }}
       >
-        <Box px="10px" pt="10px" pb="6px">
-          <AppTextInput
+        <PanelToolbar>
+          <ToolbarSearchInput
+            ref={nav.searchInputRef}
             value={nav.searchQuery}
-            onChange={(e) => nav.setSearchQuery(e.target.value)}
+            onChange={nav.setSearchQuery}
             placeholder={t('settings.search.placeholder')}
-            tone="tertiary"
-            variant="default"
-            size="xs"
-            radius="sm"
-            leftSection={<Search size={13} />}
-            rightSection={nav.searchQuery ? (
-              <ActionIcon variant="subtle" size={20} onClick={() => nav.setSearchQuery('')} aria-label={t('settings.search.clear')}>
-                <X size={12} />
-              </ActionIcon>
-            ) : undefined}
+            clearLabel={t('settings.search.clear')}
           />
-        </Box>
-        <Box px="8px" pb="8px">
+        </PanelToolbar>
+        {
+}
+        <Box px="8px" py="8px" flex={1} style={{ overflowY: 'auto', minHeight: 0 }}>
           <Stack gap={4}>
             {nav.navCategoryDefs.map((cat) => (
               <NavItem
@@ -176,104 +194,124 @@ export const SettingsView: React.FC = () => {
 
       <Box flex={1} p="24px 20px 40px" style={{ overflowY: 'auto' }}>
         <Box maw={560} mx="auto">
-          <Box display={showCategoryBlock('general')}>
-            <GeneralSection
-              hotkey={hotkey}
-              system={system}
-              t={t}
-              locale={locale}
-              availableLocales={availableLocales}
-              onSetLocale={setLocale}
-              getLocaleLabel={getLocaleLabel}
-              showSection={(tags) => nav.showSection(tags, 'general')}
-              isSearching={nav.isSearching}
-              sectionGap={SECTION_GAP}
-            />
-          </Box>
+          {categoryBlock('general', (
+            <>
+              <GeneralSection
+                hotkey={hotkey}
+                quickExport={quickExport}
+                system={system}
+                t={t}
+                locale={locale}
+                availableLocales={availableLocales}
+                onSetLocale={setLocale}
+                getLocaleLabel={getLocaleLabel}
+                onOpenLanguagesFolder={handleOpenLanguagesFolder}
+                showSection={(tags) => nav.showSection(tags, 'general')}
+                sectionGap={SECTION_GAP}
+              />
+              <NotificationsSection
+                system={system}
+                t={t}
+                showSection={(tags) => nav.showSection(tags, 'general')}
+                sectionGap={SECTION_GAP}
+              />
+            </>
+          ))}
 
-          <Box display={showCategoryBlock('appearance')}>
+          {categoryBlock('appearance', (
             <AppearanceSection
               t={t}
               showSection={(tags) => nav.showSection(tags, 'appearance')}
-              isSearching={nav.isSearching}
               sectionGap={SECTION_GAP}
             />
-          </Box>
+          ))}
 
-          <Box display={showCategoryBlock('notify')}>
-            <NotificationsSection
-              system={system}
+          {categoryBlock('export', (
+            <ExportSection
+              quickExport={quickExport}
+              preferences={exportPreferences}
+              share={shareSettings}
               t={t}
-              showSection={(tags) => nav.showSection(tags, 'notify')}
-              isSearching={nav.isSearching}
+              showSection={(tags) => nav.showSection(tags, 'export')}
               sectionGap={SECTION_GAP}
             />
-          </Box>
+          ))}
 
-          <Box display={showCategoryBlock('ai')}>
+          {categoryBlock('ai', (
             <AiSection
               system={system}
               prefs={prefs}
               t={t}
               locale={locale}
               showSection={(tags) => nav.showSection(tags, 'ai')}
-              isSearching={nav.isSearching}
               sectionGap={SECTION_GAP}
             />
-          </Box>
+          ))}
 
-          <Box display={showCategoryBlock('accounts')}>
-            <ModelSourcesSection
-              account={account}
+          {categoryBlock('connectors', (
+            <McpSection
+              mcp={mcp}
               t={t}
-              showSection={(tags) => nav.showSection(tags, 'accounts')}
-              isSearching={nav.isSearching}
+              showSection={(tags) => nav.showSection(tags, 'connectors')}
               sectionGap={SECTION_GAP}
             />
-            <ByokSection
-              byok={byok}
-              byokGroups={byokGroups}
-              t={t}
-              showSection={(tags) => nav.showSection(tags, 'accounts')}
-              sectionGap={SECTION_GAP}
-            />
-          </Box>
+          ))}
 
-          <Box display={showCategoryBlock('bots')}>
-            <BotCommandsSection
-              botCommands={botCommands}
-              t={t}
-              showSection={(tags) => nav.showSection(tags, 'bots')}
-              isSearching={nav.isSearching}
-              sectionGap={SECTION_GAP}
-            />
-            <TelegramSection
-              telegram={telegram}
-              t={t}
-              showSection={(tags) => nav.showSection(tags, 'bots')}
-              isSearching={nav.isSearching}
-              sectionGap={SECTION_GAP}
-            />
-            <LineSection
-              line={line}
-              t={t}
-              showSection={(tags) => nav.showSection(tags, 'bots')}
-              isSearching={nav.isSearching}
-              sectionGap={SECTION_GAP}
-            />
-          </Box>
+          {categoryBlock('accounts', (
+            <>
+              <ModelSourcesSection
+                account={account}
+                t={t}
+                showSection={(tags) => nav.showSection(tags, 'accounts')}
+                sectionGap={SECTION_GAP}
+              />
+              <ByokSection
+                byok={byok}
+                byokGroups={byokGroups}
+                t={t}
+                showSection={(tags) => nav.showSection(tags, 'accounts')}
+                sectionGap={SECTION_GAP}
+              />
+            </>
+          ))}
 
-          <Box display={showCategoryBlock('stats')}>
+          {categoryBlock('bots', (
+            <>
+              <BotCommandsSection
+                botCommands={botCommands}
+                anyBotEnabled={anyBotEnabled}
+                t={t}
+                showSection={(tags) => nav.showSection(tags, 'bots')}
+                isSearching={nav.isSearching}
+                sectionGap={SECTION_GAP}
+              />
+              <TelegramSection
+                telegram={telegram}
+                t={t}
+                showSection={(tags) => nav.showSection(tags, 'bots')}
+                isSearching={nav.isSearching}
+                sectionGap={SECTION_GAP}
+              />
+              <LineSection
+                line={line}
+                t={t}
+                showSection={(tags) => nav.showSection(tags, 'bots')}
+                isSearching={nav.isSearching}
+                sectionGap={SECTION_GAP}
+              />
+            </>
+          ))}
+
+          {categoryBlock('stats', (
             <StatsSection
               metrics={metrics}
               t={t}
               showSection={(tags) => nav.showSection(tags, 'stats')}
-              isSearching={nav.isSearching}
               sectionGap={SECTION_GAP}
             />
-          </Box>
+          ))}
 
-          <Box display={showCategoryBlock('system')}>
+          {categoryBlock('system', (
             <SystemSection
               dangerAction={dangerAction}
               setDangerAction={setDangerAction}
@@ -285,13 +323,10 @@ export const SettingsView: React.FC = () => {
               isSearching={nav.isSearching}
               sectionGap={SECTION_GAP}
             />
-          </Box>
+          ))}
 
-          {nav.isSearching && !(['general', 'appearance', 'notify', 'ai', 'accounts', 'bots', 'stats', 'system'] as const).some((c) => nav.showCategory(c)) && (
-            <Stack align="center" py={48} px={20} c="dimmed">
-              <Search size={32} opacity={0.25} />
-              <Text fz="var(--font-size-md)">{t('settings.search.empty')}</Text>
-            </Stack>
+          {nav.isSearching && !nav.navCategoryDefs.some((cat) => nav.showCategory(cat.id)) && (
+            <EmptyState icon={Search} label={t('settings.search.empty')} />
           )}
         </Box>
       </Box>

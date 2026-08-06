@@ -43,8 +43,6 @@ function countZipCategory(zip: AdmZip, def: CategoryDef): number {
   return count;
 }
 
-// Read + validate a backup zip and compute the per-category overwrite impact
-// (incoming vs. current counts) for the import warning page. Never mutates disk.
 export async function inspectBackup(zipPath: string): Promise<BackupInspectResult> {
   let zip: AdmZip;
   try {
@@ -90,8 +88,6 @@ async function restoreConfig(zip: AdmZip): Promise<Config | null> {
   } catch {
     return null;
   }
-  // Reuse the config import path: normalize, decrypt safeStorage fields, persist
-  // to the electron-store + in-memory config, keep-if-blank for cross-machine.
   return importConfigFromJson(parsed);
 }
 
@@ -104,7 +100,6 @@ async function restoreFlows(zip: AdmZip, deps: ApplyBackupDeps): Promise<boolean
   } catch {
     return false;
   }
-  // flows.json is a bare array; never write a malformed non-array (would wipe flows).
   if (!Array.isArray(parsed)) return false;
   const flowsPath = path.join(getFlowDataDir(), 'flows.json');
   await fs.mkdir(path.dirname(flowsPath), { recursive: true });
@@ -138,16 +133,13 @@ async function restoreDir(zip: AdmZip, def: CategoryDef): Promise<boolean> {
     const name = entry.entryName.replace(/\\/g, '/');
     const rel = name.slice(prefix.length);
     const dest = safeResolveWithin(targetDir, rel);
-    if (!dest) continue; // zip-slip guard: skip anything escaping the target dir
+    if (!dest) continue;
     await fs.mkdir(path.dirname(dest), { recursive: true });
     await fs.writeFile(dest, entry.getData());
   }
   return true;
 }
 
-// Apply the selected categories in place. Best-effort: a failing category is
-// logged and skipped, the rest still apply. `importedConfig` is surfaced so the
-// caller can run the config live-reload side effects (worker, hotkey, telegram…).
 export async function applyBackup(
   zipPath: string,
   requested: BackupCategoryId[],

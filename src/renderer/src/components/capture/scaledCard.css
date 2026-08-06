@@ -1,0 +1,14 @@
+/*
+ * A scaled preview renders the real capture card (captureCard.css), so it needs
+ * almost no styling of its own. What is left are the two things that differ from
+ * the exported image: the app's interactive chrome inside code blocks has to be
+ * hidden, and the scaled box must not react to the pointer.
+ */
+.scaled-capture-card {
+  pointer-events: none;
+}
+
+/* The exported image is static; a hoverable copy button would be a lie. */
+.scaled-capture-card .code-block-wrapper button {
+  display: none;
+}

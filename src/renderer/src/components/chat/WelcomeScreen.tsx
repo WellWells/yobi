@@ -15,8 +15,6 @@ const WelcomeStepCard: React.FC<{ children: React.ReactNode }> = ({ children }) 
 
 type GreetingSlot = 'morning' | 'afternoon' | 'evening' | 'night';
 
-// Local time buckets mirroring the reference greeting cadence:
-// deep night (<5), morning (<12), afternoon (<17), evening (<22), then night.
 function greetingSlotFor(hour: number): GreetingSlot {
   if (hour < 5) return 'night';
   if (hour < 12) return 'morning';
@@ -26,9 +24,10 @@ function greetingSlotFor(hour: number): GreetingSlot {
 }
 
 export const WelcomeScreen: React.FC<{ activeModelUrl: string }> = ({ activeModelUrl }) => {
-  const { hotkey, userNickname } = useAppStore(
+  const { hotkey, hotkeyEnabled, userNickname } = useAppStore(
     useShallow((s) => ({
       hotkey: s.hotkey,
+      hotkeyEnabled: s.hotkeyEnabled,
       userNickname: s.userNickname,
     })),
   );
@@ -39,7 +38,6 @@ export const WelcomeScreen: React.FC<{ activeModelUrl: string }> = ({ activeMode
 
   const name = userNickname.trim();
   const slot = greetingSlotFor(new Date().getHours());
-  // Function replacer so a nickname containing `$` isn't treated as a replacement pattern.
   const greeting = t(`welcome.greeting.${slot}.${name ? 'named' : 'plain'}`).replace('{{name}}', () => name);
 
   return (
@@ -56,7 +54,10 @@ export const WelcomeScreen: React.FC<{ activeModelUrl: string }> = ({ activeMode
       <Stack gap={6} w="min(420px, 92%)">
         {[
           t('welcome.step.copy'),
-          t('welcome.step.hotkey').replace('{{hotkey}}', hotkey),
+          // Naming a released binding would walk a new user through a key that does nothing.
+          hotkeyEnabled
+            ? t('welcome.step.hotkey').replace('{{hotkey}}', hotkey)
+            : t('welcome.step.hotkey.off'),
           t('welcome.step.review'),
         ].map((step) => (
           <WelcomeStepCard key={step}>{step}</WelcomeStepCard>

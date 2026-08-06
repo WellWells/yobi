@@ -5,6 +5,10 @@ import { loadPageHtml, fetchRawText, ensureHttpScheme } from './pageLoader';
 import { runParserBlocks, runCssSelector, parseRssFeed, extractFeedLinks } from './parserBlocks';
 import type { ParserBlock, ParserBlockType, RssFeedItem } from './parserBlocks';
 import { isYoutubeUrl, fetchYoutubeVideo } from './youtubeTranscript';
+import { isMapsUrl, fetchMapReviews } from './mapReviews';
+import { fetchPlaceStats, localizedVerdict } from './mapPlaceStats';
+import { mapReviewsPrompt } from '../shared/mapReviewsPrompt';
+import { config } from './config';
 
 export { fetchRawText, ensureHttpScheme, runParserBlocks, runCssSelector, parseRssFeed, extractFeedLinks };
 export type { ParserBlock, ParserBlockType, RssFeedItem };
@@ -24,6 +28,7 @@ export interface FetchAndParseOptions {
   bodyText?: boolean;
   xmlMode?: boolean;
   parserBlocks?: ParserBlock[];
+  maxChars?: number;
 }
 
 export function isSingleUrl(text: string): boolean {
@@ -108,11 +113,10 @@ export async function fetchAndParse(url: string, options?: FetchAndParseOptions)
   if (options?.bodyText) return bodyTextOf(html, url);
 
   if (options?.rawHtml) {
-    // Extract the cover image from the FULL html before truncation — a late
-    // <head> on heavy pages must not cost the og:image.
     const image = extractCoverImage(html, url);
-    const raw = html.length > MAX_CONTENT_CHARS ? html.slice(0, MAX_CONTENT_CHARS) : html;
-    return { title: url, url, cleanedText: raw, truncated: html.length > MAX_CONTENT_CHARS, image };
+    const limit = options.maxChars ?? MAX_CONTENT_CHARS;
+    const raw = html.length > limit ? html.slice(0, limit) : html;
+    return { title: url, url, cleanedText: raw, truncated: html.length > limit, image };
   }
 
   return parseHtml(html, url);
@@ -140,11 +144,6 @@ export function buildUrlAnalysisPrompt(
     ? `${result.cleanedText}\n\n${truncatedLabel}`
     : result.cleanedText;
 
-  // Function replacers: title/body are remote page content and may contain `$&`,
-  // `$'`, `` $` `` or `$$`, which are special in a String.replace replacement
-  // string (they would splice template fragments into the prompt or collapse
-  // `$$`→`$`). A replacer function inserts the value verbatim (matches
-  // buildYoutubePrompt below).
   return promptTemplate
     .replace(/\{\{title\}\}/g, () => result.title)
     .replace(/\{\{url\}\}/g, () => result.url)
@@ -172,8 +171,6 @@ function absoluteHttpUrl(raw: string | undefined, base: string): string {
   }
 }
 
-// Meta tags only — no in-page <img> fallback: it grabs avatars/ads/logos when
-// the meta is missing, and a wrong cover is worse than none.
 function pickCoverImage($: ReturnType<typeof load>, sourceUrl: string): string {
   const candidates = [
     $('meta[property="og:image"]').attr('content'),
@@ -196,12 +193,6 @@ function extractCoverImage(html: string, sourceUrl: string): string {
   }
 }
 
-// The whole <body> as text, with only the non-rendering elements dropped. Unlike
-// parseHtml it keeps navigation, sidebars and footers: the caller wants every
-// word the page shows, so no <article>/<main> selector gets to decide what counts
-// as the content. The MAX_CONTENT_CHARS budget is spent on *text* — truncating
-// the html first (as the rawHtml path must, to keep the markup parseable) would
-// blow most of that budget on tags and cut the body off on a heavy page.
 function bodyTextOf(html: string, sourceUrl: string): UrlParseResult {
   const $ = load(`<html>${html}</html>`);
   const image = pickCoverImage($, sourceUrl);
@@ -224,7 +215,14 @@ function bodyTextOf(html: string, sourceUrl: string): UrlParseResult {
   };
 }
 
-function parseHtml(html: string, sourceUrl: string): UrlParseResult {
+export interface ParseHtmlOptions {
+  blockBreaks?: boolean;
+}
+
+const BLOCK_BREAK_SELECTOR =
+  'p, div, li, h1, h2, h3, h4, h5, h6, blockquote, pre, tr, dt, dd, figcaption, section, article';
+
+export function parseHtml(html: string, sourceUrl: string, options?: ParseHtmlOptions): UrlParseResult {
   const fullHtml = `<html>${html}</html>`;
   const $ = load(fullHtml);
 
@@ -237,6 +235,13 @@ function parseHtml(html: string, sourceUrl: string): UrlParseResult {
   ).remove();
 
   const title = $('title').first().text().trim() || sourceUrl;
+
+  if (options?.blockBreaks) {
+    $('br').replaceWith('\n');
+    $(BLOCK_BREAK_SELECTOR).each((_, el) => {
+      $(el).append('\n\n');
+    });
+  }
 
   const contentEl = $('article, [role="main"], main').first();
   const rawText = (contentEl.length ? contentEl : $('body')).text();
@@ -270,12 +275,18 @@ export interface ResolvedPrompt {
   prompt: string;
   forceProviderUrl?: string;
   title?: string;
+  displayPrompt?: string;
 }
 
 export async function resolveUrlPrompt(text: string, ctx: UrlPromptContext): Promise<ResolvedPrompt> {
   if (!isSingleUrl(text)) return { prompt: text };
 
   if (isYoutubeUrl(text)) return resolveYoutubePrompt(text, ctx);
+
+  if (isMapsUrl(text)) {
+    const maps = await resolveMapsPrompt(text, ctx);
+    if (maps) return maps;
+  }
 
   const logFetching = ctx.langData['urlParser.log.fetching'] ?? '🔗 URL detected — fetching page content...';
   const notifyTitle = ctx.langData['urlParser.notify.title'] ?? 'Yobi';
@@ -332,4 +343,44 @@ async function resolveYoutubePrompt(text: string, ctx: UrlPromptContext): Promis
     forceProviderUrl: PROVIDER_URLS.gemini,
     title: result.title || undefined,
   };
+}
+
+async function resolveMapsPrompt(text: string, ctx: UrlPromptContext): Promise<ResolvedPrompt | null> {
+  const notifyTitle = ctx.langData['urlParser.notify.title'] ?? 'Yobi';
+  ctx.onLog(ctx.langData['mapReviews.log.fetching'] ?? '🗺️ Google Maps place detected — fetching reviews...');
+  ctx.onNotify(notifyTitle, (ctx.langData['mapReviews.notify.body'] ?? 'Analyzing Maps reviews: {{url}}').replace('{{url}}', text));
+
+  try {
+    const result = await fetchMapReviews(text, {
+      sort: 'mixed',
+      count: 100,
+      hl: config.locale,
+      onLog: (msg) => ctx.onLog(`🗺️ ${msg}`),
+    });
+    if (result.reviews.length === 0) return null;
+
+    const stats = await fetchPlaceStats(result.placeUrl, { onLog: (msg) => ctx.onLog(`🗺️ ${msg}`) }).catch(() => null);
+    const { verdict } = localizedVerdict(stats?.rating ?? '', stats?.total ?? '', ctx.langData);
+    const prompt = mapReviewsPrompt({
+      place: result.place || text,
+      reviews: JSON.stringify(result.reviews),
+      rating: stats?.rating ?? '',
+      total: stats?.total ?? '',
+      positive: stats?.positive ?? '',
+      distribution: stats?.distribution ?? '',
+      verdict,
+    }, config.locale);
+    ctx.onLog((ctx.langData['mapReviews.log.done'] ?? '🗺️ {{count}} reviews fetched — wrapping analysis prompt...')
+      .replace('{{count}}', String(result.reviews.length)));
+    const displayPrompt = (ctx.langData['mapReviews.displayPrompt'] ?? '🗺️ Google Maps review analysis: {{place}}')
+      .replace('{{place}}', () => result.place || text);
+    const title = result.place
+      ? (ctx.langData['mapReviews.title'] ?? 'Reviews: {{place}}').replace('{{place}}', () => result.place)
+      : undefined;
+    return { prompt, displayPrompt, title };
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    ctx.onLog(`🗺️ Maps reviews fetch failed: ${errMsg} — falling back to page fetch`);
+    return null;
+  }
 }

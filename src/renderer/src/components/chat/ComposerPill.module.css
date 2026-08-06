@@ -1,0 +1,25 @@
+/* ComposerPill.module.css */
+/* Hover + expanded state for the composer footer's pill triggers. */
+
+.pill:hover:not([data-disabled]),
+.pill[data-expanded] {
+  background: var(--mantine-color-bg-tertiary) !important;
+  border-color: var(--mantine-color-border-hover) !important;
+}
+
+/* The subtle variant owns no border of its own, so hover must not paint one in —
+   only the fill changes. Declared after .pill so it wins at equal specificity. */
+.subtle:hover:not([data-disabled]),
+.subtle[data-expanded] {
+  background: var(--mantine-color-bg-tertiary) !important;
+  border-color: transparent !important;
+}
+
+/* An accented pill (a mode other than plain chat) keeps its tint under the pointer
+   rather than flattening to the neutral hover fill — the whole point of the tint is
+   that "this send is not an ordinary chat message" stays visible. */
+.accent:hover:not([data-disabled]),
+.accent[data-expanded] {
+  background: var(--mantine-color-accent-dim) !important;
+  border-color: var(--mantine-color-accent) !important;
+}

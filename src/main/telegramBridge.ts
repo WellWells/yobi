@@ -1,3 +1,4 @@
+import { DEFAULT_CAPTURE_WIDTH } from '../shared/types';
 import type {
   TelegramRuntimeSnapshot,
   TelegramSettingsSnapshot,
@@ -59,6 +60,7 @@ export function buildTelegramSettingsSnapshot(): TelegramSettingsSnapshot {
     llmDirect: config.telegram.llmDirect,
     runtime: _telegramRuntimeSnapshot,
     pairing: normalizedPairing,
+    channels: config.telegram.channels,
   };
 }
 
@@ -93,6 +95,7 @@ export async function exportTelegramResultDocument(request: {
   title: string;
 }): Promise<{ ok: boolean; filePath?: string; error?: string }> {
   try {
+    const baseName = request.savedFileName.replace(/\.md$/i, '') || buildSafeFileNameFromTitle(request.title);
     const captureResult = await captureMarkdownDocument({
       payload: {
         title: request.title || request.savedFileName.replace(/\.md$/i, ''),
@@ -105,19 +108,23 @@ export async function exportTelegramResultDocument(request: {
       options: {
         mode: 'save',
         format: request.format,
+        fileName: baseName,
         showPrompt: true,
         showContent: true,
         showProvider: true,
         showTimestamp: true,
-        width: 1_200,
+        showTokens: false,
+        width: DEFAULT_CAPTURE_WIDTH,
         background: 'linear-gradient(140deg, #0f172a 0%, #1e293b 55%, #334155 100%)',
         cardTheme: 'dark',
+        cardLayout: 'document',
+        pixelRatio: 1,
+        zip: false,
       },
     });
 
     const outputDir = await getOutputDir();
     await fs.mkdir(outputDir, { recursive: true });
-    const baseName = request.savedFileName.replace(/\.md$/i, '') || buildSafeFileNameFromTitle(request.title);
     const desiredPath = path.join(outputDir, `${baseName}.${captureResult.ext}`);
     const filePath = await getUniquePath(desiredPath, '');
     await fs.writeFile(filePath, captureResult.buffer);

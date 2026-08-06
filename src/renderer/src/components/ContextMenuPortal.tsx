@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { Box, Menu } from '@mantine/core';
+import { Z_CONTEXT_MENU } from '../config/zLayers';
 
 interface ContextMenuPosition {
   x: number;
@@ -38,10 +39,10 @@ export const ContextMenuPortal: React.FC<ContextMenuPortalProps> = ({
       pos="fixed"
       top={position.y}
       left={position.x}
-      style={{ zIndex: 2000 }}
+      style={{ zIndex: Z_CONTEXT_MENU }}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      <Menu opened withinPortal={false} position="bottom-start" offset={0} zIndex={2000}>
+      <Menu opened withinPortal={false} position="bottom-start" offset={0} zIndex={Z_CONTEXT_MENU}>
         <Menu.Target><Box w={0} h={0} /></Menu.Target>
         <Menu.Dropdown>{children}</Menu.Dropdown>
       </Menu>

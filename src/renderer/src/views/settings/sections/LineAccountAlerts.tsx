@@ -10,8 +10,6 @@ interface Props {
   t: (key: string) => string;
 }
 
-// Surfaces the two Official Account settings that silently stop a correctly
-// built bot: LINE answering on its behalf, and webhook delivery switched off.
 export const LineAccountAlerts: React.FC<Props> = ({ account, t }) => {
   if (!account) return null;
   const showChatMode = account.chatModeOn;

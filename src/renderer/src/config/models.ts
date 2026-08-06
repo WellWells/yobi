@@ -31,7 +31,6 @@ export interface ModelOption {
   label: string;
   url: string;
   icon: ModelIcon;
-  /** Label without its provider prefix, for lists already nested under that provider. */
   shortLabel?: string;
 }
 
@@ -82,9 +81,6 @@ export function makeByokGroupModelOption(group: ByokGroupSnapshot): ModelOption 
   };
 }
 
-// Picker options for selectable groups. Empty groups (every member key deleted)
-// are unusable and would only throw at run time, so they are omitted here — they
-// remain visible and editable in the Settings groups card.
 export function makeByokGroupModels(groups: ByokGroupSnapshot[]): ModelOption[] {
   return groups.filter((group) => group.memberIds.length > 0).map(makeByokGroupModelOption);
 }
@@ -116,13 +112,9 @@ export interface ProviderSelectLabels {
 }
 
 export interface PickerModel extends ModelOption {
-  /** Hidden, but listed anyway because it is the caller's current selection. */
   hidden?: boolean;
 }
 
-// One selectable block of the provider picker. A null label renders flat, with no
-// header: the built-in providers and the Duck.ai models need none, while a BYOK
-// instance's user-chosen name says nothing about what it is.
 export interface ProviderSection {
   label: string | null;
   models: PickerModel[];
@@ -130,20 +122,12 @@ export interface ProviderSection {
 
 const NO_HIDDEN: HiddenSources = { providers: [], duckaiModelIds: [], byokIds: [], byokGroupIds: [] };
 
-// Every built-in provider plus the Duck.ai models already fills Mantine's default
-// 220px dropdown, so the picker must be tall enough for the BYOK entries below them
-// to be on screen.
 export const PROVIDER_DROPDOWN_MAX_HEIGHT = 320;
 
-// Picker order for everything the user configured on top of MODELS. Callers that
-// cannot use useProviderModels (callbacks reading the store at call time) go through
-// this so the Shift+Tab cycle order stays identical to the rendered menu.
 export function providerExtraModels(extras: ProviderSelectExtras): ModelOption[] {
   return [...extras.duckaiModels, ...extras.byokModels, ...extras.byokGroupModels];
 }
 
-// Applies the hidden sets to one ordered model list. keepVisibleUrl survives the
-// filter and is flagged, so a picker never blanks out its own stored value.
 function applyHidden(
   models: ModelOption[],
   hidden: HiddenSources,
@@ -160,9 +144,6 @@ function applyHidden(
   return out;
 }
 
-// The single source of truth for provider-picker order and grouping. Both the chat
-// menu (Mantine Menu) and the settings/AgentFlow pickers (Mantine Select) render
-// from this, so a model can never appear in one picker and go missing in another.
 export function buildProviderSections(
   extras: ProviderSelectExtras,
   labels: ProviderSelectLabels,
@@ -193,17 +174,11 @@ export function providerSectionsToSelectData(
   ));
 }
 
-// Every selectable model in picker order, minus the hidden ones. Backs the
-// Shift+Tab cycle, the "last visible source" guard, and the auto-reselect.
 export function visibleModels(extras: ProviderSelectExtras, hidden: HiddenSources): ModelOption[] {
   return [...MODELS, ...providerExtraModels(extras)]
     .filter((model) => !isModelUrlHidden(model.url, hidden));
 }
 
-// Cycle to the next model in picker order. Backs the Shift+Tab shortcut in the
-// chat prompt. `models` is the full visible list — the caller decides what is
-// visible, because built-in providers can be hidden too. Falls back to the first
-// entry when the current url is unknown.
 export function nextModelUrl(
   currentUrl: string,
   models: ModelOption[],

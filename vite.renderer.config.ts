@@ -36,6 +36,9 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, 'src/renderer/index.html'),
         capture: resolve(__dirname, 'src/renderer/capture.html'),
+        // The quick-export naming prompt: its own page because the hotkey is global
+        // and the main window may not even be open when it has to ask.
+        prompt: resolve(__dirname, 'src/renderer/prompt.html'),
       },
       output: {
         manualChunks(id: string) {

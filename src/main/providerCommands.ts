@@ -1,15 +1,26 @@
 import {
+  BOT_BUILTIN_COMMAND_KEYS,
   BOT_COMMAND_RE,
+  BUILTIN_NEW_COMMAND,
+  DEFAULT_BUILTIN_COMMANDS,
   DEFAULT_PROVIDER_COMMANDS,
   PROVIDERS,
   PROVIDER_URLS,
   buildDuckaiModelUrl,
+  isModelUrlHidden,
 } from '../shared/types';
-import type { BotProviderCommand, Provider } from '../shared/types';
+import type {
+  BotBuiltinCommandKey,
+  BotBuiltinCommands,
+  BotByokCommands,
+  BotLlmDirectConfig,
+  BotProviderCommand,
+  HiddenSources,
+  Provider,
+} from '../shared/types';
+import { resolveByokCommands } from './byokCommands';
+import type { ByokCommandDef } from './byokCommands';
 
-// One live-resolved slash command: a built-in provider or a BYOK key/group.
-// Provider entries localize their menu description via descriptionKey; BYOK
-// entries carry the configured name as a literal description instead.
 export interface ResolvedProviderCommand {
   provider: Provider | 'byok';
   command: string;
@@ -25,13 +36,33 @@ const PROVIDER_DESCRIPTION_KEYS: Record<Provider, string> = {
   duckai: 'telegram.commands.duck',
 };
 
-// Names every bot answers itself, on either platform. The union is reserved on
-// both so one shared config always resolves to the same command names — a name
-// reserved only on Telegram would otherwise be free for a provider on LINE.
-export const BOT_STATIC_COMMANDS = ['start', 'init', 'output', 'status', 'restart', 'pair', 'help'];
+/** Names the bots answer themselves. Nothing configurable may take one of these. */
+const BOT_RESERVED_STATIC_COMMANDS = [
+  'start', 'init', 'output', 'status', 'restart', 'pair', 'help', BUILTIN_NEW_COMMAND,
+];
 
-// '/chatgpt' and '/gpt' both name the same provider. Resolution prefers the
-// configured command; these are the fallback spellings LINE also accepts.
+/**
+ * Also reserved against provider/BYOK commands: the built-in defaults stay claimable by the
+ * built-in commands themselves even while the user has them renamed or switched off.
+ */
+export const BOT_STATIC_COMMANDS = [
+  ...BOT_RESERVED_STATIC_COMMANDS,
+  ...Object.values(DEFAULT_BUILTIN_COMMANDS),
+];
+
+const BUILTIN_DESCRIPTION_KEYS: Record<BotBuiltinCommandKey, string> = {
+  agent: 'telegram.commands.agent',
+  search: 'telegram.commands.search',
+};
+
+export interface ResolvedBuiltinCommand {
+  key: BotBuiltinCommandKey;
+  command: string;
+  /** Empty string means "follow the app default", resolved at run time. */
+  targetUrl: string;
+  descriptionKey: string;
+}
+
 export const PROVIDER_ALIASES: Record<string, Provider> = (() => {
   const table: Record<string, Provider> = {};
   for (const provider of PROVIDERS) {
@@ -79,4 +110,78 @@ export function resolveProviderCommands(
   }
 
   return resolved;
+}
+
+/**
+ * Flow commands are user-created and may predate this feature, so they win a name clash: a
+ * built-in that cannot get its own name is dropped rather than shadowing an existing flow.
+ * A hidden model falls back to the app default instead of removing the command.
+ */
+export function resolveBuiltinCommands(
+  builtinCommands: BotBuiltinCommands | undefined,
+  extraReserved: string[] = [],
+  hidden?: HiddenSources,
+): ResolvedBuiltinCommand[] {
+  const taken = new Set<string>([...BOT_RESERVED_STATIC_COMMANDS, ...extraReserved]);
+  const resolved: ResolvedBuiltinCommand[] = [];
+
+  for (const key of BOT_BUILTIN_COMMAND_KEYS) {
+    const cfg = builtinCommands?.[key];
+    if (!cfg || cfg.enabled === false) continue;
+
+    const def = DEFAULT_BUILTIN_COMMANDS[key];
+    const wanted = sanitizeCommandName(cfg.command) || def;
+    const command = !taken.has(wanted) ? wanted : (!taken.has(def) ? def : '');
+    if (!command) continue;
+    taken.add(command);
+
+    const targetUrl = cfg.targetUrl && hidden && isModelUrlHidden(cfg.targetUrl, hidden)
+      ? ''
+      : cfg.targetUrl;
+
+    resolved.push({ key, command, targetUrl, descriptionKey: BUILTIN_DESCRIPTION_KEYS[key] });
+  }
+
+  return resolved;
+}
+
+export interface BotCommandSet {
+  providers: ResolvedProviderCommand[];
+  byok: ByokCommandDef[];
+  builtins: ResolvedBuiltinCommand[];
+}
+
+export interface BotCommandSources {
+  providerCommands: Record<Provider, BotProviderCommand> | undefined;
+  builtinCommands: BotBuiltinCommands | undefined;
+  byokInstances: Array<{ id: string; name: string }>;
+  byokGroups: Array<{ id: string; name: string; memberIds: string[] }>;
+  byokEnabled?: BotByokCommands;
+  flowCommands: string[];
+  hidden: HiddenSources;
+}
+
+export function resolveBotCommandSet(sources: BotCommandSources): BotCommandSet {
+  const { providerCommands, builtinCommands, byokInstances, byokGroups, flowCommands, hidden } = sources;
+  const builtins = resolveBuiltinCommands(builtinCommands, flowCommands, hidden);
+  const builtinNames = builtins.map((bc) => bc.command);
+  const providers = resolveProviderCommands(providerCommands, [...flowCommands, ...builtinNames]);
+  const byok = resolveByokCommands(byokInstances, byokGroups, [
+    ...BOT_STATIC_COMMANDS,
+    ...Object.keys(PROVIDER_ALIASES),
+    ...providers.map((pc) => pc.command),
+    ...flowCommands,
+    ...builtinNames,
+  ], sources.byokEnabled);
+  const visible = <T extends { targetUrl: string }>(commands: T[]): T[] =>
+    commands.filter((cmd) => !isModelUrlHidden(cmd.targetUrl, hidden));
+  return { providers: visible(providers), byok: visible(byok), builtins };
+}
+
+export function resolveLlmDirectTarget(
+  direct: BotLlmDirectConfig,
+  hidden: HiddenSources,
+): BotLlmDirectConfig {
+  if (!direct.targetUrl || !isModelUrlHidden(direct.targetUrl, hidden)) return direct;
+  return { ...direct, targetUrl: '' };
 }

@@ -10,13 +10,13 @@
 [![Electron](https://img.shields.io/badge/Electron-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen.svg)](https://github.com/WellWells/yobi/pulls)
 
-**[English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md)**
+**[English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md)**
 
 </div>
 
 ---
 
-**Yobi** 把你早已在用的 AI 網站——**ChatGPT、Gemini、Perplexity 與 Duck.ai**——變成一個用全域熱鍵就能呼叫的桌面助理，以及一套可排程、也能從 Telegram 觸發的無程式碼自動化引擎。不需要 API 金鑰、也沒有額外費用：它在內建瀏覽器中直接驅動服務商自家的網頁，就和你親自操作時一模一樣。
+**Yobi** 把你早已在用的 AI 網站——**ChatGPT、Gemini、Perplexity 與 Duck.ai**——變成一個用全域熱鍵就能呼叫的桌面助理，以及一套可排程、也能從 Telegram 或 LINE 觸發的無程式碼自動化引擎。不需要 API 金鑰、也沒有額外費用：它在內建瀏覽器中直接驅動服務商自家的網頁，就和你親自操作時一模一樣。
 
 > ℹ️ 補充說明：自動化這些網頁並非服務商官方支援的用法，也不在其服務條款的允許範圍內。Yobi 不會繞過任何防護——當網站跳出 CAPTCHA，它會暫停，把控制權交還給你。請負責任地使用。[它如何運作 →](#-yobi-如何運作)
 
@@ -29,11 +29,12 @@
 | ⌨️ | **一個熱鍵** | 在任何地方選取文字，按下 `Alt+G`（macOS 為 `⌘G`）就有答案——還會自動存檔 |
 | 🔑 | **無需 API 金鑰** | 用的是服務商的網頁，而非付費 API——不必註冊、不必付費。已經有金鑰？可選的 BYOK 模式也支援 |
 | 🤖 | **主流 AI 全到齊** | ChatGPT · Gemini · Perplexity · Duck.ai，一鍵切換 |
+| 🧠 | **代理與搜尋** | `/agent` 接下一個目標就一路做到完；`/search` 從網路找答案，附上可點擊的來源 |
 | 🔁 | **零程式碼自動化** | 拖拉步驟就能組工作流程——或直接用一句話描述，讓 AI 幫你組起來 |
-| 📱 | **從 Telegram 操控** | 用手機就能啟動你的 AI 與自動化流程 |
-| 🎨 | **成品隨手分享** | 把任何回答匯出成精美的 PNG、WebP 或 PDF |
-| 🔒 | **完全屬於你** | 全部在你的電腦上執行——無遙測、無追蹤、開放原始碼 |
-| 🌍 | **9 種語言** | English · 繁中 · 简中 · 日本語 · 한국어 · Deutsch · Español · Français · Português |
+| 📱 | **Telegram 與 LINE** | 用手機就能啟動你的 AI 與自動化流程 |
+| 🎨 | **成品隨手分享** | 把任何回答匯出成精美的 PNG、WebP 或 PDF——或一條加密分享連結 |
+| 🔒 | **沒有中間人** | Yobi 沒有自己的伺服器：提示詞直接送到你選的 AI 網站，其餘一切都留在你的硬碟上 |
+| 🌍 | **多語系** | 內建 English · 繁體中文 · 简体中文,自行放入語言包即可新增任何語言([說明](language/README.md)) |
 
 ---
 
@@ -82,15 +83,30 @@ npm run dev
 
 <div align="center">
 
-![AgentFlow 編輯器（RSS 步驟）](assets/screenshots/agentflow-editor-rss-step.png)
+![流程編輯器（RSS 步驟）](assets/screenshots/flow-editor-rss-step.png)
 
-**AgentFlow** — 排程擷取內容、用 AI 摘要、再送到 Telegram——全程零程式碼
+**流程** — 排程擷取內容、用 AI 摘要、再送到 Telegram——全程零程式碼
 
 </div>
 
 ---
 
-## 🔗 AgentFlow — 零程式碼自動化
+## 💬 提問、搜尋，或整件事交給它
+
+在聊天輸入框打 `/` 選擇模式——或者直接開口說話：
+
+| 模式 | 功能 |
+| --- | --- |
+| **聊天** | 一般的多輪對話。每一段對話就是一個 Markdown 檔，關掉之後可以再打開接著聊。 |
+| `/agent` | 給它一個目標。它會自己規劃、讀網頁、呼叫工具、檢查自己的成果，也能順手幫你建一條流程。 |
+| `/search` | 到網路上查，答案附有編號來源，可直接點開。 |
+| `/你的指令` | 你自己建的任何一條流程，都能變成你的斜線指令。 |
+
+回答邊生成邊渲染——**Mermaid 圖表**、數學式與程式碼都包含在內——每段對話也會記錄 token 用量。任何一段都能一鍵變成 **PNG、PDF，或一條端對端加密的分享連結**。
+
+---
+
+## 🔗 流程 — 零程式碼自動化
 
 把 AI、資料與動作串成自動化流程，由**熱鍵、排程、Telegram 指令，或 App 內的 `/指令`** 觸發——而且單一流程可以同時用上好幾種。
 
@@ -102,14 +118,16 @@ npm run dev
 
 **你能串接的東西：**
 
-- 📥 **抓取資料** — 網頁、RSS、HTTP API、YouTube 字幕，甚至即時的股票 / 外匯 / 天氣——全都免 API 金鑰
+- 📥 **抓取資料** — 網頁、RSS、HTTP API、YouTube 字幕、網路搜尋、Google 地圖評論，甚至即時的股票 / 外匯 / 天氣 / 空氣品質——全都免 API 金鑰
+- 🕸️ **擷取清單** — 在真實頁面上點一則標題，Yobi 自己推算出整份清單的選擇器
 - 🌐 **操控瀏覽器** — 開分頁、點擊、填表單、截圖
 - 🧠 **詢問 AI** — ChatGPT · Gemini · Perplexity · Duck.ai——或透過 BYOK 使用你自己的 API 金鑰
-- 📤 **送出結果** — Telegram、電子郵件、檔案，或剪貼簿
+- 🔌 **接上你自己的工具** — 連接遠端 MCP 伺服器，讓 `/agent` 直接呼叫
+- 📤 **送出結果** — Telegram、LINE、電子郵件、檔案、分享連結，或剪貼簿
 - 🛠️ **執行任何東西** — 程式、JavaScript、shell，外加系統與電源控制
-- 🔀 **流程控制** — 迴圈、條件、排程
+- 🔀 **流程控制** — 迴圈、條件、排程，以及「有變動才通知我」
 
-……**35+ 種技能且持續增加**，全靠簡單的 `{{variables}}` 串接——每個步驟的輸出都餵給下一步。
+……**46 種技能且持續增加**，全靠簡單的 `{{variables}}` 串接——每個步驟的輸出都餵給下一步。
 
 **從範本開始**再自訂：
 
@@ -123,12 +141,12 @@ npm run dev
 
 ---
 
-## 📱 從 Telegram 操控
+## 📱 從 Telegram 或 LINE 操控
 
-想用手機操控你的 AI？連接一個 Telegram bot 就行——大約兩分鐘：
+想用手機操控你的 AI？連接一個 bot 就行——大約兩分鐘：
 
-1. **建立 bot** — 在 Telegram 向 [@BotFather](https://t.me/BotFather) 傳訊息，複製它給你的 token。
-2. **貼上 token**，位置在 **設定 → Telegram**。
+1. **建立 bot** — 在 Telegram 向 [@BotFather](https://t.me/BotFather) 傳訊息，複製它給你的 token。（LINE 則是建立一個 Messaging API channel。）
+2. **貼上 token**，位置在 **設定 → Telegram**（或 **LINE**）。
 3. **對你的 bot 說 `/start`**，依配對提示完成即可。搞定。
 
 現在隨時隨地都能傳訊息給你的 bot：
@@ -136,11 +154,15 @@ npm run dev
 | 指令 | 功能 |
 | --- | --- |
 | `/gpt` · `/gemini` · `/pplx` · `/duck` | 詢問該服務商（指令可自訂） |
+| `/agent` · `/search` | 交給它一個目標，或搜尋網路——與 App 內相同 |
+| `/new` | 開始一段全新的對話 |
 | `/output <模式>` | 設定回覆格式——`md` · `png` · `webp` · `pdf` |
 | `/status` | 查看代理狀態 |
 | `/restart` | 重新啟動 Yobi（管理員） |
 
-在 AgentFlow 裡用 **Telegram 觸發器** 打造你自己的指令——任何訊息都能啟動一條流程。
+完全不想打指令？在該 bot 的設定裡開啟**免指令對話**，之後直接傳訊息就會當成一般對話送給你的 AI。
+
+在「流程」裡用 **Bot 觸發器** 打造你自己的指令——任何訊息都能啟動一條流程，兩個平台皆可。
 
 ---
 
@@ -149,8 +171,9 @@ npm run dev
 - **提示詞偏好** — 設定預設語調與長度，並在每則提示詞前面加上你自己的指示。
 - **擷取與匯出** — 把任何回答變成精美的 PNG / WebP / PDF（淺色或深色卡片、漸層調色盤、自選顯示的中繼資料）。
 - **電子郵件（SMTP）** — 讓流程用郵件寄出結果；密碼存在作業系統金鑰圈裡，絕不會寫進流程檔案。
+- **MCP 伺服器** — 加入遠端 Model Context Protocol 伺服器，讓 `/agent` 使用它們的工具；任何會寫入的操作都會先問過你。
 - **帳號** — 逐一登入或登出各服務商，並可一鍵重設某服務商的資料，修復卡住的工作階段。
-- **自備金鑰（BYOK）** — 可選擇加入你自己的 OpenAI 相容（OpenAI、OpenRouter、Together、Groq、本地伺服器…）或 Gemini API 金鑰作為額外服務商：選類型、填 base URL／模型／金鑰，再用「**載入模型**」從端點支援的清單挑選、用「**測試**」確認能通。BYOK 實例在聊天與 AgentFlow 中和其他服務商一樣選用；瀏覽器模式仍是預設，金鑰以作業系統金鑰圈加密儲存。
+- **自備金鑰（BYOK）** — 可選擇加入你自己的 OpenAI 相容（OpenAI、OpenRouter、Together、Groq、本地伺服器…）或 Gemini API 金鑰作為額外服務商：選類型、填 base URL／模型／金鑰，再用「**載入模型**」從端點支援的清單挑選、用「**測試**」確認能通。BYOK 實例在聊天與流程中和其他服務商一樣選用；瀏覽器模式仍是預設，金鑰以作業系統金鑰圈加密儲存。
 - **外觀與行為** — 11 款主題、堆疊或並排版面、開機自動啟動、關閉至系統匣、回應逾時、文字縮放。
 - **備份** — 把所有設定匯出或匯入為單一 JSON 檔案。
 
@@ -168,9 +191,11 @@ Yobi 自動化 ChatGPT、Gemini、Perplexity 與 Duck.ai 的**網頁介面**。�
 
 ## 🔒 安全性與隱私
 
-- **無遙測** — 零分析、零追蹤；你的查詢只會送到你選擇的 AI 服務商（並受其各自的隱私權政策規範）。
-- **本機執行、開放原始碼** — 每一段自動化邏輯都在你的電腦上執行，並可在 `src/main/` 中查閱稽核。
-- **加密憑證** — 你的 Telegram token、SMTP 密碼與 BYOK API 金鑰會用作業系統金鑰圈（Electron `safeStorage`）加密後才寫入磁碟。
+- **你的提示詞會去哪裡** — 送到你選的那個 AI 網站，輸入在它自己的網頁上，就跟你親手打進去一模一樣。那是你的文字唯一會去的地方，並受該服務商的隱私權政策規範。
+- **沒有中間人、沒有遙測** — Yobi 沒有伺服器、也沒有帳號：不經過我們轉送，零分析、零追蹤。
+- **你的東西還是你的** — 對話、流程與匯出檔都是你硬碟上的普通檔案。自動化邏輯可在 `src/main/` 中查閱稽核。
+- **其餘會離開這台電腦的功能，一律由你主動開啟** — 分享連結在 App 內先加密才上傳，金鑰放在連結的 `#fragment`，瀏覽器不會把它送給主機（你隨時可以刪除該則貼文）。MCP 只會連到你自己加入的伺服器。
+- **加密憑證** — 你的 Telegram／LINE token、SMTP 密碼與 BYOK API 金鑰會用作業系統金鑰圈（Electron `safeStorage`）加密後才寫入磁碟。
 
 ---
 
@@ -184,7 +209,7 @@ npm run build:win   # build Windows (NSIS installer)
 npm run build:mac   # build macOS (DMG)
 ```
 
-**技術堆疊：** Electron · React + TypeScript · Mantine · Zustand · Vite + electron-builder · grammY · LINE Bot SDK
+**技術堆疊：** Electron · React + TypeScript · Mantine · Zustand · Vite + electron-builder · grammY · LINE Bot SDK · MCP SDK
 
 ---
 

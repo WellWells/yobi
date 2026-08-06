@@ -52,8 +52,6 @@ export function usePromptAttachments(
 
   const byokModels = useAppStore((s) => s.byokModels);
   const byokGroupModels = useAppStore((s) => s.byokGroupModels);
-  // BYOK targets (single keys and groups) would otherwise hostname-sniff to
-  // 'gemini' and wrongly allow uploads; the HTTP path sends text only.
   const isByokTarget = isByokTargetUrl(modelUrl);
   const provider = providerFromUrl(modelUrl);
   const maxFiles = isByokTarget ? 0 : PROVIDER_ATTACHMENT_POLICIES[provider].maxFiles;
@@ -71,8 +69,6 @@ export function usePromptAttachments(
       return;
     }
     const built = incoming.map(buildAttachment);
-    // Files dragged straight from a browser/email/zip have no filesystem path
-    // and can never be uploaded — reject them instead of showing a dead chip.
     const pathless = built.filter((a) => !a.path);
     pathless.forEach(revokePreview);
     const usable = built.filter((a) => a.path);
@@ -114,8 +110,6 @@ export function usePromptAttachments(
 
   const dismissNotice = useCallback(() => setNotice(null), []);
 
-  // Switching to a provider that accepts fewer/no files must drop the excess
-  // (and tell the user), never silently carry unsendable attachments.
   useEffect(() => {
     const current = attachmentsRef.current;
     if (current.length === 0) return;

@@ -1,5 +1,4 @@
-// JSON recovery ladder for LLM responses. Each fallback only runs when the
-// stricter pass failed, so well-formed JSON is never rewritten.
+import { jsonrepair } from 'jsonrepair';
 
 function tryParse(text: string): unknown | undefined {
   try {
@@ -9,8 +8,6 @@ function tryParse(text: string): unknown | undefined {
   }
 }
 
-// Removes commas that directly precede a closing bracket (a common LLM slip)
-// without touching string contents.
 function stripTrailingCommas(text: string): string {
   let out = '';
   let inString = false;
@@ -39,15 +36,24 @@ function stripTrailingCommas(text: string): string {
   return out;
 }
 
+function repairParse(text: string): unknown | undefined {
+  const trimmed = text.trim();
+  if (trimmed[0] !== '{' && trimmed[0] !== '[') return undefined;
+  try {
+    return tryParse(jsonrepair(trimmed));
+  } catch {
+    return undefined;
+  }
+}
+
 function attemptParse(text: string): unknown | undefined {
   const direct = tryParse(text);
   if (direct !== undefined) return direct;
-  return tryParse(stripTrailingCommas(text));
+  const noTrailing = tryParse(stripTrailingCommas(text));
+  if (noTrailing !== undefined) return noTrailing;
+  return repairParse(text);
 }
 
-// Extracts the string-aware balanced {...} / [...] slice starting at `start`,
-// so prose after the JSON (which the last-bracket heuristic would swallow)
-// cannot break parsing.
 function scanBalanced(text: string, start: number): string | null {
   const open = text[start];
   const close = open === '{' ? '}' : ']';
@@ -72,8 +78,6 @@ function scanBalanced(text: string, start: number): string | null {
   return null;
 }
 
-// Likely JSON start positions: `{ "` skips prose braces such as {{variable}}
-// examples the model may write around the payload.
 function candidateStarts(body: string): number[] {
   const starts: number[] = [];
   const objStart = /\{\s*"/g;
@@ -86,8 +90,6 @@ function candidateStarts(body: string): number[] {
   return starts;
 }
 
-// A response may carry several JSON snippets (e.g. a small illustrative fence
-// before the real flow); prefer the one shaped like a flow definition.
 function looksLikeFlow(value: unknown): boolean {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const obj = value as Record<string, unknown>;
@@ -146,7 +148,6 @@ export function extractJsonFromLlmResponse(text: string): unknown | null {
   const hit = extractFromBody(body, picker.consider);
   if (hit !== null) return hit;
 
-  // Last resort: a markdown renderer may have curled the quotes.
   if (/[“”]/.test(body)) {
     const curly = extractFromBody(body.replace(/[“”]/g, '"'), picker.consider);
     if (curly !== null) return curly;

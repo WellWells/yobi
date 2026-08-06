@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { CaptureFormat, SkillType } from '../../shared/types';
+import { isShareLinkFormat } from '../../shared/shareFormat';
 
 export function interpolate(template: string, context: Map<string, string>): string {
   return template.replace(/\{\{([^}]+)\}\}/g, (_, varName: string) => {
@@ -34,6 +35,9 @@ export function inferTelegramSendAs(filePath: string): 'photo' | 'document' | 'a
 
 export function isFileOutputStep(type: SkillType, config: Record<string, string>): boolean {
   if (type === 'capture') return true;
+  /* A share step in link mode produces a URL — pointing {{file}} at it would poison every
+   * downstream bot / email_send / file_delete that trusts {{file}} to be a real file. */
+  if (type === 'share') return !isShareLinkFormat(config.format);
   if (type === 'file_write') return true;
   if (type === 'file_download') return true;
   if (type === 'llm') return isCaptureFormat(config.exportFormat);
@@ -79,11 +83,6 @@ export function extractTemplateVariables(template: string): string[] {
 async function isExistingFilePath(value: string): Promise<boolean> {
   const filePath = value.trim();
   if (!filePath) return false;
-  // Never stat a UNC / network path. A remote-supplied value like `\\host\share`
-  // (Telegram/LINE message text reaching a bot step as {{input}}) would trigger an
-  // outbound SMB/WebDAV connection here — an NTLM-hash leak vector and a stall
-  // outside any step timeout. Magic upload only ever targets locally-produced
-  // files, so a network path is never a legitimate match.
   if (/^[\\/]{2}/.test(filePath)) return false;
   try {
     const stat = await fs.stat(filePath);
