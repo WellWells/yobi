@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { NAV_ORDER, useAppStore } from '../store/appStore';
 import { useFlowStore } from '../store/useFlowStore';
 import { useI18nStore } from '../store/i18nStore';
@@ -6,11 +6,9 @@ import { useUpdateStore } from '../store/useUpdateStore';
 import { initThemeFromConfig } from '../store/themeStore';
 import type { LayoutMode } from '../store/appStore';
 import { accountApi, byokApi, ipcEvents, settingsApi, tempChatApi } from '../api/electronApi';
-import { isTypingTarget } from '../utils/domUtils';
-import type { View } from '../store/appStore';
 import { makeByokGroupModels, makeByokModelOption, makeDuckaiModelOption } from '../config/models';
-
-const VIEW_BY_SHORTCUT: Record<string, View> = Object.fromEntries(NAV_ORDER.map((view, index) => [String(index + 1), view]));
+import { useShortcutAction } from '../shortcuts/useShortcutAction';
+import { useShortcutStore } from '../store/shortcutStore';
 
 export function useAppBootstrap() {
   const appendLog = useAppStore((s) => s.appendLog);
@@ -39,6 +37,7 @@ export function useAppBootstrap() {
     void useFlowStore.getState().loadFlows();
     void settingsApi.getHotkey().then(setHotkey);
     void settingsApi.getHotkeyEnabled().then(setHotkeyEnabled);
+    void settingsApi.getShortcuts().then(useShortcutStore.getState().setOverrides);
     void settingsApi.getPromptPreferences().then((prefs) => setUserNickname(prefs.nickname ?? ''));
     void settingsApi.getAiUrl().then(hydrateAiUrl);
     void tempChatApi.getMode().then(setTempChatMode);
@@ -88,20 +87,9 @@ export function useAppBootstrap() {
     return () => unsubs.forEach((fn) => fn());
   }, [appendLog, setStatus, setQueue, setAccountStatus, setView, setTempChatMode, setTempChatResult]);
 
-  const handleKeyDown = useCallback((event: KeyboardEvent) => {
-    if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-    if (isTypingTarget(event.target)) return;
-    const key = event.code.startsWith('Numpad')
-      ? event.code.replace('Numpad', '')
-      : event.key;
-    const nextView = VIEW_BY_SHORTCUT[key];
-    if (!nextView) return;
-    event.preventDefault();
-    setView(nextView);
-  }, [setView]);
-
-  useEffect(() => {
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleKeyDown]);
+  useShortcutAction('nav.switchView', (_event, combo) => {
+    const digit = Number(combo.slice(combo.lastIndexOf('+') + 1));
+    const nextView = NAV_ORDER[digit - 1];
+    if (nextView) setView(nextView);
+  });
 }

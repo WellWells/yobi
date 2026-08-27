@@ -16,11 +16,6 @@ export interface SourceDoc {
   title: string;
   url: string;
   text: string;
-  /**
-   * `YYYY-MM-DD`, absent when the page published no machine-readable date. It reaches the
-   * synthesis prompt, where it is the only way the model can tell a 2019 page from last
-   * week's — the difference between answering "the latest X" and answering some earlier X.
-   */
   publishedAt?: string;
 }
 

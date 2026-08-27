@@ -18,11 +18,6 @@ import type { QueryPlan, SearchOutcome, SerpHit, SourceDoc, TemporalFilter } fro
 
 export type { SearchOutcome, SerpHit, SourceDoc } from './types';
 
-/**
- * Stages of one search run, reported live. `fetching`/`analyzing` are the original two the
- * queue label is built from; the rest exist because a `research` step inside /agent is a
- * minute of silence otherwise — the caller turns these into the visible sub-lines of its row.
- */
 export type SearchProgress =
   | { stage: 'planning'; queries: string[] }
   | { stage: 'fetching'; count: number }
@@ -47,7 +42,6 @@ function preview(text: string): string {
   return text.length > 80 ? `${text.slice(0, 80)}…` : text;
 }
 
-/** Hosts, not full URLs: a readable list of what was actually read fits on one line. */
 function hostOf(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./, '');
@@ -94,13 +88,6 @@ async function runQueries(
   return { hits: interleave(perQuery), challenged };
 }
 
-/**
- * The recency filter is a guess made from words in the query, so it has to be able to be
- * wrong without costing the whole search. An empty first page means the filter excluded
- * everything — "最新" on a topic nothing published this month — and the honest recovery is
- * to answer from older pages rather than to report no results. Only a filtered run earns
- * the retry; an unfiltered run that found nothing has nothing left to relax.
- */
 async function collectHits(plan: QueryPlan, locale: string): Promise<SerpHit[]> {
   const first = await runQueries(plan.queries, plan.temporal, locale);
   if (first.hits.length > 0) return first.hits;
@@ -203,12 +190,6 @@ export async function runWebSearch(
   const maxSources = maxSourcesOverride ?? defaultMaxSources;
   const targets = selectTargets(orderedHits, maxSources + HARVEST_SPARE_TARGETS);
   onProgress?.({ stage: 'fetching', count: Math.min(targets.length, maxSources) });
-  // Summaries start as pages land instead of after the whole fetch phase. Only a key group
-  // earns this: it summarizes every relevant page anyway, so a summary begun before ranking
-  // can only be wasted on a zero-relevance page, which is rare. A single key caps its map
-  // input (`BYOK_MAP_MAX_SINGLE_KEY`), and starting by arrival order would spend that cap on
-  // whichever pages happened to load first rather than on the best-ranked ones. Quick mode
-  // never summarizes at all, so it must not start one either.
   const mapper = isByok && mode === 'standard' && isByokGroupUrl(targetUrl)
     ? createDocumentMapper(query, targetUrl, locale)
     : null;
@@ -240,8 +221,6 @@ export async function runWebSearch(
       docs: sources,
       locale,
       concise: mode === 'quick',
-      // Same predicate that sized the source budget above, so the rules the prompt carries
-      // and the room reserved for them are always the same tier.
       lean: isLeanPromptProvider(targetUrl),
     }),
     targetUrl,

@@ -19,10 +19,6 @@ export function sanitizeByokCommandName(name: string): string {
   return BOT_COMMAND_RE.test(slug) ? slug : '';
 }
 
-/**
- * A key or group switched off in settings is left out entirely rather than skipped late,
- * so it does not hold its name hostage from the ones that stayed on.
- */
 export function resolveByokCommands(
   instances: Array<{ id: string; name: string }>,
   groups: Array<{ id: string; name: string; memberIds: string[] }>,

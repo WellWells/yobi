@@ -1,20 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 
-/**
- * Text the user highlighted inside the chat content area, plus the two things an action
- * needs to interpret it: the block it was taken from (a phrase picked out of the middle of
- * a cited sentence leaves the `[n]` marker outside the selection) and which assistant turn
- * it belongs to (the answer markdown is where the source list lives).
- */
 export interface ChatSelectionState {
   text: string;
   blockText: string;
-  /** Null in the single-turn document view, which renders the file rather than turns. */
   turnIndex: number | null;
   rect: { top: number; bottom: number; left: number; width: number };
 }
 
-/** A selection long enough to be a whole answer is a copy gesture, not a quote gesture. */
 const MAX_SELECTION_CHARS = 4_000;
 const BLOCK_SELECTOR = 'p, li, blockquote, td, th, h1, h2, h3, h4, h5, h6';
 
@@ -62,8 +54,6 @@ export function useChatSelection(
     });
   }, [containerRef]);
 
-  // Opening on mouseup rather than on selectionchange keeps the toolbar from chasing the
-  // cursor mid-drag; selectionchange is only watched so that a click elsewhere closes it.
   useEffect(() => {
     const onSettle = (): void => read();
     const onSelectionChange = (): void => {
@@ -80,8 +70,6 @@ export function useChatSelection(
     };
   }, [read]);
 
-  // The rect is viewport-relative, so a scroll invalidates it. Re-reading is cheap and
-  // keeps the toolbar pinned to its text instead of floating away from it.
   useEffect(() => {
     if (!selection) return;
     const container = containerRef.current;

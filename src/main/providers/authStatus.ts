@@ -1,7 +1,7 @@
 import { session } from 'electron';
 import type { Cookie } from 'electron';
 import { isExpiredCookie } from '../helpers';
-import { CLEAN_UA, FIREFOX_UA } from '../userAgent';
+import { WORKER_USER_AGENTS } from '../userAgent';
 import { CHATGPT_LOGIN_URL } from './chatgpt';
 import { isPerplexitySessionCookie } from './perplexity';
 import { PROVIDER_URLS, AUTH_PROVIDERS } from '../../shared/types';
@@ -60,19 +60,19 @@ const GEMINI_SESSION_COOKIES = ['__Secure-1PSID', '__Secure-3PSID', 'SID'];
 const AUTH_CONFIG: Record<AuthProvider, AuthProviderConfig> = {
   chatgpt: {
     loginUrl: CHATGPT_LOGIN_URL,
-    userAgent: CLEAN_UA,
+    userAgent: WORKER_USER_AGENTS.chatgpt,
     isSessionCookie: (c) =>
       c.name.startsWith('__Secure-next-auth.session-token') && !isExpiredCookie(c.expirationDate),
   },
   gemini: {
     loginUrl: PROVIDER_URLS.gemini,
-    userAgent: FIREFOX_UA,
+    userAgent: WORKER_USER_AGENTS.gemini,
     isSessionCookie: (c) =>
       GEMINI_SESSION_COOKIES.includes(c.name) && Boolean(c.value) && !isExpiredCookie(c.expirationDate),
   },
   perplexity: {
     loginUrl: PROVIDER_URLS.perplexity,
-    userAgent: CLEAN_UA,
+    userAgent: WORKER_USER_AGENTS.perplexity,
     isSessionCookie: isPerplexitySessionCookie,
   },
 };

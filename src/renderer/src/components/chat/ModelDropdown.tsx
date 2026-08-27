@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Menu, Tooltip } from '@mantine/core';
 import type { ModelOption } from '../../config/models';
-import { PROVIDER_DROPDOWN_MAX_HEIGHT, findModelOption, getModelIconByUrl } from '../../config/models';
+import { PROVIDER_DROPDOWN_MAX_HEIGHT, findModelOption } from '../../config/models';
 import { useProviderModels } from '../../hooks/useProviderModels';
 import { ComposerPill } from './ComposerPill';
 import { ModelMenuItems } from './ModelMenuItems';
@@ -31,7 +31,7 @@ export const ModelDropdown: React.FC<ModelDropdownProps> = ({
   const [open, setOpen] = useState(false);
   const { extraModels } = useProviderModels(value);
   const current = findModelOption(value, extraModels);
-  const CurrentIcon = getModelIconByUrl(current.url);
+  const CurrentIcon = current.icon;
   const toggle = () => {
     if (disabled) return;
     setOpen((prev) => !prev);

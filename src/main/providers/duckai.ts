@@ -5,6 +5,7 @@ import {
   buildDuckaiAutomationScript,
   buildDuckaiResetScript,
   injectDuckaiLocalStorage,
+  isDuckaiPage,
   setupDuckaiLocalStorageOnDomReady,
   DUCKAI_CHALLENGE_SELECTOR,
 } from './duckaiScript';
@@ -12,7 +13,7 @@ import { raiseVerificationChallenge } from './verificationChallenge';
 import { revealWorkerWindow } from '../windows';
 import { PROVIDER_URLS } from '../../shared/types';
 import type { DuckaiModelInfo } from '../../shared/types';
-import { FIREFOX_UA } from '../userAgent';
+import { WORKER_USER_AGENTS } from '../userAgent';
 import { applyWorkerUserAgent } from '../clientHints';
 import { sendLog } from '../helpers';
 
@@ -61,39 +62,35 @@ async function waitForWorkerIdle(wc: WebContents, timeoutMs: number): Promise<vo
 
 async function navigateToDuckaiWithRetry(wc: WebContents): Promise<void> {
   const MAX_ATTEMPTS = 2;
-  let lsInjected: Promise<void> | null = null;
-  const onDomReady = (): void => { lsInjected = injectDuckaiLocalStorage(wc).catch(() => {}); };
-  wc.once('dom-ready', onDomReady);
-  try {
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      try {
-        await navigateAndWait(wc, DUCKAI_HOME);
-        if (lsInjected) await lsInjected;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const pending = setupDuckaiLocalStorageOnDomReady(wc);
+    try {
+      await navigateAndWait(wc, DUCKAI_HOME);
+      await pending.ready;
+      return;
+    } catch (err) {
+      if (isDuckaiPage(wc.getURL())) {
+        await injectDuckaiLocalStorage(wc);
         return;
-      } catch (err) {
-        if (wc.getURL().includes('duck.ai')) {
-          await injectDuckaiLocalStorage(wc).catch(() => {});
-          return;
-        }
-        const aborted = err instanceof Error && /ERR_ABORTED|\(-3\)/.test(err.message);
-        if (!aborted || attempt === MAX_ATTEMPTS) throw err;
-        await sleep(1_500);
-        await waitForWorkerIdle(wc, 8_000);
       }
+      const aborted = err instanceof Error && /ERR_ABORTED|\(-3\)/.test(err.message);
+      if (!aborted || attempt === MAX_ATTEMPTS) throw err;
+      await sleep(1_500);
+      await waitForWorkerIdle(wc, 8_000);
+    } finally {
+      pending.cancel();
     }
-  } finally {
-    wc.removeListener('dom-ready', onDomReady);
   }
 }
 
 export async function fetchDuckaiModels(workerWin: BrowserWindow): Promise<DuckaiModelInfo[]> {
   const wc = workerWin.webContents;
 
-  applyWorkerUserAgent(wc, FIREFOX_UA);
+  applyWorkerUserAgent(wc, WORKER_USER_AGENTS.duckai);
 
   await waitForWorkerIdle(wc, 8_000);
 
-  if (wc.getURL().includes('duck.ai')) {
+  if (isDuckaiPage(wc.getURL())) {
     await injectDuckaiLocalStorage(wc);
     await sleep(1_000);
   } else {
@@ -103,7 +100,6 @@ export async function fetchDuckaiModels(workerWin: BrowserWindow): Promise<Ducka
 
   return wc.executeJavaScript(`
     (async function() {
-        // Wait for the model-picker button to render, giving React up to 15s.
         let btn = null;
         let waited = 0;
         while (!btn && waited < 15000) {
@@ -114,14 +110,12 @@ export async function fetchDuckaiModels(workerWin: BrowserWindow): Promise<Ducka
         }
         if (!btn) throw new Error("Cannot find model interface after waiting");
 
-        // Open the picker menu if it is not already expanded.
         let wasOpenedByScript = false;
         if (btn.getAttribute('aria-expanded') !== 'true') {
             btn.click();
             wasOpenedByScript = true;
         }
 
-        // Wait for the menu rows to appear.
         let rows = [];
         let rowWaited = 0;
         while (rows.length === 0 && rowWaited < 5000) {
@@ -134,8 +128,6 @@ export async function fetchDuckaiModels(workerWin: BrowserWindow): Promise<Ducka
 
         const modelList = rows.map(function(row) {
             const id = (row.getAttribute('data-testid') || '').replace('model-picker-row-', '');
-            // Content wrapper is the last span child (the first child is the icon);
-            // its first child span holds the model name (a second span, if any, is a description).
             const spanKids = Array.prototype.slice.call(row.children).filter(function(c) { return c.tagName === 'SPAN'; });
             const content = spanKids.length > 0 ? spanKids[spanKids.length - 1] : null;
             const nameNode = content && content.children.length > 0 ? content.children[0] : null;
@@ -149,7 +141,6 @@ export async function fetchDuckaiModels(workerWin: BrowserWindow): Promise<Ducka
             };
         });
 
-        // Close the menu we opened so the worker window is left clean.
         if (wasOpenedByScript) {
             document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true, cancelable: true }));
         }
@@ -164,9 +155,13 @@ async function resetDuckaiConversation(wc: WebContents, navigateUrl: string): Pr
   } catch {
     return;
   }
-  const lsReady = setupDuckaiLocalStorageOnDomReady(wc);
-  await navigateAndWait(wc, navigateUrl);
-  await lsReady;
+  const pending = setupDuckaiLocalStorageOnDomReady(wc);
+  try {
+    await navigateAndWait(wc, navigateUrl);
+    await pending.ready;
+  } finally {
+    pending.cancel();
+  }
 }
 
 export async function runDuckaiAutomation(
@@ -177,7 +172,7 @@ export async function runDuckaiAutomation(
 ): Promise<{ response: string; title: string }> {
   const wc = workerWin.webContents;
 
-  applyWorkerUserAgent(wc, FIREFOX_UA);
+  applyWorkerUserAgent(wc, WORKER_USER_AGENTS.duckai);
 
   let modelId = '';
   let navigateUrl: string = DUCKAI_HOME;
@@ -193,9 +188,13 @@ export async function runDuckaiAutomation(
     navigateUrl = DUCKAI_HOME;
   }
 
-  const lsReady = setupDuckaiLocalStorageOnDomReady(wc);
-  await navigateAndWait(wc, navigateUrl);
-  await lsReady;
+  const pending = setupDuckaiLocalStorageOnDomReady(wc);
+  try {
+    await navigateAndWait(wc, navigateUrl);
+    await pending.ready;
+  } finally {
+    pending.cancel();
+  }
 
   await resetDuckaiConversation(wc, navigateUrl);
 

@@ -1,16 +1,8 @@
-/**
- * Browser-side read loop for Perplexity, injected via executeJavaScript.
- * Kept out of the automation flow so the test suite can run it against a real DOM.
- */
-
-/** Per-answer anchor. The Node side counts with this too, so both stay in step. */
 export const PPLX_RESPONSE_SELECTOR = '[id^="markdown-content-"]';
 
 const ANCHOR = JSON.stringify(PPLX_RESPONSE_SELECTOR);
 
 export const INJECTED_PPLX_READ_JS = `
-  // Perplexity renders one anchor per answer as div[id^="markdown-content-"], NOT
-  // article. Matching any element (tag-agnostic) is required.
   function getResponseNodes() {
     return document.querySelectorAll(${ANCHOR});
   }
@@ -33,19 +25,12 @@ export const INJECTED_PPLX_READ_JS = `
     return preceding || following || proses[0];
   }
 
-  // The anchor is an empty placeholder in Perplexity's current renderer: answer text
-  // streams into a .prose block several levels away in a sibling subtree of the same
-  // answer card. Older threads still render the text inside the anchor, so resolve
-  // both shapes. Only the text is read from here — the toolbar lookups below stay on
-  // the anchor, which sits directly before the action row.
   function getAnswerNode(anchor) {
     if (!anchor) return null;
     if ((anchor.innerText || '').trim() || hasGeneratedImageAsset(anchor)) return anchor;
     var el = anchor.parentElement;
     var imageHost = null;
     for (var i = 0; i < 12 && el && el !== document.body; i++) {
-      // A second anchor means the walk left this answer's card, and any .prose from
-      // here on belongs to another turn.
       if (el.querySelectorAll(${ANCHOR}).length > 1) break;
       var proses = el.querySelectorAll('.prose');
       if (proses.length) return pickNearestProse(proses, anchor);
@@ -90,9 +75,6 @@ export const INJECTED_PPLX_READ_JS = `
     return (responseEl.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
   }
 
-  // Prefer copy buttons that belong to the response action toolbar
-  // (same cluster as share/download/rewrite icons), then fall back
-  // to any copy-icon button rendered after the response block.
   function findCopyButtonFor(responseEl) {
     var el = responseEl;
     for (var i = 0; i < 12 && el && el !== document.body; i++) {
@@ -129,10 +111,6 @@ export const INJECTED_PPLX_READ_JS = `
     return null;
   }
 
-  // An image answer renders no copy button, so its action row is the only completion
-  // signal. The row is a sibling of the anchor, so this walks up — but never past this
-  // answer's card, and never counts a previous turn's row, or a turn still streaming
-  // would be read as finished.
   function findImageActionToolbarFor(responseEl) {
     if (!responseEl) return null;
     var el = responseEl.parentElement;
@@ -172,7 +150,6 @@ export const INJECTED_PPLX_READ_JS = `
       hasGeneratedImageAsset(content) || hasGeneratedImageAsset(anchor);
   }
 
-  // Waits for the latest response to finish generating, then extracts its text.
   async function perplexityWaitAndRead(baseline) {
     await waitFor(function() {
       return getResponseNodes().length > baseline;
@@ -182,9 +159,6 @@ export const INJECTED_PPLX_READ_JS = `
       return hasAnswerContent(getLatestResponseAnchor());
     }, 'Perplexity AI response content', TIMEOUT, 350);
 
-    // Generation complete = the action toolbar (copy / image actions) appeared.
-    // Idle timeout only starts after response content stops changing; window = the configured
-    // response timeout (reset on every content change).
     var NO_CHANGE_LIMIT = TIMEOUT;
     var pplxLastLen = -1;
     var pplxLastChangeAt = null;
@@ -204,7 +178,6 @@ export const INJECTED_PPLX_READ_JS = `
       await sleep(400);
     }
 
-    // Brief settle delay for any trailing DOM updates
     await sleep(300);
 
     var targetAnchor = getLatestResponseAnchor();
@@ -221,7 +194,6 @@ export const INJECTED_PPLX_READ_JS = `
 
     if (!finalAnswer && !isImageOnly) throw new Error('Perplexity response is empty');
 
-    // User query title lives in a [role="heading"][aria-level="1"] block (not an <h1>).
     var queryEl = document.querySelector('[role="heading"][aria-level="1"] span.select-text, [role="heading"][aria-level="1"] span, h1 span');
     var queryText = queryEl ? (queryEl.innerText || '').trim() : '';
 

@@ -35,8 +35,6 @@ function readAll(sel) {
   return out;
 }
 
-// React-safe value set: clear, simulate a paste, then fall back to the native
-// value setter so frameworks that wrap the value property still see the change.
 function fill(sel, value) {
   var el = document.querySelector(sel);
   if (!el) throw new Error('fill: no element for ' + sel);
@@ -64,17 +62,11 @@ function fill(sel, value) {
     if (desc && desc.set) { desc.set.call(el, text); } else { el.value = text; }
     el.dispatchEvent(new Event('input', { bubbles: true }));
   }
-  // Fire keyup/change/blur too: plain login/ERP forms commonly wire validation to
-  // onkeyup / onblur, and won't treat the field as filled without them.
   el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
   el.dispatchEvent(new Event('change', { bubbles: true }));
   el.dispatchEvent(new Event('blur', { bubbles: true }));
 }
 
-// Click: pointer/mouse pre-sequence for framework buttons that track press state,
-// then the NATIVE .click() so inline onclick="..." handlers (and delegated
-// listeners) fire reliably and exactly once. A synthetic 'click' event alone
-// misses some inline-handler / isTrusted-gated buttons.
 function click(sel) {
   var el = (typeof sel === 'string') ? document.querySelector(sel) : sel;
   if (!el) throw new Error('click: no element for ' + sel);
@@ -87,8 +79,6 @@ function click(sel) {
   else { el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); }
 }
 
-// screenshot(name?) -> Promise<savedPath>. Bridged to the main process by the
-// browserPage preload (window.__yobi.capturePage); rejects if the bridge is absent.
 function screenshot(name) {
   if (window.__yobi && window.__yobi.capturePage) {
     return window.__yobi.capturePage(name || '');

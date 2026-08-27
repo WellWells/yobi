@@ -44,6 +44,15 @@ type OutputFileCacheEntry = {
 
 const outputFileCache = new Map<string, OutputFileCacheEntry>();
 
+export function compareOutputFilesByTime(a: OutputFile, b: OutputFile): number {
+  if (a.timestamp && b.timestamp) {
+    return b.timestamp.localeCompare(a.timestamp) || b.name.localeCompare(a.name);
+  }
+  if (a.timestamp) return -1;
+  if (b.timestamp) return 1;
+  return b.name.localeCompare(a.name);
+}
+
 export async function listOutputFiles(): Promise<OutputFile[]> {
   const dir = await getOutputDir();
   try {
@@ -72,7 +81,7 @@ export async function listOutputFiles(): Promise<OutputFile[]> {
         if (!live.has(key)) outputFileCache.delete(key);
       }
     }
-    return files;
+    return files.sort(compareOutputFilesByTime);
   } catch {
     return [];
   }
@@ -96,7 +105,7 @@ export async function searchOutputFiles(query: string): Promise<OutputFile[]> {
       } catch {
       }
     }
-    return matches;
+    return matches.sort(compareOutputFilesByTime);
   } catch {
     return [];
   }

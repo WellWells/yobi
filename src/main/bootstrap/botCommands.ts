@@ -17,17 +17,9 @@ export function resolveBotCommands(getFlowManager: () => FlowManager | null): Bo
   });
 }
 
-/**
- * Every BYOK key and group as the settings page needs to show it. The command name is the
- * one the bots really registered — resolved here rather than in the renderer, which cannot
- * see flow commands and so would preview names that clash. Switched-off entries get the
- * name they would take, from a second pass that ignores the opt-outs.
- */
 export function listBotByokCommands(getFlowManager: () => FlowManager | null): BotByokCommandInfo[] {
   const hidden = getHiddenSources();
   const live = new Map(resolveBotCommands(getFlowManager).byok.map((bc) => [bc.targetUrl, bc.command]));
-  // Ignoring both the opt-outs and the hiding gives a switched-off or hidden entry the name
-  // it would take, so its row reads as a name rather than as a blank.
   const previewSet = resolveBotCommandSet({
     providerCommands: config.providerCommands,
     builtinCommands: config.builtinCommands,

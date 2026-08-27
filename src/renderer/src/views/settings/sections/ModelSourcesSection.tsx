@@ -65,12 +65,6 @@ const DuckaiModelList: React.FC<{
     );
   }
 
-  /*
-   * Checkboxes rather than a switch each: the Duck.ai row above is the on/off for the whole
-   * source, while these only pick which of its models the menu lists. Carrying the name as the
-   * checkbox label also makes the name the click target — the switches sat at the far right
-   * edge, a row's width away from the text naming them.
-   */
   return (
     <Stack gap={10}>
       {duckaiModels.map((model) => {
@@ -84,9 +78,8 @@ const DuckaiModelList: React.FC<{
         const blocked = !modelHidden && !sources.canApply(afterHiding);
         const name = model.shortLabel ?? model.label;
         return (
-          /* The Box takes the hover: a disabled checkbox fires no mouse events of its own. */
           <Tooltip key={id} label={t('settings.modelSources.lastOne')} disabled={!blocked}>
-            {/* fit-content keeps the hit area on the name; maw stops a long one from widening the card. */}
+            {}
             <Box w="fit-content" maw="100%">
               <Checkbox
                 size="sm"
@@ -111,7 +104,6 @@ const DuckaiModelList: React.FC<{
   );
 };
 
-/** Logging out is rare and already guarded by a confirm dialog, so it lives here rather than on the row. */
 const RowMenu: React.FC<{
   busy: boolean;
   onLogout?: () => void;
@@ -184,7 +176,6 @@ export const ModelSourcesSection: React.FC<Props> = ({ account, t, showSection, 
                 providers: [...sources.hidden.providers, provider],
               };
               const blocked = !providerHidden && !sources.canApply(afterHiding);
-              // Only worth saying when some models are held back; "8/8" is noise.
               const showDuckaiCount = isDuckai
                 && !providerHidden
                 && sources.duckaiTotalCount > 0
@@ -212,7 +203,7 @@ export const ModelSourcesSection: React.FC<Props> = ({ account, t, showSection, 
                           <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-default-color)">
                             {PROVIDER_LABELS[provider]}
                           </Text>
-                          {/* Status reads as part of the name, not as a fourth control at the row's end. */}
+                          {}
                           <StatusPill state={pillState} t={t} />
                           {showDuckaiCount && (
                             <Badge variant="light" color="gray" radius="sm" size="sm" tt="none" fw={500}>
@@ -228,7 +219,7 @@ export const ModelSourcesSection: React.FC<Props> = ({ account, t, showSection, 
                     </Group>
 
                     <Group gap={8} align="center" wrap="nowrap" style={{ flexShrink: 0 }}>
-                      {/* Only signing in stays on the row: it is the one action a new user has to find. */}
+                      {}
                       {isAuth && loggedIn === false && (
                         <AppButton
                           variant="filled"

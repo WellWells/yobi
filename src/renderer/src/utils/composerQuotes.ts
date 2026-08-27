@@ -1,9 +1,3 @@
-/**
- * A passage quoted out of an answer travels as a markdown blockquote in front of the
- * message. It is prepended to the *payload* rather than to the composer's raw text, so
- * that `/search …` still parses as a command and the user never sees the `>` syntax.
- */
-
 export function buildQuotePrefix(quotes: readonly string[]): string {
   return quotes
     .map((quote) => quote.trim())
@@ -22,14 +16,6 @@ export interface SplitPrompt {
   message: string;
 }
 
-/**
- * The inverse, for display. A sent turn is stored as markdown, so the bubbles that print
- * prompts as plain text would otherwise show the `>` characters the composer took care to
- * hide. Splitting them back out lets the transcript render the quote as a quote.
- *
- * Only leading blockquote lines count: a `>` further down belongs to the message the user
- * wrote and is left alone.
- */
 export function splitQuotedPrompt(prompt: string): SplitPrompt {
   const lines = prompt.split('\n');
   const quotes: string[] = [];
@@ -50,7 +36,6 @@ export function splitQuotedPrompt(prompt: string): SplitPrompt {
       index += 1;
       continue;
     }
-    // A blank line closes the block; the next `>` after it opens the following one.
     if (line.trim() === '' && block.length > 0) {
       flush();
       index += 1;

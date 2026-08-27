@@ -71,11 +71,6 @@ export const DEFAULT_SKILL_CONFIG: Record<SkillType, Record<string, string>> = {
 
 export const SKILL_TYPES = Object.keys(DEFAULT_SKILL_CONFIG) as SkillType[];
 
-/*
- * Type names that existed in shipped flows.json files and in flows an AI may still generate
- * from an older prompt. Renaming a skill cannot rename what is already on disk, so every entry
- * point that reads a step type — persistence and import validation — resolves through here.
- */
 export const LEGACY_SKILL_TYPES: Record<string, SkillType> = {
   doc_export: 'share',
 };
@@ -94,12 +89,6 @@ export interface SkillConfigField {
   required?: boolean;
 }
 
-/**
- * `brief` is the tier-1 listing text — the only thing the skill-selection prompt sees for a
- * skill it has not chosen yet, so it must front-load WHEN to reach for this skill rather than
- * describe what it is. `summary` is tier-2: it is disclosed only for the selected skills, so it
- * can afford to be long. `BRIEF_MAX_CHARS` is enforced by test/flowGenPromptBudget.test.ts.
- */
 export const BRIEF_MAX_CHARS = 150;
 
 export interface SkillSpec {

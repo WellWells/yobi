@@ -28,13 +28,12 @@ export type ChatMode = 'chat' | 'agent' | 'search' | 'quicksearch';
 
 export interface ChatModeOption {
   mode: ChatMode;
-  /** Identity of this mode's entry in the slash command list. Every mode has one. */
   commandId: string;
-  /** Flow run when a prompt is sent in this mode; `null` is the ordinary chat send. */
   flowId: string | null;
   labelKey: string;
   descriptionKey: string;
   placeholderKey: string | null;
+  takesAttachments: boolean;
   icon: CommandIcon;
 }
 
@@ -46,6 +45,7 @@ export const CHAT_MODES: ChatModeOption[] = [
     labelKey: 'chat.mode.chat.label',
     descriptionKey: 'chat.mode.chat.description',
     placeholderKey: null,
+    takesAttachments: true,
     icon: commandIcon(BUILTIN_CHAT_FLOW_ID),
   },
   {
@@ -55,6 +55,7 @@ export const CHAT_MODES: ChatModeOption[] = [
     labelKey: 'chat.mode.agent.label',
     descriptionKey: 'chat.mode.agent.description',
     placeholderKey: 'chat.mode.agent.placeholder',
+    takesAttachments: true,
     icon: commandIcon(BUILTIN_AGENT_FLOW_ID),
   },
   {
@@ -64,6 +65,7 @@ export const CHAT_MODES: ChatModeOption[] = [
     labelKey: 'chat.mode.search.label',
     descriptionKey: 'chat.mode.search.description',
     placeholderKey: 'chat.mode.search.placeholder',
+    takesAttachments: false,
     icon: commandIcon(BUILTIN_SEARCH_FLOW_ID),
   },
   {
@@ -73,6 +75,7 @@ export const CHAT_MODES: ChatModeOption[] = [
     labelKey: 'chat.mode.quicksearch.label',
     descriptionKey: 'chat.mode.quicksearch.description',
     placeholderKey: 'chat.mode.quicksearch.placeholder',
+    takesAttachments: false,
     icon: commandIcon(BUILTIN_QUICKSEARCH_FLOW_ID),
   },
 ];

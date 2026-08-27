@@ -13,7 +13,6 @@ export interface HiddenSourcesController {
   toggleDuckaiModel: (modelId: string) => void;
   toggleByok: (instanceId: string) => void;
   toggleByokGroup: (groupId: string) => void;
-  /** For the "shown 3/8" badge on the Duck.ai row. */
   duckaiVisibleCount: number;
   duckaiTotalCount: number;
   canApply: (next: HiddenSources) => boolean;
@@ -69,8 +68,6 @@ export function useHiddenSources(): HiddenSourcesController {
     apply((current) => ({ ...current, byokGroupIds: toggleId(current.byokGroupIds, groupId) }));
   }, [apply]);
 
-  // The Duck.ai row switches the source itself; the models under it are counted, not
-  // folded into a third switch state.
   const duckaiHiddenCount = duckaiModels.filter((model) => {
     const id = duckaiModelIdFromUrl(model.url);
     return id !== null && hidden.duckaiModelIds.includes(id);

@@ -4,6 +4,7 @@ import Editor from 'react-simple-code-editor';
 import type { Plugin } from 'prettier';
 import { getHighlighterSync, loadShiki, shikiThemeFor, ensureShikiTheme, SHIKI_FALLBACK_THEME } from '../utils/shikiPlugins';
 import { useThemeStore } from '../store/themeStore';
+import { matchesShortcut } from '../store/shortcutStore';
 
 interface CodeEditorProps {
   value: string;
@@ -76,7 +77,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   }, [lang, shikiTheme, ready]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (!(e.altKey && e.shiftKey && (e.code === 'KeyF' || e.key.toLowerCase() === 'f'))) return;
+    if (!matchesShortcut(e, 'editor.format')) return;
     e.preventDefault();
     if (!value.trim()) return;
     void (async () => {

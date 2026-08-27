@@ -14,6 +14,7 @@ export class QueueManager {
   private running = false;
   private activeTask: Task | null = null;
   private listener: QueueListener | null = null;
+  private discardListener: ((task: Task) => void) | null = null;
   private skipCurrentTask: (() => void) | null = null;
   private readonly TASK_HARD_TIMEOUT_MS = 10 * 60_000;
 
@@ -29,6 +30,10 @@ export class QueueManager {
     this.listener = listener;
   }
 
+  onDiscard(listener: (task: Task) => void): void {
+    this.discardListener = listener;
+  }
+
   enqueue(task: Task): void {
     this.queue.push(task);
     this.notify();
@@ -38,8 +43,9 @@ export class QueueManager {
   cancel(taskId: string): boolean {
     const index = this.queue.findIndex((task) => task.id === taskId);
     if (index < 0) return false;
-    this.queue.splice(index, 1);
+    const [discarded] = this.queue.splice(index, 1);
     this.notify();
+    if (discarded) this.discardListener?.(discarded);
     return true;
   }
 

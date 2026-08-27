@@ -5,6 +5,7 @@ import { AppTextarea } from '../AppTextarea';
 import { ModelDropdown } from './ModelDropdown';
 import { ModeDropdown } from './ModeDropdown';
 import { AttachmentChips } from './AttachmentChips';
+import { ComposerAddButton } from './ComposerAddButton';
 import { QuoteChips } from './QuoteChips';
 import { SlashCommandMenu } from './SlashCommandMenu';
 import {
@@ -17,8 +18,11 @@ import { chatModeFlowId, chatModeForCommandId, findChatMode, type ChatMode } fro
 import { useAppStore } from '../../store/appStore';
 import { endTarget, homeTarget } from '../../utils/composerKeys';
 import { withQuotedContext } from '../../utils/composerQuotes';
-import { SHIFT_TAB_HINT } from '../../utils/keyLabels';
+import { collectPastedFiles, pasteMayHoldSystemFile } from '../../utils/pastedFiles';
+import { toTokens } from '../../../../shared/shortcuts';
+import { isMac } from '../../utils/keyLabels';
 import { BUILTIN_CHAT_FLOW_ID, type PromptAttachment } from '../../../../shared/types';
+import { useResolvedCombo } from '../../store/shortcutStore';
 
 interface PromptInputAreaProps {
   t: (key: string) => string;
@@ -27,6 +31,10 @@ interface PromptInputAreaProps {
   onSend: (text: string) => boolean;
   attachments: PromptAttachment[];
   notice: string | null;
+  onAddFiles: (files: File[]) => void;
+  onAddFromClipboard: () => void;
+  attachUnsupportedReason: string | null;
+  attachAccept: string;
   onRemoveAttachment: (id: string) => void;
   chatCommands: ChatCommand[];
   onRunCommand: (command: ChatCommand, input: string) => boolean;
@@ -47,6 +55,10 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
   onSend,
   attachments,
   notice,
+  onAddFiles,
+  onAddFromClipboard,
+  attachUnsupportedReason,
+  attachAccept,
   onRemoveAttachment,
   chatCommands,
   onRunCommand,
@@ -60,13 +72,14 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
   const tempChatMode = useAppStore((s) => s.tempChatMode);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [menuDismissed, setMenuDismissed] = useState(false);
+  const cycleModelKeys = toTokens(useResolvedCombo('chat.cycleModel'), isMac).join(' + ');
+  const modelTooltip = cycleModelKeys
+    ? t('chat.model.tooltip').replace('{{shortcut}}', cycleModelKeys)
+    : t('chat.model.tooltip').replace(' · {{shortcut}}', '').replace('{{shortcut}}', '');
   const promptInputRef = useRef<HTMLTextAreaElement>(null);
 
   useImperativeHandle(ref, () => ({
     focusPrompt: () => promptInputRef.current?.focus(),
-    // A quote is held beside the message rather than typed into it: the user sees the
-    // passage they picked, not the blockquote syntax, and can drop it again without
-    // editing their own sentence around it.
     insertQuote: (text: string) => {
       const quote = text.trim();
       if (quote) setQuotes((current) => [...current, quote]);
@@ -119,12 +132,10 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
   const placeholder = modeOption.placeholderKey
     ? t(modeOption.placeholderKey)
     : t(tempChatMode ? 'chat.tempMode.input.placeholder' : 'input.placeholder.short');
-  const modeNotice = modeCommand && attachments.length > 0
+  const modeNotice = modeCommand && !modeOption.takesAttachments && attachments.length > 0
     ? t('chat.mode.attachments.ignored')
     : null;
 
-  // Quotes ride in front of whatever the message turns out to be — an ordinary turn, a
-  // slash command's argument, a mode command's input.
   const withQuotes = useCallback(
     (text: string): string => withQuotedContext(quotes, text),
     [quotes],
@@ -154,8 +165,6 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
         return;
       }
       if (match.flowId === BUILTIN_CHAT_FLOW_ID) {
-        // `/chat <text>` is the one-shot form: chat mode runs no flow, so the text
-        // takes the ordinary send and the pill stays where the user left it.
         if (onSend(withQuotes(parsed.args))) clearComposer();
         keepFocus();
         return;
@@ -176,21 +185,23 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     onRunCommand, onUnknownCommand, onSend, withQuotes, clearComposer,
   ]);
 
+  const handlePaste = useCallback((event: React.ClipboardEvent<HTMLElement>) => {
+    const files = collectPastedFiles(event.clipboardData);
+    if (files.length > 0) {
+      event.preventDefault();
+      onAddFiles(files);
+      return;
+    }
+    if (pasteMayHoldSystemFile(event.clipboardData)) {
+      event.preventDefault();
+      onAddFromClipboard();
+    }
+  }, [onAddFiles, onAddFromClipboard]);
+
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     const field = promptInputRef.current;
     const caret = field && field.selectionStart === field.selectionEnd ? field.selectionStart : null;
-
-    if (
-      event.key.toLowerCase() === 'c'
-      && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
-      && caret !== null && (promptInput || quotes.length > 0)
-    ) {
-      event.preventDefault();
-      clearComposer();
-      setMenuDismissed(false);
-      return;
-    }
 
     if ((event.key === 'Home' || event.key === 'End')
       && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey
@@ -256,6 +267,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
         onFocusCapture={() => setInputFocused(true)}
         onBlurCapture={() => setInputFocused(false)}
         onClick={() => promptInputRef.current?.focus()}
+        onPaste={handlePaste}
         style={tempChatMode ? {
           borderStyle: 'dashed',
           borderColor: inputFocused ? 'var(--mantine-color-violet-4)' : 'var(--mantine-color-violet-6)',
@@ -304,12 +316,20 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
 
         {}
         <Flex align="center" justify="space-between" gap={8} p="8px 12px">
+          <Flex align="center" gap={6}>
+          <ComposerAddButton
+            t={t}
+            onAddFiles={onAddFiles}
+            disabledReason={attachUnsupportedReason}
+            accept={attachAccept}
+          />
           <ModeDropdown value={chatMode} onChange={handleChangeMode} t={t} />
+          </Flex>
           <Flex align="center" gap={8}>
           <ModelDropdown
             value={activeModelUrl}
             onChange={onChangeModel}
-            tooltipLabel={t('chat.model.tooltip').replace('{{shortcut}}', SHIFT_TAB_HINT)}
+            tooltipLabel={modelTooltip}
           />
           <Tooltip label={t('input.send')} position="top">
             <ActionIcon
@@ -342,4 +362,4 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
 });
 
 PromptInputArea.displayName = 'PromptInputArea';
-
+

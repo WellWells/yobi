@@ -12,11 +12,6 @@ interface PendingTurnBubbleProps {
   t: (key: string) => string;
 }
 
-/**
- * A row earns its place once it can say more than the bubble header already does. A turn that
- * has only just started has none of tool / provider / thought / stage, and rendering it would
- * repeat "thinking" directly under the word "thinking".
- */
 export function visibleTraceSteps(trace: AgentTraceTurn[] | undefined): AgentTraceTurn[] {
   return (trace ?? []).filter((turn) => turn.tool || turn.provider || turn.thought || turn.stage);
 }
@@ -24,13 +19,9 @@ export function visibleTraceSteps(trace: AgentTraceTurn[] | undefined): AgentTra
 function PendingTurnBubbleInner({ turn, t }: PendingTurnBubbleProps) {
   const runId = turn.runId;
   const progress = useAppStore((state) => queueProgressForRun(state.queue.items, runId));
-  // Serial queue: with a few cron flows enabled a run can sit untouched for minutes, and
-  // "thinking" made that indistinguishable from a hang.
   const waitAhead = useAppStore((state) => queueWaitAhead(state.queue.items, runId));
   const trace = useAgentRunStore(useShallow((state) => (runId ? state.traces[runId] : undefined)));
   const plan = useAgentRunStore(useShallow((state) => (runId ? state.plans[runId] : undefined)));
-  // The final write-up is the run's longest single call and the one phase with no row of its
-  // own, so the header carries it — otherwise the UI reads as "still thinking" for a minute.
   const synthesizing = useAgentRunStore((state) => (runId ? Boolean(state.synthesizing[runId]) : false));
 
   const steps = useMemo(() => visibleTraceSteps(trace), [trace]);
@@ -43,7 +34,7 @@ function PendingTurnBubbleInner({ turn, t }: PendingTurnBubbleProps) {
 
   return (
     <Stack gap={20}>
-      <UserBubble prompt={turn.prompt} t={t} />
+      <UserBubble prompt={turn.prompt} t={t} attachments={turn.attachments} />
       <Stack gap={6}>
         <Group gap={8} c="dimmed">
           <Loader size="xs" />

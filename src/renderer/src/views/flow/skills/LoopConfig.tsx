@@ -4,7 +4,7 @@ import { AppTextInput } from '../../../components/AppTextInput';
 import { ToggleSwitch } from '../../../components/ToggleSwitch';
 import { SettingRow } from '../../../components/SettingRow';
 import { AppNumberInput } from '../../../components/AppNumberInput';
-import { Sliders } from 'lucide-react';
+import { SlidersHorizontal } from 'lucide-react';
 import type { SkillConfigProps } from './types';
 
 export const LoopConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
@@ -32,7 +32,7 @@ export const LoopConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) =>
       />
 
       <SettingRow
-        icon={<Sliders size={13} />}
+        icon={<SlidersHorizontal size={13} />}
         label={t('flow.skill.loop.limitIterations')}
         control={
           <ToggleSwitch

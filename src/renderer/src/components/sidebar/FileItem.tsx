@@ -23,7 +23,7 @@ interface FileItemProps {
   onOpenMenu: (e: React.MouseEvent<HTMLElement>, f: OutputFile) => void;
   onCommitEdit: () => Promise<void>;
   onCancelEdit: () => void;
-  formatTime: (ts: string) => string;
+  timeLabel: string;
   turnsLabel: string;
   registerItemRef: (path: string, node: HTMLDivElement | null) => void;
 }
@@ -31,7 +31,7 @@ interface FileItemProps {
 export const FileItem: React.FC<FileItemProps> = React.memo(({
   file, selected, unread, unreadLabel, isEditing, editingMode, editingText, setEditingText,
   selectMode, checked, onToggleSelect,
-  onRowClick, onOpenMenu, onCommitEdit, onCancelEdit, formatTime, turnsLabel, registerItemRef,
+  onRowClick, onOpenMenu, onCommitEdit, onCancelEdit, timeLabel, turnsLabel, registerItemRef,
 }) => {
   const highlighted = selectMode ? checked : selected;
   const body = (
@@ -50,16 +50,16 @@ export const FileItem: React.FC<FileItemProps> = React.memo(({
             {file.provider}
           </Badge>
         )}
-        <Text
-          component="span"
-          fz="var(--font-size-xs)"
-          data-selected={String(highlighted)}
-          className={styles.timestamp}
-        >
-          {formatTime(file.timestamp)}
-        </Text>
-        {
-}
+        {timeLabel && (
+          <Text
+            component="span"
+            fz="var(--font-size-xs)"
+            data-selected={String(highlighted)}
+            className={styles.timestamp}
+          >
+            {timeLabel}
+          </Text>
+        )}
         {(file.turns ?? 1) > 1 && (
           <Text
             component="span"

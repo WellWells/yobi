@@ -8,6 +8,7 @@ import type {
   AgentTurnRecord,
 } from '../../shared/types';
 import { pickConversationTitle } from '../../shared/conversationTitle';
+import { attachmentMetaNames } from '../../shared/conversationDoc';
 import { listOutputFiles } from '../files';
 import { buildOutputMarkdown } from '../output';
 import { saveCommandOutput } from './commandOutput';
@@ -37,22 +38,11 @@ export interface AgentRunRequest {
   state: AgentRunState;
   resumeFrom?: AgentTurnRecord[];
   strings: Strings;
-  /**
-   * The prompt this run's output is filed under. It is the goal, except when the run was
-   * resumed with an answer to its own question — then the conversation turn belongs to the
-   * answer the user just typed, not to a goal they asked about several turns ago.
-   */
   deliveredPrompt?: string;
   origin?: CommandOrigin;
-  /**
-   * Progress for a caller with no queue UI to read — a bot. Without it a run that is working
-   * normally is indistinguishable from one that has hung, because the only message the user
-   * has is the "queued" acknowledgement.
-   */
   onProgressText?: (text: string) => void;
 }
 
-/** Adds the delivered text, which a bot needs in order to send the reply on. */
 export interface AgentRunOutcome extends AgentCommandResult {
   answer?: string;
   title?: string;
@@ -83,11 +73,13 @@ async function deliverResult(
   origin: CommandOrigin,
   conversationPath?: string,
   usage?: TokenUsage,
+  attachments?: string[],
 ): Promise<AgentRunOutcome> {
   const conversationTitle = pickConversationTitle({ resolved: title, prompt });
+  const attached = attachmentMetaNames(attachments ?? []);
   const markdownOptions = {
     prompt,
-    turnMeta: { c: BUILTIN_AGENT_COMMAND },
+    turnMeta: { c: BUILTIN_AGENT_COMMAND, ...(attached.length > 0 ? { a: attached } : {}) },
     response: answer,
     title: conversationTitle,
     provider: getProviderLabel(resolvedTarget),
@@ -97,8 +89,6 @@ async function deliverResult(
     timestampLabel: strings['md.timestamp'] ?? 'Time',
   };
 
-  // A bot run must never land in the desktop's temporary chat: the two would overwrite each
-  // other, and the requester would get nothing back on their phone.
   if (origin === 'app' && isTempChatMode()) {
     deliverTempChatResult({
       content: buildOutputMarkdown(markdownOptions),
@@ -110,6 +100,7 @@ async function deliverResult(
           t: new Date().toISOString(),
           m: 'replay',
           c: BUILTIN_AGENT_COMMAND,
+          ...(attached.length > 0 ? { a: attached } : {}),
           ...(usage ? tokenMetaFields(usage) : {}),
         },
       },
@@ -124,6 +115,7 @@ async function deliverResult(
     response: markdownOptions.response,
     providerLabel: markdownOptions.provider,
     command: BUILTIN_AGENT_COMMAND,
+    ...(attachments?.length ? { attachments } : {}),
     usage,
   });
   sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
@@ -156,8 +148,9 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
         state.updatedAt = new Date().toISOString();
         void saveRunState(state);
       };
+      const turnAttachments = resumeFrom?.length ? undefined : state.attachments;
 
-      if (!resumeFrom?.length) {
+      if (!resumeFrom?.length && !state.attachments?.length) {
         report({ stage: 'thinking' });
         const { result: shortcut, usage: shortcutUsage } = await measureTokens(
           () => runUrlShortcut(goal, providerUrl, flowManager.getExecutorDeps(), strings, controller.signal),
@@ -190,6 +183,7 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
           onTurn,
           resumeFrom,
           ...(state.conversationPath ? { conversationPath: state.conversationPath } : {}),
+          ...(state.attachments?.length ? { attachments: state.attachments } : {}),
           signal: controller.signal,
           onConfirm: buildAgentConfirm(deps.getMainWin, strings, origin),
           onSaveFlow: (flow) => flowManager.saveGeneratedFlow(flow),
@@ -197,16 +191,12 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
       ));
 
       if (outcome.kind === 'question') {
-        // The question is delivered exactly like an answer — it becomes this turn's reply in
-        // the conversation — so the user answers by typing, with no second UI to discover.
         const delivered = await deliverResult(
           deliveredPrompt, '', outcome.question, providerUrl, strings, origin, state.conversationPath, usage,
+          turnAttachments,
         );
         state.status = 'awaiting';
         state.updatedAt = new Date().toISOString();
-        // A run started from a blank chat had no conversation until this delivery created
-        // one. Without adopting it, the reply would open a second conversation and the
-        // gathered scratchpad would be stranded in the first.
         if (delivered.filePath) state.conversationPath = delivered.filePath;
         await saveRunState(state);
         emit({ kind: 'question', question: outcome.question });
@@ -228,6 +218,7 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
       await deleteRunState(runId);
       return await deliverResult(
         deliveredPrompt, outcome.title, answer, providerUrl, strings, origin, state.conversationPath, usage,
+        turnAttachments,
       );
     } catch (err: unknown) {
       const aborted = controller.signal.aborted;

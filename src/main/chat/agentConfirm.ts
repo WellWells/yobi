@@ -11,7 +11,6 @@ import type { CommandOrigin } from './commandOrigin';
 type Strings = Record<string, string>;
 type GetWin = () => BrowserWindow | null;
 
-/** Long argument blobs are trimmed here so the renderer never has to decide what to drop. */
 const ARGS_PREVIEW_LIMIT = 800;
 
 async function confirmMcpWrite(
@@ -24,8 +23,6 @@ async function confirmMcpWrite(
     sendLog(`🔓 [Agent] ${req.serverName}: ${req.toolName} — ${t(strings, 'agent.mcp.confirm.autoApproved')}`);
     return true;
   }
-  // Nobody is at the machine to answer a dialog, and the queue has no hard timeout, so a
-  // prompt here would stall every task behind it. Deny instead and let the agent adapt.
   if (origin === 'bot') {
     sendLog(`🔒 [Agent] ${req.serverName}: ${req.toolName} — ${t(strings, 'agent.mcp.confirm.botDenied')}`);
     return false;
@@ -46,13 +43,6 @@ async function confirmMcpWrite(
   return choice !== 'deny';
 }
 
-/**
- * Approves saving a flow the agent just built. Deliberately offers no "always allow": the agent's
- * observations come from web pages, so a standing permission to write flows is a standing
- * invitation for a poisoned page to leave a scheduled shell step behind. The dialog lists the
- * step types for the same reason — "a flow that reads a feed" and "a flow that runs a command
- * every morning" read identically until someone spells out the steps.
- */
 async function confirmFlowWrite(
   req: FlowWriteConfirmRequest,
   getMainWin: GetWin,
@@ -73,11 +63,6 @@ async function confirmFlowWrite(
   return choice !== 'deny';
 }
 
-/**
- * Decides whether an agent may take an action that leaves state behind. From the app this asks
- * the user through an in-app dialog; from a bot it cannot, so MCP falls back to what the user has
- * already approved standing and a flow write is refused outright.
- */
 export function buildAgentConfirm(
   getMainWin: GetWin,
   strings: Strings,

@@ -1,10 +1,12 @@
 import { clipboard } from 'electron';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import { config, saveConfig, normalizeShareSettings } from './config';
 import { captureMarkdownDocument } from './capture';
-import { writeCaptureToClipboard } from './captureClipboard';
+import { writeCaptureToClipboard, zipSingleFile } from './captureClipboard';
 import { instanceHost, runWithExportPrompt } from './exportPrompt';
 import type { ExportPanel } from './exportPrompt';
-import { buildSafeFileNameFromTitle, buildSnapshotFileName } from './files';
+import { buildSafeFileNameFromTitle, buildSnapshotFileName, getOutputDir, getUniquePath } from './files';
 import { sendLog, sendWebNotification } from './helpers';
 import { getLangCache, t } from './i18n';
 import { normalizeCaptureSettings, normalizeQuickExport } from './configNormalizers';
@@ -33,7 +35,7 @@ export function buildQuickExportRequest(markdown: string, choice: CaptureExportC
       turns: [{ prompt: '', response: body, provider: '', timestamp: '' }],
     },
     options: {
-      mode: 'copy',
+      mode: choice.action === 'save' ? 'save' : 'copy',
       format: choice.format,
       fileName: buildSafeFileNameFromTitle(choice.fileName) || buildSnapshotFileName(),
       showPrompt: false,
@@ -43,12 +45,13 @@ export function buildQuickExportRequest(markdown: string, choice: CaptureExportC
       showTokens: false,
       cardLayout: 'document',
       width: choice.width,
+      margin: choice.margin,
       background: captureBackgroundCss(
-        settings.palette,
+        choice.palette,
         settings.backgroundStyle as CaptureBackgroundStyle,
         settings.direction as CaptureDirection,
       ),
-      cardTheme: paletteCardTheme(settings.palette),
+      cardTheme: paletteCardTheme(choice.palette),
       pixelRatio: settings.pixelRatio,
       zip: choice.zip,
     },
@@ -60,23 +63,21 @@ export function defaultExportName(markdown: string): string {
   return (title && buildSafeFileNameFromTitle(title)) || buildSnapshotFileName();
 }
 
-/*
- * Exported for the test suite. The machine comments a conversation file carries
- * (`yobi:thread` / `yobi:turn`) must never leave the machine — publishing is the one
- * place where a leak is irreversible.
- */
+// SECURITY: the machine comments a conversation file carries must never leave the machine.
+// Publishing is the one place where that leak is irreversible — strip before, not after.
 export function buildQuickShareMarkdown(raw: string): string {
   return stripConversationMarkers(raw).trim();
 }
 
 function rememberCaptureChoice(choice: CaptureExportChoice): void {
-  /*
-   * Width is deliberately stored in captureSettings rather than alongside the
-   * panel's own format/zip memory: it is the same setting the export dialog
-   * shows, so picking a size in either place moves both.
-   */
-  if (choice.width !== config.captureSettings.width) {
-    config.captureSettings = normalizeCaptureSettings({ ...config.captureSettings, width: choice.width });
+  const capture = config.captureSettings;
+  if (choice.width !== capture.width || choice.margin !== capture.margin || choice.palette !== capture.palette) {
+    config.captureSettings = normalizeCaptureSettings({
+      ...capture,
+      width: choice.width,
+      margin: choice.margin,
+      palette: choice.palette,
+    });
     saveConfig({ captureSettings: config.captureSettings });
   }
   if (choice.format === config.quickExport.format && choice.zip === config.quickExport.zip) return;
@@ -89,7 +90,6 @@ function rememberShareChoice(choice: ShareExportChoice): void {
     config.quickExport = normalizeQuickExport({ ...config.quickExport, format: 'text' });
     saveConfig({ quickExport: config.quickExport });
   }
-  /* Expire and burn live in the same config the chat dialog edits, so both entry points move together. */
   const share = config.share;
   const consentedAt = share.consentedAt || new Date().toISOString();
   if (
@@ -113,14 +113,17 @@ function shareErrorText(err: unknown, strings: LangStrings): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function shareResultState(url: string, strings: LangStrings): ShareResultState {
+function shareResultState(url: string, burned: boolean, strings: LangStrings): ShareResultState {
   return {
     url,
     revoked: false,
+    burned,
     error: '',
     strings: {
       hint: t(strings, 'share.result.hint'),
       copied: t(strings, 'quickExport.panel.shareCopied'),
+      open: t(strings, 'share.open'),
+      burnBlocked: t(strings, 'share.open.burnBlocked'),
       revoke: t(strings, 'share.revoke'),
       revoked: t(strings, 'share.revoked'),
       done: t(strings, 'share.done'),
@@ -128,11 +131,6 @@ function shareResultState(url: string, strings: LangStrings): ShareResultState {
   };
 }
 
-/*
- * Exported for the test suite, and deliberately free of config reads: everything it needs
- * is passed in, so the revoke loop can be driven with a stub panel. Returns whether the
- * paste ended up revoked.
- */
 export async function performQuickShare(
   markdown: string,
   choice: ShareExportChoice,
@@ -150,13 +148,16 @@ export async function performQuickShare(
   });
   clipboard.writeText(url);
 
-  let state = shareResultState(url, ctx.strings);
+  let state = shareResultState(url, choice.burnAfterReading, ctx.strings);
   while (true) {
     const action = await panel.showShareResult(state);
+    if (action === 'open') {
+      if (!state.revoked && !state.burned) await panel.openExternally(state.url);
+      continue;
+    }
     if (action !== 'revoke' || state.revoked) break;
     try {
       await revokePaste(ctx.instanceUrl, deleteUrl);
-      /* The link is dead now — leaving it on the clipboard is worse than putting back what was there. */
       clipboard.writeText(markdown);
       sendLog('🔗 Quick export share revoked — clipboard restored');
       state = { ...state, revoked: true, error: '' };
@@ -165,6 +166,22 @@ export async function performQuickShare(
     }
   }
   return state.revoked;
+}
+
+export async function writeCaptureToDisk(
+  buffer: Buffer,
+  ext: string,
+  fileStem: string,
+  zip: boolean,
+  panel: ExportPanel,
+): Promise<string | null> {
+  const outExt = zip ? 'zip' : ext;
+  const defaultPath = await getUniquePath(path.join(await getOutputDir(), `${fileStem}.${outExt}`), '');
+  const filePath = await panel.chooseSavePath(defaultPath, outExt);
+  if (!filePath) return null;
+  await fs.writeFile(filePath, zip ? zipSingleFile(buffer, `${fileStem}.${ext}`) : buffer);
+  sendLog(`💾 Quick export saved: ${filePath}`);
+  return filePath;
 }
 
 export async function runQuickExport(): Promise<void> {
@@ -178,6 +195,7 @@ export async function runQuickExport(): Promise<void> {
 
   let sharing = false;
   let revoked = false;
+  let savedPath: string | null = null;
   try {
     const choice = await runWithExportPrompt(
       {
@@ -185,29 +203,34 @@ export async function runQuickExport(): Promise<void> {
         format: config.quickExport.format,
         zip: config.quickExport.zip,
         width: config.captureSettings.width,
+        margin: config.captureSettings.margin,
       },
       async (chosen, panel) => {
         if (chosen.kind === 'share') {
           sharing = true;
-          /* The panel talks to no IPC, so the consent gate the share handler enforces is enforced here. */
           if (!config.share.consentedAt && !chosen.consentAccepted) throw new ShareError('noConsent');
           rememberShareChoice(chosen);
           revoked = await performQuickShare(markdown, chosen, panel, {
             instanceUrl: config.share.instanceUrl,
             strings,
           });
-          return;
+          return 'done';
         }
         const request = buildQuickExportRequest(markdown, chosen);
-        sendLog(`🖼️ Clipboard capture: rendering ${markdown.length} chars as ${chosen.format.toUpperCase()}`);
-        const result = await captureMarkdownDocument(request);
-        await writeCaptureToClipboard(
-          result.buffer,
-          result.ext,
-          request.options.fileName as string,
-          chosen.zip,
+        sendLog(
+          `🖼️ Quick export: rendering ${markdown.length} chars as ${chosen.format.toUpperCase()} `
+          + `to ${chosen.action === 'save' ? 'a file' : 'the clipboard'}`,
         );
+        const result = await captureMarkdownDocument(request);
+        const fileStem = request.options.fileName as string;
+        if (chosen.action === 'save') {
+          savedPath = await writeCaptureToDisk(result.buffer, result.ext, fileStem, chosen.zip, panel);
+          if (!savedPath) return 'reopen';
+        } else {
+          await writeCaptureToClipboard(result.buffer, result.ext, fileStem, chosen.zip);
+        }
         rememberCaptureChoice(chosen);
+        return 'done';
       },
     );
 
@@ -221,6 +244,19 @@ export async function runQuickExport(): Promise<void> {
         title,
         t(strings, revoked ? 'quickExport.notify.shareRevoked' : 'quickExport.notify.shareCopied'),
         revoked ? 'warning' : 'success',
+      );
+      return;
+    }
+
+    if (choice.action === 'save') {
+      if (!savedPath) {
+        sendLog('🚫 Quick export save dismissed — nothing written');
+        return;
+      }
+      sendWebNotification(
+        title,
+        t(strings, 'quickExport.notify.saved', { file: path.basename(savedPath) }),
+        'success',
       );
       return;
     }

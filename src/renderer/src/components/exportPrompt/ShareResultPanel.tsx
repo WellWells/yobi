@@ -1,28 +1,23 @@
 import React from 'react';
-import { Alert, Group, Stack, Text } from '@mantine/core';
-import { Check, Trash2, TriangleAlert } from 'lucide-react';
+import { ActionIcon, Alert, Box, Group, Stack, Text, Tooltip } from '@mantine/core';
+import { Check, ExternalLink, Trash2, TriangleAlert } from 'lucide-react';
 import { AppButton } from '../AppButton';
 import { AppTextInput } from '../AppTextInput';
 import { PromptShell } from './PromptShell';
-import type { ShareResultAction, ShareResultState } from '../../../../shared/types';
+import { selectAllOnClick } from '../../utils/selectAllOnClick';
+import type { PanelHeight, ShareResultAction, ShareResultState } from '../../../../shared/types';
 
 interface Props {
   title: string;
   state: ShareResultState;
   onAction: (action: ShareResultAction) => void;
-  onHeight: (height: number) => void;
+  onHeight: (height: PanelHeight) => void;
 }
 
-/*
- * Deliberately not shared with the chat dialog's result view: that one also copies, opens
- * and reports errors inline. One component behind four flags would be harder to read than
- * two small ones — the wording stays in step through the i18n keys instead.
- */
 export const ShareResultPanel: React.FC<Props> = ({ title, state, onAction, onHeight }) => {
   const [busy, setBusy] = React.useState(false);
   const done = (): void => onAction('done');
 
-  /* Main re-renders this same instance after a revoke resolves — including when it failed. */
   React.useEffect(() => { setBusy(false); }, [state]);
 
   return (
@@ -38,10 +33,32 @@ export const ShareResultPanel: React.FC<Props> = ({ title, state, onAction, onHe
             value={state.url}
             readOnly
             mono
-            onFocus={(event) => event.currentTarget.select()}
+            {...selectAllOnClick}
             ref={(node) => {
               if (node && document.activeElement !== node) { node.focus(); node.select(); }
             }}
+            rightSectionWidth={34}
+            rightSectionPointerEvents="all"
+            rightSection={(
+              <Tooltip
+                label={state.burned ? state.strings.burnBlocked : state.strings.open}
+                position="top"
+                maw={280}
+                multiline
+              >
+                <Box>
+                  <ActionIcon
+                    variant="subtle"
+                    size={22}
+                    disabled={state.burned}
+                    aria-label={state.strings.open}
+                    onClick={() => onAction('open')}
+                  >
+                    <ExternalLink size={13} />
+                  </ActionIcon>
+                </Box>
+              </Tooltip>
+            )}
           />
           <Group gap={6} c="var(--accent)">
             <Check size={13} />

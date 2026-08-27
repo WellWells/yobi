@@ -25,6 +25,9 @@ import { flushPendingTempChatResult, isTempChatMode, setTempChatMode } from '../
 import { getWorkerWin } from '../windows';
 import { llmLane } from '../flow/lanes';
 import { setHotkeyPaused, wouldCollide } from '../hotkey';
+import { normalizeShortcuts } from '../configNormalizers';
+import { isRegisterableAccelerator } from '../../shared/shortcuts';
+import type { ShortcutOverride } from '../../shared/shortcuts';
 import { quickExportAccelerator } from '../hotkeyBinding';
 import { buildSettingsSnapshot } from './context';
 import type { IpcContext } from './context';
@@ -59,6 +62,7 @@ export function applyImportedConfigLiveEffects(importedConfig: Config, ctx: IpcC
 export function registerSettingsHandlers(ctx: IpcContext): void {
   ipcMain.handle(IPC.GET_HOTKEY, () => config.hotkey);
   ipcMain.handle(IPC.UPDATE_HOTKEY, (_event, newHotkey: string): HotkeyBindResult => {
+    if (!isRegisterableAccelerator(newHotkey)) return 'taken';
     if (wouldCollide(newHotkey, config.hotkey, config.quickExport.hotkey)) return 'conflict';
 
     saveConfig({ hotkey: newHotkey });
@@ -73,9 +77,16 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
     return true;
   });
 
+  ipcMain.handle(IPC.GET_SHORTCUTS, () => config.shortcuts);
+  ipcMain.handle(IPC.UPDATE_SHORTCUTS, (_event, next: Record<string, ShortcutOverride>) => {
+    const shortcuts = normalizeShortcuts(next);
+    config.shortcuts = shortcuts;
+    saveConfig({ shortcuts });
+    return shortcuts;
+  });
+
   ipcMain.handle(IPC.GET_HOTKEY_ENABLED, () => config.hotkeyEnabled);
   ipcMain.handle(IPC.SET_HOTKEY_ENABLED, (_event, enabled: boolean): HotkeyBindResult => {
-    // The combination stays in config while it is off, so switching back on is all it takes.
     config.hotkeyEnabled = Boolean(enabled);
     saveConfig({ hotkeyEnabled: config.hotkeyEnabled });
     const ok = ctx.bindHotkey();
@@ -88,9 +99,6 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
     const normalized = normalizeAiUrl(nextUrl);
     config.targetUrl = normalized;
     saveConfig({ targetUrl: normalized });
-    // Pointing the worker at the new provider only saves the next send a navigation,
-    // so it queues behind whatever automation is already driving that window rather
-    // than loading a page out from under it — and is skipped once a later pick wins.
     if (!isByokTargetUrl(normalized)) {
       void llmLane.runExclusive(async () => {
         const worker = getWorkerWin();
@@ -235,7 +243,6 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
   ipcMain.handle(IPC.GET_QUICK_EXPORT, () => config.quickExport);
   ipcMain.handle(IPC.UPDATE_QUICK_EXPORT, (_event, settings: QuickExportSettings): HotkeyBindResult => {
     const next = normalizeQuickExport(settings);
-    // Judged only when the combination moves, so a format or ZIP change can never be refused.
     if (wouldCollide(next.hotkey, config.quickExport.hotkey, config.hotkey)) return 'conflict';
 
     const previous = quickExportAccelerator(config.quickExport);

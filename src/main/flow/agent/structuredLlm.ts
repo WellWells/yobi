@@ -9,10 +9,11 @@ import type { FlowExecutorDeps } from '../types';
 export interface ProviderSession {
   threadUrl: string | null;
   lost: boolean;
+  attachments?: string[];
 }
 
-export function createProviderSession(): ProviderSession {
-  return { threadUrl: null, lost: false };
+export function createProviderSession(attachments?: string[]): ProviderSession {
+  return { threadUrl: null, lost: false, ...(attachments?.length ? { attachments } : {}) };
 }
 
 export async function runProviderText(
@@ -40,11 +41,12 @@ export async function runProviderText(
 
   const prepared = preparePromptForProvider(prompt, providerUrl);
   const resumeThread = session?.threadUrl ?? undefined;
+  const uploads = resumeThread ? undefined : session?.attachments;
   const result = await llmLane.runExclusive(async () => {
     if (signal?.aborted) throw new FlowAbortError();
     const win = deps.ensureWorkerWin ? await deps.ensureWorkerWin() : deps.getWorkerWin();
     if (!win || win.isDestroyed()) throw new Error('Worker window not available');
-    return runAutomation(win, prepared.prompt, timeoutMs, providerUrl, undefined, resumeThread);
+    return runAutomation(win, prepared.prompt, timeoutMs, providerUrl, uploads, resumeThread);
   });
   if (session) {
     if (result.threadLost) {
@@ -64,9 +66,6 @@ const TRANSPORT_BACKOFF_MS = 1_000;
 export function shouldRetryTransport(err: unknown, aborted: boolean): boolean {
   if (aborted) return false;
   if (err instanceof FlowAbortError) return false;
-  // A payload the endpoint already understood and refused will be refused again. Retrying
-  // it up to three times, with each retry replayed across every key in the group, turned
-  // one unknown model name into 3N requests where N would have done.
   return isByokRetryable(err);
 }
 
@@ -149,10 +148,6 @@ export interface AskJsonOptions<T> {
   validate: (json: unknown) => Validation<T>;
   buildRepair: (prevRaw: string, error: string) => string;
   maxRepairs?: number;
-  /**
-   * A rejected response costs a whole extra round-trip — on a web provider that is another
-   * minute of silence. Reported so the caller can say so instead of looking hung.
-   */
   onReject?: (error: string, attempt: number) => void;
   signal?: AbortSignal;
   session?: ProviderSession;

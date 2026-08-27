@@ -3,10 +3,13 @@ import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { IPC } from '../../shared/types';
 import type {
+  AttachmentStashRequest,
   MarkdownCaptureRequest,
   MarkdownCaptureResult,
   StartedConversation,
+  StashedAttachment,
 } from '../../shared/types';
+import { attachmentFromClipboard, stashAttachmentBytes } from '../attachmentStash';
 import { getMainWindow, sendLog, sendToRenderer } from '../helpers';
 import {
   listOutputFiles,
@@ -182,6 +185,14 @@ export function registerFileHandlers(): void {
     clipboard.writeText(text ?? '');
     return true;
   });
+
+  ipcMain.handle(
+    IPC.ATTACHMENT_STASH_BYTES,
+    (_event, request: AttachmentStashRequest): Promise<StashedAttachment> => stashAttachmentBytes(request),
+  );
+
+  ipcMain.handle(IPC.ATTACHMENT_FROM_CLIPBOARD, (): Promise<StashedAttachment | null> =>
+    attachmentFromClipboard());
 
   ipcMain.handle(IPC.CAPTURE_PAGE, async (event, args: { name?: string }): Promise<string> => {
     if (!isManagedPageWebContents(event.sender)) {

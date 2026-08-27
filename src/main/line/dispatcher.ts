@@ -54,7 +54,6 @@ export interface LineDispatcherDeps {
   onAgentAnswer: (answer: string, chatId: string, userId: string) => Promise<BotBuiltinRunResult | null>;
   hasPendingAgentAsk: (chatId: string, userId: string) => boolean;
   onDropAgentAsk: (chatId: string, userId: string) => void;
-  /** Drops this chat's running conversation. Resolves true when there was one to drop. */
   onNewConversation: (chatId: string, userId: string) => Promise<boolean>;
   getFlowCommands?: () => LineFlowCommandDef[];
   getByokCommands?: () => ByokCommandDef[];
@@ -101,8 +100,6 @@ export class LineDispatcher {
       await this.handleCommand(event, command);
       return;
     }
-    // An open agent question is answered by plain text, so this has to come before the
-    // command-free chat gate — otherwise nobody with that switch off could ever reply.
     if (this.deps.hasPendingAgentAsk(event.chatId, event.userId)) {
       await this.runAgentAnswer(event, event.text);
       return;
@@ -146,7 +143,6 @@ export class LineDispatcher {
       await this.reply(event, this.usageText());
       return;
     }
-    // Any command means the user moved on from whatever the agent last asked them.
     this.deps.onDropAgentAsk(event.chatId, event.userId);
 
     if (command.name === BUILTIN_NEW_COMMAND) {

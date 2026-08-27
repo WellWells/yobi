@@ -26,11 +26,6 @@ export function resolveStepTimeoutMs(
   if (type === 'delay') {
     return resolveDelayMs(config) + 10_000;
   }
-  /*
-   * `share` joins this tier because it drives a hidden render window (twice, when an over-tall
-   * image falls back to PDF) or uploads over the network. The engine's own 30s guard still
-   * bounds each render — 60s was close enough to two of them to kill the fallback mid-flight.
-   */
   if (type === 'browser' || type === 'rss' || type === 'scraper' || type === 'research' || type === 'gmap_reviews' || type === 'youtube' || type === 'youtube_subs' || type === 'browser_js' || type === 'file_download' || type === 'share') {
     return BROWSER_STEP_TIMEOUT_MS;
   }

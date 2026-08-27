@@ -19,11 +19,6 @@ export interface HotkeyDeps {
 
 let _accessibilityPrompted = false;
 
-/**
- * Reports whether the accelerator actually took. The capture hotkey used to swallow this —
- * a combination another app owned was logged and nothing else, so the settings field showed
- * a binding that never fired. Quick export already warned; both now behave the same.
- */
 export function bindHotkey(deps: HotkeyDeps): boolean {
   const { queue } = deps;
   const accelerator = mainAccelerator(config);
@@ -100,12 +95,6 @@ function notifyHotkeyFailed(accelerator: string): void {
   );
 }
 
-/**
- * Both slots are bound from TWO values — the combination and its on/off switch — so the
- * derivation lives in one place per slot and every "did the binding change?" comparison goes
- * through it. Switching off must yield blank (how registerHotkey releases a slot) while the
- * recorded combination stays in config, so flicking the switch back is all it takes.
- */
 export function mainAccelerator(settings: { hotkey: string; hotkeyEnabled: boolean }): string {
   return settings.hotkeyEnabled ? settings.hotkey : '';
 }

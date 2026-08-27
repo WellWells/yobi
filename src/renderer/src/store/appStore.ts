@@ -28,6 +28,7 @@ export interface PendingTurn {
   sendId: string;
   prompt: string;
   runId?: string;
+  attachments?: string[];
 }
 
 export type View = 'chat' | 'settings' | 'about' | 'logs' | 'flow';
@@ -269,8 +270,6 @@ export const useAppStore = create<AppState>((set) => ({
   setHotkeyEnabled: (hotkeyEnabled) => set({ hotkeyEnabled }),
   setUserNickname: (userNickname) => set({ userNickname }),
   setAiUrl: (aiUrl) => set({ aiUrl, aiUrlLoaded: true }),
-  // Startup's stored value. It arrives a moment after the window does, so a model
-  // picked in the meantime has to outrank it rather than be reverted by it.
   hydrateAiUrl: (aiUrl) => set((s) => (s.aiUrlLoaded ? s : { aiUrl, aiUrlLoaded: true })),
   setDuckaiModels: (duckaiModels) => set({ duckaiModels }),
   setByokModels: (byokModels) => set({ byokModels, byokModelsLoaded: true }),

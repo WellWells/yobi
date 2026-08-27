@@ -8,6 +8,7 @@ import { AppTextInput } from '../../../components/AppTextInput';
 import { AppPasswordInput } from '../../../components/AppPasswordInput';
 import { buildInputStyles } from '../../../components/inputStyles';
 import { WebDialog } from '../../../components/WebDialog';
+import { getByokTypeIcon } from '../../../config/models';
 import type { useByokSettings } from '../hooks/useByokSettings';
 import { BYOK_MODEL_EXAMPLES, BYOK_PROVIDER_TYPES, BYOK_PROVIDER_TYPE_LABELS } from '../../../../../shared/types';
 import type { ByokInstanceSnapshot, ByokProviderType } from '../../../../../shared/types';
@@ -63,7 +64,9 @@ export const ByokKeysCard: React.FC<Props> = ({ byok, t, sectionGap }) => {
         )}
 
         <Stack gap={0}>
-          {instances.map((instance, index) => (
+          {instances.map((instance, index) => {
+            const InstanceIcon = getByokTypeIcon(instance.providerType);
+            return (
             <Box
               key={instance.id}
               py={12}
@@ -79,7 +82,7 @@ export const ByokKeysCard: React.FC<Props> = ({ byok, t, sectionGap }) => {
                   opacity={hiddenNow(instance.id) ? 0.55 : 1}
                 >
                   <Box c="var(--mantine-color-default-color)" mt={2} style={{ flexShrink: 0 }}>
-                    <KeyRound size={16} />
+                    <InstanceIcon size={16} />
                   </Box>
                   <Stack gap={4} miw={0}>
                     <Group gap={8} wrap="nowrap">
@@ -130,7 +133,8 @@ export const ByokKeysCard: React.FC<Props> = ({ byok, t, sectionGap }) => {
                 </Group>
               </Group>
             </Box>
-          ))}
+            );
+          })}
         </Stack>
 
         {form ? (

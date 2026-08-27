@@ -128,13 +128,6 @@ export function execBrowserClose(config: Record<string, string>): string {
   return '';
 }
 
-/*
- * Turns the `attachments` field into paths the provider may actually be handed. Three gates,
- * in order: the provider must support uploads at all, each path must clear the same guard the
- * bot step uses, and the provider's own file cap trims the rest. Every rejection is a log line
- * and a smaller list — never a thrown error, because an attachment is an enhancement to a
- * prompt that would otherwise send fine on its own.
- */
 async function resolveLlmAttachments(
   config: Record<string, string>,
   providerUrl: string,
@@ -386,7 +379,6 @@ export async function execBot(
     .map(Number)
     .filter((n) => Number.isFinite(n) && n !== 0);
 
-  // Telegram targets must be numeric ids; @handles silently resolve to nothing, so say so out loud.
   const invalidTargets = rawTargets.filter((value) => {
     const numeric = Number(value);
     return !Number.isFinite(numeric) || numeric === 0;

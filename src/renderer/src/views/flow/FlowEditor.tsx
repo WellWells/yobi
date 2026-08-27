@@ -3,11 +3,10 @@ import {
   ActionIcon, Badge, Box, Button, Flex, Group, Loader, Menu, Stack, Text,
 } from '@mantine/core';
 import {
-  ArrowDown, ArrowUp, Copy, MoreHorizontal, Play, RotateCcw, Save, Square, Trash2, Upload,
+  ArrowDown, ArrowUp, Copy, Download, MoreVertical, Play, RotateCcw, Save, Square, Trash2,
 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useFlowStore } from '../../store/useFlowStore';
-import { useAppStore } from '../../store/appStore';
 import { AppTextarea } from '../../components/AppTextarea';
 import { AppTextInput } from '../../components/AppTextInput';
 import { SectionCard } from '../../components/SectionCard';
@@ -16,6 +15,7 @@ import { FlowStepsCard } from './FlowStepsCard';
 import { FlowVariablesPanel } from './FlowVariablesPanel';
 import { TriggerEditor } from './TriggerEditor';
 import type { FlowDefinition, FlowVariable, SkillType } from '../../../../shared/types';
+import { useShortcutAction } from '../../shortcuts/useShortcutAction';
 
 export interface FlowEditorProps {
   flow: FlowDefinition;
@@ -32,7 +32,6 @@ export interface FlowEditorProps {
 export const FlowEditor: React.FC<FlowEditorProps> = ({
   flow, t, onDelete, onDuplicate, onExport, onMoveUp, onMoveDown, canMoveUp, canMoveDown,
 }) => {
-  const currentView = useAppStore((s) => s.currentView);
   const {
     updateFlow, saveFlow, executeFlow, abortFlow, addStep, isExecuting, runningFlowIds, restoreFlow, savedFlows,
   } = useFlowStore(
@@ -89,20 +88,9 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
   }, [flow, saveFlow, executeFlow]);
   const handleStop = useCallback(() => { void abortFlow(flow.id); }, [abortFlow, flow.id]);
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (currentView === 'flow' && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-        e.preventDefault();
-        if (isDirty) {
-          void handleSave();
-        }
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [currentView, handleSave, isDirty]);
+  useShortcutAction('flow.save', () => {
+    if (isDirty) void handleSave();
+  }, 'flow');
 
   const handleAddStep = useCallback((type: SkillType) => { addStep(flow.id, type); }, [addStep, flow.id]);
   const handleVariablesChange = useCallback((variables: FlowVariable[]) => {
@@ -163,11 +151,11 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
             )}
             <Menu position="bottom-end" withArrow shadow="md">
               <Menu.Target>
-                <ActionIcon variant="default" size="md"><MoreHorizontal size={14} /></ActionIcon>
+                <ActionIcon variant="default" size="md"><MoreVertical size={14} /></ActionIcon>
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Item leftSection={<Copy size={14} />} onClick={onDuplicate}>{t('flow.duplicateFlow')}</Menu.Item>
-                <Menu.Item leftSection={<Upload size={14} />} onClick={onExport}>{t('flow.exportFlow')}</Menu.Item>
+                <Menu.Item leftSection={<Download size={14} />} onClick={onExport}>{t('flow.exportFlow')}</Menu.Item>
                 <Menu.Item leftSection={<ArrowUp size={14} />} disabled={!canMoveUp} onClick={onMoveUp}>{t('flow.flow.moveUp')}</Menu.Item>
                 <Menu.Item leftSection={<ArrowDown size={14} />} disabled={!canMoveDown} onClick={onMoveDown}>{t('flow.flow.moveDown')}</Menu.Item>
                 <Menu.Divider />

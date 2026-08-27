@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  Terminal, Globe, MessageSquare, Clipboard, Timer, Bell, Camera, Bot, Rss, OctagonX, StickyNote, Eye, Repeat, CircleDot, Split, Cpu, Webhook, MonitorPlay, ListVideo, Rocket, Braces, Power, RotateCcw, AppWindow, SquareCode, SquareX, FilePen, FileText, Share2, FolderOpen, Mail, Trash2, Type, TrendingUp, DollarSign, Cloud, Wind, Download, Dices, LogOut, SkipForward, Search, MapPin, Microscope, GitCompare,
+  Terminal, Globe, MessageSquare, Clipboard, Timer, Bell, Camera, Bot, Rss, OctagonX, StickyNote, ListTree, Repeat, IterationCcw, Split, Merge, Cpu, Webhook, MonitorPlay, ListVideo, Rocket, Braces, Power, RotateCcw, AppWindow, SquareCode, SquareX, FilePen, FileText, Share2, FolderOpen, Mail, Trash2, Type, TrendingUp, ArrowRightLeft, Cloud, Wind, Download, Dices, CircleStop, SkipForward, Search, MapPin, Microscope, GitCompare,
 } from 'lucide-react';
 import type { SkillType } from '../../../../../shared/types';
 import type { SkillConfigProps, SkillConfigEditorMap } from './types';
@@ -116,16 +116,16 @@ export const SKILL_ICON: Record<SkillType, React.ReactNode> = {
   rss: <Rss size={14} />,
   stop: <OctagonX size={14} />,
   comment: <StickyNote size={14} />,
-  scraper: <Eye size={14} />,
+  scraper: <ListTree size={14} />,
   search: <Search size={14} />,
   research: <Microscope size={14} />,
   gmap_reviews: <MapPin size={14} />,
   loop: <Repeat size={14} />,
-  end_loop: <CircleDot size={14} />,
+  end_loop: <IterationCcw size={14} />,
   if: <Split size={14} />,
-  end_if: <CircleDot size={14} />,
+  end_if: <Merge size={14} />,
   on_change: <GitCompare size={14} />,
-  break: <LogOut size={14} />,
+  break: <CircleStop size={14} />,
   continue: <SkipForward size={14} />,
   sysinfo: <Cpu size={14} />,
   http: <Webhook size={14} />,
@@ -141,7 +141,7 @@ export const SKILL_ICON: Record<SkillType, React.ReactNode> = {
   email_send: <Mail size={14} />,
   text: <Type size={14} />,
   stock: <TrendingUp size={14} />,
-  forex: <DollarSign size={14} />,
+  forex: <ArrowRightLeft size={14} />,
   weather: <Cloud size={14} />,
   air_quality: <Wind size={14} />,
   random: <Dices size={14} />,

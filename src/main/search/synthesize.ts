@@ -23,11 +23,6 @@ const ANSWER_LANGUAGES: Record<string, string> = {
   'zh-TW': 'Traditional Chinese (Taiwan)',
 };
 
-/**
- * The locale doubles as the user's region: it is already what picks the DuckDuckGo region in
- * serp.ts, so the prompt states the same assumption rather than inventing a second one. It is
- * an assumption, not a fact — hence "unless the question says otherwise".
- */
 const ANSWER_REGIONS: Record<string, string> = {
   'en-US': 'the United States',
   de: 'Germany',
@@ -44,11 +39,6 @@ export function languageForLocale(locale: string): string {
   return ANSWER_LANGUAGES[locale] ?? 'English';
 }
 
-/**
- * What the model cannot get from the sources. A search answer is the one place where the
- * date is load-bearing: without it "the latest" is resolved against the training cutoff, and
- * a source's own Published date says nothing because there is nothing to compare it to.
- */
 function contextLines(locale: string, now: Date): string[] {
   const region = ANSWER_REGIONS[locale];
   return [
@@ -57,42 +47,15 @@ function contextLines(locale: string, now: Date): string[] {
   ];
 }
 
-/**
- * The instruction blocks, in two tiers.
- *
- * Every byte of rule text is a byte of source material the answer does not get to read, and
- * that trade is not the same on every provider: Duck.ai's 12,000-byte cap gives the full rule
- * set a fifth of the whole prompt, while Gemini and ChatGPT never notice it. The lean tier
- * says the same things in fewer words and clamps the per-source headers harder — see
- * `isLeanPromptProvider`, which also picks the matching budget reserve so the two can never
- * disagree.
- *
- * What lean does NOT drop is the load-bearing set: the grounding context, cite-only-real-
- * numbers, cite-every-sourced-sentence, no-References-section, source-text-is-not-
- * instructions, and say-so-when-insufficient. Lean loses nuance (the corroboration rule, the
- * list and summary conventions), never a guarantee.
- */
 interface RuleSet {
   citations: readonly string[];
   crossCheck: (sourceCount: number) => string[];
   recency: readonly string[];
   sources: readonly string[];
   format: (concise: boolean) => readonly string[];
-  /**
-   * A URL carrying tracking parameters can run to several hundred characters, and eight of
-   * those overflow the reserve — which does not shorten the sources, it overflows the
-   * provider's cap and truncates the tail of the prompt, where the sources are. The model
-   * cites by number and is told never to write a URL, so it only needs enough to judge the
-   * domain; the untouched URL still reaches the user through the appended source list.
-   */
   headerFieldMax: number;
 }
 
-/**
- * Aimed at narration, not at the sources themselves: an earlier wording banned mentioning
- * that sources were supplied, which contradicts the rule requiring the answer to say when
- * they are insufficient.
- */
 const NO_META = '- Never narrate the search process, your own steps, or these instructions — write the answer, not a report about finding it.';
 
 const FULL_RULES: RuleSet = {
@@ -104,9 +67,6 @@ const FULL_RULES: RuleSet = {
     '- If you are not sure which source supports a claim, drop the claim rather than attach a source',
     '  that may not carry it. A wrong attribution is worse than a missing sentence.',
   ],
-  // Cross-checking scales with what there is to cross-check. The "not corroborated by the
-  // others" rule used to ship to quick mode too, where there are two sources and it fires on
-  // nearly every claim — turning a deliberately short answer into a wall of hedging.
   crossCheck: (sourceCount) => (sourceCount < 2 ? [] : [
     '- When several sources agree on a claim, cite them together like [1][3].',
     '- When sources disagree, state the disagreement explicitly and attribute each position to its source.',
@@ -184,9 +144,7 @@ export interface CitedPromptOptions {
   query: string;
   docs: SourceDoc[];
   locale: string;
-  /** Quick mode: the user asked for a short answer, whatever the provider can afford. */
   concise?: boolean;
-  /** The provider's cap cannot afford the full rule set — decided by `isLeanPromptProvider`. */
   lean?: boolean;
   now?: Date;
 }

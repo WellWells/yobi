@@ -12,11 +12,18 @@ export interface TurnMeta {
   t?: string;
   m?: 'native' | 'replay';
   c?: string;
+  a?: string[];
   dropped?: number;
   summarized?: number;
   ti?: number;
   to?: number;
   tx?: 1;
+}
+
+export function attachmentMetaNames(paths: readonly string[]): string[] {
+  return paths
+    .map((entry) => (entry.split(/[\\/]/).pop() ?? '').replace(/-->/g, '--').trim())
+    .filter(Boolean);
 }
 
 export interface ConversationHeadingAliases {

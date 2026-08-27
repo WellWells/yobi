@@ -19,7 +19,6 @@ function resolveSources(raw: string): number | undefined {
   return Math.min(Math.max(parsed, MIN_SOURCES), MAX_SOURCES);
 }
 
-/** Exported for the test suite. */
 export function reportStage(deps: FlowExecutorDeps): ((progress: SearchProgress) => void) | undefined {
   const onStage = deps.onStage;
   if (!onStage) return undefined;
@@ -48,8 +47,6 @@ export async function execResearch(
   const scope = maxSources === undefined ? '' : `, sources=${maxSources}`;
   sendLog(`🔬 [Flow] Research step — "${query}" (depth=${mode}${scope})`);
   try {
-    // The pipeline has always reported its stages; until now nothing downstream listened,
-    // so an /agent research step showed a tool name and then nothing for a minute.
     const outcome = await runWebSearch(query, providerUrl, config.locale, reportStage(deps), mode, maxSources);
     sendLog(`🔬 [Flow] Research: ${outcome.sources.length} source(s) → ${outcome.answer.length} chars`);
     return JSON.stringify({

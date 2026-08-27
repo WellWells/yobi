@@ -13,6 +13,7 @@ export interface CaptureLook {
   cardTheme: CardTheme;
   cardLayout: CardLayout;
   width: number;
+  margin: number;
   pixelRatio: number;
   zip: boolean;
   showProvider: boolean;
@@ -62,6 +63,7 @@ export function buildCaptureRequest(input: ConversationCaptureInput): MarkdownCa
       showTokens: input.showTokens,
       fileName: input.fileName,
       width: input.width,
+      margin: input.margin,
       background: input.background,
       cardTheme: input.cardTheme,
       cardLayout: input.cardLayout,
@@ -101,6 +103,7 @@ export function buildTurnCaptureRequest(input: TurnCaptureInput): MarkdownCaptur
       showTokens: input.showTokens,
       fileName: input.fileName,
       width: input.width,
+      margin: input.margin,
       background: input.background,
       cardTheme: input.cardTheme,
       cardLayout: input.cardLayout,

@@ -6,7 +6,6 @@ import type { TelegramReplyMode } from '../../../../../shared/types';
 interface Props {
   compactReply: boolean;
   mode: TelegramReplyMode;
-  /** Overrides the note under the bubble — LINE always replies compact for its own reasons. */
   note?: string;
   t: (key: string) => string;
 }

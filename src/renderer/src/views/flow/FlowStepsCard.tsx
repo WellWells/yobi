@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Badge, Box, Code, Flex, Group, Paper, Stack, Text } from '@mantine/core';
-import { BookOpen, ChevronRight } from 'lucide-react';
+import { ChevronRight, ListOrdered } from 'lucide-react';
 import {
   closestCenter, DndContext, DragOverlay, type DragEndEvent, type DragStartEvent,
 } from '@dnd-kit/core';
@@ -201,7 +201,7 @@ export const FlowStepsCard: React.FC<FlowStepsCardProps> = ({ flow, t, onAddStep
               border: '1px dashed var(--mantine-color-default-border)',
             }}
           >
-            <EmptyState icon={BookOpen} label={t('flow.steps.empty')}>
+            <EmptyState icon={ListOrdered} label={t('flow.steps.empty')}>
               <AddStepMenu position="top" t={t} onAdd={onAddStep} />
             </EmptyState>
           </Box>

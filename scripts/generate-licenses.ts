@@ -11,7 +11,6 @@ const LICENSE_FILE_NAMES = [
   'LICENSE-MIT', 'COPYING', 'COPYING.md',
 ];
 
-// Apache-2.0 §4(d): a NOTICE file, where present, must be reproduced downstream.
 const NOTICE_FILE_NAMES = ['NOTICE', 'NOTICE.md', 'NOTICE.txt'];
 
 interface LockEntry {

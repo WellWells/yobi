@@ -3,6 +3,8 @@ import cron from 'node-cron';
 import type { ScheduledTask } from 'node-cron';
 import type { FlowDefinition, TriggerConfig } from '../../shared/types';
 import { sendLog } from '../helpers';
+import { isHotkeyPaused, ownsAccelerator } from '../hotkey';
+import { isRegisterableAccelerator, toAccelerator } from '../../shared/shortcuts';
 import { normalizeCronTrigger, shouldExecuteCronTriggerNow, shouldNormalizeCronTrigger } from '../../shared/flowSchedule';
 
 export class FlowTriggerRegistry {
@@ -35,14 +37,23 @@ export class FlowTriggerRegistry {
   }
 
   private registerHotkey(flow: FlowDefinition, keys: string): void {
+    if (!isRegisterableAccelerator(keys)) {
+      sendLog(`❌ [Flow] Hotkey "${keys}" is not a valid accelerator — skipping for "${flow.name}"`);
+      return;
+    }
     for (const [existingFlowId, existingKeys] of this.flowHotkeys) {
       if (existingFlowId !== flow.id && existingKeys.includes(keys)) {
         sendLog(`⚠️ [Flow] Hotkey "${keys}" already used by another flow — skipping for "${flow.name}"`);
         return;
       }
     }
+    if (ownsAccelerator(keys)) {
+      sendLog(`⚠️ [Flow] Hotkey "${keys}" is already claimed by Yobi itself (a global hotkey or another flow) — skipping for "${flow.name}"`);
+      return;
+    }
     try {
-      const ok = globalShortcut.register(keys, () => {
+      const ok = globalShortcut.register(toAccelerator(keys, process.platform === 'darwin'), () => {
+        if (isHotkeyPaused()) return;
         this.onTrigger(flow.id);
       });
       if (ok) {
@@ -79,7 +90,7 @@ export class FlowTriggerRegistry {
     const hotkeys = this.flowHotkeys.get(flow.id);
     if (hotkeys) {
       for (const hotkey of hotkeys) {
-        try { globalShortcut.unregister(hotkey); } catch {}
+        try { globalShortcut.unregister(toAccelerator(hotkey, process.platform === 'darwin')); } catch {}
       }
       this.flowHotkeys.delete(flow.id);
     }

@@ -10,6 +10,8 @@ import { SILENT_WEB_PREFERENCES, muteWindow } from './silentWindow';
 import { PROVIDER_URLS, isByokTargetUrl } from '../shared/types';
 import { themeBackground } from '../shared/themes';
 import { config } from './config';
+import { activeCombos, fromElectronInput, matchesCombo, shortcutById } from '../shared/shortcuts';
+import { isHotkeyPaused } from './hotkey';
 
 const WORKER_PARTITION = 'persist:gemini';
 type WorkerWindowMode = 'automation' | 'interactive';
@@ -99,11 +101,14 @@ export function createMainWindow(): void {
 
   mainWin.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown' || input.isAutoRepeat) return;
-    const modifier = process.platform === 'darwin' ? input.meta : input.control;
-    if (modifier && input.shift && !input.alt && input.code === 'KeyI') {
-      event.preventDefault();
-      toggleTempChatMode();
-    }
+    if (isHotkeyPaused()) return;
+    const def = shortcutById('app.tempChat');
+    const combos = activeCombos(def, process.platform === 'darwin', config.shortcuts['app.tempChat']);
+    const pressed = fromElectronInput(input);
+    const isMac = process.platform === 'darwin';
+    if (!combos.some((combo) => matchesCombo(pressed, combo, [], { isMac }))) return;
+    event.preventDefault();
+    toggleTempChatMode();
   });
 
   mainWin.on('close', (event) => {
@@ -179,7 +184,6 @@ export function createWorkerWindow(initialUrl: string, mode: WorkerWindowMode = 
   workerWin.on('resize', () => rememberWorkerVisibleBounds());
 
   applyWorkerUserAgent(workerWin.webContents, CLEAN_UA);
-  // Mapped-but-offscreen for its whole life unless revealed — provider pages stay silent there.
   muteWindow(workerWin);
   workerWin.loadURL(bootUrl);
 

@@ -67,7 +67,6 @@ const VarChip: React.FC<{
 
 function isFileProducerStep(s: SkillInstance): boolean {
   return s.type === 'file_write' || s.type === 'capture' || s.type === 'file_download'
-    /* Link mode hands back a URL, not a file — no {{file}} chip for it. */
     || (s.type === 'share' && !isShareLinkFormat(s.config.format))
     || (s.type === 'llm' && ['png', 'webp', 'pdf'].includes(s.config.exportFormat ?? ''));
 }

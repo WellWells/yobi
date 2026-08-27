@@ -4,6 +4,7 @@ import type { AccountStatus, AuthProvider, Provider } from '../shared/types';
 import { sendLog, sendToRenderer, sendWebNotification } from './helpers';
 import { getLangCache, t } from './i18n';
 import { getAuthProviderConfig, getAccountStatus, clearProviderSession } from './providers/authStatus';
+import { runGoogleSignInLanguageReset } from './providers/googleSignInLanguage';
 import { applyWorkerUserAgent } from './clientHints';
 
 const WORKER_PARTITION = 'persist:gemini';
@@ -59,6 +60,8 @@ export async function openAccountLoginWindow(provider: AuthProvider): Promise<bo
   await win.loadURL(cfg.loginUrl);
 
   sendLog(t(strings, 'settings.accounts.login.opened', { provider: providerLabel }));
+
+  if (provider === 'gemini' && !win.isDestroyed()) await runGoogleSignInLanguageReset(win.webContents);
 
   pollTimer = setInterval(() => {
     void (async () => {

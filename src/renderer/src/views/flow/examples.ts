@@ -203,11 +203,6 @@ function feedVar(key: string, t: Translate): FlowVariable {
   };
 }
 
-/**
- * One pick session fills all three. Only the row selector is asked for; title and
- * link are derived from the same session and stay hidden, because two selectors
- * chosen independently is exactly how they end up describing different rows.
- */
 function listSelectorVar(urlKey: string, t: Translate): FlowVariable {
   return {
     key: 'itemSelector',
@@ -660,7 +655,6 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
             burnAfterReading: 'false',
             emitFailFlag: 'false',
           }, t('flow.templates.md.step.render'), 'doc'),
-          /* {{doc}} is the path in file mode and the URL in link mode — one line, both branches. */
           step('text', { text: '{{doc.summary}}\n{{doc}}' }, t('flow.templates.md.step.reply'), 'reply'),
           step('bot', {
             chatId: '{{bot.triggerChatId}}',

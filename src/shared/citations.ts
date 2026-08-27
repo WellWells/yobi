@@ -1,26 +1,11 @@
-/**
- * Reading back the citations a `/search` answer carries.
- *
- * `search/synthesize.ts` makes the model put `[n]` on every sourced sentence and
- * `linkifyCitations` turns each one into `[\[n\]](<url>)`, which renders as the literal
- * text `[n]`. `chat/searchCommand.ts` then appends the numbered source list. Both halves
- * live in the saved markdown, so a selection made in the rendered answer can be traced
- * back to the pages it came from without asking the model anything.
- *
- * The list heading is localized, so nothing here may key off it — matching the numbered
- * link shape is what keeps this working in every language.
- */
-
 export interface CitationSource {
   id: number;
   title: string;
   url: string;
 }
 
-/** `1. [title](<url>)` — the angle-bracket form is what `mdLinkDestination` emits. */
 const SOURCE_LINE = /^[ \t]*(\d{1,3})\.[ \t]+\[([^\]]*)\]\((?:<([^>]*)>|([^)\s]+))\)[ \t]*$/gm;
 
-/** The rendered form of an inline citation is the bare text `[n]`. */
 const CITATION_MARKER = /\[(\d{1,3})\]/g;
 
 export function parseCitationSources(markdown: string): CitationSource[] {
@@ -56,15 +41,6 @@ export function citationNumbersIn(text: string): number[] {
   return numbers;
 }
 
-/**
- * Sources backing a selection. `selected` wins when it carries markers of its own;
- * `block` is the fallback for a phrase picked out of the middle of a cited sentence,
- * where the marker sits at the sentence end and falls outside the selection.
- *
- * A number with no matching entry in the source list is dropped rather than shown as an
- * unresolved citation — the same stance the synthesis prompt takes when it tells the model
- * to use only numbers that exist.
- */
 export function resolveSelectionCitations(
   selected: string,
   block: string,
@@ -82,7 +58,6 @@ export function resolveSelectionCitations(
   return resolved;
 }
 
-/** Host shown next to a source title. Falls back to the raw url when it will not parse. */
 export function citationHost(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./, '');

@@ -1,12 +1,3 @@
-/**
- * Browser-side selector inference for the visual list picker.
- *
- * Exported as source text because it must run in the target page's main world via
- * executeJavaScript, while the test suite evaluates the very same string against
- * happy-dom fixtures — the shipped algorithm is the tested algorithm.
- *
- * Defines a single global, `YobiPick`, with no side effects on the page.
- */
 export const PICKER_ALGO_SOURCE = String.raw`
 var YobiPick = (function(){
   var MAX_CLIMB = 10;
@@ -33,12 +24,6 @@ var YobiPick = (function(){
     try { return '.' + CSS.escape(c); } catch (e) { return '.' + c; }
   }
 
-  /**
-   * Only genuine build-tool hashes are dropped. Utility frameworks put digits in
-   * their most meaningful names (py-4, text-gray-900, line-clamp-2), so a plain
-   * "contains a digit" test throws away exactly the classes worth keeping and
-   * leaves the site-wide generic ones (block, flex, group) behind.
-   */
   function isHashClass(c){
     if (!c) return true;
     if (c.length > 30) return true;
@@ -76,7 +61,6 @@ var YobiPick = (function(){
     return Array.prototype.filter.call(parent.children, function(c){ return signatureOf(c) === sig; });
   }
 
-  /** Every ancestor level that looks like a repeating row, nearest first. */
   function levelsFor(clicked){
     var out = [];
     var node = clicked;
@@ -96,11 +80,6 @@ var YobiPick = (function(){
     });
   }
 
-  /**
-   * Shortest selector matching exactly the peer set: start from the bare tag and
-   * add shared classes rarest-first. Growing until the count matches is what keeps
-   * a generic utility class (.block, 117 matches) from ever being the answer.
-   */
   function minimalRowSelector(nodes){
     var tag = tagOf(nodes[0]);
     var target = nodes.length;
@@ -116,7 +95,6 @@ var YobiPick = (function(){
     return sel;
   }
 
-  /** Scope the row selector with ancestors until it isolates the peer set. */
   function buildItemSelector(nodes){
     var sel = minimalRowSelector(nodes);
     var target = nodes.length;
@@ -135,7 +113,6 @@ var YobiPick = (function(){
     return sel;
   }
 
-  /** Simplest selector picking this node out from inside its own row. */
   function leafSelector(node, row){
     var tag = tagOf(node);
     if (qsa(tag, row).length === 1) return tag;
@@ -164,11 +141,6 @@ var YobiPick = (function(){
     return hits >= 2 && hits >= rows.length * MIN_ROW_HIT_RATIO;
   }
 
-  /**
-   * Descendant-only path from a row down to a target, widened one ancestor at a
-   * time until it resolves across the whole row set. Descendant-only matters:
-   * the scraper resolves it with cheerio's find(), which never looks upward.
-   */
   function relativePath(row, target, rows){
     if (!target || target === row) return '';
     var chain = [];
@@ -201,12 +173,6 @@ var YobiPick = (function(){
     return n >= Math.max(2, Math.ceil(links.length * MIN_LINK_DISTINCT_RATIO));
   }
 
-  /**
-   * Anchors to consider, nearest to what the user actually clicked first. A row
-   * often holds several links (tag, author, article); the row's FIRST anchor is
-   * frequently a shared tag link, identical on every row, so starting there hands
-   * back one URL repeated N times.
-   */
   function linkCandidateElements(rowEl, clicked){
     var out = [];
     function push(el){
@@ -218,10 +184,6 @@ var YobiPick = (function(){
     return out;
   }
 
-  /**
-   * An empty link selector means "the row element itself carries the href" — the
-   * shape of every card list where the whole row is one anchor.
-   */
   function resolveLinkSelector(rowEl, clicked, rows){
     var candidates = [];
     linkCandidateElements(rowEl, clicked).forEach(function(el){
@@ -235,7 +197,6 @@ var YobiPick = (function(){
     return candidates[0];
   }
 
-  /** Mirrors execScraper's itemSelector branch so the preview cannot lie. */
   function extract(itemSel, titleSel, linkSel){
     return qsa(itemSel).map(function(el){
       var titleEl = titleSel ? (safeMatches(el, titleSel) ? el : el.querySelector(titleSel)) : el;
@@ -271,12 +232,6 @@ var YobiPick = (function(){
     };
   }
 
-  /**
-   * All viable row levels for a clicked element, plus which one to start on.
-   * preferredIndex drives the scope slider; without it the lowest level that
-   * survives validation wins, so a container that yields duplicate links or
-   * blank titles is skipped rather than silently shipped.
-   */
   function analyze(clicked, preferredIndex){
     if (!clicked || clicked.nodeType !== 1) return null;
     var levels = levelsFor(clicked).map(function(lv){ return describe(lv, clicked); })

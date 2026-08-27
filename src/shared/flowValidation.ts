@@ -52,7 +52,6 @@ function validateStep(raw: unknown, index: number): StepValidationResult {
   }
   const s = raw as Record<string, unknown>;
   const type = s.type;
-  /* Resolves renamed types too, so a flow exported before a rename still imports. */
   const skillType = typeof type === 'string' ? canonicalSkillType(type) : null;
   if (!skillType) {
     return { ok: false, error: `Step ${index + 1} has unknown type "${String(type)}"` };

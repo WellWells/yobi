@@ -12,14 +12,13 @@ interface Props {
   onCancel: () => void;
 }
 
-/* The same five points the chat dialog shows, in the same order — see SHARE_CONSENT_KEYS. */
 export const ShareConsent: React.FC<Props> = ({ share, strings, cancelLabel, onAccept, onCancel }) => (
   <Stack gap={12}>
     <Text fz="var(--font-size-sm)" c="var(--mantine-color-text)" lh={1.7}>
       {strings.consentIntro}
     </Text>
 
-    {/* Clamped so a verbose language pack scrolls instead of overflowing the fixed window. */}
+    {}
     <Box style={{ maxHeight: 260, overflowY: 'auto' }}>
       <ShareConsentPoints points={share.consentPoints} />
     </Box>

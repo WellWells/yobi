@@ -1,0 +1,10 @@
+/* Hover has to lift, never darken: Mantine's `subtle` overlay darkens on Yobi's dark themes,
+   so the tile moves to the tertiary surface — one step brighter than the card it sits on. */
+.card {
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.card:hover {
+  background-color: var(--bg-tertiary);
+  border-color: var(--border-hover);
+}

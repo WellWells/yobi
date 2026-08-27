@@ -4,6 +4,7 @@ import { Copy, Download, FileText, FolderOpen, Link2, Minus, MoreVertical, Penci
 import type { LayoutMode } from '../../store/appStore';
 import { AppTextInput } from '../AppTextInput';
 import { AppSegmentedControl } from '../AppSegmentedControl';
+import { ChatHeaderRow } from './ChatHeaderRow';
 import { ModelMenuItems } from './ModelMenuItems';
 
 interface FileHeaderBarProps {
@@ -66,13 +67,7 @@ export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
   const zoomPercentText = `${markdownZoom}%`;
 
   return (
-    <Group
-      gap={6}
-      wrap="nowrap"
-      p="6px 14px"
-      bg="var(--mantine-color-default)"
-      style={{ borderBottom: '1px solid var(--mantine-color-default-border)', flexShrink: 0, minWidth: 0 }}
-    >
+    <ChatHeaderRow>
       {headerEditing ? (
         <AppTextInput
           ref={headerInputRef}
@@ -277,6 +272,6 @@ export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
           </MMenu>
         </Box>
       </Group>
-    </Group>
+    </ChatHeaderRow>
   );
 };

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { mcpApi } from '../../../api/electronApi';
+import { normalizeMcpUrl } from '../../../../../shared/mcpCatalog';
+import type { McpCatalogEntry } from '../../../../../shared/mcpCatalog';
 import type { McpServerView } from '../../../../../shared/types';
 
 export interface McpFormState {
@@ -50,28 +52,28 @@ export function useMcpServers() {
     setForm((prev) => (prev ? { ...prev, ...patch } : prev));
   }, []);
 
-  const saveForm = useCallback(async () => {
-    if (!form) return;
-    setSaving(true);
+  const addFromCatalog = useCallback(async (entry: McpCatalogEntry | undefined) => {
+    if (!entry) return;
+    if (entry.auth === 'token') {
+      setError(null);
+      setForm({ name: entry.name, url: entry.url, token: '', headerName: '', agentEnabled: true, autoApproveWrites: false });
+      return;
+    }
+    setBusyId(entry.id);
     setError(null);
-    const result = await mcpApi.save({
-      id: form.id,
-      name: form.name.trim(),
-      url: form.url.trim(),
-      token: form.token.trim(),
-      headerName: form.headerName.trim(),
-      agentEnabled: form.agentEnabled,
-      autoApproveWrites: form.autoApproveWrites,
-    });
-    setSaving(false);
+    const saved = await mcpApi.save({ name: entry.name, url: entry.url, agentEnabled: true, autoApproveWrites: false });
+    setServers(saved.servers);
+    const created = saved.servers.find((s) => normalizeMcpUrl(s.url) === normalizeMcpUrl(entry.url));
+    if (!saved.ok || !created) {
+      setBusyId(null);
+      setError(saved.error ?? 'Save failed');
+      return;
+    }
+    setBusyId(created.id);
+    const result = await mcpApi.connect(created.id);
+    setBusyId(null);
     setServers(result.servers);
-    if (result.ok) setForm(null);
-    else setError(result.error ?? 'Save failed');
-  }, [form]);
-
-  const removeServer = useCallback(async (id: string) => {
-    const result = await mcpApi.remove(id);
-    setServers(result.servers);
+    if (!result.ok && result.error) setError(result.error);
   }, []);
 
   const connect = useCallback(async (id: string) => {
@@ -81,6 +83,36 @@ export function useMcpServers() {
     setBusyId(null);
     setServers(result.servers);
     if (!result.ok && result.error) setError(result.error);
+  }, []);
+
+  const saveForm = useCallback(async () => {
+    if (!form) return;
+    setSaving(true);
+    setError(null);
+    const url = form.url.trim();
+    const result = await mcpApi.save({
+      id: form.id,
+      name: form.name.trim(),
+      url,
+      token: form.token.trim(),
+      headerName: form.headerName.trim(),
+      agentEnabled: form.agentEnabled,
+      autoApproveWrites: form.autoApproveWrites,
+    });
+    setSaving(false);
+    setServers(result.servers);
+    if (!result.ok) {
+      setError(result.error ?? 'Save failed');
+      return;
+    }
+    setForm(null);
+    const target = result.servers.find((s) => normalizeMcpUrl(s.url) === normalizeMcpUrl(url));
+    if (target && target.status !== 'connected') await connect(target.id);
+  }, [form, connect]);
+
+  const removeServer = useCallback(async (id: string) => {
+    const result = await mcpApi.remove(id);
+    setServers(result.servers);
   }, []);
 
   const disconnect = useCallback(async (id: string) => {
@@ -93,5 +125,6 @@ export function useMcpServers() {
   return {
     servers, form, saving, busyId, error, formValid,
     openAdd, openEdit, closeForm, updateForm, saveForm, removeServer, connect, disconnect,
+    addFromCatalog,
   };
 }

@@ -1,7 +1,7 @@
 import React, { useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Box, Flex, Stack, Text } from '@mantine/core';
-import { Download } from 'lucide-react';
+import { Upload } from 'lucide-react';
 import type { FlowDefinition } from '../../../../shared/types';
 import { parseImportedFlows } from './flowImportParser';
 
@@ -65,7 +65,7 @@ export const FlowDropzone: React.FC<FlowDropzoneProps> = ({ t, onImport, childre
           }}
         >
           <Stack align="center" gap="sm">
-            <Download size={40} color="var(--mantine-color-accent)" />
+            <Upload size={40} color="var(--mantine-color-accent)" />
             <Text fw={600} fz="md" c="var(--mantine-color-accent)">
               {t('flow.import.drop.hint')}
             </Text>

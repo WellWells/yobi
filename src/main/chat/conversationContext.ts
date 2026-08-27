@@ -19,16 +19,6 @@ const SUMMARY_SHARE = 0.15;
 
 const CONTEXT_SHARE = 0.7;
 
-/**
- * Once the history stops fitting, evict in chunks of this many turns instead of shaving off
- * exactly as many as the budget requires.
- *
- * The retained window is always anchored to the newest turn, so its START index is what has
- * to hold still for a prefix to repeat — lowering the byte limit does not help, because the
- * newest-N window slides forward regardless. Rounding the start up to a multiple of this
- * chunk pins it for several turns at the cost of dropping up to `chunk - 1` extra turns.
- * Exported for the test suite.
- */
 export const EVICTION_CHUNK_TURNS = 4;
 
 export function resolveContextMode(
@@ -65,7 +55,16 @@ export function contextBudgetFor(
   return { budget: Math.floor(promptCapFor(targetUrl) * CONTEXT_SHARE), measure };
 }
 
-function truncateByMeasure(text: string, max: number, measure: (text: string) => number): string {
+export function inlineBudgetFor(
+  targetUrl: string,
+  byokBudgetChars: number,
+): { budget: number; measure: (text: string) => number } {
+  const measure = measureFor(targetUrl);
+  const cap = isByokTargetUrl(targetUrl) ? byokBudgetChars : promptCapFor(targetUrl);
+  return { budget: Math.floor(cap * (1 - CONTEXT_SHARE)), measure };
+}
+
+export function truncateByMeasure(text: string, max: number, measure: (text: string) => number): string {
   if (max <= 0) return '';
   if (measure(text) <= max) return text;
   let lo = 0;
@@ -124,16 +123,9 @@ export function packReplayPrompt(args: {
 
   let blocks = fill(budget);
 
-  // Packing to exactly the budget moves the start of the history forward by one turn on
-  // every later turn, so the prompt prefix never repeats twice and the server-side prefix
-  // caches (automatic on the OpenAI-compatible providers, and the only discount available
-  // to a stateless replay) can never hit. Quantizing the start index pins it for a run of
-  // turns, during which each turn is a pure append onto a byte-identical prefix.
   if (blocks.length < usable.length) {
     const minStart = usable.length - blocks.length;
     const chunkedStart = Math.ceil(minStart / EVICTION_CHUNK_TURNS) * EVICTION_CHUNK_TURNS;
-    // Dropping every remaining turn to land on a chunk boundary would trade the whole
-    // history for a cache hit with nothing left to cache.
     if (chunkedStart < usable.length) {
       blocks = usable.slice(chunkedStart).map(turnBlock);
     }

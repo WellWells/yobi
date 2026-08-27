@@ -3,7 +3,8 @@ import { Anchor, Box, Button, Container, Divider, Flex, Group, Stack, Text } fro
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import { useUpdateStore } from '../store/useUpdateStore';
-import { BookOpen, Bug, Book, Download, Info, RefreshCw, Scale, Store } from 'lucide-react';
+import { Bug, Download, Info, Newspaper, RefreshCw, Scale, Store } from 'lucide-react';
+import { GithubIcon } from '../config/brandIcons';
 import { SectionCard } from '../components/SectionCard';
 import { GroupHeader } from '../components/GroupHeader';
 import styles from './AboutView.module.css';
@@ -102,7 +103,7 @@ export const AboutView: React.FC = () => {
               variant="outline"
               size="xs"
               radius="md"
-              leftSection={<BookOpen size={13} />}
+              leftSection={<Newspaper size={13} />}
             >
               {t('about.blog')}
             </Button>
@@ -111,7 +112,7 @@ export const AboutView: React.FC = () => {
               variant="outline"
               size="xs"
               radius="md"
-              leftSection={<Book size={13} />}
+              leftSection={<GithubIcon size={13} />}
             >
               {t('about.github')}
             </Button>

@@ -6,6 +6,7 @@ import { executeAutomationWithTimeout } from './providers/automationExecutor';
 import { buildPickerScript, type PickerStrings } from './selectorPickerScript';
 import { getLangCache, t } from './i18n';
 import type { ScraperPickRequest, ScraperPickResult } from '../shared/types';
+import { toTokens } from '../shared/shortcuts';
 
 const LOAD_TIMEOUT_MS = 25_000;
 const PICK_TIMEOUT_MS = 180_000;
@@ -22,7 +23,8 @@ interface PickedSet {
 function pickerStrings(strings: Record<string, string>): PickerStrings {
   return {
     banner: t(strings, 'flow.skill.scraper.pickBannerList'),
-    cancelHint: t(strings, 'flow.skill.scraper.pickBannerCancel'),
+    cancelHint: t(strings, 'flow.skill.scraper.pickBannerCancel')
+      .replace('{{shortcut}}', toTokens('Escape', process.platform === 'darwin').join(' + ')),
     notAList: t(strings, 'flow.skill.scraper.pickNotAList'),
     scope: t(strings, 'flow.skill.scraper.pickScope'),
     rowCount: t(strings, 'flow.skill.scraper.matchCount'),
@@ -38,12 +40,6 @@ function pickerStrings(strings: Record<string, string>): PickerStrings {
   };
 }
 
-/**
- * One algorithm, three read-outs. A legacy single-field pick still gets a plain
- * selector, but it is now derived from the same row-scoped set as a list pick —
- * so the title and link a saved two-field flow ends up with describe the same
- * rows instead of two unrelated element sets.
- */
 function joinScoped(itemSelector: string, part: string): string {
   return part ? `${itemSelector} ${part}` : itemSelector;
 }
@@ -111,7 +107,6 @@ export async function pickSelector(args: ScraperPickRequest): Promise<ScraperPic
   });
   activePicker = win;
   win.webContents.setUserAgent(CLEAN_UA);
-  // Stays muted even though the window is visible: it exists for clicking elements, not viewing.
   muteWindow(win);
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());

@@ -1,6 +1,7 @@
 import { startTransition, useCallback } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import type { AgentCommandResult } from '../../../shared/types';
+import { attachmentMetaNames } from '../../../shared/conversationDoc';
 import { useAppStore } from '../store/appStore';
 import { agentApi, fileApi } from '../api/electronApi';
 import { answeringRun, useAgentRunStore } from '../store/useAgentRunStore';
@@ -29,11 +30,6 @@ export function useAgentRunner() {
     setResumable(await agentApi.listResumable());
   }, [setResumable]);
 
-  /**
-   * Arms (or disarms) the pending question. A question lands in the conversation the run
-   * just wrote to, which for a run started from a blank chat is a file that did not exist
-   * when it began — so the path comes back with the result rather than from before the run.
-   */
   const trackQuestion = useCallback((res: AgentCommandResult, runId: string): void => {
     useAgentRunStore.getState().setPendingQuestion(
       res.success && res.question
@@ -42,18 +38,20 @@ export function useAgentRunner() {
     );
   }, []);
 
-  const run = useCallback(async (goal: string, targetUrl: string): Promise<void> => {
+  const run = useCallback(async (
+    goal: string,
+    targetUrl: string,
+    attachments: string[] = [],
+  ): Promise<void> => {
     const conversationPath = useAppStore.getState().selectedFile?.path;
-    // The agent asked something in this very conversation, so this message is the answer:
-    // resume that run — every observation it already gathered is still on disk — rather
-    // than starting the goal over from nothing.
     const answering = answeringRun(useAgentRunStore.getState().pendingQuestion, conversationPath ?? '');
     const runId = answering?.runId ?? crypto.randomUUID();
-    const sendId = begin(goal, runId);
+    const sending = answering ? [] : attachments;
+    const sendId = begin(goal, runId, attachmentMetaNames(sending));
     try {
       const res = answering
         ? await agentApi.resume(runId, goal)
-        : await agentApi.run(goal, targetUrl, runId, conversationPath);
+        : await agentApi.run(goal, targetUrl, runId, conversationPath, sending);
       trackQuestion(res, runId);
       if (res.success) await finish(sendId, res.filePath);
       else fail(sendId);

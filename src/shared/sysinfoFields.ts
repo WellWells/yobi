@@ -62,14 +62,6 @@ export const SYSINFO_PROBE_FIELDS: ReadonlySet<string> = new Set([
   'dns',
 ]);
 
-/**
- * The runtime versions Yobi is built on. Excluded from the DEFAULT selection, and left out of
- * the field list documented to the flow-generating model, because a sysinfo result is sent
- * verbatim to a third-party provider — and "electron / chrome / node" in one line names the
- * framework the app is written in. They still collect normally when the user ticks them in the
- * field picker: the app may tell the user what it is made of; it does not tell everyone else.
- * `appVersion` stays in the default — Yobi's own version discloses nothing about how it is built.
- */
 export const SYSINFO_RUNTIME_FIELDS: ReadonlySet<string> = new Set([
   'electron',
   'node',

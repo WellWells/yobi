@@ -19,14 +19,6 @@ export function selectTargets(hits: SerpHit[], limit: number): SerpHit[] {
   return dedupeHits(hits).slice(0, limit);
 }
 
-/**
- * `onDoc` receives each page the moment it lands, not when its wave settles. That is what
- * lets the BYOK summariser run underneath the remaining fetches instead of after all of
- * them; a wave is only as fast as its slowest page, and on a 12-source run that was twelve
- * seconds of the summariser sitting idle. The consequence is that ids are handed out in
- * completion order rather than in rank order — every stage downstream renumbers, and
- * `rankSourcesScored` re-sorts, so nothing depends on the old ordering.
- */
 export async function harvest(
   targets: SerpHit[],
   maxSources: number = DEFAULT_MAX_SOURCES,
@@ -117,8 +109,6 @@ async function fetchClean(hit: SerpHit, signal: AbortSignal): Promise<Omit<Sourc
       text = rendered.cleanedText;
       if (rendered.title && rendered.title !== hit.url) title = rendered.title;
     }
-    // A page whose text only appears after rendering usually did not deliver its metadata
-    // in the raw response either, so this is the run that finds the date for those.
     if (!publishedAt) publishedAt = extractPublishedAt(html);
   }
 

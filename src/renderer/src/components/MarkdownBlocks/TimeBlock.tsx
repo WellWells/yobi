@@ -1,6 +1,6 @@
 import React from 'react';
 import { Box, Group, Text } from '@mantine/core';
-import { Clock3 } from 'lucide-react';
+import { Clock } from 'lucide-react';
 import dayjs from 'dayjs';
 
 interface TimeBlockProps {
@@ -47,7 +47,7 @@ export const TimeBlock = React.memo<TimeBlockProps>(({ time, provider }) => {
       )}
       {displayTime && (
         <>
-          <Clock3 size={13} style={{ opacity: 0.75, marginTop: 1 }} />
+          <Clock size={13} style={{ opacity: 0.75, marginTop: 1 }} />
           <Text span style={{
             fontFamily: 'var(--font-mono)',
             letterSpacing: '0.4px',

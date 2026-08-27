@@ -1,14 +1,16 @@
 import { PROVIDER_URLS } from '../shared/types';
-import { DEFAULT_CAPTURE_WIDTH, defaultMainHotkey, defaultQuickExportHotkey } from '../shared/types';
+import { DEFAULT_CAPTURE_MARGIN, DEFAULT_CAPTURE_WIDTH, defaultMainHotkey, defaultQuickExportHotkey } from '../shared/types';
 import { DEFAULT_SHARE_INSTANCE } from '../shared/types';
 import { DEFAULT_CAPTURE_BACKGROUND_STYLE, DEFAULT_CAPTURE_PALETTE } from '../shared/capturePalettes';
 import { DEFAULT_AGENT_ASK_TTL_MINUTES } from '../shared/types';
+import type { ShortcutOverride } from '../shared/shortcuts';
 import type { BotBuiltinCommands, BotByokCommands, BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureRange, CaptureSettings, CardLayout, QuickExportSettings, LinePairingState, McpServerConfig, NotifyEventPrefs, PromptPreferences, Provider, ShareSettings, TelegramChannel, TelegramPairingState } from '../shared/types';
 
 export interface Config {
   targetUrl: string;
   hotkey: string;
   hotkeyEnabled: boolean;
+  shortcuts: Record<string, ShortcutOverride>;
   debounceMs: number;
   responseTimeout: number;
   byokContextBudgetChars: number;
@@ -107,6 +109,7 @@ export const defaultStored: StoredConfig = {
   targetUrl: PROVIDER_URLS.gemini,
   hotkey: defaultMainHotkey(process.platform === 'darwin'),
   hotkeyEnabled: true,
+  shortcuts: {},
   debounceMs: 1000,
   responseTimeout: 120_000,
   byokContextBudgetChars: 32_000,
@@ -140,6 +143,7 @@ export const defaultStored: StoredConfig = {
     cardLayout: 'document' as CardLayout,
     range: 'all' as CaptureRange,
     width: DEFAULT_CAPTURE_WIDTH,
+    margin: DEFAULT_CAPTURE_MARGIN,
     pixelRatio: 1,
     zip: false,
   },
@@ -148,6 +152,7 @@ export const defaultStored: StoredConfig = {
     expire: '1week',
     burnAfterReading: false,
     consentedAt: '',
+    instanceExpires: null,
   },
   quickExport: {
     enabled: true,

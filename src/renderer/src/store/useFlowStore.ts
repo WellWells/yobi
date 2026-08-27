@@ -229,8 +229,6 @@ export const useFlowStore = create<ActionState>((set, get) => ({
     if (result.ok) {
       const { flow } = result;
       set((state) => ({
-        // Filtered, not appended: main broadcasts FLOW_CREATED as it saves, so `adoptFlow` has
-        // usually already inserted this flow before the invoke even resolves.
         flows: [...state.flows.filter((existing) => existing.id !== flow.id), flow],
         selectedFlowId: flow.id,
         savedFlows: { ...state.savedFlows, [flow.id]: cloneFlow(flow) },
@@ -241,11 +239,6 @@ export const useFlowStore = create<ActionState>((set, get) => ({
     return result;
   },
 
-  /*
-   * A flow created outside this store — the agent's `build_flow`, mid-conversation. Deliberately
-   * does not move the selection or clear the execution log: the user is in the chat view when
-   * this arrives, and reaching over to re-point the flow editor is not what they asked for.
-   */
   adoptFlow: (flow) => {
     set((state) => (state.flows.some((existing) => existing.id === flow.id)
       ? state

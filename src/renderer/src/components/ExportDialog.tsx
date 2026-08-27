@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Modal, Button, Box, Flex, Group, Text, Tooltip } from '@mantine/core';
 import 'katex/dist/katex.min.css';
 import type { CaptureFormat, CaptureRange, CardLayout, MarkdownCaptureRequest } from '../../../shared/types';
-import { Clipboard, Download, Image as ImageIcon, Save, Upload, } from 'lucide-react';
+import { Clipboard, Download, Image as ImageIcon, ImageDown, Save } from 'lucide-react';
 import { ExportSettingsPanel } from './exportDialog/ExportSettingsPanel';
 import { ExportPreviewPanel } from './exportDialog/ExportPreviewPanel';
 import { AppButton } from './AppButton';
@@ -43,6 +43,8 @@ interface ExportDialogProps {
   turnCount: number;
   width: number;
   setWidth: (value: number) => void;
+  margin: number;
+  setMargin: (value: number) => void;
   hiDpi: boolean;
   setHiDpi: (value: boolean) => void;
   zip: boolean;
@@ -86,6 +88,8 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
   turnCount,
   width,
   setWidth,
+  margin,
+  setMargin,
   hiDpi,
   setHiDpi,
   zip,
@@ -124,7 +128,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
       onClose={onCancel}
       title={
         <Group gap={8}>
-          <Box c="var(--accent)"><Upload size={16} /></Box>
+          <Box c="var(--accent)"><ImageDown size={16} /></Box>
           <Text component="span" fz="var(--font-size-xl)" fw={700} c="var(--text-primary)">
             {t('capture.dialog.title')}
           </Text>
@@ -185,6 +189,8 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
           turnCount={turnCount}
           width={width}
           setWidth={setWidth}
+          margin={margin}
+          setMargin={setMargin}
           hiDpi={hiDpi}
           setHiDpi={setHiDpi}
           zip={zip}

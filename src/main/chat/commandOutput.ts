@@ -5,6 +5,7 @@ import { getOutputDir } from '../files';
 import { sendLog } from '../helpers';
 import { tokenMetaFields } from '../../shared/tokenEstimate';
 import type { TokenUsage } from '../../shared/tokenEstimate';
+import { attachmentMetaNames } from '../../shared/conversationDoc';
 import { appendConversationTurn } from './conversationStore';
 
 export async function saveCommandOutput(args: {
@@ -14,9 +15,11 @@ export async function saveCommandOutput(args: {
   response: string;
   providerLabel: string;
   command?: string;
+  attachments?: string[];
   usage?: TokenUsage;
 }): Promise<string> {
   const { conversationPath, markdownOptions, prompt, response, providerLabel, command, usage } = args;
+  const attached = attachmentMetaNames(args.attachments ?? []);
   const tokens = usage ? tokenMetaFields(usage) : {};
 
   if (conversationPath) {
@@ -30,6 +33,7 @@ export async function saveCommandOutput(args: {
           t: new Date().toISOString(),
           m: 'replay',
           ...(command ? { c: command } : {}),
+          ...(attached.length > 0 ? { a: attached } : {}),
           ...tokens,
         },
       });

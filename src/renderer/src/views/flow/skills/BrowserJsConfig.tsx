@@ -8,6 +8,9 @@ import { ToggleSwitch } from '../../../components/ToggleSwitch';
 import { SettingRow } from '../../../components/SettingRow';
 import { clipboardApi } from '../../../api/electronApi';
 import type { SkillConfigProps } from './types';
+import { toTokens } from '../../../../../shared/shortcuts';
+import { useResolvedCombo } from '../../../store/shortcutStore';
+import { isMac } from '../../../utils/keyLabels';
 
 const HELPER_ROWS: { sig: string; key: string }[] = [
   { sig: 'await waitFor(sel, ms?)', key: 'flow.skill.browser_js.help.waitFor' },
@@ -51,6 +54,10 @@ const BROWSER_JS_LLM_REFERENCE = [
 ].join('\n');
 
 export const BrowserJsConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
+  const formatKeys = toTokens(useResolvedCombo('editor.format'), isMac).join(' + ');
+  const formatHint = formatKeys
+    ? t('flow.skill.browser_js.formatHint').replace('{{shortcut}}', formatKeys)
+    : '';
   const [helpOpen, setHelpOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -91,7 +98,7 @@ export const BrowserJsConfig: React.FC<SkillConfigProps> = ({ step, onChange, t 
           placeholder={t('flow.skill.browser_js.code.placeholder')}
           ariaLabel={t('flow.skill.browser_js.code')}
         />
-        <Text fz="xs" c="dimmed" mt={4}>{t('flow.skill.browser_js.formatHint')}</Text>
+        {formatHint && <Text fz="xs" c="dimmed" mt={4}>{formatHint}</Text>}
       </Box>
 
       <Collapse expanded={helpOpen}>

@@ -15,6 +15,7 @@ import {
   type TelegramContext,
 } from './commandHandlers';
 import { handleInitCommand, handleStartCommand, pairingConversation } from './pairing';
+import { createMediaIntake, type MediaIntake } from './mediaIntake';
 import type { ResolvedBuiltinCommand, ResolvedProviderCommand } from '../providerCommands';
 
 export type {
@@ -25,7 +26,10 @@ export type {
   TelegramTaskRequest,
 } from './commandHandlers';
 
-export function attachTelegramHandlers(bot: Bot<TelegramContext>, options: TelegramCommandOptions): void {
+export function attachTelegramHandlers(
+  bot: Bot<TelegramContext>,
+  options: TelegramCommandOptions,
+): MediaIntake {
   bot.use(session({ initial: () => ({}) }));
   bot.use(conversations());
   bot.use(createConversation((conversation, ctx) => pairingConversation(conversation, ctx, options), 'pairing-init'));
@@ -56,7 +60,6 @@ export function attachTelegramHandlers(bot: Bot<TelegramContext>, options: Teleg
     const name = readLeadingCommand(ctx, options.getBotUsername?.() ?? '');
     if (!name) return next();
 
-    // Any command means the user moved on from whatever the agent last asked them.
     if (ctx.chat && ctx.from) options.onDropAgentAsk?.(ctx.chat.id, ctx.from.id);
 
     const provider = options.getProviderCommands().find((spec) => spec.command === name);
@@ -92,6 +95,20 @@ export function attachTelegramHandlers(bot: Bot<TelegramContext>, options: Teleg
     }
     await handleDirectMessage(ctx, options);
   });
+
+  const media = createMediaIntake(options);
+
+  bot.on(
+    ['message:animation', 'message:video', 'message:video_note', 'message:sticker'],
+    async (ctx) => { await media.handleUnsupported(ctx); },
+  );
+  bot.on(
+    ['message:photo', 'message:document', 'message:voice', 'message:audio'],
+    async (ctx) => { await media.handle(ctx); },
+  );
+  bot.on('message:file', async (ctx) => { await media.handleUnsupported(ctx); });
+
+  return media;
 }
 
 function readLeadingCommand(ctx: TelegramContext, botUsername: string): string | null {

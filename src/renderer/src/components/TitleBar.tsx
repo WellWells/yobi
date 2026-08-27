@@ -6,7 +6,6 @@ import { useI18nStore } from '../store/i18nStore';
 import { useUpdateStore } from '../store/useUpdateStore';
 import { useAltKeyHeld } from '../hooks/useAltKeyHeld';
 import type { View } from '../store/appStore';
-// Same glyph the chat slash-command menu uses for a flow, so the two can never drift.
 import { FLOW_COMMAND_ICON as FlowIcon } from '../config/chatModes';
 import { AppWindow, Info, ListOrdered, MessageSquare, ScrollText, Settings } from 'lucide-react';
 import { agentApi, systemApi } from '../api/electronApi';

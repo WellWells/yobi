@@ -29,11 +29,6 @@ export function toSummary(state: AgentRunState): AgentRunSummary {
   };
 }
 
-/**
- * `awaiting` is deliberately absent: that run's question is already in the conversation,
- * so the user's reply is how it continues. Offering it in the resume banner as well would
- * put two competing ways to continue one run in front of them.
- */
 export function shouldOfferOnRestart(state: AgentRunState): boolean {
   return state.status === 'running' || state.status === 'failed';
 }
@@ -42,11 +37,6 @@ function isPendingAsk(turn: AgentTurnRecord): boolean {
   return turn.tool === AGENT_ASK_TOOL && turn.observation === '';
 }
 
-/**
- * Writes the user's reply into the question turn that is waiting for it, so the engine
- * replays the whole scratchpad — every observation already paid for, plus the answer — and
- * continues from there instead of starting the goal over.
- */
 export function applyAnswer(turns: AgentTurnRecord[], answer: string): AgentTurnRecord[] {
   const index = turns.findIndex(isPendingAsk);
   if (index < 0) return turns.slice();
@@ -55,10 +45,6 @@ export function applyAnswer(turns: AgentTurnRecord[], answer: string): AgentTurn
   return next;
 }
 
-/**
- * A resume with no answer (the restart banner, a retry after a crash) must not replay an
- * unanswered question: the model would read "I asked and got nothing" and ask again.
- */
 export function dropUnansweredAsk(turns: AgentTurnRecord[]): AgentTurnRecord[] {
   return turns.filter((turn) => !isPendingAsk(turn));
 }

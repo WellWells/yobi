@@ -13,10 +13,8 @@ export const BYOK_REQUEST_FAILED_PREFIX = 'BYOK request failed: ';
 
 const COOLDOWN_STATUSES = new Set([429, 503]);
 
-/** The 4xx worth sending again to the SAME endpoint with the SAME payload. */
 const RETRYABLE_STATUSES = new Set([408, 409, 425, 429]);
 
-/** 5xx that state a permanent capability gap rather than a transient fault. */
 const PERMANENT_SERVER_STATUSES = new Set([501, 505]);
 
 const MIN_COOLDOWN_MS = 1_000;
@@ -35,31 +33,13 @@ export class ByokFailure extends Error {
   }
 }
 
-/**
- * Whether re-sending the identical request to the identical endpoint could plausibly do
- * something different. A 4xx says the endpoint understood and refused; sending it twice
- * more only spends quota — and the retry layers multiply, so one unknown model name used
- * to cost three requests per key instead of one.
- *
- * Deliberately NOT used to decide failover: every member of a group carries its own
- * `baseUrl` and `model`, so even a 404 or a 400 can be specific to the member that
- * answered. Trying the next key is bounded by the group size and can genuinely succeed.
- *
- * Leniency is scoped to what it can defend: anything that is NOT a 4xx — a transport fault,
- * a 5xx, an odd code from a proxy that invented it — keeps its retry, because
- * "OpenAI-compatible" is a spectrum and a temporary fault should not become a hard failure
- * the user has to redo by hand. Inside 4xx the allowlist rules, because a 4xx is the
- * endpoint saying it understood the request and will not serve it.
- */
 export function isByokRetryable(err: unknown): boolean {
   if (!(err instanceof ByokFailure) || err.status === undefined) return true;
-  // "Not Implemented" and "HTTP Version Not Supported" are capability statements, not blips.
   if (PERMANENT_SERVER_STATUSES.has(err.status)) return false;
   const refusedByEndpoint = err.status >= 400 && err.status < 500;
   return refusedByEndpoint ? RETRYABLE_STATUSES.has(err.status) : true;
 }
 
-/** Accepts both `retry-after` forms (delta-seconds and HTTP-date), clamped to sanity. */
 export function parseRetryAfter(header: string | null | undefined): number | undefined {
   if (!header?.trim()) return undefined;
   const clamp = (ms: number): number => Math.min(MAX_COOLDOWN_MS, Math.max(MIN_COOLDOWN_MS, ms));
@@ -74,14 +54,12 @@ export interface ByokEndpoint {
   apiKey: string;
   model?: string;
   label?: string;
-  /** Instance id, when this endpoint came from a stored instance — keys the cooldown. */
   id?: string;
 }
 
 export interface ByokUsage {
   input: number;
   output: number;
-  /** Prefix tokens the provider served from its own cache, when it reports them. */
   cachedInput?: number;
 }
 
@@ -102,13 +80,6 @@ export function getByokLabel(url: string): string {
   return findByokInstanceByUrl(url)?.name ?? 'BYOK';
 }
 
-/**
- * How many usable keys a URL can rotate across — 1 for a single instance, the member count
- * for a group. `orderGroupMembers` hands each call the next key round-robin, so this is the
- * natural ceiling on how many requests a caller can have in flight before it starts reusing
- * a key and racing its rate limit. Callers that fan out (the search map-reduce) size
- * themselves from it rather than from a guessed constant.
- */
 export function byokConcurrencyCeiling(url: string): number {
   if (!isByokGroupUrl(url)) return 1;
   const group = findByokGroupByUrl(url);
@@ -131,32 +102,20 @@ function endpointForInstance(instance: ByokInstance): ByokEndpoint {
 
 const groupRotation = new Map<string, number>();
 
-/**
- * Keys that answered with a rate-limit, and when they are worth trying again. Held in
- * memory only: quota windows are minutes long, so losing this on restart is correct.
- */
 const keyCooldown = new Map<string, number>();
 
 function cooldownUntil(id: string | undefined): number {
   return id ? keyCooldown.get(id) ?? 0 : 0;
 }
 
-/** Exported for the test suite. */
 export function markKeyCooling(id: string, retryAfterMs: number | undefined): void {
   keyCooldown.set(id, Date.now() + (retryAfterMs ?? DEFAULT_COOLDOWN_MS));
 }
 
-/** Exported for the test suite. */
 export function clearByokCooldowns(): void {
   keyCooldown.clear();
 }
 
-/**
- * Round-robin across the group, then move keys that are still cooling down to the back.
- * A cooling key is never dropped — when every member is rate-limited the list is still
- * complete, ordered by which one recovers first, so a request always goes out.
- * Exported for the test suite.
- */
 export function orderGroupMembers(groupId: string, members: ByokInstance[]): ByokInstance[] {
   const start = (groupRotation.get(groupId) ?? 0) % members.length;
   groupRotation.set(groupId, start + 1);
@@ -241,19 +200,11 @@ function extractCompletionContent(bodyText: string): string | null {
   return null;
 }
 
-/**
- * Prefix-cache hits, when the endpoint reports them. OpenAI and the Gemini
- * OpenAI-compatible layer both nest this under `prompt_tokens_details`; some proxies
- * hoist it to the top level, so accept either. Capped at the reported input so a
- * miscounting proxy can never imply a hit rate above 100%.
- */
 function readCachedInput(usage: Record<string, unknown>, input: number): number | undefined {
   const details = usage.prompt_tokens_details;
   const nested = details && typeof details === 'object'
     ? (details as Record<string, unknown>).cached_tokens
     : undefined;
-  // Prefer the nested form, but a proxy that sends an empty details object and hoists the
-  // count should still be read rather than silently counted as a miss.
   const value = nested ?? usage.cached_tokens;
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined;
   return Math.min(input, Math.round(value));
@@ -355,12 +306,6 @@ async function fetchWithByokTimeout(
   }
 }
 
-/**
- * How much longer than the idle timeout a stream may keep going in total. The idle timer
- * alone cannot bound a call: it is reset on every raw chunk, and SSE keep-alive comments
- * (`: ping`) are chunks that carry no content — so a gateway that keeps the socket warm
- * holds the request open forever while the caller believes it passed a timeout.
- */
 const STREAM_TOTAL_TIMEOUT_FACTOR = 3;
 
 async function streamByokChat(
@@ -464,8 +409,6 @@ async function streamByokChat(
       try {
         result = await reader.read();
       } catch (err: unknown) {
-        // Whatever it managed to stream beats an error, so a slow-but-productive model
-        // degrades to a truncated answer rather than losing the whole turn.
         if ((abortedByIdle || abortedByDeadline) && content.trim()) {
           return { content: content.trim(), usage };
         }
@@ -499,11 +442,6 @@ function isBadRequestError(err: unknown): boolean {
   return err instanceof ByokFailure && err.status === 400;
 }
 
-/**
- * Prefix caching on the OpenAI-compatible providers is server-side and automatic, so
- * the only way to know whether it is working is to read it back. Surfacing the hit rate
- * is what makes every other token-saving change verifiable instead of hopeful.
- */
 function logCacheHit(usage: ByokUsage): void {
   if (usage.cachedInput === undefined || usage.cachedInput <= 0 || usage.input <= 0) return;
   const share = Math.round((usage.cachedInput / usage.input) * 100);

@@ -171,23 +171,13 @@ function commandLabel(s: Record<string, string>, command: string): string {
   return command === 'direct' ? t(s, 'telegram.msg.directLabel') : command;
 }
 
-/** Minimum gap between progress edits — Telegram rate-limits edits to a chat. */
 const PROGRESS_EDIT_INTERVAL_MS = 4_000;
 
 export interface ProgressEditor {
   push: (text: string) => void;
-  /**
-   * Must be called before the final reply is sent: a trailing edit that lands afterwards
-   * would overwrite the answer with a stale "thinking…".
-   */
   stop: () => void;
 }
 
-/**
- * Rewrites the "queued" acknowledgement in place as the run reports progress. A bot user has
- * no queue panel to look at, so without this a long run is indistinguishable from a hung one.
- * Best-effort throughout: a failed edit is never worth failing the run over.
- */
 export function createProgressEditor(
   mctx: TelegramMessagingContext,
   target: TelegramReplyTarget,
@@ -208,7 +198,6 @@ export function createProgressEditor(
     try {
       await bot.api.editMessageText(target.chatId, messageId, text);
     } catch {
-      // Rate limited, unchanged, or the message is gone — progress is decoration.
     }
   };
 
@@ -220,7 +209,6 @@ export function createProgressEditor(
       void send(text);
       return;
     }
-    // Too soon: hold the newest update and let the timer deliver it.
     queued = text;
     if (timer) return;
     timer = setTimeout(() => {

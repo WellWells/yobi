@@ -7,7 +7,7 @@ export function useAltKeyHeld(): boolean {
   useEffect(() => {
     const sync = (event: KeyboardEvent): void => {
       const altOnly = event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
-      setHeld(altOnly && !isTypingTarget(document.activeElement));
+      setHeld(altOnly && !isTypingTarget(event.target));
     };
     const clear = (): void => setHeld(false);
     window.addEventListener('keydown', sync);

@@ -10,7 +10,6 @@ export { AppTextInput } from '../../components/AppTextInput';
 export { SettingField } from '../../components/SettingField';
 export { SettingDivider } from '../../components/SettingDivider';
 export { SectionTitle } from '../../components/SectionTitle';
-export { HotkeyField } from '../../components/HotkeyField';
 export { VisibilityToggle } from '../../components/VisibilityToggle';
 
 export { AppSegmentedControl as SegmentedControl } from '../../components/AppSegmentedControl';

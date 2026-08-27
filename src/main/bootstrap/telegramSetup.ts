@@ -5,6 +5,7 @@ import { relaunchApp, sendLog, sendToRenderer, sendWebNotification, createTaskId
 import { getLangCache } from '../i18n';
 import { resolveUrlPrompt } from '../urlParser';
 import { TelegramRuntime, normalizePairingState } from '../telegram';
+import { sweepOrphanTempAttachments } from '../telegram/fileDownload';
 import { clearBotConversation, getBotConversation } from '../botConversations';
 import { resolveBotCommands } from './botCommands';
 import {
@@ -31,6 +32,10 @@ export function createTelegramRuntime(deps: {
 }): TelegramRuntime {
   const { queue, getFlowManager } = deps;
 
+  void sweepOrphanTempAttachments().then((removed) => {
+    if (removed > 0) sendLog(`[telegram] swept ${removed} orphaned media temp file(s)`);
+  });
+
   return new TelegramRuntime({
     getEnabled: () => config.telegram.enabled,
     getToken: () => config.telegram.botToken,
@@ -51,6 +56,11 @@ export function createTelegramRuntime(deps: {
       sendToRenderer(IPC.TELEGRAM_RUNTIME, getTelegramRuntimeSnapshot());
     },
     isAdminUser: (userId) => isTelegramAdminUser(userId),
+    getEffectiveTargetUrl: () => resolveLlmDirectTarget(
+      config.telegram.llmDirect,
+      getHiddenSources(),
+    ).targetUrl || config.targetUrl,
+    getByokContextBudgetChars: () => config.byokContextBudgetChars,
     onTaskRequest: async (request) => {
       const resolved = await resolveUrlPrompt(request.prompt, {
         langData: getLangCache(),
@@ -75,6 +85,9 @@ export function createTelegramRuntime(deps: {
         replyTarget: request.replyTarget,
         requesterName: request.requesterName,
         sessionKey,
+        ...(request.attachments?.length
+          ? { attachments: request.attachments, ephemeralAttachments: true }
+          : {}),
         ...(conversationPath ? { conversationPath } : {}),
       });
       sendLog(`[${id}] Telegram /${request.command} queued`);

@@ -11,13 +11,18 @@ function nextCommandSendId(): string {
 export function useCommandTurn() {
   const originBySendId = useRef(new Map<string, string>());
 
-  const begin = useCallback((prompt: string, runId?: string): string => {
+  const begin = useCallback((prompt: string, runId?: string, attachments?: string[]): string => {
     const conversationPath = useAppStore.getState().selectedFile?.path ?? '';
     const sendId = nextCommandSendId();
     originBySendId.current.set(sendId, conversationPath);
     useAppStore.getState().addPendingTurn(
       conversationPath || NEW_CONVERSATION_KEY,
-      { sendId, prompt, ...(runId ? { runId } : {}) },
+      {
+        sendId,
+        prompt,
+        ...(runId ? { runId } : {}),
+        ...(attachments?.length ? { attachments } : {}),
+      },
     );
     return sendId;
   }, []);

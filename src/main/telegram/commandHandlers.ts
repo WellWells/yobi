@@ -20,6 +20,7 @@ export interface TelegramTaskRequest {
   targetUrl: string;
   replyTarget: TelegramReplyTarget;
   requesterName?: string;
+  attachments?: string[];
 }
 
 export interface TelegramBuiltinRequest {
@@ -52,14 +53,10 @@ export interface TelegramCommandOptions {
   getBotUsername?: () => string;
   getProviderCommands: () => ResolvedProviderCommand[];
   getBuiltinCommands: () => ResolvedBuiltinCommand[];
-  /** Runs the built-in command and delivers its reply through the ordinary task reply path. */
   onBuiltinCommand?: (request: TelegramBuiltinRequest) => Promise<void>;
-  /** True while an agent question from this chat is still open for an answer. */
   hasPendingAgentAsk?: (chatId: number, userId: number) => boolean;
-  /** Feeds a plain message back into the agent run that asked this chat a question. */
   onAgentAnswer?: (request: TelegramAgentAnswerRequest) => Promise<void>;
   onDropAgentAsk?: (chatId: number, userId: number) => void;
-  /** Drops this chat's running conversation. Resolves true when there was one to drop. */
   onNewConversation?: (chatId: number, userId: number) => Promise<boolean>;
   getFlowCommands?: () => Array<{ flowId: string; command: string; description: string; inputVariable: string }>;
   onFlowCommand?: (
@@ -69,6 +66,9 @@ export interface TelegramCommandOptions {
     userId: number,
     chatId: number,
   ) => Promise<{ taskId: string; result: Promise<FlowExecutionResult> }>;
+  getBotToken?: () => string;
+  getEffectiveTargetUrl?: () => string;
+  getByokContextBudgetChars?: () => number;
 }
 
 export async function handleProviderCommand(
@@ -96,7 +96,6 @@ export async function handleProviderCommand(
   await queueTaskWithAck(ctx, options, { command: spec.command, prompt, targetUrl: spec.targetUrl });
 }
 
-/** Ends the running conversation for this chat, so the next message opens a fresh one. */
 export async function handleNewCommand(
   ctx: TelegramContext,
   options: TelegramCommandOptions,
@@ -240,8 +239,6 @@ export async function handleDirectMessage(ctx: TelegramContext, options: Telegra
   const s = options.getStrings();
   const direct = options.getLlmDirect();
 
-  // An open agent question is answered by plain text, so this has to come before the
-  // command-free chat gate — otherwise nobody with that switch off could ever reply.
   const answersAgent = options.hasPendingAgentAsk?.(ctx.chat.id, ctx.from.id) ?? false;
 
   if (ctx.chat.type === 'private') {

@@ -234,14 +234,9 @@ export const EXTRACTION_SCRIPT = `(async () => {
       && pr.captions.playerCaptionsTracklistRenderer
       && pr.captions.playerCaptionsTracklistRenderer.captionTracks;
     if (!Array.isArray(tracks) || tracks.length === 0) {
-      // No caption tracks at all — genuinely no transcript (or a non-watch page
-      // was served, e.g. a consent / bot-check wall with no player response).
       return JSON.stringify({ title, transcript: '', reason: 'no_caption_tracks' });
     }
 
-    // The transcript can render in more than one panel instance; scope reading
-    // to a single EXPANDED panel that actually holds transcript segments so we
-    // never concatenate the transcript twice.
     const expandedPanel = () => Array.from(document.querySelectorAll('ytd-engagement-panel-section-list-renderer'))
       .find((p) => /EXPANDED/.test(p.getAttribute('visibility') || '')
         && (/transcript/i.test(p.getAttribute('target-id') || '')
@@ -249,11 +244,6 @@ export const EXTRACTION_SCRIPT = `(async () => {
 
     const readSegments = () => {
       const root = expandedPanel() || document;
-      // Two coexisting transcript UIs: legacy ytd-transcript-segment-renderer
-      // (text in .segment-text) and the modern transcript-segment-view-model
-      // (text in <span class="ytAttributedStringHost" role="text">). The
-      // timestamp lives in a separate element in both, so targeting the caption
-      // span/element excludes it.
       const nodes = root.querySelectorAll('ytd-transcript-segment-renderer, transcript-segment-view-model');
       if (!nodes.length) return '';
       const parts = [];
@@ -270,32 +260,27 @@ export const EXTRACTION_SCRIPT = `(async () => {
     };
 
     const openTranscript = () => {
-      // Expand the description so its transcript section mounts.
       ['#description #expand', 'ytd-text-inline-expander #expand', 'tp-yt-paper-button#expand', '#expand'].forEach((sel) => {
         const e = document.querySelector(sel);
         if (e) { try { e.click(); } catch (x) {} }
       });
-      // Language-independent: the dedicated "Show transcript" section button.
       const sectionBtn = document.querySelector(
         'ytd-video-description-transcript-section-renderer button, '
         + 'ytd-video-description-transcript-section-renderer yt-button-shape button'
       );
       if (sectionBtn) { try { sectionBtn.click(); } catch (x) {} }
-      // Multilingual aria-label/text fallback.
       document.querySelectorAll('button, tp-yt-paper-button, ytd-button-renderer, yt-button-shape, a').forEach((b) => {
         const label = ((b.getAttribute && b.getAttribute('aria-label')) || '') + ' | ' + (b.textContent || '').trim();
         if (TRANSCRIPT_RE.test(label)) { try { b.click(); } catch (x) {} }
       });
     };
 
-    // Wait for the watch page to hydrate (up to ~12s).
     for (let i = 0; i < 24 && !count('ytd-watch-metadata'); i++) await sleep(500);
 
     let transcript = readSegments();
     if (transcript) return JSON.stringify({ title, transcript, reason: 'ok' });
 
     openTranscript();
-    // Poll up to ~20s for the panel to expand and render its segments.
     for (let i = 0; i < 50; i++) {
       await sleep(400);
       transcript = readSegments();

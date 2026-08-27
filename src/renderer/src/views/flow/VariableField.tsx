@@ -18,7 +18,6 @@ export interface VariableFieldProps {
   asQuestion?: boolean;
   onBeforeNavigate?: () => void;
   allVariables?: FlowVariable[];
-  /** Required for a 'list' pick: one session fills this variable and its siblings. */
   onChangeMany?: (patch: Record<string, string>) => void;
 }
 

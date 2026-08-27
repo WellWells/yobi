@@ -18,6 +18,7 @@ import {
   type TelegramContext,
   type TelegramTaskRequest,
 } from './commands';
+import type { MediaIntake } from './mediaIntake';
 import type { ResolvedBuiltinCommand, ResolvedProviderCommand } from '../providerCommands';
 import type { BotBuiltinCommandKey } from '../../shared/types';
 import type { BotBuiltinRunResult } from '../botBuiltinCommands';
@@ -79,6 +80,8 @@ export interface TelegramRuntimeDeps {
     userId: number,
     chatId: number,
   ) => Promise<{ taskId: string; result: Promise<FlowExecutionResult> }>;
+  getEffectiveTargetUrl: () => string;
+  getByokContextBudgetChars: () => number;
 }
 
 export class TelegramRuntime {
@@ -90,6 +93,7 @@ export class TelegramRuntime {
   private currentAllowGroupCommands = false;
   private pollerActive = false;
   private lock: Promise<void> = Promise.resolve();
+  private mediaIntake: MediaIntake | null = null;
   private readonly registry = new ExportTokenRegistry();
   private readonly msgCtx: TelegramMessagingContext;
 
@@ -205,7 +209,6 @@ export class TelegramRuntime {
     await messaging.sendTaskError(this.msgCtx, target, payload);
   }
 
-  /** Built-in results reuse the ordinary reply path, so output modes and exports still apply. */
   private async deliverBuiltinResult(
     target: TelegramReplyTarget,
     prompt: string,
@@ -232,7 +235,7 @@ export class TelegramRuntime {
     this.updateStatus('starting');
     this.errorMessage = '';
 
-    const candidate = this.createBot(token);
+    const { bot: candidate, intake } = this.createBot(token);
     let me: Awaited<ReturnType<typeof candidate.api.getMe>>;
     const s = this.deps.getStrings();
     try {
@@ -260,6 +263,7 @@ export class TelegramRuntime {
 
     await this.stopInternal();
     this.bot = candidate;
+    this.mediaIntake = intake;
     this.currentToken = token;
     this.currentAllowGroupCommands = this.deps.getAllowGroupCommands();
     this.botUsername = me.username || '';
@@ -284,7 +288,7 @@ export class TelegramRuntime {
     this.deps.onLog(`[telegram] bot running as @${this.botUsername || 'unknown'}`);
   }
 
-  private createBot(token: string): Bot<TelegramContext> {
+  private createBot(token: string): { bot: Bot<TelegramContext>; intake: MediaIntake } {
     const bot = new Bot<TelegramContext>(token, {
       client: {
         fetch: telegramFetchCompat,
@@ -295,18 +299,19 @@ export class TelegramRuntime {
       () => this.deps.getPairing(),
       (next) => this.deps.savePairing(next),
     );
-    // Registered ahead of the command handlers: discovery needs neither session nor conversation
-    // state, so it must not sit behind that middleware stack.
     attachChannelDiscovery(bot, {
       isPairedUser: pairingBridge.isPairedUser,
       getChannels: () => this.deps.getChannels(),
       saveChannels: (next) => this.deps.saveChannels(next),
       onLog: this.deps.onLog,
     });
-    attachTelegramHandlers(bot, {
+    const intake = attachTelegramHandlers(bot, {
       isPairedUser: pairingBridge.isPairedUser,
       consumePairingCode: pairingBridge.consumePairingCode,
       allowGroupCommands: () => this.deps.getAllowGroupCommands(),
+      getBotToken: () => this.deps.getToken().trim(),
+      getEffectiveTargetUrl: () => this.deps.getEffectiveTargetUrl(),
+      getByokContextBudgetChars: () => this.deps.getByokContextBudgetChars(),
       isAdminUser: (userId) => this.deps.isAdminUser(userId),
       onTaskRequest: (request) => this.deps.onTaskRequest(request),
       onStatusRequest: () => this.deps.onStatusRequest(),
@@ -375,10 +380,12 @@ export class TelegramRuntime {
       this.updateStatus('error');
       this.deps.onLog(`[telegram] middleware error: ${getErrorMessage(err)}`);
     });
-    return bot;
+    return { bot, intake };
   }
 
   private async stopInternal(): Promise<void> {
+    this.mediaIntake?.dispose();
+    this.mediaIntake = null;
     if (!this.bot) {
       this.pollerActive = false;
       this.currentToken = '';

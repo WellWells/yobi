@@ -35,8 +35,6 @@ export function useBotCommands() {
     setByokCommands(byok);
   }, []);
 
-  // BYOK keys are added, renamed and deleted on this same page, and each edit can change
-  // which command name a key ends up with — reload whenever that list moves.
   const byokSignature = useAppStore((s) =>
     [...s.byokModels, ...s.byokGroupModels].map((m) => m.url + '=' + m.label).join('|'));
 

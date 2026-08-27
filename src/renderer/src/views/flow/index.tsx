@@ -3,12 +3,11 @@ import {
   Flex, Group, Menu, Stack,
 } from '@mantine/core';
 import {
-  ArrowDown, ArrowUp, BookOpen, Copy, Download, ListChecks, Pencil, Play, Plus, Power, PowerOff, Search, Sparkles, Trash2, Upload,
+  ArrowDown, ArrowUp, Copy, Download, LayoutTemplate, ListChecks, Pencil, Play, Plus, Power, PowerOff, Search, Sparkles, Trash2, Upload, Workflow,
 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useI18nStore } from '../../store/i18nStore';
 import { useFlowStore } from '../../store/useFlowStore';
-import { useAppStore } from '../../store/appStore';
 import { flowApi, ipcEvents } from '../../api/electronApi';
 import { PanelToolbar, ToolbarButton, ToolbarIconButton } from '../../components/PanelToolbar';
 import { EmptyState } from '../../components/EmptyState';
@@ -18,7 +17,6 @@ import { ContextMenuPortal } from '../../components/ContextMenuPortal';
 import { ShortcutHint } from '../../components/ShortcutHint';
 import { SelectionActionBar } from '../../components/SelectionActionBar';
 import { useMultiSelect } from '../../hooks/useMultiSelect';
-import { isTypingTarget } from '../../utils/domUtils';
 import type { FlowDefinition } from '../../../../shared/types';
 import { FlowSidebarList } from './FlowSidebarList';
 import { FlowSearchOverlay } from './FlowSearchOverlay';
@@ -32,6 +30,8 @@ import type { FlowTemplate } from './examples';
 import { FlowGenerateModal } from './FlowGenerateModal';
 import { FlowRenameModal } from './FlowRenameModal';
 import { Z_POPOVER } from '../../config/zLayers';
+import { useShortcutAction } from '../../shortcuts/useShortcutAction';
+import { useResolvedCombo } from '../../store/shortcutStore';
 
 export const FlowView: React.FC = () => {
   const { t } = useI18nStore();
@@ -100,52 +100,35 @@ export const FlowView: React.FC = () => {
     return () => { unsubStart(); unsubEnd(); };
   }, [markFlowRunning, markFlowDone]);
 
-  // Subscribed here rather than in the store because every top-level view stays mounted, so
-  // this listener is live even while the user is in the chat view watching the agent build it.
   useEffect(() => ipcEvents.onFlowCreated((flow) => adoptFlow(flow)), [adoptFlow]);
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (useAppStore.getState().currentView !== 'flow') return;
-      if (document.querySelector('[aria-modal="true"]')) return;
-      if (isTypingTarget(event.target)) return;
+  const renameCombo = useResolvedCombo('flow.rename');
+  const duplicateCombo = useResolvedCombo('flow.duplicate');
+  const deleteCombo = useResolvedCombo('flow.delete');
 
-      if (selection.selectMode) {
-        if (event.key === 'Delete' && selection.count > 0) {
-          event.preventDefault();
-          setBulkDeleteOpen(true);
-        }
-        return;
-      }
+  useShortcutAction('nav.quickSwitch', () => {
+    if (selection.selectMode) return;
+    setSearchOpen(true);
+  }, 'flow');
 
-      const withCtrl = (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey;
-      const noMods = !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
+  useShortcutAction('flow.rename', () => {
+    if (selection.selectMode || !selectedFlowId) return;
+    setRenameId(selectedFlowId);
+  }, 'flow');
 
-      if (withCtrl && event.key.toLowerCase() === 'f') {
-        event.preventDefault();
-        setSearchOpen(true);
-        return;
-      }
+  useShortcutAction('flow.duplicate', () => {
+    if (selection.selectMode || !selectedFlowId) return;
+    void duplicateFlow(selectedFlowId);
+  }, 'flow');
 
-      if (!selectedFlowId) return;
-
-      if (noMods && event.key === 'F2') {
-        event.preventDefault();
-        setRenameId(selectedFlowId);
-        return;
-      }
-      if (withCtrl && event.key.toLowerCase() === 'd') {
-        event.preventDefault();
-        void duplicateFlow(selectedFlowId);
-        return;
-      }
-      if (noMods && event.key === 'Delete') {
-        setPendingDeleteId(selectedFlowId);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedFlowId, selection.selectMode, selection.count, duplicateFlow]);
+  useShortcutAction('flow.delete', () => {
+    if (selection.selectMode) {
+      if (selection.count > 0) setBulkDeleteOpen(true);
+      return;
+    }
+    if (!selectedFlowId) return;
+    setPendingDeleteId(selectedFlowId);
+  }, 'flow');
 
   useEffect(() => {
     if (!selection.selectMode) selection.setAnchor(selectedFlowId ?? null);
@@ -293,10 +276,10 @@ export const FlowView: React.FC = () => {
                 <Menu.Item leftSection={<Sparkles size={13} />} onClick={() => setGenerateOpen(true)}>
                   {t('flow.generate')}
                 </Menu.Item>
-                <Menu.Item leftSection={<BookOpen size={13} />} onClick={() => setTemplatesOpen(true)}>
+                <Menu.Item leftSection={<LayoutTemplate size={13} />} onClick={() => setTemplatesOpen(true)}>
                   {t('flow.templates')}
                 </Menu.Item>
-                <Menu.Item leftSection={<Download size={13} />} onClick={() => setImportOpen(true)}>
+                <Menu.Item leftSection={<Upload size={13} />} onClick={() => setImportOpen(true)}>
                   {t('flow.import')}
                 </Menu.Item>
               </Menu.Dropdown>
@@ -367,14 +350,14 @@ export const FlowView: React.FC = () => {
           onClose={() => setContextMenu(null)}
         >
           <Menu.Item leftSection={<Play size={13} />} onClick={() => { void handleRunFlow(contextMenu!.flowId); }}>{t('flow.runFlow')}</Menu.Item>
-          <Menu.Item leftSection={<Pencil size={13} />} rightSection={<ShortcutHint combo={t('flow.shortcut.rename')} />} onClick={() => { setRenameId(contextMenu!.flowId); setContextMenu(null); }}>{t('flow.renameFlow')}</Menu.Item>
-          <Menu.Item leftSection={<Copy size={13} />} rightSection={<ShortcutHint combo={t('flow.shortcut.duplicate')} />} onClick={() => { void handleDuplicateFlow(contextMenu!.flowId); }}>{t('flow.duplicateFlow')}</Menu.Item>
-          <Menu.Item leftSection={<Upload size={13} />} onClick={() => { void handleExportFlow(contextMenu!.flowId); }}>{t('flow.exportFlow')}</Menu.Item>
+          <Menu.Item leftSection={<Pencil size={13} />} rightSection={<ShortcutHint combo={renameCombo} />} onClick={() => { setRenameId(contextMenu!.flowId); setContextMenu(null); }}>{t('flow.renameFlow')}</Menu.Item>
+          <Menu.Item leftSection={<Copy size={13} />} rightSection={<ShortcutHint combo={duplicateCombo} />} onClick={() => { void handleDuplicateFlow(contextMenu!.flowId); }}>{t('flow.duplicateFlow')}</Menu.Item>
+          <Menu.Item leftSection={<Download size={13} />} onClick={() => { void handleExportFlow(contextMenu!.flowId); }}>{t('flow.exportFlow')}</Menu.Item>
           <Menu.Item leftSection={<ArrowUp size={13} />} disabled={contextFlowIndex <= 0} onClick={() => { void handleMoveFlow(contextMenu!.flowId, 'up'); }}>{t('flow.flow.moveUp')}</Menu.Item>
           <Menu.Item leftSection={<ArrowDown size={13} />} disabled={contextFlowIndex < 0 || contextFlowIndex >= flows.length - 1} onClick={() => { void handleMoveFlow(contextMenu!.flowId, 'down'); }}>{t('flow.flow.moveDown')}</Menu.Item>
           <Menu.Divider />
           <Menu.Item leftSection={<ListChecks size={13} />} disabled={flows.length < 2} onClick={() => handleStartSelection(contextMenu!.flowId)}>{t('selection.selectMultiple')}</Menu.Item>
-          <Menu.Item leftSection={<Trash2 size={13} />} color="red" rightSection={<ShortcutHint combo={t('flow.shortcut.delete')} />} onClick={() => { setPendingDeleteId(contextMenu!.flowId); setContextMenu(null); }}>{t('flow.deleteFlow')}</Menu.Item>
+          <Menu.Item leftSection={<Trash2 size={13} />} color="red" rightSection={<ShortcutHint combo={deleteCombo} />} onClick={() => { setPendingDeleteId(contextMenu!.flowId); setContextMenu(null); }}>{t('flow.deleteFlow')}</Menu.Item>
         </ContextMenuPortal>
 
         <WebDialog
@@ -458,7 +441,7 @@ export const FlowView: React.FC = () => {
               canMoveDown={flows.findIndex((flow) => flow.id === selectedFlow.id) < flows.length - 1}
             />
           ) : (
-            <EmptyState icon={BookOpen} label={t('flow.emptyState')} fill />
+            <EmptyState icon={Workflow} label={t('flow.emptyState')} fill />
           )}
         </Flex>
       </Flex>

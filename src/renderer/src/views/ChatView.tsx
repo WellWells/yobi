@@ -1,6 +1,6 @@
 import React, { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActionIcon, Box, Button, Flex, Group, Stack, Text } from '@mantine/core';
-import { BookOpen, Quote, SearchCheck, X } from 'lucide-react';
+import { Library, Quote, SearchCheck, X } from 'lucide-react';
 import { Sidebar } from '../components/Sidebar';
 import { MarkdownView } from '../components/MarkdownView';
 import { ExportDialog } from '../components/ExportDialog';
@@ -8,6 +8,7 @@ import { FileHeaderBar } from '../components/chat/FileHeaderBar';
 import { PromptInputArea, type PromptInputAreaHandle } from '../components/chat/PromptInputArea';
 import { WelcomeScreen } from '../components/chat/WelcomeScreen';
 import { IncognitoWelcome } from '../components/chat/IncognitoWelcome';
+import { ChatHeaderRow } from '../components/chat/ChatHeaderRow';
 import { TempChatToggle } from '../components/chat/TempChatToggle';
 import { ChatDropZone } from '../components/chat/ChatDropZone';
 import { LoginRequiredDialog } from '../components/chat/LoginRequiredDialog';
@@ -98,10 +99,6 @@ export const ChatView: React.FC = React.memo(() => {
   const pendingNewTurns = useAppStore((s) => (s.pendingTurns[NEW_CONVERSATION_KEY] ?? []).length);
   const pendingSelectedTurns = useAppStore((s) => (s.pendingTurns[s.selectedFile?.path ?? ''] ?? []).length);
 
-  // The picked model lives in the store, not here: `config.targetUrl` is what a
-  // hotkey capture, a bot message and a flow LLM step with no provider of its own
-  // all fall back to, so a pick kept locally would leave every one of those paths
-  // on the previous provider — and would be forgotten on the next launch.
   const activeModelUrl = useAppStore((s) => s.aiUrl);
   const [chatMode, setChatMode] = useState<ChatMode>(DEFAULT_CHAT_MODE);
   const [pendingLoginModel, setPendingLoginModel] = useState<{ provider: LoginRequiredProvider; url: string } | null>(null);
@@ -190,8 +187,11 @@ export const ChatView: React.FC = React.memo(() => {
 
   const {
     attachments,
+    unsupportedReason: attachUnsupportedReason,
+    accept: attachAccept,
     notice: attachmentNotice,
     addFiles,
+    addFromClipboard,
     removeAttachment,
     clearAttachments,
   } = usePromptAttachments(activeModelUrl, t);
@@ -213,7 +213,6 @@ export const ChatView: React.FC = React.memo(() => {
 
   const openSearch = useCallback((): void => setSearchOpen(true), []);
 
-  /** The one way the picked model changes: shown here, and persisted for everyone else. */
   const selectModel = useCallback((url: string): void => {
     if (useAppStore.getState().aiUrl === url) return;
     setAiUrl(url);
@@ -249,9 +248,6 @@ export const ChatView: React.FC = React.memo(() => {
     setViewMenuOpen(false);
   }, [selectedFile?.path]);
 
-  // Both repairs below wait for `aiUrlLoaded`: until the stored pick has arrived the
-  // model is still the store's placeholder, and correcting that would persist over
-  // the very value being loaded.
   const aiUrlLoaded = useAppStore((s) => s.aiUrlLoaded);
 
   const byokModels = useAppStore((s) => s.byokModels);
@@ -331,12 +327,17 @@ export const ChatView: React.FC = React.memo(() => {
         setExportToast({ id: Date.now(), message: t('agent.error.empty') });
         return false;
       }
-      void runAgentCommand(input, activeModelUrl);
+      const attachmentPaths = attachments.map((a) => a.path).filter(Boolean);
+      void runAgentCommand(input, activeModelUrl, attachmentPaths);
+      if (attachments.length > 0) clearAttachments();
       return true;
     }
     void runCommand(command, input, activeModelUrl);
     return true;
-  }, [activeModelUrl, handleNewConversation, runCommand, runAgentCommand, t]);
+  }, [
+    activeModelUrl, attachments, clearAttachments,
+    handleNewConversation, runCommand, runAgentCommand, t,
+  ]);
 
   const handleAiUrlChange = useCallback((nextUrl: string): void => {
     const provider = loginRequiredProviderForUrl(nextUrl);
@@ -395,9 +396,6 @@ export const ChatView: React.FC = React.memo(() => {
     void startRewrite(url);
   }, [startRewrite]);
 
-  // Whichever doc ConversationView is showing. It is what turns a `data-turn-index` back
-  // into answer markdown, and so the only way a selection reaches the `/search` source
-  // list — the single-turn document view renders the file rather than turns, and has none.
   const activeConversation = showConversationView && conversation
     ? conversation
     : (tempChatMode && (tempChatConversation?.turns.length ?? 0) > 0 ? tempChatConversation : null);
@@ -426,9 +424,6 @@ export const ChatView: React.FC = React.memo(() => {
     [chatCommands],
   );
 
-  // The second slot changes meaning with the turn, and must not claim more than it knows:
-  // a cited passage can show the pages it came from, an uncited one can only be looked up.
-  // Reporting a model's own account of its sources as provenance would be a lie.
   const selectionActions = useMemo<SelectionAction[]>(() => {
     if (!selection) return [];
     const actions: SelectionAction[] = [{
@@ -444,7 +439,7 @@ export const ChatView: React.FC = React.memo(() => {
       actions.push({
         id: 'sources',
         label: t('chat.selection.sources'),
-        Icon: BookOpen,
+        Icon: Library,
         run: () => setSourcesOpen((open) => !open),
       });
     } else if (searchChatCommand) {
@@ -473,9 +468,11 @@ export const ChatView: React.FC = React.memo(() => {
         {
 }
         {!selectedFile && (
-          <Box pos="absolute" top={10} right={14} style={{ zIndex: 50 }}>
-            <TempChatToggle />
-          </Box>
+          <ChatHeaderRow>
+            <Box ml="auto">
+              <TempChatToggle />
+            </Box>
+          </ChatHeaderRow>
         )}
         {selectedFile && (
           <FileHeaderBar
@@ -552,6 +549,10 @@ export const ChatView: React.FC = React.memo(() => {
           onSend={handleSendPrompt}
           attachments={attachments}
           notice={attachmentNotice}
+          onAddFiles={addFiles}
+          onAddFromClipboard={addFromClipboard}
+          attachUnsupportedReason={attachUnsupportedReason}
+          attachAccept={attachAccept}
           onRemoveAttachment={removeAttachment}
           chatCommands={chatCommands}
           onRunCommand={handleRunChatCommand}
@@ -620,6 +621,8 @@ export const ChatView: React.FC = React.memo(() => {
         turnCount={captureExport.captureTurnCount}
         width={captureExport.captureWidth}
         setWidth={captureExport.setCaptureWidth}
+        margin={captureExport.captureMargin}
+        setMargin={captureExport.setCaptureMargin}
         hiDpi={captureExport.captureHiDpi}
         setHiDpi={captureExport.setCaptureHiDpi}
         zip={captureExport.captureZip}
@@ -682,4 +685,4 @@ export const ChatView: React.FC = React.memo(() => {
     </Flex>
   );
 });
-
+

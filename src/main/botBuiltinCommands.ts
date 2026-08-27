@@ -25,13 +25,11 @@ export interface BotBuiltinDeps {
 
 export interface BotBuiltinRunResult {
   ok: boolean;
-  /** The answer on success, a localized message on failure. Ready to send as-is. */
   text: string;
   title: string;
   savedFileName: string;
   providerLabel: string;
   elapsedSeconds: string;
-  /** The agent paused on a question; the next plain message in this chat answers it. */
   awaitingAnswer: boolean;
 }
 
@@ -40,10 +38,6 @@ interface PendingAsk {
   expiresAt: number;
 }
 
-/**
- * Chats with an agent question still open. In memory only — a restart drops the shortcut,
- * but the run itself survives in the agent run store and stays resumable from the app.
- */
 const pendingAsks = new Map<string, PendingAsk>();
 
 export function botChatKey(platform: BotPlatform, chatId: string, userId: string): string {
@@ -55,7 +49,6 @@ function askTtlMs(): number {
   return minutes * 60_000;
 }
 
-/** Returns the run waiting on this chat's reply, consuming it. Expired entries are dropped. */
 export function takePendingAgentAsk(chatKey: string): string | null {
   const pending = pendingAsks.get(chatKey);
   if (!pending) return null;
@@ -63,7 +56,6 @@ export function takePendingAgentAsk(chatKey: string): string | null {
   return pending.expiresAt > Date.now() ? pending.runId : null;
 }
 
-/** Called when the user types a command instead of answering — they moved on. */
 export function clearPendingAgentAsk(chatKey: string): void {
   pendingAsks.delete(chatKey);
 }
@@ -80,7 +72,6 @@ function rememberPendingAsk(chatKey: string, runId: string): void {
   pendingAsks.set(chatKey, { runId, expiresAt: Date.now() + askTtlMs() });
 }
 
-/** Exported for the test suite. */
 export const __rememberPendingAskForTest = rememberPendingAsk;
 
 function toResult(
@@ -88,9 +79,7 @@ function toResult(
   targetUrl: string,
   strings: Strings,
   startedAt: number,
-  /** Set for /agent: the chat that may be asked a question and can answer by replying. */
   askChatKey: string | undefined,
-  /** The chat whose running conversation this result belongs to. */
   sessionKey: string,
 ): BotBuiltinRunResult {
   const elapsedSeconds = ((Date.now() - startedAt) / 1_000).toFixed(1);
@@ -114,12 +103,10 @@ function toResult(
   const awaitingAnswer = Boolean(question && runId && askChatKey);
   if (awaitingAnswer && askChatKey && runId) rememberPendingAsk(askChatKey, runId);
 
-  // Even a question is a turn in the conversation, so the chat continues from that file.
   if (outcome.filePath) void setBotConversation(sessionKey, outcome.filePath);
 
   return {
     ok: true,
-    // The question arrives as an ordinary reply, so say plainly that typing back continues it.
     text: awaitingAnswer ? `${answer}\n\n${t(strings, 'bot.builtin.answerHint')}` : answer,
     title: outcome.title ?? '',
     savedFileName: outcome.filePath ? path.basename(outcome.filePath) : '',
@@ -132,14 +119,8 @@ function toResult(
 export interface BotBuiltinRunRequest {
   key: BotBuiltinCommandKey;
   input: string;
-  /** Empty follows the app default, matching the settings dropdown's first option. */
   targetUrl: string;
   chatKey: string;
-  /**
-   * Called as the run reports what it is doing. A bot user only has the acknowledgement
-   * message to look at, so without this a healthy multi-minute run and a hung one look
-   * exactly the same.
-   */
   onProgressText?: (text: string) => void;
 }
 
@@ -152,11 +133,8 @@ export async function runBotBuiltinCommand(
   const targetUrl = request.targetUrl.trim() || config.targetUrl;
   const startedAt = Date.now();
 
-  // A command reply is a new topic, so whatever the agent last asked is no longer live.
   clearPendingAgentAsk(request.chatKey);
 
-  // Built-ins join the chat's running conversation, the same way /agent and /search append
-  // to whatever conversation is open in the app.
   const conversationPath = await getBotConversation(request.chatKey);
 
   if (request.key === 'search') {
@@ -194,7 +172,6 @@ export async function runBotBuiltinCommand(
   return toResult(outcome, targetUrl, strings, startedAt, request.chatKey, request.chatKey);
 }
 
-/** Continues a run that asked a question, using this message as the answer. */
 export async function resumeBotAgentAsk(
   deps: BotBuiltinDeps,
   params: {

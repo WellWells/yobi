@@ -1,13 +1,3 @@
-/**
- * Fenced-code-block scanning, used to find every mermaid diagram in a markdown
- * document up front. The export path measures the capture card's height right
- * after its first paint, so diagrams have to be rendered into the cache before
- * that tree mounts rather than in an effect afterwards.
- *
- * The rules mirror the CommonMark subset remark actually applies, so the code
- * strings produced here match the ones `SharedCodeBlock` receives.
- */
-
 const MAX_FENCE_INDENT = 3;
 const MIN_FENCE_LENGTH = 3;
 
@@ -38,7 +28,6 @@ function parseFenceOpen(line: string): FenceOpen | null {
   const length = countMarkers(line, indent, marker);
   if (length < MIN_FENCE_LENGTH) return null;
   const info = line.slice(indent + length);
-  // CommonMark: a backtick info string may not itself contain a backtick.
   if (marker === '`' && info.includes('`')) return null;
   return { marker, length, indent, info };
 }
@@ -84,7 +73,6 @@ export function extractMermaidFences(markdown: string): string[] {
       body.push(stripIndent(lines[index] ?? '', open.indent));
       index += 1;
     }
-    // Step over the closing fence; an unclosed fence just runs to the end.
     index += 1;
 
     if (isMermaidLanguage(infoLanguage(open.info)) && body.length > 0) {

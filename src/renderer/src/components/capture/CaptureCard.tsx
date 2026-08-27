@@ -119,11 +119,6 @@ export const CaptureCard: React.FC<CaptureCardProps> = ({ request, rootId }) => 
   const { payload, options } = request;
   const bubble = options.cardLayout === 'bubble';
 
-  /*
-   * Both forced themes are established here rather than at each call site, so the
-   * capture window and the export preview cannot disagree — and so the theme the
-   * capture window pre-renders diagrams under is derived from the same function.
-   */
   return (
     <ForcedCodeThemeContext.Provider value={CAPTURE_CODE_THEME}>
       <CaptureDiagramThemeContext.Provider value={captureDiagramTheme(options.cardTheme)}>
@@ -136,7 +131,11 @@ export const CaptureCard: React.FC<CaptureCardProps> = ({ request, rootId }) => 
             background: options.background,
           } as React.CSSProperties}
         >
-          <div className="capture-scene" style={{ background: options.background }}>
+          {}
+          <div
+            className="capture-scene"
+            style={{ background: options.background, ...(options.margin === undefined ? {} : { padding: options.margin }) }}
+          >
             <article className={bubble ? 'capture-card capture-card-bubble' : 'capture-card'}>
               {payload.title && <h1 className="capture-title">{payload.title}</h1>}
               {options.showTokens && payload.tokensTotal && (

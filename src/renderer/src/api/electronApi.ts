@@ -2,6 +2,7 @@ import type {
   AccountStatus,
   AgentConfirmChoice,
   AgentConfirmPayload,
+  AttachmentStashRequest,
   AuthProvider,
   BackupCategoryId,
   BackupCategoryInfo,
@@ -41,6 +42,7 @@ import type {
   NotifyEventPrefs,
   OutputFile,
   StartedConversation,
+  StashedAttachment,
   PromptPreferences,
   ChatTurnEvent,
   PromptTriggerOptions,
@@ -70,6 +72,8 @@ import type {
 } from '../../../shared/types';
 import type { ConversationTokenStats } from '../../../shared/tokenEstimate';
 
+import type { ShortcutOverride } from '../../../shared/shortcuts';
+
 export const fileApi = {
   getList: (): Promise<OutputFile[]> => window.electronAPI.getFileList(),
   search: (query: string): Promise<OutputFile[]> => window.electronAPI.searchFileList(query),
@@ -91,6 +95,9 @@ export const settingsApi = {
   updateHotkey: (hotkey: string): Promise<HotkeyBindResult> => window.electronAPI.updateHotkey(hotkey),
   setHotkeyPaused: (paused: boolean): Promise<boolean> => window.electronAPI.setHotkeyPaused(paused),
   getHotkeyEnabled: (): Promise<boolean> => window.electronAPI.getHotkeyEnabled(),
+  getShortcuts: (): Promise<Record<string, ShortcutOverride>> => window.electronAPI.getShortcuts(),
+  updateShortcuts: (next: Record<string, ShortcutOverride>): Promise<Record<string, ShortcutOverride>> =>
+    window.electronAPI.updateShortcuts(next),
   setHotkeyEnabled: (enabled: boolean): Promise<HotkeyBindResult> => window.electronAPI.setHotkeyEnabled(enabled),
   getAiUrl: (): Promise<string> => window.electronAPI.getAiUrl(),
   updateAiUrl: (url: string): Promise<boolean> => window.electronAPI.updateAiUrl(url),
@@ -293,6 +300,12 @@ export const systemApi = {
   getPathForFile: (file: File): string => window.electronAPI.getPathForFile(file),
 };
 
+export const attachmentApi = {
+  stashBytes: (request: AttachmentStashRequest): Promise<StashedAttachment> =>
+    window.electronAPI.stashAttachmentBytes(request),
+  fromClipboard: (): Promise<StashedAttachment | null> => window.electronAPI.attachmentFromClipboard(),
+};
+
 export const backupApi = {
   getCategories: (): Promise<BackupCategoryInfo[]> => window.electronAPI.backupGetCategories(),
   export: (categories: BackupCategoryId[], namePrefix?: string): Promise<BackupExportResult> =>
@@ -372,8 +385,8 @@ export const searchApi = {
 };
 
 export const agentApi = {
-  run: (goal: string, targetUrl: string, runId: string, conversationPath?: string): Promise<AgentCommandResult> =>
-    window.electronAPI.runAgentCommand(goal, targetUrl, runId, conversationPath),
+  run: (goal: string, targetUrl: string, runId: string, conversationPath?: string, attachments?: string[]): Promise<AgentCommandResult> =>
+    window.electronAPI.runAgentCommand(goal, targetUrl, runId, conversationPath, attachments),
   resume: (runId: string, answer?: string): Promise<AgentCommandResult> =>
     window.electronAPI.resumeAgentRun(runId, answer),
   cancel: (runId: string): Promise<boolean> => window.electronAPI.cancelAgentRun(runId),
@@ -399,4 +412,4 @@ export const ytSubsApi = {
   hasCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.ytSubsHasCheckpoint(stepId),
   clearCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.ytSubsClearCheckpoint(stepId),
 };
-
+

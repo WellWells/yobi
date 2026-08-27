@@ -4,20 +4,14 @@ import { ToggleSwitch } from './ToggleSwitch';
 
 interface VisibilityToggleProps {
   checked: boolean;
-  /** The last visible source cannot be switched off — the model menu would be empty. */
   blocked?: boolean;
   busy?: boolean;
-  /** Accessible name, since the switch carries no visible label of its own. */
   label: string;
   size?: 'xs' | 'sm' | 'md';
   onToggle: () => void;
   t: (key: string) => string;
 }
 
-/**
- * Show/hide for one model source. A switch rather than a checkbox: it applies the moment
- * it is flipped, and there is no bulk action to select rows for.
- */
 export const VisibilityToggle: React.FC<VisibilityToggleProps> = ({
   checked, blocked = false, busy = false, label, size = 'md', onToggle, t,
 }) => (

@@ -1,6 +1,7 @@
 import type React from 'react';
 import type { OutputFile } from '../../../../shared/types';
 import { isTypingTarget } from '../../utils/domUtils';
+import { matchesShortcut } from '../../store/shortcutStore';
 
 interface SidebarKeyNavDeps {
   editingPath: string | null;
@@ -47,25 +48,21 @@ export function createSidebarKeyDownHandler({
 
     const focusedFile = getFocusedFile();
     if (!focusedFile) return;
-    const key = e.key.toLowerCase();
 
-    if (!e.ctrlKey && !e.shiftKey && !e.altKey && e.key === 'F2') {
+    if (matchesShortcut(e, 'files.editTitle')) {
       e.preventDefault();
       void onEditH1(focusedFile);
       return;
     }
 
-    if (
-      (e.altKey && !e.ctrlKey && !e.shiftKey && key === 'r')
-      || (e.ctrlKey && e.shiftKey && !e.altKey && key === 'o')
-    ) {
+    if (matchesShortcut(e, 'files.revealInFolder')) {
       e.preventDefault();
       void window.electronAPI.showInFolder(focusedFile.path);
       onCloseContextMenu();
       return;
     }
 
-    if (e.key === 'Delete') {
+    if (matchesShortcut(e, 'files.delete')) {
       e.preventDefault();
       onDelete(focusedFile);
       return;

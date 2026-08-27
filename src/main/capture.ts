@@ -1,7 +1,7 @@
 import { app, BrowserWindow } from 'electron';
 import * as path from 'node:path';
 import type { MarkdownCaptureRequest, CaptureFormat, CaptureMode, CaptureTurn, CardLayout } from '../shared/types';
-import { DEFAULT_CAPTURE_WIDTH, MAX_CAPTURE_HEIGHT, MAX_CAPTURE_WIDTH, MIN_CAPTURE_WIDTH } from '../shared/types';
+import { DEFAULT_CAPTURE_WIDTH, MAX_CAPTURE_HEIGHT, MAX_CAPTURE_WIDTH, MIN_CAPTURE_WIDTH, clampCaptureMargin } from '../shared/types';
 import { stripConversationMarkers } from '../shared/conversationDoc';
 import { captureBackgroundCss, DEFAULT_CAPTURE_PALETTE } from '../shared/capturePalettes';
 import { isSafeCaptureBackground } from '../shared/captureBackgroundGuard';
@@ -69,6 +69,7 @@ export function normalizeCaptureRequest(request: MarkdownCaptureRequest): Markdo
       showTimestamp: Boolean(request?.options?.showTimestamp),
       showTokens: Boolean(request?.options?.showTokens),
       width,
+      margin: request?.options?.margin === undefined ? undefined : clampCaptureMargin(request.options.margin),
       background: safeBackground,
       cardTheme,
       cardLayout,

@@ -23,14 +23,6 @@ const PANEL_CSS = [
   'font:13px/1.5 system-ui,-apple-system,sans-serif;padding:14px;display:none',
 ].join(';');
 
-/**
- * Interactive list picker injected into the target page.
- *
- * Hover-highlight and click stay live for the whole session so a wrong guess is
- * corrected by clicking somewhere else rather than reopening the window. The
- * panel's preview runs the same extraction the scraper will run, which is the
- * point of the whole thing: the user approves rows, not a CSS selector.
- */
 export function buildPickerScript(strings: PickerStrings, timeoutMs: number): string {
   return `(function(){
     return new Promise(function(resolve){
@@ -93,7 +85,6 @@ export function buildPickerScript(strings: PickerStrings, timeoutMs: number): st
         row.appendChild(input);
         advBox.appendChild(row);
       });
-      // An empty link selector is meaningful, not missing: the row element is the anchor.
       fields.link.placeholder = S.rowIsLink;
       advToggle.addEventListener('click', function(){
         var open = advBox.style.display === 'none';
@@ -121,8 +112,6 @@ export function buildPickerScript(strings: PickerStrings, timeoutMs: number): st
 
       function fill(str, n){ return str.split('{{count}}').join(String(n)); }
 
-      // Draws at most MARK_CAP outlines; the count badge always reports the true
-      // total, so a long list is under-drawn but never under-reported.
       var MARK_CAP = 60;
       function paintMarks(nodes){
         marks.textContent = '';
@@ -211,8 +200,6 @@ export function buildPickerScript(strings: PickerStrings, timeoutMs: number): st
         adopt(node);
       }
 
-      // Scrolling only moves the boxes — re-running the extraction every frame
-      // would re-query the whole document while the page is in motion.
       var repaint = null;
       function onScroll(){
         if (repaint) return;

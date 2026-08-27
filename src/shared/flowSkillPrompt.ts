@@ -2,43 +2,16 @@ import type { SkillSpec, SkillType } from './flowSkillSpecs';
 import { SKILL_OUTPUT, SKILL_SPECS, SKILLS_WITHOUT_OUTPUT_KEY } from './flowSkillSpecs';
 import { SKILL_NOTES } from './flowSkillNotes';
 
-/*
- * Flow generation is a two-stage, three-tier disclosure, modelled on the SKILL.md contract:
- *
- *   tier 1  `brief`            every skill, one line — stage A, all that selection ever sees
- *   tier 2  `renderSkillLine`  selected skills only  — stage B, the config + OUTPUT contract
- *   tier 3  `SKILL_NOTES`      selected skills only  — stage B, the non-obvious failure modes
- *
- * Rendering all 46 skills at tier 2 in one shot is what silently broke this feature: the prompt
- * reached 43.7k chars against Gemini's 33,499 cap, so `preparePromptForProvider` reported a
- * truncation and the generator refused to send anything at all. Narrowing tier 2/3 to the
- * selection is the fix, and `buildFlowGenerationPrompt` therefore REQUIRES a skill list — there
- * is deliberately no way to ask it for "all of them" again.
- */
-
-/**
- * Control flow is never left to the selection. Models routinely pick `loop` and forget
- * `end_loop`, and a flow missing its closer fails validation after both stages have been paid
- * for. All eight together cost ~600 chars at tier 2, which is cheaper than one repair round.
- */
 export const ALWAYS_INCLUDED_SKILLS: readonly SkillType[] = [
   'loop', 'end_loop', 'if', 'end_if', 'stop', 'break', 'continue', 'comment',
 ];
 
-/**
- * How many working skills stage B will disclose. Not a taste judgement — it is the number the
- * budget allows: with the eight fattest skills selected, the REPAIR prompt (generation prompt
- * plus the rejected output) reaches 93% of Gemini's cap, and at ten it goes over. Real flows
- * use three to six. Extras beyond this are dropped in requested order, so the model's own
- * priority decides what survives. Pinned by test/flowGenPromptBudget.test.ts.
- */
 export const MAX_SELECTED_SKILLS = 8;
 
 export function renderSkillBrief(spec: SkillSpec): string {
   return `- "${spec.type}": ${spec.brief}`;
 }
 
-/** Tier 1 — every skill, one line each. The whole of what stage A sees. */
 export function buildSkillIndex(): string {
   return SKILL_SPECS.map(renderSkillBrief).join('\n');
 }
@@ -56,13 +29,6 @@ export function renderSkillLine(spec: SkillSpec): string {
 const KNOWN_SKILLS = new Set<string>(SKILL_SPECS.map((spec) => spec.type));
 const CONTROL_SET = new Set<string>(ALWAYS_INCLUDED_SKILLS);
 
-/**
- * Normalizes a requested selection into the skills stage B will disclose: unknown names are
- * dropped rather than rejected (a selection is bookkeeping, and losing a whole assessment over
- * one hallucinated name costs more than ignoring it), the working skills are capped at
- * `MAX_SELECTED_SKILLS` in requested order, control flow is appended for free, and the result
- * is emitted in `SKILL_SPECS` order so the same selection always renders identically.
- */
 export function resolveSelectedSkills(requested: readonly string[]): SkillType[] {
   const working: string[] = [];
   for (const name of requested) {
@@ -87,13 +53,6 @@ function renderNotes(skills: readonly SkillType[]): string[] {
   ];
 }
 
-/**
- * What can START a flow. This belongs at tier 1 next to the skills, because "what a flow can do"
- * and "what makes a flow run" are two independent capability axes and the assessment is asked
- * about both. Leaving it to stage B produced a confident, wrong refusal: asked for "push the
- * time to Telegram every minute", the assessor saw 46 skill briefs with no mention of
- * scheduling and reported that Yobi has no cron — a capability it has had all along.
- */
 export const TRIGGER_BRIEFS: readonly string[] = [
   '- "cron": run on a SCHEDULE — any repeating time, from every few seconds to specific days and times (e.g. every minute, every weekday at 08:00). Runs in the background while the app is open; no external scheduler needed.',
   '- "hotkey": run when the user presses a global keyboard shortcut, from anywhere on the desktop.',
@@ -120,9 +79,6 @@ const ASSESS_EXAMPLE = JSON.stringify(
 
 export function buildFlowAssessPrompt(goal: string): string {
   return [
-    // Never names the framework Yobi is built on. Everything below this line is sent verbatim
-    // to a third-party model, and what the app is made of is not something a user asking for a
-    // flow has agreed to disclose. The prompts describe capabilities, not the implementation.
     'You are a capability assessor for "Yobi", a desktop automation app.',
     'A Yobi flow is a TRIGGER plus a list of steps, each step running one SKILL. Below is every',
     'trigger and every skill Yobi has. Decide what the user request needs, and whether Yobi',
@@ -224,8 +180,6 @@ export function buildFlowGenerationPrompt(
     '- bot:    {"type":"bot","botCommand":"my_cmd","botCommandDescription":"...","botInputVariable":"input"}  (a Telegram /command)',
     '- chat:   {"type":"chat","chatCommand":"my_cmd","chatCommandDescription":"...","chatInputVariable":"input"}  (a /command run from the in-app chat)',
     'Infer the trigger from the request (e.g. "every morning at 8" -> cron "0 8 * * *").',
-    // Threaded from stage A so the two stages cannot disagree about how the flow starts — the
-    // assessment is what the user was shown and approved, so it is the one that binds.
     ...(triggerHint
       ? [`- The assessment already chose "${triggerHint}" for this request; use it unless the request plainly contradicts it.`]
       : []),
@@ -274,10 +228,6 @@ export function buildFlowRepairPrompt(
     `Validation error: ${error}`,
     '',
     'Your previous output (for reference — do not repeat its mistake):',
-    // 2,000, not 4,000: the repair prompt is the widest one this module builds — it carries the
-    // whole generation prompt on top of this excerpt — and it is what sets the real ceiling on
-    // MAX_SELECTED_SKILLS. The error message above is what the model has to act on; the excerpt
-    // only has to be enough to recognize its own output.
     previousResponse.trim().slice(0, 2_000),
     '',
     'Produce a corrected flow that fixes the error above and obeys ALL of these rules:',

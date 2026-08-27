@@ -2,10 +2,6 @@ import type { Bot } from 'grammy';
 import type { TelegramChannel } from '../../shared/types';
 import type { TelegramContext } from './commands';
 
-/**
- * A `my_chat_member` update flattened into the fields channel discovery cares about.
- * Exported for the test suite.
- */
 export interface ChannelMemberEvent {
   chatId: number;
   chatType: string;
@@ -27,16 +23,9 @@ export interface ChannelReduceResult {
 function canPublish(event: ChannelMemberEvent): boolean {
   if (event.status === 'creator') return true;
   if (event.status !== 'administrator') return false;
-  // Telegram omits can_post_messages on some payloads; only an explicit false revokes posting.
   return event.canPostMessages !== false;
 }
 
-/**
- * Pure reducer for channel discovery. Exported for the test suite.
- *
- * Channels are never dropped on demotion — a flow may already reference the chat id, so a lost
- * channel stays in the list flagged `canPost: false` and is only removed when the user forgets it.
- */
 export function reduceChannelState(
   channels: TelegramChannel[],
   event: ChannelMemberEvent,
@@ -49,7 +38,6 @@ export function reduceChannelState(
   const index = channels.findIndex((item) => item.chatId === event.chatId);
   const existing = index >= 0 ? channels[index] : undefined;
 
-  // Anyone can add a bot to their own channel; only accept promotions performed by a paired user.
   if (!isPairedUser(event.fromUserId)) return { next: channels, change: 'ignored' };
 
   const username = event.username?.replace(/^@/, '').trim() ?? '';

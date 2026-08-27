@@ -17,7 +17,6 @@ export function useQuickExportRecorder() {
       await load();
       return useExportSettingsStore.getState().quick.hotkey;
     }, [load]),
-    // Goes through the store's awaited path, not patchQuick: main can refuse this field.
     save: setQuickHotkey,
     defaultValue: defaultQuickExportHotkey(IS_MAC),
   });

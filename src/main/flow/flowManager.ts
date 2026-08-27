@@ -395,12 +395,6 @@ export class FlowManager {
     return this.createQueueExecution(flowId, extraContext, source);
   }
 
-  /**
-   * Persists a freshly generated flow, always DISABLED so no trigger is registered until the
-   * user has read it. Shared by the AI-generate button and the agent's `build_flow` tool —
-   * the agent path calls it directly rather than through `queueGeneration`, because an agent
-   * run is already a queued task and re-enqueueing would be the queue waiting on itself.
-   */
   async saveGeneratedFlow(candidate: FlowDefinition): Promise<FlowDefinition> {
     const now = new Date().toISOString();
     const saved = await this.save({
@@ -411,10 +405,6 @@ export class FlowManager {
       createdAt: now,
       updatedAt: now,
     });
-    // The renderer mirrors the flow list in its own store and only reloads on demand, so a flow
-    // created outside a renderer-initiated call — by the agent, mid-conversation — would sit on
-    // disk invisible until the next restart. The button path also receives this and de-dupes on
-    // id, so one broadcast serves both.
     sendToRenderer(IPC.FLOW_CREATED, saved);
     return saved;
   }

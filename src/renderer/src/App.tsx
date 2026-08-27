@@ -16,6 +16,7 @@ const MemoFlowView = React.memo(FlowView);
 import { useAppStore } from './store/appStore';
 import { useI18nStore } from './store/i18nStore';
 import { useAppBootstrap } from './hooks/useAppBootstrap';
+import { useShortcutDispatcher } from './shortcuts/useShortcutDispatcher';
 import { ipcEvents, windowApi } from './api/electronApi';
 
 export const App: React.FC = () => {
@@ -25,6 +26,7 @@ export const App: React.FC = () => {
   const [closeRemember, setCloseRemember] = useState(false);
 
   useAppBootstrap();
+  useShortcutDispatcher();
 
   const handleCloseDialogRespond = useCallback((action: 'quit' | 'hide') => {
     setShowCloseDialog(false);

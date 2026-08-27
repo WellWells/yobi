@@ -8,12 +8,15 @@ import { sendLog } from '../../helpers';
 import { currentScopeTokens } from '../../tokenMeter';
 import { askJson, createProviderSession } from './structuredLlm';
 import type { ProviderSession, Validation } from './structuredLlm';
-import { buildToolCatalog, validateAgentAction, validateFinalAnswer } from './agentTools';
+import {
+  buildToolCatalog, describeToolSpec, isHelpTool, validateAgentAction, validateFinalAnswer,
+} from './agentTools';
 import type { AgentAction, FinalAnswer } from './agentTools';
 import {
   applyPlanUpdate, buildActionRepair, buildDeltaPrompt, buildFinishPrompt, buildRepairPrompt,
   buildTurnPrompt, emptyPlan, historyThatFits, planComplete, SCRATCH_IN_PROMPT,
-  SCRATCH_IN_PROMPT_MCP, SCRATCH_TOTAL_BUDGET, SYNTH_SCRATCH_BUDGET_LEAN, SYNTH_SCRATCH_SLOTS_LEAN,
+  SCRATCH_IN_PROMPT_MCP, SCRATCH_IN_PROMPT_MCP_CAPPED, SCRATCH_TOTAL_BUDGET,
+  SYNTH_SCRATCH_BUDGET_LEAN, SYNTH_SCRATCH_SLOTS_LEAN,
 } from './agentPrompts';
 import type { AgentPlan, ScratchEntry, TurnPromptOptions } from './agentPrompts';
 import { denyReasonForFileTool, getAgentFileRoots } from './agentSandbox';
@@ -22,14 +25,13 @@ import { detectProvider, getProviderLabel } from '../../providers';
 import type { McpRegistry } from '../../mcp';
 import {
   buildMcpCatalog, buildMcpIndex, classifyMcpTool, formatMcpObservation, hasMcpTools,
-  mcpCatalogBudgetChars, resolveMcpTool, schemaHint, validateMcpAction, validateMcpArguments,
+  mcpCatalogBudgetChars, mcpScratchReserveChars, resolveMcpTool, schemaHint, validateMcpAction,
+  validateMcpArguments,
 } from './mcpTools';
 import type { McpAction, McpRuntimeIndex } from './mcpTools';
 import { isBuiltinTool, runBuiltinTool } from './agentBuiltins';
 import type { AgentBuiltinTool, BuiltinDeps, FlowWriteConfirmRequest } from './agentBuiltins';
 
-// Façade: the prompt builders moved out when their parameter list outgrew positional
-// arguments, but they are part of this module's public surface for the test suite.
 export {
   buildActionRepair, buildDeltaPrompt, buildFinishPrompt, buildTurnPrompt, historyThatFits,
   renderScratch, SCRATCH_IN_PROMPT, SCRATCH_IN_PROMPT_MCP, SCRATCH_TOTAL_BUDGET,
@@ -46,10 +48,6 @@ export interface McpConfirmRequest {
   args: Record<string, unknown>;
 }
 
-/**
- * Everything the agent can do that leaves state behind on the user's machine. Both arms are
- * asked through one channel so a new one cannot be added without deciding what its dialog says.
- */
 export type AgentConfirmRequest = McpConfirmRequest | FlowWriteConfirmRequest;
 
 const DEFAULT_MAX_TURNS = 8;
@@ -59,33 +57,13 @@ const MIN_TURN_BUDGET_MS = 30_000;
 const BYOK_OBSERVATION_LIMIT = 16_000;
 const BROWSER_OBSERVATION_LIMIT = 3_500;
 const BROWSER_DELTA_OBSERVATION_LIMIT = 24_000;
-/**
- * Ceiling on the tokens one BYOK `/agent` run may spend before it is told to wrap up.
- * The four retry layers (turns x json repairs x transport retries x keys in a group)
- * multiply, and nothing else bounds their product. Browser providers are exempt: their
- * tokens are not billed, so only wall-clock matters there.
- */
 const AGENT_BYOK_TOKEN_BUDGET = 120_000;
-/**
- * Hard stop, mirroring how the wall-clock budget pairs a soft `mustFinish` with a real
- * `break`. The soft budget only *asks* the model to wrap up; a model that keeps calling
- * tools anyway would sail past it to the turn limit.
- */
 const AGENT_BYOK_TOKEN_CEILING = 180_000;
 const AGENT_STEP_ID = 'agent';
 const SYNTH_MIN_TIMEOUT_MS = 45_000;
 const LOCAL_SOURCE_TOOLS = new Set<SkillType>(['file_read', 'clipboard', 'sysinfo']);
-/** Failed steps in a row before the prompt starts telling the model to change course. */
 const STALL_THRESHOLD = 2;
-/** Consecutive verbatim re-reads tolerated before the run gives up instead of spinning. */
 const MAX_STALE_READS = 2;
-/**
- * A plan earns turns. `DEFAULT_MAX_TURNS` was one number for every goal, so a run that split
- * itself into four sub-questions got the same eight steps as a one-lookup goal and had to
- * choose between covering its plan and synthesizing an answer. Growth is bounded by
- * `PLAN_MAX_TURNS`, and the wall-clock and token budgets remain the real stops — they force a
- * graceful finish long before a 14-turn ceiling could be reached on a slow provider.
- */
 const PLAN_TURN_BASE = 2;
 const PLAN_TURNS_PER_STEP = 2;
 const PLAN_MAX_TURNS = 14;
@@ -105,14 +83,11 @@ export interface AgentRunOptions {
   onTurn?: (turn: AgentTurnRecord) => void;
   resumeFrom?: AgentTurnRecord[];
   conversationPath?: string;
+  attachments?: string[];
   signal?: AbortSignal;
   maxTurns?: number;
   totalBudgetMs?: number;
   onConfirm?: (request: AgentConfirmRequest) => Promise<boolean>;
-  /**
-   * Persists a flow the agent built. Absent = `build_flow` refuses rather than silently
-   * discarding the result, so a caller that cannot save flows never advertises that it can.
-   */
   onSaveFlow?: (flow: FlowDefinition) => Promise<FlowDefinition>;
 }
 
@@ -130,11 +105,6 @@ interface PlannedCall {
   config: Record<string, string>;
 }
 
-/**
- * Resolves a decision into the (label, config) pair that is logged, persisted and — via
- * `callSignature` — deduplicated. Both come from one place so a resumed run recomputes
- * exactly the signature the stored turn produced.
- */
 function planCall(action: AgentDecision, providerUrl: string): PlannedCall {
   if (action.action === 'call_mcp') {
     return {
@@ -144,20 +114,12 @@ function planCall(action: AgentDecision, providerUrl: string): PlannedCall {
   }
   const config = action.config ?? {};
   const tool = action.tool as SkillType;
-  // "provider" is hidden from the catalog, so the model never sets it: a sub-call inherits
-  // the provider this run is already using rather than the app's configured target.
   if ((tool === 'llm' || tool === 'research') && !(config.provider ?? '').trim()) {
     config.provider = providerUrl;
   }
   return { label: tool, config };
 }
 
-/**
- * Exported for the test suite. Identity of a tool call for repeat detection. Values are
- * whitespace-normalized and lowercased because a model re-asking the same thing rarely
- * retypes it byte-identically ("Apple Inc" vs "apple inc " is one query, not two), and
- * empty values are dropped because optional keys are emitted inconsistently between turns.
- */
 export function callSignature(tool: string, config: Record<string, string>): string {
   const parts = Object.entries(config)
     .map(([key, value]) => [key, (value ?? '').trim().replace(/\s+/g, ' ').toLowerCase()] as const)
@@ -189,8 +151,6 @@ async function synthesizeFinal(
   plan: AgentPlan,
   signal?: AbortSignal,
 ): Promise<FinalAnswer> {
-  // A browser provider's window is fixed by its input cap; BYOK's is not, so the final answer
-  // there sees every observation the run gathered rather than the last six.
   const assembleFinish = (h: string): string => buildFinishPrompt({
     goal,
     scratch,
@@ -289,42 +249,49 @@ export async function runAgent(
   const trimmedGoal = goal.trim();
   if (!trimmedGoal) throw new Error('Empty goal');
 
-  // A caller-supplied ceiling is authoritative and never grown — only the default one earns
-  // extra turns from a plan, so a bounded caller (a test, a queued flow) stays bounded.
   const pinnedMaxTurns = options.maxTurns === undefined ? undefined : Math.max(1, options.maxTurns);
   let maxTurns = pinnedMaxTurns ?? DEFAULT_MAX_TURNS;
   const catalog = buildToolCatalog();
   const fileRoots = await getAgentFileRoots();
   const lean = isByokTargetUrl(providerUrl);
-  // Named in the trace so "thinking" says WHO is being asked: on a web provider this step is
-  // a minute of wall-clock, and an unlabelled spinner is indistinguishable from a hang.
   const providerLabel = getProviderLabel(providerUrl);
   const observationLimit = lean ? BYOK_OBSERVATION_LIMIT : BROWSER_OBSERVATION_LIMIT;
   const deltaObservationLimit = lean ? BYOK_OBSERVATION_LIMIT : BROWSER_DELTA_OBSERVATION_LIMIT;
-
-  const { buildAgentHistory, historyPromptCost } = await import('./agentContext');
-  const history = await buildAgentHistory({
-    ...(options.conversationPath ? { conversationPath: options.conversationPath } : {}),
-    providerUrl,
-    catalogLen: catalog.length,
-    goalLen: trimmedGoal.length,
-  });
-  const historyCost = historyPromptCost(history, providerUrl);
 
   const { getMcpRegistry } = await import('../../mcp');
   const mcpRegistry = getMcpRegistry();
   const mcpIndex = buildMcpIndex(mcpRegistry?.getAgentTools() ?? []);
   const isDuckai = !lean && detectProvider(providerUrl) === 'duckai';
   const mcpCandidate = mcpRegistry !== null && hasMcpTools(mcpIndex) && !isDuckai;
+  const mcpScratchSlots = lean ? SCRATCH_IN_PROMPT_MCP : SCRATCH_IN_PROMPT_MCP_CAPPED;
+
+  const { buildAgentHistory, historyPromptCost, MCP_CATALOG_RESERVE } = await import('./agentContext');
+  const history = await buildAgentHistory({
+    ...(options.conversationPath ? { conversationPath: options.conversationPath } : {}),
+    providerUrl,
+    catalogLen: catalog.length,
+    goalLen: trimmedGoal.length,
+    mcpReserve: mcpCandidate
+      ? mcpScratchReserveChars(mcpScratchSlots, observationLimit) + MCP_CATALOG_RESERVE
+      : 0,
+  });
+  const historyCost = historyPromptCost(history, providerUrl);
+
   const mcpBudget = mcpCandidate
-    ? mcpCatalogBudgetChars(providerUrl, catalog.length, trimmedGoal.length, SCRATCH_IN_PROMPT_MCP, observationLimit, historyCost)
+    ? mcpCatalogBudgetChars(providerUrl, catalog.length, trimmedGoal.length, mcpScratchSlots, observationLimit, historyCost)
     : 0;
   const mcpSection = mcpBudget > 0 ? buildMcpCatalog(mcpIndex, mcpBudget) : { text: '', includedCount: 0, omitted: 0 };
   const mcpEnabled = mcpSection.includedCount > 0;
+  if (mcpCandidate && !mcpEnabled) {
+    const total = mcpIndex.handles.reduce((sum, server) => sum + server.tools.length, 0);
+    sendLog(`⚠️ [Agent] ${total} MCP tool(s) hidden — ${providerLabel}'s input limit leaves no room for the catalog`);
+  } else if (mcpEnabled && mcpSection.omitted > 0) {
+    sendLog(`⚠️ [Agent] ${mcpSection.omitted} MCP tool(s) omitted — ${providerLabel}'s input limit fits only ${mcpSection.includedCount}`);
+  }
   const catalogForPrompt = mcpEnabled
     ? `${catalog}\n\nMCP TOOLS (external tools from your connected servers; call with "call_mcp"):\n${mcpSection.text}`
     : catalog;
-  const scratchSlots = mcpEnabled ? SCRATCH_IN_PROMPT_MCP : SCRATCH_IN_PROMPT;
+  const scratchSlots = mcpEnabled ? mcpScratchSlots : SCRATCH_IN_PROMPT;
   const validateDecision = (allowAsk: boolean) => (json: unknown): Validation<AgentDecision> => {
     if (mcpEnabled && json && typeof json === 'object' && (json as Record<string, unknown>).action === 'call_mcp') {
       return validateMcpAction(json as Record<string, unknown>, mcpIndex);
@@ -342,15 +309,10 @@ export async function runAgent(
     config: entry.config,
     observation: entry.observation,
   }));
-  // Repeat detection, keyed by call identity → the step that already made it. Only
-  // successful resumed calls are pinned: a resumed run is a fresh attempt at whatever
-  // died with the app, so re-trying the step that failed must stay allowed.
   const signatures = new Map<string, number>();
   (options.resumeFrom ?? []).forEach((entry, index) => {
     if (entry.status === 'ok') signatures.set(callSignature(entry.tool, entry.config), index + 1);
   });
-  // One context for the whole run so `assess_flow` can hand its selection to a later
-  // `build_flow` turn — the assessment is the expensive half and is never paid for twice.
   const builtinCtx: BuiltinDeps = {
     deps,
     providerUrl,
@@ -361,22 +323,14 @@ export async function runAgent(
     ...(options.onConfirm ? { confirm: options.onConfirm } : {}),
   };
 
-  // A turn spent on a stale read produced no decision, so it is retried rather than counted.
-  // Cumulative for the run, not consecutive: "drop the thread and ask again" only helps when
-  // the thread was the problem, so a provider that keeps doing it must stop the run, not spin.
   let lastRawDecision = '';
   let staleReads = 0;
 
   let toolCalls = scratch.length;
   let consecutiveErrors = 0;
-  // Not persisted across a resume: a resumed run simply re-plans, which costs nothing and is
-  // preferable to threading plan state through the run store for a bookkeeping field.
   const plan: AgentPlan = emptyPlan();
-  const session = createProviderSession();
+  const session = createProviderSession(lean ? undefined : options.attachments);
   let budgetWarned = false;
-  // No meter around this run means no budgeting: `null` is "cannot tell", not "nothing
-  // spent", and a missing measurement must never be the reason a task gets cut short.
-  // Browser providers are exempt — their tokens are not billed, so only wall-clock matters.
   const spentTokens = (): number | null => {
     if (!lean) return null;
     const spent = currentScopeTokens();
@@ -399,16 +353,10 @@ export async function runAgent(
   for (let turn = scratch.length + 1; turn <= maxTurns; turn++) {
     if (options.signal?.aborted) throw new FlowAbortError();
     if (remainingMs() <= 0) break;
-    // Only ever break with something to synthesize from — an empty scratch falls through to
-    // the "reached the step limit without an answer" throw, which would be a lie here.
     if (scratch.length > 0 && overTokenCeiling()) break;
 
-    // Same graceful landing as the wall-clock budget: force a finish so the user gets an
-    // answer built from the observations already paid for, not an error.
     const mustFinish = turn === maxTurns || remainingMs() < MIN_TURN_BUDGET_MS || overTokenBudget();
     const turnTimeoutMs = Math.max(10_000, Math.min(reasoningTimeoutMs, remainingMs()));
-    // Asking is offered only while a reply could still be acted on: at the step limit the
-    // observations are already paid for and the user is owed the answer, not a question.
     const turnOptions: TurnPromptOptions = {
       goal: trimmedGoal,
       catalog: catalogForPrompt,
@@ -447,16 +395,6 @@ export async function runAgent(
       signal: options.signal,
     });
 
-    /*
-     * A byte-identical reply two turns running is not a decision — it is the same message read
-     * twice. It happens when a browser provider navigates mid-turn and the recovery read picks
-     * up the answer already on the page; the loop then re-runs the decision it just made, the
-     * repeat guard turns each one into an error observation, and the run burns every remaining
-     * turn saying the same thing. Drop the thread so the next turn re-sends the full prompt on
-     * a clean one, and spend no turn on the stale copy.
-     */
-    // Browser providers only: a BYOK endpoint repeating itself is an ordinary loop the repeat
-    // guard already handles, and there is no page to have re-read.
     if (!lean && decision.raw && decision.raw === lastRawDecision) {
       staleReads++;
       if (staleReads > MAX_STALE_READS) {
@@ -466,8 +404,6 @@ export async function runAgent(
       session.lost = false;
       sendLog(`♻️ [Agent] turn ${turn}: ${providerLabel} returned the previous answer verbatim — dropping the thread and retrying`);
       options.onTrace?.({ kind: 'stage', turn, label: 'repairing', detail: 'stale' });
-      // No decision was made, so this must not cost a step. `staleReads` is cumulative for the
-      // whole run, which is what bounds the retry — the loop counter cannot.
       turn--;
       continue;
     }
@@ -480,10 +416,6 @@ export async function runAgent(
 
     const action = decision.value;
     const planWasEmpty = plan.steps.length === 0;
-    // A plan that arrives before any step was taken cannot have anything done yet. Models
-    // asked for "the items you have now finished" will happily echo all of them on turn one,
-    // and an instantly-complete plan would trigger the finish nudge — turning the feature
-    // meant to buy depth into the shallowest possible run.
     const bornComplete = planWasEmpty && scratch.length === 0;
     applyPlanUpdate(plan, action.plan, bornComplete ? undefined : action.planDone);
     if (plan.steps.length > 0) {
@@ -491,8 +423,6 @@ export async function runAgent(
     }
     if (planWasEmpty && plan.steps.length > 0) {
       sendLog(`🗂️ [Agent] plan: ${plan.steps.map((step, i) => `${i + 1}. ${step}`).join(' | ')}`);
-      // Not while landing: at the step limit the model was told to finish, and growing the
-      // budget for a plan it produced instead would reward ignoring that.
       if (pinnedMaxTurns === undefined && !mustFinish) {
         const grown = planTurnCeiling(plan.steps.length);
         if (grown > maxTurns) {
@@ -509,9 +439,6 @@ export async function runAgent(
     if (action.action === 'ask_user') {
       const question = action.question ?? '';
       sendLog(`❓ [Agent] pausing to ask the user: ${question}`);
-      // Persisted with an empty observation on purpose: the resume writes the user's reply
-      // into it, so the answer reaches the model through the scratchpad every other tool
-      // result travels through, and nothing gathered so far is thrown away.
       options.onTurn?.({
         index: turn,
         thought: action.thought,
@@ -538,8 +465,6 @@ export async function runAgent(
     let turnStatus: 'ok' | 'error' = 'ok';
 
     if (repeatedAt !== undefined) {
-      // Not executed at all: the prompt has always asked for no identical repeats, but a
-      // rule the loop does not enforce is a rule a stuck model can spend every turn on.
       observation = repeatObservation(toolLabel, repeatedAt);
       turnStatus = 'error';
       sendLog(`🔁 [Agent] skipped a repeat of ${toolLabel} (identical to step ${repeatedAt})`);
@@ -548,6 +473,9 @@ export async function runAgent(
       observation = outcome.observation;
       turnStatus = outcome.status;
       if (turnStatus === 'error') sendLog(`⚠️ [Agent] ${toolLabel}: ${observation.slice(0, 160)}`);
+    } else if (isHelpTool(action.tool ?? '')) {
+      observation = describeToolSpec(recordConfig.tool ?? '');
+      turnStatus = observation.startsWith('ERROR:') ? 'error' : 'ok';
     } else if (isBuiltinTool(action.tool ?? '')) {
       const outcome = await runBuiltinTool(action.tool as AgentBuiltinTool, recordConfig, builtinCtx);
       observation = outcome.observation;
@@ -561,8 +489,6 @@ export async function runAgent(
         turnStatus = 'error';
         sendLog(`🔒 [Agent] blocked ${tool}: ${denyReason}`);
       } else {
-        // Stages are reported against THIS turn, so a pipeline skill (research) can narrate
-        // itself into its own row instead of leaving it blank for a minute.
         const stageDeps: FlowExecutorDeps = options.onTrace
           ? { ...deps, onStage: (label, detail) => options.onTrace?.({ kind: 'stage', turn, label, detail }) }
           : deps;
@@ -600,8 +526,6 @@ export async function runAgent(
 
   if (scratch.length === 0) throw new Error('The agent reached the step limit without an answer');
   options.onProgress?.({ stage: 'thinking' });
-  // The last thing a run does is the one phase with no row of its own: without this the UI
-  // sits on "thinking" through the whole final write-up, which is also its longest single call.
   options.onTrace?.({ kind: 'synthesizing' });
   const synthTimeoutMs = Math.max(SYNTH_MIN_TIMEOUT_MS, Math.min(reasoningTimeoutMs, remainingMs()));
   if (plan.steps.length > 0 && !planComplete(plan)) {

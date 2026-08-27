@@ -7,6 +7,7 @@ import { EmptyState } from '../components/EmptyState';
 import { useShallow } from 'zustand/react/shallow';
 import { useI18nStore } from '../store/i18nStore';
 import { useAppStore } from '../store/appStore';
+import { useShortcutStore } from '../store/shortcutStore';
 import { useFlowStore } from '../store/useFlowStore';
 import { useThemeStore, resolveThemePreference } from '../store/themeStore';
 import { settingsApi, fileApi, systemApi } from '../api/electronApi';
@@ -30,6 +31,7 @@ import { useMcpServers } from './settings/hooks/useMcpServers';
 import { useSettingsNav } from './settings/hooks/useSettingsNav';
 import type { Category } from './settings/hooks/useSettingsNav';
 import { GeneralSection } from './settings/sections/GeneralSection';
+import { ShortcutsSection } from './settings/sections/ShortcutsSection';
 import { AppearanceSection } from './settings/sections/AppearanceSection';
 import { ExportSection } from './settings/sections/ExportSection';
 import { NotificationsSection } from './settings/sections/NotificationsSection';
@@ -76,6 +78,7 @@ export const SettingsView: React.FC = () => {
   const [dangerAction, setDangerAction] = useState<DangerAction>(null);
   const applySettingsSnapshot = useCallback(async (snapshot: SettingsSnapshot) => {
     hotkey.applyHotkeyReset(snapshot.hotkey, snapshot.hotkeyEnabled);
+    useShortcutStore.getState().setOverrides(snapshot.shortcuts ?? {});
     prefs.applyPromptReset(snapshot.promptPreferences, snapshot.syncSystemLanguageToModel, snapshot.youtubePrompt);
     system.applySystemReset(
       snapshot.notifyOnComplete,
@@ -99,6 +102,13 @@ export const SettingsView: React.FC = () => {
   }, [localeTranslations]);
 
   const currentView = useAppStore((s) => s.currentView);
+  const setView = useAppStore((s) => s.setView);
+  const selectFlow = useFlowStore((s) => s.selectFlow);
+
+  const handleOpenFlow = useCallback((flowId: string) => {
+    selectFlow(flowId);
+    setView('flow');
+  }, [selectFlow, setView]);
   useEffect(() => {
     if (currentView === 'settings') void refreshLocales();
   }, [currentView, refreshLocales]);
@@ -138,12 +148,6 @@ export const SettingsView: React.FC = () => {
     else if (action === 'clear-history') await handleClearHistory();
   }, [dangerAction, handleResetSettings, handleClearHistory]);
 
-  /*
-   * The category heading is owned here rather than by each section, because a category can be
-   * made of several sections: a query matching Telegram and LINE used to print "Bot" twice.
-   * Called as a function, not rendered as a component — a component declared during render is a
-   * fresh type every keystroke, which would remount the sections and drop their in-progress forms.
-   */
   const categoryBlock = (category: Category, content: React.ReactNode): React.ReactNode => (
     <Box display={nav.showCategory(category) ? 'block' : 'none'}>
       {nav.isSearching && <GroupHeader label={t(`settings.group.${category}`)} />}
@@ -151,7 +155,6 @@ export const SettingsView: React.FC = () => {
     </Box>
   );
 
-  // The shared command cards only mean something once a bot can actually receive a command.
   const anyBotEnabled = (telegram.telegramSettings?.enabled ?? false) || (line.lineSettings?.enabled ?? false);
 
   return (
@@ -197,8 +200,6 @@ export const SettingsView: React.FC = () => {
           {categoryBlock('general', (
             <>
               <GeneralSection
-                hotkey={hotkey}
-                quickExport={quickExport}
                 system={system}
                 t={t}
                 locale={locale}
@@ -206,6 +207,7 @@ export const SettingsView: React.FC = () => {
                 onSetLocale={setLocale}
                 getLocaleLabel={getLocaleLabel}
                 onOpenLanguagesFolder={handleOpenLanguagesFolder}
+                onOpenShortcuts={() => nav.setActiveCategory('shortcuts')}
                 showSection={(tags) => nav.showSection(tags, 'general')}
                 sectionGap={SECTION_GAP}
               />
@@ -216,6 +218,17 @@ export const SettingsView: React.FC = () => {
                 sectionGap={SECTION_GAP}
               />
             </>
+          ))}
+
+          {categoryBlock('shortcuts', (
+            <ShortcutsSection
+              hotkey={hotkey}
+              quickExport={quickExport}
+              t={t}
+              showSection={(tags) => nav.showSection(tags, 'shortcuts')}
+              sectionGap={SECTION_GAP}
+              onOpenFlow={handleOpenFlow}
+            />
           ))}
 
           {categoryBlock('appearance', (

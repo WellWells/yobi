@@ -7,33 +7,18 @@ export interface AgentTraceTurn {
   config?: Record<string, string>;
   status: 'thinking' | 'running' | 'ok' | 'error';
   preview?: string;
-  /** The model's own one-line reason for this step. */
   thought?: string;
-  /** Who is being asked, while this turn is still being decided. */
   provider?: string;
-  /** What the step is doing right now; cleared when it finishes. */
   stage?: { label: AgentStageLabel; detail?: string };
-  /** Hosts this step actually read, kept after it finishes — the disclosure is the point. */
   read?: string[];
 }
 
-/**
- * A run that stopped to ask the user something. Its question is already sitting in the
- * conversation, so the next agent-mode message typed into that same conversation is the
- * answer: it resumes this run instead of starting a new one.
- */
 export interface AgentPendingQuestion {
   runId: string;
-  /** '' for a temporary chat, which has no file. */
   conversationPath: string;
   question: string;
 }
 
-/**
- * Whether an agent-mode message is the reply to a pending question rather than a new goal.
- * It has to match on the conversation: the question lives in one conversation's transcript,
- * so a message typed anywhere else is a new goal, not an answer to something invisible.
- */
 export function answeringRun(
   pending: AgentPendingQuestion | null,
   conversationPath: string,
@@ -45,9 +30,7 @@ export function answeringRun(
 interface AgentRunStore {
   resumable: AgentRunSummary[];
   traces: Record<string, AgentTraceTurn[]>;
-  /** Each run's checklist, so the UI can show where it is and not only what it just did. */
   plans: Record<string, { steps: string[]; done: number[] }>;
-  /** Runs whose loop is over and are writing the final answer. */
   synthesizing: Record<string, true>;
   pendingQuestion: AgentPendingQuestion | null;
   setResumable: (list: AgentRunSummary[]) => void;
@@ -56,10 +39,6 @@ interface AgentRunStore {
   applyTrace: (payload: AgentTracePayload) => void;
 }
 
-/**
- * A `read` stage names one page, and they arrive one at a time — they accumulate into a list
- * rather than overwriting each other, so the row ends up naming every source it used.
- */
 function stagePatch(
   previous: AgentTraceTurn | undefined,
   label: AgentStageLabel,
@@ -110,7 +89,6 @@ export const useAgentRunStore = create<AgentRunStore>((set) => ({
       : event.kind === 'tool'
         ? { tool: event.tool, config: event.config, status: 'running', ...(event.thought ? { thought: event.thought } : {}) }
       : event.kind === 'stage' ? stagePatch(previous, event.label, event.detail)
-      // The step is over: drop the live stage, keep what it read.
       : { tool: event.tool, status: event.status, preview: event.preview, stage: undefined };
     if (idx >= 0) turns[idx] = { ...turns[idx], ...patch };
     else turns.push({ turn: event.turn, status: 'thinking', ...patch });

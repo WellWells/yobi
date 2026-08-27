@@ -20,7 +20,6 @@ import type { FlowManager } from '../flow';
 
 type Strings = Record<string, string>;
 
-/** Adds the delivered text, which a bot needs in order to send the reply on. */
 export interface SearchRunOutcome extends SearchCommandResult {
   answer?: string;
   title?: string;
@@ -34,7 +33,6 @@ export interface SearchRunRequest {
   conversationPath?: string;
   clientToken?: string;
   origin?: CommandOrigin;
-  /** Progress for a caller with no queue UI to read — a bot. See AgentRunRequest. */
   onProgressText?: (text: string) => void;
 }
 
@@ -99,8 +97,6 @@ export function runSearchCommand(
       timestampLabel: strings['md.timestamp'] ?? 'Time',
     };
 
-    // A bot run must never land in the desktop's temporary chat: the two would overwrite
-    // each other, and the requester would get nothing back on their phone.
     if (origin === 'app' && isTempChatMode()) {
       deliverTempChatResult({ content: buildOutputMarkdown(markdownOptions) });
       return { success: true, answer: response, title };

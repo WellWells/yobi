@@ -150,7 +150,6 @@ async function resolveStepConfig(
   }
   if (step.type === 'llm') {
     resolvedConfig.__flowId = flowId;
-    /* Same gate as the bot step: only files this run produced may leave the machine. */
     resolvedConfig.__attachmentAllowlist = JSON.stringify(getProducedFiles(context));
   }
   if (step.type === 'browser_open' || step.type === 'browser_close') {

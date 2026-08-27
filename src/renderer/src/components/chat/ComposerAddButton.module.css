@@ -1,0 +1,15 @@
+/* ComposerAddButton.module.css */
+/*
+ * Hover for the composer footer's add button.
+ *
+ * Mantine's subtle variant is unusable here: on a dark theme its hover fill is *darker* than
+ * the composer surface, so the button reads as a hole punched in the toolbar rather than a
+ * lit control — and with the grey palette the fill lands within a few units of the surface
+ * and vanishes entirely. `bg-tertiary` is the elevated-surface token the neighbouring
+ * ComposerPill already hovers to, so the two controls light up the same way, and it stays
+ * the right direction in light themes because the theme resolver derives it per theme.
+ */
+
+.button:hover:not([data-disabled]) {
+  background: var(--mantine-color-bg-tertiary) !important;
+}

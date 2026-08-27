@@ -1,3 +1,5 @@
+import type { Provider } from '../shared/types';
+
 function getPlatformToken(): string {
   if (process.platform === 'darwin') {
     return 'Macintosh; Intel Mac OS X 10_15_7';
@@ -25,3 +27,10 @@ function buildFirefoxUserAgent(): string {
 export const CLEAN_UA = buildCleanChromiumUserAgent();
 
 export const FIREFOX_UA = buildFirefoxUserAgent();
+
+export const WORKER_USER_AGENTS: Record<Provider, string> = {
+  gemini: FIREFOX_UA,
+  chatgpt: CLEAN_UA,
+  perplexity: CLEAN_UA,
+  duckai: CLEAN_UA,
+};

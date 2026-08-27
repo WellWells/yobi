@@ -9,7 +9,6 @@ const VAR_REF_RE = /\{\{([^{}]+)\}\}/g;
 
 function isFileProducer(step: SkillInstance): boolean {
   if (FILE_PRODUCER_TYPES.has(step.type)) return true;
-  /* A share step writes a file for every format except "text", which hands back a link. */
   if (step.type === 'share') return !isShareLinkFormat(step.config.format);
   return step.type === 'llm' && LLM_EXPORT_FORMATS.has(step.config.exportFormat ?? '');
 }

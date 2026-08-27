@@ -35,8 +35,6 @@ export function inferTelegramSendAs(filePath: string): 'photo' | 'document' | 'a
 
 export function isFileOutputStep(type: SkillType, config: Record<string, string>): boolean {
   if (type === 'capture') return true;
-  /* A share step in link mode produces a URL — pointing {{file}} at it would poison every
-   * downstream bot / email_send / file_delete that trusts {{file}} to be a real file. */
   if (type === 'share') return !isShareLinkFormat(config.format);
   if (type === 'file_write') return true;
   if (type === 'file_download') return true;

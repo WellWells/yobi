@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Button, Divider, NavLink, Popover, Stack, Text } from '@mantine/core';
+import { Box, Button, Divider, Group, NavLink, Popover, Stack, Text } from '@mantine/core';
 import { Plus, Search } from 'lucide-react';
+import { ShortcutHint } from '../../components/ShortcutHint';
 import { AppTextInput } from '../../components/AppTextInput';
 import { SKILL_ICON } from './skills';
 import { buildSkillGroups, filterSkillGroups, flattenSkillGroups } from './skillCatalog';
@@ -132,9 +133,14 @@ export const AddStepMenu: React.FC<AddStepMenuProps> = ({ position = 'bottom', t
             )}
           </Box>
           <Divider />
-          <Text size="xs" c="dimmed" ta="center" py={4}>
-            {t('flow.skillSearch.hint')}
-          </Text>
+          {}
+          <Group gap={6} justify="center" py={4}>
+            <ShortcutHint combo="Enter" />
+            <Text size="xs" c="dimmed">{t('flow.skillSearch.hint.add')}</Text>
+            <Text size="xs" c="dimmed">·</Text>
+            <ShortcutHint combo="Escape" />
+            <Text size="xs" c="dimmed">{t('flow.skillSearch.hint.close')}</Text>
+          </Group>
         </Stack>
       </Popover.Dropdown>
     </Popover>

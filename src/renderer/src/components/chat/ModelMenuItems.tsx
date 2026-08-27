@@ -1,7 +1,6 @@
 import React, { Fragment, useCallback } from 'react';
 import { Badge, Group, Menu } from '@mantine/core';
 import { Check } from 'lucide-react';
-import { getModelIconByUrl } from '../../config/models';
 import { useProviderModels } from '../../hooks/useProviderModels';
 import { useAppStore } from '../../store/appStore';
 import { useI18nStore } from '../../store/i18nStore';
@@ -32,7 +31,7 @@ export const ModelMenuItems: React.FC<ModelMenuItemsProps> = ({ value, onChange 
         <Fragment key={section.label ?? 'providers'}>
           {section.label && <Menu.Label>{section.label}</Menu.Label>}
           {section.models.map((model) => {
-            const Icon = getModelIconByUrl(model.url);
+            const Icon = model.icon;
             const isSelected = value === model.url;
             const showLoginBadge = needsLogin(model.url);
 

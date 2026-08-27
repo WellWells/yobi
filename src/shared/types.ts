@@ -1,3 +1,6 @@
+import { SHARE_EXPIRE_VALUES } from './shareExpire';
+import { CAPTURE_PALETTES } from './capturePalettes';
+import type { ShareExpire, ShareExpireCache } from './shareExpire';
 import type { TurnMeta } from './conversationDoc';
 import type { TokenUsage } from './tokenEstimate';
 import type { Theme } from './themes';
@@ -45,10 +48,6 @@ export const DEFAULT_PROVIDER_COMMANDS: Record<Provider, string> = {
 
 export const BOT_COMMAND_RE = /^[a-z][a-z0-9_]{0,31}$/;
 
-/**
- * App built-in chat commands the bots may also expose. Shared by Telegram and LINE — a
- * single command set, the same way provider commands are shared.
- */
 export const BOT_BUILTIN_COMMAND_KEYS = ['agent', 'search'] as const;
 export type BotBuiltinCommandKey = (typeof BOT_BUILTIN_COMMAND_KEYS)[number];
 
@@ -57,12 +56,6 @@ export const DEFAULT_BUILTIN_COMMANDS: Record<BotBuiltinCommandKey, string> = {
   search: 'search',
 } as const;
 
-/**
- * How long a bot chat keeps answering an agent's question. Past this, the next plain
- * message is an ordinary chat message again instead of an answer to a stale question.
- * Kept short on purpose: a stale window silently swallows an unrelated message as an
- * answer, which is worse than making the user re-run the command.
- */
 export const DEFAULT_AGENT_ASK_TTL_MINUTES = 5;
 export const AGENT_ASK_TTL_MIN_MINUTES = 1;
 export const AGENT_ASK_TTL_MAX_MINUTES = 5;
@@ -307,6 +300,7 @@ export interface McpServerView extends McpServerConfig {
   authorized: boolean;
   hasToken: boolean;
   error?: string;
+  tools: McpToolInfo[];
 }
 
 export interface McpToolInfo {
@@ -330,28 +324,6 @@ export interface McpServerActionResult {
   error?: string;
 }
 
-export interface McpPreset {
-  name: string;
-  url: string;
-}
-
-export interface McpPresetInfo extends McpPreset {
-  needsToken?: boolean;
-}
-
-export const MCP_PRESETS: readonly McpPresetInfo[] = [
-  { name: 'Notion', url: 'https://mcp.notion.com/mcp' },
-  { name: 'Linear', url: 'https://mcp.linear.app/mcp' },
-  { name: 'Atlassian', url: 'https://mcp.atlassian.com/v1/mcp' },
-  { name: 'Asana', url: 'https://mcp.asana.com/mcp' },
-  { name: 'Sentry', url: 'https://mcp.sentry.dev/mcp' },
-  { name: 'Stripe', url: 'https://mcp.stripe.com' },
-  { name: 'Vercel', url: 'https://mcp.vercel.com' },
-  { name: 'Neon', url: 'https://mcp.neon.tech/mcp' },
-  { name: 'Intercom', url: 'https://mcp.intercom.com/mcp' },
-  { name: 'GitHub', url: 'https://api.githubcopilot.com/mcp/', needsToken: true },
-];
-
 export interface PromptAttachment {
   id: string;
   name: string;
@@ -361,13 +333,29 @@ export interface PromptAttachment {
   previewUrl?: string;
 }
 
+export const ATTACHMENT_STASH_MAX_BYTES = 25 * 1024 * 1024;
+
+export interface AttachmentStashRequest {
+  name: string;
+  mimeType: string;
+  data: Uint8Array;
+}
+
+export interface StashedAttachment {
+  path: string;
+  name: string;
+  size: number;
+  mimeType: string;
+  preview?: string;
+}
+
 export interface ProviderAttachmentPolicy {
   maxFiles: number;
 }
 
 export const PROVIDER_ATTACHMENT_POLICIES: Record<Provider, ProviderAttachmentPolicy> = {
   gemini: { maxFiles: 10 },
-  chatgpt: { maxFiles: 0 },
+  chatgpt: { maxFiles: 10 },
   perplexity: { maxFiles: 0 },
   duckai: { maxFiles: 0 },
 };
@@ -412,6 +400,8 @@ export const IPC = {
   SET_HOTKEY_PAUSED: 'hotkey:set-paused',
   GET_HOTKEY_ENABLED: 'hotkey:get-enabled',
   SET_HOTKEY_ENABLED: 'hotkey:set-enabled',
+  GET_SHORTCUTS: 'shortcuts:get',
+  UPDATE_SHORTCUTS: 'shortcuts:update',
   GET_AI_URL: 'ai:get-url',
   UPDATE_AI_URL: 'ai:update-url',
   GET_HIDDEN_SOURCES: 'sources:get-hidden',
@@ -442,6 +432,8 @@ export const IPC = {
   CANCEL_QUEUE_TASK: 'queue:cancel-task',
   FORCE_SKIP_ACTIVE_TASK: 'queue:force-skip-active',
   COPY_TEXT_TO_CLIPBOARD: 'clipboard:write-text',
+  ATTACHMENT_STASH_BYTES: 'attachment:stash-bytes',
+  ATTACHMENT_FROM_CLIPBOARD: 'attachment:from-clipboard',
   GET_TELEGRAM_SETTINGS: 'telegram:get-settings',
   UPDATE_TELEGRAM_ENABLED: 'telegram:update-enabled',
   UPDATE_TELEGRAM_BOT_TOKEN: 'telegram:update-bot-token',
@@ -630,10 +622,8 @@ export interface ScraperPickRequest {
 }
 
 export interface ScraperPickResult {
-  /** Absolute selector for the requested target — what a legacy single-field pick writes. */
   selector: string;
   count: number;
-  /** The row-scoped set the picker actually derived; a 'list' pick consumes all three. */
   itemSelector: string;
   titleSelector: string;
   linkSelector: string;
@@ -776,12 +766,10 @@ export interface TelegramPairingState {
   pairedUsers: TelegramPairedUser[];
 }
 
-/** A channel the bot was promoted into, discovered from `my_chat_member` updates. */
 export interface TelegramChannel {
   chatId: number;
   title: string;
   username?: string;
-  /** False once the bot is demoted, removed, or loses the post-messages right. */
   canPost: boolean;
   discoveredAt: string;
   lostAt?: string;
@@ -801,30 +789,21 @@ export interface BotLlmDirectConfig {
 export interface BotBuiltinCommand {
   enabled: boolean;
   command: string;
-  /** Empty string follows the app's default model. */
   targetUrl: string;
 }
 
 export interface BotBuiltinCommands extends Record<BotBuiltinCommandKey, BotBuiltinCommand> {
-  /** Minutes a bot chat stays willing to treat a plain message as an answer to /agent. */
   askTtlMinutes: number;
 }
 
-/**
- * Per-BYOK-key/group opt-out for the bots, keyed by instance or group id. A missing id
- * means "on" — BYOK commands existed before this switch did.
- */
 export type BotByokCommands = Record<string, boolean>;
 
-/** One BYOK key or group as the settings page lists it, with its real command name. */
 export interface BotByokCommandInfo {
   id: string;
   kind: 'key' | 'group';
   name: string;
-  /** Empty when the name yields no usable command or another command already took it. */
   command: string;
   enabled: boolean;
-  /** Hidden under Model sources, which withdraws the command wherever this switch stands. */
   hidden: boolean;
 }
 
@@ -960,14 +939,11 @@ export interface Task {
   replyTarget?: TelegramReplyTarget;
   lineReplyTarget?: LineReplyTarget;
   attachments?: string[];
+  ephemeralAttachments?: boolean;
   requesterName?: string;
   conversationPath?: string;
   placeholderTitle?: string;
   sendId?: string;
-  /**
-   * Bot chat this task belongs to (`botChatKey`). Set on bot tasks so the conversation the
-   * task ends up writing to becomes the one that chat continues next time.
-   */
   sessionKey?: string;
 }
 
@@ -997,19 +973,8 @@ export type CardLayout = 'document' | 'bubble';
 
 export type CaptureRange = 'all' | 'last';
 
-/*
- * 1600 is gone: at that width a line of body text runs past 170 Latin characters, more
- * than twice a comfortable measure, and the export is usually read downscaled inside a
- * chat app where the type ends up unreadable. 1200 is the widest that stays useful, and
- * it earns its place by not wrapping code and tables.
- */
 export const CAPTURE_WIDTHS = [720, 1000, 1200] as const;
 
-/*
- * The single source of truth for how the three widths are named. Both the export
- * dialog and the quick-export panel read this, so the two can never drift into
- * offering different sizes or different labels for the same size.
- */
 export const CAPTURE_WIDTH_LABEL_KEYS: Record<number, string> = {
   720: 'capture.size.phone',
   1000: 'capture.size.standard',
@@ -1020,15 +985,21 @@ export function captureWidthLabelKey(width: number): string {
   return CAPTURE_WIDTH_LABEL_KEYS[width] ?? 'capture.size.standard';
 }
 
-/*
- * Stored widths are only clamped to MIN/MAX, so an older config can hold a value
- * that is none of the three offered sizes. Snapping to the nearest one keeps a
- * three-way picker from rendering with nothing selected.
- */
 export function snapCaptureWidth(width: number): number {
   if (!Number.isFinite(width)) return DEFAULT_CAPTURE_WIDTH;
   return CAPTURE_WIDTHS.reduce((best, value) =>
     Math.abs(value - width) < Math.abs(best - width) ? value : best);
+}
+
+export const DEFAULT_CAPTURE_MARGIN = 40;
+export const MAX_CAPTURE_MARGIN = 120;
+export const CAPTURE_MARGIN_STEP = 10;
+export const CAPTURE_MARGIN_MARKS = [0, 40, 80, 120] as const;
+
+export function clampCaptureMargin(margin: unknown): number {
+  const value = typeof margin === 'number' ? margin : Number.NaN;
+  if (!Number.isFinite(value)) return DEFAULT_CAPTURE_MARGIN;
+  return Math.max(0, Math.min(MAX_CAPTURE_MARGIN, Math.round(value)));
 }
 
 export const DEFAULT_CAPTURE_WIDTH = 1000;
@@ -1037,18 +1008,18 @@ export const MAX_CAPTURE_WIDTH = 1200;
 
 export const MAX_CAPTURE_HEIGHT = 20_000;
 
-export const SHARE_EXPIRE_VALUES = [
-  '5min', '10min', '1hour', '1day', '1week', '1month', '1year', 'never',
-] as const;
-export type ShareExpire = (typeof SHARE_EXPIRE_VALUES)[number];
-
-export const DEFAULT_SHARE_INSTANCE = 'https://privatebin.net';
+export {
+  SHARE_EXPIRE_VALUES, SHARE_EXPIRE_SECONDS, DEFAULT_SHARE_INSTANCE, DEFAULT_INSTANCE_EXPIRES,
+  PRIVATEBIN_DEFAULT_EXPIRES, clampShareExpire, isShareExpire, normalizeShareExpireList, resolveShareExpires,
+} from './shareExpire';
+export type { ShareExpire, ShareExpireCache } from './shareExpire';
 
 export interface ShareSettings {
   instanceUrl: string;
   expire: ShareExpire;
   burnAfterReading: boolean;
   consentedAt: string;
+  instanceExpires: ShareExpireCache | null;
 }
 
 export interface ShareLinkRequest {
@@ -1057,12 +1028,6 @@ export interface ShareLinkRequest {
   burnAfterReading: boolean;
 }
 
-/*
- * The consent bullets, in display order. Single source for all three consumers: the chat
- * dialog renders them, the quick-export panel renders them from strings the main process
- * resolved, and the main process resolves them by walking this list. Two consent screens
- * that keep their own copy of the list drift the moment one of them gains a point.
- */
 export const SHARE_CONSENT_KEYS = [
   'share.consent.thirdParty',
   'share.consent.encrypted',
@@ -1100,15 +1065,11 @@ export interface CaptureSettings {
   cardLayout: CardLayout;
   range: CaptureRange;
   width: number;
+  margin: number;
   pixelRatio: number;
   zip: boolean;
 }
 
-/*
- * The panel's fourth choice is not a capture format at all — it uploads the text and hands
- * back a link. It rides in the same slot because it is the same "what should this become?"
- * question, but it must never reach the card renderer, hence the separate union.
- */
 export type QuickExportFormat = CaptureFormat | 'text';
 
 export interface QuickExportSettings {
@@ -1122,38 +1083,37 @@ export function defaultQuickExportHotkey(isMac: boolean): string {
   return isMac ? 'Command+Ctrl+H' : 'Alt+H';
 }
 
-/**
- * Paired with the quick-export default so the two land next to each other on the keyboard.
- * macOS gets the same Command+Ctrl prefix for two separate reasons: Option+<letter> (which
- * Electron spells "Alt") types a character rather than firing a shortcut, and a plain
- * Command+G is the system-wide "Find Next" that a global binding would swallow everywhere.
- */
 export function defaultMainHotkey(isMac: boolean): string {
   return isMac ? 'Command+Ctrl+G' : 'Alt+G';
 }
 
-/**
- * Why a hotkey did not take effect. `conflict` is Yobi's own two bindings colliding — refused
- * before anything is saved, because accepting it silently breaks whichever slot binds second.
- * `taken` is another application already owning the combination: saved anyway, since the app
- * holding it may well close, but surfaced instead of failing in silence.
- */
 export type HotkeyBindResult = 'ok' | 'conflict' | 'taken';
+
+export interface PanelHeight {
+  panel: number;
+  total: number;
+}
 
 export interface ExportPromptPayload {
   defaultName: string;
   format: QuickExportFormat;
   zip: boolean;
   width: number;
+  margin: number;
+  palette: string;
+  backgroundStyle: string;
+  direction: string;
   theme: Theme;
-  /* Localised in the main process — the prompt window has no i18n store of its own. */
   strings: {
     title: string;
     fileName: string;
     zip: string;
     size: string;
     copy: string;
+    save: string;
     cancel: string;
+    theme: string;
+    margin: string;
     share: ExportPromptShareStrings;
   };
   sizes: Array<{ value: number; label: string }>;
@@ -1183,18 +1143,22 @@ export interface ExportPromptShareState {
 export interface ShareResultState {
   url: string;
   revoked: boolean;
-  /* Already localised by main — the panel has no i18n of its own. */
+  burned: boolean;
   error: string;
   strings: {
     hint: string;
     copied: string;
+    open: string;
+    burnBlocked: string;
     revoke: string;
     revoked: string;
     done: string;
   };
 }
 
-export type ShareResultAction = 'revoke' | 'done';
+export type ShareResultAction = 'revoke' | 'open' | 'done';
+
+export type CaptureExportAction = 'copy' | 'save';
 
 export interface CaptureExportChoice {
   kind: 'capture';
@@ -1202,6 +1166,9 @@ export interface CaptureExportChoice {
   format: CaptureFormat;
   zip: boolean;
   width: number;
+  margin: number;
+  palette: string;
+  action: CaptureExportAction;
 }
 
 export interface ShareExportChoice {
@@ -1223,6 +1190,8 @@ export interface ExportChoiceFallback {
   format: QuickExportFormat;
   zip: boolean;
   width: number;
+  margin: number;
+  palette: string;
   expire: ShareExpire;
   burnAfterReading: boolean;
 }
@@ -1257,10 +1226,16 @@ export function normalizeExportChoice(
     width: (CAPTURE_WIDTHS as readonly number[]).includes(value.width as number)
       ? (value.width as number)
       : snapCaptureWidth(fallback.width),
+    margin: typeof value.margin === 'number'
+      ? clampCaptureMargin(value.margin)
+      : clampCaptureMargin(fallback.margin),
+    palette: CAPTURE_PALETTES.some((entry) => entry.key === value.palette)
+      ? (value.palette as string)
+      : fallback.palette,
+    action: value.action === 'save' ? 'save' : 'copy',
   };
 }
 
-/* The remembered format can be 'text', which no card renderer accepts. */
 export function captureFormatOf(format: QuickExportFormat): CaptureFormat {
   return format === 'text' ? 'png' : format;
 }
@@ -1294,6 +1269,7 @@ export interface MarkdownCaptureOptions {
   showTimestamp: boolean;
   showTokens: boolean;
   width: number;
+  margin?: number;
   background: string;
   cardTheme: CardTheme;
   cardLayout: CardLayout;
@@ -1382,9 +1358,7 @@ export interface FlowVariable {
   placeholder?: string;
   pickTarget?: 'title' | 'link' | 'list';
   pickUrlKey?: string;
-  /** 'list' pick only: sibling variables the one pick session fills in as well. */
   pickWriteKeys?: { title?: string; link?: string };
-  /** Filled by a sibling's pick, so the setup wizard does not ask for it twice. */
   hiddenInSetup?: boolean;
 }
 
@@ -1401,9 +1375,6 @@ export interface FlowDefinition {
   updatedAt: string;
 }
 
-// Envelope marker written into exported flow .json files. LEGACY_FLOW_EXPORT_TYPE
-// is what the feature emitted while it was still called AgentFlow; importers must
-// keep accepting it so flow files already saved or shared by users still load.
 export const FLOW_EXPORT_TYPE = 'flow-export';
 export const LEGACY_FLOW_EXPORT_TYPE = 'agentflow-export';
 
@@ -1443,11 +1414,6 @@ export const BUILTIN_NEW_COMMAND = 'new';
 export const BUILTIN_NEW_FLOW_ID = '__builtin:new__';
 export const BUILTIN_NEW_ALIAS = 'clear';
 
-/**
- * `/chat` owns no flow: it is the way back to the ordinary send after a mode pill
- * has been left on agent or search. The id only gives it an identity in the
- * command list, the same way `/new` names a local action.
- */
 export const BUILTIN_CHAT_COMMAND = 'chat';
 export const BUILTIN_CHAT_FLOW_ID = '__builtin:chat__';
 
@@ -1470,19 +1436,12 @@ export interface SearchCommandResult {
 export const BUILTIN_AGENT_COMMAND = 'agent';
 export const BUILTIN_AGENT_FLOW_ID = '__builtin:agent__';
 
-/**
- * Pseudo-tool recorded in a run's turn list when the agent stopped to ask the user
- * something. It is never dispatched to `executeSkill`: the question goes out as the
- * turn's config and the user's reply arrives as its observation, so the answer reaches
- * the model through the same scratchpad every real tool result travels through.
- */
 export const AGENT_ASK_TOOL = 'ask_user';
 
 export interface AgentCommandResult {
   success: boolean;
   error?: string;
   filePath?: string;
-  /** Set when the run paused on a question; resume with the user's reply as the answer. */
   question?: string;
   runId?: string;
 }
@@ -1496,12 +1455,6 @@ export interface AgentTurnRecord {
   status: 'ok' | 'error';
 }
 
-/**
- * `awaiting` is a run that asked the user something and is holding its scratchpad until
- * they reply. It is deliberately NOT offered by `listResumableRuns`: the question is
- * already sitting in the conversation, so the reply is the resume, and a banner offering
- * a second way to continue the same run would only compete with it.
- */
 export type AgentRunStatus = 'running' | 'failed' | 'cancelled' | 'done' | 'awaiting';
 
 export interface AgentRunState {
@@ -1509,6 +1462,7 @@ export interface AgentRunState {
   goal: string;
   providerUrl: string;
   conversationPath?: string;
+  attachments?: string[];
   status: AgentRunStatus;
   turns: AgentTurnRecord[];
   result?: { title: string; content: string };
@@ -1525,26 +1479,14 @@ export interface AgentRunSummary {
   updatedAt: string;
 }
 
-/**
- * A stage INSIDE one tool call. A single `research` step is a whole pipeline — plan queries,
- * fetch pages, pick passages, synthesize — and all of it used to be invisible: the row said
- * "research" and then nothing for a minute. The renderer localizes the label; `detail` is
- * data (the queries, a page count, the hosts actually read) and is never translated.
- */
 export type AgentStageLabel = 'planning' | 'fetching' | 'read' | 'analyzing' | 'synthesizing' | 'repairing';
 
 export type AgentTraceEvent =
-  /** Waiting on the model to decide. `provider` names who is being asked, because on a web
-   *  provider this is a minute of wall-clock that used to render as a bare "thinking". */
   | { kind: 'thinking'; turn: number; provider?: string }
-  /** `thought` is the model's own one-line reason for this step — it was always recorded in
-   *  the run state and never shown, which is the cheapest step definition available. */
   | { kind: 'tool'; turn: number; tool: string; config: Record<string, string>; thought?: string }
-  /** The run's checklist, so the UI can show where it is rather than only what it just did. */
   | { kind: 'plan'; steps: string[]; done: number[] }
   | { kind: 'stage'; turn: number; label: AgentStageLabel; detail?: string }
   | { kind: 'observation'; turn: number; tool: string; status: 'ok' | 'error'; preview: string }
-  /** The loop is over and the run is writing its final answer from the observations. */
   | { kind: 'synthesizing' }
   | { kind: 'done'; title: string }
   | { kind: 'question'; question: string }
@@ -1560,14 +1502,8 @@ export type FlowGenerationResult =
   | { ok: true; flow: FlowDefinition }
   | { ok: false; error: string };
 
-/**
- * Stage A of flow generation: which skills the request needs, what the flow would do, and what
- * it cannot cover. Produced from the tier-1 skill index alone, so it is cheap enough to show
- * the user before anything is written.
- */
 export interface FlowAssessment {
   skills: string[];
-  /** How the flow should START. Assessed at stage A because it is a capability axis of its own. */
   trigger: TriggerType;
   outline: string[];
   gaps: string[];
@@ -1578,19 +1514,12 @@ export type FlowAssessResult =
   | { ok: true; assessment: FlowAssessment }
   | { ok: false; error: string };
 
-/**
- * An approval the agent needs before it acts. Carried to the renderer as DATA, not as
- * pre-rendered text: the dialog is an in-app one, so it localizes and lays the payload out
- * itself rather than receiving a string the main process already formatted.
- */
 export type AgentConfirmRequestData =
   | { kind: 'flow'; flowName: string; stepTypes: string[]; sensitiveTypes: string[] }
   | { kind: 'mcp'; serverName: string; toolName: string; argsPreview: string };
 
-/** `id` sits outside the union so it survives narrowing on `kind`. */
 export type AgentConfirmPayload = AgentConfirmRequestData & { id: string };
 
-/** `approveAlways` is offered for MCP servers only — never for a flow write. */
 export type AgentConfirmChoice = 'approve' | 'approveAlways' | 'deny';
 
 export type PromptTone = 'default' | 'professional' | 'casual' | 'direct';
@@ -1613,6 +1542,7 @@ export interface PromptPreferences {
 export interface SettingsSnapshot {
   hotkey: string;
   hotkeyEnabled: boolean;
+  shortcuts: Record<string, { combo?: string; off?: true }>;
   locale: string;
   theme: string;
   syncSystemLanguageToModel: boolean;

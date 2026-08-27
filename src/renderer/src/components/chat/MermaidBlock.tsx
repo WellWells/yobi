@@ -15,14 +15,8 @@ interface MermaidBlockProps {
 export const MermaidBlock = React.memo<MermaidBlockProps>(({ code }) => {
   const storeTheme = useThemeStore((state) => state.theme);
   const forcedCodeTheme = useContext(ForcedCodeThemeContext);
-  // Diagrams follow the export's card theme, not the fixed dark code-panel theme.
   const forcedDiagramTheme = useContext(CaptureDiagramThemeContext);
   const theme = forcedDiagramTheme ?? storeTheme;
-  /*
-   * A forced theme means this block is rendering for an export (capture window
-   * or export preview). That tree has no MantineProvider, so any Mantine
-   * component would throw and take the whole card down — see ShikiCodeBlock.
-   */
   const staticRender = forcedCodeTheme !== null;
   const { t } = useI18nStore();
 
@@ -40,11 +34,6 @@ export const MermaidBlock = React.memo<MermaidBlockProps>(({ code }) => {
       return;
     }
     let cancelled = false;
-    /*
-     * A theme switch redraws the same diagram, so leave the old colours up for
-     * the few hundred ms it takes rather than flashing the source back. A new
-     * diagram does have to clear — otherwise it shows the previous one's picture.
-     */
     if (drawnCode.current !== code) setState(null);
     void renderMermaid(code, theme).then((next) => {
       if (cancelled) return;
@@ -65,7 +54,6 @@ export const MermaidBlock = React.memo<MermaidBlockProps>(({ code }) => {
 
   const source = <ShikiCodeBlock lang="mermaid" code={code} />;
 
-  // Still rendering, or mermaid could not be loaded at all: show the source.
   if (state === null || (state.status === 'error' && state.failure !== 'syntax')) {
     return source;
   }
@@ -111,11 +99,6 @@ export const MermaidBlock = React.memo<MermaidBlockProps>(({ code }) => {
     </Group>
   );
 
-  /*
-   * Plain elements on purpose: this subtree also renders inside the export
-   * window, which has no MantineProvider. The SVG comes from mermaid with
-   * securityLevel 'strict', so it is already DOMPurify-sanitised.
-   */
   return (
     <div className="mermaid-block">
       {toolbar}

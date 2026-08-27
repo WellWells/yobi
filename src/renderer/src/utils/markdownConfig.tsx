@@ -7,15 +7,6 @@ import { ShikiCodeBlock } from '../components/ShikiCodeBlock';
 import { MermaidBlock } from '../components/chat/MermaidBlock';
 import { isMermaidLanguage } from '../../../shared/mermaidFences';
 
-/**
- * Single-dollar text math stays off. With it on, any two `$` in one block pair up, so an
- * answer quoting prices — "$549 … HK$4,282 … NT$19,990 … AI TOPS/$" — turns the prose
- * between them into math: KaTeX prints CJK in an italic math font, or fails outright and
- * paints the raw source red, taking the citation links this app injects with it. Those
- * links are consumed while parsing, so nothing downstream can put them back.
- *
- * `$$…$$` still renders, inline and display alike, which is what real math arrives as.
- */
 export const remarkPlugins: NonNullable<Options['remarkPlugins']> = [
   remarkGfm,
   [remarkMath, { singleDollarTextMath: false }],

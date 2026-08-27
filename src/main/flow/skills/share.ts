@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import type { CaptureFormat, MarkdownCapturePayload, ShareExpire } from '../../../shared/types';
 import { DEFAULT_CAPTURE_WIDTH, MAX_CAPTURE_WIDTH, MIN_CAPTURE_WIDTH, SHARE_EXPIRE_VALUES } from '../../../shared/types';
+import { effectiveExpire } from '../../share/instanceExpires';
 import {
   captureBackgroundCss,
   paletteCardTheme,
@@ -71,7 +72,6 @@ async function fileSizeText(filePath: string): Promise<string> {
   }
 }
 
-/* Every branch answers the same shape, so the executor's envelope never has holes in it. */
 interface ShareEnvelope {
   output: string;
   kind: 'file' | 'link';
@@ -111,7 +111,7 @@ async function shareAsLink(
     throw new Error(t(strings, 'flow.skill.share.error.noConsent'));
   }
 
-  const expire = resolveShareExpire(config.expire, settings.expire);
+  const expire = effectiveExpire(settings, resolveShareExpire(config.expire, settings.expire));
   const burn = config.burnAfterReading === 'true';
   const { url, deleteUrl } = await deps.createShareLink(content, { expire, burnAfterReading: burn });
 
@@ -223,14 +223,11 @@ export async function execShare(
 ): Promise<string> {
   const raw = config.content ?? '';
   if (!raw.trim()) throw new Error('share: content is empty');
-  /*
-   * Conversation markers are machine state the parser normally eats. Nothing handed to
-   * someone else — a rendered card or an uploaded paste — should carry them.
-   */
+  // SECURITY: conversation markers are machine state. Nothing handed to someone else —
+  // a rendered card or an uploaded paste — may carry them.
   const content = stripConversationMarkers(raw);
 
   const requested = parseShareFormat(config.format);
-  /* The token may carry the zip flag (`/md zippng`); the switch is the other way to set it. */
   const zip = requested.zip || config.zip === 'true';
 
   if (requested.format === 'text') {

@@ -2,7 +2,7 @@ import React, { useCallback, useRef } from 'react';
 import {
   ActionIcon, Badge, Box, Code, Group, Paper, Stack, Text, Tooltip,
 } from '@mantine/core';
-import { AlertTriangle, ArrowDown, ArrowUp, Trash2 } from 'lucide-react';
+import { TriangleAlert, ArrowDown, ArrowUp, Trash2 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { AppTextInput } from '../../components/AppTextInput';
 import { useFlowStore } from '../../store/useFlowStore';
@@ -82,7 +82,7 @@ export const StepCard: React.FC<StepCardProps> = ({
         <Stack gap="xs">
           <Group justify="space-between" wrap="nowrap" align="flex-start">
             <Group gap="xs" wrap="nowrap" align="center">
-              <Badge variant="light" color="red" size="sm" leftSection={<AlertTriangle size={14} />} radius="sm">
+              <Badge variant="light" color="red" size="sm" leftSection={<TriangleAlert size={14} />} radius="sm">
                 {t('flow.step.unknown')}
               </Badge>
               <Code fz="xs" c="red">{step.type}</Code>

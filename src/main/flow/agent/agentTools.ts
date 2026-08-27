@@ -31,12 +31,30 @@ export function isAllowedTool(name: string): name is SkillType {
   return ALLOWED_SET.has(name as SkillType);
 }
 
+export const AGENT_HELP_TOOL = 'tool_help';
+
+export type AgentHelpTool = typeof AGENT_HELP_TOOL;
+
+export function isHelpTool(name: string): name is AgentHelpTool {
+  return name === AGENT_HELP_TOOL;
+}
+
+export const AGENT_BRIEF_ONLY_TOOLS: readonly SkillType[] = [
+  'sysinfo', 'air_quality', 'gmap_reviews', 'forex', 'random', 'stock', 'weather',
+  'file_read', 'file_list', 'clipboard', 'notify',
+];
+
+const BRIEF_ONLY_SET = new Set<SkillType>(AGENT_BRIEF_ONLY_TOOLS);
+
+// SECURITY: the workspace/sandbox wording must survive into these tier-1 briefs. A model
+// that guesses a path has to be refused rather than corrected, and only the brief tells it so.
+const AGENT_TOOL_BRIEFS: Partial<Record<SkillType, string>> = {
+  file_read: 'Read a local text file. Only your workspace is allowed (app output folder, Documents, Downloads, Desktop); a guessed path is refused, so call file_list first.',
+  file_list: 'List the files in a local folder (non-recursive). Only your workspace is allowed (app output folder, Documents, Downloads, Desktop). Use it to learn a file name before reading it.',
+  stock: 'Get a stock / equity / index quote. The suffix picks the market: US as-is (AAPL), Taiwan .TW (2330.TW) or .TWO, indices with ^ (^TWII).',
+};
+
 const AGENT_HIDDEN_FIELDS = new Set<string>([
-  /*
-   * `attachments` is hidden rather than merely unused: no tool in AGENT_ALLOWED_SKILLS
-   * produces a file, so the only paths the agent could name are ones the user already had —
-   * an upload channel with no legitimate use and an obvious misuse.
-   */
   'attachments',
   'emitFailFlag', 'includeImage', 'provider', 'saveToHistory', 'useMemory',
   'exportFormat', 'exportTitle', 'exportFileName', 'exportShowProvider', 'exportShowTimestamp', 'palette',
@@ -116,10 +134,14 @@ function sanitizeFieldDesc(desc: string): string {
     .trim();
 }
 
+function visibleFieldsOf(spec: SkillSpec) {
+  return spec.fields.filter((f) => !AGENT_HIDDEN_FIELDS.has(f.key));
+}
+
 function renderAgentToolLine(spec: SkillSpec): string {
   const doc = AGENT_TOOL_DOCS[spec.type];
   const summary = doc?.summary ?? spec.summary;
-  const visibleFields = spec.fields.filter((f) => !AGENT_HIDDEN_FIELDS.has(f.key));
+  const visibleFields = visibleFieldsOf(spec);
   const fields = visibleFields.length === 0
     ? 'no config.'
     : `config keys: ${visibleFields
@@ -130,15 +152,57 @@ function renderAgentToolLine(spec: SkillSpec): string {
   return `- "${spec.type}": ${summary} ${fields}${returns}`;
 }
 
-export function buildToolCatalog(): string {
-  const skills = SKILL_SPECS
-    .filter((spec) => ALLOWED_SET.has(spec.type))
-    .map(renderAgentToolLine)
-    .join('\n');
-  return `${skills}\n${buildBuiltinCatalog()}`;
+export const OPTS_MARKER = '[+opts]';
+
+function renderBriefToolLine(spec: SkillSpec): string {
+  const brief = AGENT_TOOL_BRIEFS[spec.type] ?? spec.brief;
+  const visibleFields = visibleFieldsOf(spec);
+  const required = visibleFields.filter((f) => f.required).map((f) => `"${f.key}"`);
+  const config = required.length > 0 ? `config: ${required.join(', ')} (REQUIRED).` : 'config: none required.';
+  const opts = visibleFields.some((f) => !f.required) ? ` ${OPTS_MARKER}` : '';
+  return `- "${spec.type}": ${brief} ${config}${opts}`;
 }
 
-function requiredFieldsFor(type: SkillType | AgentBuiltinTool): string[] {
+function helpToolLine(): string {
+  return [
+    `- "${AGENT_HELP_TOOL}": Look up another tool's FULL entry — its optional config keys and its exact output —`,
+    'before calling it. config keys: "tool" (the name of the tool to look up; REQUIRED)',
+    "→ returns: that tool's complete catalog entry.",
+  ].join(' ');
+}
+
+function optsFooter(): string {
+  return `A line marked ${OPTS_MARKER} shows only its REQUIRED config; call "${AGENT_HELP_TOOL}" first if you need that tool's optional settings or its exact output shape.`;
+}
+
+function specsForAgent(): SkillSpec[] {
+  return SKILL_SPECS.filter((spec) => ALLOWED_SET.has(spec.type));
+}
+
+export function buildToolCatalog(): string {
+  const skills = specsForAgent()
+    .map((spec) => (BRIEF_ONLY_SET.has(spec.type) ? renderBriefToolLine(spec) : renderAgentToolLine(spec)))
+    .join('\n');
+  return [skills, buildBuiltinCatalog(), helpToolLine(), optsFooter()].join('\n');
+}
+
+export function describeToolSpec(name: string): string {
+  const wanted = name.trim();
+  if (!wanted) return 'ERROR: "tool" is required — name the tool you want the full entry for.';
+  if (isHelpTool(wanted)) return helpToolLine();
+  if (isBuiltinTool(wanted)) {
+    const line = buildBuiltinCatalog().split('\n').find((entry) => entry.startsWith(`- "${wanted}"`));
+    if (line) return line;
+  }
+  const spec = specsForAgent().find((entry) => entry.type === wanted);
+  if (!spec) {
+    return `ERROR: "${wanted}" is not one of your tools. Pick one from TOOLS: ${[...AGENT_ALLOWED_SKILLS, ...AGENT_BUILTIN_TOOLS].join(', ')}.`;
+  }
+  return renderAgentToolLine(spec);
+}
+
+function requiredFieldsFor(type: SkillType | AgentBuiltinTool | AgentHelpTool): string[] {
+  if (isHelpTool(type)) return ['tool'];
   if (isBuiltinTool(type)) return builtinRequiredFields(type);
   const spec = SKILL_SPECS.find((s) => s.type === type);
   return spec ? spec.fields.filter((f) => f.required).map((f) => f.key) : [];
@@ -147,12 +211,11 @@ function requiredFieldsFor(type: SkillType | AgentBuiltinTool): string[] {
 export interface AgentAction {
   thought: string;
   action: 'call_tool' | 'finish' | 'ask_user';
-  tool?: SkillType | AgentBuiltinTool;
+  tool?: SkillType | AgentBuiltinTool | AgentHelpTool;
   config?: Record<string, string>;
   title?: string;
   content?: string;
   question?: string;
-  /** Optional plan bookkeeping; see `readPlanFields`. Absent when the model omitted it. */
   plan?: string[];
   planDone?: number[];
 }
@@ -220,9 +283,6 @@ export function validateAgentAction(json: unknown, allowAsk = false): Validation
   const thought = typeof obj.thought === 'string' ? obj.thought : '';
   const action = obj.action;
 
-  // Rejected rather than silently downgraded to a finish: the model asked because it
-  // believes it lacks an input, and inventing an answer over that belief is worse than
-  // spending one repair round-trip telling it the budget is gone.
   if (action === 'ask_user' && !allowAsk) {
     return {
       ok: false,
@@ -260,10 +320,10 @@ export function validateAgentAction(json: unknown, allowAsk = false): Validation
   }
 
   const tool = typeof obj.tool === 'string' ? obj.tool : '';
-  if (!isAllowedTool(tool) && !isBuiltinTool(tool)) {
+  if (!isAllowedTool(tool) && !isBuiltinTool(tool) && !isHelpTool(tool)) {
     return {
       ok: false,
-      error: `"tool" must be one of: ${[...AGENT_ALLOWED_SKILLS, ...AGENT_BUILTIN_TOOLS].join(', ')}. Got "${tool}".`,
+      error: `"tool" must be one of: ${[...AGENT_ALLOWED_SKILLS, ...AGENT_BUILTIN_TOOLS, AGENT_HELP_TOOL].join(', ')}. Got "${tool}".`,
     };
   }
 

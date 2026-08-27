@@ -1,6 +1,9 @@
 import type { WebContents } from 'electron';
 import { sleep } from './common';
 import { PROVIDER_ATTACHMENT_POLICIES } from '../../shared/types';
+import { UploadError, probeDropTarget, withTrustedFileDrop } from './fileDrop';
+
+const PROVIDER = 'gemini';
 
 const DROPZONE_SELECTORS = [
   'div.xap-uploader-dropzone[file-drop-zone]',
@@ -23,34 +26,12 @@ const CONSENT_DISMISS_SCRIPT = `(function () {
   return false;
 })()`;
 
-class GeminiUploadError extends Error {
-  constructor(phase: string, detail: string) {
-    super(`gemini-upload[${phase}] ${detail}`);
-    this.name = 'GeminiUploadError';
+function isGemsConversation(href: string): boolean {
+  try {
+    return /\/gem\//.test(new URL(href).pathname);
+  } catch {
+    return false;
   }
-}
-
-interface DropzoneProbe {
-  found: boolean;
-  gems: boolean;
-  href: string;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-function buildProbeScript(): string {
-  const selectors = JSON.stringify(DROPZONE_SELECTORS);
-  return `(function () {
-    var sels = ${selectors};
-    var el = null;
-    for (var i = 0; i < sels.length; i++) { el = document.querySelector(sels[i]); if (el) break; }
-    var gems = /\\/gem\\//.test(location.pathname);
-    if (!el) return { found: false, gems: gems, href: location.href, x: 0, y: 0, w: 0, h: 0 };
-    var r = el.getBoundingClientRect();
-    return { found: true, gems: gems, href: location.href, x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height };
-  })()`;
 }
 
 export async function uploadFilesToGemini(
@@ -64,40 +45,23 @@ export async function uploadFilesToGemini(
 
   const max = PROVIDER_ATTACHMENT_POLICIES.gemini.maxFiles;
   if (paths.length > max) {
-    throw new GeminiUploadError('too-many', `${paths.length} files exceeds cap ${max}`);
+    throw new UploadError(PROVIDER, 'too-many', `${paths.length} files exceeds cap ${max}`);
   }
   add(`start ${paths.length} file(s)`);
 
   const signedIn = await wc.executeJavaScript(`!!document.querySelector(${JSON.stringify(LOGIN_SELECTOR)})`);
-  if (!signedIn) throw new GeminiUploadError('not-signed-in', 'account menu not found');
+  if (!signedIn) throw new UploadError(PROVIDER, 'not-signed-in', 'account menu not found');
   add('signed-in confirmed');
 
-  const probe = (await wc.executeJavaScript(buildProbeScript())) as DropzoneProbe;
-  if (probe.gems) throw new GeminiUploadError('gems-mode', `gem conversation: ${probe.href}`);
-  if (!probe.found) throw new GeminiUploadError('dropzone-missing', 'no dropzone element');
+  const probe = await probeDropTarget(wc, DROPZONE_SELECTORS);
+  if (isGemsConversation(probe.href)) throw new UploadError(PROVIDER, 'gems-mode', `gem conversation: ${probe.href}`);
+  if (!probe.found) throw new UploadError(PROVIDER, 'dropzone-missing', 'no dropzone element');
   if (!(probe.w > 0 && probe.h > 0)) {
-    throw new GeminiUploadError('dropzone-missing', `degenerate rect ${probe.w}x${probe.h}`);
+    throw new UploadError(PROVIDER, 'dropzone-missing', `degenerate rect ${probe.w}x${probe.h}`);
   }
   add(`dropzone @ ${Math.round(probe.x)},${Math.round(probe.y)} (${Math.round(probe.w)}x${Math.round(probe.h)})`);
 
-  let attachedHere = false;
-  try {
-    if (!wc.debugger.isAttached()) {
-      try { wc.debugger.attach('1.3'); attachedHere = true; }
-      catch (e) { throw new GeminiUploadError('debugger-attach-failed', String((e as Error)?.message ?? e)); }
-    }
-
-    const data = { items: [], files: paths, dragOperationsMask: 1 };
-    const base = { x: probe.x, y: probe.y, data };
-    try {
-      await wc.debugger.sendCommand('Input.dispatchDragEvent', { type: 'dragEnter', ...base });
-      await wc.debugger.sendCommand('Input.dispatchDragEvent', { type: 'dragOver', ...base });
-      await wc.debugger.sendCommand('Input.dispatchDragEvent', { type: 'drop', ...base });
-    } catch (e) {
-      const msg = String((e as Error)?.message ?? e);
-      if (msg.includes('Not allowed')) throw new GeminiUploadError('file-access-denied', msg);
-      throw new GeminiUploadError('dispatch-failed', msg);
-    }
+  await withTrustedFileDrop(wc, PROVIDER, probe, paths, async () => {
     add('drop dispatched');
 
     const deadline = Date.now() + timeoutMs;
@@ -114,14 +78,10 @@ export async function uploadFilesToGemini(
       await sleep(300);
     }
     if (count < paths.length) {
-      throw new GeminiUploadError('incomplete', `only ${count}/${paths.length} chips appeared`);
+      throw new UploadError(PROVIDER, 'incomplete', `only ${count}/${paths.length} chips appeared`);
     }
     add(`chips ready ${count}/${paths.length}`);
-  } finally {
-    if (attachedHere && wc.debugger.isAttached()) {
-      try { wc.debugger.detach(); } catch { }
-    }
-  }
+  });
 
   return log;
 }

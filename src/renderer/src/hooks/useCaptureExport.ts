@@ -23,7 +23,7 @@ import type {
   CardLayout,
   MarkdownCaptureRequest,
 } from '../../../shared/types';
-import { DEFAULT_CAPTURE_WIDTH } from '../../../shared/types';
+import { DEFAULT_CAPTURE_WIDTH, clampCaptureMargin } from '../../../shared/types';
 
 export { CAPTURE_PALETTES, captureBackgroundCss };
 export type { CaptureBackgroundStyle, CaptureDirection };
@@ -107,6 +107,7 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
   const captureCardLayout = capture.cardLayout;
   const captureRange = capture.range;
   const captureWidth = capture.width || DEFAULT_CAPTURE_WIDTH;
+  const captureMargin = clampCaptureMargin(capture.margin);
   const captureHiDpi = capture.pixelRatio === 2;
   const captureZip = capture.zip;
   const captureShowProvider = capture.showProvider;
@@ -124,6 +125,7 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
   const setCaptureCardLayout = useCallback((v: CardLayout) => patchCapture({ cardLayout: v }), [patchCapture]);
   const setCaptureRange = useCallback((v: CaptureRange) => patchCapture({ range: v }), [patchCapture]);
   const setCaptureWidth = useCallback((v: number) => patchCapture({ width: v }), [patchCapture]);
+  const setCaptureMargin = useCallback((v: number) => patchCapture({ margin: v }), [patchCapture]);
   const setCaptureHiDpi = useCallback((v: boolean) => patchCapture({ pixelRatio: v ? 2 : 1 }), [patchCapture]);
   const setCaptureZip = useCallback((v: boolean) => patchCapture({ zip: v }), [patchCapture]);
   const setCaptureShowProvider = useCallback((v: boolean) => patchCapture({ showProvider: v }), [patchCapture]);
@@ -167,13 +169,14 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
     cardTheme: captureCardTheme,
     cardLayout: captureCardLayout,
     width: captureWidth,
+    margin: captureMargin,
     pixelRatio: captureHiDpi ? 2 : 1,
     zip: captureZip,
     showProvider: captureShowProvider,
     showTimestamp: captureShowTimestamp,
     showTokens: captureShowTokens,
   }), [
-    captureBackground, captureCardTheme, captureCardLayout, captureWidth, captureHiDpi, captureZip,
+    captureBackground, captureCardTheme, captureCardLayout, captureWidth, captureMargin, captureHiDpi, captureZip,
     captureShowProvider, captureShowTimestamp, captureShowTokens,
   ]);
 
@@ -283,6 +286,7 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
     captureRange, setCaptureRange,
     captureTurnCount: captureTurns.length,
     captureWidth, setCaptureWidth,
+    captureMargin, setCaptureMargin,
     captureHiDpi, setCaptureHiDpi,
     captureZip, setCaptureZip,
     captureShowProvider, setCaptureShowProvider,

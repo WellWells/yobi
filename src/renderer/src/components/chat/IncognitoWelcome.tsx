@@ -1,11 +1,13 @@
 import React from 'react';
-import { Box, Group, Kbd, Stack, Text } from '@mantine/core';
+import { Box, Group, Stack, Text } from '@mantine/core';
 import { MessageSquareDashed } from 'lucide-react';
 import { useI18nStore } from '../../store/i18nStore';
-import { TEMP_CHAT_SHORTCUT_HINT } from '../../utils/keyLabels';
+import { ShortcutHint } from '../ShortcutHint';
+import { useResolvedCombo } from '../../store/shortcutStore';
 
 export const IncognitoWelcome: React.FC = () => {
   const { t } = useI18nStore();
+  const tempChatCombo = useResolvedCombo('app.tempChat');
 
   return (
     <Stack align="center" justify="center" gap={18} h="100%" c="dimmed" p="24px 20px">
@@ -32,7 +34,7 @@ export const IncognitoWelcome: React.FC = () => {
         {t('chat.tempMode.welcome.desc')}
       </Text>
       <Group gap={6} align="center" wrap="nowrap">
-        <Kbd>{TEMP_CHAT_SHORTCUT_HINT}</Kbd>
+        <ShortcutHint combo={tempChatCombo} />
         <Text fz="var(--font-size-sm)" c="dimmed">{t('chat.tempMode.welcome.exit')}</Text>
       </Group>
     </Stack>

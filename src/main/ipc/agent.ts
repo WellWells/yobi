@@ -29,6 +29,7 @@ export function registerAgentHandlers(ctx: IpcContext): void {
       targetUrl?: string,
       rawRunId?: string,
       conversationPath?: string,
+      attachments?: string[],
     ): Promise<AgentCommandResult> => {
       const goal = (rawGoal ?? '').trim();
       const strings = (await loadLanguageData(config.locale)) ?? {};
@@ -41,6 +42,7 @@ export function registerAgentHandlers(ctx: IpcContext): void {
         goal,
         providerUrl: (targetUrl ?? '').trim() || config.targetUrl,
         ...(conversationPath ? { conversationPath } : {}),
+        ...(attachments?.length ? { attachments: attachments.filter(Boolean) } : {}),
         status: 'running',
         turns: [],
         createdAt: now,
@@ -58,8 +60,6 @@ export function registerAgentHandlers(ctx: IpcContext): void {
     if (state.status === 'done') return { success: false, error: t(strings, 'agent.error.notResumable') };
     const answer = (rawAnswer ?? '').trim();
     const resumeFrom = answer ? applyAnswer(state.turns, answer) : dropUnansweredAsk(state.turns);
-    // The replayed list becomes the run's own history, so a later resume cannot re-ask a
-    // question this one already answered.
     state.turns = resumeFrom;
     state.status = 'running';
     state.error = undefined;

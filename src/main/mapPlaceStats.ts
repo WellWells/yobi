@@ -32,9 +32,6 @@ export const STATS_EXTRACTION_SCRIPT = `(async () => {
     const distribution = all.map((e) => (e.getAttribute('aria-label') || '').trim())
       .filter((l) => /[、,]/.test(l) && (l.match(/\\d[\\d,]*/g) || []).length >= 2 && /^[1-5]\\D/.test(l))
       .slice(0, 5)
-      // "<star> …、<count> reviews": the count is the LAST number in the row —
-      // a comma-separator locale ("5 stars, 2,000 reviews") makes the middle a
-      // spurious group, so never assume it is the second one.
       .map((l) => { const n = l.match(/\\d[\\d,]*/g) || []; return (n[n.length - 1] || '').replace(/,/g, ''); });
     const total = distribution.length === 5
       ? String(distribution.reduce((sum, c) => sum + (Number(c) || 0), 0))

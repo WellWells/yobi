@@ -13,6 +13,7 @@ import type {
 } from '../../../../shared/capturePalettes';
 import { mustShowPrompt } from '../../hooks/captureRequest';
 import { SectionLabel } from './SectionLabel';
+import { MarginSlider } from '../capture/MarginSlider';
 
 export interface ExportSettingsPanelProps {
   palettes: readonly CapturePalette[];
@@ -43,6 +44,8 @@ export interface ExportSettingsPanelProps {
   turnCount: number;
   width: number;
   setWidth: (value: number) => void;
+  margin: number;
+  setMargin: (value: number) => void;
   hiDpi: boolean;
   setHiDpi: (value: boolean) => void;
   zip: boolean;
@@ -102,6 +105,8 @@ export const ExportSettingsPanel: React.FC<ExportSettingsPanelProps> = ({
   turnCount,
   width,
   setWidth,
+  margin,
+  setMargin,
   hiDpi,
   setHiDpi,
   zip,
@@ -159,6 +164,14 @@ export const ExportSettingsPanel: React.FC<ExportSettingsPanelProps> = ({
         />
         <Text fz="var(--font-size-sm)" c="var(--text-muted)" mt={6}>
           {hiDpi ? `${width} px · 2× → ${width * 2} px` : `${width} px`}
+        </Text>
+      </Box>
+
+      <Box>
+        <SectionLabel>{t('capture.margin')}</SectionLabel>
+        <MarginSlider value={margin} onChange={setMargin} label={t('capture.margin')} />
+        <Text fz="var(--font-size-sm)" c="var(--text-muted)" mt={6}>
+          {t('capture.margin.desc')}
         </Text>
       </Box>
 

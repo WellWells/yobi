@@ -47,7 +47,6 @@ export const LineSection: React.FC<Props> = ({ line, t, showSection, isSearching
   const runtimeStatus = settings?.runtime.status;
   const account = settings?.runtime.account;
   const [portDraft, setPortDraft] = useState<number | string>(settings?.port ?? 3007);
-  // Same rule as the Telegram card: off collapses to the switch, search still reaches in.
   const expanded = (settings?.enabled ?? false) || isSearching;
 
   useEffect(() => {
@@ -128,7 +127,7 @@ export const LineSection: React.FC<Props> = ({ line, t, showSection, isSearching
                 </Text>
               </SettingField>
 
-              {/* One button for both fields: the API stores the token and the secret together. */}
+              {}
               <Group justify="flex-end">
                 <MButton
                   variant="default"

@@ -4,17 +4,11 @@ import { splitQuotedPrompt } from '../../utils/composerQuotes';
 
 interface PromptBodyProps {
   prompt: string;
-  /** The side-by-side layout sets its question in medium; the bubble leaves it regular. */
   fw?: number;
 }
 
 const TEXT_STYLE = { whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere' } as const;
 
-/**
- * A sent prompt, with any passage quoted from an answer shown as a quote rather than as
- * the `>` characters it is stored with. The composer hid that syntax on the way in, so
- * the transcript has no business showing it on the way out.
- */
 export const PromptBody = React.memo<PromptBodyProps>(({ prompt, fw }) => {
   const { quotes, message } = useMemo(() => splitQuotedPrompt(prompt), [prompt]);
 

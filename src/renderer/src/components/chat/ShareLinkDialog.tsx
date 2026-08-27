@@ -3,7 +3,7 @@ import { Alert, Box, Group, Stack, Text, Tooltip } from '@mantine/core';
 import {
   Check, Clock, Copy, ExternalLink, Flame, Link2, Server, Trash2, TriangleAlert,
 } from 'lucide-react';
-import { SHARE_CONSENT_KEYS, SHARE_EXPIRE_VALUES } from '../../../../shared/types';
+import { SHARE_CONSENT_KEYS, clampShareExpire, resolveShareExpires } from '../../../../shared/types';
 import type { ShareErrorCode, ShareExpire, ShareSettings } from '../../../../shared/types';
 import { clipboardApi, shareApi } from '../../api/electronApi';
 import { AppButton } from '../AppButton';
@@ -13,6 +13,7 @@ import { SelectDropdown } from '../SelectDropdown';
 import { SettingRow } from '../SettingRow';
 import { ToggleSwitch } from '../ToggleSwitch';
 import { ShareConsentPoints } from '../ShareConsentPoints';
+import { selectAllOnClick } from '../../utils/selectAllOnClick';
 
 type Stage = 'consent' | 'options' | 'result';
 
@@ -39,8 +40,10 @@ export const ShareLinkDialog: React.FC<ShareLinkDialogProps> = ({ open, onClose,
     setCopied(false);
     setRevoked(false);
     void shareApi.getSettings().then((loaded) => {
-      setSettings(loaded);
+      const expire = clampShareExpire(loaded.expire, resolveShareExpires(loaded.instanceUrl, loaded.instanceExpires));
+      setSettings({ ...loaded, expire });
       setStage(loaded.consentedAt ? 'options' : 'consent');
+      if (expire !== loaded.expire) void shareApi.updateSettings({ expire });
     });
   }, [open]);
 
@@ -94,7 +97,10 @@ export const ShareLinkDialog: React.FC<ShareLinkDialogProps> = ({ open, onClose,
     });
   }, [result, busy]);
 
-  const expireOptions = SHARE_EXPIRE_VALUES.map((value) => ({
+  const supportedExpires = settings
+    ? resolveShareExpires(settings.instanceUrl, settings.instanceExpires)
+    : [];
+  const expireOptions = supportedExpires.map((value) => ({
     value,
     label: t(`share.expire.${value}`),
   }));
@@ -200,7 +206,7 @@ export const ShareLinkDialog: React.FC<ShareLinkDialogProps> = ({ open, onClose,
                 <Text fz="var(--font-size-sm)" c="dimmed" lh={1.65}>
                   {t('share.result.hint')}
                 </Text>
-                <AppTextInput value={result.url} readOnly mono onFocus={(e) => e.currentTarget.select()} />
+                <AppTextInput value={result.url} readOnly mono {...selectAllOnClick} />
                 {error && <ShareErrorAlert error={error} t={t} />}
               </>
             )}

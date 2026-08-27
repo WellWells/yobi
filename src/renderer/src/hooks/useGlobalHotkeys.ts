@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
-import { isTypingTarget } from '../utils/domUtils';
-import { useAppStore } from '../store/appStore';
+import { useShortcutAction } from '../shortcuts/useShortcutAction';
 
 function getScrollableHostWithin(container: HTMLElement, target: EventTarget | null): HTMLElement | null {
   if (!(target instanceof HTMLElement)) return null;
@@ -52,83 +51,14 @@ export function useGlobalHotkeys({
 }: UseGlobalHotkeysOptions): void {
   const wheelZoomTickRef = useRef(0);
 
-  useEffect(() => {
-    const onNewConversationHotkey = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
-      if (event.key.toLowerCase() !== 'n') return;
-      if (useAppStore.getState().currentView !== 'chat') return;
-      if (document.querySelector('[aria-modal="true"]')) return;
-      event.preventDefault();
-      onNewConversation();
-    };
-    window.addEventListener('keydown', onNewConversationHotkey);
-    return () => window.removeEventListener('keydown', onNewConversationHotkey);
-  }, [onNewConversation]);
+  useShortcutAction('chat.newConversation', () => onNewConversation(), 'chat');
+  useShortcutAction('nav.quickSwitch', () => onOpenSearch(), 'chat');
+  useShortcutAction('chat.cycleModel', () => onCycleModel(), 'chat');
+  useShortcutAction('chat.focusComposer', () => onFocusPrompt(), 'chat');
 
-  useEffect(() => {
-    const onOpenSearchHotkey = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
-      if (event.key.toLowerCase() !== 'f') return;
-      if (useAppStore.getState().currentView !== 'chat') return;
-      if (document.querySelector('[aria-modal="true"]')) return;
-      event.preventDefault();
-      onOpenSearch();
-    };
-    window.addEventListener('keydown', onOpenSearchHotkey);
-    return () => window.removeEventListener('keydown', onOpenSearchHotkey);
-  }, [onOpenSearch]);
-
-  useEffect(() => {
-    const onCycleModelHotkey = (event: KeyboardEvent) => {
-      if (event.key !== 'Tab' || !event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
-      if (useAppStore.getState().currentView !== 'chat') return;
-      if (document.activeElement?.closest('[role="dialog"],[aria-modal="true"]')) return;
-      event.preventDefault();
-      event.stopPropagation();
-      onCycleModel();
-    };
-    window.addEventListener('keydown', onCycleModelHotkey, true);
-    return () => window.removeEventListener('keydown', onCycleModelHotkey, true);
-  }, [onCycleModel]);
-
-  useEffect(() => {
-    const onFocusPromptHotkey = (event: KeyboardEvent) => {
-      const key = event.key.toLowerCase();
-      if (!((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && (key === 'k' || key === 'e'))) return;
-      if (useAppStore.getState().currentView !== 'chat') return;
-      if (document.querySelector('[aria-modal="true"]')) return;
-      event.preventDefault();
-      onFocusPrompt();
-    };
-    window.addEventListener('keydown', onFocusPromptHotkey);
-    return () => window.removeEventListener('keydown', onFocusPromptHotkey);
-  }, [onFocusPrompt]);
-
-  useEffect(() => {
-    const onZoomHotkey = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
-      if (isTypingTarget(event.target)) return;
-      const key = event.key;
-      const code = event.code;
-
-      if (code === 'NumpadAdd' || key === '+' || key === '=') {
-        event.preventDefault();
-        zoomInMarkdown();
-        return;
-      }
-      if (code === 'NumpadSubtract' || key === '-' || key === '_') {
-        event.preventDefault();
-        zoomOutMarkdown();
-        return;
-      }
-      if (code === 'Numpad0' || key === '0') {
-        event.preventDefault();
-        resetMarkdownZoom();
-      }
-    };
-    window.addEventListener('keydown', onZoomHotkey);
-    return () => window.removeEventListener('keydown', onZoomHotkey);
-  }, [resetMarkdownZoom, zoomInMarkdown, zoomOutMarkdown]);
+  useShortcutAction('view.zoomIn', () => zoomInMarkdown(), 'chat');
+  useShortcutAction('view.zoomOut', () => zoomOutMarkdown(), 'chat');
+  useShortcutAction('view.zoomReset', () => resetMarkdownZoom(), 'chat');
 
   useEffect(() => {
     const onWheelZoom = (event: WheelEvent) => {

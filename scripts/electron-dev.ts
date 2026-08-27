@@ -11,15 +11,12 @@ let started = false;
 
 function launchElectron() {
   electronProcess?.kill();
-  // Ignore the child's stdin so the parent owns it for the manual-restart prompt.
   electronProcess = spawn(electronBin, ['out/main/index.js'], {
     stdio: ['ignore', 'inherit', 'inherit'],
     env: { ...process.env, ELECTRON_RENDERER_URL: rendererUrl },
   });
 }
 
-// Debounce coalesces the near-simultaneous preload + main rebuilds (e.g. from a
-// shared-file edit) into a single prompt.
 function debounce(fn: () => void, ms: number): () => void {
   let timer: ReturnType<typeof setTimeout> | null = null;
   return () => {
@@ -35,11 +32,6 @@ const notifyRestartNeeded = debounce(() => {
   console.log('   Press \x1b[1mEnter\x1b[0m (or type "rs") to restart Electron now.\n');
 }, 300);
 
-// Renderer edits hot-reload via the Vite dev server; only main/preload rebuilds
-// reach this plugin. build.watch's promise resolves when the watcher is created,
-// not when the first bundle is written, so the initial closeBundle is what tells
-// us the entry file is on disk — main() awaits it (via onFirstWrite) before
-// launching Electron. Every later closeBundle only prompts for a manual restart.
 function watcherPlugin(onFirstWrite?: () => void): Plugin {
   let firstWriteDone = false;
   return {
@@ -66,11 +58,6 @@ function printHelp() {
   );
 }
 
-// build.watch resolves as soon as the watcher exists — before the first bundle is
-// written — so await watcherPlugin's initial closeBundle to guarantee the entry
-// file is on disk before Electron launches. Otherwise Electron can spawn into a
-// missing out/main/index.js (emptyOutDir clears it first, widening the window) and
-// show its native "Unable to find Electron app" error.
 function startWatchBuild(configFile: string): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     build({
@@ -88,7 +75,6 @@ async function main() {
 
   rendererUrl = server.resolvedUrls?.local[0] ?? 'http://localhost:5173';
 
-  // Wait for each initial bundle to be written to disk before booting Electron.
   await startWatchBuild('vite.preload.config.ts');
   await startWatchBuild('vite.main.config.ts');
 

@@ -1,5 +1,5 @@
-import { DEFAULT_CAPTURE_WIDTH, DEFAULT_SHARE_INSTANCE, MAX_CAPTURE_WIDTH, MIN_CAPTURE_WIDTH, SHARE_EXPIRE_VALUES, defaultQuickExportHotkey } from '../shared/types';
-import type { BotBuiltinCommand, BotBuiltinCommands, BotByokCommands, BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureSettings, QuickExportFormat, QuickExportSettings, CustomTemplate, HiddenSources, LinePairedUser, LinePairingState, LinePendingCode, McpServerConfig, NotifyEventPrefs, Provider, PromptLength, PromptPreferences, PromptTone, ShareExpire, ShareSettings, TelegramChannel, TelegramPairedUser, TelegramPairingState, TelegramPendingCode } from '../shared/types';
+import { DEFAULT_CAPTURE_WIDTH, DEFAULT_SHARE_INSTANCE, MAX_CAPTURE_WIDTH, MIN_CAPTURE_WIDTH, SHARE_EXPIRE_VALUES, clampCaptureMargin, defaultQuickExportHotkey, normalizeShareExpireList } from '../shared/types';
+import type { BotBuiltinCommand, BotBuiltinCommands, BotByokCommands, BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureSettings, QuickExportFormat, QuickExportSettings, CustomTemplate, HiddenSources, LinePairedUser, LinePairingState, LinePendingCode, McpServerConfig, NotifyEventPrefs, Provider, PromptLength, PromptPreferences, PromptTone, ShareExpire, ShareExpireCache, ShareSettings, TelegramChannel, TelegramPairedUser, TelegramPairingState, TelegramPendingCode } from '../shared/types';
 import {
   AGENT_ASK_TTL_MAX_MINUTES,
   AGENT_ASK_TTL_MIN_MINUTES,
@@ -19,6 +19,8 @@ import {
 import { defaultStored } from './configTypes';
 import { normalizeInstanceUrl } from './share/privatebin';
 import type { ByokInstance, Config, LineConfig, SmtpConfig, TelegramConfig } from './configTypes';
+import { canonicalise, SHORTCUTS } from '../shared/shortcuts';
+import type { ShortcutOverride } from '../shared/shortcuts';
 
 type LegacyTelegramConfig = TelegramConfig & { providerCommands?: unknown };
 
@@ -53,6 +55,7 @@ export function normalizeConfig(raw: unknown): Config {
     markdownZoom: clampedZoom,
     captureSettings: normalizeCaptureSettings(obj.captureSettings),
     quickExport: normalizeQuickExport(obj.quickExport),
+    shortcuts: normalizeShortcuts(obj.shortcuts),
     share: normalizeShareSettings(obj.share),
     promptPreferences: normalizePromptPreferences(obj.promptPreferences),
     providerCommands: normalizeProviderCommands(
@@ -304,6 +307,7 @@ export function normalizeCaptureSettings(raw: unknown): CaptureSettings {
     cardLayout: obj.cardLayout === 'bubble' ? 'bubble' : 'document',
     range: obj.range === 'last' ? 'last' : 'all',
     width: clampCaptureWidth(obj.width),
+    margin: clampCaptureMargin(obj.margin),
     pixelRatio: obj.pixelRatio === 2 ? 2 : 1,
     zip: obj.zip === true,
   };
@@ -319,7 +323,34 @@ export function normalizeShareSettings(raw: unknown): ShareSettings {
       : '1week',
     burnAfterReading: obj.burnAfterReading === true,
     consentedAt: typeof obj.consentedAt === 'string' ? obj.consentedAt.trim() : '',
+    instanceExpires: normalizeExpireCache(obj.instanceExpires),
   };
+}
+
+function normalizeExpireCache(raw: unknown): ShareExpireCache | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const cache = raw as Partial<ShareExpireCache>;
+  const url = typeof cache.url === 'string' ? normalizeInstanceUrl(cache.url) : null;
+  if (!url) return null;
+  const values = normalizeShareExpireList(Array.isArray(cache.values) ? cache.values : []);
+  return values.length > 0 ? { url, values } : null;
+}
+
+export function normalizeShortcuts(raw: unknown): Record<string, ShortcutOverride> {
+  if (!raw || typeof raw !== 'object') return {};
+  const known = new Set(SHORTCUTS.filter((s) => s.rebindable).map((s) => s.id as string));
+  const out: Record<string, ShortcutOverride> = {};
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!known.has(id)) continue;
+    if (!value || typeof value !== 'object') continue;
+    const entry = value as { combo?: unknown; off?: unknown };
+    const next: ShortcutOverride = {};
+    if (typeof entry.combo === 'string') next.combo = canonicalise(entry.combo);
+    if (entry.off === true) next.off = true;
+    if (next.combo === undefined && !next.off) continue;
+    out[id] = next;
+  }
+  return out;
 }
 
 export function normalizeQuickExport(raw: unknown): QuickExportSettings {
@@ -415,7 +446,6 @@ export function normalizeBuiltinCommands(raw: unknown): BotBuiltinCommands {
   return result;
 }
 
-/** Only the "off" entries are worth keeping — a missing id already means "on". */
 export function normalizeBotByokCommands(raw: unknown): BotByokCommands {
   if (!raw || typeof raw !== 'object') return {};
   const result: BotByokCommands = {};

@@ -22,6 +22,7 @@ import {
   type LogTone,
 } from './logFormat';
 import styles from './LogPanel.module.css';
+import { useShortcutAction } from '../shortcuts/useShortcutAction';
 
 const toneTextColor: Record<LogTone, string> = {
   error: 'var(--mantine-color-error)',
@@ -159,19 +160,10 @@ export const LogPanel: React.FC = () => {
     URL.revokeObjectURL(url);
   }, [visibleLogs]);
 
-  useEffect(() => {
-    const onFindHotkey = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
-      if (event.key.toLowerCase() !== 'f') return;
-      if (useAppStore.getState().currentView !== 'logs') return;
-      if (document.querySelector('[aria-modal="true"]')) return;
-      event.preventDefault();
-      filterInputRef.current?.focus();
-      filterInputRef.current?.select();
-    };
-    window.addEventListener('keydown', onFindHotkey);
-    return () => window.removeEventListener('keydown', onFindHotkey);
-  }, []);
+  useShortcutAction('nav.find', () => {
+    filterInputRef.current?.focus();
+    filterInputRef.current?.select();
+  }, 'logs');
 
   const rowVirtualizer = useVirtualizer({
     count: visibleLogs.length,

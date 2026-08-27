@@ -1,7 +1,7 @@
 import React from 'react';
 import { ActionIcon, Box, Group, Stack, Text } from '@mantine/core';
 import {
-  AlignJustify, AlignLeft, Eye, FileText, MessageSquare, Minus, Plus,
+  Eye, FileText, Languages, MessageSquare, Minus, Plus, Ruler,
   SlidersHorizontal, Timer, User2, MonitorPlay,
 } from 'lucide-react';
 import { AppTextarea } from '../../../components/AppTextarea';
@@ -104,7 +104,7 @@ export const AiSection: React.FC<Props> = ({
 
         <Box mb={14} pb={14} style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}>
           <SettingRow
-            icon={<AlignLeft size={13} />}
+            icon={<Languages size={13} />}
             label={t('settings.prompt.localeSync.title')}
             hint={t('settings.prompt.localeSync.hint').replace('{{locale}}', locale)}
             alignStart
@@ -151,7 +151,7 @@ export const AiSection: React.FC<Props> = ({
             />
           </SettingField>
 
-          <SettingField icon={<AlignJustify size={13} />} label={t('settings.prompt.length.label')}>
+          <SettingField icon={<Ruler size={13} />} label={t('settings.prompt.length.label')}>
             <SegmentedControl
               value={prefs.promptPrefs.length}
               options={[

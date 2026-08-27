@@ -4,14 +4,8 @@ import { Check, X } from 'lucide-react';
 import { useI18nStore } from '../store/i18nStore';
 import type { AgentTraceTurn } from '../store/useAgentRunStore';
 
-/**
- * Config keys that are only noise on screen: `provider` is injected by the loop, is identical
- * on every step, and is a long URL that pushes the argument the user actually cares about —
- * the query, the page — out of the visible width.
- */
 const HIDDEN_CONFIG_KEYS = new Set(['provider']);
 
-/** Lines up the sub-lines under the tool name instead of the row number. */
 const SUBLINE_INDENT = 30;
 
 const SUBLINE_STYLE = {
@@ -22,12 +16,6 @@ const SUBLINE_STYLE = {
   textOverflow: 'ellipsis',
 };
 
-/**
- * Exported for the test suite. Every line a step can contribute, in the order a reader wants
- * them: why it was taken, what it is doing, what it read, what came back. All four were
- * already in the trace payload; none of them used to be rendered, which is why a step showed
- * a tool name and then nothing for as long as it took.
- */
 export function subLines(turn: AgentTraceTurn, t: (key: string) => string): string[] {
   const lines: string[] = [];
   if (turn.thought) lines.push(turn.thought);
@@ -41,7 +29,6 @@ export function subLines(turn: AgentTraceTurn, t: (key: string) => string): stri
   return lines;
 }
 
-/** Exported for the test suite. */
 export function configText(config?: Record<string, string>): string {
   if (!config) return '';
   return Object.entries(config)
@@ -59,8 +46,6 @@ export function AgentTraceRow({ turn }: { turn: AgentTraceTurn }) {
       : <Loader size={10} />;
   const config = configText(turn.config);
   const lines = subLines(turn, t);
-  // A turn with no tool yet is the model deciding — on a web provider that is a minute of
-  // wall-clock. Naming who is being asked is the difference between progress and a hang.
   const label = turn.tool
     ?? (turn.provider
       ? t('agent.trace.asking').replace('{{provider}}', turn.provider)

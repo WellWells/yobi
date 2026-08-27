@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from 'react';
 import { Button, Group, Stack, Text } from '@mantine/core';
-import { Download, Link } from 'lucide-react';
+import { Link, Upload } from 'lucide-react';
 import { AppModal } from '../../components/AppModal';
 import { AppTextInput } from '../../components/AppTextInput';
 import { AppButton } from '../../components/AppButton';
@@ -93,7 +93,7 @@ export const FlowImportModal: React.FC<FlowImportModalProps> = ({
       opened={open}
       onClose={onClose}
       title={t('flow.import')}
-      icon={<Download size={16} />}
+      icon={<Upload size={16} />}
       size="sm"
       zIndex={Z_MODAL}
     >
@@ -102,7 +102,7 @@ export const FlowImportModal: React.FC<FlowImportModalProps> = ({
           <Text fz="sm" fw={600}>{t('flow.import.file.label')}</Text>
           <Button
             variant="default"
-            leftSection={<Download size={14} />}
+            leftSection={<Upload size={14} />}
             onClick={() => { void handleFilePick(); }}
             fullWidth
           >

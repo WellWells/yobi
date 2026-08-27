@@ -41,8 +41,6 @@ export function validateTrigger(raw: unknown): TriggerValidationResult {
     const keys = typeof tr.keys === 'string' ? tr.keys.trim() : '';
     if (!keys) return { ok: false, error: 'Hotkey trigger is missing "keys"' };
     if (!isValidAccelerator(keys)) {
-      // Validation errors are fed BACK to the model in the repair prompt, so this string is
-      // sent to a third party as surely as the prompt itself is — it names no framework.
       return { ok: false, error: `Invalid hotkey "${keys}" — use a keyboard accelerator like "CommandOrControl+Shift+Y" (modifiers joined with "+", one key at the end) or a bare media/volume/function key` };
     }
     return { ok: true, trigger: { type: 'hotkey', keys } };

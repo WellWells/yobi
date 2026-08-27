@@ -3,11 +3,6 @@ import { formatPromptDateWithWeekday } from '../../../shared/promptDate';
 import { fenceUntrusted } from '../../../shared/promptFencing';
 import { preparePromptForProvider } from '../../providers';
 
-/**
- * One completed step of an agent run. `deltaObservation` is the loosely-capped copy sent
- * as a follow-up on a live provider thread, where the message owns the whole budget;
- * `observation` is the tightly-capped copy that has to share the self-contained prompt.
- */
 export interface ScratchEntry {
   thought: string;
   tool: string;
@@ -18,24 +13,14 @@ export interface ScratchEntry {
 
 export const SCRATCH_IN_PROMPT = 6;
 export const SCRATCH_IN_PROMPT_MCP = 5;
+export const SCRATCH_IN_PROMPT_MCP_CAPPED = 3;
 export const SCRATCH_TOTAL_BUDGET = 48_000;
 
-/**
- * The run's own checklist. `steps` is written once and never rewritten — a model allowed to
- * restate its plan mid-run will quietly shrink it to whatever it has already done — and
- * `done` accumulates the 1-based indices it reports finishing.
- */
 export interface AgentPlan {
   steps: string[];
   done: number[];
 }
 
-/**
- * The plan is re-rendered into every prompt, so its worst case has to be part of
- * INSTRUCTION_EST — which is why the caps are tight and match the 2-4 sub-goals the prompt
- * asks for, rather than being generous limits that quietly cost a byte-capped provider its
- * conversation history.
- */
 const MAX_PLAN_STEPS = 4;
 const MAX_PLAN_STEP_CHARS = 100;
 
@@ -43,11 +28,6 @@ export function emptyPlan(): AgentPlan {
   return { steps: [], done: [] };
 }
 
-/**
- * Reads the optional plan fields off a decision. Deliberately total: anything malformed is
- * dropped rather than reported, because a plan is bookkeeping and must never be the reason
- * an otherwise valid action is rejected — that would trade real progress for tidy metadata.
- */
 export function readPlanFields(json: unknown): { plan?: string[]; planDone?: number[] } {
   if (typeof json !== 'object' || json === null) return {};
   const obj = json as Record<string, unknown>;
@@ -74,7 +54,6 @@ export function readPlanFields(json: unknown): { plan?: string[]; planDone?: num
   };
 }
 
-/** Merges a decision's plan fields into the run's plan, in place. */
 export function applyPlanUpdate(plan: AgentPlan, steps?: string[], done?: number[]): void {
   if (plan.steps.length === 0 && steps && steps.length > 0) plan.steps = [...steps];
   if (!done) return;
@@ -96,26 +75,6 @@ export function renderPlan(plan: AgentPlan): string[] {
   ];
 }
 
-/**
- * What `buildTurnPrompt` costs before any catalog, goal, history or observation is added.
- * Everything that competes for a capped provider's input — the conversation history and the
- * MCP catalog — is budgeted by subtracting this, so it is the single source of truth for
- * both and MUST NOT be re-typed by either. Sized for the worst case (every optional rule
- * block present) and pinned by `test/agentPromptBudget.test.ts`, because under-estimating
- * it does not truncate the prompt — it silently drops the whole history instead.
- *
- * The slack over the measured worst case also has to cover the environment line, whose
- * timezone and locale are read from the running machine: the estimate is pinned wherever the
- * test happens to run, so it must already hold on a machine with the longest names the
- * clamps allow.
- */
-/*
- * Raised 5,100 → 5,700 for the capability-check rule and the precedence block. The cost is paid
- * by the MCP catalog, which is sized as "the cap minus this" with no floor of its own; the
- * conversation history is unaffected because its own 12,000 ceiling binds first
- * (33,499 − 5,700 − 1,200 = 26,599, still far above it). Both are pinned by
- * test/agentPromptBudget.test.ts.
- */
 export const INSTRUCTION_EST = 5_700;
 
 function renderScratchEntry(entry: ScratchEntry, step: number): string {
@@ -126,13 +85,6 @@ function renderScratchEntry(entry: ScratchEntry, step: number): string {
   ].join('\n');
 }
 
-/**
- * Exported for the test suite. The per-observation caps bound a single tool result, but
- * nothing bounded their sum: on BYOK six observations at the 16k cap meant re-sending
- * ~96k characters on every turn, of a prompt that is already re-sent in full because the
- * API is stateless. Filling newest-first inside a total budget keeps the freshest evidence
- * whole and drops the oldest, which is the same trade `packReplayPrompt` makes for chat.
- */
 export function renderScratch(
   scratch: ScratchEntry[],
   scratchSlots: number = SCRATCH_IN_PROMPT,
@@ -146,8 +98,6 @@ export function renderScratch(
   let used = 0;
   for (let index = windowed.length - 1; index >= 0; index--) {
     const line = renderScratchEntry(windowed[index], firstStep + index);
-    // The newest entry always goes in, even when it alone exceeds the budget — a turn with
-    // no observation at all cannot make progress.
     if (lines.length > 0 && used + line.length > totalBudget) break;
     lines.unshift(line);
     used += line.length;
@@ -157,26 +107,12 @@ export function renderScratch(
   const header = omitted > 0
     ? `STEPS TAKEN SO FAR (showing the last ${lines.length} of ${scratch.length}):`
     : 'STEPS TAKEN SO FAR:';
-  // Fenced because an observation is whatever a web page said. Everything above this point
-  // is Yobi's own text; everything inside the tag was written by someone else.
   return [header, fenceUntrusted('steps', lines.join('\n'))].join('\n');
 }
 
-/**
- * Clamped because the block is part of INSTRUCTION_EST: the estimate is pinned on one
- * machine, and a user in `America/Argentina/ComodRivadavia` must not be able to widen the
- * prompt past what every other budget was computed against.
- */
 const ENV_TIMEZONE_MAX = 40;
 const ENV_LOCALE_MAX = 20;
 
-/**
- * The one fact the model cannot recover from anything else in the prompt. Without it a
- * time-relative goal ("the latest", "this year") is resolved against the model's training
- * cutoff and a place-relative one ("the weather", "the market") against nothing at all.
- * Browser providers inject a date of their own; BYOK endpoints do not, which is where this
- * earns its bytes.
- */
 export function envContextLine(now: Date = new Date()): string {
   const resolved = Intl.DateTimeFormat().resolvedOptions();
   const timezone = (resolved.timeZone || 'unknown').slice(0, ENV_TIMEZONE_MAX);
@@ -223,13 +159,6 @@ const APPROACH_LEAN: readonly string[] = [
   '  exactly what to provide so YOU can finish it with your own tools.',
 ];
 
-/**
- * Every other block states a rule; this one states which rule wins. The prompt carries ~20 of
- * them with no precedence, and the pairs that collide are known from real runs: the repeat guard
- * against plan coverage, "ask if you are unsure" against "just try it", depth against the step
- * limit. Anthropic's published prompts do the same thing with an explicit `<default_stance>` —
- * a model that has to invent a tie-break invents a different one each turn.
- */
 const PRECEDENCE: readonly string[] = [
   'WHEN TWO RULES COLLIDE:',
   '- Progress on the GOAL outranks bookkeeping: never re-run a call you already made because the',
@@ -238,11 +167,6 @@ const PRECEDENCE: readonly string[] = [
   '  that cannot change your answer.',
 ];
 
-/**
- * The counterweight to handing the model an `ask_user` action. A tool-using agent that can
- * ask questions will happily ask instead of working — "which sources should I use?" — so
- * the rule has to name the one situation that qualifies and refuse the rest by example.
- */
 const ASK_RULES: readonly string[] = [
   '- "ask_user" pauses the whole run until the user replies, so it is a LAST RESORT, not a courtesy.',
   '  Use it ONLY when the GOAL cannot be attempted at all without something no TOOL can get: a URL or',
@@ -251,12 +175,6 @@ const ASK_RULES: readonly string[] = [
   '  Ask ONE specific question, in the same language as the GOAL.',
 ];
 
-/**
- * Asked for, never required. A model that ignores it simply behaves as it did before, which
- * is why the engine accepts a planless first action instead of spending a repair round-trip
- * on bookkeeping — but a model that answers gets a checklist that survives the scratch
- * window, so by turn 5 it still knows what it set out to cover.
- */
 const PLAN_REQUEST: readonly string[] = [
   '- On this FIRST action, ALSO include "plan": [2-4 short sub-goals that together cover the GOAL].',
   '  Write it once — it is your checklist for the whole run, and it is what keeps you from',
@@ -299,11 +217,8 @@ export interface TurnPromptOptions {
   mcpGrammar?: boolean;
   scratchSlots?: number;
   history?: string;
-  /** Consecutive failed steps have piled up — tell the model to change course. */
   stalled?: boolean;
-  /** `ask_user` is offered only while there is still budget to act on the reply. */
   allowAsk?: boolean;
-  /** The run's checklist, carried into every prompt so progress outlives the scratch window. */
   plan?: AgentPlan;
 }
 
@@ -370,12 +285,6 @@ export function buildTurnPrompt(opts: TurnPromptOptions): string {
     ...historySection(history),
     '',
     'GOAL:',
-    /*
-     * Still NOT fenced, on purpose — see test/promptFencing.test.ts. A fence marks a span the
-     * model must not take direction from, and the goal is the one span it must. A bot-triggered
-     * run does put third-party text here, but that is answered by giving a bot origin fewer
-     * powers (MCP writes auto-denied, flow writes refused), not by demoting the instruction.
-     */
     goal.trim(),
     '',
     ...(planned ? [...renderPlan(plan), ''] : []),
@@ -402,8 +311,6 @@ export function buildDeltaPrompt(
     `Observation from step ${index} — ${entry.tool}:`,
     entry.deltaObservation || entry.observation || '(empty)',
     '',
-    // On a live provider thread this is the ONLY message sent, so the checklist has to ride
-    // along or the plan would exist for BYOK runs and be invisible for browser ones.
     ...(plan.steps.length > 0 && !mustFinish ? [...renderPlan(plan), ''] : []),
     ...(stalled && !mustFinish && !finished ? [...STALL_WARNING, ''] : []),
     mustFinish
@@ -414,12 +321,6 @@ export function buildDeltaPrompt(
   ].join('\n');
 }
 
-/**
- * The synthesis window, for BYOK only. Every other prompt is capped by the provider's input
- * limit, but the final answer is the one place where dropping an early observation loses
- * evidence the run already paid for — and once the turn ceiling can grow past the 6-slot
- * window, that is exactly what a shared window would do.
- */
 export const SYNTH_SCRATCH_SLOTS_LEAN = 16;
 export const SYNTH_SCRATCH_BUDGET_LEAN = 64_000;
 

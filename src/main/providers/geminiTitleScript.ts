@@ -25,12 +25,8 @@ export function buildGeminiTitleScript(timeoutMs: number = GEMINI_TITLE_TIMEOUT_
       for (var i = 0; i < rows.length; i++) {
         if (idOf(rows[i].getAttribute('href')) === wanted) return rows[i];
       }
-      // The URL names a thread the sidebar has not listed yet — waiting for the
-      // right row beats reading whichever one is currently highlighted.
       return null;
     }
-    // No id in the URL yet (a new chat mid-creation): the highlighted row is the
-    // only thing that can identify this conversation.
     return document.querySelector('a[aria-current="page"][href*="/app/"]');
   }
 

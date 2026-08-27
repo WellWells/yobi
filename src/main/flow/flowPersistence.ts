@@ -12,12 +12,6 @@ function getFlowsPath(): string {
   return path.join(getFlowDataDir(), 'flows.json');
 }
 
-/*
- * A renamed skill type is still spelled the old way in every flows.json already on disk.
- * Rewriting on load (rather than at every read site) means the file heals itself the next
- * time anything saves, and the rest of the engine only ever sees canonical type names.
- * Exported for the test suite.
- */
 export function migrateLoadedFlows(flows: FlowDefinition[]): FlowDefinition[] {
   for (const flow of flows) {
     for (const step of flow.steps ?? []) {

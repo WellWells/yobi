@@ -8,7 +8,6 @@ interface QuoteChipsProps {
   removeLabel: string;
 }
 
-/** A quote is context, not the message: one line, so it never crowds out the question. */
 function oneLine(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
 }

@@ -6,7 +6,7 @@ import { isExpiredCookie } from '../helpers';
 import { showInteractiveWorkerWindow, showLoginWindowIfNeeded } from '../windows';
 import { raiseVerificationChallenge, VERIFICATION_CHALLENGE_ERROR_NAME } from './verificationChallenge';
 import { PROVIDER_LABELS, PROVIDER_URLS } from '../../shared/types';
-import { CLEAN_UA } from '../userAgent';
+import { WORKER_USER_AGENTS } from '../userAgent';
 import { applyWorkerUserAgent } from '../clientHints';
 
 export const PERPLEXITY_CLOUDFLARE_ERROR_NAME = VERIFICATION_CHALLENGE_ERROR_NAME;
@@ -44,7 +44,7 @@ export async function runPerplexityAutomation(
 ): Promise<{ response: string; title: string }> {
   const wc = workerWin.webContents;
 
-  applyWorkerUserAgent(wc, CLEAN_UA);
+  applyWorkerUserAgent(wc, WORKER_USER_AGENTS.perplexity);
 
   await navigateAndWait(wc, targetUrl);
 
@@ -85,12 +85,6 @@ export async function runPerplexityAutomation(
 
   if (!result && fullyNavigated) {
     await waitForPageLoad(wc, 30_000);
-    /*
-     * The pre-send count, not 0. Reading with 0 accepts whatever answer is already rendered,
-     * and when targetUrl was a thread being continued the reloaded page still shows the
-     * PREVIOUS reply — which the caller then receives as if it were the answer to this prompt.
-     * `baseline` is already 0 for a fresh chat, so this is strictly the safer number.
-     */
     const readScript = buildPerplexityReadScript(baseline, timeoutMs);
     result = await executeAutomationWithTimeout<PplxResult>(wc, readScript, timeoutMs, 'Perplexity');
   }
@@ -152,7 +146,6 @@ function buildPerplexityAutomationScript(
   ${INJECTED_INTERCEPT_COPY_JS}
   ${INJECTED_PPLX_READ_JS}
 
-  // ── Locate input ─────────────────────────────────────────────────────────────
   var INPUT_SELECTORS = [
     '#ask-input[contenteditable="true"]',
     'div.chat-input-container #ask-input',
@@ -171,7 +164,6 @@ function buildPerplexityAutomationScript(
 
   if (!input) throw new Error('Perplexity input area not found');
 
-  // ── Type prompt ──────────────────────────────────────────────────────────────
   input.focus();
   input.textContent = '';
   input.dispatchEvent(new InputEvent('input', {
@@ -181,8 +173,6 @@ function buildPerplexityAutomationScript(
   var dt = new DataTransfer();
   dt.setData('text/plain', ${escapedPrompt});
   input.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-  // Perplexity uses Lexical editor which processes paste asynchronously;
-  // wait for DOM to settle before checking if the fallback is needed.
   await sleep(150);
   if (!(input.innerText || '').trim()) {
     document.execCommand('insertText', false, ${escapedPrompt});
@@ -192,8 +182,6 @@ function buildPerplexityAutomationScript(
   }));
   await sleep(250);
 
-  // ── Submit ───────────────────────────────────────────────────────────────────
-  // The submit button is the primary (bg-button-bg) button inside the ask-input
   function findSubmitBtn() {
     var container = document.querySelector('[data-ask-input-container="true"]');
     var btn = container ? container.querySelector('button.bg-button-bg') : null;

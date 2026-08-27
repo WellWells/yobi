@@ -6,14 +6,20 @@ import { getTempChatConversation, isTempChatMode } from '../../tempChat';
 import { sendLog } from '../../helpers';
 import { INSTRUCTION_EST } from './agentPrompts';
 
-/** Exported for the test suite, which derives its boundary cases from them. */
 export const SAFETY_MARGIN = 1_200;
 export const AGENT_HISTORY_MIN = 800;
 const AGENT_HISTORY_MAX = 12_000;
 
-export function agentHistoryBudget(providerUrl: string, catalogLen: number, goalLen: number): number {
+export const MCP_CATALOG_RESERVE = 4_000;
+
+export function agentHistoryBudget(
+  providerUrl: string,
+  catalogLen: number,
+  goalLen: number,
+  mcpReserve = 0,
+): number {
   if (isByokTargetUrl(providerUrl)) return AGENT_HISTORY_MAX;
-  const budget = promptCapFor(providerUrl) - INSTRUCTION_EST - catalogLen - goalLen - SAFETY_MARGIN;
+  const budget = promptCapFor(providerUrl) - INSTRUCTION_EST - catalogLen - goalLen - SAFETY_MARGIN - mcpReserve;
   if (budget < AGENT_HISTORY_MIN) return 0;
   return Math.min(budget, AGENT_HISTORY_MAX);
 }
@@ -49,11 +55,12 @@ export async function buildAgentHistory(args: {
   providerUrl: string;
   catalogLen: number;
   goalLen: number;
+  mcpReserve?: number;
 }): Promise<string> {
-  const { conversationPath, providerUrl, catalogLen, goalLen } = args;
+  const { conversationPath, providerUrl, catalogLen, goalLen, mcpReserve = 0 } = args;
   if (!conversationPath && !isTempChatMode()) return '';
 
-  const budget = agentHistoryBudget(providerUrl, catalogLen, goalLen);
+  const budget = agentHistoryBudget(providerUrl, catalogLen, goalLen, mcpReserve);
   if (budget <= 0) {
     sendLog('🧠 [Agent] The provider\'s input limit leaves no room for conversation history — running without it');
     return '';

@@ -14,10 +14,6 @@ export interface SaveHistoryInfo {
 
 export interface FlowExecutorDeps {
   getWorkerWin: () => BrowserWindow | null;
-  /**
-   * Reports a stage inside the running skill. Injected per tool call by the agent loop and
-   * absent everywhere else, so a skill's stage reporting costs nothing in a normal flow.
-   */
   onStage?: (label: AgentStageLabel, detail?: string) => void;
   ensureWorkerWin?: () => Promise<BrowserWindow | null>;
   getTargetUrl: () => string;
@@ -44,10 +40,6 @@ export interface FlowExecutorDeps {
     },
   ) => Promise<string>;
   captureScreen?: (format: 'png' | 'jpg', targetDir?: string) => Promise<string>;
-  /*
-   * Injected rather than imported so the share skill's link branch can be unit-tested
-   * without a network — and so the consent check reads one settings object, not two.
-   */
   getShareSettings?: () => ShareSettings;
   createShareLink?: (
     markdown: string,

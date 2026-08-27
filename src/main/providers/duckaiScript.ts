@@ -7,7 +7,20 @@ const DUCKAI_MAX_PROMPT_BYTES = 12_000;
 export const DUCKAI_CHALLENGE_SELECTOR =
   '[data-testid^="anomaly-modal-"], img[src*="assets/anomaly"], [style*="assets/anomaly"]';
 
+const DUCKAI_HOSTS = new Set(['duck.ai', 'www.duck.ai', 'duckduckgo.com', 'www.duckduckgo.com']);
+
+export function isDuckaiPage(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+    return DUCKAI_HOSTS.has(parsed.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 export function injectDuckaiLocalStorage(wc: WebContents): Promise<void> {
+  if (!isDuckaiPage(wc.getURL())) return Promise.resolve();
   return wc
     .executeJavaScript(
       `try{` +
@@ -20,12 +33,27 @@ export function injectDuckaiLocalStorage(wc: WebContents): Promise<void> {
     .catch(() => undefined);
 }
 
-export function setupDuckaiLocalStorageOnDomReady(wc: WebContents): Promise<void> {
-  return new Promise<void>((resolve) => {
-    wc.once('dom-ready', () => {
-      injectDuckaiLocalStorage(wc).then(resolve).catch(resolve);
-    });
-  });
+export interface PendingLocalStorageSetup {
+  ready: Promise<void>;
+  cancel(): void;
+}
+
+export function setupDuckaiLocalStorageOnDomReady(wc: WebContents): PendingLocalStorageSetup {
+  let settle: () => void = () => undefined;
+  const ready = new Promise<void>((resolve) => { settle = resolve; });
+
+  function stop(): void {
+    wc.removeListener('dom-ready', onDomReady);
+    settle();
+  }
+
+  function onDomReady(): void {
+    if (!isDuckaiPage(wc.getURL())) return;
+    void injectDuckaiLocalStorage(wc).then(stop, stop);
+  }
+
+  wc.on('dom-ready', onDomReady);
+  return { ready, cancel: stop };
 }
 
 export const DUCKAI_PRESERVED_KEYS = ['duckaiHasAgreedToTerms', 'isRecentChatsOn'] as const;
@@ -68,13 +96,10 @@ export function buildDuckaiAutomationScript(
   ${INJECTED_SLEEP_JS}
   ${INJECTED_WAIT_FOR_JS}
 
-  // Detects DuckDuckGo's human-verification overlay (appears right after submit
-  // when traffic is flagged); the Node side reveals the worker window and notifies.
   function isDuckaiChallenge() {
     return !!document.querySelector(CHALLENGE_SELECTOR);
   }
 
-  // ── Fallback: dismiss onboarding modal if localStorage injection was too late ──
   var onboardBtn = document.querySelector('button[data-testid="DUCKAI_ONBOARDING_AGREE"]');
   if (onboardBtn) {
     console.debug('[DuckAI Automate] 🛡️ Onboarding modal detected, attempting to close...');
@@ -82,10 +107,8 @@ export function buildDuckaiAutomationScript(
     await sleep(600);
   }
 
-  // ── Switch model via the picker menu (if a specific model was requested) ───────
   if (TARGET_MODEL) {
     console.debug('[DuckAI Automate] 🔄 Switching model to:', TARGET_MODEL);
-    // 1. Wait for the model-picker button, then open its menu.
     var modelPickerBtn = null;
     var msWaited = 0;
     while (!modelPickerBtn && msWaited < 10000) {
@@ -105,7 +128,6 @@ export function buildDuckaiAutomationScript(
       await sleep(500);
     }
 
-    // 2. Click the target model row; selection applies immediately and auto-closes the menu.
     var safeTargetModel = TARGET_MODEL.replace(/"/g, '\\"');
     var targetRow = document.querySelector('[data-testid="model-picker-row-' + safeTargetModel + '"]');
     if (!targetRow) throw new Error('Duck AI error: target model ID not found in picker - ' + TARGET_MODEL);
@@ -127,7 +149,6 @@ export function buildDuckaiAutomationScript(
     await sleep(400);
   }
 
-  // ── Locate textarea ───────────────────────────────────────────────────────────
   console.debug('[DuckAI Automate] 🔍 Looking for input area...');
   var input = null;
   await waitFor(function() {
@@ -139,7 +160,6 @@ export function buildDuckaiAutomationScript(
   if (!input) throw new Error('Duck AI input area not found');
   console.debug('[DuckAI Automate] ✅ Input area found, preparing to write prompt...');
 
-  // ── Type prompt ───────────────────────────────────────────────────────────────
   input.focus();
   input.value = '';
   input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -158,7 +178,6 @@ export function buildDuckaiAutomationScript(
   }
   await sleep(200);
 
-  // ── Submit ────────────────────────────────────────────────────────────────────
   console.debug('[DuckAI Automate] 🔍 Looking for submit button...');
   var submitBtn = null;
   await waitFor(function() {
@@ -171,14 +190,10 @@ export function buildDuckaiAutomationScript(
   console.debug('[DuckAI Automate] 🚀 Submitting prompt...');
   submitBtn.click();
 
-  // ── Wait for response block to appear (or a human-verification overlay) ────────
   console.debug('[DuckAI Automate] ⏳ Waiting for response block to appear (beyond BASELINE)...');
   var respWaited = 0;
   var gotResponse = false;
   while (respWaited < TIMEOUT) {
-    // Check the challenge FIRST: on submit DuckDuckGo inserts a "generating"
-    // assistant-message placeholder at the same time as the anomaly modal, so a
-    // response-first check would mistake that placeholder for a real answer.
     if (isDuckaiChallenge()) throw new Error('Duck AI human-verification challenge detected');
     if (document.querySelectorAll('div[id*="assistant-message"]').length > BASELINE) { gotResponse = true; break; }
     await sleep(350);
@@ -186,19 +201,15 @@ export function buildDuckaiAutomationScript(
   }
   if (!gotResponse) throw new Error('Timeout waiting for: Duck AI response block');
 
-  // ── Wait for generation to complete ───────────────────────────────────────────
   console.debug('[DuckAI Automate] ⏳ Response block detected, waiting for generation to complete...');
   var seenGenerating = false;
   var stableText = '';
   var stableCount = 0;
-  var NO_CHANGE_LIMIT = TIMEOUT;   // idle window = configured response timeout (reset on every content change)
+  var NO_CHANGE_LIMIT = TIMEOUT;   
   var lastChangeAt = null;
   var loopCount = 0;
 
   while (true) {
-    // The overlay can also appear during generation (or a hair after the response
-    // placeholder), so keep polling for it here — otherwise a challenge-blocked
-    // generation would hang until the Node-side hard timeout (~5 min).
     if (isDuckaiChallenge()) throw new Error('Duck AI human-verification challenge detected');
 
     var promptArea = document.querySelector('textarea[name="user-prompt"]');
@@ -240,7 +251,6 @@ export function buildDuckaiAutomationScript(
     await sleep(100);
   }
 
-  // ── Extract response ──────────────────────────────────────────────────────────
   console.debug('[DuckAI Automate] 🔍 Extracting response content...');
   var responseHeaders = document.querySelectorAll('div[id*="assistant-message"]');
   var latestHeader = responseHeaders.length > 0 ? responseHeaders[responseHeaders.length - 1] : null;
@@ -258,7 +268,6 @@ export function buildDuckaiAutomationScript(
   hoverTarget.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, composed: true }));
   await sleep(300);
 
-  // Poll up to 3 s for the copy button to render after hover events.
   var copyBtn = null;
   for (var cbWait = 0; cbWait < 15; cbWait++) {
     if (actionBlock) {
@@ -274,10 +283,6 @@ export function buildDuckaiAutomationScript(
 
   var copiedText = '';
   if (copyBtn) {
-    // Mock navigator.clipboard.writeText BEFORE dispatching click events.
-    // The real writeText throws NotAllowedError in an unfocused worker window,
-    // so we shadow it with an own property on navigator that captures the text
-    // and returns Promise.resolve() to keep React's handler happy.
     var origClipboardDesc = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
     Object.defineProperty(navigator, 'clipboard', {
       value: {
@@ -293,7 +298,6 @@ export function buildDuckaiAutomationScript(
       for (var i = 0; i < btnEvents.length; i++) {
         copyBtn.dispatchEvent(new MouseEvent(btnEvents[i], { bubbles: true, cancelable: true, view: window }));
       }
-      // Allow React's async writeText handler to resolve.
       await sleep(300);
     } finally {
       if (origClipboardDesc) {
@@ -324,7 +328,6 @@ export function buildDuckaiAutomationScript(
   var finalAnswer = copiedText || fallbackText;
   if (!finalAnswer) throw new Error('Duck AI error: extracted response content is empty');
   
-  // ── Extract AI-generated chat title ──────────────────────────────────────────
   console.debug('[DuckAI Automate] 📝 Extracting chat title...');
   var chatTitle = '';
   var titleWaited = 0;

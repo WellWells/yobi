@@ -36,15 +36,10 @@ const PROVIDER_DESCRIPTION_KEYS: Record<Provider, string> = {
   duckai: 'telegram.commands.duck',
 };
 
-/** Names the bots answer themselves. Nothing configurable may take one of these. */
 const BOT_RESERVED_STATIC_COMMANDS = [
   'start', 'init', 'output', 'status', 'restart', 'pair', 'help', BUILTIN_NEW_COMMAND,
 ];
 
-/**
- * Also reserved against provider/BYOK commands: the built-in defaults stay claimable by the
- * built-in commands themselves even while the user has them renamed or switched off.
- */
 export const BOT_STATIC_COMMANDS = [
   ...BOT_RESERVED_STATIC_COMMANDS,
   ...Object.values(DEFAULT_BUILTIN_COMMANDS),
@@ -58,7 +53,6 @@ const BUILTIN_DESCRIPTION_KEYS: Record<BotBuiltinCommandKey, string> = {
 export interface ResolvedBuiltinCommand {
   key: BotBuiltinCommandKey;
   command: string;
-  /** Empty string means "follow the app default", resolved at run time. */
   targetUrl: string;
   descriptionKey: string;
 }
@@ -112,11 +106,6 @@ export function resolveProviderCommands(
   return resolved;
 }
 
-/**
- * Flow commands are user-created and may predate this feature, so they win a name clash: a
- * built-in that cannot get its own name is dropped rather than shadowing an existing flow.
- * A hidden model falls back to the app default instead of removing the command.
- */
 export function resolveBuiltinCommands(
   builtinCommands: BotBuiltinCommands | undefined,
   extraReserved: string[] = [],

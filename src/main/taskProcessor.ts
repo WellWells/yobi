@@ -20,6 +20,7 @@ import {
 } from './taskReporting';
 import type { TaskReportDeps } from './taskReporting';
 import { PERPLEXITY_CLOUDFLARE_ERROR_NAME } from './providers/perplexity';
+import { parseUploadFailure } from './providers/fileDrop';
 import { VERIFICATION_CHALLENGE_ERROR_NAME } from './providers/verificationChallenge';
 import {
   buildOutputMarkdown,
@@ -33,6 +34,7 @@ import { IPC, isByokTargetUrl, providerFromUrl } from '../shared/types';
 import type { ChatTurnEvent, PromptPreferences, Task } from '../shared/types';
 import { extractTitleMarker, pickConversationTitle } from '../shared/conversationTitle';
 import type { TurnMeta } from '../shared/conversationDoc';
+import { attachmentMetaNames } from '../shared/conversationDoc';
 import { estimateUsage } from '../shared/tokenEstimate';
 import {
   sendLog,
@@ -42,6 +44,7 @@ import {
   sanitizeRequesterName,
 } from './helpers';
 import { setBotConversation } from './botConversations';
+import { deleteTempAttachments } from './telegram/fileDownload';
 import { backupClipboard, restoreClipboard } from './clipboard';
 import { classifyFailure, recordTaskOutcome } from './metrics';
 import { llmLane } from './flow/lanes';
@@ -179,10 +182,12 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
       ? { input: sent.usage.input, output: sent.usage.output, exact: true }
       : estimateUsage(sent.outgoingPrompt, response);
 
+    const attachedNames = attachmentMetaNames(task.attachments ?? []);
     const turnMeta: TurnMeta = {
       ...(sent.plan?.turnMeta ?? {}),
       p: providerLabel,
       t: new Date().toISOString(),
+      ...(attachedNames.length > 0 ? { a: attachedNames } : {}),
       ti: usage.input,
       to: usage.output,
       ...(usage.exact ? { tx: 1 as const } : {}),
@@ -252,8 +257,6 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
         });
       }
 
-      // Whatever file this turn landed in is what the bot chat continues from next time —
-      // including the first turn, which only just created it.
       if (task.sessionKey) await setBotConversation(task.sessionKey, conversationPath);
 
       sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
@@ -314,17 +317,20 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
       return;
     }
     const error = err as Error;
-    const uploadMatch = /^gemini-upload\[([^\]]+)\]/.exec(error.message ?? '');
-    if (uploadMatch) {
-      const phase = uploadMatch[1];
+    const uploadFailure = parseUploadFailure(error.message ?? '');
+    if (uploadFailure) {
+      const { phase } = uploadFailure;
       const key = phase === 'not-signed-in'
         ? 'attach.upload.notSignedIn'
         : phase === 'gems-mode'
           ? 'attach.upload.gemsMode'
-          : 'attach.upload.failed';
-      sendWebNotification(t(strings, 'app.name'), t(strings, key), 'error');
+          : phase === 'rejected'
+            ? 'attach.upload.rejected'
+            : 'attach.upload.failed';
+      const message = t(strings, key, { provider: providerLabel });
+      sendWebNotification(t(strings, 'app.name'), message, 'error');
       sendLog(`[${id}] ⚠️ attachment upload failed: ${phase}`);
-      await replyRemoteError(task, deps, { providerLabel, message: t(strings, key) });
+      await replyRemoteError(task, deps, { providerLabel, message });
       return;
     }
     if (error.name === PERPLEXITY_CLOUDFLARE_ERROR_NAME) {
@@ -354,6 +360,9 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
       lastError instanceof Error ? lastError.message : String(lastError ?? ''),
       getLangCache(),
     ));
+    if (task.ephemeralAttachments && task.attachments?.length) {
+      await deleteTempAttachments(task.attachments);
+    }
     restoreClipboard(clipboardSnapshot);
     if (!preservePerplexitySiteData) {
       await clearPerplexitySiteDataIfNeeded(targetUrl);

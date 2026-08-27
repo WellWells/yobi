@@ -41,12 +41,6 @@ const ACCESS_BY_SKILL: Partial<Record<SkillType, FlowAccess>> = {
   research: 'thirdPartyAi',
 };
 
-/*
- * A share step writes a file OR uploads to a third-party paste service, depending on its
- * format — one of them is a very different disclosure from the other. When the format is an
- * unresolved {{variable}} both are declared: this list is what the import trust gate shows
- * the user, and there it is always better to over-disclose than to under-disclose.
- */
 function accessKindsFor(step: SkillInstance): FlowAccess[] {
   if (step.type !== 'share') {
     const kind = ACCESS_BY_SKILL[step.type];

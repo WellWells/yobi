@@ -21,7 +21,6 @@ interface AssistantTurnProps {
   meta: TurnMeta;
   formattedTime: string | null;
   t: (key: string) => string;
-  /** Lets a selection made in this turn find the answer markdown its citations live in. */
   turnIndex?: number;
   onCaptureAs?: (format: CaptureFormat, turn: CaptureTurn) => Promise<boolean>;
 }

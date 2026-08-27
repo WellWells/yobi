@@ -35,6 +35,7 @@ export function buildSettingsSnapshot(): SettingsSnapshot {
   return {
     hotkey: config.hotkey,
     hotkeyEnabled: config.hotkeyEnabled,
+    shortcuts: config.shortcuts,
     locale: config.locale,
     theme: config.theme,
     syncSystemLanguageToModel: config.syncSystemLanguageToModel,

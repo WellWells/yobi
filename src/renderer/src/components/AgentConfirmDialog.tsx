@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Badge, Code, Group, ScrollArea, Stack, Text } from '@mantine/core';
-import { AlertTriangle, ShieldCheck, Workflow } from 'lucide-react';
+import { TriangleAlert, ShieldCheck, Workflow } from 'lucide-react';
 import type { AgentConfirmChoice, AgentConfirmPayload } from '../../../shared/types';
 import { ipcEvents, windowApi } from '../api/electronApi';
 import { useI18nStore } from '../store/i18nStore';
@@ -8,15 +8,6 @@ import { AppModal } from './AppModal';
 import { AppButton } from './AppButton';
 import { Z_MODAL_CONFIRM } from '../config/zLayers';
 
-/*
- * The agent's approval prompts, drawn in-app. They used to be Electron message boxes, which is
- * an OS window carrying none of Yobi's typography, theme or spacing — it reads as a different
- * program interrupting the one you are using. Main sends the request as DATA and waits; this
- * component owns the wording and the layout.
- *
- * Requests queue rather than overwrite: the run is blocked on each answer, so two can only ever
- * overlap if a second run is in flight, and dropping one would leave that run waiting forever.
- */
 export const AgentConfirmDialog: React.FC = () => {
   const t = useI18nStore((s) => s.t);
   const [queue, setQueue] = useState<AgentConfirmPayload[]>([]);
@@ -43,10 +34,9 @@ export const AgentConfirmDialog: React.FC = () => {
     <AppModal
       opened
       onClose={() => respond('deny')}
-      // A confirmation the agent raised while the user may already be inside another dialog.
       zIndex={Z_MODAL_CONFIRM}
       size={isFlow ? 'md' : 'lg'}
-      icon={dangerous ? <AlertTriangle size={18} /> : isFlow ? <Workflow size={18} /> : <ShieldCheck size={18} />}
+      icon={dangerous ? <TriangleAlert size={18} /> : isFlow ? <Workflow size={18} /> : <ShieldCheck size={18} />}
       title={t(isFlow ? 'agent.flow.confirm.title' : 'agent.mcp.confirm.title')}
     >
       <Stack gap={14}>
@@ -105,11 +95,8 @@ export const AgentConfirmDialog: React.FC = () => {
           <AppButton variant="default" onClick={() => respond('deny')}>
             {t(isFlow ? 'agent.flow.confirm.discard' : 'agent.mcp.confirm.deny')}
           </AppButton>
-          {/*
-            "Always allow" is offered for an MCP server only. A standing permission to write
-            flows would let a poisoned web page the agent read leave a scheduled step behind
-            without ever asking again.
-          */}
+          {
+}
           {!isFlow && (
             <AppButton variant="subtle" onClick={() => respond('approveAlways')}>
               {t('agent.mcp.confirm.always')}

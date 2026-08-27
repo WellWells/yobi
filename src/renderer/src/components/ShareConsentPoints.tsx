@@ -8,12 +8,6 @@ export interface ShareConsentPoint {
   text: string;
 }
 
-/*
- * The five points, rendered identically wherever consent is asked for: the chat dialog, the
- * quick-export panel and the share skill's config form. The three differ in how they OBTAIN
- * the text — two call t(), the panel receives strings already localised by main — so the text
- * arrives as a prop and only the presentation lives here. SHARE_CONSENT_KEYS still owns order.
- */
 export const ShareConsentPoints: React.FC<{ points: readonly ShareConsentPoint[] }> = ({ points }) => (
   <List spacing={8} size="sm" c="var(--text-secondary)" listStyleType="none" style={{ paddingLeft: 0 }}>
     {points.map((point) => {

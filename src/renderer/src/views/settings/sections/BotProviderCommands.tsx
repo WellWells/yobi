@@ -112,10 +112,6 @@ const ProviderCommandRow: React.FC<RowProps> = ({ provider, cfg, duckaiModels, b
   );
 };
 
-/**
- * BYOK rows are read-only apart from the switch: the command name comes from the key's own
- * name, so renaming happens where the key lives instead of in a second place here.
- */
 const ByokCommandRow: React.FC<{
   info: BotByokCommandInfo;
   busy: boolean;

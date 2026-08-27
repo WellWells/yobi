@@ -33,6 +33,57 @@ export const BackgroundStylePicker: React.FC<BackgroundStylePickerProps> = ({ va
   />
 );
 
+export interface PaletteSwatchProps {
+  palette: CapturePalette;
+  active: boolean;
+  style: CaptureBackgroundStyle;
+  direction: CaptureDirection;
+  size?: number;
+  onSelect: (key: string) => void;
+  onHover?: (key: string | null) => void;
+}
+
+export const PaletteSwatch: React.FC<PaletteSwatchProps> = ({
+  palette, active, style, direction, size = 32, onSelect, onHover,
+}) => (
+  <ActionIcon
+    onClick={() => onSelect(palette.key)}
+    onMouseEnter={() => onHover?.(palette.key)}
+    onMouseLeave={() => onHover?.(null)}
+    title={palette.label}
+    aria-label={palette.label}
+    aria-pressed={active}
+    variant="transparent"
+    radius="xl"
+    size={size}
+    style={{
+      position: 'relative',
+      padding: 0,
+      border: active ? '2px solid var(--accent)' : '2px solid var(--border)',
+      overflow: 'hidden',
+      boxShadow: active ? '0 0 0 3px var(--accent-dim)' : 'none',
+      transition: 'box-shadow 0.15s ease, border-color 0.15s ease',
+      flexShrink: 0,
+    }}
+  >
+    <Box
+      component="span"
+      style={{ position: 'absolute', inset: 0, background: captureBackgroundCss(palette.key, style, direction) }}
+    />
+    {active && (
+      <Flex
+        pos="absolute"
+        align="center"
+        justify="center"
+        c="#fff"
+        style={{ inset: 0, textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}
+      >
+        <Check size={Math.round(size * 0.38)} strokeWidth={3} />
+      </Flex>
+    )}
+  </ActionIcon>
+);
+
 export interface PaletteSwatchGridProps {
   palettes?: readonly CapturePalette[];
   value: string;
@@ -71,52 +122,17 @@ export const PaletteSwatchGrid: React.FC<PaletteSwatchGridProps> = ({
             {t(`capture.palette.${group}`)}
           </Text>
           <Group gap={6} wrap="wrap">
-            {items.map((item) => {
-              const active = value === item.key;
-              return (
-                <ActionIcon
-                  key={item.key}
-                  onClick={() => onChange(item.key)}
-                  onMouseEnter={() => onHover?.(item.key)}
-                  onMouseLeave={() => onHover?.(null)}
-                  title={item.label}
-                  aria-label={item.label}
-                  aria-pressed={active}
-                  variant="transparent"
-                  radius="xl"
-                  size={32}
-                  style={{
-                    position: 'relative',
-                    padding: 0,
-                    border: active ? '2px solid var(--accent)' : '2px solid var(--border)',
-                    overflow: 'hidden',
-                    boxShadow: active ? '0 0 0 3px var(--accent-dim)' : 'none',
-                    transition: 'box-shadow 0.15s ease, border-color 0.15s ease',
-                    flexShrink: 0,
-                  }}
-                >
-                  <Box
-                    component="span"
-                    style={{
-                      position: 'absolute',
-                      inset: 0,
-                      background: captureBackgroundCss(item.key, style, direction),
-                    }}
-                  />
-                  {active && (
-                    <Flex
-                      pos="absolute"
-                      align="center"
-                      justify="center"
-                      c="#fff"
-                      style={{ inset: 0, textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}
-                    >
-                      <Check size={12} strokeWidth={3} />
-                    </Flex>
-                  )}
-                </ActionIcon>
-              );
-            })}
+            {items.map((item) => (
+              <PaletteSwatch
+                key={item.key}
+                palette={item}
+                active={value === item.key}
+                style={style}
+                direction={direction}
+                onSelect={onChange}
+                onHover={onHover}
+              />
+            ))}
           </Group>
         </Box>
       );

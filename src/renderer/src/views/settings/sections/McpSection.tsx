@@ -1,6 +1,6 @@
 import React from 'react';
 import { Box } from '@mantine/core';
-import { McpServersCard } from './McpServersCard';
+import { ConnectorGallery } from './mcp/ConnectorGallery';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import type { useMcpServers } from '../hooks/useMcpServers';
 
@@ -15,6 +15,6 @@ interface Props {
 
 export const McpSection: React.FC<Props> = ({ mcp, t, showSection, sectionGap }) => (
   <Box display={showSection(TAG_SETS.mcp, 'connectors') ? 'block' : 'none'}>
-    <McpServersCard mcp={mcp} t={t} sectionGap={sectionGap} />
+    <ConnectorGallery mcp={mcp} t={t} sectionGap={sectionGap} />
   </Box>
 );

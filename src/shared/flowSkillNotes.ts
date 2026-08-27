@@ -1,16 +1,5 @@
 import type { SkillType } from './flowSkillSpecs';
 
-/**
- * Tier 3 of the generation prompt: the hard-won rules that are NOT derivable from a skill's
- * config keys or its OUTPUT contract — the mistakes a flow author only learns by shipping a
- * broken flow. They are disclosed only for the skills the assessment actually selected, which
- * is what makes them affordable: writing all of them into every prompt is exactly the habit
- * that pushed the one-shot prompt past every provider's input cap.
- *
- * A note is prose, not a spec. If something belongs in `fields` or `SKILL_OUTPUT`, put it
- * there instead — this file is for the "and by the way, if you do X here it breaks" layer.
- * `NOTE_MAX_CHARS` is enforced by test/flowGenPromptBudget.test.ts.
- */
 export const NOTE_MAX_CHARS = 600;
 
 export const SKILL_NOTES: Partial<Record<SkillType, string>> = {

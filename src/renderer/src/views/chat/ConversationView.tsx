@@ -144,7 +144,7 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
 
           {conversation.turns.map((turn, index) => (
             <Stack gap={20} key={`turn-${index}`}>
-              <UserBubble prompt={turn.prompt} t={t} />
+              <UserBubble prompt={turn.prompt} t={t} attachments={turn.meta.a} />
               {turn.response
                 ? (
                   <AssistantTurn

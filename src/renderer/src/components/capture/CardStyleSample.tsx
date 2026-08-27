@@ -20,12 +20,13 @@ export interface CardStyleSampleProps {
   direction: string;
   cardLayout: CardLayout;
   width: number;
+  margin: number;
   hiDpi: boolean;
   t: (key: string) => string;
 }
 
 export const CardStyleSample: React.FC<CardStyleSampleProps> = ({
-  palette, backgroundStyle, direction, cardLayout, width, hiDpi, t,
+  palette, backgroundStyle, direction, cardLayout, width, margin, hiDpi, t,
 }) => {
   const request = useMemo<MarkdownCaptureRequest>(() => ({
     payload: {
@@ -46,13 +47,14 @@ export const CardStyleSample: React.FC<CardStyleSampleProps> = ({
       showTimestamp: false,
       showTokens: false,
       width,
+      margin,
       background: captureBackgroundCss(palette, backgroundStyle, (direction || 'se') as CaptureDirection),
       cardTheme: paletteCardTheme(palette),
       cardLayout,
       pixelRatio: hiDpi ? 2 : 1,
       zip: false,
     },
-  }), [palette, backgroundStyle, direction, cardLayout, width, hiDpi, t]);
+  }), [palette, backgroundStyle, direction, cardLayout, width, margin, hiDpi, t]);
 
   return (
     <Stack gap={8}>

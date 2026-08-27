@@ -1,16 +1,17 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/types';
 import type {
-  AccountStatus, AuthProvider, BackupCategoryId, BackupCategoryInfo, BackupExportResult,
+  AccountStatus, AttachmentStashRequest, AuthProvider, BackupCategoryId, BackupCategoryInfo, BackupExportResult,
   BackupImportResult, BackupInspectResult, BotBuiltinCommands, BotByokCommandInfo, BotLlmDirectConfig, ByokConnectionProbe, ByokGroupSaveRequest, ByokInstanceSaveRequest, ByokModelsResult,
   ByokSettingsSnapshot, ByokTestResult, CaptureSettings, ChatCommandResult, ChatTurnEvent, HotkeyBindResult,
   QuickExportSettings, DuckaiModelInfo,
   FeedCandidate, FlowDefinition, FlowExecutionEvent, FlowExecutionLog, FlowExecutionResult, HiddenSources,
   ScraperPickRequest, ScraperPickResult,
   FlowGenerationResult, MarkdownCaptureRequest, MarkdownCaptureResult, MetricsSnapshot, NotifyEventPrefs, OutputFile, PromptPreferences, StartedConversation,
-  ShareLinkRequest, ShareLinkResult, ShareSettings,
+  ShareLinkRequest, ShareLinkResult, ShareSettings, StashedAttachment,
 } from '../shared/types';
 import type { ConversationTokenStats } from '../shared/tokenEstimate';
+import type { ShortcutOverride } from '../shared/shortcuts';
 import type {
   PromptTriggerOptions, Provider, QueueState, EmailSettingsSnapshot, DataKeyStatus, AgentCommandResult, AgentRunSummary, AgentTracePayload, AgentConfirmPayload, AgentConfirmChoice, SearchCommandResult, SearchMode, SmtpCredentials,
   SelectPathRequest, SelectPathResult, SettingsSnapshot, TempChatResult, BotProviderCommand, TelegramRuntimeSnapshot,
@@ -55,6 +56,8 @@ export type ElectronAPI = {
   updateHotkey: (hotkey: string) => Promise<HotkeyBindResult>;
   setHotkeyPaused: (paused: boolean) => Promise<boolean>;
   getHotkeyEnabled: () => Promise<boolean>;
+  getShortcuts: () => Promise<Record<string, ShortcutOverride>>;
+  updateShortcuts: (next: Record<string, ShortcutOverride>) => Promise<Record<string, ShortcutOverride>>;
   setHotkeyEnabled: (enabled: boolean) => Promise<HotkeyBindResult>;
   getAiUrl: () => Promise<string>;
   updateAiUrl: (url: string) => Promise<boolean>;
@@ -97,6 +100,8 @@ export type ElectronAPI = {
   setCurrentLocale: (lang: string) => Promise<boolean>;
 
   copyTextToClipboard: (text: string) => Promise<boolean>;
+  stashAttachmentBytes: (request: AttachmentStashRequest) => Promise<StashedAttachment>;
+  attachmentFromClipboard: () => Promise<StashedAttachment | null>;
   getPathForFile: (file: File) => string;
   showInFolder: (filePath: string) => Promise<void>;
   openPath: (filePath: string) => Promise<boolean>;
@@ -220,7 +225,7 @@ export type ElectronAPI = {
   executeFlow: (flowId: string) => Promise<FlowExecutionResult>;
   runChatCommand: (flowId: string, command: string, input: string, conversationPath?: string) => Promise<ChatCommandResult>;
   runSearchCommand: (query: string, targetUrl: string, mode?: SearchMode, conversationPath?: string, clientToken?: string) => Promise<SearchCommandResult>;
-  runAgentCommand: (goal: string, targetUrl: string, runId: string, conversationPath?: string) => Promise<AgentCommandResult>;
+  runAgentCommand: (goal: string, targetUrl: string, runId: string, conversationPath?: string, attachments?: string[]) => Promise<AgentCommandResult>;
   resumeAgentRun: (runId: string, answer?: string) => Promise<AgentCommandResult>;
   cancelAgentRun: (runId: string) => Promise<boolean>;
   listResumableAgentRuns: () => Promise<AgentRunSummary[]>;
@@ -323,6 +328,8 @@ const api: ElectronAPI = {
   updateHotkey: (hotkey) => ipcRenderer.invoke(IPC.UPDATE_HOTKEY, hotkey),
   setHotkeyPaused: (paused) => ipcRenderer.invoke(IPC.SET_HOTKEY_PAUSED, paused),
   getHotkeyEnabled: () => ipcRenderer.invoke(IPC.GET_HOTKEY_ENABLED),
+  getShortcuts: () => ipcRenderer.invoke(IPC.GET_SHORTCUTS),
+  updateShortcuts: (next) => ipcRenderer.invoke(IPC.UPDATE_SHORTCUTS, next),
   setHotkeyEnabled: (enabled) => ipcRenderer.invoke(IPC.SET_HOTKEY_ENABLED, enabled),
   getAiUrl: () => ipcRenderer.invoke(IPC.GET_AI_URL),
   updateAiUrl: (url) => ipcRenderer.invoke(IPC.UPDATE_AI_URL, url),
@@ -377,6 +384,8 @@ const api: ElectronAPI = {
   setCurrentLocale: (lang) => ipcRenderer.invoke(IPC.SET_CURRENT_LOCALE, lang),
 
   copyTextToClipboard: (text) => ipcRenderer.invoke(IPC.COPY_TEXT_TO_CLIPBOARD, text),
+  stashAttachmentBytes: (request) => ipcRenderer.invoke(IPC.ATTACHMENT_STASH_BYTES, request),
+  attachmentFromClipboard: () => ipcRenderer.invoke(IPC.ATTACHMENT_FROM_CLIPBOARD),
   getPathForFile: (file) => webUtils.getPathForFile(file),
   showInFolder: (filePath) => ipcRenderer.invoke(IPC.SHOW_IN_FOLDER, filePath),
   openPath: (filePath) => ipcRenderer.invoke(IPC.OPEN_PATH, filePath),
@@ -546,8 +555,8 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC.FLOW_RUN_CHAT_COMMAND, flowId, command, input, conversationPath),
   runSearchCommand: (query, targetUrl, mode, conversationPath, clientToken) =>
     ipcRenderer.invoke(IPC.SEARCH_RUN, query, targetUrl, mode, conversationPath, clientToken),
-  runAgentCommand: (goal, targetUrl, runId, conversationPath) =>
-    ipcRenderer.invoke(IPC.AGENT_RUN, goal, targetUrl, runId, conversationPath),
+  runAgentCommand: (goal, targetUrl, runId, conversationPath, attachments) =>
+    ipcRenderer.invoke(IPC.AGENT_RUN, goal, targetUrl, runId, conversationPath, attachments),
   resumeAgentRun: (runId, answer) => ipcRenderer.invoke(IPC.AGENT_RESUME, runId, answer),
   cancelAgentRun: (runId) => ipcRenderer.invoke(IPC.AGENT_CANCEL, runId),
   listResumableAgentRuns: () => ipcRenderer.invoke(IPC.AGENT_LIST_RESUMABLE),

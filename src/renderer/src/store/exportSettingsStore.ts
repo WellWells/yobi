@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { settingsApi } from '../api/electronApi';
-import { DEFAULT_CAPTURE_WIDTH } from '../../../shared/types';
+import { DEFAULT_CAPTURE_MARGIN, DEFAULT_CAPTURE_WIDTH } from '../../../shared/types';
 import { DEFAULT_CAPTURE_BACKGROUND_STYLE, DEFAULT_CAPTURE_PALETTE } from '../../../shared/capturePalettes';
 import type { CaptureSettings, HotkeyBindResult, QuickExportSettings } from '../../../shared/types';
 
@@ -26,6 +26,7 @@ const CAPTURE_FALLBACK: CaptureSettings = {
   cardLayout: 'document',
   range: 'all',
   width: DEFAULT_CAPTURE_WIDTH,
+  margin: DEFAULT_CAPTURE_MARGIN,
   pixelRatio: 1,
   zip: false,
 };
@@ -71,11 +72,6 @@ export const useExportSettingsStore = create<ExportSettingsState>((set, get) => 
     void settingsApi.updateQuickExport(next);
   },
 
-  /*
-   * The accelerator is the one field main can refuse (it would collide with the capture
-   * hotkey), so unlike patchQuick it waits for the answer before committing — an optimistic
-   * write would leave the field showing a binding the main process never accepted.
-   */
   setQuickHotkey: async (hotkey) => {
     const next = { ...get().quick, hotkey };
     const result = await settingsApi.updateQuickExport(next);

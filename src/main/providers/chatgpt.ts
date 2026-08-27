@@ -1,12 +1,13 @@
 import type { BrowserWindow } from 'electron';
 import { navigateAndWait, sleep, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
 import { executeAutomationWithTimeout, dispatchFocusEvents, settledElementCount } from './automationExecutor';
-import { isExpiredCookie } from '../helpers';
+import { isExpiredCookie, sendLog } from '../helpers';
 import { showLoginWindowIfNeeded } from '../windows';
 import { PROVIDER_URLS } from '../../shared/types';
-import { CLEAN_UA } from '../userAgent';
+import { WORKER_USER_AGENTS } from '../userAgent';
 import { applyWorkerUserAgent } from '../clientHints';
 import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_SUBMIT_JS } from './chatgptSendScript';
+import { uploadFilesToChatgpt } from './chatgptUpload';
 
 const CHATGPT_HOME = PROVIDER_URLS.chatgpt;
 export const CHATGPT_LOGIN_URL = 'https://auth.openai.com/log-in-or-create-account';
@@ -114,10 +115,11 @@ export async function runChatgptAutomation(
   prompt: string,
   timeoutMs = 60_000,
   targetUrl: string = CHATGPT_HOME,
+  attachments?: string[],
 ): Promise<{ response: string; title: string }> {
   const wc = workerWin.webContents;
 
-  applyWorkerUserAgent(wc, CLEAN_UA);
+  applyWorkerUserAgent(wc, WORKER_USER_AGENTS.chatgpt);
 
   await navigateAndWait(wc, targetUrl);
 
@@ -130,6 +132,11 @@ export async function runChatgptAutomation(
     throw new Error(
       `${CHATGPT_LOGIN_REQUIRED}: ChatGPT page indicates logged-out state (session=${authSignals.hasSessionCookie}, logoutDebug=${authSignals.hasLogoutDebugCookie}, composer=${pageSignals.hasComposer})`,
     );
+  }
+
+  if (attachments && attachments.length > 0) {
+    const uploadLog = await uploadFilesToChatgpt(wc, attachments, 120_000);
+    for (const line of uploadLog) sendLog(`[chatgpt-upload] ${line}`);
   }
 
   await dispatchFocusEvents(wc);
@@ -186,23 +193,19 @@ function buildChatgptAutomationScript(
     return (turn.innerText || '').trim();
   }
 
-  // Redesigned: find the copy button for a given assistant turn.
   function findCopyButtonForTurn(turn) {
     if (!turn) return null;
     
-    // The action bar lives outside the assistant bubble in recent DOM versions;
-    // walk up to the enclosing turn container (.agent-turn or .group/turn-messages).
     var turnContainer = turn.closest('.agent-turn') || turn.closest('.group\\\\/turn-messages') || turn.parentElement.parentElement;
     var searchContext = turnContainer || document;
 
-    // Use exact selectors only — avoids matching code-block copy buttons.
     var selectors = [
       'button[data-testid="copy-turn-action-button"]'
     ];
 
     for (var i = 0; i < selectors.length; i++) {
       var btns = searchContext.querySelectorAll(selectors[i]);
-      if (btns && btns.length > 0) return btns[btns.length - 1]; // last button = latest response
+      if (btns && btns.length > 0) return btns[btns.length - 1]; 
     }
     return null;
   }
@@ -211,11 +214,6 @@ function buildChatgptAutomationScript(
 
   ${CHATGPT_SUBMIT_JS}
 
-  // chatgptSubmit throws unless a new USER turn appeared, so reaching this line
-  // means the question really went in. It also hands back the assistant count as
-  // it stood immediately before the send: the Node-side baseline is taken before
-  // this script runs, which on a resumed thread is early enough for late history
-  // to push past it and make the PREVIOUS answer look like a new one.
   var submitted = await chatgptSubmit(${escapedPrompt});
   BASELINE = submitted.assistantBaseline;
 
@@ -228,13 +226,9 @@ function buildChatgptAutomationScript(
     return !!getTurnText(turn);
   }, 'ChatGPT response text', TIMEOUT, 350);
 
-  // Generation is done the moment the turn's action toolbar (its copy button)
-  // renders — ChatGPT only adds it after the stream ends, so this is faster and
-  // more reliable than waiting for the text to stop changing. The text-stability
-  // check stays as a fallback for when the copy button can't be located.
   var stableText = '';
   var stableCount = 0;
-  var NO_CHANGE_LIMIT = TIMEOUT;   // idle window = configured response timeout (reset on every text change)
+  var NO_CHANGE_LIMIT = TIMEOUT;   
   var chatLastChangeAt = null;
   var copyBtn = null;
   while (true) {
@@ -260,15 +254,11 @@ function buildChatgptAutomationScript(
   var latestTurn = getLatestAssistantTurn();
   if (!latestTurn) throw new Error('ChatGPT response block not found');
 
-  // The copy button is in the DOM even while visually hidden (no hover needed);
-  // element.click() fires its handler regardless of pointer-events. Re-find it
-  // only if we exited via the text-stability fallback.
   if (!copyBtn) copyBtn = findCopyButtonForTurn(latestTurn);
 
   var answerText = getTurnText(latestTurn);
   var copiedText = copyBtn ? ((await interceptCopy(copyBtn)) || '').trim() : '';
   
-  // Prefer the intercepted clipboard text; fall back to innerText if empty.
   var finalAnswer = copiedText || answerText;
   if (!finalAnswer) throw new Error('ChatGPT response is empty');
 

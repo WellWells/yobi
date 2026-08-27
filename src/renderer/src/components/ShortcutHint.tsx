@@ -1,21 +1,7 @@
 import React from 'react';
 import { Group, Kbd } from '@mantine/core';
+import { toTokens } from '../../../shared/shortcuts';
 import { isMac } from '../utils/keyLabels';
-
-const MAC_MODIFIER_GLYPH: Record<string, string> = {
-  ctrl: '⌘',
-  cmd: '⌘',
-  command: '⌘',
-  meta: '⌘',
-  alt: '⌥',
-  option: '⌥',
-  shift: '⇧',
-};
-
-function displayToken(token: string): string {
-  if (!isMac) return token;
-  return MAC_MODIFIER_GLYPH[token.toLowerCase()] ?? token;
-}
 
 const capStyle: React.CSSProperties = {
   fontFamily: 'var(--font-mono)',
@@ -32,15 +18,18 @@ const capStyle: React.CSSProperties = {
 
 interface ShortcutHintProps {
   combo: string;
+  muted?: boolean;
 }
 
-export const ShortcutHint: React.FC<ShortcutHintProps> = ({ combo }) => {
-  const keys = combo.split('+').map((key) => key.trim()).filter(Boolean);
+export const ShortcutHint: React.FC<ShortcutHintProps> = ({ combo, muted }) => {
+  const keys = toTokens(combo, isMac);
+  if (keys.length === 0) return null;
+  const style = muted ? { ...capStyle, opacity: 0.55 } : capStyle;
   return (
     <Group gap={3} wrap="nowrap" component="span">
       {keys.map((key, index) => (
-        <Kbd key={`${key}-${index}`} style={capStyle}>
-          {displayToken(key)}
+        <Kbd key={`${key}-${index}`} style={style}>
+          {key}
         </Kbd>
       ))}
     </Group>

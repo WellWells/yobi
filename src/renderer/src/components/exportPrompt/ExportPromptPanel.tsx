@@ -1,16 +1,21 @@
 import React from 'react';
-import { Group, Stack, Text } from '@mantine/core';
-import { Copy, Link2 } from 'lucide-react';
+import { Box, Group, Stack, Text } from '@mantine/core';
+import { PaletteSwatch } from '../capture/PalettePicker';
+import { CardSchematic } from './CardSchematic';
+import { ExpirySlider } from './ExpirySlider';
+import { MarginSlider } from '../capture/MarginSlider';
+import { Copy, Link2, Save } from 'lucide-react';
 import { AppTextInput } from '../AppTextInput';
 import { AppButton } from '../AppButton';
 import { AppSegmentedControl } from '../AppSegmentedControl';
-import { SelectDropdown } from '../SelectDropdown';
 import { ToggleSwitch } from '../ToggleSwitch';
 import { PromptShell } from './PromptShell';
 import { ShareConsent } from './ShareConsent';
-import { captureRidesAsFile } from '../../../../shared/types';
+import { captureRidesAsFile, clampCaptureMargin } from '../../../../shared/types';
+import { CAPTURE_PALETTES } from '../../../../shared/capturePalettes';
+import type { CaptureBackgroundStyle, CaptureDirection } from '../../../../shared/capturePalettes';
 import type {
-  ExportPromptChoice, ExportPromptPayload, QuickExportFormat, ShareExpire,
+  CaptureExportAction, ExportPromptChoice, ExportPromptPayload, PanelHeight, QuickExportFormat, ShareExpire,
 } from '../../../../shared/types';
 
 const CAPTURE_FORMATS: { value: QuickExportFormat; label: string }[] = [
@@ -19,11 +24,13 @@ const CAPTURE_FORMATS: { value: QuickExportFormat; label: string }[] = [
   { value: 'pdf', label: 'PDF' },
 ];
 
+const PREVIEW_WIDTH = 150;
+
 interface Props {
   payload: ExportPromptPayload;
   onSubmit: (choice: ExportPromptChoice) => void;
   onCancel: () => void;
-  onHeight: (height: number) => void;
+  onHeight: (height: PanelHeight) => void;
 }
 
 export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel, onHeight }) => {
@@ -34,6 +41,9 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
   const [format, setFormat] = React.useState<QuickExportFormat>(payload.format);
   const [zip, setZip] = React.useState(payload.zip);
   const [width, setWidth] = React.useState(payload.width);
+  const [palette, setPalette] = React.useState(payload.palette);
+  const [margin, setMargin] = React.useState(clampCaptureMargin(payload.margin));
+  const [hoveredPalette, setHoveredPalette] = React.useState<string | null>(null);
   const [expire, setExpire] = React.useState<ShareExpire>(share.expire);
   const [burn, setBurn] = React.useState(share.burnAfterReading);
   const [consented, setConsented] = React.useState(share.consented);
@@ -42,7 +52,8 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
   const [lastCaptureFormat, setLastCaptureFormat] = React.useState<QuickExportFormat>(
     payload.format === 'text' ? 'png' : payload.format,
   );
-  const [busy, setBusy] = React.useState(false);
+  const [pending, setPending] = React.useState<CaptureExportAction | 'share' | null>(null);
+  const busy = pending !== null;
 
   const sizeOptions = React.useMemo(
     () => payload.sizes.map((size) => ({ value: String(size.value), label: size.label })),
@@ -62,21 +73,20 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
   const pickFormat = (next: QuickExportFormat): void => {
     if (next !== 'text') setLastCaptureFormat(next);
     setFormat(next);
-    /* The gate has to live here: the panel has no IPC, so main cannot ask on its behalf. */
     if (next === 'text' && !consented) setAsking(true);
   };
 
-  /* Backing out of the gate returns to the format you were on — it does not close the panel. */
   const declineConsent = (): void => { setFormat(lastCaptureFormat); setAsking(false); };
 
-  const submit = (): void => {
+  const submit = (action: CaptureExportAction = 'copy'): void => {
     if (!ready) return;
-    setBusy(true);
     if (format === 'text') {
+      setPending('share');
       onSubmit({ kind: 'share', expire, burnAfterReading: burn, consentAccepted });
       return;
     }
-    onSubmit({ kind: 'capture', fileName: trimmed, format, zip, width });
+    setPending(action);
+    onSubmit({ kind: 'capture', fileName: trimmed, format, zip, width, margin, palette, action });
   };
 
   if (asking) {
@@ -94,7 +104,7 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
   }
 
   return (
-    <PromptShell title={payload.strings.title} onHeight={onHeight} onEscape={onCancel} onEnter={submit}>
+    <PromptShell title={payload.strings.title} onHeight={onHeight} onEscape={onCancel} onEnter={() => submit('copy')}>
       <AppSegmentedControl
         value={format}
         options={formatOptions}
@@ -109,17 +119,12 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
             <Text fz="var(--font-size-sm)" c="dimmed" ff="var(--font-mono)">{share.instanceHost}</Text>
           </Group>
 
-          <Stack gap={6}>
-            <Text fz="var(--font-size-sm)" c="dimmed">{shareStrings.expire}</Text>
-            {/* The window is a fixed 440×~285: eight options at full height would be clipped by it. */}
-            <SelectDropdown
-              value={expire}
-              options={share.expires}
-              onChange={(value) => setExpire(value as ShareExpire)}
-              size="sm"
-              maxDropdownHeight={150}
-            />
-          </Stack>
+          <ExpirySlider
+            label={shareStrings.expire}
+            options={share.expires}
+            value={expire}
+            onChange={setExpire}
+          />
 
           <Group justify="space-between" wrap="nowrap" gap={12}>
             <Text fz="var(--font-size-sm)" c="var(--mantine-color-text)">{shareStrings.burn}</Text>
@@ -128,6 +133,47 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
         </>
       ) : (
         <>
+          {
+}
+          <Group align="stretch" gap={12} wrap="nowrap">
+            <Stack gap={10} flex={1} miw={0} onMouseLeave={() => setHoveredPalette(null)}>
+              <Stack gap={6}>
+                <Text fz="var(--font-size-sm)" c="dimmed">{payload.strings.theme}</Text>
+                {}
+                <Group gap={5} wrap="wrap">
+                  {CAPTURE_PALETTES.map((item) => (
+                    <PaletteSwatch
+                      key={item.key}
+                      palette={item}
+                      active={palette === item.key}
+                      style={payload.backgroundStyle as CaptureBackgroundStyle}
+                      direction={payload.direction as CaptureDirection}
+                      size={24}
+                      onSelect={setPalette}
+                      onHover={setHoveredPalette}
+                    />
+                  ))}
+                </Group>
+              </Stack>
+
+              <Stack gap={2} mt="auto">
+                <Text fz="var(--font-size-sm)" c="dimmed">{payload.strings.margin}</Text>
+                <MarginSlider value={margin} onChange={setMargin} label={payload.strings.margin} />
+              </Stack>
+            </Stack>
+
+            <Box w={PREVIEW_WIDTH} style={{ flexShrink: 0 }}>
+              <CardSchematic
+                palette={hoveredPalette ?? palette}
+                backgroundStyle={payload.backgroundStyle as CaptureBackgroundStyle}
+                direction={payload.direction as CaptureDirection}
+                width={width}
+                margin={margin}
+                boxWidth={PREVIEW_WIDTH}
+              />
+            </Box>
+          </Group>
+
           <Stack gap={6}>
             <Text fz="var(--font-size-sm)" c="dimmed">{payload.strings.fileName}</Text>
             <AppTextInput
@@ -166,12 +212,25 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
         <AppButton variant="subtle" color="gray" disabled={busy} onClick={onCancel}>
           {payload.strings.cancel}
         </AppButton>
-        {/* AppButton keeps the spinner beside the label instead of centred over it. */}
+        {
+}
+        {!sharing && (
+          <AppButton
+            variant="outline"
+            leftSection={<Save size={14} />}
+            loading={pending === 'save'}
+            disabled={!ready}
+            onClick={() => submit('save')}
+          >
+            {payload.strings.save}
+          </AppButton>
+        )}
+        {}
         <AppButton
           leftSection={sharing ? <Link2 size={14} /> : <Copy size={14} />}
-          loading={busy}
+          loading={pending === 'copy' || pending === 'share'}
           disabled={!ready}
-          onClick={submit}
+          onClick={() => submit('copy')}
         >
           {sharing
             ? (busy ? shareStrings.creating : shareStrings.create)

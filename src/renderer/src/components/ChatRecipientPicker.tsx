@@ -72,7 +72,6 @@ export const ChatRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
   const pairedUsers: RecipientChoice[] = useMemo(() => (
     isLine ? lineUsers.map(lineChoice) : telegramUsers.map(telegramChoice)
   ), [isLine, lineUsers, telegramUsers]);
-  // Channels are a Telegram-only concept; LINE has no broadcast target of this shape.
   const channels = useMemo(() => (isLine ? [] : telegramChannels), [isLine, telegramChannels]);
 
   const raw = value.trim();

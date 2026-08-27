@@ -17,12 +17,6 @@ export const ShikiCodeBlock = React.memo<ShikiCodeBlockProps>(({ lang, code }) =
   const storeTheme = useThemeStore((state) => state.theme);
   const forcedTheme = useContext(ForcedCodeThemeContext);
   const theme = forcedTheme ?? storeTheme;
-  /*
-   * A forced theme means this block is being rendered for an export (the capture
-   * window and the export dialog preview), not for the live app. That tree has no
-   * MantineProvider, so Mantine components would throw and take the whole card
-   * down; a copy button in a PNG or PDF is meaningless anyway.
-   */
   const staticRender = forcedTheme !== null;
   const { t } = useI18nStore();
 
@@ -77,11 +71,6 @@ export const ShikiCodeBlock = React.memo<ShikiCodeBlockProps>(({ lang, code }) =
     borderRadius: 'var(--radius-lg)',
     overflow: 'clip' as React.CSSProperties['overflow'],
     background: 'var(--code-bg)',
-    /*
-     * The blurred half of this shadow cannot be vectorised, so in a PDF export
-     * Skia bakes every code panel into a full-resolution raster. Keep the crisp
-     * 1px ring, which costs nothing, and drop the blur for exports only.
-     */
     boxShadow: staticRender
       ? '0 0 0 1px var(--border)'
       : '0 0 0 1px var(--border), 0 2px 10px rgba(0,0,0,0.15)',
@@ -184,5 +173,4 @@ export const ShikiCodeBlock = React.memo<ShikiCodeBlockProps>(({ lang, code }) =
     </div>
   );
 });
-
-
+

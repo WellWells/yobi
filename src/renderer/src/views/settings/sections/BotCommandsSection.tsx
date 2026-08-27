@@ -11,7 +11,6 @@ type BotCommands = ReturnType<typeof useBotCommands>;
 
 interface Props {
   botCommands: BotCommands;
-  /** Both bots off means nothing here can fire — the cards go away rather than mislead. */
   anyBotEnabled: boolean;
   t: (key: string) => string;
   showSection: (tags: readonly string[], category: 'bots') => boolean;

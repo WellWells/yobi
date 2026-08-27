@@ -1,5 +1,6 @@
 import { startTransition, useCallback, useEffect, useRef } from 'react';
 import type { ChatTurnEvent } from '../../../shared/types';
+import { attachmentMetaNames } from '../../../shared/conversationDoc';
 import { fileApi, promptApi, ipcEvents } from '../api/electronApi';
 import { NEW_CONVERSATION_KEY, useAppStore } from '../store/appStore';
 
@@ -37,8 +38,12 @@ export function useConversationTurns(onError: (message: string) => void) {
       }
 
       const sendId = nextSendId();
+      const attached = attachmentMetaNames(attachments ?? []);
       originBySendId.current.set(sendId, conversationPath);
-      useAppStore.getState().addPendingTurn(conversationPath || NEW_CONVERSATION_KEY, { sendId, prompt });
+      useAppStore.getState().addPendingTurn(
+        conversationPath || NEW_CONVERSATION_KEY,
+        { sendId, prompt, ...(attached.length > 0 ? { attachments: attached } : {}) },
+      );
 
       promptApi.triggerWithOptions({
         prompt,

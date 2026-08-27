@@ -22,7 +22,6 @@ if (!rootElement) {
 }
 const root = ReactDOM.createRoot(rootElement);
 
-// Deliberately well under the main process's 30s capture timeout.
 const IDLE_BARRIER_MS = 3_000;
 
 function nextFrame(): Promise<void> {
@@ -36,11 +35,6 @@ async function waitForRenderedLayout(): Promise<void> {
   for (let i = 0; i < 3; i++) {
     await nextFrame();
   }
-  /*
-   * Diagrams are pre-rendered before the card mounts, so this normally resolves
-   * immediately. It is the safety net for anything the fence scanner missed:
-   * without it the height below would be measured before the diagram exists.
-   */
   await whenMermaidIdle(IDLE_BARRIER_MS);
   for (let i = 0; i < 3; i++) {
     await nextFrame();

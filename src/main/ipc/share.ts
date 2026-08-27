@@ -4,12 +4,26 @@ import type { ShareLinkRequest, ShareLinkResult, ShareSettings } from '../../sha
 import { config, saveConfig, normalizeShareSettings } from '../config';
 import { sendLog } from '../helpers';
 import { ShareError, createPaste, revokePaste } from '../share/privatebin';
+import { effectiveExpire, probeInstanceExpires } from '../share/instanceExpires';
 
 export function registerShareHandlers(): void {
   ipcMain.handle(IPC.GET_SHARE_SETTINGS, (): ShareSettings => config.share);
 
-  ipcMain.handle(IPC.UPDATE_SHARE_SETTINGS, (_event, patch: Partial<ShareSettings>) => {
+  ipcMain.handle(IPC.UPDATE_SHARE_SETTINGS, async (_event, patch: Partial<ShareSettings>) => {
+    const previousUrl = config.share.instanceUrl;
     config.share = normalizeShareSettings({ ...config.share, ...patch });
+    if (config.share.instanceUrl !== previousUrl) {
+      const values = await probeInstanceExpires(config.share.instanceUrl);
+      config.share = normalizeShareSettings({
+        ...config.share,
+        instanceExpires: values ? { url: config.share.instanceUrl, values } : null,
+      });
+      sendLog(
+        values
+          ? `🔗 Share instance offers: ${values.join(', ')}`
+          : `⚠️ Could not read the expiry options of ${config.share.instanceUrl} — using the PrivateBin defaults`,
+      );
+    }
     saveConfig({ share: config.share });
     return config.share;
   });
@@ -19,11 +33,12 @@ export function registerShareHandlers(): void {
 
     const instanceUrl = config.share.instanceUrl;
     try {
+      const expire = effectiveExpire(config.share, request?.expire ?? config.share.expire);
       const { url, deleteUrl } = await createPaste(instanceUrl, request?.markdown ?? '', {
-        expire: request?.expire ?? config.share.expire,
+        expire,
         burnAfterReading: request?.burnAfterReading === true,
       });
-      sendLog(`🔗 Share link created on ${instanceUrl} (expires: ${request?.expire ?? config.share.expire})`);
+      sendLog(`🔗 Share link created on ${instanceUrl} (expires: ${expire})`);
       return { ok: true, url, deleteUrl };
     } catch (err: unknown) {
       if (err instanceof ShareError) {

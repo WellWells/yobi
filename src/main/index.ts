@@ -48,6 +48,7 @@ import { setupPlatformIcons, loadInitialLanguages, setupWindows } from './bootst
 import { setupTrayAndCloseBehavior, buildTrayIpcCallbacks } from './bootstrap/traySetup';
 import { initFlowManager, broadcastMergedQueueState } from './bootstrap/flowSetup';
 import { createTelegramRuntime } from './bootstrap/telegramSetup';
+import { deleteTempAttachments } from './telegram/fileDownload';
 import { createLineRuntime } from './bootstrap/lineSetup';
 import { initMcp } from './bootstrap/mcpSetup';
 
@@ -56,7 +57,6 @@ app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 
 if (!app.isPackaged) {
-  // Overridable so a second dev instance can run alongside `npm run dev` on the default port.
   app.commandLine.appendSwitch('remote-debugging-port', process.env['YOBI_CDP_PORT'] || '9222');
 }
 app.userAgentFallback = CLEAN_UA;
@@ -103,6 +103,12 @@ const bindHotkey = (): boolean => bindHotkeyImpl({ queue });
 
 queue.onUpdate(() => {
   broadcastMergedQueueState(queue, flowManager);
+});
+
+queue.onDiscard((task) => {
+  if (task.ephemeralAttachments && task.attachments?.length) {
+    void deleteTempAttachments(task.attachments);
+  }
 });
 
 const telegramRuntime = createTelegramRuntime({

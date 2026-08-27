@@ -1,4 +1,5 @@
 import { globalShortcut } from 'electron';
+import { canonicalise, toAccelerator } from '../shared/shortcuts';
 
 export type HotkeySlot = 'main' | 'quickExport';
 
@@ -7,6 +8,10 @@ let _paused = false;
 
 export function setHotkeyPaused(paused: boolean): void {
   _paused = paused;
+}
+
+export function isHotkeyPaused(): boolean {
+  return _paused;
 }
 
 export function registerHotkey(
@@ -24,18 +29,23 @@ export function registerHotkey(
     registered.delete(slot);
   }
 
-  const target = accelerator.trim();
+  const target = toAccelerator(accelerator.trim(), process.platform === 'darwin');
   if (!target) return true;
 
   let lastTrigger = 0;
 
-  const ok = globalShortcut.register(target, () => {
-    if (_paused) return;
-    const now = Date.now();
-    if (now - lastTrigger < debounceMs) return;
-    lastTrigger = now;
-    handler();
-  });
+  let ok = false;
+  try {
+    ok = globalShortcut.register(target, () => {
+      if (_paused) return;
+      const now = Date.now();
+      if (now - lastTrigger < debounceMs) return;
+      lastTrigger = now;
+      handler();
+    });
+  } catch {
+    ok = false;
+  }
 
   if (ok) {
     registered.set(slot, target);
@@ -44,26 +54,25 @@ export function registerHotkey(
   return ok;
 }
 
-/**
- * Whether two accelerators would fight over the same combination. Blank never collides —
- * that is how a slot is switched off.
- */
 export function isSameAccelerator(a: string, b: string): boolean {
-  const left = a.trim().toLowerCase();
-  const right = b.trim().toLowerCase();
+  const left = canonicalise(a);
+  const right = canonicalise(b);
   return left.length > 0 && left === right;
 }
 
-/**
- * Whether giving one slot `next` would fight with the other slot's binding.
- *
- * Only a *change* can introduce a collision. An install that already has both slots on the
- * same combination — nothing used to check — has to stay editable, otherwise every later save
- * from either field would be refused and the user could never break the tie.
- */
 export function wouldCollide(next: string, currentOwn: string, otherSlot: string): boolean {
   if (isSameAccelerator(next, currentOwn)) return false;
   return isSameAccelerator(next, otherSlot);
+}
+
+export function ownsAccelerator(accelerator: string): boolean {
+  const target = toAccelerator(accelerator.trim(), process.platform === 'darwin');
+  if (!target) return false;
+  try {
+    return globalShortcut.isRegistered(target);
+  } catch {
+    return false;
+  }
 }
 
 export function unregisterAll(): void {

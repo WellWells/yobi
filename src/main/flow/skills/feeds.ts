@@ -106,8 +106,6 @@ export async function execScraper(
   }
 
   if (itemSel) {
-    // The row element itself can BE the match — card lists wrap the whole row in one
-    // <a>, and find() only ever looks at descendants, so it would miss every link.
     const within = (row: ReturnType<typeof $>, sel: string): ReturnType<typeof $> =>
       (row.is(sel) ? row : row.find(sel).first());
 

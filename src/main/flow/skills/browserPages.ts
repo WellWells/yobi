@@ -40,7 +40,6 @@ function safeDestroy(win: BrowserWindow): void {
 
 function revealPage(win: BrowserWindow): void {
   if (win.isDestroyed()) return;
-  // On screen the page is no longer "background": let the user hear what they click.
   muteWindow(win, false);
   win.setBounds({ x: 100, y: 100, width: 1_280, height: 900 });
   if (process.platform !== 'darwin') win.setSkipTaskbar(false);

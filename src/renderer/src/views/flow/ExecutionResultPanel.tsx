@@ -1,7 +1,7 @@
 import React, { useCallback, useMemo } from 'react';
 import { Box, Button, Code, CopyButton, Group, Spoiler, Stack, Text, Tooltip } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
-import { Check, CheckCircle2, ClipboardCopy, Download, History, XCircle } from 'lucide-react';
+import { Check, CheckCircle2, Copy, Download, History, XCircle } from 'lucide-react';
 import { SectionCard } from '../../components/SectionCard';
 import { CopyIconButton } from '../../components/CopyIconButton';
 import { flowApi } from '../../api/electronApi';
@@ -53,7 +53,7 @@ export const ExecutionResultPanel: React.FC<ExecutionResultPanelProps> = React.m
               size="compact-xs"
               color={copyAllClipboard.copied ? 'teal' : undefined}
               onClick={handleCopyAll}
-              leftSection={copyAllClipboard.copied ? <Check size={12} /> : <ClipboardCopy size={12} />}
+              leftSection={copyAllClipboard.copied ? <Check size={12} /> : <Copy size={12} />}
             >
               {copyAllClipboard.copied ? copiedLabel : t('flow.export.result.copyAll')}
             </Button>

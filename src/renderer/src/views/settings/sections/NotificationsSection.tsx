@@ -29,13 +29,8 @@ export const NotificationsSection: React.FC<Props> = ({ system, t, showSection, 
             control={<ToggleSwitch checked={enabled} onChange={() => { void system.handleToggleNotification(); }} />}
           />
           <SettingDivider />
-          {/*
-            The master switch already drops every notification before it is sent
-            (`sendWebNotification` returns early), so these rows are inert while it is off —
-            they dim and stop responding rather than look live and do nothing. Same treatment
-            as the quick-export hotkey field; `disabled` carries it to keyboard and AT users,
-            which `pointerEvents` alone would not.
-          */}
+          {
+}
           <Box style={{ opacity: enabled ? 1 : 0.45, pointerEvents: enabled ? 'auto' : 'none' }}>
             <Stack gap={14}>
               <SettingRow

@@ -51,8 +51,6 @@ export const TelegramSection: React.FC<Props> = ({
   const pendingCodes = settings?.pairing.pendingCodes ?? [];
   const pairedUsers = settings?.pairing.pairedUsers ?? [];
   const adminUserIds = settings?.adminUserIds ?? [];
-  // Switched off, every row below it is inert — the card collapses to the one switch that
-  // brings them back. Search has to reach those rows either way, so it wins.
   const expanded = (settings?.enabled ?? false) || isSearching;
 
   return (

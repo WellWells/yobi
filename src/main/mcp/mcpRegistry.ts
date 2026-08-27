@@ -83,6 +83,7 @@ export class McpRegistry {
       authorized: Boolean(record?.tokens),
       hasToken: Boolean(record?.manualToken),
       error: rt.error,
+      tools: rt.tools.map((tool) => ({ name: tool.name, description: tool.description ?? '' })),
     };
   }
 

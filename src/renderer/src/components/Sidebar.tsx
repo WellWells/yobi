@@ -8,22 +8,30 @@ import type { OutputFile } from '../../../shared/types';
 import { PanelToolbar, ToolbarButton, ToolbarIconButton } from './PanelToolbar';
 import { WebDialog } from './WebDialog';
 import { ContextMenuPortal } from './ContextMenuPortal';
+import { GroupHeader } from './GroupHeader';
 import { ShortcutHint } from './ShortcutHint';
 import { SelectionActionBar } from './SelectionActionBar';
-import { Edit3, FolderOpen, ListChecks, Search, SquarePen, Trash2 } from 'lucide-react';
+import { FolderOpen, ListChecks, Pencil, Search, SquarePen, Trash2 } from 'lucide-react';
 import { fileApi } from '../api/electronApi';
 import { FileItem } from './sidebar/FileItem';
 import { useSidebarFileActions } from './sidebar/useSidebarFileActions';
 import { createSidebarKeyDownHandler } from './sidebar/sidebarKeyNav';
 import { useMultiSelect } from '../hooks/useMultiSelect';
 import { useFormatTime } from '../hooks/useFormatTime';
-import { containsActiveElement, isTypingTarget } from '../utils/domUtils';
-import { NEW_CHAT_SHORTCUT_HINT } from '../utils/keyLabels';
+import { buildSidebarRows } from '../utils/timeGroups';
+import { containsActiveElement } from '../utils/domUtils';
+import { useResolvedCombo } from '../store/shortcutStore';
+import { toTokens } from '../../../shared/shortcuts';
+import { isMac } from '../utils/keyLabels';
+import { useShortcutAction } from '../shortcuts/useShortcutAction';
 
 interface SidebarProps {
   onNewConversation: () => void;
   onOpenSearch: () => void;
 }
+
+const FILE_ROW_HEIGHT = 72;
+const HEADER_ROW_HEIGHT = 34;
 
 const observeRectKeepLast: typeof observeElementRect = (instance, cb) =>
   observeElementRect(instance, (rect) => {
@@ -71,31 +79,40 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
     return unsub;
   }, [loadFiles, setFiles]);
 
-  useEffect(() => {
-    if (!selection.selectMode) return;
-    const onDeleteKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Delete') return;
-      if (useAppStore.getState().currentView !== 'chat') return;
-      if (isTypingTarget(event.target) || document.querySelector('[aria-modal="true"]')) return;
-      if (selection.count === 0) return;
-      event.preventDefault();
-      setBulkDeleteOpen(true);
-    };
-    window.addEventListener('keydown', onDeleteKey);
-    return () => window.removeEventListener('keydown', onDeleteKey);
-  }, [selection.selectMode, selection.count]);
+  useShortcutAction('files.delete', () => {
+    if (!selection.selectMode || selection.count === 0) return;
+    setBulkDeleteOpen(true);
+  }, 'chat');
+
+  const newChatCombo = useResolvedCombo('chat.newConversation');
+  const editTitleCombo = useResolvedCombo('files.editTitle');
+  const revealCombo = useResolvedCombo('files.revealInFolder');
+  const deleteCombo = useResolvedCombo('files.delete');
 
   const visibleFiles = files;
   const selectableIds = useMemo(() => visibleFiles.map((f) => f.path), [visibleFiles]);
 
+  const { rows, rowIndexByFileIndex } = useMemo(() => buildSidebarRows(visibleFiles, new Date()), [visibleFiles]);
+
   const rowVirtualizer = useVirtualizer({
-    count: visibleFiles.length,
+    count: rows.length,
     getScrollElement: () => sidebarViewportRef.current,
-    estimateSize: () => 72,
+    estimateSize: (index) => (rows[index]?.kind === 'header' ? HEADER_ROW_HEIGHT : FILE_ROW_HEIGHT),
+    getItemKey: (index) => {
+      const row = rows[index];
+      if (!row) return index;
+      return row.kind === 'header' ? `group:${row.key}` : row.file.path;
+    },
     overscan: 5,
     observeElementRect: observeRectKeepLast,
     measureElement: measureElementKeepLast,
   });
+
+  const scrollToFileIndex = useCallback((fileIndex: number) => {
+    const rowIndex = rowIndexByFileIndex[fileIndex];
+    if (rowIndex === undefined) return;
+    rowVirtualizer.scrollToIndex(rowIndex, { align: 'auto' });
+  }, [rowIndexByFileIndex, rowVirtualizer]);
 
   const getFocusedFile = useCallback((): OutputFile | null => {
     const active = document.activeElement;
@@ -172,7 +189,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
   useEffect(() => {
     if (!selectedFile?.path || pendingDeleteFile || editingPath) return;
     const idx = visibleFiles.findIndex((f) => f.path === selectedFile.path);
-    if (idx >= 0) rowVirtualizer.scrollToIndex(idx, { align: 'auto' });
+    if (idx >= 0) scrollToFileIndex(idx);
     if (!containsActiveElement(sidebarViewportRef.current)) return;
     const activeItem = fileItemRefs.current.get(selectedFile.path);
     if (!activeItem || document.activeElement === activeItem) return;
@@ -188,7 +205,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
     prevDeleteDialogOpenRef.current = isOpen;
     if (!wasOpen || isOpen || !selectedFile?.path || editingPath) return;
     const idx = visibleFiles.findIndex((f) => f.path === selectedFile.path);
-    if (idx >= 0) rowVirtualizer.scrollToIndex(idx, { align: 'auto' });
+    if (idx >= 0) scrollToFileIndex(idx);
     const activeItem = fileItemRefs.current.get(selectedFile.path);
     if (!activeItem) return;
     window.requestAnimationFrame(() => activeItem.focus());
@@ -205,7 +222,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
     visibleFiles,
     selectedFile,
     fileItemRefs,
-    scrollToIndex: rowVirtualizer.scrollToIndex,
+    scrollToIndex: scrollToFileIndex,
     getFocusedFile,
     onSelect: handleSelect,
     onRename: startRenameFile,
@@ -224,7 +241,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
       style={{ borderRight: '1px solid var(--mantine-color-default-border)', overflow: 'hidden', position: 'relative' }}
     >
       <PanelToolbar>
-        <Tooltip label={NEW_CHAT_SHORTCUT_HINT} position="bottom">
+        <Tooltip label={toTokens(newChatCombo, isMac).join(' + ')} position="bottom">
           <ToolbarButton icon={SquarePen} label={t('chat.new')} onClick={onNewConversation} />
         </Tooltip>
         <ToolbarIconButton icon={Search} label={t('sidebar.search.tooltip')} onClick={onOpenSearch} />
@@ -243,7 +260,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
         ) : (
           <Box style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>
             {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-              const file = visibleFiles[virtualRow.index];
+              const row = rows[virtualRow.index];
+              if (!row) return null;
               return (
                 <Box
                   key={virtualRow.key}
@@ -255,29 +273,33 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
                     left: 0,
                     width: '100%',
                     transform: `translateY(${virtualRow.start}px)`,
-                    padding: '2px 8px',
+                    padding: row.kind === 'header' ? '0 12px' : '2px 8px',
                   }}
                 >
-                  <FileItem
-                    file={file}
-                    selected={selectedFile?.path === file.path}
-                    unread={Boolean(unreadFilePaths[file.path])}
-                    unreadLabel={unreadLabel}
-                    isEditing={editingPath === file.path}
-                    editingMode={editingMode}
-                    editingText={editingText}
-                    setEditingText={setEditingText}
-                    selectMode={selection.selectMode}
-                    checked={selection.isSelected(file.path)}
-                    onToggleSelect={selection.toggle}
-                    onRowClick={handleRowClick}
-                    onOpenMenu={openContextMenu}
-                    onCommitEdit={handleCommitEdit}
-                    onCancelEdit={handleCancelEdit}
-                    formatTime={formatTime}
-                    turnsLabel={turnsLabel}
-                    registerItemRef={registerItemRef}
-                  />
+                  {row.kind === 'file' ? (
+                    <FileItem
+                      file={row.file}
+                      selected={selectedFile?.path === row.file.path}
+                      unread={Boolean(unreadFilePaths[row.file.path])}
+                      unreadLabel={unreadLabel}
+                      isEditing={editingPath === row.file.path}
+                      editingMode={editingMode}
+                      editingText={editingText}
+                      setEditingText={setEditingText}
+                      selectMode={selection.selectMode}
+                      checked={selection.isSelected(row.file.path)}
+                      onToggleSelect={selection.toggle}
+                      onRowClick={handleRowClick}
+                      onOpenMenu={openContextMenu}
+                      onCommitEdit={handleCommitEdit}
+                      onCancelEdit={handleCancelEdit}
+                      timeLabel={formatTime(row.file.timestamp, row.group)}
+                      turnsLabel={turnsLabel}
+                      registerItemRef={registerItemRef}
+                    />
+                  ) : (
+                    <GroupHeader label={t(`sidebar.group.${row.key}`)} />
+                  )}
                 </Box>
               );
             })}
@@ -301,15 +323,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
         onClose={() => setContextMenu(null)}
       >
         <MMenu.Item
-          leftSection={<Edit3 size={13} />}
-          rightSection={<ShortcutHint combo={t('context.shortcut.editH1')} />}
+          leftSection={<Pencil size={13} />}
+          rightSection={<ShortcutHint combo={editTitleCombo} />}
           onClick={() => { void startEditH1(contextMenu!.file); }}
         >
           {t('context.editH1')}
         </MMenu.Item>
         <MMenu.Item
           leftSection={<FolderOpen size={13} />}
-          rightSection={<ShortcutHint combo={t('context.shortcut.showInFolder')} />}
+          rightSection={<ShortcutHint combo={revealCombo} />}
           onClick={() => { void window.electronAPI.showInFolder(contextMenu!.file.path); setContextMenu(null); }}
         >
           {t('context.showInFolder')}
@@ -325,7 +347,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
         <MMenu.Item
           leftSection={<Trash2 size={13} />}
           color="red"
-          rightSection={<ShortcutHint combo={t('context.shortcut.delete')} />}
+          rightSection={<ShortcutHint combo={deleteCombo} />}
           onClick={() => startDelete(contextMenu!.file)}
         >
           {t('common.delete')}

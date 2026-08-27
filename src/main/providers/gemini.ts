@@ -2,7 +2,7 @@ import type { BrowserWindow, WebContents } from 'electron';
 import { sleep, navigateAndWait, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
 import { executeAutomationWithTimeout, countElements, settledElementCount } from './automationExecutor';
 import { PROVIDER_URLS } from '../../shared/types';
-import { FIREFOX_UA } from '../userAgent';
+import { WORKER_USER_AGENTS } from '../userAgent';
 import { applyWorkerUserAgent } from '../clientHints';
 import { sendLog } from '../helpers';
 import { showLoginWindowIfNeeded } from '../windows';
@@ -49,7 +49,7 @@ async function runGeminiAttempt(
 ): Promise<{ response: string; title: string }> {
   const wc = workerWin.webContents;
 
-  applyWorkerUserAgent(wc, FIREFOX_UA);
+  applyWorkerUserAgent(wc, WORKER_USER_AGENTS.gemini);
 
   await navigateAndWait(wc, targetUrl);
   await waitForInputArea(wc, 15_000);
@@ -62,6 +62,7 @@ async function runGeminiAttempt(
   }
 
   const baseline = await settledElementCount(wc, COPY_BTN_SELECTOR);
+  const responseBaseline = continuingThread ? await settledElementCount(wc, 'model-response') : 0;
 
   wc.focus();
 
@@ -91,15 +92,10 @@ async function runGeminiAttempt(
       await waitForInputArea(wc, 15_000);
       await applyVisibilityPatch(wc);
 
-      /*
-       * The baseline has to survive the reload. Reading with 0 accepts whatever answer is
-       * already on the page, which in a CONTINUING thread is the PREVIOUS turn's answer — the
-       * reloaded conversation still shows it. The caller then receives the last turn's reply
-       * as if it were a fresh one, and an agent loop re-runs the decision it already made,
-       * forever. Zero is correct only for a fresh chat, where a reload leaves nothing behind.
-       */
       const recoveryBaseline = continuingThread ? baseline : 0;
-      const readScript = buildGeminiReadScript(recoveryBaseline, timeoutMs, COPY_BTN_SELECTOR, wantTitle);
+      const readScript = buildGeminiReadScript(
+        recoveryBaseline, timeoutMs, COPY_BTN_SELECTOR, wantTitle, responseBaseline,
+      );
       result = await executeAutomationWithTimeout<{ response: string; title: string }>(
         wc,
         readScript,
@@ -127,19 +123,15 @@ async function runGeminiAttempt(
 async function applyVisibilityPatch(wc: WebContents): Promise<void> {
   await wc.executeJavaScript(`
     (function patchVisibility() {
-      // 1. Override document.hidden / visibilityState
       try {
         Object.defineProperty(document, 'hidden', { get: function() { return false; }, configurable: true });
         Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; }, configurable: true });
       } catch(e) {}
-      // 2. Override document.hasFocus so it always returns true
       try {
         document.hasFocus = function() { return true; };
       } catch(e) {}
-      // 3. Suppress visibilitychange + blur events so they can't un-focus the page
       document.addEventListener('visibilitychange', function(e) { e.stopImmediatePropagation(); }, true);
       window.addEventListener('blur', function(e) { e.stopImmediatePropagation(); }, true);
-      // 4. Fire visibility + focus events the browser would send when a tab becomes active
       document.dispatchEvent(new Event('visibilitychange', { bubbles: true }));
       window.dispatchEvent(new FocusEvent('focus', { bubbles: false }));
       document.dispatchEvent(new FocusEvent('focus', { bubbles: true }));
@@ -170,7 +162,6 @@ async function waitForPageLoad(wc: WebContents, timeoutMs: number): Promise<void
   });
 }
 
-/** Exported for the test suite. */
 export function buildGeminiAutomationScript(
   prompt: string,
   baselineCopyCount: number,
@@ -201,9 +192,6 @@ export function buildGeminiAutomationScript(
     return !!document.querySelector(INPUT_SEL);
   }, 'input area', 15000, 150);
 
-  // Always re-query the composer instead of caching a reference: Angular re-renders
-  // (zero-state -> conversation transition, late hydration) can REPLACE the editor
-  // node, and every action on a stale detached node silently no-ops.
   function getComposer() {
     return document.querySelector(INPUT_SEL);
   }
@@ -222,9 +210,6 @@ export function buildGeminiAutomationScript(
     if (c && c.querySelector('mat-icon[fonticon="stop"]')) return true;
     return !!document.querySelector('[data-test-id="stop-button"]');
   }
-  // Send button: anchor on the stable data-test-id container; the enabled state
-  // lives on the wrapping <gem-icon-button> (aria-disabled / gem-button-disabled
-  // / inert), not on the inner native button.
   function readySendButton() {
     var container = document.querySelector('[data-test-id="send-button-container"]');
     if (!container) return null;
@@ -239,17 +224,6 @@ export function buildGeminiAutomationScript(
     return btn;
   }
 
-  // A reused worker window can reload the PREVIOUS conversation instead of a new
-  // chat; sending into it may silently no-op (never generating) and also bleeds
-  // earlier context into the answer. Best-effort: when a prior response is on the
-  // page, start a fresh chat so this run takes the same reliable new-conversation
-  // path (full-frame nav -> recovery) as the very first run.
-  //
-  // Never when the caller is continuing a thread on purpose. The page looks identical
-  // in both cases — a conversation with answers on it — so only the caller can tell a
-  // stale window from a deliberate follow-up, and resetting a deliberate one throws away
-  // the very history the caller navigated here for. It stays silent, too: the reply that
-  // comes back is fluent and confident and has no context behind it.
   if (!CONTINUING && countResponses() > 0) {
     var newChatBtn = document.querySelector('[data-test-id="new-chat-button"]');
     if (newChatBtn) {
@@ -261,8 +235,6 @@ export function buildGeminiAutomationScript(
   }
 
   function placeCursorAtEnd(el) {
-    // Element focus + Range/Selection work at the document level, no OS window
-    // focus needed, so this also works while the worker window is hidden.
     try {
       el.focus();
       var range = document.createRange();
@@ -279,8 +251,6 @@ export function buildGeminiAutomationScript(
     el.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
     el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true }));
     el.dispatchEvent(new PointerEvent('pointerup',   { bubbles: true, composed: true }));
-    // selectAll before inserting means a retry replaces the previous attempt rather
-    // than appending, so re-filling can never duplicate the prompt.
     document.execCommand('selectAll', false, null);
     var dt = new DataTransfer();
     dt.setData('text/plain', PROMPT);
@@ -293,14 +263,6 @@ export function buildGeminiAutomationScript(
     }));
   }
 
-  // Quill (the editor behind rich-textarea) watches its own DOM with a
-  // MutationObserver and syncs internal state from direct DOM edits (that is how it
-  // supports spellcheck/IME). Writing the prompt straight into the DOM therefore
-  // works even when the event paths are ignored: Gemini ships Quill 1.x (the hidden
-  // .ql-clipboard div next to the editor), whose paste handler relies on the
-  // browser's DEFAULT paste action — synthetic ClipboardEvents never trigger default
-  // actions, so that path inserts nothing — and execCommand('insertText') needs a
-  // live selection that a mid-render page can drop.
   function fillViaDom(el) {
     while (el.firstChild) el.removeChild(el.firstChild);
     var lines = PROMPT.split('\\n');
@@ -316,10 +278,6 @@ export function buildGeminiAutomationScript(
   }
 
   async function fillComposer() {
-    // The composer can be in the DOM before its editor is interactive, and Angular
-    // can replace the node between attempts — so re-query fresh every round, verify
-    // the text actually landed, and escalate to the DOM write after the event-based
-    // fill has had two chances. 15s window covers a page still loading its history.
     var deadline = Date.now() + 15000;
     var attempt = 0;
     while (Date.now() < deadline) {
@@ -347,7 +305,6 @@ export function buildGeminiAutomationScript(
       throw new Error('Gemini composer never accepted the prompt text after retries (editor not ready)');
     }
 
-    // Poll every 100ms for up to 8s; click the instant the button is clickable.
     var sendBtn = null;
     try {
       await waitFor(function() {
@@ -360,9 +317,6 @@ export function buildGeminiAutomationScript(
     }
     sendBtn.click();
 
-    // Confirm the send registered (button goes disabled / composer clears). If not,
-    // fall back to Enter — rich-textarea carries enterkeyhint="send", so it is
-    // equivalent; Enter on an empty composer is a no-op, so this cannot double-send.
     var landed = false;
     try {
       await waitFor(function() {
@@ -386,17 +340,16 @@ export function buildGeminiAutomationScript(
     }
   }
 
-  // Re-derive the copy-button baseline in-page: after a fresh-chat reset the count
-  // is 0, and this is the true pre-send state whether or not we reset.
+  if (CONTINUING) {
+    try {
+      await waitFor(function() { return countResponses() > 0; }, 'thread history', 10000, 200);
+    } catch(e) {}
+  }
+
   BASELINE = document.querySelectorAll(COPY_SEL).length;
   var respBaseline = countResponses();
   await submitPrompt();
 
-  // Confirm Gemini actually began generating. On the first message of a new chat
-  // the send triggers a full-frame navigation that tears this script down (the
-  // Node-side recovery path handles that), so this check only runs to completion
-  // on the reused-conversation path — exactly the case that used to stall silently
-  // until the outer step timeout.
   var started = false;
   try {
     await waitFor(function() {
@@ -406,8 +359,6 @@ export function buildGeminiAutomationScript(
   } catch(e) {}
 
   if (!started) {
-    // The first submit may have cleared the composer without dispatching; re-type
-    // and resend once before giving up.
     await submitPrompt();
     try {
       await waitFor(function() {
@@ -418,17 +369,15 @@ export function buildGeminiAutomationScript(
   }
 
   if (!started) {
-    // Prompt still (or again) in the composer with nothing generating: either an
-    // immediate server-side bounce or a send that never registered — a fresh-chat
-    // re-run (node-side GEMINI_BOUNCED retry) is the right recovery for both.
     if (composerText()) {
       throw new Error('GEMINI_BOUNCED: prompt bounced back to the composer without starting a generation');
     }
     throw new Error('Gemini accepted the prompt but never started generating a response (reused conversation or rate limit)');
   }
 
-  // No fixed post-send sleep — geminiWaitAndRead polls immediately.
-  return await geminiWaitAndRead(BASELINE, COPY_SEL, { idleMs: TIMEOUT, wantTitle: WANT_TITLE });
+  return await geminiWaitAndRead(BASELINE, COPY_SEL, {
+    idleMs: TIMEOUT, wantTitle: WANT_TITLE, responseBaseline: respBaseline
+  });
 })()`;
 }
 
@@ -437,6 +386,7 @@ function buildGeminiReadScript(
   timeoutMs: number,
   copyBtnSelector: string,
   wantTitle: boolean,
+  responseBaseline = 0,
 ): string {
   const escapedSelector = JSON.stringify(copyBtnSelector);
 
@@ -444,11 +394,14 @@ function buildGeminiReadScript(
 (async function geminiRead() {
   var TIMEOUT  = ${timeoutMs};
   var BASELINE = ${baselineCopyCount};
+  var RESP_BASELINE = ${responseBaseline};
   var WANT_TITLE = ${wantTitle};
   ${INJECTED_SLEEP_JS}
   ${INJECTED_INTERCEPT_COPY_JS}
   ${INJECTED_GEMINI_WAIT_AND_READ_JS}
 
-  return await geminiWaitAndRead(BASELINE, ${escapedSelector}, { idleMs: TIMEOUT, wantTitle: WANT_TITLE });
+  return await geminiWaitAndRead(BASELINE, ${escapedSelector}, {
+    idleMs: TIMEOUT, wantTitle: WANT_TITLE, responseBaseline: RESP_BASELINE
+  });
 })()`;
 }

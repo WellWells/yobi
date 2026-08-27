@@ -88,6 +88,10 @@ const SAFETY_MARGIN = 1_200;
 const MCP_MIN_BUDGET = 1_000;
 const BYOK_CATALOG_BUDGET = 40_000;
 
+export function mcpScratchReserveChars(scratchSlots: number, observationLimit: number): number {
+  return scratchSlots * (observationLimit + SCRATCH_OVERHEAD);
+}
+
 export function mcpCatalogBudgetChars(
   providerUrl: string,
   builtinCatalogLen: number,
@@ -99,7 +103,7 @@ export function mcpCatalogBudgetChars(
   if (isByokTargetUrl(providerUrl)) return BYOK_CATALOG_BUDGET;
   const policy = PROVIDER_PROMPT_POLICIES[detectProvider(providerUrl)];
   const cap = policy.maxCharsPlusBreaks ?? policy.maxBytes ?? 0;
-  const scratchCost = scratchSlots * (observationLimit + SCRATCH_OVERHEAD);
+  const scratchCost = mcpScratchReserveChars(scratchSlots, observationLimit);
   const budget = cap - INSTRUCTION_EST - builtinCatalogLen - goalLen - historyLen - scratchCost - SAFETY_MARGIN;
   return budget < MCP_MIN_BUDGET ? 0 : budget;
 }
@@ -186,8 +190,6 @@ export interface McpAction {
   server: string;
   name: string;
   arguments: Record<string, unknown>;
-  /** Plan bookkeeping, read the same way as on a built-in action — a run that reaches for an
-   * MCP tool must not lose its checklist for the turn. */
   plan?: string[];
   planDone?: number[];
 }

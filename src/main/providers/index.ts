@@ -21,11 +21,6 @@ const PROVIDER_RUNNER: Record<
     targetUrl: string,
     attachments?: string[],
     wantTitle?: boolean,
-    /**
-     * The caller navigated to an existing thread to continue it, so the page's own history
-     * is the point of the run. Only the caller can know this — the page looks the same as a
-     * reused window that reloaded a stale conversation.
-     */
     continuingThread?: boolean,
   ) => Promise<{ response: string; title: string }>
 > = {

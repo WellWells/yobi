@@ -5,11 +5,6 @@ import type { CitationSource } from '../../../../shared/citations';
 import { citationHost } from '../../../../shared/citations';
 import type { ChatSelectionState } from '../../hooks/useChatSelection';
 
-/**
- * One button in the bar. Kept as data rather than as hand-placed buttons so that a future
- * source of actions — a flow bound to the selection, say — is a longer array and not a
- * rewrite of this component.
- */
 export interface SelectionAction {
   id: string;
   label: string;
@@ -29,7 +24,6 @@ interface SelectionToolbarProps {
 
 const MAX_WIDTH = 340;
 const EDGE_MARGIN = 12;
-/** Enough daylight that the bar reads as floating above the text, not sitting on it. */
 const GAP = 10;
 const COLLAPSED_HEIGHT = 38;
 const EXPANDED_HEIGHT = 268;
@@ -60,7 +54,6 @@ export const SelectionToolbar: React.FC<SelectionToolbarProps> = ({
       left={left}
       maw={MAX_WIDTH}
       bg="var(--bg-tertiary)"
-      // Clicking a button must not collapse the selection the action is about to read.
       onMouseDown={(event) => event.preventDefault()}
       style={{
         zIndex: 130,
@@ -74,7 +67,7 @@ export const SelectionToolbar: React.FC<SelectionToolbarProps> = ({
       <Group gap={0} wrap="nowrap" align="stretch">
         {actions.map(({ id, label, Icon, run }, index) => (
           <React.Fragment key={id}>
-            {/* Inset by design: a full-height rule would cut the bar into cells. */}
+            {}
             {index > 0 && <Box my={7} w={1} bg="var(--border)" style={{ flexShrink: 0 }} />}
             <Button
               variant="subtle"

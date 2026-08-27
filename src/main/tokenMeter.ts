@@ -37,11 +37,6 @@ export function meterText(prompt: string, response: string): void {
   report(estimateTokens(prompt), estimateTokens(response), false);
 }
 
-/**
- * Tokens spent so far inside the surrounding `measureTokens` scope, or `null` when there
- * is no scope. Callers that budget their own spend must treat `null` as "no budgeting" —
- * a missing meter is not a reason to cut work short.
- */
 export function currentScopeTokens(): { input: number; output: number } | null {
   const scope = scopes.getStore();
   return scope ? { input: scope.input, output: scope.output } : null;

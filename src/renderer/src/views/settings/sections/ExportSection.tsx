@@ -1,6 +1,6 @@
 import React from 'react';
 import { Box, Stack, Text } from '@mantine/core';
-import { Eye, FileDown, Image as ImageIcon, Layers, Link2, Maximize, Palette, Server, Sparkles } from 'lucide-react';
+import { Aperture, Eye, FileDown, Frame, Image as ImageIcon, Layers, Link2, Maximize, Palette, Server, Sparkles } from 'lucide-react';
 import {
   SectionCard, SettingRow, SettingField, SelectDropdown, ToggleSwitch, SectionTitle, AppTextInput,
 } from '../components';
@@ -8,6 +8,7 @@ import { TAG_SETS } from '../hooks/useSettingsNav';
 import { BackgroundStylePicker, DirectionGrid, PaletteSwatchGrid } from '../../../components/capture/PalettePicker';
 import type { CaptureDirection } from '../../../../../shared/capturePalettes';
 import { CardStyleSample } from '../../../components/capture/CardStyleSample';
+import { MarginSlider } from '../../../components/capture/MarginSlider';
 import { CAPTURE_WIDTHS, captureWidthLabelKey } from '../../../../../shared/types';
 import type { CardLayout, QuickExportFormat } from '../../../../../shared/types';
 import type { useQuickExportRecorder } from '../hooks/useQuickExportRecorder';
@@ -47,7 +48,7 @@ export const ExportSection: React.FC<Props> = ({
       <Text fz="var(--font-size-sm)" c="dimmed" mb={14} style={{ lineHeight: 1.6 }}>
         {t('settings.quickExport.hint')}
       </Text>
-      {/* The shortcut itself is a General setting, next to the capture one; this card is what it produces. */}
+      {}
       <Stack gap={14}>
         <SettingRow
           icon={<ImageIcon size={13} />}
@@ -62,7 +63,7 @@ export const ExportSection: React.FC<Props> = ({
             />
           )}
         />
-        {/* A share link is not a file, so ZIP has nothing to wrap. */}
+        {}
         <Box display={quickExport.format === 'text' ? 'none' : 'block'}>
           <SettingRow
             icon={<FileDown size={13} />}
@@ -137,7 +138,20 @@ export const ExportSection: React.FC<Props> = ({
           )}
         />
         <SettingRow
-          icon={<Sparkles size={13} />}
+          icon={<Frame size={13} />}
+          label={t('capture.margin')}
+          hint={t('capture.margin.desc')}
+          control={(
+            <MarginSlider
+              value={preferences.margin}
+              onChange={preferences.setMargin}
+              label={t('capture.margin')}
+              w={170}
+            />
+          )}
+        />
+        <SettingRow
+          icon={<Aperture size={13} />}
           label={t('capture.hiDpi')}
           hint={t('capture.hiDpi.desc')}
           control={<ToggleSwitch checked={preferences.hiDpi} onChange={(e) => preferences.setHiDpi(e.currentTarget.checked)} />}
@@ -151,6 +165,7 @@ export const ExportSection: React.FC<Props> = ({
             direction={preferences.direction}
             cardLayout={preferences.cardLayout}
             width={preferences.width}
+            margin={preferences.margin}
             hiDpi={preferences.hiDpi}
             t={t}
           />

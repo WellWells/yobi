@@ -23,11 +23,6 @@ let _chain: Promise<unknown> = Promise.resolve();
 const _cache = new Map<string, MermaidState>();
 const _inflight = new Map<string, Promise<MermaidState>>();
 
-/*
- * Read the live body font rather than a var: the capture page ships its own
- * CJK-safe stack and never loads globals.css, so a hardcoded stack would make
- * diagram labels in an export differ from the ones on screen.
- */
 function resolveFontFamily(): string {
   const body = document.body;
   const declared = body ? getComputedStyle(body).fontFamily.trim() : '';
@@ -38,16 +33,7 @@ function baseConfig(): MermaidConfig {
   return {
     startOnLoad: false,
     securityLevel: 'strict',
-    /*
-     * Without this, an invalid diagram makes mermaid append its own red error
-     * SVG to the document — which in the capture window would be exported as
-     * the picture. Failures are surfaced by falling back to the code block.
-     */
     suppressErrorRendering: true,
-    /*
-     * Labels as SVG <text> instead of foreignObject: printToPDF keeps those as
-     * real vector text, so exports stay crisp and small.
-     */
     htmlLabels: false,
     theme: 'base',
     logLevel: 'fatal',
@@ -55,7 +41,6 @@ function baseConfig(): MermaidConfig {
   };
 }
 
-/** Maps the app palette onto mermaid's `base` theme so diagrams match the UI. */
 export function mermaidThemeVariables(theme: Theme): Record<string, string | boolean> {
   const { colors, light } = themeDef(theme);
   return {
@@ -102,10 +87,6 @@ export function loadMermaid(): Promise<Mermaid | null> {
   return _loadPromise;
 }
 
-/*
- * mermaid's config is global mutable state and each theme needs its own
- * initialize() call, so renders run one at a time rather than concurrently.
- */
 function enqueue<T>(task: () => Promise<T>): Promise<T> {
   const run = _chain.then(task, task);
   _chain = run.catch(() => undefined);
@@ -122,11 +103,6 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
   });
 }
 
-/**
- * mermaid pins the root SVG to the diagram's natural width via an inline
- * `max-width`. Capping it keeps small diagrams at their real size while wide
- * ones shrink to the card instead of being clipped by the export.
- */
 function fitSvg(svg: string): string {
   return svg.replace(
     /max-width:\s*([\d.]+)(px|rem|em|ch)/,
@@ -145,20 +121,16 @@ async function renderOnce(code: string, theme: Theme): Promise<MermaidState> {
   return { status: 'ok', svg: fitSvg(svg) };
 }
 
-/** Exported for the test suite: swaps the real mermaid call out. */
 export type MermaidRenderer = (code: string, theme: Theme) => Promise<MermaidState>;
 let _renderer: MermaidRenderer = renderOnce;
 
-/** Exported for the test suite. */
 export function setMermaidRenderer(renderer: MermaidRenderer | null): void {
   _renderer = renderer ?? renderOnce;
 }
 
-/** Exported for the test suite. */
 export function resetMermaidRuntime(): void {
   _cache.clear();
   _inflight.clear();
-  // Renders are serialised, so an abandoned one would block every later test.
   _pending = 0;
   _idleWaiters = [];
   _chain = Promise.resolve();
@@ -173,11 +145,6 @@ export function getCachedMermaid(code: string, theme: Theme): MermaidState | und
 }
 
 function remember(key: string, state: MermaidState): void {
-  /*
-   * A syntax error is a property of the diagram and never changes, but an
-   * `unavailable` result is transient (mermaid still loading, render timed
-   * out) — caching it would freeze the block on the fallback forever.
-   */
   if (state.status === 'error' && state.failure !== 'syntax') return;
   _cache.set(key, state);
   while (_cache.size > CACHE_LIMIT) {
@@ -217,18 +184,12 @@ export function renderMermaid(code: string, theme: Theme): Promise<MermaidState>
   return job;
 }
 
-/**
- * Resolves once no render is outstanding — the export path's measure barrier.
- * Pass a timeout there: losing one diagram to a clipped panel beats holding the
- * card past the main process's hard capture timeout and failing the whole export.
- */
 export function whenMermaidIdle(timeoutMs?: number): Promise<void> {
   if (_pending === 0) return Promise.resolve();
   const idle = new Promise<void>((resolve) => { _idleWaiters.push(resolve); });
   return timeoutMs === undefined ? idle : withTimeout(idle, timeoutMs, undefined);
 }
 
-/** Renders every diagram in `sources` into the cache before the card mounts. */
 export function prerenderMermaid(sources: string[], theme: Theme): Promise<void> {
   const codes = new Set<string>();
   for (const source of sources) {
