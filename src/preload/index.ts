@@ -16,7 +16,7 @@ import type {
   PromptTriggerOptions, Provider, QueueState, EmailSettingsSnapshot, DataKeyStatus, AgentCommandResult, AgentRunSummary, AgentTracePayload, AgentConfirmPayload, AgentConfirmChoice, SearchCommandResult, SearchMode, SmtpCredentials,
   SelectPathRequest, SelectPathResult, SettingsSnapshot, TempChatResult, BotProviderCommand, TelegramRuntimeSnapshot,
   TelegramSettingsSnapshot, LineSettingsSnapshot, LineRuntimeSnapshot, LineCredentialsUpdate,
-  McpServerView, McpServerSaveRequest, McpServerActionResult,
+  McpServerView, McpServerSaveRequest, McpServerActionResult, SecretHealth, SecretTarget,
   UpdateAvailablePayload, UpdateSource, UiNotificationPayload,
 } from '../shared/types';
 
@@ -41,6 +41,9 @@ export type ElectronAPI = {
   logoutAccount: (provider: AuthProvider) => Promise<boolean>;
   clearProviderData: (provider: Provider) => Promise<boolean>;
   onAccountStatusChanged: (cb: (status: AccountStatus) => void) => () => void;
+  getSecretHealth: () => Promise<SecretHealth>;
+  deleteBrokenSecret: (target: SecretTarget) => Promise<{ ok: boolean }>;
+  onSecretHealthChanged: (cb: (health: SecretHealth) => void) => () => void;
 
   getFileList: () => Promise<OutputFile[]>;
   searchFileList: (query: string) => Promise<OutputFile[]>;
@@ -312,6 +315,14 @@ const api: ElectronAPI = {
     const handler = (_: Electron.IpcRendererEvent, status: AccountStatus) => cb(status);
     ipcRenderer.on(IPC.ACCOUNT_STATUS_CHANGED, handler);
     return () => ipcRenderer.removeListener(IPC.ACCOUNT_STATUS_CHANGED, handler);
+  },
+
+  getSecretHealth: () => ipcRenderer.invoke(IPC.GET_SECRET_HEALTH),
+  deleteBrokenSecret: (target) => ipcRenderer.invoke(IPC.DELETE_BROKEN_SECRET, target),
+  onSecretHealthChanged: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, health: SecretHealth) => cb(health);
+    ipcRenderer.on(IPC.SECRET_HEALTH_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.SECRET_HEALTH_CHANGED, handler);
   },
 
   getFileList: () => ipcRenderer.invoke(IPC.GET_FILE_LIST),

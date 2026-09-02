@@ -1,6 +1,5 @@
 import React, { useMemo, useState } from 'react';
 import { Modal, Button, Box, Flex, Group, Text, Tooltip } from '@mantine/core';
-import 'katex/dist/katex.min.css';
 import type { CaptureFormat, CaptureRange, CardLayout, MarkdownCaptureRequest } from '../../../shared/types';
 import { Clipboard, Download, Image as ImageIcon, ImageDown, Save } from 'lucide-react';
 import { ExportSettingsPanel } from './exportDialog/ExportSettingsPanel';

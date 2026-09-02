@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 import { resolve } from 'node:path';
 
 function hotReloadLanguageFiles(): Plugin {
-  const langDir = resolve(__dirname, 'language');
+  const langDir = resolve(import.meta.dirname, 'language');
   return {
     name: 'hot-reload-language-files',
     configureServer(server) {
@@ -19,28 +19,33 @@ function hotReloadLanguageFiles(): Plugin {
 }
 
 export default defineConfig({
-  root: resolve(__dirname, 'src/renderer'),
+  root: resolve(import.meta.dirname, 'src/renderer'),
   base: './',
   plugins: [react(), hotReloadLanguageFiles()],
   resolve: {
     alias: {
-      '@renderer': resolve(__dirname, 'src/renderer/src'),
-      '@shared': resolve(__dirname, 'src/shared'),
+      '@renderer': resolve(import.meta.dirname, 'src/renderer/src'),
+      '@shared': resolve(import.meta.dirname, 'src/shared'),
     },
   },
   build: {
-    outDir: resolve(__dirname, 'out/renderer'),
+    outDir: resolve(import.meta.dirname, 'out/renderer'),
     emptyOutDir: true,
     chunkSizeWarningLimit: 1000,
     rollupOptions: {
       input: {
-        main: resolve(__dirname, 'src/renderer/index.html'),
-        capture: resolve(__dirname, 'src/renderer/capture.html'),
-        prompt: resolve(__dirname, 'src/renderer/prompt.html'),
+        main: resolve(import.meta.dirname, 'src/renderer/index.html'),
+        capture: resolve(import.meta.dirname, 'src/renderer/capture.html'),
+        prompt: resolve(import.meta.dirname, 'src/renderer/prompt.html'),
       },
       output: {
         manualChunks(id: string) {
-          if (id.includes('node_modules/katex')) return 'vendor-katex';
+          // KaTeX is reached only through the dynamic import in utils/katexBundle.
+          // Naming a chunk here would hoist it back into the eagerly preloaded
+          // vendor graph (rehype-katex otherwise matches the `rehype-` rule below),
+          // which is exactly what keeping it off the first paint has to avoid —
+          // let rollup leave both in the on-demand chunk.
+          if (id.includes('node_modules/katex') || id.includes('node_modules/rehype-katex')) return;
           if (
             id.includes('node_modules/react-markdown') ||
             id.includes('node_modules/remark-') ||

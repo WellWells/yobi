@@ -1,12 +1,13 @@
 import { ipcMain, app, shell } from 'electron';
 import * as fs from 'node:fs/promises';
 import { IPC, isByokTargetUrl } from '../../shared/types';
-import type { CaptureSettings, QuickExportSettings, HiddenSources, HotkeyBindResult } from '../../shared/types';
+import type { CaptureSettings, QuickExportSettings, HiddenSources, HotkeyBindResult, SecretScope, SecretTarget } from '../../shared/types';
 import { isThemePreference } from '../../shared/themes';
 import { getProviderLabel } from '../providers';
 import {
   config,
   saveConfig,
+  clearStoredSecret,
   getHiddenSources,
   normalizePromptPreferences,
   normalizeCaptureSettings,
@@ -21,6 +22,9 @@ import { getMetricsSnapshot, resetMetrics } from '../metrics';
 import { getConversationTokenStats } from '../conversationTokenStats';
 import { loadLanguageData, setLangCache, setEnCache } from '../i18n';
 import { requestFactoryReset } from '../factoryReset';
+import { getSecretHealth, isSecretEncryptionAvailable } from '../secretHealth';
+import { clearAuthRecord } from '../mcp/mcpTokenStore';
+import { setDataKey } from '../dataKeyStore';
 import { flushPendingTempChatResult, isTempChatMode, setTempChatMode } from '../tempChat';
 import { getWorkerWin } from '../windows';
 import { llmLane } from '../flow/lanes';
@@ -59,7 +63,38 @@ export function applyImportedConfigLiveEffects(importedConfig: Config, ctx: IpcC
   void ctx.lineRuntime.syncWithConfig();
 }
 
+const SECRET_SCOPES = new Set<SecretScope>(['telegram', 'line', 'smtp', 'byok', 'mcp', 'dataKey']);
+
+function parseSecretTarget(raw: unknown): SecretTarget | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const { scope, id, field } = raw as Record<string, unknown>;
+  if (typeof scope !== 'string' || !SECRET_SCOPES.has(scope as SecretScope)) return null;
+  if (typeof id !== 'string' || typeof field !== 'string') return null;
+  return { scope: scope as SecretScope, id, field };
+}
+
+/**
+ * Deletes a secret the app can no longer read, so a user who does not want to re-enter it can
+ * stop being warned about it. Refused while the keychain is merely out of reach: that failure
+ * is usually temporary, and honouring it would destroy a secret that was about to come back.
+ */
+function clearBrokenSecret(raw: unknown): { ok: boolean } {
+  const target = parseSecretTarget(raw);
+  if (!target) return { ok: false };
+  if (!isSecretEncryptionAvailable()) return { ok: false };
+
+  if (target.scope === 'mcp') clearAuthRecord(target.id);
+  else if (target.scope === 'dataKey') setDataKey(target.id, '');
+  else clearStoredSecret(target.scope, target.id, target.field);
+
+  sendLog(`🗑️ Removed an unreadable stored secret: ${target.scope}.${target.field}`);
+  return { ok: true };
+}
+
 export function registerSettingsHandlers(ctx: IpcContext): void {
+  ipcMain.handle(IPC.GET_SECRET_HEALTH, () => getSecretHealth());
+  ipcMain.handle(IPC.DELETE_BROKEN_SECRET, (_event, raw: unknown) => clearBrokenSecret(raw));
+
   ipcMain.handle(IPC.GET_HOTKEY, () => config.hotkey);
   ipcMain.handle(IPC.UPDATE_HOTKEY, (_event, newHotkey: string): HotkeyBindResult => {
     if (!isRegisterableAccelerator(newHotkey)) return 'taken';

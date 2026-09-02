@@ -12,7 +12,7 @@ export default defineConfig({
   resolve: {
     conditions: ['node'],
     alias: {
-      '@shared': resolve(__dirname, 'src/shared'),
+      '@shared': resolve(import.meta.dirname, 'src/shared'),
     },
   },
   ssr: {
@@ -26,9 +26,9 @@ export default defineConfig({
     ssr: true,
     rollupOptions: {
       input: {
-        index: resolve(__dirname, 'src/preload/index.ts'),
-        worker: resolve(__dirname, 'src/preload/worker.ts'),
-        browserPage: resolve(__dirname, 'src/preload/browserPage.ts'),
+        index: resolve(import.meta.dirname, 'src/preload/index.ts'),
+        worker: resolve(import.meta.dirname, 'src/preload/worker.ts'),
+        browserPage: resolve(import.meta.dirname, 'src/preload/browserPage.ts'),
       },
       output: {
         format: 'cjs',

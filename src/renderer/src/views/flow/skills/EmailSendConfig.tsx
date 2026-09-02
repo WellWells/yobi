@@ -6,6 +6,7 @@ import { AppTextarea } from '../../../components/AppTextarea';
 import { AppNumberInput } from '../../../components/AppNumberInput';
 import { AppPasswordInput } from '../../../components/AppPasswordInput';
 import { emailApi } from '../../../api/electronApi';
+import { SecretHealthAlert } from '../../../components/SecretHealthAlert';
 import type { SkillConfigProps } from './types';
 
 export const EmailSendConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
@@ -43,6 +44,7 @@ export const EmailSendConfig: React.FC<SkillConfigProps> = ({ step, onChange, t 
 
   return (
     <Stack gap="xs">
+      <SecretHealthAlert scopes={['smtp']} />
       <Text fz="sm" fw={600}>{t('flow.skill.email_send.smtp')}</Text>
       <Text fz="xs" c="dimmed">{t('flow.skill.email_send.smtp.hint')}</Text>
       <AppTextInput

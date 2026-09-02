@@ -1,7 +1,9 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { app, clipboard, nativeImage } from 'electron';
+import { fileURLToPath } from 'node:url';
+import { app, nativeImage } from 'electron';
+import { clipboardBytes, readClipboardItems } from './clipboard';
 import {
   ATTACHMENT_STASH_MAX_BYTES,
   type AttachmentStashRequest,
@@ -105,7 +107,7 @@ export async function stashAttachmentBytes(request: AttachmentStashRequest): Pro
 }
 
 export async function attachmentFromClipboard(): Promise<StashedAttachment | null> {
-  const copied = clipboardFilePath();
+  const copied = await clipboardFilePath();
   if (copied) {
     const stat = await fs.stat(copied).catch(() => null);
     if (stat?.isFile()) {
@@ -115,14 +117,23 @@ export async function attachmentFromClipboard(): Promise<StashedAttachment | nul
     }
   }
 
-  const image = clipboard.readImage();
-  if (image.isEmpty()) return null;
+  const png = await clipboardImagePng();
+  if (!png) return null;
   const stashed = await stashAttachmentBytes({
     name: 'pasted-image.png',
     mimeType: 'image/png',
-    data: image.toPNG(),
+    data: png,
   });
   return { ...stashed, preview: thumbnail(stashed.path, stashed.mimeType) };
+}
+
+async function clipboardImagePng(): Promise<Uint8Array<ArrayBuffer> | null> {
+  for (const item of await readClipboardItems()) {
+    if (!item.types.includes('image/png')) continue;
+    const bytes = await clipboardBytes(item, 'image/png');
+    if (bytes && bytes.byteLength > 0) return bytes;
+  }
+  return null;
 }
 
 function thumbnail(filePath: string, mimeType: string): string | undefined {
@@ -136,13 +147,41 @@ function thumbnail(filePath: string, mimeType: string): string | undefined {
   }
 }
 
-function clipboardFilePath(): string {
-  if (process.platform !== 'win32') return '';
-  try {
-    const raw = clipboard.readBuffer('FileNameW');
-    if (!raw || raw.byteLength === 0) return '';
-    return raw.toString('ucs2').replace(/\0.*$/, '').trim();
-  } catch {
-    return '';
+// macOS carries a copied file as its own pasteboard type, which has no MIME spelling and
+// so arrives through the raw-format escape hatch. It holds the same file:// URL.
+const FILE_URL_TYPES = [
+  'text/uri-list',
+  'electron application/osclipboard;format="public.file-url"',
+];
+
+async function clipboardFilePath(): Promise<string> {
+  for (const item of await readClipboardItems()) {
+    for (const type of FILE_URL_TYPES) {
+      if (!item.types.includes(type)) continue;
+      const bytes = await clipboardBytes(item, type);
+      if (!bytes) continue;
+      const filePath = filePathFromUriList(Buffer.from(bytes).toString('utf-8'));
+      if (filePath) return filePath;
+    }
   }
+  return '';
+}
+
+// Electron 44 no longer exposes raw OS clipboard formats, so the Windows 'FileNameW'
+// handle is gone. A file copied in Explorer now surfaces as a percent-encoded
+// text/uri-list instead, which carries non-ASCII names correctly and works everywhere.
+// Anything that is not a file:// URL (a link copied from a browser) is ignored.
+// Exported for the test suite.
+export function filePathFromUriList(text: string): string {
+  for (const line of text.split(/\r?\n/)) {
+    const uri = line.trim();
+    if (!uri || uri.startsWith('#')) continue;
+    if (!uri.toLowerCase().startsWith('file:')) continue;
+    try {
+      return fileURLToPath(uri);
+    } catch {
+      continue;
+    }
+  }
+  return '';
 }

@@ -3,12 +3,14 @@ import { NAV_ORDER, useAppStore } from '../store/appStore';
 import { useFlowStore } from '../store/useFlowStore';
 import { useI18nStore } from '../store/i18nStore';
 import { useUpdateStore } from '../store/useUpdateStore';
+import { useSecretHealthStore } from '../store/secretHealthStore';
 import { initThemeFromConfig } from '../store/themeStore';
 import type { LayoutMode } from '../store/appStore';
 import { accountApi, byokApi, ipcEvents, settingsApi, tempChatApi } from '../api/electronApi';
 import { makeByokGroupModels, makeByokModelOption, makeDuckaiModelOption } from '../config/models';
 import { useShortcutAction } from '../shortcuts/useShortcutAction';
 import { useShortcutStore } from '../store/shortcutStore';
+import { onIdle } from '../utils/idle';
 
 export function useAppBootstrap() {
   const appendLog = useAppStore((s) => s.appendLog);
@@ -34,6 +36,7 @@ export function useAppBootstrap() {
   useEffect(() => {
     void loadLocales();
     initThemeFromConfig();
+    useSecretHealthStore.getState().initialize();
     void useFlowStore.getState().loadFlows();
     void settingsApi.getHotkey().then(setHotkey);
     void settingsApi.getHotkeyEnabled().then(setHotkeyEnabled);
@@ -57,10 +60,16 @@ export function useAppBootstrap() {
     });
     if (!duckaiModelsFetched.current) {
       duckaiModelsFetched.current = true;
-      void settingsApi.fetchDuckaiModels().then((models) => {
-        if (models && models.length > 0) {
-          setDuckaiModels(models.map(makeDuckaiModelOption));
-        }
+      // Unlike its neighbours this is not a config read: it drives the shared worker
+      // window through a real Duck.ai page load and clicks the model picker open,
+      // measured at ~1.8 s of main-process work. Off the boot window it goes, so it
+      // stops racing the provider warm-up for the very same worker window.
+      onIdle(() => {
+        void settingsApi.fetchDuckaiModels().then((models) => {
+          if (models && models.length > 0) {
+            setDuckaiModels(models.map(makeDuckaiModelOption));
+          }
+        });
       });
     }
     void byokApi.getSettings().then((snapshot) => {

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Box, Stack, Text } from '@mantine/core';
 import type { MarkdownCaptureRequest } from '../../../../shared/types';
-import { MAX_CAPTURE_HEIGHT } from '../../../../shared/types';
+import { checkCaptureHeight } from '../../../../shared/types';
 import { ScaledCardFrame } from '../capture/ScaledCardFrame';
 import { SectionLabel } from './SectionLabel';
 
@@ -16,7 +16,12 @@ export const ExportPreviewPanel: React.FC<ExportPreviewPanelProps> = ({ request,
   const turnCount = request?.options.cardLayout === 'bubble'
     ? (request.payload.turns?.length ?? 0)
     : 0;
-  const tooTall = request?.options.format !== 'pdf' && logicalHeight > MAX_CAPTURE_HEIGHT;
+  // Same guard the capture itself applies, so the preview cannot promise an export that
+  // will be refused — or worse, one that silently comes back doubled.
+  const verdict = request
+    ? checkCaptureHeight(request.options.format, logicalHeight, request.options.pixelRatio, request.options.width)
+    : null;
+  const tooTall = verdict !== null && !verdict.ok;
   const pixelHeight = logicalHeight * (request?.options.pixelRatio ?? 1);
 
   return (

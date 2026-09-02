@@ -288,10 +288,10 @@ export function execClipboard(config: Record<string, string>): Promise<string> {
   return clipboardLane.runExclusive(async () => {
     const action = config.action ?? 'read';
     if (action === 'write') {
-      clipboard.writeText(config.text ?? '');
+      await clipboard.writeText(config.text ?? '');
       return '';
     }
-    return clipboard.readText();
+    return await clipboard.readText();
   });
 }
 

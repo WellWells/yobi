@@ -82,7 +82,7 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
 
   sendLog(`[${id}] 📤 ${task.source ?? 'ui'} → ${providerLabel}${task.conversationPath ? ' (follow-up)' : ''}: "${preview}"`);
 
-  const clipboardSnapshot = backupClipboard();
+  const clipboardSnapshot = await backupClipboard();
   let preservePerplexitySiteData = false;
   let lastError: unknown;
 
@@ -363,7 +363,7 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
     if (task.ephemeralAttachments && task.attachments?.length) {
       await deleteTempAttachments(task.attachments);
     }
-    restoreClipboard(clipboardSnapshot);
+    await restoreClipboard(clipboardSnapshot);
     if (!preservePerplexitySiteData) {
       await clearPerplexitySiteDataIfNeeded(targetUrl);
     }

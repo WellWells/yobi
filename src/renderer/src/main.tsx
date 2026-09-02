@@ -2,7 +2,10 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 import { ModalsProvider } from '@mantine/modals';
+import { Notifications } from '@mantine/notifications';
 import '@mantine/core/styles.css';
+// Must come after the core styles, per the package's own contract.
+import '@mantine/notifications/styles.css';
 import { App } from './App';
 import { useThemeStore } from './store/themeStore';
 import './styles/globals.css';
@@ -25,6 +28,8 @@ function Root() {
       cssVariablesResolver={cssVariablesResolver}
     >
       <ModalsProvider>
+        {/* Top-right, so a notice never covers the composer at the bottom. */}
+        <Notifications position="top-right" />
         <App />
       </ModalsProvider>
     </MantineProvider>

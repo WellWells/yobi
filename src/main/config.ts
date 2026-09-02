@@ -3,10 +3,12 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import * as path from 'node:path';
 import Store from 'electron-store';
 import { PROVIDER_URLS, byokIdFromUrl, byokGroupIdFromUrl } from '../shared/types';
-import type { HiddenSources } from '../shared/types';
+import type { HiddenSources, SecretFailure, SecretScope } from '../shared/types';
 import { defaultStored } from './configTypes';
 import type { Config, LineConfig, StoredByokInstance, StoredConfig, StoredLineConfig, StoredSmtpConfig, StoredTelegramConfig, TelegramConfig } from './configTypes';
 import { encryptToken, decryptToken, decryptTokenChecked } from './configEncryption';
+import { getConfigDir, getConfigPath } from './configPaths';
+import { clearAllSecretFailures, clearSecretFailures, getSecretHealth, recordSecretFailure } from './secretHealth';
 import {
   normalizeConfig,
   normalizeCaptureSettings,
@@ -20,15 +22,6 @@ import {
   normalizeSmtp,
   deserializePairingConfig,
 } from './configNormalizers';
-
-function getConfigDir(): string {
-  if (app.isPackaged) return app.getPath('userData');
-  return path.resolve('.');
-}
-
-function getConfigPath(): string {
-  return path.join(getConfigDir(), 'config.json');
-}
 
 function getLegacyWindowsConfigPath(): string | null {
   if (!app.isPackaged || process.platform !== 'win32') return null;
@@ -107,6 +100,22 @@ function markTelegramTokenResolved(): void {
   telegramTokenUnavailable = false;
 }
 
+/**
+ * Decrypts one stored secret and files a failure the UI can show. Before this, a secret that
+ * would not decrypt just became an empty string and the bot quietly stopped answering.
+ */
+function readSecretChecked(stored: string, at: SecretFailure): { value: string; failed: boolean } {
+  const suffix = at.label ? ` (${at.label})` : '';
+  const result = decryptTokenChecked(stored, `${at.scope}.${at.field}${suffix}`);
+  if (result.failed) recordSecretFailure(at);
+  else clearSecretFailures(at.scope, at.id, at.field);
+  return result;
+}
+
+function readSecret(stored: string, at: SecretFailure): string {
+  return readSecretChecked(stored, at).value;
+}
+
 function initSensitiveConfig(): void {
   const stored = store.store as StoredConfig & {
     telegram: StoredTelegramConfig & { botToken?: string };
@@ -122,21 +131,116 @@ function initSensitiveConfig(): void {
     config.telegram.botToken = legacyToken;
     telegramTokenUnavailable = false;
   } else {
-    const decrypted = decryptTokenChecked(encrypted);
-    config.telegram.botToken = decrypted.value;
-    telegramTokenUnavailable = decrypted.failed;
+    const telegramToken = readSecretChecked(encrypted, { scope: 'telegram', id: '', field: 'botToken', label: '' });
+    config.telegram.botToken = telegramToken.value;
+    telegramTokenUnavailable = telegramToken.failed;
   }
 
-  config.smtp.password = decryptToken(stored.smtp?.passwordEncrypted ?? '');
+  config.smtp.password = readSecret(stored.smtp?.passwordEncrypted ?? '', { scope: 'smtp', id: '', field: 'password', label: '' });
 
-  config.line.channelAccessToken = decryptToken(stored.line?.channelAccessTokenEncrypted ?? '');
-  config.line.channelSecret = decryptToken(stored.line?.channelSecretEncrypted ?? '');
+  config.line.channelAccessToken = readSecret(
+    stored.line?.channelAccessTokenEncrypted ?? '',
+    { scope: 'line', id: '', field: 'channelAccessToken', label: '' },
+  );
+  config.line.channelSecret = readSecret(
+    stored.line?.channelSecretEncrypted ?? '',
+    { scope: 'line', id: '', field: 'channelSecret', label: '' },
+  );
 
   const storedByok = stored.byokInstances ?? [];
   for (const instance of config.byokInstances) {
     const storedInstance = storedByok.find((entry) => entry.id === instance.id);
-    instance.apiKey = decryptToken(storedInstance?.apiKeyEncrypted ?? '');
+    instance.apiKey = readSecret(
+      storedInstance?.apiKeyEncrypted ?? '',
+      { scope: 'byok', id: instance.id, field: 'apiKey', label: instance.name },
+    );
   }
+}
+
+/**
+ * Throws away one unreadable ciphertext, leaving the field empty. This is the escape hatch for
+ * a user who does not want to re-enter a secret they can no longer use; it writes the store
+ * directly because `saveConfig` deliberately preserves ciphertext an empty plaintext would
+ * otherwise wipe. Only the caller may decide it is safe — see `clearBrokenSecret` in ipc.
+ */
+function clearStoredSecret(scope: SecretScope, id: string, field: string): void {
+  const current = store.store;
+
+  if (scope === 'telegram') {
+    store.store = { ...current, telegram: { ...current.telegram, botTokenEncrypted: '' } } as StoredConfig;
+    config.telegram.botToken = '';
+    telegramTokenUnavailable = false;
+  }
+
+  if (scope === 'line') {
+    const emptied = field === 'channelSecret'
+      ? { channelSecretEncrypted: '' }
+      : { channelAccessTokenEncrypted: '' };
+    store.store = { ...current, line: { ...current.line, ...emptied } } as StoredConfig;
+    if (field === 'channelSecret') config.line.channelSecret = '';
+    else config.line.channelAccessToken = '';
+  }
+
+  if (scope === 'smtp') {
+    store.store = { ...current, smtp: { ...current.smtp, passwordEncrypted: '' } } as StoredConfig;
+    config.smtp.password = '';
+  }
+
+  if (scope === 'byok') {
+    store.store = {
+      ...current,
+      byokInstances: (current.byokInstances ?? []).map((entry) => (
+        entry.id === id ? { ...entry, apiKeyEncrypted: '' } : entry
+      )),
+    } as StoredConfig;
+    const instance = config.byokInstances.find((entry) => entry.id === id);
+    if (instance) instance.apiKey = '';
+  }
+
+  clearSecretFailures(scope, id, field);
+}
+
+/**
+ * Every stored secret is re-encrypted under the current OS key. Triggered by the canary's
+ * `shouldReEncrypt`, so it runs only when Electron says the old key provider is on its way
+ * out — never on an ordinary boot, which would churn config.json for nothing.
+ */
+function reEncryptSensitiveConfig(): void {
+  const current = store.store;
+  store.store = {
+    ...current,
+    telegram: {
+      ...current.telegram,
+      botTokenEncrypted: config.telegram.botToken ? encryptToken(config.telegram.botToken) : current.telegram.botTokenEncrypted,
+    },
+    line: {
+      ...current.line,
+      channelAccessTokenEncrypted: config.line.channelAccessToken
+        ? encryptToken(config.line.channelAccessToken)
+        : current.line.channelAccessTokenEncrypted,
+      channelSecretEncrypted: config.line.channelSecret
+        ? encryptToken(config.line.channelSecret)
+        : current.line.channelSecretEncrypted,
+    },
+    smtp: {
+      ...current.smtp,
+      passwordEncrypted: config.smtp.password ? encryptToken(config.smtp.password) : current.smtp.passwordEncrypted,
+    },
+    byokInstances: (current.byokInstances ?? []).map((entry) => {
+      const plaintext = config.byokInstances.find((instance) => instance.id === entry.id)?.apiKey ?? '';
+      return plaintext ? { ...entry, apiKeyEncrypted: encryptToken(plaintext) } : entry;
+    }),
+  } as StoredConfig;
+}
+
+/**
+ * Keeps the previous ciphertext when there is no fresh plaintext — an unreadable secret must
+ * survive a save of unrelated settings, or a keychain hiccup would turn into real data loss.
+ */
+function writeSecret(plaintext: string, previousEncrypted: string, at: SecretFailure): string {
+  if (!plaintext) return previousEncrypted;
+  clearSecretFailures(at.scope, at.id, at.field);
+  return encryptToken(plaintext);
 }
 
 function saveConfig(cfg: Partial<Config>): void {
@@ -160,6 +264,7 @@ function saveConfig(cfg: Partial<Config>): void {
   const telegramTokenEncrypted = botToken
     ? encryptToken(botToken)
     : (telegramTokenUnavailable ? (previousStoredTelegram?.botTokenEncrypted ?? '') : '');
+  if (botToken) clearSecretFailures('telegram');
 
   const mergedLine = partialLine !== undefined
     ? normalizeLine({ ...config.line, ...partialLine })
@@ -168,12 +273,16 @@ function saveConfig(cfg: Partial<Config>): void {
   const { channelAccessToken, channelSecret, ...lineWithoutSecrets } = mergedLine;
   const storedLine: StoredLineConfig = {
     ...lineWithoutSecrets,
-    channelAccessTokenEncrypted: channelAccessToken
-      ? encryptToken(channelAccessToken)
-      : (previousStoredLine?.channelAccessTokenEncrypted ?? ''),
-    channelSecretEncrypted: channelSecret
-      ? encryptToken(channelSecret)
-      : (previousStoredLine?.channelSecretEncrypted ?? ''),
+    channelAccessTokenEncrypted: writeSecret(
+      channelAccessToken,
+      previousStoredLine?.channelAccessTokenEncrypted ?? '',
+      { scope: 'line', id: '', field: 'channelAccessToken', label: '' },
+    ),
+    channelSecretEncrypted: writeSecret(
+      channelSecret,
+      previousStoredLine?.channelSecretEncrypted ?? '',
+      { scope: 'line', id: '', field: 'channelSecret', label: '' },
+    ),
   };
 
   const mergedSmtp = partialSmtp !== undefined
@@ -181,9 +290,11 @@ function saveConfig(cfg: Partial<Config>): void {
     : config.smtp;
   const { password, ...smtpWithoutPassword } = mergedSmtp;
   const previousStoredSmtp = store.store.smtp;
-  const smtpPasswordEncrypted = password
-    ? encryptToken(password)
-    : (previousStoredSmtp?.passwordEncrypted ?? '');
+  const smtpPasswordEncrypted = writeSecret(
+    password,
+    previousStoredSmtp?.passwordEncrypted ?? '',
+    { scope: 'smtp', id: '', field: 'password', label: '' },
+  );
 
   const mergedByok = partialByok !== undefined
     ? normalizeByokInstances(partialByok)
@@ -191,10 +302,20 @@ function saveConfig(cfg: Partial<Config>): void {
   const previousStoredByok = store.store.byokInstances ?? [];
   const storedByok: StoredByokInstance[] = mergedByok.map(({ apiKey, ...instanceRest }) => ({
     ...instanceRest,
-    apiKeyEncrypted: apiKey
-      ? encryptToken(apiKey)
-      : (previousStoredByok.find((entry) => entry.id === instanceRest.id)?.apiKeyEncrypted ?? ''),
+    apiKeyEncrypted: writeSecret(
+      apiKey,
+      previousStoredByok.find((entry) => entry.id === instanceRest.id)?.apiKeyEncrypted ?? '',
+      { scope: 'byok', id: instanceRest.id, field: 'apiKey', label: instanceRest.name },
+    ),
   }));
+
+  // A deleted BYOK instance must take its alert with it, or the user is left staring at a
+  // warning about a key that no longer has a field to be re-entered into.
+  for (const failure of getSecretHealth().failures) {
+    if (failure.scope !== 'byok') continue;
+    if (mergedByok.some((instance) => instance.id === failure.id)) continue;
+    clearSecretFailures('byok', failure.id);
+  }
 
   store.store = {
     ...storedBase,
@@ -228,6 +349,8 @@ function wipeSensitiveConfig(): void {
   config.line.channelSecret = '';
   config.smtp.password = '';
   for (const instance of config.byokInstances) instance.apiKey = '';
+  // The ciphertext is gone, so there is nothing left to fail to decrypt.
+  clearAllSecretFailures();
 }
 
 function getDefaultConfig(): Config {
@@ -352,6 +475,8 @@ export {
   getConfigPath,
   importConfigFromJson,
   initSensitiveConfig,
+  reEncryptSensitiveConfig,
+  clearStoredSecret,
   normalizePromptPreferences,
   normalizeCaptureSettings,
   normalizeQuickExport,

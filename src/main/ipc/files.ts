@@ -143,12 +143,15 @@ export function registerFileHandlers(): void {
         options: { ...request.options, fileName: fileStem },
       });
       if (resultDoc.mode === 'copy') {
-        await writeCaptureToClipboard(
+        // The outcome is logged rather than surfaced: this dialog lives inside the main
+        // window, where the copy button's own feedback already tells the user it ran.
+        const outcome = await writeCaptureToClipboard(
           resultDoc.buffer,
           resultDoc.ext,
           fileStem,
           request?.options?.zip === true,
         );
+        if (outcome !== 'ok') sendLog(`⚠️ Snapshot copy landed as: ${outcome}`);
         const result: MarkdownCaptureResult = { ok: true };
         return result;
       }
@@ -181,8 +184,8 @@ export function registerFileHandlers(): void {
     }
   });
 
-  ipcMain.handle(IPC.COPY_TEXT_TO_CLIPBOARD, (_event, text: string) => {
-    clipboard.writeText(text ?? '');
+  ipcMain.handle(IPC.COPY_TEXT_TO_CLIPBOARD, async (_event, text: string) => {
+    await clipboard.writeText(text ?? '');
     return true;
   });
 

@@ -1,23 +1,32 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useState } from 'react';
 import { AppWindow, LogOut } from 'lucide-react';
 import { Modal, Button, Group, Text, Checkbox, Box, Flex, Stack, Loader } from '@mantine/core';
 import { TitleBar } from './components/TitleBar';
 import { AgentConfirmDialog } from './components/AgentConfirmDialog';
 import { ChatView } from './views/ChatView';
-import { SettingsView } from './views/SettingsView';
-import { AboutView } from './views/AboutView';
-import { LogView } from './views/LogView';
-import { FlowView } from './views/FlowView';
-
-const MemoSettingsView = React.memo(SettingsView);
-const MemoAboutView = React.memo(AboutView);
-const MemoLogView = React.memo(LogView);
-const MemoFlowView = React.memo(FlowView);
+import { onIdle } from './utils/idle';
 import { useAppStore } from './store/appStore';
 import { useI18nStore } from './store/i18nStore';
 import { useAppBootstrap } from './hooks/useAppBootstrap';
+import { useUiNotifications } from './hooks/useUiNotifications';
 import { useShortcutDispatcher } from './shortcuts/useShortcutDispatcher';
 import { ipcEvents, windowApi } from './api/electronApi';
+
+// The app always opens on the chat view, so it is the only one worth putting on
+// the first-paint path. The other four — settings with its dozen sections, the
+// flow editor, dnd-kit, react-virtual — used to sit in the entry chunk purely to
+// be hidden by `display: none`. They are pulled in on idle once i18n is ready,
+// early enough that switching views finds them in memory, and once resolved they
+// stay mounted for good, which is what the display-toggle lifecycle below needs.
+const importSettingsView = () => import('./views/SettingsView');
+const importAboutView = () => import('./views/AboutView');
+const importLogView = () => import('./views/LogView');
+const importFlowView = () => import('./views/FlowView');
+
+const MemoSettingsView = React.memo(React.lazy(() => importSettingsView().then((m) => ({ default: m.SettingsView }))));
+const MemoAboutView = React.memo(React.lazy(() => importAboutView().then((m) => ({ default: m.AboutView }))));
+const MemoLogView = React.memo(React.lazy(() => importLogView().then((m) => ({ default: m.LogView }))));
+const MemoFlowView = React.memo(React.lazy(() => importFlowView().then((m) => ({ default: m.FlowView }))));
 
 export const App: React.FC = () => {
   const currentView = useAppStore((s) => s.currentView);
@@ -27,11 +36,22 @@ export const App: React.FC = () => {
 
   useAppBootstrap();
   useShortcutDispatcher();
+  useUiNotifications();
 
   const handleCloseDialogRespond = useCallback((action: 'quit' | 'hide') => {
     setShowCloseDialog(false);
     windowApi.respondCloseDialog(action, closeRemember);
   }, [closeRemember]);
+
+  useEffect(() => {
+    if (!isReady) return;
+    return onIdle(() => {
+      void importSettingsView();
+      void importAboutView();
+      void importLogView();
+      void importFlowView();
+    });
+  }, [isReady]);
 
   useEffect(() => {
     const unsub = ipcEvents.onShowCloseDialog(() => {
@@ -60,16 +80,16 @@ export const App: React.FC = () => {
           <ChatView />
         </Box>
         <Box display={currentView === 'logs' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
-          <MemoLogView />
+          <Suspense fallback={null}><MemoLogView /></Suspense>
         </Box>
         <Box display={currentView === 'settings' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
-          <MemoSettingsView />
+          <Suspense fallback={null}><MemoSettingsView /></Suspense>
         </Box>
         <Box display={currentView === 'about' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
-          <MemoAboutView />
+          <Suspense fallback={null}><MemoAboutView /></Suspense>
         </Box>
         <Box display={currentView === 'flow' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
-          <MemoFlowView />
+          <Suspense fallback={null}><MemoFlowView /></Suspense>
         </Box>
       </Flex>
 

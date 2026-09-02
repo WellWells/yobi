@@ -19,20 +19,25 @@ export const NavItem: React.FC<{
   label: string;
   active: boolean;
   hasMatch: boolean;
+  /** A secret in this category no longer decrypts and has to be re-entered. */
+  alert?: boolean;
   onClick: () => void;
-}> = ({ icon, label, active, hasMatch, onClick }) => (
+}> = ({ icon, label, active, hasMatch, alert = false, onClick }) => (
   <NavLink
     label={label}
     leftSection={icon}
     active={active}
     onClick={onClick}
-    rightSection={hasMatch ? <Box w={5} h={5} bg="var(--mantine-color-accent)" style={{ borderRadius: '50%', flexShrink: 0 }} /> : undefined}
+    rightSection={hasMatch || alert
+      ? <Box w={5} h={5} bg={alert ? 'var(--mantine-color-red-6)' : 'var(--mantine-color-accent)'} style={{ borderRadius: '50%', flexShrink: 0 }} />
+      : undefined}
     styles={{
       root: {
         borderRadius: 'var(--radius)',
         fontSize: 'var(--font-size-base)',
         color: active ? 'var(--mantine-color-accent)' : 'var(--mantine-color-default-color)',
         background: active ? 'var(--mantine-color-accent-dim)' : undefined,
+        boxShadow: alert ? 'inset 0 0 0 1px var(--mantine-color-red-6)' : undefined,
       },
     }}
   />

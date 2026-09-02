@@ -51,6 +51,7 @@ import { createTelegramRuntime } from './bootstrap/telegramSetup';
 import { deleteTempAttachments } from './telegram/fileDownload';
 import { createLineRuntime } from './bootstrap/lineSetup';
 import { initMcp } from './bootstrap/mcpSetup';
+import { initSecretHealthBridge, probeStoredSecrets, reportSecretHealth } from './bootstrap/secretHealthSetup';
 
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
@@ -136,7 +137,9 @@ app.whenReady().then(async () => {
 
   registerWorkerClientHints(session.fromPartition('persist:gemini'));
 
+  initSecretHealthBridge();
   initSensitiveConfig();
+  probeStoredSecrets();
 
   setupPlatformIcons();
   await loadInitialLanguages();
@@ -166,6 +169,7 @@ app.whenReady().then(async () => {
 
   bindHotkey();
   bindQuickExportHotkey();
+  void reportSecretHealth();
   void telegramRuntime.syncWithConfig();
   void lineRuntime.syncWithConfig();
   sendLog(config.hotkeyEnabled

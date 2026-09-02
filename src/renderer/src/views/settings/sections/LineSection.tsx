@@ -8,6 +8,7 @@ import { SectionCard, SettingRow, SettingField, SettingDivider, ToggleSwitch, Se
 import { BotLlmDirectSetting } from './BotLlmDirectSetting';
 import { BotReplyPreview } from './BotReplyPreview';
 import { TAG_SETS } from '../hooks/useSettingsNav';
+import { SecretHealthAlert } from '../../../components/SecretHealthAlert';
 import { LineAccountAlerts } from './LineAccountAlerts';
 import { LinePairingPanel } from './LinePairingPanel';
 import { LinePairedUsers } from './LinePairedUsers';
@@ -70,6 +71,8 @@ export const LineSection: React.FC<Props> = ({ line, t, showSection, isSearching
         </Group>
 
         <SettingDivider my={16} />
+
+        <SecretHealthAlert scopes={['line']} />
 
         {expanded && (
           <>

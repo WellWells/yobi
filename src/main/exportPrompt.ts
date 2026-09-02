@@ -135,6 +135,7 @@ function buildPayload(defaults: ExportPromptDefaults): ExportPromptPayload {
   const supportedExpires = effectiveExpires(share);
   return {
     defaultName: defaults.defaultName,
+    notice: defaults.notice,
     format: defaults.format,
     zip: defaults.zip,
     width: snapCaptureWidth(defaults.width),
@@ -185,6 +186,7 @@ export function instanceHost(instanceUrl: string): string {
 
 interface ExportPromptDefaults {
   defaultName: string;
+  notice?: string;
   format: QuickExportFormat;
   zip: boolean;
   width: number;
@@ -192,7 +194,12 @@ interface ExportPromptDefaults {
   palette?: string;
 }
 
-export type PerformOutcome = 'done' | 'reopen';
+/**
+ * `'reopen'` keeps the panel up for another attempt. The object form carries a reason to
+ * show above the controls, so a failure the user can act on — a capture too tall for the
+ * chosen format — costs them a re-pick rather than a dismissed panel and a lost hotkey.
+ */
+export type PerformOutcome = 'done' | 'reopen' | { reopen: true; notice?: string };
 
 export function retryDefaults(choice: ExportPromptChoice, previous: ExportPromptDefaults): ExportPromptDefaults {
   if (choice.kind !== 'capture') return previous;
@@ -286,8 +293,10 @@ export async function runWithExportPrompt(
       });
       if (!choice) return null;
 
-      if (await perform(choice, panel) !== 'reopen') return choice;
-      attempt = retryDefaults(choice, attempt);
+      const outcome = await perform(choice, panel);
+      const detailed = typeof outcome === 'object' && outcome !== null ? outcome : null;
+      if (!(detailed ? detailed.reopen : outcome === 'reopen')) return choice;
+      attempt = { ...retryDefaults(choice, attempt), notice: detailed?.notice };
       if (!win.isDestroyed()) win.focus();
     }
     return null;

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { onIdle } from '../utils/idle';
 
 type Translations = Record<string, string>;
 const FALLBACK_LOCALE = 'en-US';
@@ -97,9 +98,14 @@ export const useI18nStore = create<I18nState>((set, get) => ({
       }
     }
 
-    const localesToLoad = [...new Set([FALLBACK_LOCALE, resolvedLocale, ...list])];
+    // Only the two packs the first paint actually needs. Pulling every installed
+    // locale here meant ~1 MB of JSON crossing IPC before `isReady` flipped, so
+    // the main window sat on a spinner the whole time; the rest stream in on
+    // idle below, which is early enough for the language picker and for the
+    // heading aliases in parseMarkdownBlocks.
+    const essentialLocales = [...new Set([FALLBACK_LOCALE, resolvedLocale])];
     const localeEntries = await Promise.all(
-      localesToLoad.map(async (locale) => {
+      essentialLocales.map(async (locale) => {
         const content = await window.electronAPI.getLanguageContent(locale);
         return [locale, content as Translations | null] as const;
       }),
@@ -117,6 +123,7 @@ export const useI18nStore = create<I18nState>((set, get) => ({
     });
     await get().setLocale(resolvedLocale, { persist: false });
     set({ isReady: true });
+    onIdle(() => void get().refreshLocales());
   },
 
   refreshLocales: async () => {

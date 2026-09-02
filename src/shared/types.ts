@@ -374,6 +374,9 @@ export const IPC = {
   TELEGRAM_RUNTIME: 'telegram:runtime',
   LINE_RUNTIME: 'line:runtime',
   ACCOUNT_STATUS_CHANGED: 'account:status-changed',
+  SECRET_HEALTH_CHANGED: 'secret:health-changed',
+  GET_SECRET_HEALTH: 'secret:get-health',
+  DELETE_BROKEN_SECRET: 'secret:delete-broken',
 
   WINDOW_MINIMIZE: 'window:minimize',
   WINDOW_MAXIMIZE: 'window:maximize',
@@ -725,12 +728,64 @@ export interface StartedConversation {
   files: OutputFile[];
 }
 
+/** Every place a secret is stored behind safeStorage. */
+export type SecretScope = 'telegram' | 'line' | 'smtp' | 'byok' | 'mcp' | 'dataKey';
+
+/**
+ * Where the user goes to re-enter a scope's secret, and what to call it. The label keys are
+ * spelled out rather than built at the call site so `npm run i18n:check` can see them used.
+ * 'flow' is not a settings category: those two are configured inside flow steps.
+ */
+export const SECRET_SCOPE_META: Record<SecretScope, { category: string; labelKey: string }> = {
+  telegram: { category: 'bots', labelKey: 'secret.scope.telegram' },
+  line: { category: 'bots', labelKey: 'secret.scope.line' },
+  smtp: { category: 'flow', labelKey: 'secret.scope.smtp' },
+  byok: { category: 'accounts', labelKey: 'secret.scope.byok' },
+  mcp: { category: 'connectors', labelKey: 'secret.scope.mcp' },
+  dataKey: { category: 'flow', labelKey: 'secret.scope.dataKey' },
+} as const;
+
+export interface SecretFailure {
+  scope: SecretScope;
+  /** Instance/server/key id when a scope holds several secrets; '' for singletons. */
+  id: string;
+  /** Field discriminator inside a scope, e.g. 'channelAccessToken'. */
+  field: string;
+  /** Name to show the user (BYOK instance, MCP server); '' when the scope speaks for itself. */
+  label: string;
+}
+
+/**
+ * 'intact'  — the OS key still decrypts our canary, so a failure is that one blob.
+ * 'rotated' — the canary itself no longer decrypts: the whole key changed.
+ * 'unknown' — no canary written yet (fresh install, or an upgrade from before canaries).
+ */
+export type SecretKeyState = 'intact' | 'rotated' | 'unknown';
+
+export interface SecretHealth {
+  keyState: SecretKeyState;
+  /**
+   * False means the OS keychain itself is out of reach right now (no libsecret, a locked or
+   * denied macOS Keychain). The ciphertext is probably still fine, so this must never be
+   * treated as a permanent loss and must never offer to delete anything.
+   */
+  encryptionAvailable: boolean;
+  failures: SecretFailure[];
+}
+
+/** Identifies the one stored secret a delete request is aimed at. */
+export interface SecretTarget {
+  scope: SecretScope;
+  id: string;
+  field: string;
+}
+
 export interface UiNotificationPayload {
   title: string;
   body: string;
   level?: 'success' | 'info' | 'warning' | 'error';
   action?: {
-    id: 'open-worker-window';
+    id: 'open-worker-window' | 'open-secret-settings';
     label: string;
   };
 }
@@ -1006,7 +1061,87 @@ export const DEFAULT_CAPTURE_WIDTH = 1000;
 export const MIN_CAPTURE_WIDTH = 600;
 export const MAX_CAPTURE_WIDTH = 1200;
 
-export const MAX_CAPTURE_HEIGHT = 20_000;
+/**
+ * The ceiling for any raster capture, in ENCODED pixels (logical height x pixel ratio).
+ *
+ * Two unrelated mechanisms land on the same number, both measured 2026-08-28 against a
+ * real Chromium:
+ *  - WebP stores each dimension in 14 bits, so 16383 is a hard format ceiling. At an
+ *    encoded height of 16382 the encoder returned 48008 bytes; at 16384, nothing at all.
+ *  - PNG has no format limit, but Chromium's max texture size does. A capture of encoded
+ *    height 26798 came back at full size and passed every surface check — yet row 16384
+ *    onward was the document drawn a second time from the top. It does not fail loudly;
+ *    it hands back a plausible image that is wrong.
+ *
+ * The PNG half is why "it produced bytes" is not evidence a capture succeeded.
+ */
+export const MAX_CAPTURE_ENCODED_HEIGHT = 16_383;
+
+/**
+ * Extra page height a PDF export needs beyond the measured layout.
+ *
+ * printToPDF does not photograph the screen: Chromium lays the document out a second
+ * time through its print engine, and that layout comes out slightly TALLER — per-line
+ * rounding accumulating over a few hundred line boxes. Sizing the page from the screen
+ * layout therefore left the bottom of the card off the page, where the injected
+ * `overflow: hidden` silently clipped it, and the export came back with a bottom border
+ * thinner than the other three.
+ *
+ * The inflation is NOT a fixed ratio, so it cannot be extrapolated from one sample.
+ * Rasterising the real exports and measuring the bottom band row by row (2026-08-29):
+ * a 7995px document inflated about 0.09%, but a 14524px one needed at least 0.37%. What
+ * drives it is how many line boxes the content produces — tables and code blocks — not
+ * the height alone. 1% + 8px covers both, with roughly 3x headroom over the worse of the
+ * two. Whatever is left over is absorbed inside the card rather than between the card and
+ * the page edge, so the border stays exactly the configured margin on all four sides.
+ */
+export function printPageSlack(logicalHeight: number): number {
+  return Math.ceil(Math.max(0, logicalHeight) * 0.01) + 8;
+}
+
+export interface CaptureHeightVerdict {
+  ok: boolean;
+  /** What the encoder actually sees: the logical height multiplied by the pixel ratio. */
+  encodedHeight: number;
+  limit: number;
+  /** A wider capture that should fit, or null when even the widest one will not. */
+  suggestedWidth: number | null;
+}
+
+/**
+ * The encoder sees `logicalHeight * pixelRatio`, not the logical height.
+ * Comparing the logical height let tall documents through to a WebP encoder that returns
+ * nothing at all and a PNG encoder that returns the document drawn twice.
+ */
+export function checkCaptureHeight(
+  format: CaptureFormat,
+  logicalHeight: number,
+  pixelRatio: number,
+  width: number,
+): CaptureHeightVerdict {
+  const ratio = Number.isFinite(pixelRatio) && pixelRatio >= 1 ? pixelRatio : 1;
+  const encodedHeight = Math.ceil(Math.max(0, logicalHeight) * ratio);
+  const limit = MAX_CAPTURE_ENCODED_HEIGHT;
+  if (format === 'pdf' || encodedHeight <= limit) {
+    return { ok: true, encodedHeight, limit, suggestedWidth: null };
+  }
+  return {
+    ok: false,
+    encodedHeight,
+    limit,
+    suggestedWidth: widerCaptureWidth(width, encodedHeight, limit),
+  };
+}
+
+/**
+ * Reflowed text shortens roughly in proportion to how much wider it gets, so the width
+ * that fits is about `width * encodedHeight / limit`, taken with headroom. The estimate
+ * only has to be good enough to suggest: being wrong costs another in-panel notice.
+ */
+function widerCaptureWidth(width: number, encodedHeight: number, limit: number): number | null {
+  const needed = (width * encodedHeight * 1.1) / limit;
+  return CAPTURE_WIDTHS.find((value) => value > width && value >= needed) ?? null;
+}
 
 export {
   SHARE_EXPIRE_VALUES, SHARE_EXPIRE_SECONDS, DEFAULT_SHARE_INSTANCE, DEFAULT_INSTANCE_EXPIRES,
@@ -1096,6 +1231,8 @@ export interface PanelHeight {
 
 export interface ExportPromptPayload {
   defaultName: string;
+  /** Why the previous attempt failed, shown above the controls when the panel reopens. */
+  notice?: string;
   format: QuickExportFormat;
   zip: boolean;
   width: number;
@@ -1180,8 +1317,8 @@ export interface ShareExportChoice {
 
 export type ExportPromptChoice = CaptureExportChoice | ShareExportChoice;
 
-export function captureRidesAsFile(format: string, zip: boolean): boolean {
-  return zip || format !== 'png';
+export function captureRidesAsImage(format: string, zip: boolean): boolean {
+  return !zip && format === 'png';
 }
 
 const CAPTURE_FORMATS: readonly CaptureFormat[] = ['png', 'webp', 'pdf'];

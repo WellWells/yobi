@@ -6,7 +6,7 @@ import { toggleTempChatMode } from './tempChat';
 import { getLangCache, t } from './i18n';
 import { CLEAN_UA } from './userAgent';
 import { applyWorkerUserAgent } from './clientHints';
-import { SILENT_WEB_PREFERENCES, muteWindow } from './silentWindow';
+import { SILENT_WEB_PREFERENCES, muteWindow, parkWindowOffscreen, unparkWindow } from './silentWindow';
 import { PROVIDER_URLS, isByokTargetUrl } from '../shared/types';
 import { themeBackground } from '../shared/themes';
 import { config } from './config';
@@ -77,7 +77,10 @@ export function createMainWindow(): void {
       sandbox: false,
     },
   });
-  if (isDev) {
+  // Opt-in: a detached DevTools is a second renderer plus its own bundle, and it
+  // lands right on top of the window's first paint. Set YOBI_DEVTOOLS=1 to get it
+  // back automatically — otherwise it is one keystroke away.
+  if (isDev && process.env['YOBI_DEVTOOLS']) {
     mainWin.webContents.openDevTools({ mode: 'detach' });
   }
 
@@ -167,7 +170,14 @@ export function createWorkerWindow(initialUrl: string, mode: WorkerWindowMode = 
     autoHideMenuBar: true,
     skipTaskbar: true,
     hiddenInMissionControl: process.platform === 'darwin',
-    focusable: true,
+    // NOT focusable while it is the invisible automation window, which is the whole point:
+    // `webContents.focus()` also focuses the OWNER WINDOW on macOS and Linux (Electron does
+    // it deliberately, to match Windows — see the #if in WebContents::Focus), so a focusable
+    // worker parked offscreen at opacity 0 becomes the key window on every send. The user
+    // sees nothing move, but the main window stops responding to clicks until Cmd+` cycles
+    // back to it. A window that cannot become key still gives its renderer real focus, so
+    // this costs nothing and `revealWorkerWindow` turns it back on.
+    focusable: false,
     hasShadow: false,
     title: 'Provider Worker',
     webPreferences,
@@ -176,9 +186,11 @@ export function createWorkerWindow(initialUrl: string, mode: WorkerWindowMode = 
 
   workerWin.setMenuBarVisibility(false);
 
+  // Transparent BEFORE it is mapped so it never flashes, parked AFTER because the position
+  // only sticks once macOS has a frame to clamp — see parkWindowOffscreen.
   workerWin.setOpacity(0);
-  workerWin.setPosition(-10_000, -10_000);
   workerWin.showInactive();
+  parkWindowOffscreen(workerWin);
 
   workerWin.on('move', () => rememberWorkerVisibleBounds());
   workerWin.on('resize', () => rememberWorkerVisibleBounds());
@@ -186,6 +198,20 @@ export function createWorkerWindow(initialUrl: string, mode: WorkerWindowMode = 
   applyWorkerUserAgent(workerWin.webContents, CLEAN_UA);
   muteWindow(workerWin);
   workerWin.loadURL(bootUrl);
+
+  // Every provider page has to believe it is focused. Several of them slow their streaming
+  // right down while they think they are a background tab — "it only answers fast once I
+  // open the worker window" is that, and only Gemini had a workaround for it
+  // (`applyVisibilityPatch`, which fakes the flags in JS rather than being focused).
+  // Re-asserted per navigation because a new document starts unfocused. Measured on macOS:
+  // with a non-focusable window this leaves `document.hasFocus()` true even after the user
+  // clicks back to the main window, and the key window never moves.
+  workerWin.webContents.on('did-finish-load', () => {
+    if (!workerWin || workerWin.isDestroyed()) return;
+    // Revealed: the window is on screen and the user owns focus, so do not grab it.
+    if (workerWin.isFocusable()) return;
+    workerWin.webContents.focus();
+  });
 
   workerWin.on('close', (event) => {
     if (isAppQuitting) return;
@@ -208,8 +234,9 @@ export function revealWorkerWindow(): void {
   if (process.platform !== 'darwin') {
     workerWin.setSkipTaskbar(false);
   }
-  workerWin.setOpacity(1);
+  unparkWindow(workerWin);
   muteWindow(workerWin, false);
+  workerWin.setFocusable(true);
   workerWin.show();
   workerWin.focus();
   if (!app.isPackaged) workerWin.webContents.openDevTools({ mode: 'detach' });
@@ -222,10 +249,9 @@ export function hideWorkerWindow(): void {
   rememberWorkerVisibleBounds();
   muteWindow(workerWin);
   workerWin.setSkipTaskbar(true);
-  if (workerWin.isVisible()) {
-    workerWin.setOpacity(0);
-    workerWin.setPosition(-10_000, -10_000);
-  }
+  // Back to the state that cannot steal the key window.
+  workerWin.setFocusable(false);
+  if (workerWin.isVisible()) parkWindowOffscreen(workerWin);
 }
 
 function rememberWorkerVisibleBounds(): void {

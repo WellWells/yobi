@@ -1,13 +1,12 @@
 import React, { useState } from 'react';
-import { ActionIcon, Badge, Box, Checkbox, Group, Stack, Text } from '@mantine/core';
+import { ActionIcon, Badge, Box, Group, Stack, Text } from '@mantine/core';
 import { Layers, Pencil, Plus, Trash2 } from 'lucide-react';
 import { SectionCard, SectionTitle, VisibilityToggle } from '../components';
 import { useHiddenSources } from '../hooks/useHiddenSources';
 import { AppButton } from '../../../components/AppButton';
-import { AppTextInput } from '../../../components/AppTextInput';
 import { WebDialog } from '../../../components/WebDialog';
+import { ByokGroupForm } from './ByokGroupForm';
 import type { useByokGroups } from '../hooks/useByokGroups';
-import { BYOK_PROVIDER_TYPE_LABELS } from '../../../../../shared/types';
 import type { ByokGroupSnapshot } from '../../../../../shared/types';
 
 type ByokGroups = ReturnType<typeof useByokGroups>;
@@ -22,6 +21,7 @@ export const ByokGroupsCard: React.FC<Props> = ({ byokGroups, t, sectionGap }) =
   const [confirmDelete, setConfirmDelete] = useState<ByokGroupSnapshot | null>(null);
   const sources = useHiddenSources();
   const { groups, availableKeys, form } = byokGroups;
+  const addingNew = form !== null && form.id === null;
 
   const keyName = (id: string): string =>
     availableKeys.find((key) => key.id === id)?.name ?? id;
@@ -48,7 +48,9 @@ export const ByokGroupsCard: React.FC<Props> = ({ byokGroups, t, sectionGap }) =
             )}
 
             <Stack gap={0}>
-              {groups.map((group, index) => (
+              {groups.map((group, index) => {
+                const editingThis = form?.id === group.id;
+                return (
                 <Box
                   key={group.id}
                   py={12}
@@ -87,10 +89,10 @@ export const ByokGroupsCard: React.FC<Props> = ({ byokGroups, t, sectionGap }) =
 
                     <Group gap={6} align="center" wrap="nowrap" style={{ flexShrink: 0 }}>
                       <ActionIcon
-                        variant="default"
+                        variant={editingThis ? 'light' : 'default'}
                         size={30}
                         aria-label={t('settings.byok.group.edit')}
-                        onClick={() => byokGroups.openEdit(group)}
+                        onClick={() => (editingThis ? byokGroups.closeForm() : byokGroups.openEdit(group))}
                       >
                         <Pencil size={14} />
                       </ActionIcon>
@@ -116,72 +118,15 @@ export const ByokGroupsCard: React.FC<Props> = ({ byokGroups, t, sectionGap }) =
                       />
                     </Group>
                   </Group>
+
+                  {editingThis && <ByokGroupForm byokGroups={byokGroups} t={t} mt={12} />}
                 </Box>
-              ))}
+                );
+              })}
             </Stack>
 
-            {form ? (
-              <Stack
-                gap="xs"
-                mt={groups.length > 0 ? 12 : 0}
-                p={12}
-                style={{
-                  border: '1px solid var(--mantine-color-default-border)',
-                  borderRadius: 'var(--mantine-radius-sm)',
-                }}
-              >
-                <AppTextInput
-                  label={t('settings.byok.group.name')}
-                  placeholder={t('settings.byok.group.name.placeholder')}
-                  value={form.name}
-                  onChange={(e) => byokGroups.updateName(e.target.value)}
-                  size="sm"
-                />
-                <Text fz="var(--font-size-sm)" fw={600} c="var(--mantine-color-default-color)" mt={4}>
-                  {t('settings.byok.group.members')}
-                </Text>
-                <Text fz="var(--font-size-sm)" c="dimmed" mb={2}>
-                  {t('settings.byok.group.selectHint')}
-                </Text>
-                <Stack gap={8}>
-                  {availableKeys.map((key) => (
-                    <Checkbox
-                      key={key.id}
-                      size="sm"
-                      checked={form.memberIds.includes(key.id)}
-                      onChange={() => byokGroups.toggleMember(key.id)}
-                      label={
-                        <Group gap={8} wrap="nowrap" align="center">
-                          <Text fz="var(--font-size-base)" c="var(--mantine-color-default-color)" truncate>
-                            {key.name}
-                          </Text>
-                          <Badge variant="light" color="gray" radius="sm" size="sm" tt="none" fw={500}>
-                            {BYOK_PROVIDER_TYPE_LABELS[key.providerType]}
-                          </Badge>
-                          <Text fz="var(--font-size-sm)" c="dimmed" ff="var(--font-mono)" truncate>
-                            {key.model}
-                          </Text>
-                        </Group>
-                      }
-                    />
-                  ))}
-                </Stack>
-                <Group justify="flex-end" gap={8} mt={4} wrap="nowrap">
-                  <AppButton variant="default" size="xs" onClick={byokGroups.closeForm} disabled={byokGroups.busy}>
-                    {t('dialog.cancel')}
-                  </AppButton>
-                  <AppButton
-                    variant="filled"
-                    size="xs"
-                    leftSection={<Layers size={13} />}
-                    loading={byokGroups.busy}
-                    disabled={!byokGroups.formValid}
-                    onClick={() => { void byokGroups.saveForm(); }}
-                  >
-                    {t('settings.byok.group.save')}
-                  </AppButton>
-                </Group>
-              </Stack>
+            {addingNew ? (
+              <ByokGroupForm byokGroups={byokGroups} t={t} mt={groups.length > 0 ? 12 : 0} />
             ) : (
               <Group mt={groups.length > 0 ? 12 : 0}>
                 <AppButton

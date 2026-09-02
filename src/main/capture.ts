@@ -1,14 +1,14 @@
 import { app, BrowserWindow } from 'electron';
 import * as path from 'node:path';
-import type { MarkdownCaptureRequest, CaptureFormat, CaptureMode, CaptureTurn, CardLayout } from '../shared/types';
-import { DEFAULT_CAPTURE_WIDTH, MAX_CAPTURE_HEIGHT, MAX_CAPTURE_WIDTH, MIN_CAPTURE_WIDTH, clampCaptureMargin } from '../shared/types';
+import type { MarkdownCaptureRequest, CaptureFormat, CaptureHeightVerdict, CaptureMode, CaptureTurn, CardLayout } from '../shared/types';
+import { DEFAULT_CAPTURE_WIDTH, MAX_CAPTURE_WIDTH, MIN_CAPTURE_WIDTH, checkCaptureHeight, clampCaptureMargin, printPageSlack } from '../shared/types';
 import { stripConversationMarkers } from '../shared/conversationDoc';
 import { captureBackgroundCss, DEFAULT_CAPTURE_PALETTE } from '../shared/capturePalettes';
 import { isSafeCaptureBackground } from '../shared/captureBackgroundGuard';
 import { brandPdfMetadata } from './pdfMetadata';
 import { flattenPdfBackdrop } from './capturePdfBackdrop';
 import { sendLog } from './helpers';
-import { SILENT_WEB_PREFERENCES, muteWindow } from './silentWindow';
+import { SILENT_WEB_PREFERENCES, muteWindow, parkWindowOffscreen } from './silentWindow';
 
 const CAPTURE_TIMEOUT_MS = 30_000;
 
@@ -101,6 +101,21 @@ function attachCaptureConsoleForwarder(win: BrowserWindow): void {
   });
 }
 
+/**
+ * Thrown before encoding when the capture cannot fit the target format. Carries the
+ * measured numbers so a caller with somewhere to show them — the quick export panel —
+ * can say how far over the limit it is and what width would fit, while callers without
+ * a UI still get a translatable message.
+ */
+export class CaptureTooTallError extends Error {
+  constructor(readonly format: CaptureFormat, readonly verdict: CaptureHeightVerdict) {
+    // PNG and WebP share the ceiling, so PDF is the only way out — never suggest the
+    // other raster format, which would fail at exactly the same height.
+    super('Image height exceeds limits. Please use PDF format.');
+    this.name = 'CaptureTooTallError';
+  }
+}
+
 export async function captureMarkdownDocument(
   rawRequest: MarkdownCaptureRequest,
 ): Promise<CaptureDocumentResult> {
@@ -108,11 +123,15 @@ export async function captureMarkdownDocument(
   const logicalWidth = request.options.width;
 
   const captureWin = new BrowserWindow({
-    show: true,
-    x: -99_999,
-    y: -99_999,
+    show: false,
     skipTaskbar: true,
     focusable: false,
+    hasShadow: false,
+    // macOS constrains a window's frame to the screen in both directions: back onto a
+    // display, and down to that display's height. Quick export needs the opposite of
+    // both — parked offscreen, and free to grow past the screen for a tall PDF page.
+    enableLargerThanScreen: true,
+    hiddenInMissionControl: process.platform === 'darwin',
     width: logicalWidth,
     height: 900,
     backgroundColor: '#00000000',
@@ -126,6 +145,14 @@ export async function captureMarkdownDocument(
   });
   muteWindow(captureWin);
   attachCaptureConsoleForwarder(captureWin);
+  // A window that has never been shown stalls Chromium's rendering lifecycle, so map it
+  // in the same invisible state the worker window uses: transparent and offscreen, shown
+  // inactive so it never steals focus or flashes on screen. `show: true` at an extreme
+  // offscreen origin used to do this, and on macOS that is exactly what surfaced the
+  // window — the window server pulled the frame back onto the display.
+  captureWin.setOpacity(0);
+  captureWin.showInactive();
+  parkWindowOffscreen(captureWin);
 
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
@@ -180,11 +207,15 @@ async function captureMarkdownDocumentCore(
 
   const logicalHeight = Math.max(1, Math.ceil(renderResult?.logicalHeight ?? 1));
   const imageLogicalHeight = Math.max(1, Math.floor(renderResult?.logicalHeight ?? 1));
-  const pdfHeight = logicalHeight - 1;
+  const pdfHeight = logicalHeight + printPageSlack(logicalHeight);
 
-  if (request.options.format !== 'pdf' && logicalHeight > MAX_CAPTURE_HEIGHT) {
-    throw new Error('Image height exceeds limits. Please use PDF format.');
-  }
+  const heightVerdict = checkCaptureHeight(
+    request.options.format,
+    imageLogicalHeight,
+    request.options.pixelRatio,
+    logicalWidth,
+  );
+  if (!heightVerdict.ok) throw new CaptureTooTallError(request.options.format, heightVerdict);
 
   if (request.options.format === 'pdf') {
     await applyPdfDocumentTitle(captureWin, request);
@@ -192,7 +223,13 @@ async function captureMarkdownDocumentCore(
     await flattenPdfBackdrop(captureWin, logicalWidth, logicalHeight);
     const cssKey = await captureWin.webContents.insertCSS(
       `@page { size: ${logicalWidth}px ${pdfHeight}px; margin: 0; }` +
-      `html, body { margin: 0 !important; padding: 0 !important; width: ${logicalWidth}px !important; height: ${pdfHeight}px !important; overflow: hidden !important; box-sizing: border-box !important; }`,
+      `html, body { margin: 0 !important; padding: 0 !important; width: ${logicalWidth}px !important; height: ${pdfHeight}px !important; overflow: hidden !important; box-sizing: border-box !important; }` +
+      // Stretch the backdrop to the whole page so its border stays exactly the configured
+      // margin on all four sides, and let the last card swallow the slack as interior
+      // space — :last-child rather than .capture-card so bubble layouts, which stack
+      // several cards, only stretch the bottom one.
+      `.capture-scene { min-height: ${pdfHeight}px !important; box-sizing: border-box !important; display: flex !important; flex-direction: column !important; }` +
+      `.capture-scene > :last-child { flex: 1 1 auto !important; }`,
     );
     await captureWin.webContents.executeJavaScript(
       `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 100))))`,

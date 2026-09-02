@@ -10,6 +10,7 @@ import { appendLogLine } from './logFile';
 let _mainWin: BrowserWindow | null = null;
 let _notifyEnabled = true;
 let _workerReveal: (() => void) | null = null;
+let _secretSettingsReveal: (() => void) | null = null;
 let _workerAttention: WorkerAttention = 'idle';
 
 export function setMainWindow(win: BrowserWindow | null): void {
@@ -18,6 +19,10 @@ export function setMainWindow(win: BrowserWindow | null): void {
 
 export function setWorkerReveal(fn: () => void): void {
   _workerReveal = fn;
+}
+
+export function setSecretSettingsReveal(fn: () => void): void {
+  _secretSettingsReveal = fn;
 }
 
 export function setNotifyEnabled(enabled: boolean): void {
@@ -33,10 +38,9 @@ export function applyLaunchAtStartup(enabled: boolean, hideOnStart: boolean = fa
       args: enabled && hideOnStart ? ['--hidden'] : [],
     });
   } else {
-    app.setLoginItemSettings({
-      openAtLogin: enabled,
-      openAsHidden: enabled && hideOnStart,
-    });
+    // Electron 44 removed openAsHidden — it only ever worked on macOS 12 and below, so
+    // launching hidden is no longer expressible there. openAtLogin still applies.
+    app.setLoginItemSettings({ openAtLogin: enabled });
   }
 }
 
@@ -93,6 +97,28 @@ export function sendWebNotification(
   action?: UiNotificationPayload['action'],
 ): void {
   if (!_notifyEnabled) return;
+  emitNotification(title, body, level, action);
+}
+
+/**
+ * Ignores the "notify me" preference on purpose: that switch is about task chatter, and a
+ * secret the app can no longer decrypt is not chatter — silencing it is how a dead bot token
+ * goes unnoticed for weeks.
+ */
+export function sendSecurityNotification(
+  title: string,
+  body: string,
+  action?: UiNotificationPayload['action'],
+): void {
+  emitNotification(title, body, 'error', action);
+}
+
+function emitNotification(
+  title: string,
+  body: string,
+  level: UiNotificationPayload['level'],
+  action?: UiNotificationPayload['action'],
+): void {
   sendToRenderer(IPC.UI_NOTIFICATION, { title, body, level, action });
   if (!Notification.isSupported()) return;
   const notification = new Notification({
@@ -103,6 +129,9 @@ export function sendWebNotification(
   });
   if (action?.id === 'open-worker-window' && _workerReveal) {
     notification.on('click', _workerReveal);
+  }
+  if (action?.id === 'open-secret-settings' && _secretSettingsReveal) {
+    notification.on('click', _secretSettingsReveal);
   }
   notification.show();
 }

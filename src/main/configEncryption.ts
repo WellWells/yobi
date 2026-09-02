@@ -11,23 +11,23 @@ export function encryptToken(token: string): string {
   return token;
 }
 
-export function decryptTokenChecked(stored: string): { value: string; failed: boolean } {
+export function decryptTokenChecked(stored: string, label = 'token'): { value: string; failed: boolean } {
   if (!stored) return { value: '', failed: false };
   if (stored.startsWith(ENCRYPTED_PREFIX)) {
     if (!safeStorage.isEncryptionAvailable()) {
-      console.warn('[config] safeStorage unavailable — cannot decrypt stored token. Install libsecret on Linux or check OS keychain access.');
+      console.warn(`[config] safeStorage unavailable — cannot decrypt ${label}. Install libsecret on Linux or check OS keychain access.`);
       return { value: '', failed: true };
     }
     try {
       return { value: safeStorage.decryptString(Buffer.from(stored.slice(ENCRYPTED_PREFIX.length), 'base64')), failed: false };
     } catch {
-      console.warn('[config] Failed to decrypt token — OS keychain may have changed. Token will be inaccessible until re-entered.');
+      console.warn(`[config] Failed to decrypt ${label} — OS keychain may have changed. It will be inaccessible until re-entered.`);
       return { value: '', failed: true };
     }
   }
   return { value: stored, failed: false };
 }
 
-export function decryptToken(stored: string): string {
-  return decryptTokenChecked(stored).value;
+export function decryptToken(stored: string, label = 'token'): string {
+  return decryptTokenChecked(stored, label).value;
 }

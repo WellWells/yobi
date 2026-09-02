@@ -7,6 +7,7 @@ import { AppPasswordInput } from '../../../components/AppPasswordInput';
 import { AppButton } from '../../../components/AppButton';
 import { SelectDropdown } from '../../../components/SelectDropdown';
 import { dataKeyApi } from '../../../api/electronApi';
+import { SecretHealthAlert } from '../../../components/SecretHealthAlert';
 import { ExternalLink } from '../../settings/sections/lineLinks';
 import type { SkillConfigProps } from './types';
 
@@ -37,6 +38,7 @@ export const AirQualityConfig: React.FC<SkillConfigProps> = ({ step, onChange, t
 
   return (
     <Stack gap="xs">
+      <SecretHealthAlert scopes={['dataKey']} />
       <AppTextInput
         label={t('flow.skill.air_quality.location')}
         placeholder={t('flow.skill.air_quality.location.placeholder')}

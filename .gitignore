@@ -37,5 +37,7 @@ config.json
 metrics.json
 mcp-auth.json
 bot-conversations.json
+data-keys.json
+secret-health.json
 
 flow-checkpoints

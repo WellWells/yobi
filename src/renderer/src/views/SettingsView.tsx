@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Box, Flex, Stack } from '@mantine/core';
 
 import { Search } from 'lucide-react';
@@ -8,9 +8,11 @@ import { useShallow } from 'zustand/react/shallow';
 import { useI18nStore } from '../store/i18nStore';
 import { useAppStore } from '../store/appStore';
 import { useShortcutStore } from '../store/shortcutStore';
+import { useSecretHealthStore } from '../store/secretHealthStore';
 import { useFlowStore } from '../store/useFlowStore';
 import { useThemeStore, resolveThemePreference } from '../store/themeStore';
 import { settingsApi, fileApi, systemApi } from '../api/electronApi';
+import { SECRET_SCOPE_META } from '../../../shared/types';
 import type { BackupImportResult, SettingsSnapshot } from '../../../shared/types';
 
 import { GroupHeader, NavItem } from './settings/components';
@@ -74,6 +76,13 @@ export const SettingsView: React.FC = () => {
   const byokGroups = useByokGroups(byok.snapshot, byok.applySnapshot);
   const mcp = useMcpServers();
   const nav = useSettingsNav();
+  // Only the scopes that live in this view light up a nav entry; SMTP and data keys are
+  // configured inside flow steps, so their alerts belong there instead.
+  const secretScopes = useSecretHealthStore(useShallow((s) => s.failures.map((failure) => failure.scope)));
+  const alertCategories = useMemo(
+    () => new Set<string>(secretScopes.map((scope) => SECRET_SCOPE_META[scope].category)),
+    [secretScopes],
+  );
 
   const [dangerAction, setDangerAction] = useState<DangerAction>(null);
   const applySettingsSnapshot = useCallback(async (snapshot: SettingsSnapshot) => {
@@ -188,6 +197,7 @@ export const SettingsView: React.FC = () => {
                 label={cat.label}
                 active={!nav.isSearching && nav.activeCategory === cat.id}
                 hasMatch={nav.isSearching && nav.showCategory(cat.id)}
+                alert={alertCategories.has(cat.id)}
                 onClick={() => { nav.setSearchQuery(''); nav.setActiveCategory(cat.id); }}
               />
             ))}

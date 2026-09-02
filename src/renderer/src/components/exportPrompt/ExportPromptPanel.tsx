@@ -1,17 +1,17 @@
 import React from 'react';
-import { Box, Group, Stack, Text } from '@mantine/core';
+import { Alert, Box, Group, Stack, Text } from '@mantine/core';
 import { PaletteSwatch } from '../capture/PalettePicker';
 import { CardSchematic } from './CardSchematic';
 import { ExpirySlider } from './ExpirySlider';
 import { MarginSlider } from '../capture/MarginSlider';
-import { Copy, Link2, Save } from 'lucide-react';
+import { Copy, Link2, Save, TriangleAlert } from 'lucide-react';
 import { AppTextInput } from '../AppTextInput';
 import { AppButton } from '../AppButton';
 import { AppSegmentedControl } from '../AppSegmentedControl';
 import { ToggleSwitch } from '../ToggleSwitch';
 import { PromptShell } from './PromptShell';
 import { ShareConsent } from './ShareConsent';
-import { captureRidesAsFile, clampCaptureMargin } from '../../../../shared/types';
+import { clampCaptureMargin } from '../../../../shared/types';
 import { CAPTURE_PALETTES } from '../../../../shared/capturePalettes';
 import type { CaptureBackgroundStyle, CaptureDirection } from '../../../../shared/capturePalettes';
 import type {
@@ -65,7 +65,7 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
   );
 
   const sharing = format === 'text';
-  const named = !sharing && captureRidesAsFile(format, zip);
+  const named = !sharing;
   const extension = zip ? 'zip' : format;
   const trimmed = name.trim();
   const ready = !busy && (sharing || !named || trimmed.length > 0);
@@ -111,6 +111,12 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
         onChange={(value) => pickFormat(value as QuickExportFormat)}
         size="sm"
       />
+
+      {payload.notice && (
+        <Alert color="red" variant="light" icon={<TriangleAlert size={16} />}>
+          <Text fz="var(--font-size-sm)" style={{ wordBreak: 'break-word' }}>{payload.notice}</Text>
+        </Alert>
+      )}
 
       {sharing ? (
         <>

@@ -22,6 +22,7 @@ import type { AgentPlan, ScratchEntry, TurnPromptOptions } from './agentPrompts'
 import { denyReasonForFileTool, getAgentFileRoots } from './agentSandbox';
 import { maskSecrets } from './secretMask';
 import { detectProvider, getProviderLabel } from '../../providers';
+import { getMcpRegistry } from '../../mcp';
 import type { McpRegistry } from '../../mcp';
 import {
   buildMcpCatalog, buildMcpIndex, classifyMcpTool, formatMcpObservation, hasMcpTools,
@@ -258,7 +259,6 @@ export async function runAgent(
   const observationLimit = lean ? BYOK_OBSERVATION_LIMIT : BROWSER_OBSERVATION_LIMIT;
   const deltaObservationLimit = lean ? BYOK_OBSERVATION_LIMIT : BROWSER_DELTA_OBSERVATION_LIMIT;
 
-  const { getMcpRegistry } = await import('../../mcp');
   const mcpRegistry = getMcpRegistry();
   const mcpIndex = buildMcpIndex(mcpRegistry?.getAgentTools() ?? []);
   const isDuckai = !lean && detectProvider(providerUrl) === 'duckai';

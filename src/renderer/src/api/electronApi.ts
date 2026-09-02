@@ -53,6 +53,8 @@ import type {
   AgentTracePayload,
   SearchCommandResult,
   SearchMode,
+  SecretHealth,
+  SecretTarget,
   SelectPathRequest,
   SelectPathResult,
   TempChatResult,
@@ -259,6 +261,12 @@ export const accountApi = {
   onStatusChanged: (cb: (status: AccountStatus) => void) => window.electronAPI.onAccountStatusChanged(cb),
 };
 
+export const secretApi = {
+  getHealth: (): Promise<SecretHealth> => window.electronAPI.getSecretHealth(),
+  deleteBroken: (target: SecretTarget): Promise<{ ok: boolean }> => window.electronAPI.deleteBrokenSecret(target),
+  onChanged: (cb: (health: SecretHealth) => void) => window.electronAPI.onSecretHealthChanged(cb),
+};
+
 export const promptApi = {
   trigger: (prompt: string): void => window.electronAPI.triggerPrompt(prompt),
   triggerWithOptions: (options: PromptTriggerOptions): Promise<string | null> =>
@@ -412,4 +420,4 @@ export const ytSubsApi = {
   hasCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.ytSubsHasCheckpoint(stepId),
   clearCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.ytSubsClearCheckpoint(stepId),
 };
-
+

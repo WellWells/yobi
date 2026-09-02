@@ -1,5 +1,6 @@
-import { clipboard, systemPreferences } from 'electron';
+import { ClipboardItem, clipboard, systemPreferences } from 'electron';
 import { execFile } from 'node:child_process';
+import { setTimeout as delay } from 'node:timers/promises';
 
 export function checkMacosAccessibility(): boolean {
   if (process.platform !== 'darwin') return true;
@@ -11,100 +12,123 @@ export function promptMacosAccessibility(): void {
   systemPreferences.isTrustedAccessibilityClient(true);
 }
 
+// Electron 44 replaced the clipboard module with an async, W3C-shaped API: the whole
+// module is clear/has/read/write/readText/writeText and nothing else. Entries arrive as
+// ClipboardItem objects whose payloads are Blobs, and an item handed back by read()
+// cannot be passed to write() — it has to be rebuilt from its bytes.
+const RESTORABLE_TYPES: readonly string[] = [
+  'text/plain',
+  'text/html',
+  'text/rtf',
+  'image/png',
+  'text/uri-list',
+];
+
+const POLL_INTERVAL_MS = 20;
+const POLL_MAX_ATTEMPTS = 150;
+
+interface ClipboardEntry {
+  type: string;
+  bytes: Uint8Array<ArrayBuffer>;
+}
+
 interface ClipboardSnapshot {
-  format: 'text' | 'image' | 'html' | 'empty';
-  text?: string;
-  html?: string;
-  image?: Electron.NativeImage;
-  rtf?: string;
+  items: ClipboardEntry[][];
 }
 
-export function backupClipboard(): ClipboardSnapshot {
-  const formats = clipboard.availableFormats();
-
-  const hasImage = formats.some((f) => f.startsWith('image/'));
-  const hasHtml = formats.includes('text/html');
-  const hasText = formats.includes('text/plain');
-  const hasRtf = formats.includes('text/rtf');
-
-  if (hasImage) {
-    return {
-      format: 'image',
-      image: clipboard.readImage(),
-      text: hasText ? clipboard.readText() : undefined,
-      html: hasHtml ? clipboard.readHTML() : undefined,
-      rtf: hasRtf ? clipboard.readRTF() : undefined,
-    };
+export async function readClipboardItems(): Promise<Electron.ClipboardItem[]> {
+  try {
+    return await clipboard.read();
+  } catch {
+    return [];
   }
-
-  if (hasHtml || hasText) {
-    return {
-      format: hasHtml ? 'html' : 'text',
-      text: hasText ? clipboard.readText() : undefined,
-      html: hasHtml ? clipboard.readHTML() : undefined,
-      rtf: hasRtf ? clipboard.readRTF() : undefined,
-    };
-  }
-
-  return { format: 'empty' };
 }
 
-export function restoreClipboard(snapshot: ClipboardSnapshot): void {
-  if (snapshot.format === 'empty') {
+async function readClipboardText(): Promise<string> {
+  try {
+    return await clipboard.readText();
+  } catch {
+    return '';
+  }
+}
+
+// getType() resolves to a Blob for every type except 'electron application/bookmark',
+// which resolves to a plain object — hence the instanceof guard rather than a cast.
+export async function clipboardBytes(
+  item: Electron.ClipboardItem,
+  type: string,
+): Promise<Uint8Array<ArrayBuffer> | null> {
+  try {
+    const payload = await item.getType(type);
+    if (!(payload instanceof Blob)) return null;
+    return new Uint8Array(await payload.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+function clipboardBlob(bytes: Uint8Array<ArrayBuffer>, type: string): Blob {
+  return new Blob([bytes], { type });
+}
+
+// Only the types we know survive a write() round-trip are snapshotted. The OLE
+// bookkeeping formats Windows attaches ('DataObject', 'Ole Private Data') are not
+// meaningful to hand back, and restoring them is untested.
+export async function backupClipboard(): Promise<ClipboardSnapshot> {
+  const items: ClipboardEntry[][] = [];
+  for (const item of await readClipboardItems()) {
+    const entries: ClipboardEntry[] = [];
+    for (const type of item.types) {
+      if (!RESTORABLE_TYPES.includes(type)) continue;
+      const bytes = await clipboardBytes(item, type);
+      if (bytes) entries.push({ type, bytes });
+    }
+    if (entries.length > 0) items.push(entries);
+  }
+  return { items };
+}
+
+export async function restoreClipboard(snapshot: ClipboardSnapshot): Promise<void> {
+  if (snapshot.items.length === 0) {
     clipboard.clear();
     return;
   }
 
-  if (snapshot.format === 'image' && snapshot.image && !snapshot.image.isEmpty()) {
-    clipboard.write({
-      image: snapshot.image,
-      text: snapshot.text ?? '',
-      html: snapshot.html ?? '',
-      rtf: snapshot.rtf ?? '',
-    });
+  const items = snapshot.items.map((entries) => new ClipboardItem(
+    Object.fromEntries(entries.map((entry) => [entry.type, clipboardBlob(entry.bytes, entry.type)])),
+  ));
+
+  // If the OS refuses the write, whatever the capture left behind stays put. That is the
+  // text the user selected, which is what a plain Ctrl+C would have left them with —
+  // strictly better than clearing and handing back an empty clipboard.
+  try {
+    await clipboard.write(items);
+  } catch {
     return;
   }
-
-  clipboard.write({
-    text: snapshot.text ?? '',
-    html: snapshot.html ?? '',
-    rtf: snapshot.rtf ?? '',
-  });
 }
 
-function pollClipboard(snapshot: ClipboardSnapshot, resolve: (v: string) => void): void {
-  const check = () => clipboard.readText().trim();
-
-  const immediate = check();
-  if (immediate) {
-    restoreClipboard(snapshot);
-    resolve(immediate);
-    return;
-  }
-
-  let attempts = 0;
-  const MAX_ATTEMPTS = 150;
-  const poll = setInterval(() => {
-    attempts++;
-    if (attempts > MAX_ATTEMPTS) {
-      clearInterval(poll);
-      restoreClipboard(snapshot);
-      resolve('');
+async function pollClipboard(finish: (value: string) => Promise<void>): Promise<void> {
+  for (let attempt = 0; attempt <= POLL_MAX_ATTEMPTS; attempt++) {
+    const text = (await readClipboardText()).trim();
+    if (text) {
+      await finish(text);
       return;
     }
-    const text = check();
-    if (text) {
-      clearInterval(poll);
-      restoreClipboard(snapshot);
-      resolve(text);
-    }
-  }, 20);
+    await delay(POLL_INTERVAL_MS);
+  }
+  await finish('');
 }
 
-export function captureSelectedText(): Promise<string> {
+export async function captureSelectedText(): Promise<string> {
+  const snapshot = await backupClipboard();
+  clipboard.clear();
+
   return new Promise((resolve) => {
-    const snapshot = backupClipboard();
-    clipboard.clear();
+    const finish = async (value: string): Promise<void> => {
+      await restoreClipboard(snapshot);
+      resolve(value);
+    };
 
     switch (process.platform) {
       case 'darwin': {
@@ -122,29 +146,27 @@ export function captureSelectedText(): Promise<string> {
 
         execFile('/usr/bin/osascript', ['-e', script], (err, stdout) => {
           if (err) {
-            restoreClipboard(snapshot);
-            resolve('');
+            void finish('');
             return;
           }
           const axText = stdout.trim();
           if (axText) {
-            restoreClipboard(snapshot);
-            resolve(axText);
+            void finish(axText);
             return;
           }
-          pollClipboard(snapshot, resolve);
+          void pollClipboard(finish);
         });
         break;
       }
       case 'linux':
-        execFile('xdotool', ['key', 'ctrl+c'], () => pollClipboard(snapshot, resolve));
+        execFile('xdotool', ['key', 'ctrl+c'], () => void pollClipboard(finish));
         break;
       default:
         execFile(
           'powershell.exe',
           ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command',
             'Add-Type -A System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait("^c")'],
-          () => pollClipboard(snapshot, resolve),
+          () => void pollClipboard(finish),
         );
     }
   });

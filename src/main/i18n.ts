@@ -22,14 +22,34 @@ export function setEnCache(data: Record<string, string>): void {
   enCache = data;
 }
 
+interface CachedPack {
+  mtimeMs: number;
+  data: Record<string, string>;
+}
+
+/**
+ * Parsed packs keyed by absolute path. The renderer asks for every installed
+ * locale on startup and again whenever the language picker opens, and a pack is
+ * ~110 KB of JSON — re-reading and re-parsing all of them blocks the main
+ * process at exactly the wrong moment. Validated by mtime so dropping a file
+ * into the user language folder (or editing one in dev) still takes effect.
+ */
+const packCache = new Map<string, CachedPack>();
+
 export async function loadLanguageData(lang: string): Promise<Record<string, string> | null> {
   if (!isValidLocaleTag(lang)) return null;
   for (const dir of [getUserLanguageDir(), getLanguageDir()]) {
+    const file = path.join(dir, `${lang}.json`);
     try {
-      const raw = await fs.readFile(path.join(dir, `${lang}.json`), 'utf-8');
+      const { mtimeMs } = await fs.stat(file);
+      const cached = packCache.get(file);
+      if (cached && cached.mtimeMs === mtimeMs) return cached.data;
+      const raw = await fs.readFile(file, 'utf-8');
       const parsed: unknown = JSON.parse(raw);
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return parsed as Record<string, string>;
+        const data = parsed as Record<string, string>;
+        packCache.set(file, { mtimeMs, data });
+        return data;
       }
     } catch {
     }

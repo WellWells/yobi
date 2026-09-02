@@ -5,8 +5,8 @@ import { captureMarkdownSources } from '../../shared/captureSources';
 import { CapturePage } from './CapturePage';
 import './styles/capture.css';
 import './styles/captureCard.css';
-import 'katex/dist/katex.min.css';
 import { loadShiki } from './utils/shikiPlugins';
+import { loadKatex } from './utils/katexRuntime';
 import { prerenderMermaid, whenMermaidIdle } from './utils/mermaidRuntime';
 import { captureDiagramTheme } from './utils/forcedCodeTheme';
 
@@ -43,7 +43,7 @@ async function waitForRenderedLayout(): Promise<void> {
 }
 
 window.renderCaptureCard = async (request) => {
-  await loadShiki();
+  await Promise.all([loadShiki(), loadKatex()]);
   await prerenderMermaid(captureMarkdownSources(request), captureDiagramTheme(request.options.cardTheme));
   root.render(
     <React.StrictMode>

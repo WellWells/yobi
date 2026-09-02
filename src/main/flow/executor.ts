@@ -465,7 +465,7 @@ async function runFlowSteps(
 ): Promise<FlowExecutionResult> {
   const context = new Map<string, string>();
 
-  context.set('clipboard', clipboard.readText());
+  context.set('clipboard', await clipboard.readText());
   context.set('timestamp', new Date().toISOString());
   context.set('flow.name', flow.name);
 

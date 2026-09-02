@@ -182,11 +182,20 @@ function buildPerplexityAutomationScript(
   }));
   await sleep(250);
 
+  var SUBMIT_ICONS = ['pplx-icon-arrow-up', 'pplx-icon-arrow-right'];
+
   function findSubmitBtn() {
     var container = document.querySelector('[data-ask-input-container="true"]');
-    var btn = container ? container.querySelector('button.bg-button-bg') : null;
+    if (!container) return null;
+    var btn = container.querySelector('button.bg-button-bg');
     if (btn) return btn;
-    return document.querySelector('button[data-testid="submit-button"]');
+    // The send control is icon-only and its aria-label is localized, so the arrow icon
+    // is the stable marker: pointing right on a new thread, up in a follow-up composer.
+    var buttons = container.querySelectorAll('button');
+    for (var i = buttons.length - 1; i >= 0; i--) {
+      if (buttonHasAnyIcon(buttons[i], SUBMIT_ICONS)) return buttons[i];
+    }
+    return null;
   }
 
   var sent = false;

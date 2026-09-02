@@ -1,7 +1,7 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { MarkdownCaptureRequest } from '../../../../shared/types';
-import { REHYPE_PLUGINS } from '../../utils/shikiPlugins';
+import { useKatexPlugins } from '../../utils/katexRuntime';
 import { SharedCodeBlock, SharedPreBlock, remarkPlugins } from '../../utils/markdownConfig';
 import { captureCardCssVars } from '../../hooks/captureTheme';
 import {
@@ -13,13 +13,18 @@ import {
 
 const mdComponents = { pre: SharedPreBlock, code: SharedCodeBlock };
 
-const MarkdownBlock: React.FC<{ children: string }> = ({ children }) => (
-  <div className="capture-md-content">
-    <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={REHYPE_PLUGINS} components={mdComponents}>
-      {children}
-    </ReactMarkdown>
-  </div>
-);
+const MarkdownBlock: React.FC<{ children: string }> = ({ children }) => {
+  // In the capture window `capture-main` has already awaited loadKatex(), so the
+  // hook resolves synchronously and the screenshot never catches a pre-KaTeX frame.
+  const rehypePlugins = useKatexPlugins(children);
+  return (
+    <div className="capture-md-content">
+      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={mdComponents}>
+        {children}
+      </ReactMarkdown>
+    </div>
+  );
+};
 
 const MetaRow: React.FC<{ provider?: string; time?: string; tokens?: string }> = ({ provider, time, tokens }) => (
   provider || time || tokens ? (

@@ -3,6 +3,7 @@ import { config } from '../config';
 import { isWriteAutoApproved } from '../flow/agent/mcpTools';
 import { sendLog } from '../helpers';
 import { t } from '../i18n';
+import { getMcpRegistry } from '../mcp';
 import type { AgentConfirmRequest, McpConfirmRequest } from '../flow/agent/agentEngine';
 import type { FlowWriteConfirmRequest } from '../flow/agent/agentBuiltins';
 import { askRenderer } from './agentConfirmBridge';
@@ -37,7 +38,6 @@ async function confirmMcpWrite(
   });
 
   if (choice === 'approveAlways') {
-    const { getMcpRegistry } = await import('../mcp');
     getMcpRegistry()?.setAutoApproveWrites(req.serverId, true);
   }
   return choice !== 'deny';

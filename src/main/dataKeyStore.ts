@@ -1,6 +1,7 @@
 import Store from 'electron-store';
-import { getConfigDir } from './config';
-import { decryptToken, encryptToken } from './configEncryption';
+import { getConfigDir } from './configPaths';
+import { decryptToken, decryptTokenChecked, encryptToken } from './configEncryption';
+import { clearSecretFailures, recordSecretFailure } from './secretHealth';
 
 export { DATA_KEY_MOENV } from '../shared/types';
 
@@ -19,7 +20,11 @@ function getStore(): Store<DataKeyStoreShape> {
 
 export function getDataKey(name: string): string {
   const encrypted = getStore().store.keys[name];
-  return encrypted ? decryptToken(encrypted) : '';
+  if (!encrypted) return '';
+  const { value, failed } = decryptTokenChecked(encrypted, `dataKey.${name}`);
+  if (failed) recordSecretFailure({ scope: 'dataKey', id: name, field: 'value', label: name });
+  else clearSecretFailures('dataKey', name);
+  return value;
 }
 
 export function setDataKey(name: string, value: string): void {
@@ -31,4 +36,23 @@ export function setDataKey(name: string, value: string): void {
     delete keys[name];
   }
   getStore().set('keys', keys);
+  clearSecretFailures('dataKey', name);
+}
+
+/**
+ * Decrypts every stored key at startup purely to file failures. Without it a broken key
+ * stays invisible until the flow that needs it runs, which is the worst moment to find out.
+ */
+export function probeDataKeys(): void {
+  for (const name of Object.keys(getStore().store.keys)) getDataKey(name);
+}
+
+export function reEncryptDataKeys(): void {
+  const current = getStore().store.keys;
+  const next: Record<string, string> = {};
+  for (const [name, encrypted] of Object.entries(current)) {
+    const plaintext = decryptToken(encrypted, `dataKey.${name}`);
+    next[name] = plaintext ? encryptToken(plaintext) : encrypted;
+  }
+  getStore().set('keys', next);
 }

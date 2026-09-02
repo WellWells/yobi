@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { NAV_ORDER, useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import { useUpdateStore } from '../store/useUpdateStore';
+import { useSecretHealthStore } from '../store/secretHealthStore';
 import { useAltKeyHeld } from '../hooks/useAltKeyHeld';
 import type { View } from '../store/appStore';
 import { FLOW_COMMAND_ICON as FlowIcon } from '../config/chatModes';
@@ -28,6 +29,16 @@ const NAV_META: Record<View, { labelKey: string; icon: React.ReactNode }> = {
   about: { labelKey: 'nav.about', icon: <Info size={13} /> },
 };
 
+/**
+ * The only cue a user gets while sitting in another view, so an unreadable secret has to
+ * outrank an available update: a dead bot token is already breaking things, an update is not.
+ */
+function navHighlight(id: View, currentView: View, hasUpdate: boolean, secretsBroken: boolean): string | undefined {
+  if (id === 'settings' && secretsBroken && currentView !== 'settings') return '0 0 0 1px var(--mantine-color-red-6)';
+  if (id === 'about' && hasUpdate && currentView !== 'about') return '0 0 0 1px var(--mantine-color-orange-6)';
+  return undefined;
+}
+
 export const TitleBar: React.FC = () => {
   const { currentView, setView, status, queue } = useAppStore(
     useShallow((s) => ({
@@ -39,6 +50,7 @@ export const TitleBar: React.FC = () => {
   );
   const { t, locale } = useI18nStore();
   const hasUpdate = useUpdateStore((state) => state.hasUpdate);
+  const secretsBroken = useSecretHealthStore((state) => state.failures.length > 0);
   const agentTraces = useAgentRunStore((state) => state.traces);
 
   useEffect(() => agentApi.onTrace((payload) => useAgentRunStore.getState().applyTrace(payload)), []);
@@ -210,7 +222,7 @@ export const TitleBar: React.FC = () => {
                     '--button-hover': currentView !== item.id ? 'var(--mantine-color-default-hover)' : undefined,
                     padding: isTight ? 0 : '6px 12px',
                     flexShrink: 0,
-                    boxShadow: item.id === 'about' && hasUpdate && currentView !== 'about' ? '0 0 0 1px var(--mantine-color-orange-6)' : undefined,
+                    boxShadow: navHighlight(item.id, currentView, hasUpdate, secretsBroken),
                   } as React.CSSProperties}
                 >
                   {isTight ? icon : item.label}

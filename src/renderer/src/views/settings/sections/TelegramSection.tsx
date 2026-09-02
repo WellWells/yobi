@@ -4,6 +4,7 @@ import { Bot, KeyRound, Link, Megaphone, MessageSquare, Plug, Send, Users } from
 import dayjs from 'dayjs';
 import { AppPasswordInput } from '../../../components/AppPasswordInput';
 import { SectionCard, SettingRow, SettingField, SettingDivider, SelectDropdown, ToggleSwitch, SectionTitle } from '../components';
+import { SecretHealthAlert } from '../../../components/SecretHealthAlert';
 import { BotLlmDirectSetting } from './BotLlmDirectSetting';
 import { BotReplyPreview } from './BotReplyPreview';
 import { TelegramChannels } from './TelegramChannels';
@@ -70,6 +71,8 @@ export const TelegramSection: React.FC<Props> = ({
         </Group>
 
         <SettingDivider my={16} />
+
+        <SecretHealthAlert scopes={['telegram']} />
 
         {expanded && (
           <>

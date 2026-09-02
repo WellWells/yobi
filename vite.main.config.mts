@@ -15,8 +15,8 @@ function copyLanguageFilesPlugin(): Plugin {
   return {
     name: 'copy-language-files',
     closeBundle() {
-      copyJsonFiles(resolve(__dirname, 'language'), resolve(__dirname, 'out/language'));
-      copyJsonFiles(resolve(__dirname, 'language/community'), resolve(__dirname, 'out/language/community'));
+      copyJsonFiles(resolve(import.meta.dirname, 'language'), resolve(import.meta.dirname, 'out/language'));
+      copyJsonFiles(resolve(import.meta.dirname, 'language/community'), resolve(import.meta.dirname, 'out/language/community'));
     },
   };
 }
@@ -32,7 +32,7 @@ export default defineConfig({
   resolve: {
     conditions: ['node'],
     alias: {
-      '@shared': resolve(__dirname, 'src/shared'),
+      '@shared': resolve(import.meta.dirname, 'src/shared'),
     },
   },
   ssr: {
@@ -43,7 +43,7 @@ export default defineConfig({
     outDir: 'out/main',
     emptyOutDir: true,
     sourcemap: 'hidden',
-    ssr: resolve(__dirname, 'src/main/index.ts'),
+    ssr: resolve(import.meta.dirname, 'src/main/index.ts'),
     rollupOptions: {
       output: {
         format: 'cjs',

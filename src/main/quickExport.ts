@@ -2,8 +2,9 @@ import { clipboard } from 'electron';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { config, saveConfig, normalizeShareSettings } from './config';
-import { captureMarkdownDocument } from './capture';
+import { CaptureTooTallError, captureMarkdownDocument } from './capture';
 import { writeCaptureToClipboard, zipSingleFile } from './captureClipboard';
+import type { ClipboardCopyOutcome } from './captureClipboard';
 import { instanceHost, runWithExportPrompt } from './exportPrompt';
 import type { ExportPanel } from './exportPrompt';
 import { buildSafeFileNameFromTitle, buildSnapshotFileName, getOutputDir, getUniquePath } from './files';
@@ -20,6 +21,25 @@ import type {
 } from '../shared/types';
 
 type LangStrings = ReturnType<typeof getLangCache>;
+
+/**
+ * The panel can act on this, so it says how far over the limit the capture is and names a
+ * width that should fit. The suggestion is an estimate; if it misses, the user simply gets
+ * this notice again rather than losing anything.
+ */
+function tooTallNotice(err: CaptureTooTallError, strings: LangStrings): string {
+  const over = t(strings, 'quickExport.tooTall.over', {
+    format: err.format.toUpperCase(),
+    limit: String(err.verdict.limit),
+    height: String(err.verdict.encodedHeight),
+  });
+  // Only ever suggest what this panel can actually change: the width picker, or PDF.
+  const hint = err.verdict.suggestedWidth === null
+    ? t(strings, 'quickExport.tooTall.switch')
+    : t(strings, 'quickExport.tooTall.widen', { width: String(err.verdict.suggestedWidth) });
+  // CJK sentences already close with a full-width stop, which supplies its own spacing.
+  return over + (/[。！？]$/.test(over) ? '' : ' ') + hint;
+}
 
 export function buildQuickExportRequest(markdown: string, choice: CaptureExportChoice): MarkdownCaptureRequest {
   const settings = config.captureSettings;
@@ -146,7 +166,7 @@ export async function performQuickShare(
     expire: choice.expire,
     burnAfterReading: choice.burnAfterReading,
   });
-  clipboard.writeText(url);
+  await clipboard.writeText(url);
 
   let state = shareResultState(url, choice.burnAfterReading, ctx.strings);
   while (true) {
@@ -158,7 +178,7 @@ export async function performQuickShare(
     if (action !== 'revoke' || state.revoked) break;
     try {
       await revokePaste(ctx.instanceUrl, deleteUrl);
-      clipboard.writeText(markdown);
+      await clipboard.writeText(markdown);
       sendLog('🔗 Quick export share revoked — clipboard restored');
       state = { ...state, revoked: true, error: '' };
     } catch (err) {
@@ -187,7 +207,7 @@ export async function writeCaptureToDisk(
 export async function runQuickExport(): Promise<void> {
   const strings = getLangCache();
   const title = t(strings, 'quickExport.notify.title');
-  const markdown = clipboard.readText().trim();
+  const markdown = (await clipboard.readText()).trim();
   if (!markdown) {
     sendWebNotification(title, t(strings, 'quickExport.notify.empty'), 'warning');
     return;
@@ -196,6 +216,7 @@ export async function runQuickExport(): Promise<void> {
   let sharing = false;
   let revoked = false;
   let savedPath: string | null = null;
+  let copied: ClipboardCopyOutcome = 'ok';
   try {
     const choice = await runWithExportPrompt(
       {
@@ -221,13 +242,31 @@ export async function runQuickExport(): Promise<void> {
           `🖼️ Quick export: rendering ${markdown.length} chars as ${chosen.format.toUpperCase()} `
           + `to ${chosen.action === 'save' ? 'a file' : 'the clipboard'}`,
         );
-        const result = await captureMarkdownDocument(request);
+        let result;
+        try {
+          result = await captureMarkdownDocument(request);
+        } catch (err) {
+          // Recoverable: nothing has been written yet, so keep the panel open with the
+          // measured numbers instead of tearing it down and making the user start over.
+          if (!(err instanceof CaptureTooTallError)) throw err;
+          sendLog(`🚫 Quick export: ${chosen.format.toUpperCase()} needs ${err.verdict.encodedHeight}px, limit is ${err.verdict.limit}px`);
+          return { reopen: true, notice: tooTallNotice(err, strings) };
+        }
         const fileStem = request.options.fileName as string;
         if (chosen.action === 'save') {
           savedPath = await writeCaptureToDisk(result.buffer, result.ext, fileStem, chosen.zip, panel);
           if (!savedPath) return 'reopen';
         } else {
-          await writeCaptureToClipboard(result.buffer, result.ext, fileStem, chosen.zip);
+          try {
+            copied = await writeCaptureToClipboard(result.buffer, result.ext, fileStem, chosen.zip);
+          } catch (err) {
+            // The hotkey fires while the user is in another app, so a notification is the
+            // one channel that may be silenced or unpermitted exactly when it is needed.
+            // The panel is on screen right now — say it there, the way a too-tall capture does.
+            const detail = err instanceof Error ? err.message : String(err);
+            sendLog(`❌ Quick export: the clipboard refused the copy — ${detail}`);
+            return { reopen: true, notice: t(strings, 'quickExport.notify.copyFailed', { error: detail }) };
+          }
         }
         rememberCaptureChoice(chosen);
         return 'done';
@@ -261,10 +300,20 @@ export async function runQuickExport(): Promise<void> {
       return;
     }
 
+    // Three different true things, and saying "copied" for all of them would be the lie
+    // that hid this whole class of bug: the picture may have been refused while the file
+    // went through, or the clipboard may have declined to say what it took.
+    const format = (choice.zip ? 'zip' : choice.format).toUpperCase();
+    if (copied === 'ok') {
+      sendWebNotification(title, t(strings, 'quickExport.notify.copied', { format }), 'success');
+      return;
+    }
     sendWebNotification(
       title,
-      t(strings, 'quickExport.notify.copied', { format: (choice.zip ? 'zip' : choice.format).toUpperCase() }),
-      'success',
+      copied === 'fileOnly'
+        ? t(strings, 'quickExport.notify.copiedFileOnly', { format })
+        : t(strings, 'quickExport.notify.copiedUnverified', { format }),
+      'warning',
     );
   } catch (err) {
     const message = shareErrorText(err, strings);
