@@ -84,6 +84,7 @@ export interface PairingBridge {
 export function createPairingBridge(
   getPairing: () => TelegramPairingState,
   savePairing: (next: TelegramPairingState) => void,
+  onPaired?: (user: PairingUserProfile) => void,
 ): PairingBridge {
   return {
     isPairedUser: (userId) => {
@@ -97,6 +98,7 @@ export function createPairingBridge(
       const pairing = normalizePairingState(getPairing());
       const result = consumePairingCode(pairing, code, user);
       savePairing(result.nextState);
+      if (result.ok) onPaired?.(user);
       return { ok: result.ok, reason: result.reason };
     },
   };

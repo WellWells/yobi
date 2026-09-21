@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AgentRunSummary, AgentStageLabel, AgentTracePayload } from '../../../shared/types';
+import type { AgentCommandResult, AgentRunSummary, AgentStageLabel, AgentTracePayload } from '../../../shared/types';
 
 export interface AgentTraceTurn {
   turn: number;
@@ -17,14 +17,74 @@ export interface AgentPendingQuestion {
   runId: string;
   conversationPath: string;
   question: string;
+  /** The connectors disclosed when the question was asked; only the same set may answer it. */
+  mcpServerIds?: readonly string[];
 }
 
+/** Set equality, order-independent — the ids arrive in whatever order the composer built them. */
+export function sameConnectorScope(
+  a: readonly string[] | undefined,
+  b: readonly string[] | undefined,
+): boolean {
+  const left = new Set(a ?? []);
+  const right = new Set(b ?? []);
+  if (left.size !== right.size) return false;
+  for (const id of left) if (!right.has(id)) return false;
+  return true;
+}
+
+/**
+ * The disclosed set has to match as well as the conversation. Keying on the path alone let a
+ * plain `/agent <new goal>` resume a paused `/notion` run — inheriting a scope the user never
+ * asked for — while `/notion <answer>` could not answer the question `/notion` itself asked.
+ *
+ * Equality, not subset: toggling a connector between the question and the answer is the user
+ * changing their mind about what is on the table, so the text they type next starts a new run
+ * rather than silently answering an older one under a scope that no longer matches the pill.
+ */
 export function answeringRun(
   pending: AgentPendingQuestion | null,
   conversationPath: string,
+  mcpServerIds?: readonly string[],
 ): AgentPendingQuestion | null {
   if (!pending) return null;
-  return pending.conversationPath === conversationPath ? pending : null;
+  if (pending.conversationPath !== conversationPath) return null;
+  return sameConnectorScope(pending.mcpServerIds, mcpServerIds) ? pending : null;
+}
+
+/**
+ * The question a call leaves waiting, or null. The composer's scope wins when the call had one;
+ * otherwise the run's own connectors, as main reports them. A run resumed from the banner carries
+ * no composer scope, and recording that empty set made the reply typed under its connector start a
+ * new run instead of answering the question (2026-09-15).
+ */
+export function pendingQuestionFrom(
+  res: AgentCommandResult,
+  runId: string,
+  composerScope?: readonly string[],
+): AgentPendingQuestion | null {
+  if (!res.success || !res.question) return null;
+  const mcpServerIds = composerScope?.length ? composerScope : res.mcpServerIds;
+  return {
+    runId,
+    conversationPath: res.filePath ?? '',
+    question: res.question,
+    ...(mcpServerIds?.length ? { mcpServerIds } : {}),
+  };
+}
+
+/** A choice button, addressed to the run whose question offered it. */
+export interface AgentChoicePick {
+  runId: string;
+  text: string;
+}
+
+/** The question a picked choice answers, or null when that question is no longer the one waiting. */
+export function choiceAnswer(
+  pending: AgentPendingQuestion | null,
+  pick: AgentChoicePick,
+): AgentPendingQuestion | null {
+  return pending?.runId === pick.runId ? pending : null;
 }
 
 interface AgentRunStore {

@@ -5,6 +5,8 @@ import { normalizeLlmDirect } from '../configNormalizers';
 import { sendLog } from '../helpers';
 import { buildTelegramSettingsSnapshot } from '../telegramBridge';
 import { forgetChannel, issuePairingCode, revokePairingCode, unpairUser } from '../telegram';
+import { clearBotConversationsForUser } from '../botConversations';
+import { forgetBotChat, revokeBotPairing } from '../botDirectory';
 import type { IpcContext } from './context';
 
 function registerSyncSetting(
@@ -114,20 +116,24 @@ export function registerTelegramHandlers(ctx: IpcContext): void {
     return true;
   });
 
-  ipcMain.handle(IPC.UNPAIR_TELEGRAM_USER, (_event, userId: number) => {
+  ipcMain.handle(IPC.UNPAIR_TELEGRAM_USER, async (_event, userId: number) => {
     const numericUserId = Number(userId);
     if (!Number.isFinite(numericUserId) || numericUserId <= 0) return false;
     config.telegram.pairing = unpairUser(config.telegram.pairing, numericUserId);
     config.telegram.adminUserIds = config.telegram.adminUserIds.filter((id) => id !== numericUserId);
+    config.telegram.knownUsers = config.telegram.knownUsers.filter((user) => user.userId !== numericUserId);
     saveConfig({ telegram: config.telegram });
+    await clearBotConversationsForUser('telegram', numericUserId);
+    await revokeBotPairing('telegram', String(numericUserId));
     return true;
   });
 
-  ipcMain.handle(IPC.FORGET_TELEGRAM_CHANNEL, (_event, chatId: number) => {
+  ipcMain.handle(IPC.FORGET_TELEGRAM_CHANNEL, async (_event, chatId: number) => {
     const numericChatId = Number(chatId);
     if (!Number.isFinite(numericChatId) || numericChatId === 0) return false;
     config.telegram.channels = forgetChannel(config.telegram.channels, numericChatId);
     saveConfig({ telegram: config.telegram });
+    await forgetBotChat('telegram', String(numericChatId));
     return true;
   });
 }

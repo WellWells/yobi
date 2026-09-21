@@ -5,6 +5,7 @@ import { isByokRetryable, runByokCompletion } from '../../providers/byokClient';
 import { llmLane } from '../lanes';
 import { FlowAbortError } from '../runtime';
 import type { FlowExecutorDeps } from '../types';
+import { sendLog } from '../../helpers';
 
 export interface ProviderSession {
   threadUrl: string | null;
@@ -106,6 +107,11 @@ async function callWithTransportRetry(
       return await runProviderText(providerUrl, prompt, deps, timeoutMs, signal, session);
     } catch (err) {
       lastError = err;
+      // Browser failures can happen after submission. Replaying the prompt is not idempotent.
+      if (!isByokTargetUrl(providerUrl)) {
+        sendLog(`⚠️ [Agent] browser automation failed; automatic resend suppressed: ${err instanceof Error ? err.message : String(err)}`);
+        throw err;
+      }
       if (attempt >= MAX_TRANSPORT_RETRIES || !shouldRetryTransport(err, signal?.aborted ?? false)) throw err;
       await sleep(TRANSPORT_BACKOFF_MS * (attempt + 1), signal);
     }

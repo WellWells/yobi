@@ -1,9 +1,9 @@
-import React, { useMemo, useRef, useState } from 'react';
-import { Bot, ChartLine, CircleUserRound, DatabaseBackup, ImageDown, Keyboard, Palette, Plug, SlidersHorizontal, Sparkles } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Bot, Brain, ChartLine, CircleUserRound, DatabaseBackup, ImageDown, Keyboard, Palette, Plug, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useI18nStore } from '../../../store/i18nStore';
 import { useAppStore } from '../../../store/appStore';
-import { buildHaystacks, CATEGORY_TAG_MAP, TAG_SETS } from './settingsSearch';
+import { buildHaystacks, CATEGORY_IDS, CATEGORY_TAG_MAP, TAG_SETS } from './settingsSearch';
 import type { Category } from './settingsSearch';
 import { useShortcutAction } from '../../../shortcuts/useShortcutAction';
 
@@ -22,6 +22,16 @@ export function useSettingsNav() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState<Category>('general');
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const categoryRequest = useAppStore((s) => s.settingsCategoryRequest);
+
+  useEffect(() => {
+    if (!categoryRequest) return;
+    if ((CATEGORY_IDS as readonly string[]).includes(categoryRequest)) {
+      setSearchQuery('');
+      setActiveCategory(categoryRequest as Category);
+    }
+    useAppStore.getState().clearSettingsCategoryRequest();
+  }, [categoryRequest]);
 
   useShortcutAction('nav.find', () => {
     searchInputRef.current?.focus();
@@ -62,6 +72,7 @@ export function useSettingsNav() {
     { id: 'appearance' as Category, label: t('settings.group.appearance'), icon: React.createElement(Palette, { size: 14 }) },
     { id: 'export' as Category, label: t('settings.group.export'), icon: React.createElement(ImageDown, { size: 14 }) },
     { id: 'ai' as Category, label: t('settings.group.ai'), icon: React.createElement(Sparkles, { size: 14 }) },
+    { id: 'memory' as Category, label: t('settings.group.memory'), icon: React.createElement(Brain, { size: 14 }) },
     { id: 'accounts' as Category, label: t('settings.group.accounts'), icon: React.createElement(CircleUserRound, { size: 14 }) },
     { id: 'connectors' as Category, label: t('settings.group.connectors'), icon: React.createElement(Plug, { size: 14 }) },
     { id: 'bots' as Category, label: t('settings.group.bots'), icon: React.createElement(Bot, { size: 14 }) },

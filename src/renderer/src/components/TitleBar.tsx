@@ -6,11 +6,14 @@ import { useI18nStore } from '../store/i18nStore';
 import { useUpdateStore } from '../store/useUpdateStore';
 import { useSecretHealthStore } from '../store/secretHealthStore';
 import { useAltKeyHeld } from '../hooks/useAltKeyHeld';
+import { useFlowIssues } from '../hooks/useFlowIssues';
+import { hasAnyFlowIssue } from '../../../shared/flowIssues';
 import type { View } from '../store/appStore';
 import { FLOW_COMMAND_ICON as FlowIcon } from '../config/chatModes';
 import { AppWindow, Info, ListOrdered, MessageSquare, ScrollText, Settings } from 'lucide-react';
-import { agentApi, systemApi } from '../api/electronApi';
+import { agentApi, flowApi, systemApi } from '../api/electronApi';
 import { useAgentRunStore } from '../store/useAgentRunStore';
+import { useFlowBuildStore } from '../store/useFlowBuildStore';
 import {
   isMac,
   navScrollStyle,
@@ -33,8 +36,17 @@ const NAV_META: Record<View, { labelKey: string; icon: React.ReactNode }> = {
  * The only cue a user gets while sitting in another view, so an unreadable secret has to
  * outrank an available update: a dead bot token is already breaking things, an update is not.
  */
-function navHighlight(id: View, currentView: View, hasUpdate: boolean, secretsBroken: boolean): string | undefined {
+function navHighlight(
+  id: View,
+  currentView: View,
+  hasUpdate: boolean,
+  secretsBroken: boolean,
+  flowBroken: boolean,
+): string | undefined {
   if (id === 'settings' && secretsBroken && currentView !== 'settings') return '0 0 0 1px var(--mantine-color-red-6)';
+  // A clashing bot command or an unfilled required setting means a flow the user
+  // believes is armed answers nothing — same urgency band as an update, orange.
+  if (id === 'flow' && flowBroken && currentView !== 'flow') return '0 0 0 1px var(--mantine-color-orange-6)';
   if (id === 'about' && hasUpdate && currentView !== 'about') return '0 0 0 1px var(--mantine-color-orange-6)';
   return undefined;
 }
@@ -51,9 +63,13 @@ export const TitleBar: React.FC = () => {
   const { t, locale } = useI18nStore();
   const hasUpdate = useUpdateStore((state) => state.hasUpdate);
   const secretsBroken = useSecretHealthStore((state) => state.failures.length > 0);
+  const flowBroken = hasAnyFlowIssue(useFlowIssues());
   const agentTraces = useAgentRunStore((state) => state.traces);
 
   useEffect(() => agentApi.onTrace((payload) => useAgentRunStore.getState().applyTrace(payload)), []);
+  // Subscribed next to the trace because it is the other half of the same picture: an `/agent`
+  // run can start building a flow from any view, including one that has no panel open.
+  useEffect(() => flowApi.onBuildProgress((payload) => useFlowBuildStore.getState().applyBuild(payload)), []);
   const handleCancelAgent = useCallback((runId: string): void => { void agentApi.cancel(runId); }, []);
   const barRef = useRef<HTMLDivElement>(null);
   const navRef = useRef<HTMLDivElement>(null);
@@ -222,7 +238,7 @@ export const TitleBar: React.FC = () => {
                     '--button-hover': currentView !== item.id ? 'var(--mantine-color-default-hover)' : undefined,
                     padding: isTight ? 0 : '6px 12px',
                     flexShrink: 0,
-                    boxShadow: navHighlight(item.id, currentView, hasUpdate, secretsBroken),
+                    boxShadow: navHighlight(item.id, currentView, hasUpdate, secretsBroken, flowBroken),
                   } as React.CSSProperties}
                 >
                   {isTight ? icon : item.label}

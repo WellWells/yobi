@@ -13,6 +13,7 @@ import { execOnChange } from './stateGate';
 import { execSearch } from './search';
 import { execResearch } from './research';
 import { execGmapReviews } from './mapReviews';
+import { execLineRead } from './lineMessages';
 import {
   execBot,
   execBrowser,
@@ -39,7 +40,7 @@ export async function executeSkill(
 ): Promise<string> {
   switch (type) {
     case 'shell':
-      return execShell(config, timeoutMs);
+      return execShell(config, timeoutMs, signal);
     case 'run':
       return execRun(config);
     case 'js':
@@ -80,6 +81,8 @@ export async function executeSkill(
       return execResearch(config, deps);
     case 'gmap_reviews':
       return execGmapReviews(config);
+    case 'line_read':
+      return execLineRead(config, stepId, deps);
     case 'youtube':
       return execYoutube(config);
     case 'youtube_subs':

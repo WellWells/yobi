@@ -1,10 +1,8 @@
 import type { ComponentType } from 'react';
 import { KeyRound, Layers } from 'lucide-react';
-import { PROVIDER_LABELS, PROVIDER_URLS, buildByokUrl, buildByokGroupUrl, buildDuckaiModelUrl, isByokGroupUrl, isByokUrl, isModelUrlHidden } from '../../../shared/types';
-import type { ByokGroupSnapshot, ByokInstanceSnapshot, ByokProviderType, DuckaiModelInfo, HiddenSources } from '../../../shared/types';
-import { ClaudeIcon, DuckDuckGoIcon, GeminiIcon, GrokIcon, KimiIcon, OpenAiIcon, OpenRouterIcon, PerplexityIcon } from './brandIcons';
-
-export { buildDuckaiModelUrl };
+import { PROVIDER_LABELS, PROVIDER_URLS, buildByokUrl, buildByokGroupUrl, isByokGroupUrl, isByokUrl, isModelUrlHidden } from '../../../shared/types';
+import type { ByokGroupSnapshot, ByokInstanceSnapshot, ByokProviderType, HiddenSources } from '../../../shared/types';
+import { ClaudeIcon, GeminiIcon, GrokIcon, KimiIcon, OpenAiIcon, OpenRouterIcon, PerplexityIcon } from './brandIcons';
 
 interface ModelIconProps {
   size?: number;
@@ -21,8 +19,9 @@ export interface ModelOption {
 
 export const MODELS: ModelOption[] = [
   { label: PROVIDER_LABELS.gemini, url: PROVIDER_URLS.gemini, icon: GeminiIcon },
-  { label: PROVIDER_LABELS.perplexity, url: PROVIDER_URLS.perplexity, icon: PerplexityIcon },
+  { label: PROVIDER_LABELS.claude, url: PROVIDER_URLS.claude, icon: ClaudeIcon },
   { label: PROVIDER_LABELS.chatgpt, url: PROVIDER_URLS.chatgpt, icon: OpenAiIcon },
+  { label: PROVIDER_LABELS.perplexity, url: PROVIDER_URLS.perplexity, icon: PerplexityIcon },
 ];
 
 export const DEFAULT_MODEL_URL = MODELS[0].url;
@@ -31,6 +30,7 @@ const MODEL_ICON_BY_URL: Record<string, ModelIcon> = {
   [PROVIDER_URLS.gemini]: GeminiIcon,
   [PROVIDER_URLS.perplexity]: PerplexityIcon,
   [PROVIDER_URLS.chatgpt]: OpenAiIcon,
+  [PROVIDER_URLS.claude]: ClaudeIcon,
 } as const;
 
 const BYOK_TYPE_ICONS: Partial<Record<ByokProviderType, ModelIcon>> = {
@@ -45,23 +45,6 @@ const BYOK_TYPE_ICONS: Partial<Record<ByokProviderType, ModelIcon>> = {
 
 export function getByokTypeIcon(type: ByokProviderType): ModelIcon {
   return BYOK_TYPE_ICONS[type] ?? KeyRound;
-}
-
-export function isDuckaiUrl(url: string): boolean {
-  try {
-    return new URL(url).hostname.includes('duck.ai');
-  } catch {
-    return false;
-  }
-}
-
-export function makeDuckaiModelOption(info: DuckaiModelInfo): ModelOption {
-  return {
-    label: `Duck AI · ${info.label}`,
-    shortLabel: info.label,
-    url: buildDuckaiModelUrl(info.id),
-    icon: DuckDuckGoIcon,
-  };
 }
 
 export function makeByokModelOption(instance: ByokInstanceSnapshot): ModelOption {
@@ -100,7 +83,6 @@ export interface ProviderSelectGroup {
 }
 
 export interface ProviderSelectExtras {
-  duckaiModels: ModelOption[];
   byokModels: ModelOption[];
   byokGroupModels: ModelOption[];
 }
@@ -119,12 +101,12 @@ export interface ProviderSection {
   models: PickerModel[];
 }
 
-const NO_HIDDEN: HiddenSources = { providers: [], duckaiModelIds: [], byokIds: [], byokGroupIds: [] };
+const NO_HIDDEN: HiddenSources = { providers: [], byokIds: [], byokGroupIds: [] };
 
 export const PROVIDER_DROPDOWN_MAX_HEIGHT = 320;
 
 export function providerExtraModels(extras: ProviderSelectExtras): ModelOption[] {
-  return [...extras.duckaiModels, ...extras.byokModels, ...extras.byokGroupModels];
+  return [...extras.byokModels, ...extras.byokGroupModels];
 }
 
 function applyHidden(
@@ -151,7 +133,7 @@ export function buildProviderSections(
   const hidden = opts.hidden ?? NO_HIDDEN;
   const keep = opts.keepVisibleUrl;
   const candidates: ProviderSection[] = [
-    { label: null, models: applyHidden([...MODELS, ...extras.duckaiModels], hidden, keep) },
+    { label: null, models: applyHidden(MODELS, hidden, keep) },
     { label: labels.byok, models: applyHidden(extras.byokModels, hidden, keep) },
     { label: labels.byokGroups, models: applyHidden(extras.byokGroupModels, hidden, keep) },
   ];
@@ -178,20 +160,8 @@ export function visibleModels(extras: ProviderSelectExtras, hidden: HiddenSource
     .filter((model) => !isModelUrlHidden(model.url, hidden));
 }
 
-export function nextModelUrl(
-  currentUrl: string,
-  models: ModelOption[],
-  direction: 1 | -1 = 1,
-): string {
-  if (models.length === 0) return currentUrl;
-  const idx = models.findIndex((m) => m.url === currentUrl);
-  if (idx === -1) return models[0].url;
-  return models[(idx + direction + models.length) % models.length].url;
-}
-
 export function getModelIconByUrl(url: string): ModelIcon {
   if (MODEL_ICON_BY_URL[url]) return MODEL_ICON_BY_URL[url];
-  if (isDuckaiUrl(url)) return DuckDuckGoIcon;
   if (isByokGroupUrl(url)) return Layers;
   if (isByokUrl(url)) return KeyRound;
   return GeminiIcon;

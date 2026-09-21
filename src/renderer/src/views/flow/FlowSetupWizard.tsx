@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Box, Button, Center, Group, Stack, Text } from '@mantine/core';
+import { Box, Button, Group, Stack, Text } from '@mantine/core';
 import { TriangleAlert } from 'lucide-react';
 import { AppModal } from '../../components/AppModal';
 import { VariableField } from './VariableField';
 import { analyzeFlow } from './flowCapabilities';
-import { SKILL_ICON, skillHue } from './skills';
+import { SKILL_ICON } from './skills';
+import { TemplateIcon } from './TemplateIcon';
 import { useI18nStore } from '../../store/i18nStore';
 import { useAppStore } from '../../store/appStore';
 import { telegramApi, lineApi } from '../../api/electronApi';
@@ -17,10 +18,15 @@ export interface FlowSetupWizardProps {
   template: FlowTemplate | null;
   t: (key: string) => string;
   onClose: () => void;
+  /**
+   * Leaving for another view. Distinct from `onClose`, which only drops back to the template
+   * gallery still open underneath — that gallery would otherwise sit on top of Settings.
+   */
+  onNavigateAway: () => void;
   onCreate: (flow: FlowDefinition) => void;
 }
 
-export const FlowSetupWizard: React.FC<FlowSetupWizardProps> = ({ template, t, onClose, onCreate }) => {
+export const FlowSetupWizard: React.FC<FlowSetupWizardProps> = ({ template, t, onClose, onNavigateAway, onCreate }) => {
   const locale = useI18nStore((s) => s.locale);
   const setView = useAppStore((s) => s.setView);
   const [flow, setFlow] = useState<FlowDefinition | null>(null);
@@ -59,30 +65,20 @@ export const FlowSetupWizard: React.FC<FlowSetupWizardProps> = ({ template, t, o
     } : f));
   };
 
-  const goToSettings = (): void => { setView('settings'); onClose(); };
+  const goToSettings = (): void => { setView('settings'); onNavigateAway(); };
 
   return (
     <AppModal
       opened
       onClose={onClose}
       title={t(template.titleKey)}
-      icon={SKILL_ICON[template.primarySkill]}
+      icon={template.icon ? <template.icon size={16} /> : SKILL_ICON[template.primarySkill]}
       size="md"
       zIndex={Z_MODAL_NESTED}
     >
       <Stack gap="md">
         <Group gap="sm" align="flex-start" wrap="nowrap">
-          <Center
-            w={40}
-            h={40}
-            style={{
-              flexShrink: 0,
-              borderRadius: 'var(--mantine-radius-md)',
-              background: `var(--mantine-color-${skillHue(template.primarySkill)}-light)`,
-            }}
-          >
-            {SKILL_ICON[template.primarySkill]}
-          </Center>
+          <TemplateIcon template={template} size={40} />
           <Text fz="sm" c="dimmed" style={{ lineHeight: 1.6 }}>{t(template.descKey)}</Text>
         </Group>
 
@@ -123,7 +119,7 @@ export const FlowSetupWizard: React.FC<FlowSetupWizardProps> = ({ template, t, o
                 asQuestion
                 onChange={(value) => setVarValue(variable.key, value)}
                 onChangeMany={setVarValues}
-                onBeforeNavigate={onClose}
+                onBeforeNavigate={onNavigateAway}
                 t={t}
               />
             ))}
@@ -138,7 +134,8 @@ export const FlowSetupWizard: React.FC<FlowSetupWizardProps> = ({ template, t, o
         )}
 
         <Group justify="flex-end">
-          <Button variant="default" size="xs" onClick={onClose}>{t('dialog.cancel')}</Button>
+          {/* Not "cancel": this drops back into the still-open template gallery. */}
+          <Button variant="default" size="xs" onClick={onClose}>{t('flow.setup.back')}</Button>
           <Button variant="filled" size="xs" disabled={missing.length > 0} onClick={() => onCreate(flow)}>
             {t('flow.setup.add')}
           </Button>

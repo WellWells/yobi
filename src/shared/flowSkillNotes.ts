@@ -49,7 +49,7 @@ export const SKILL_NOTES: Partial<Record<SkillType, string>> = {
 
   air_quality: 'The geocoder matches Latin-script place names only, same as weather. Compare {{<outputKey>.level}} numerically (1 Good … 6 Hazardous, 0 = no reading) rather than matching the .status text, which is always English.',
 
-  email_send: 'A pure sink with no outputKey. SMTP credentials come from the app settings and are never written into the flow, so a flow using this is safe to export or share — but it does nothing on a machine where email has not been configured.',
+  email_send: 'A pure sink with no outputKey. SMTP credentials come from the app settings and are never written into the flow, so a flow using this is safe to export or share — but it does nothing on a machine where email has not been configured. attachments takes LOCAL PATHS ONLY, normally {{file}} from an earlier step; a URL there is rejected, so fetch it with file_download first and attach {{file}}.',
 
   shell: 'Runs with the user\'s full privileges and its output is whatever the command printed. Prefer a purpose-built skill when one exists (http for APIs, file_read for files) and keep shell for work that genuinely needs the system.',
 

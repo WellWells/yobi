@@ -6,3 +6,15 @@ export {
   normalizePairingState,
 } from './dmPolicy';
 export { forgetChannel, reduceChannelState } from './channels';
+export {
+  canPostFromMember,
+  collectDirectoryCandidates,
+  describeKnownUser,
+  parseIdentity,
+  parseRecipientIds,
+  parseMember,
+  restorePairedUsers,
+  runDirectoryBackfill,
+  upsertKnownUser,
+  upsertResolvedChannel,
+} from './directory';

@@ -29,12 +29,21 @@ function resolveFontFamily(): string {
   return declared || 'system-ui, sans-serif';
 }
 
-function baseConfig(): MermaidConfig {
+/** Exported for the test suite. */
+export function baseConfig(): MermaidConfig {
   return {
     startOnLoad: false,
     securityLevel: 'strict',
     suppressErrorRendering: true,
     htmlLabels: false,
+    // mermaid 12 defaults to the ELK layout and the `neo` look; both are pinned to what the
+    // app has always rendered so an upgrade never silently restyles a user's saved diagrams.
+    layout: 'dagre',
+    look: 'classic',
+    // Its new 120px minimum node width widens the box but leaves an SVG label at the left
+    // edge of it, so state labels drew off centre. Zero sizes nodes to their labels again.
+    flowchart: { minNodeWidth: 0 },
+    state: { minNodeWidth: 0 },
     theme: 'base',
     logLevel: 'fatal',
     fontFamily: resolveFontFamily(),

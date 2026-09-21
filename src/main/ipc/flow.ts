@@ -1,17 +1,18 @@
 import { ipcMain, app } from 'electron';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
-import { FLOW_EXPORT_TYPE, IPC } from '../../shared/types';
-import type { ChatCommandResult, FlowDefinition, FlowGenerationResult, ScraperPickRequest } from '../../shared/types';
+import { IPC } from '../../shared/types';
+import type { ChatCommandResult, FlowBuildOutcome, FlowBuildRequestPayload, FlowDefinition, ScraperPickRequest, TriggerConfig } from '../../shared/types';
+import { buildFlowExportPayload } from '../../shared/flowExport';
 import { cleanTitle } from '../../shared/conversationTitle';
-import { config } from '../config';
+import { config, saveConfig } from '../config';
 import { buildSafeFileNameFromTitle, listOutputFiles } from '../files';
-import { buildOutputMarkdown } from '../output';
-import { saveCommandOutput } from '../chat/commandOutput';
-import { deliverTempChatResult, isTempChatMode } from '../tempChat';
+import { deliverCommandResultToTempChat, saveCommandOutput } from '../chat/commandOutput';
+import { isTempChatMode } from '../tempChat';
 import { sendLog, sendToRenderer, sendWebNotification } from '../helpers';
 import { loadLanguageData } from '../i18n';
 import { getCheckpointPath } from '../flow';
+import { previewSchedule } from '../flow/schedulePreview';
 import { discoverFeeds } from '../urlParser';
 import { pickSelector } from '../selectorPicker';
 import { showSaveDialogForWin } from './context';
@@ -135,7 +136,14 @@ export function registerFlowHandlers(ctx: IpcContext): void {
       };
 
       if (isTempChatMode()) {
-        deliverTempChatResult({ content: buildOutputMarkdown(markdownOptions) });
+        deliverCommandResultToTempChat({
+          markdownOptions,
+          prompt: markdownOptions.prompt,
+          response: markdownOptions.response,
+          providerLabel: markdownOptions.provider,
+          ...(resolvedCommand ? { command: resolvedCommand } : {}),
+          ...(flowResult.tokenUsage ? { usage: flowResult.tokenUsage } : {}),
+        });
         return { result: flowResult };
       }
 
@@ -160,24 +168,38 @@ export function registerFlowHandlers(ctx: IpcContext): void {
     return flowManager.abort(flowId);
   });
 
-  ipcMain.handle(IPC.FLOW_GENERATE, async (_event, description: string): Promise<FlowGenerationResult> => {
-    if (!flowManager) return { ok: false, error: 'FlowManager not available' };
-    const desc = (description ?? '').trim();
-    if (!desc) return { ok: false, error: 'Empty description' };
+  ipcMain.handle(IPC.FLOW_GENERATE, async (_event, request: FlowBuildRequestPayload): Promise<FlowBuildOutcome> => {
+    if (!flowManager) return { status: 'failed', phase: 'understand', error: 'FlowManager not available' };
+    const desc = (request?.description ?? '').trim();
+    if (!desc) return { status: 'failed', phase: 'understand', error: 'Empty description' };
+
+    // Remembered before the build runs, so the choice sticks even if this one fails.
+    const providerUrl = (request.providerUrl ?? '').trim();
+    if (providerUrl !== config.flowGenerateUrl) {
+      config.flowGenerateUrl = providerUrl;
+      saveConfig({ flowGenerateUrl: providerUrl });
+    }
 
     const langData = await loadLanguageData(config.locale);
     const queueLabel = langData?.['flow.generate.queueLabel'] ?? 'AI Flow';
-    const result = await flowManager.queueGeneration(desc, queueLabel);
+    const result = await flowManager.queueBuild(desc, {
+      buildId: (request.buildId ?? '').trim() || 'flow-build',
+      queueLabel,
+      ...(providerUrl ? { providerUrl } : {}),
+      ...(request.answers?.length ? { answers: request.answers } : {}),
+    });
 
-    if (!result.ok) {
-      const compactError = (result.error ?? '').replace(/\s+/g, ' ').trim();
+    // A question is the build working as intended and the panel is already showing it, so it
+    // gets no notification — only an outcome the user has stopped watching for does.
+    if (result.status === 'failed') {
+      const compactError = result.error.replace(/\s+/g, ' ').trim();
       const displayError = compactError.length > 140 ? `${compactError.slice(0, 140)}…` : compactError;
       const title = langData?.['flow.generate.failed.title'] ?? 'AI generation failed';
       const body = (langData?.['flow.generate.failed.body']
         ?? 'The AI response could not be parsed into a valid flow. Please try again. ({{error}})')
         .replace(/\{\{error\}\}/g, () => displayError);
       sendWebNotification(title, body, 'error');
-    } else {
+    } else if (result.status === 'created') {
       const title = langData?.['flow.generate.done.title'] ?? 'Flow generated';
       const body = (langData?.['flow.generate.done.body']
         ?? 'AI created the flow {{name}}. Review and enable it when ready.')
@@ -185,6 +207,12 @@ export function registerFlowHandlers(ctx: IpcContext): void {
       sendWebNotification(title, body, 'success');
     }
     return result;
+  });
+
+  ipcMain.handle(IPC.FLOW_GET_AI_URL, () => config.flowGenerateUrl);
+
+  ipcMain.handle(IPC.FLOW_PREVIEW_SCHEDULE, (_event, trigger: TriggerConfig) => {
+    return previewSchedule(trigger);
   });
 
   ipcMain.handle(IPC.FLOW_EXPORT, async (_event, flow: FlowDefinition) => {
@@ -196,7 +224,7 @@ export function registerFlowHandlers(ctx: IpcContext): void {
         filters: [{ name: 'JSON', extensions: ['json'] }],
       });
       if (result.canceled || !result.filePath) return false;
-      const payload = { type: FLOW_EXPORT_TYPE, version: 1, flow };
+      const payload = buildFlowExportPayload(flow);
       await fs.writeFile(result.filePath, JSON.stringify(payload, null, 2), 'utf-8');
       return true;
     } catch (err: unknown) {

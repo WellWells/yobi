@@ -5,7 +5,7 @@ import type { UiNotificationPayload, WorkerAttention } from '../shared/types';
 import { IPC, PROVIDER_URLS } from '../shared/types';
 import { detectProvider, getProviderLabel } from './providers';
 import { isPerplexitySessionCookie } from './providers/perplexity';
-import { appendLogLine } from './logFile';
+import { appendLogLine, fileStamp } from './logFile';
 
 let _mainWin: BrowserWindow | null = null;
 let _notifyEnabled = true;
@@ -48,15 +48,6 @@ export function relaunchApp(reason = 'restart requested'): void {
   sendLog(`🔄 Relaunching Yobi (${reason})...`);
   app.relaunch();
   setTimeout(() => app.quit(), 600);
-}
-
-function pad(value: number): string {
-  return String(value).padStart(2, '0');
-}
-
-function fileStamp(now: Date): string {
-  const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-  return `${date} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 }
 
 export function sendLog(msg: string): void {
@@ -113,14 +104,62 @@ export function sendSecurityNotification(
   emitNotification(title, body, 'error', action);
 }
 
+/**
+ * How long the native notification gets to report `show` before the in-app toast steps in.
+ * Electron emits `show` only after the OS accepted the notice (WinRT `ToastNotifier::Show`,
+ * `UNUserNotificationCenter addNotificationRequest`, `notify_notification_show`) and `failed`
+ * when it did not; measured at ~10 ms on Windows, so silence this long means it was dropped.
+ * Exported for the test suite.
+ */
+export const NATIVE_SHOW_GRACE_MS = 1_500;
+
+/** The two verdicts a native notification can give. Exported for the test suite. */
+export interface NativeDeliveryEvents {
+  once(event: 'show', listener: () => void): unknown;
+  once(event: 'failed', listener: (event: unknown, error: string) => void): unknown;
+}
+
+/**
+ * Calls `onUndelivered` exactly once if the native notification never reaches the user:
+ * the OS reported `failed`, or stayed silent past the grace period. A verdict that arrives
+ * after that is ignored, so the user never gets the same notice twice.
+ * Exported for the test suite.
+ */
+export function watchNativeDelivery(
+  notification: NativeDeliveryEvents,
+  onUndelivered: (reason: string) => void,
+  graceMs: number = NATIVE_SHOW_GRACE_MS,
+): void {
+  let settled = false;
+  const settle = (reason: string | null): void => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    if (reason !== null) onUndelivered(reason);
+  };
+  const timer = setTimeout(() => settle(`no show within ${graceMs} ms`), graceMs);
+  notification.once('show', () => settle(null));
+  notification.once('failed', (_event, error) => settle(`failed: ${error}`));
+}
+
+/**
+ * Native first; the in-app toast exists for the notice the OS could not show. The two are
+ * never sent together: a banner is the right channel while the window is hidden, and the
+ * toast covers a platform without notifications or a Mac that has not allowed them yet.
+ */
 function emitNotification(
   title: string,
   body: string,
   level: UiNotificationPayload['level'],
   action?: UiNotificationPayload['action'],
 ): void {
-  sendToRenderer(IPC.UI_NOTIFICATION, { title, body, level, action });
-  if (!Notification.isSupported()) return;
+  const showInApp = (): void => {
+    sendToRenderer(IPC.UI_NOTIFICATION, { title, body, level, action });
+  };
+  if (!Notification.isSupported()) {
+    showInApp();
+    return;
+  }
   const notification = new Notification({
     title,
     body,
@@ -133,6 +172,10 @@ function emitNotification(
   if (action?.id === 'open-secret-settings' && _secretSettingsReveal) {
     notification.on('click', _secretSettingsReveal);
   }
+  watchNativeDelivery(notification, (reason) => {
+    appendLogLine(`[${fileStamp(new Date())}] Native notification not shown (${reason}); falling back to the in-app toast`);
+    showInApp();
+  });
   notification.show();
 }
 

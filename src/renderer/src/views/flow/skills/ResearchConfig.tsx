@@ -2,6 +2,7 @@ import React from 'react';
 import { Stack, Text } from '@mantine/core';
 import { ShieldAlert } from 'lucide-react';
 import { AppTextInput } from '../../../components/AppTextInput';
+import { AppTextarea } from '../../../components/AppTextarea';
 import { AppNumberInput } from '../../../components/AppNumberInput';
 import { SelectDropdown } from '../../../components/SelectDropdown';
 import { ToggleSwitch } from '../../../components/ToggleSwitch';
@@ -23,6 +24,18 @@ export const ResearchConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }
         value={query}
         onChange={(e) => onChange({ ...step.config, query: e.currentTarget.value })}
         size="sm"
+      />
+
+      <AppTextarea
+        label={t('flow.skill.research.urls')}
+        description={t('flow.skill.research.urls.hint')}
+        placeholder={t('flow.skill.research.urls.placeholder')}
+        value={step.config.urls ?? ''}
+        onChange={(e) => onChange({ ...step.config, urls: e.currentTarget.value })}
+        size="sm"
+        autosize
+        minRows={2}
+        maxRows={5}
       />
 
       <SelectDropdown

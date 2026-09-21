@@ -1,6 +1,6 @@
 # Switching Providers and BYOK Instances
 
-Once you have [added a BYOK instance](add-instance.md), it appears everywhere a provider can be picked — alongside ChatGPT, Gemini, Perplexity, and Duck.ai. Nothing switches to BYOK unless you select it.
+Once you have [added a BYOK instance](add-instance.md), it appears everywhere a provider can be picked — alongside ChatGPT, Claude, Gemini, and Perplexity. Nothing switches to BYOK unless you select it.
 
 ## In chat (and for the global hotkey)
 
@@ -27,13 +27,13 @@ The *rewrite with model* button on a saved answer shows the same list — pick a
 | --- | --- | --- |
 | API key | none needed | your own key |
 | Login / CAPTCHA | may require sign-in, may pause on verification | never — direct HTTPS call |
-| File attachments | Gemini supports uploads | not supported (text only) |
+| File attachments | Gemini, ChatGPT, and Claude support uploads | not supported (text only) |
 | Prompt length | trimmed to each site's input limit | sent verbatim |
 | Cost | free (your account's web quota) | billed by your API provider |
 
 Two small caveats:
 
-- Hotkey captures of a **YouTube link without subtitles** are still routed to the Gemini *browser* provider on purpose — an API model can't watch a video, while Gemini's web app can.
+- Hotkey captures of a **YouTube link without subtitles** are still routed to the Gemini *browser* provider on purpose, since it can watch the video itself. In a flow, the `youtube` step handles the same case with a **Gemini API** key you select on the step — that is the one API that reads a YouTube URL, so an OpenAI-compatible instance won't do.
 - Each answer's Markdown file records the instance name as its provider, so your history stays attributable.
 
 ## When an instance is deleted

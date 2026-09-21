@@ -128,6 +128,17 @@ export const EmailSendConfig: React.FC<SkillConfigProps> = ({ step, onChange, t 
         onChange={(e) => onChange({ ...step.config, fromName: e.currentTarget.value })}
         size="sm"
       />
+      <AppTextInput
+        label={t('flow.skill.email_send.attachments')}
+        placeholder={t('flow.skill.email_send.attachments.placeholder')}
+        value={step.config.attachments ?? ''}
+        onChange={(e) => onChange({ ...step.config, attachments: e.currentTarget.value })}
+        size="sm"
+        mono
+      />
+      {(step.config.attachments ?? '').trim() && (
+        <Text fz="xs" c="dimmed">{t('flow.skill.email_send.attachments.hint')}</Text>
+      )}
       <Text fz="xs" c="dimmed">{t('flow.skill.email_send.hint')}</Text>
     </Stack>
   );

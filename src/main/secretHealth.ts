@@ -1,5 +1,6 @@
 import { safeStorage } from 'electron';
-import Store from 'electron-store';
+import type Store from 'electron-store';
+import { openStoreWithRecovery } from './configStore';
 import { getConfigDir } from './configPaths';
 import { encryptToken } from './configEncryption';
 import type { SecretFailure, SecretHealth, SecretKeyState, SecretScope } from '../shared/types';
@@ -20,7 +21,7 @@ let store: Store<HealthStoreShape> | null = null;
 
 function getStore(): Store<HealthStoreShape> {
   if (!store) {
-    store = new Store<HealthStoreShape>({ name: 'secret-health', cwd: getConfigDir(), defaults: { canary: '' } });
+    store = openStoreWithRecovery<HealthStoreShape>('secret-health', getConfigDir(), { canary: '' });
   }
   return store;
 }

@@ -3,6 +3,7 @@ import type {
   BotLlmDirectConfig,
   FlowExecutionResult,
   TelegramChannel,
+  TelegramKnownUser,
   TelegramOutputChoice,
   TelegramPairingState,
   TelegramReplyMode,
@@ -12,6 +13,16 @@ import type {
 } from '../../shared/types';
 import { createPairingBridge } from './dmPolicy';
 import { attachChannelDiscovery } from './channels';
+import { collectDirectoryCandidates, runDirectoryBackfill } from './directory';
+import type { DirectorySources } from './directory';
+import { attachPresenceTracking } from './presence';
+import {
+  markBotReachable,
+  markBotUnreachable,
+  recordBotContact,
+  trackBotSend,
+  type BotContactKind,
+} from '../botDirectory';
 import {
   attachTelegramHandlers,
   syncPrivateCommands,
@@ -42,6 +53,9 @@ export interface TelegramRuntimeDeps {
   savePairing: (next: TelegramPairingState) => void;
   getChannels: () => TelegramChannel[];
   saveChannels: (next: TelegramChannel[]) => void;
+  getKnownUsers: () => TelegramKnownUser[];
+  saveKnownUsers: (next: TelegramKnownUser[]) => void;
+  getDirectorySources: () => Promise<Omit<DirectorySources, 'channels' | 'pairedUserIds'>>;
   isAdminUser: (userId: number) => boolean;
   onTaskRequest: (request: TelegramTaskRequest) => Promise<{ taskId: string }>;
   onStatusRequest: () => string;
@@ -62,6 +76,7 @@ export interface TelegramRuntimeDeps {
     chatId: number,
     userId: number,
     onProgressText: (text: string) => void,
+    plain?: boolean,
   ) => Promise<BotBuiltinRunResult>;
   onAgentAnswer: (
     answer: string,
@@ -72,7 +87,13 @@ export interface TelegramRuntimeDeps {
   hasPendingAgentAsk: (chatId: number, userId: number) => boolean;
   onDropAgentAsk: (chatId: number, userId: number) => void;
   onNewConversation: (chatId: number, userId: number) => Promise<boolean>;
-  getFlowCommands?: () => Array<{ flowId: string; command: string; description: string; inputVariable: string }>;
+  getFlowCommands?: () => Array<{
+    flowId: string;
+    command: string;
+    description: string;
+    inputVariable: string;
+    allowedUserIds: string[];
+  }>;
   onFlowCommand?: (
     flowId: string,
     inputVariable: string,
@@ -121,7 +142,7 @@ export class TelegramRuntime {
   }
 
   async sendProactive(chatId: number, text: string): Promise<void> {
-    await messaging.sendProactive(this.msgCtx, chatId, text);
+    await this.tracked(chatId, () => messaging.sendProactive(this.msgCtx, chatId, text));
   }
 
   async sendProactiveFile(
@@ -131,7 +152,18 @@ export class TelegramRuntime {
     caption?: string,
     authorizedPaths?: string[],
   ): Promise<void> {
-    await messaging.sendProactiveFile(this.msgCtx, chatId, filePath, sendAs, caption, authorizedPaths);
+    await this.tracked(chatId, () => messaging.sendProactiveFile(
+      this.msgCtx, chatId, filePath, sendAs, caption, authorizedPaths,
+    ));
+  }
+
+  /**
+   * A negative id is a group or channel, a positive one a user — the directory keeps them apart so
+   * "blocked" is never reported against a channel, nor "kicked" against a person.
+   */
+  private async tracked<T>(chatId: number, send: () => Promise<T>): Promise<T> {
+    const kind: BotContactKind = chatId < 0 ? 'chat' : 'user';
+    return trackBotSend('telegram', kind, String(chatId), send);
   }
 
   async syncWithConfig(): Promise<void> {
@@ -199,14 +231,14 @@ export class TelegramRuntime {
     target: TelegramReplyTarget,
     payload: TelegramTaskSuccessPayload,
   ): Promise<void> {
-    await messaging.sendTaskSuccess(this.msgCtx, target, payload);
+    await this.tracked(target.chatId, () => messaging.sendTaskSuccess(this.msgCtx, target, payload));
   }
 
   async sendTaskError(
     target: TelegramReplyTarget,
     payload: { providerLabel: string; message: string },
   ): Promise<void> {
-    await messaging.sendTaskError(this.msgCtx, target, payload);
+    await this.tracked(target.chatId, () => messaging.sendTaskError(this.msgCtx, target, payload));
   }
 
   private async deliverBuiltinResult(
@@ -286,6 +318,45 @@ export class TelegramRuntime {
 
     this.updateStatus('running');
     this.deps.onLog(`[telegram] bot running as @${this.botUsername || 'unknown'}`);
+    void this.backfillDirectory(candidate, me.id);
+  }
+
+  /**
+   * Fire-and-forget: my_chat_member only fires when the bot's own status changes, so a chat it was
+   * already sitting in can never re-announce itself. Asking Telegram about the ids we still hold is
+   * the only way back from a cleared config.
+   */
+  private async backfillDirectory(bot: Bot<TelegramContext>, botId: number): Promise<void> {
+    try {
+      const extra = await this.deps.getDirectorySources();
+      if (this.bot !== bot) return;
+      const candidates = collectDirectoryCandidates({
+        ...extra,
+        channels: this.deps.getChannels(),
+        pairedUserIds: this.deps.getPairing().pairedUsers.map((user) => user.userId),
+      });
+      if (candidates.chatIds.length === 0 && candidates.userIds.length === 0) return;
+      await runDirectoryBackfill(
+        {
+          getChat: (chatId) => bot.api.getChat(chatId),
+          getChatMember: (chatId, userId) => bot.api.getChatMember(chatId, userId),
+        },
+        botId,
+        candidates,
+        {
+          getChannels: () => this.deps.getChannels(),
+          saveChannels: (next) => this.deps.saveChannels(next),
+          getKnownUsers: () => this.deps.getKnownUsers(),
+          saveKnownUsers: (next) => this.deps.saveKnownUsers(next),
+          getPairing: () => this.deps.getPairing(),
+          savePairing: (next) => this.deps.savePairing(next),
+          recordContact: (input) => { void recordBotContact(input).catch(() => undefined); },
+          onLog: (message) => this.deps.onLog(message),
+        },
+      );
+    } catch (err: unknown) {
+      this.deps.onLog(`[telegram] directory backfill failed: ${getErrorMessage(err)}`);
+    }
   }
 
   private createBot(token: string): { bot: Bot<TelegramContext>; intake: MediaIntake } {
@@ -298,7 +369,32 @@ export class TelegramRuntime {
     const pairingBridge = createPairingBridge(
       () => this.deps.getPairing(),
       (next) => this.deps.savePairing(next),
+      (user) => {
+        void recordBotContact({
+          platform: 'telegram',
+          kind: 'user',
+          id: String(user.userId),
+          ...(user.username ? { username: user.username } : {}),
+          ...(user.firstName ? { firstName: user.firstName } : {}),
+          ...(user.lastName ? { lastName: user.lastName } : {}),
+          pairedAt: new Date().toISOString(),
+        }).catch(() => undefined);
+      },
     );
+    attachPresenceTracking(bot, {
+      onPresence: ({ contact, reachability }) => {
+        void recordBotContact(contact)
+          .then(() => (
+            reachability === 'ok'
+              ? markBotReachable('telegram', contact.kind, contact.id)
+              : markBotUnreachable('telegram', contact.kind, contact.id, reachability)
+          ))
+          .catch((err: unknown) => {
+            this.deps.onLog(`[telegram] could not record presence: ${getErrorMessage(err)}`);
+          });
+      },
+      onLog: this.deps.onLog,
+    });
     attachChannelDiscovery(bot, {
       isPairedUser: pairingBridge.isPairedUser,
       getChannels: () => this.deps.getChannels(),
@@ -334,6 +430,7 @@ export class TelegramRuntime {
             request.replyTarget.chatId,
             request.replyTarget.userId,
             progress.push,
+            request.plain,
           );
         } finally {
           progress.stop();

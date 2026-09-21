@@ -120,7 +120,54 @@ async function pollClipboard(finish: (value: string) => Promise<void>): Promise<
   await finish('');
 }
 
-export async function captureSelectedText(): Promise<string> {
+/**
+ * Undoes a provider's own "Copy" click at the end of a task — and nothing else.
+ *
+ * This used to restore unconditionally, 30 seconds to 10 minutes after the snapshot was taken,
+ * so anything the user copied in another app meanwhile was overwritten, or cleared outright
+ * when the snapshot had been empty. Bot tasks fire at arbitrary times, so there was nothing to
+ * connect the loss to. Requiring the clipboard to still hold the answer we just read makes
+ * that impossible: normally `interceptCopy` keeps the OS clipboard out of it entirely, and
+ * then this correctly does nothing at all.
+ */
+export async function restoreClipboardAfterTask(
+  snapshot: ClipboardSnapshot,
+  providerAnswer: string,
+): Promise<boolean> {
+  const answer = providerAnswer.trim();
+  if (!answer) return false;
+  const current = (await readClipboardText()).trim();
+  if (!current || current !== answer) return false;
+  await restoreClipboard(snapshot);
+  return true;
+}
+
+let captureInFlight: Promise<string> | null = null;
+
+export function isClipboardCaptureInFlight(): boolean {
+  return captureInFlight !== null;
+}
+
+/**
+ * Captures the current selection, leaving the clipboard as it found it.
+ *
+ * Only one capture may run at a time. The hotkey debounce is 1 s but polling runs for up to
+ * 3 s, so a second press used to overlap the first: it snapshotted a clipboard the first had
+ * already cleared, then read the text the first restored as if it were a new selection, and
+ * finally handed back its own empty snapshot. That sent the user's old clipboard to the
+ * provider AND left them with an empty clipboard. An overlapping press is dropped instead —
+ * the capture already running is the one the user is waiting for.
+ */
+export function captureSelectedText(): Promise<string> {
+  if (captureInFlight) return Promise.resolve('');
+  const run = runCapture();
+  captureInFlight = run;
+  return run.finally(() => {
+    captureInFlight = null;
+  });
+}
+
+async function runCapture(): Promise<string> {
   const snapshot = await backupClipboard();
   clipboard.clear();
 

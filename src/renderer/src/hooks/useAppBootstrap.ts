@@ -1,16 +1,17 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { NAV_ORDER, useAppStore } from '../store/appStore';
 import { useFlowStore } from '../store/useFlowStore';
 import { useI18nStore } from '../store/i18nStore';
 import { useUpdateStore } from '../store/useUpdateStore';
 import { useSecretHealthStore } from '../store/secretHealthStore';
+import { useMcpStore } from '../store/useMcpStore';
 import { initThemeFromConfig } from '../store/themeStore';
 import type { LayoutMode } from '../store/appStore';
-import { accountApi, byokApi, ipcEvents, settingsApi, tempChatApi } from '../api/electronApi';
-import { makeByokGroupModels, makeByokModelOption, makeDuckaiModelOption } from '../config/models';
+import { accountApi, byokApi, chatgptModelApi, claudeModelApi, geminiModelApi, ipcEvents, mcpApi, settingsApi, tempChatApi } from '../api/electronApi';
+import { onIdle } from '../utils/idle';
+import { makeByokGroupModels, makeByokModelOption } from '../config/models';
 import { useShortcutAction } from '../shortcuts/useShortcutAction';
 import { useShortcutStore } from '../store/shortcutStore';
-import { onIdle } from '../utils/idle';
 
 export function useAppBootstrap() {
   const appendLog = useAppStore((s) => s.appendLog);
@@ -23,15 +24,16 @@ export function useAppBootstrap() {
   const setUserNickname = useAppStore((s) => s.setUserNickname);
   const setView = useAppStore((s) => s.setView);
   const hydrateAiUrl = useAppStore((s) => s.hydrateAiUrl);
-  const setDuckaiModels = useAppStore((s) => s.setDuckaiModels);
   const setByokModels = useAppStore((s) => s.setByokModels);
   const setByokGroupModels = useAppStore((s) => s.setByokGroupModels);
   const setHiddenSources = useAppStore((s) => s.setHiddenSources);
+  const setGeminiModels = useAppStore((s) => s.setGeminiModels);
+  const setClaudeModels = useAppStore((s) => s.setClaudeModels);
+  const setChatgptModels = useAppStore((s) => s.setChatgptModels);
   const setTempChatMode = useAppStore((s) => s.setTempChatMode);
   const setTempChatResult = useAppStore((s) => s.setTempChatResult);
   const loadLocales = useI18nStore((s) => s.loadLocales);
   const initializeListeners = useUpdateStore((s) => s.initializeListeners);
-  const duckaiModelsFetched = useRef(false);
 
   useEffect(() => {
     void loadLocales();
@@ -58,27 +60,42 @@ export function useAppBootstrap() {
     void settingsApi.getShowTokenUsage().then((show) => {
       if (typeof show === 'boolean') useAppStore.setState({ showTokenUsage: show });
     });
-    if (!duckaiModelsFetched.current) {
-      duckaiModelsFetched.current = true;
-      // Unlike its neighbours this is not a config read: it drives the shared worker
-      // window through a real Duck.ai page load and clicks the model picker open,
-      // measured at ~1.8 s of main-process work. Off the boot window it goes, so it
-      // stops racing the provider warm-up for the very same worker window.
-      onIdle(() => {
-        void settingsApi.fetchDuckaiModels().then((models) => {
-          if (models && models.length > 0) {
-            setDuckaiModels(models.map(makeDuckaiModelOption));
-          }
-        });
-      });
-    }
     void byokApi.getSettings().then((snapshot) => {
       setByokGroupModels(makeByokGroupModels(snapshot.groups));
       setByokModels(snapshot.instances.map(makeByokModelOption));
     });
     void settingsApi.getHiddenSources().then(setHiddenSources);
     void accountApi.getStatuses().then(setAccountStatuses);
-  }, [initializeListeners, loadLocales, setHotkey, setHotkeyEnabled, setUserNickname, hydrateAiUrl, setDuckaiModels, setByokModels, setByokGroupModels, setHiddenSources, setTempChatMode, setAccountStatuses]);
+    // Hydrated here, not in the Settings hook: the composer derives a slash command per
+    // connected server, so the list has to exist before Settings is ever opened.
+    void mcpApi.list().then(useMcpStore.getState().setServers);
+    void geminiModelApi.get().then((state) => {
+      setGeminiModels(state);
+      if (state.catalog) return;
+      // Only with nothing cached yet (a first run). Unlike its neighbours this is not a config
+      // read: it may load Gemini in the shared worker window and open its model picker, so it
+      // stays off the boot window instead of racing the worker warm-up.
+      onIdle(() => {
+        void geminiModelApi.refresh().then(setGeminiModels);
+      });
+    });
+    void claudeModelApi.get().then((state) => {
+      setClaudeModels(state);
+      if (state.catalog) return;
+      // Same first-run rule as Gemini; main skips it outright when Claude is hidden or signed out.
+      onIdle(() => {
+        void claudeModelApi.refresh().then(setClaudeModels);
+      });
+    });
+    void chatgptModelApi.get().then((state) => {
+      setChatgptModels(state);
+      if (state.catalog) return;
+      // Same first-run rule again; main skips it when ChatGPT is hidden or signed out.
+      onIdle(() => {
+        void chatgptModelApi.refresh().then(setChatgptModels);
+      });
+    });
+  }, [initializeListeners, loadLocales, setHotkey, setHotkeyEnabled, setUserNickname, hydrateAiUrl, setByokModels, setByokGroupModels, setHiddenSources, setTempChatMode, setAccountStatuses, setGeminiModels, setClaudeModels, setChatgptModels]);
 
   useEffect(() => {
     const unsubs = [
@@ -92,9 +109,13 @@ export function useAppBootstrap() {
         setView('chat');
       }),
       ipcEvents.onTempChatResult(({ content }) => setTempChatResult(content)),
+      mcpApi.onServerStatus(useMcpStore.getState().setServers),
+      geminiModelApi.onChanged(setGeminiModels),
+      claudeModelApi.onChanged(setClaudeModels),
+      chatgptModelApi.onChanged(setChatgptModels),
     ];
     return () => unsubs.forEach((fn) => fn());
-  }, [appendLog, setStatus, setQueue, setAccountStatus, setView, setTempChatMode, setTempChatResult]);
+  }, [appendLog, setStatus, setQueue, setAccountStatus, setView, setTempChatMode, setTempChatResult, setGeminiModels, setClaudeModels, setChatgptModels]);
 
   useShortcutAction('nav.switchView', (_event, combo) => {
     const digit = Number(combo.slice(combo.lastIndexOf('+') + 1));

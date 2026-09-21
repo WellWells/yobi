@@ -1,13 +1,17 @@
 import React from 'react';
 import { Badge, Box, Checkbox, Group, Loader, Stack, Text, Tooltip } from '@mantine/core';
+import { TriangleAlert } from 'lucide-react';
 import { ToggleSwitch } from '../../components/ToggleSwitch';
 import type { FlowDefinition } from '../../../../shared/types';
+import type { FlowIssue } from '../../../../shared/flowIssues';
+import { describeFlowIssue } from './flowIssueText';
 import styles from './FlowSidebarItem.module.css';
 
 export interface FlowSidebarItemProps {
   flow: FlowDefinition;
   selected: boolean;
   isRunning: boolean;
+  issues: FlowIssue[];
   t: (k: string) => string;
   selectMode: boolean;
   checked: boolean;
@@ -17,13 +21,18 @@ export interface FlowSidebarItemProps {
   onToggleEnabled: (enabled: boolean) => void;
 }
 
+function issueId(issue: FlowIssue): string {
+  return `${issue.kind} ${issue.scope ?? ''} ${issue.command ?? ''}`;
+}
+
 export const FlowSidebarItem: React.FC<FlowSidebarItemProps> = ({
-  flow, selected, isRunning, t, selectMode, checked, onToggleSelect,
+  flow, selected, isRunning, issues, t, selectMode, checked, onToggleSelect,
   onRowClick, onContextMenu, onToggleEnabled,
 }) => {
   return (
     <Box
       className={styles.row}
+      data-flow-id={flow.id}
       data-selected={(selectMode ? checked : selected) ? 'true' : undefined}
       onClick={(e) => onRowClick({ ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey })}
       onContextMenu={selectMode ? undefined : onContextMenu}
@@ -54,6 +63,30 @@ export const FlowSidebarItem: React.FC<FlowSidebarItemProps> = ({
           </Group>
         </Stack>
         <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
+          {issues.length > 0 && (
+            <Tooltip
+              position="top"
+              maw={280}
+              multiline
+              label={(
+                <Stack gap={4}>
+                  {issues.map((issue) => (
+                    <Text key={issueId(issue)} fz="xs" lh={1.5}>{describeFlowIssue(issue, t)}</Text>
+                  ))}
+                </Stack>
+              )}
+            >
+              {/* A tooltip is mouse-only, so the reasons have to reach the label too. */}
+              <Box
+                component="span"
+                role="img"
+                aria-label={issues.map((issue) => describeFlowIssue(issue, t)).join(' ')}
+                style={{ display: 'inline-flex' }}
+              >
+                <TriangleAlert size={13} color="var(--mantine-color-orange-6)" />
+              </Box>
+            </Tooltip>
+          )}
           {isRunning && (
             <Box component="span" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
               <Loader size={14} color="teal" />

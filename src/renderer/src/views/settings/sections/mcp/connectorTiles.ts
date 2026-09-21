@@ -1,5 +1,6 @@
 import { findCatalogEntry, MCP_CATALOG, normalizeMcpUrl } from '../../../../../../shared/mcpCatalog';
 import type { McpCatalogCategory, McpCatalogEntry } from '../../../../../../shared/mcpCatalog';
+import { findBuiltinConnector } from '../../../../../../shared/builtinConnectors';
 import type { McpServerView } from '../../../../../../shared/types';
 
 export interface ConnectorTile {
@@ -32,6 +33,7 @@ export function buildTiles(servers: readonly McpServerView[], t: (key: string) =
   }
 
   for (const server of servers) {
+    if (findBuiltinConnector(server.id)) continue; // rendered by its own built-in card
     if (findCatalogEntry(server.url)) continue;
     tiles.push({
       key: server.id,

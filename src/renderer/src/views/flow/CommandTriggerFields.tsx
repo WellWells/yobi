@@ -2,13 +2,18 @@ import React from 'react';
 import { Group, Stack, Text } from '@mantine/core';
 import { Bot, MessageSquare, TriangleAlert } from 'lucide-react';
 import { AppTextInput } from '../../components/AppTextInput';
+import { BotUserAllowlist } from '../../components/BotUserAllowlist';
 import type { TriggerConfig } from '../../../../shared/types';
+import type { FlowIssue } from '../../../../shared/flowIssues';
+import { describeFlowIssue } from './flowIssueText';
 
 interface CommandTriggerFieldsProps {
   kind: 'bot' | 'chat';
   value: TriggerConfig;
   patch: (p: Partial<TriggerConfig>) => void;
   t: (k: string) => string;
+  /** Another enabled flow already claims this command. */
+  conflict?: FlowIssue;
   showBotCompoundHint?: boolean;
   cardStyle?: React.CSSProperties;
 }
@@ -19,7 +24,7 @@ const FIELDS = {
 } as const;
 
 export const CommandTriggerFields: React.FC<CommandTriggerFieldsProps> = ({
-  kind, value, patch, t, showBotCompoundHint = false, cardStyle,
+  kind, value, patch, t, conflict, showBotCompoundHint = false, cardStyle,
 }) => {
   const fields = FIELDS[kind];
   const Icon = kind === 'bot' ? Bot : MessageSquare;
@@ -74,10 +79,24 @@ export const CommandTriggerFields: React.FC<CommandTriggerFieldsProps> = ({
         size="sm"
       />
 
+      {kind === 'bot' && (
+        <BotUserAllowlist
+          value={value.botAllowedUserIds}
+          onChange={(botAllowedUserIds) => patch({ botAllowedUserIds })}
+        />
+      )}
+
       {commandEmpty && (
         <Group gap={6} align="center">
           <TriangleAlert size={13} color="var(--mantine-color-orange-6)" />
           <Text fz="xs" c="orange">{tk('command.empty')}</Text>
+        </Group>
+      )}
+
+      {conflict && (
+        <Group gap={6} align="flex-start" wrap="nowrap">
+          <TriangleAlert size={13} color="var(--mantine-color-orange-6)" style={{ marginTop: 2, flexShrink: 0 }} />
+          <Text fz="xs" c="orange">{describeFlowIssue(conflict, t)}</Text>
         </Group>
       )}
 

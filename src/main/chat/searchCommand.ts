@@ -3,14 +3,13 @@ import type { SearchCommandResult, SearchMode } from '../../shared/types';
 import { pickConversationTitle } from '../../shared/conversationTitle';
 import { config } from '../config';
 import { listOutputFiles } from '../files';
-import { buildOutputMarkdown } from '../output';
-import { saveCommandOutput } from './commandOutput';
+import { deliverCommandResultToTempChat, saveCommandOutput } from './commandOutput';
 import { runUrlShortcut } from './urlShortcut';
-import { deliverTempChatResult, isTempChatMode } from '../tempChat';
+import { isTempChatMode } from '../tempChat';
 import { sendLog, sendToRenderer } from '../helpers';
 import { localizeUserFacingError, t } from '../i18n';
 import { getProviderLabel } from '../providers';
-import { runWebSearch, SearchPipelineError } from '../search';
+import { buildSearchHistory, runWebSearch, SearchPipelineError } from '../search';
 import { measureTokens } from '../tokenMeter';
 import { mdLinkDestination } from '../search/synthesize';
 import type { SearchProgress, SourceDoc } from '../search';
@@ -98,7 +97,14 @@ export function runSearchCommand(
     };
 
     if (origin === 'app' && isTempChatMode()) {
-      deliverTempChatResult({ content: buildOutputMarkdown(markdownOptions) });
+      deliverCommandResultToTempChat({
+        markdownOptions,
+        prompt: query,
+        response,
+        providerLabel: markdownOptions.provider,
+        command: commandName,
+        usage,
+      });
       return { success: true, answer: response, title };
     }
 
@@ -137,8 +143,15 @@ export function runSearchCommand(
         }
       }
 
+      // Read at run time, not when the command was typed: turns can land while it waits in the queue.
+      const history = await buildSearchHistory({
+        conversationPath,
+        targetUrl: resolvedTarget,
+        mode: searchMode,
+        tempChat: origin === 'app' && isTempChatMode(),
+      });
       const { result: outcome, usage } = await measureTokens(
-        () => runWebSearch(query, resolvedTarget, config.locale, onProgress, searchMode),
+        () => runWebSearch(query, resolvedTarget, config.locale, onProgress, searchMode, undefined, history),
       );
 
       const sourcesSection = buildSourcesSection(outcome.sources, t(strings, 'search.output.sources'));

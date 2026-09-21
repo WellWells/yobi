@@ -43,6 +43,17 @@ export function registerMcpHandlers(): void {
     if (!registry) return emptyResult('MCP is unavailable');
     return registry.disconnectServer((id ?? '').trim());
   });
+
+  ipcMain.handle(IPC.MCP_SET_BUILTIN_ENABLED, async (_event, id: string, enabled: boolean): Promise<McpServerActionResult> => {
+    const registry = getMcpRegistry();
+    if (!registry) return emptyResult('MCP is unavailable');
+    try {
+      const result = await registry.setBuiltinEnabled((id ?? '').trim(), enabled === true);
+      return { ...result, error: result.error ? localizeUserFacingError(result.error, getLangCache()) : undefined };
+    } catch (err) {
+      return { ok: false, servers: registry.listServers(), error: localizeUserFacingError(errText(err), getLangCache()) };
+    }
+  });
 }
 
 function errText(err: unknown): string {

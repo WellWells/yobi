@@ -36,6 +36,7 @@ interface RowProps {
   prevStep?: SkillInstance;
   flowId: string;
   botTrigger: TriggerConfig;
+  hasHotkeyTrigger: boolean;
   prevSteps: SkillInstance[];
   allPrevSteps: SkillInstance[];
   loopVars: LoopVarHint[];
@@ -44,8 +45,8 @@ interface RowProps {
 }
 
 const SortableStepRow: React.FC<RowProps> = React.memo(({
-  step, index, total, level, prevLevel, prevStep, flowId, botTrigger, prevSteps, allPrevSteps,
-  loopVars, flowVariables, t,
+  step, index, total, level, prevLevel, prevStep, flowId, botTrigger, hasHotkeyTrigger, prevSteps,
+  allPrevSteps, loopVars, flowVariables, t,
 }) => {
   const locked = ENDERS.includes(step.type);
   const {
@@ -97,6 +98,7 @@ const SortableStepRow: React.FC<RowProps> = React.memo(({
           prevSteps={prevSteps}
           allPrevSteps={allPrevSteps}
           flowTrigger={botTrigger}
+          hasHotkeyTrigger={hasHotkeyTrigger}
           loopVars={loopVars}
           flowVariables={flowVariables}
           dragHandle={handle}
@@ -153,6 +155,11 @@ export const FlowStepsCard: React.FC<FlowStepsCardProps> = ({ flow, t, onAddStep
 
   const botTrigger = useMemo(
     () => [flow.trigger, ...(flow.extraTriggers ?? [])].find((tr) => tr.type === 'bot') ?? flow.trigger,
+    [flow.trigger, flow.extraTriggers],
+  );
+
+  const hasHotkeyTrigger = useMemo(
+    () => [flow.trigger, ...(flow.extraTriggers ?? [])].some((tr) => tr.type === 'hotkey'),
     [flow.trigger, flow.extraTriggers],
   );
 
@@ -227,6 +234,7 @@ export const FlowStepsCard: React.FC<FlowStepsCardProps> = ({ flow, t, onAddStep
                     prevStep={index > 0 ? flow.steps[index - 1] : undefined}
                     flowId={flow.id}
                     botTrigger={botTrigger}
+                    hasHotkeyTrigger={hasHotkeyTrigger}
                     prevSteps={rowData[index].prevSteps}
                     allPrevSteps={rowData[index].allPrevSteps}
                     loopVars={rowData[index].loopVars}

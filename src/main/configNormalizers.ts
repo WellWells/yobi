@@ -1,5 +1,5 @@
 import { DEFAULT_CAPTURE_WIDTH, DEFAULT_SHARE_INSTANCE, MAX_CAPTURE_WIDTH, MIN_CAPTURE_WIDTH, SHARE_EXPIRE_VALUES, clampCaptureMargin, defaultQuickExportHotkey, normalizeShareExpireList } from '../shared/types';
-import type { BotBuiltinCommand, BotBuiltinCommands, BotByokCommands, BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureSettings, QuickExportFormat, QuickExportSettings, CustomTemplate, HiddenSources, LinePairedUser, LinePairingState, LinePendingCode, McpServerConfig, NotifyEventPrefs, Provider, PromptLength, PromptPreferences, PromptTone, ShareExpire, ShareExpireCache, ShareSettings, TelegramChannel, TelegramPairedUser, TelegramPairingState, TelegramPendingCode } from '../shared/types';
+import type { BotBuiltinCommand, BotBuiltinCommands, BotByokCommands, BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureSettings, QuickExportFormat, QuickExportSettings, CustomTemplate, HiddenSources, LinePairedUser, LinePairingState, LinePendingCode, McpServerConfig, NotifyEventPrefs, Provider, PromptLength, PromptPreferences, PromptTone, ShareExpire, ShareExpireCache, ShareSettings, TelegramChannel, TelegramChatKind, TelegramKnownUser, TelegramPairedUser, TelegramPairingState, TelegramPendingCode } from '../shared/types';
 import {
   AGENT_ASK_TTL_MAX_MINUTES,
   AGENT_ASK_TTL_MIN_MINUTES,
@@ -8,8 +8,19 @@ import {
   DEFAULT_AGENT_ASK_TTL_MINUTES,
   PROVIDERS,
   detectByokProviderType,
+  migrateRemovedTargetUrl,
 } from '../shared/types';
 import { isThemePreference } from '../shared/themes';
+import type { GeminiModelCatalog, GeminiModelChoice, GeminiModelInfo } from '../shared/geminiModels';
+import type {
+  ClaudeModelCatalog,
+  ClaudeModelChoice,
+  ClaudeModelInfo,
+  ClaudeModelOptions,
+  ClaudeOptionInfo,
+} from '../shared/claudeModels';
+import type { ChatgptModelCatalog, ChatgptModelChoice, ChatgptModelInfo } from '../shared/chatgptModels';
+import { slugifyCommandName } from '../shared/mcpCommand';
 import {
   CAPTURE_BACKGROUND_STYLES,
   DEFAULT_CAPTURE_BACKGROUND_STYLE,
@@ -37,17 +48,23 @@ export function normalizeConfig(raw: unknown): Config {
 
   const hidden = normalizeHiddenSources({
     providers: obj.hiddenProviders,
-    duckaiModelIds: obj.hiddenDuckaiModelIds,
     byokIds: obj.hiddenByokIds,
     byokGroupIds: obj.hiddenByokGroupIds,
   });
+  // Written by versions that still had Duck.ai; dropped so it does not ride along forever.
+  const { hiddenDuckaiModelIds: _legacyDuckaiIds, ...current } = obj as Partial<Config> & { hiddenDuckaiModelIds?: unknown };
 
   return {
     ...defaultStored,
-    ...obj,
+    ...current,
+    targetUrl: normalizeStoredTarget(obj.targetUrl) || defaultStored.targetUrl,
+    flowGenerateUrl: normalizeStoredTarget(obj.flowGenerateUrl),
+    memoryCurateUrl: normalizeStoredTarget(obj.memoryCurateUrl),
     localeSetByUser: inferredLocaleSetByUser,
     metricsEnabled: obj.metricsEnabled !== false,
     hotkeyEnabled: obj.hotkeyEnabled !== false,
+    lineReaderEnabled: obj.lineReaderEnabled === true,
+    thunderbirdEnabled: obj.thunderbirdEnabled === true,
     notifyEvents: normalizeNotifyEvents(obj.notifyEvents),
     youtubePrompt: typeof obj.youtubePrompt === 'string' ? obj.youtubePrompt : defaultStored.youtubePrompt,
     theme: isThemePreference(obj.theme) ? obj.theme : defaultStored.theme,
@@ -70,10 +87,126 @@ export function normalizeConfig(raw: unknown): Config {
     byokGroups: normalizeByokGroups(obj.byokGroups),
     mcpServers: normalizeMcpServers(obj.mcpServers),
     hiddenProviders: hidden.providers,
-    hiddenDuckaiModelIds: hidden.duckaiModelIds,
     hiddenByokIds: hidden.byokIds,
     hiddenByokGroupIds: hidden.byokGroupIds,
+    geminiModel: normalizeGeminiModelChoice(obj.geminiModel),
+    geminiModelCatalog: normalizeGeminiModelCatalog(obj.geminiModelCatalog),
+    claudeModel: normalizeClaudeModelChoice(obj.claudeModel),
+    claudeModelCatalog: normalizeClaudeModelCatalog(obj.claudeModelCatalog),
+    chatgptModel: normalizeChatgptModelChoice(obj.chatgptModel),
+    chatgptModelCatalog: normalizeChatgptModelCatalog(obj.chatgptModelCatalog),
   };
+}
+
+export function normalizeGeminiModelChoice(raw: unknown): GeminiModelChoice {
+  const obj = (raw && typeof raw === 'object') ? (raw as Partial<GeminiModelChoice>) : {};
+  return {
+    modelId: typeof obj.modelId === 'string' ? obj.modelId.trim() : '',
+    extendedThinking: typeof obj.extendedThinking === 'boolean' ? obj.extendedThinking : null,
+  };
+}
+
+function cleanText(raw: unknown): string {
+  return typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim() : '';
+}
+
+/** A cache, so anything malformed is simply dropped: the next Gemini send reads the page again. */
+export function normalizeGeminiModelCatalog(raw: unknown): GeminiModelCatalog | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Partial<GeminiModelCatalog>;
+  const seen = new Set<string>();
+  const models: GeminiModelInfo[] = [];
+  for (const entry of Array.isArray(obj.models) ? obj.models : []) {
+    const id = cleanText((entry as Partial<GeminiModelInfo> | null)?.id);
+    const label = cleanText((entry as Partial<GeminiModelInfo> | null)?.label);
+    if (!id || !label || seen.has(id)) continue;
+    seen.add(id);
+    models.push({ id, label, sublabel: cleanText((entry as Partial<GeminiModelInfo>).sublabel) });
+  }
+  if (models.length === 0) return null;
+  const thinkingLabel = cleanText(obj.thinking?.label);
+  return {
+    models,
+    thinking: thinkingLabel ? { label: thinkingLabel, sublabel: cleanText(obj.thinking?.sublabel) } : null,
+    updatedAt: typeof obj.updatedAt === 'string' ? obj.updatedAt : '',
+  };
+}
+
+export function normalizeClaudeModelChoice(raw: unknown): ClaudeModelChoice {
+  const obj = (raw && typeof raw === 'object') ? (raw as Partial<ClaudeModelChoice>) : {};
+  return {
+    modelId: typeof obj.modelId === 'string' ? obj.modelId.trim() : '',
+    effort: typeof obj.effort === 'string' ? obj.effort.trim() : '',
+    thinking: typeof obj.thinking === 'boolean' ? obj.thinking : null,
+  };
+}
+
+/** An `{ id, label, sublabel }` row of a provider's picker (Claude's and ChatGPT's share the shape). */
+function normalizePickerOption(raw: unknown): ClaudeOptionInfo | null {
+  const entry = (raw && typeof raw === 'object') ? (raw as Partial<ClaudeOptionInfo>) : {};
+  const id = cleanText(entry.id);
+  const label = cleanText(entry.label);
+  return id && label ? { id, label, sublabel: cleanText(entry.sublabel) } : null;
+}
+
+function normalizeClaudeModelOptions(raw: unknown): ClaudeModelOptions | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Partial<ClaudeModelOptions>;
+  const efforts = (Array.isArray(obj.efforts) ? obj.efforts : [])
+    .map(normalizePickerOption)
+    .filter((effort): effort is ClaudeOptionInfo => effort !== null);
+  const thinkingLabel = cleanText(obj.thinking?.label);
+  return {
+    efforts,
+    thinking: thinkingLabel ? { label: thinkingLabel, sublabel: cleanText(obj.thinking?.sublabel) } : null,
+  };
+}
+
+/** A cache, like Gemini's: anything malformed is dropped and the next Claude send reads the page again. */
+export function normalizeClaudeModelCatalog(raw: unknown): ClaudeModelCatalog | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Partial<ClaudeModelCatalog>;
+  const seen = new Set<string>();
+  const models: ClaudeModelInfo[] = [];
+  for (const entry of Array.isArray(obj.models) ? obj.models : []) {
+    const option = normalizePickerOption(entry);
+    if (!option || seen.has(option.id)) continue;
+    seen.add(option.id);
+    models.push({ ...option, options: normalizeClaudeModelOptions((entry as Partial<ClaudeModelInfo>).options) });
+  }
+  if (models.length === 0) return null;
+  return { models, updatedAt: typeof obj.updatedAt === 'string' ? obj.updatedAt : '' };
+}
+
+export function normalizeChatgptModelChoice(raw: unknown): ChatgptModelChoice {
+  const obj = (raw && typeof raw === 'object') ? (raw as Partial<ChatgptModelChoice>) : {};
+  return {
+    modelId: typeof obj.modelId === 'string' ? obj.modelId.trim() : '',
+    effort: typeof obj.effort === 'string' ? obj.effort.trim() : '',
+    thinking: typeof obj.thinking === 'boolean' ? obj.thinking : null,
+  };
+}
+
+/** A cache, like Claude's: anything malformed is dropped and the next ChatGPT send reads the page again. */
+export function normalizeChatgptModelCatalog(raw: unknown): ChatgptModelCatalog | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Partial<ChatgptModelCatalog>;
+  const seen = new Set<string>();
+  const models: ChatgptModelInfo[] = [];
+  for (const entry of Array.isArray(obj.models) ? obj.models : []) {
+    const option = normalizePickerOption(entry);
+    if (!option || seen.has(option.id)) continue;
+    seen.add(option.id);
+    const rawEfforts = (entry as Partial<ChatgptModelInfo>).efforts;
+    const efforts = (Array.isArray(rawEfforts) ? rawEfforts : [])
+      .map(normalizePickerOption)
+      .filter((effort) => effort !== null);
+    models.push({ ...option, efforts });
+  }
+  const thinkingLabel = cleanText(obj.thinking?.label);
+  const thinking = thinkingLabel ? { label: thinkingLabel, sublabel: cleanText(obj.thinking?.sublabel) } : null;
+  if (models.length === 0 && !thinking) return null;
+  return { models, thinking, updatedAt: typeof obj.updatedAt === 'string' ? obj.updatedAt : '' };
 }
 
 function normalizeStringList(raw: unknown): string[] {
@@ -92,7 +225,6 @@ export function normalizeHiddenSources(raw: unknown): HiddenSources {
   const known = new Set<string>(PROVIDERS);
   return {
     providers: normalizeStringList(obj.providers).filter((p): p is Provider => known.has(p)),
-    duckaiModelIds: normalizeStringList(obj.duckaiModelIds),
     byokIds: normalizeStringList(obj.byokIds),
     byokGroupIds: normalizeStringList(obj.byokGroupIds),
   };
@@ -143,6 +275,9 @@ export function normalizeMcpServers(raw: unknown): McpServerConfig[] {
     if (!id || !url || seen.has(id) || !/^https:\/\//i.test(url)) continue;
     seen.add(id);
     const headerName = typeof entry.headerName === 'string' && entry.headerName.trim() ? entry.headerName.trim() : undefined;
+    // Repaired rather than dropped: a stored command that no longer parses would otherwise take
+    // the user's slash command with it, silently, at the next launch.
+    const commandName = slugifyCommandName(typeof entry.commandName === 'string' ? entry.commandName : '');
     servers.push({
       id,
       name: typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : url,
@@ -152,6 +287,7 @@ export function normalizeMcpServers(raw: unknown): McpServerConfig[] {
       autoApproveWrites: entry.autoApproveWrites === true,
       createdAt: typeof entry.createdAt === 'string' && entry.createdAt ? entry.createdAt : new Date().toISOString(),
       ...(headerName ? { headerName } : {}),
+      ...(commandName ? { commandName } : {}),
     });
   }
   return servers;
@@ -209,8 +345,14 @@ export function normalizeLlmDirect(raw: unknown): BotLlmDirectConfig {
   const obj = (raw && typeof raw === 'object') ? (raw as Partial<BotLlmDirectConfig>) : {};
   return {
     enabled: Boolean(obj.enabled),
-    targetUrl: typeof obj.targetUrl === 'string' ? obj.targetUrl.trim() : '',
+    targetUrl: normalizeStoredTarget(obj.targetUrl),
   };
+}
+
+/** Empty stays empty ("follow the default"); anything else is migrated off removed providers. */
+function normalizeStoredTarget(raw: unknown): string {
+  const trimmed = typeof raw === 'string' ? raw.trim() : '';
+  return trimmed ? migrateRemovedTargetUrl(trimmed) : '';
 }
 
 function deserializeLinePairingState(raw: unknown, legacyAllowedUserIds: unknown): LinePairingState {
@@ -380,6 +522,7 @@ export function deserializePairingConfig(raw: unknown): TelegramConfig {
     llmDirect: normalizeLlmDirect(obj.llmDirect),
     pairing: deserializePairingState(obj.pairing),
     channels: normalizeTelegramChannels(obj.channels),
+    knownUsers: normalizeTelegramKnownUsers(obj.knownUsers),
   };
 }
 
@@ -394,16 +537,46 @@ export function normalizeTelegramChannels(raw: unknown): TelegramChannel[] {
     seen.add(chatId);
     const username = typeof entry.username === 'string' ? entry.username.replace(/^@/, '').trim() : '';
     const lostAt = typeof entry.lostAt === 'string' ? entry.lostAt.trim() : '';
+    const chatType = normalizeTelegramChatKind(entry.chatType);
     channels.push({
       chatId,
       title: typeof entry.title === 'string' ? entry.title.trim() : '',
       ...(username ? { username } : {}),
+      ...(chatType ? { chatType } : {}),
       canPost: entry.canPost === true,
       discoveredAt: typeof entry.discoveredAt === 'string' ? entry.discoveredAt : new Date().toISOString(),
       ...(lostAt ? { lostAt } : {}),
     });
   }
   return channels;
+}
+
+function normalizeTelegramChatKind(raw: unknown): TelegramChatKind | undefined {
+  if (raw === 'group' || raw === 'supergroup' || raw === 'channel') return raw;
+  return undefined;
+}
+
+export function normalizeTelegramKnownUsers(raw: unknown): TelegramKnownUser[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<number>();
+  const users: TelegramKnownUser[] = [];
+  for (const item of raw) {
+    const entry = (item && typeof item === 'object') ? (item as Partial<TelegramKnownUser>) : {};
+    const userId = Number(entry.userId);
+    if (!Number.isFinite(userId) || userId <= 0 || seen.has(userId)) continue;
+    seen.add(userId);
+    const username = typeof entry.username === 'string' ? entry.username.replace(/^@/, '').trim() : '';
+    const firstName = typeof entry.firstName === 'string' ? entry.firstName.trim() : '';
+    const lastName = typeof entry.lastName === 'string' ? entry.lastName.trim() : '';
+    users.push({
+      userId,
+      ...(username ? { username } : {}),
+      ...(firstName ? { firstName } : {}),
+      ...(lastName ? { lastName } : {}),
+      resolvedAt: typeof entry.resolvedAt === 'string' ? entry.resolvedAt : new Date().toISOString(),
+    });
+  }
+  return users;
 }
 
 export function normalizeProviderCommands(raw: unknown): Record<Provider, BotProviderCommand> {
@@ -413,14 +586,10 @@ export function normalizeProviderCommands(raw: unknown): Record<Provider, BotPro
     const entry = (obj[provider] && typeof obj[provider] === 'object')
       ? (obj[provider] as Partial<BotProviderCommand>)
       : {};
-    const command: BotProviderCommand = {
+    result[provider] = {
       enabled: entry.enabled !== false,
       command: typeof entry.command === 'string' ? entry.command.trim() : '',
     };
-    if (provider === 'duckai') {
-      command.modelId = typeof entry.modelId === 'string' ? entry.modelId.trim() : '';
-    }
-    result[provider] = command;
   }
   return result;
 }
@@ -440,7 +609,7 @@ export function normalizeBuiltinCommands(raw: unknown): BotBuiltinCommands {
     result[key] = {
       enabled: entry.enabled !== false,
       command: typeof entry.command === 'string' ? entry.command.trim() : '',
-      targetUrl: typeof entry.targetUrl === 'string' ? entry.targetUrl.trim() : '',
+      targetUrl: normalizeStoredTarget(entry.targetUrl),
     };
   }
   return result;

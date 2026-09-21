@@ -1,9 +1,15 @@
+import { FileOutput, Sunrise, type LucideIcon } from 'lucide-react';
 import { buildFlowCronExpression } from '../../../../shared/flowSchedule';
 import { COMMON_CURRENCIES } from '../../../../shared/currencies';
 import type { FlowDefinition, FlowVariable, FlowVariableOption, SkillInstance, SkillType, TriggerConfig } from '../../../../shared/types';
 import {
   articleBriefingPrompt,
   askPrompt,
+  lineAlertPrompt,
+  lineDigestPrompt,
+  lineTodayPrompt,
+  lineTopicsPrompt,
+  lineWeeklyPrompt,
   mapReviewsPrompt,
   morningBriefPrompt,
   stockQuotePrompt,
@@ -21,12 +27,30 @@ type Translate = (key: string) => string;
 
 export type TemplateCategory = 'push' | 'command';
 
+/**
+ * Gallery identity colour. It answers "what is this template about", which is a different
+ * question from `skillHue()`'s "what does this step do" — nearly every template starts by
+ * fetching something, so the skill categories collapsed fifteen of seventeen tiles onto one
+ * colour. Templates over the same source share a hue on purpose (the five LINE ones).
+ *
+ * `gray` and `dark` are deliberately absent: their `-light` value is darker than the tile
+ * on Yobi's dark themes, which turns the icon chip into a hole.
+ */
+export type TemplateHue =
+  | 'green' | 'red' | 'orange' | 'yellow' | 'blue' | 'cyan' | 'teal' | 'violet' | 'pink' | 'indigo';
+
 export interface FlowTemplate {
   key: string;
   category: TemplateCategory;
   titleKey: string;
   descKey: string;
   primarySkill: SkillType;
+  hue: TemplateHue;
+  /**
+   * Overrides the `primarySkill` glyph where the first step misrepresents the whole template
+   * — the morning brief is not a weather report, and `/md` converts rather than shares.
+   */
+  icon?: LucideIcon;
   command?: string;
   setupCount: number;
   build: (t: Translate, locale: string) => FlowDefinition;
@@ -51,19 +75,19 @@ function llmConfig(prompt: string, extra: Record<string, string> = {}): Record<s
 }
 
 function weekdayCron(hour: number, minute = 0): TriggerConfig {
-  return {
+  const trigger: TriggerConfig = {
     type: 'cron',
     scheduleMode: 'weekly',
     weekdays: [1, 2, 3, 4, 5],
     scheduleHour: hour,
     scheduleMinute: minute,
     repeatWithinDay: false,
-    repeatEveryUnit: 'minutes',
-    repeatEveryValue: 60,
+    repeatEveryUnit: 'hours',
+    repeatEveryValue: 1,
     endHour: 23,
     endMinute: 59,
-    cronExpression: `${minute} ${hour} * * 1-5`,
   };
+  return { ...trigger, cronExpression: buildFlowCronExpression(trigger) };
 }
 
 function intervalCron(value: number, unit: 'minutes' | 'hours' = 'minutes'): TriggerConfig {
@@ -77,7 +101,7 @@ function intervalCron(value: number, unit: 'minutes' | 'hours' = 'minutes'): Tri
 }
 
 function hourlyWeekdayCron(startHour: number, endHour: number): TriggerConfig {
-  return {
+  const trigger: TriggerConfig = {
     type: 'cron',
     scheduleMode: 'weekly',
     weekdays: [1, 2, 3, 4, 5],
@@ -88,8 +112,25 @@ function hourlyWeekdayCron(startHour: number, endHour: number): TriggerConfig {
     repeatEveryValue: 1,
     endHour,
     endMinute: 0,
-    cronExpression: '* * * * *',
   };
+  return { ...trigger, cronExpression: buildFlowCronExpression(trigger) };
+}
+
+/** One weekday only — `weekdayCron` is the Mon-Fri variant. */
+function singleWeekdayCron(weekday: number, hour: number, minute = 0): TriggerConfig {
+  const trigger: TriggerConfig = {
+    type: 'cron',
+    scheduleMode: 'weekly',
+    weekdays: [weekday],
+    scheduleHour: hour,
+    scheduleMinute: minute,
+    repeatWithinDay: false,
+    repeatEveryUnit: 'hours',
+    repeatEveryValue: 1,
+    endHour: 23,
+    endMinute: 59,
+  };
+  return { ...trigger, cronExpression: buildFlowCronExpression(trigger) };
 }
 
 function commandTriggers(command: string, descKey: string, t: Translate): { trigger: TriggerConfig; extraTriggers: TriggerConfig[] } {
@@ -285,6 +326,33 @@ function whenSet(varKey: string, labelKey: string, t: Translate, ...inner: Skill
   ];
 }
 
+function lineChatVar(t: Translate): FlowVariable {
+  return {
+    key: 'lineChat',
+    type: 'lineChat',
+    label: t('flow.templates.var.lineChat.label'),
+    question: t('flow.templates.var.lineChat.question'),
+    hint: t('flow.templates.var.lineChat.hint'),
+    value: '',
+    required: true,
+  };
+}
+
+function dailyCron(hour: number, minute = 0): TriggerConfig {
+  const trigger: TriggerConfig = {
+    type: 'cron',
+    scheduleMode: 'daily',
+    scheduleHour: hour,
+    scheduleMinute: minute,
+    repeatWithinDay: false,
+    repeatEveryUnit: 'hours',
+    repeatEveryValue: 1,
+    endHour: 23,
+    endMinute: 59,
+  };
+  return { ...trigger, cronExpression: buildFlowCronExpression(trigger) };
+}
+
 function timestamps(): { createdAt: string; updatedAt: string } {
   const now = new Date().toISOString();
   return { createdAt: now, updatedAt: now };
@@ -292,11 +360,148 @@ function timestamps(): { createdAt: string; updatedAt: string } {
 
 export const FLOW_TEMPLATES: FlowTemplate[] = [
   {
+    key: 'line_digest',
+    category: 'push',
+    titleKey: 'flow.templates.lineDigest',
+    descKey: 'flow.templates.lineDigest.desc',
+    primarySkill: 'line_read',
+    hue: 'green',
+    setupCount: 2,
+    build: (t, locale): FlowDefinition => ({
+      id: makeId(),
+      name: t('flow.templates.lineDigest'),
+      description: t('flow.templates.lineDigest.desc'),
+      enabled: false,
+      trigger: dailyCron(9),
+      variables: [lineChatVar(t), chatVar(t)],
+      steps: [
+        recipientGuard(t),
+        step('line_read', { chat: '{{var.lineChat}}', limit: '200', query: '', range: 'all', since: '', until: '', sinceLastRun: 'true' }, t('flow.templates.lineDigest.step.read'), 'line_1'),
+        step('stop', { value: '{{line_1}}' }, t('flow.templates.step.stop_noNew')),
+        step('llm', llmConfig(lineDigestPrompt(locale), { useMemory: 'true' }), t('flow.templates.lineDigest.step.llm'), 'llm_1'),
+        step('bot', { chatId: '{{var.chatId}}', message: '{{llm_1}}', attachment: '', attachmentType: 'auto', emitFailFlag: 'true' }, t('flow.templates.step.bot'), 'bot_1'),
+      ],
+      ...timestamps(),
+    }),
+  },
+  {
+    key: 'line_alert',
+    category: 'push',
+    titleKey: 'flow.templates.lineAlert',
+    descKey: 'flow.templates.lineAlert.desc',
+    primarySkill: 'line_read',
+    hue: 'green',
+    setupCount: 2,
+    build: (t, locale): FlowDefinition => ({
+      id: makeId(),
+      name: t('flow.templates.lineAlert'),
+      description: t('flow.templates.lineAlert.desc'),
+      enabled: false,
+      trigger: intervalCron(30),
+      variables: [textVar('keyword', t), chatVar(t)],
+      steps: [
+        recipientGuard(t),
+        step('line_read', { chat: '', limit: '50', query: '{{var.keyword}}', range: 'all', since: '', until: '', sinceLastRun: 'true' }, t('flow.templates.lineAlert.step.read'), 'line_1'),
+        step('stop', { value: '{{line_1}}' }, t('flow.templates.step.stop_noNew')),
+        step('llm', llmConfig(lineAlertPrompt(locale), { emitFailFlag: 'true' }), t('flow.templates.lineAlert.step.llm'), 'llm_1'),
+        step('bot', { chatId: '{{var.chatId}}', message: '{{llm_1}}', attachment: '', attachmentType: 'auto', emitFailFlag: 'true' }, t('flow.templates.step.bot'), 'bot_1'),
+      ],
+      ...timestamps(),
+    }),
+  },
+  {
+    key: 'line_weekly',
+    category: 'push',
+    titleKey: 'flow.templates.lineWeekly',
+    descKey: 'flow.templates.lineWeekly.desc',
+    primarySkill: 'line_read',
+    hue: 'green',
+    setupCount: 2,
+    build: (t, locale): FlowDefinition => ({
+      id: makeId(),
+      name: t('flow.templates.lineWeekly'),
+      description: t('flow.templates.lineWeekly.desc'),
+      enabled: false,
+      trigger: singleWeekdayCron(5, 17),
+      variables: [lineChatVar(t), chatVar(t)],
+      steps: [
+        recipientGuard(t),
+        // A fixed seven days, NOT sinceLastRun: a week the PC was switched off would make the
+        // next "weekly" review cover fourteen days. This is what the date range is for.
+        step('line_read', { chat: '{{var.lineChat}}', limit: '400', query: '', range: 'last7d', since: '', until: '', sinceLastRun: 'false' }, t('flow.templates.lineWeekly.step.read'), 'line_1'),
+        step('stop', { value: '{{line_1}}' }, t('flow.templates.lineWeekly.step.stop')),
+        step('llm', llmConfig(lineWeeklyPrompt(locale)), t('flow.templates.lineWeekly.step.llm'), 'llm_1'),
+        step('bot', { chatId: '{{var.chatId}}', message: '{{llm_1}}', attachment: '', attachmentType: 'auto', emitFailFlag: 'true' }, t('flow.templates.step.bot'), 'bot_1'),
+      ],
+      ...timestamps(),
+    }),
+  },
+  {
+    key: 'cmd_line_topics',
+    category: 'command',
+    titleKey: 'flow.templates.lineTopics',
+    descKey: 'flow.templates.lineTopics.desc',
+    primarySkill: 'line_read',
+    hue: 'green',
+    command: 'linetopics',
+    setupCount: 0,
+    build: (t, locale): FlowDefinition => {
+      const { trigger, extraTriggers } = commandTriggers('linetopics', 'flow.templates.lineTopics.desc', t);
+      return {
+        id: makeId(),
+        name: t('flow.templates.lineTopics'),
+        description: t('flow.templates.lineTopics.desc'),
+        enabled: false,
+        trigger,
+        extraTriggers,
+        steps: [
+          step('stop', { value: '{{input}}' }, t('flow.templates.lineTopics.step.needChat')),
+          step('line_read', { chat: '{{input}}', limit: '100', query: '', range: 'all', since: '', until: '', sinceLastRun: 'false' }, t('flow.templates.lineTopics.step.read'), 'line_1'),
+          step('stop', { value: '{{line_1}}' }, t('flow.templates.lineTopics.step.stop')),
+          step('llm', llmConfig(lineTopicsPrompt(locale)), t('flow.templates.lineTopics.step.llm'), 'llm_1'),
+          replyStep(t),
+        ],
+        ...timestamps(),
+      };
+    },
+  },
+  {
+    key: 'cmd_line_today',
+    category: 'command',
+    titleKey: 'flow.templates.lineToday',
+    descKey: 'flow.templates.lineToday.desc',
+    primarySkill: 'line_read',
+    hue: 'green',
+    command: 'lineday',
+    setupCount: 0,
+    build: (t, locale): FlowDefinition => {
+      const { trigger, extraTriggers } = commandTriggers('lineday', 'flow.templates.lineToday.desc', t);
+      return {
+        id: makeId(),
+        name: t('flow.templates.lineToday'),
+        description: t('flow.templates.lineToday.desc'),
+        enabled: false,
+        trigger,
+        extraTriggers,
+        steps: [
+          step('stop', { value: '{{input}}' }, t('flow.templates.lineToday.step.needChat')),
+          step('line_read', { chat: '{{input}}', limit: '200', query: '', range: 'today', since: '', until: '', sinceLastRun: 'false' }, t('flow.templates.lineToday.step.read'), 'line_1'),
+          // Deliberately no stop on an empty transcript: someone typed a command and is owed an
+          // answer. The prompt turns a quiet day into one line instead of silence.
+          step('llm', llmConfig(lineTodayPrompt(locale)), t('flow.templates.lineToday.step.llm'), 'llm_1'),
+          replyStep(t),
+        ],
+        ...timestamps(),
+      };
+    },
+  },
+  {
     key: 'rss_telegram',
     category: 'push',
     titleKey: 'flow.templates.rss',
     descKey: 'flow.templates.rss.desc',
     primarySkill: 'rss',
+    hue: 'orange',
     setupCount: 2,
     build: (t, locale): FlowDefinition => ({
       id: makeId(),
@@ -326,6 +531,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
     titleKey: 'flow.templates.ytSubs',
     descKey: 'flow.templates.ytSubs.desc',
     primarySkill: 'youtube_subs',
+    hue: 'red',
     setupCount: 2,
     build: (t, locale): FlowDefinition => ({
       id: makeId(),
@@ -355,6 +561,8 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
     titleKey: 'flow.templates.morningBrief',
     descKey: 'flow.templates.morningBrief.desc',
     primarySkill: 'weather',
+    hue: 'yellow',
+    icon: Sunrise,
     setupCount: 4,
     build: (t, locale): FlowDefinition => ({
       id: makeId(),
@@ -388,6 +596,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
     titleKey: 'flow.templates.stockWatch',
     descKey: 'flow.templates.stockWatch.desc',
     primarySkill: 'stock',
+    hue: 'teal',
     setupCount: 2,
     build: (t, locale): FlowDefinition => ({
       id: makeId(),
@@ -411,6 +620,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
     titleKey: 'flow.templates.forexAlert',
     descKey: 'flow.templates.forexAlert.desc',
     primarySkill: 'forex',
+    hue: 'cyan',
     setupCount: 5,
     build: (t): FlowDefinition => ({
       id: makeId(),
@@ -450,6 +660,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
     titleKey: 'flow.templates.webMonitor',
     descKey: 'flow.templates.webMonitor.desc',
     primarySkill: 'scraper',
+    hue: 'blue',
     setupCount: 3,
     build: (t, locale): FlowDefinition => ({
       id: makeId(),
@@ -491,6 +702,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
     titleKey: 'flow.templates.cmdAsk',
     descKey: 'flow.templates.cmdAsk.desc',
     primarySkill: 'llm',
+    hue: 'violet',
     command: 'ask',
     setupCount: 0,
     build: (t, locale): FlowDefinition => {
@@ -516,6 +728,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
     titleKey: 'flow.templates.cmdSum',
     descKey: 'flow.templates.cmdSum.desc',
     primarySkill: 'browser',
+    hue: 'blue',
     command: 'sum',
     setupCount: 0,
     build: (t, locale): FlowDefinition => {
@@ -542,6 +755,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
     titleKey: 'flow.templates.cmdYt',
     descKey: 'flow.templates.cmdYt.desc',
     primarySkill: 'youtube',
+    hue: 'red',
     command: 'yt',
     setupCount: 0,
     build: (t, locale): FlowDefinition => {
@@ -568,6 +782,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
     titleKey: 'flow.templates.cmdStock',
     descKey: 'flow.templates.cmdStock.desc',
     primarySkill: 'stock',
+    hue: 'teal',
     command: 'stock',
     setupCount: 0,
     build: (t, locale): FlowDefinition => {
@@ -594,6 +809,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
     titleKey: 'flow.templates.cmdMapReviews',
     descKey: 'flow.templates.cmdMapReviews.desc',
     primarySkill: 'gmap_reviews',
+    hue: 'pink',
     command: 'gmr',
     setupCount: 0,
     build: (t, locale): FlowDefinition => {
@@ -628,6 +844,8 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
     titleKey: 'flow.templates.cmdMd',
     descKey: 'flow.templates.cmdMd.desc',
     primarySkill: 'share',
+    hue: 'indigo',
+    icon: FileOutput,
     command: 'md',
     setupCount: 0,
     build: (t): FlowDefinition => {

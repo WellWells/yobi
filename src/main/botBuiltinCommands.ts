@@ -1,18 +1,21 @@
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_AGENT_ASK_TTL_MINUTES } from '../shared/types';
-import type { AgentRunState, BotBuiltinCommandKey } from '../shared/types';
+import type { AgentRunState, AgentTurnRecord, BotBuiltinCommandKey } from '../shared/types';
 import { config } from './config';
 import { executeAgentRun } from './chat/agentCommand';
+import { BOT_CHAT_TOOL_SCOPE } from './flow/agent/agentTools';
 import { runSearchCommand } from './chat/searchCommand';
 import type { AgentRunOutcome } from './chat/agentCommand';
 import type { SearchRunOutcome } from './chat/searchCommand';
 import { getBotConversation, setBotConversation } from './botConversations';
 import { applyAnswer, loadRunState } from './flow/agent/agentRunStore';
+import { agentSourcesUsed, hasAnySource } from './flow/agent/agentSources';
 import { sendLog } from './helpers';
 import { t } from './i18n';
 import { getProviderLabel } from './providers';
 import type { FlowManager } from './flow';
+import { botChatMemoryContext, withMemoryNotes } from './memory';
 
 type Strings = Record<string, string>;
 
@@ -74,6 +77,27 @@ function rememberPendingAsk(chatKey: string, runId: string): void {
 
 export const __rememberPendingAskForTest = rememberPendingAsk;
 
+/**
+ * "Where did this come from", in one line, for a surface that has no step trail.
+ *
+ * In the app the queue popover shows the live trail, so the user can see which tool answered. A bot
+ * reply is one message with none of that: a run that answered from the web when the user meant
+ * their own chats reads exactly like one that read them. Derived from the run's own turns rather
+ * than from anything the model says, and silent when no tool ran at all (a URL shortcut, an answer
+ * from the model's own knowledge) — a footer with nothing in it would be filler.
+ */
+function sourceLine(turns: readonly AgentTurnRecord[], strings: Strings): string {
+  const sources = agentSourcesUsed(turns);
+  if (!hasAnySource(sources)) return '';
+  const parts = [
+    ...sources.connectors,
+    ...(sources.web ? [t(strings, 'agent.source.web')] : []),
+    ...(sources.files ? [t(strings, 'agent.source.files')] : []),
+    ...sources.tools,
+  ];
+  return t(strings, 'agent.source.line', { sources: parts.join('、') });
+}
+
 function toResult(
   outcome: AgentRunOutcome | SearchRunOutcome,
   targetUrl: string,
@@ -81,6 +105,7 @@ function toResult(
   startedAt: number,
   askChatKey: string | undefined,
   sessionKey: string,
+  turns: readonly AgentTurnRecord[] = [],
 ): BotBuiltinRunResult {
   const elapsedSeconds = ((Date.now() - startedAt) / 1_000).toFixed(1);
   const providerLabel = getProviderLabel(targetUrl);
@@ -105,9 +130,17 @@ function toResult(
 
   if (outcome.filePath) void setBotConversation(sessionKey, outcome.filePath);
 
+  // Withheld while a question is pending: that reply ends in a call to action the user has to act
+  // on, and the run has not finished consulting anything yet.
+  const footer = awaitingAnswer ? '' : sourceLine(turns, strings);
+  const memoryNotes = 'memoryNotes' in outcome ? outcome.memoryNotes ?? [] : [];
+  const body = withMemoryNotes(answer, memoryNotes, (key, vars) => t(strings, key, vars));
+
   return {
     ok: true,
-    text: awaitingAnswer ? `${answer}\n\n${t(strings, 'bot.builtin.answerHint')}` : answer,
+    text: awaitingAnswer
+      ? `${answer}\n\n${t(strings, 'bot.builtin.answerHint')}`
+      : footer ? `${body}\n\n${footer}` : body,
     title: outcome.title ?? '',
     savedFileName: outcome.filePath ? path.basename(outcome.filePath) : '',
     providerLabel,
@@ -122,6 +155,8 @@ export interface BotBuiltinRunRequest {
   targetUrl: string;
   chatKey: string;
   onProgressText?: (text: string) => void;
+  /** Plain message rather than a typed command — runs on the narrow chat scope. */
+  plain?: boolean;
 }
 
 export async function runBotBuiltinCommand(
@@ -166,10 +201,14 @@ export async function runBotBuiltinCommand(
       state,
       strings,
       origin: 'bot',
+      memory: await botChatMemoryContext(request.chatKey),
+      // Typing /agent is the user asking for the full kit. Just talking to the bot is not, so a
+      // plain message gets the web and the harmless lookups and nothing that reads the machine.
+      ...(request.plain ? { toolScope: BOT_CHAT_TOOL_SCOPE } : {}),
       ...(request.onProgressText ? { onProgressText: request.onProgressText } : {}),
     },
   );
-  return toResult(outcome, targetUrl, strings, startedAt, request.chatKey, request.chatKey);
+  return toResult(outcome, targetUrl, strings, startedAt, request.chatKey, request.chatKey, state.turns);
 }
 
 export async function resumeBotAgentAsk(
@@ -204,8 +243,9 @@ export async function resumeBotAgentAsk(
       strings,
       deliveredPrompt: answer || state.goal,
       origin: 'bot',
+      memory: await botChatMemoryContext(params.chatKey),
       ...(params.onProgressText ? { onProgressText: params.onProgressText } : {}),
     },
   );
-  return toResult(outcome, state.providerUrl, strings, startedAt, params.chatKey, params.chatKey);
+  return toResult(outcome, state.providerUrl, strings, startedAt, params.chatKey, params.chatKey, state.turns);
 }

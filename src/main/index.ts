@@ -28,6 +28,7 @@ import { config, initSensitiveConfig } from './config';
 import { QueueManager } from './queueManager';
 import type { Task } from '../shared/types';
 import { sendLog, setMainWindow } from './helpers';
+import { reportStoreRecoveries } from './bootstrap/storeRecovery';
 import { flushLogFileSync, initLogFile } from './logFile';
 import {
   createMainWindow,
@@ -36,8 +37,10 @@ import {
 } from './windows';
 import { CLEAN_UA } from './userAgent';
 import { registerWorkerClientHints } from './clientHints';
+import { installRequestFilter } from './requestFilter';
 import { setupIpcHandlers } from './ipc';
-import { classifyFailure, recordTaskOutcome } from './metrics';
+import { classifyFailure, flushMetrics, recordTaskOutcome } from './metrics';
+import { flushFlowMetrics } from './flowMetrics';
 import { notifyQueueLevelFailure, processTask } from './taskProcessor';
 import { bindHotkey as bindHotkeyImpl, bindQuickExportHotkey } from './hotkeyBinding';
 import type { FlowManager } from './flow';
@@ -48,7 +51,7 @@ import { setupPlatformIcons, loadInitialLanguages, setupWindows } from './bootst
 import { setupTrayAndCloseBehavior, buildTrayIpcCallbacks } from './bootstrap/traySetup';
 import { initFlowManager, broadcastMergedQueueState } from './bootstrap/flowSetup';
 import { createTelegramRuntime } from './bootstrap/telegramSetup';
-import { deleteTempAttachments } from './telegram/fileDownload';
+import { handleDiscardedTask } from './taskReporting';
 import { createLineRuntime } from './bootstrap/lineSetup';
 import { initMcp } from './bootstrap/mcpSetup';
 import { initSecretHealthBridge, probeStoredSecrets, reportSecretHealth } from './bootstrap/secretHealthSetup';
@@ -106,11 +109,7 @@ queue.onUpdate(() => {
   broadcastMergedQueueState(queue, flowManager);
 });
 
-queue.onDiscard((task) => {
-  if (task.ephemeralAttachments && task.attachments?.length) {
-    void deleteTempAttachments(task.attachments);
-  }
-});
+queue.onDiscard(handleDiscardedTask);
 
 const telegramRuntime = createTelegramRuntime({
   queue,
@@ -135,7 +134,19 @@ app.whenReady().then(async () => {
   session.fromPartition('persist:url-parser').setUserAgent(CLEAN_UA);
   session.fromPartition('persist:browser-flow').setUserAgent(CLEAN_UA);
 
+  // Page-fetching sessions only: the AI worker session keeps its provider pages untouched.
+  installRequestFilter(session.fromPartition('persist:url-parser'));
+  installRequestFilter(session.fromPartition('persist:browser-flow'));
+
+  // Every session that claims CLEAN_UA needs this, not just the worker: the UA says Chrome
+  // while Electron sends no Sec-CH-UA at all, and a bot manager reading both sees a Chrome
+  // that cannot answer for itself. Different webRequest event from installRequestFilter
+  // (onBeforeSendHeaders vs onBeforeRequest), so the two do not displace each other.
+  // persist:gmaps and persist:youtube are left out on purpose — they never claim Chrome, so
+  // harmonizing would only strip headers that are already absent.
   registerWorkerClientHints(session.fromPartition('persist:gemini'));
+  registerWorkerClientHints(session.fromPartition('persist:url-parser'));
+  registerWorkerClientHints(session.fromPartition('persist:browser-flow'));
 
   initSecretHealthBridge();
   initSensitiveConfig();
@@ -144,6 +155,10 @@ app.whenReady().then(async () => {
   setupPlatformIcons();
   await loadInitialLanguages();
   setupWindows();
+
+  // Drained only now: the config store is built at import time and the secret stores just
+  // above, both before there is any window or language pack to report through.
+  reportStoreRecoveries();
 
   flowManager = initFlowManager({ queue, telegramRuntime, lineRuntime });
   initMcp();
@@ -180,6 +195,8 @@ app.whenReady().then(async () => {
 app.on('before-quit', () => {
   sendLog('🔄 App closing — shutting down services...');
   setAppQuitting(true);
+  flushMetrics();
+  flushFlowMetrics();
   destroyTray();
   flowManager?.shutdown();
   void telegramRuntime.shutdown();

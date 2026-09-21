@@ -6,7 +6,7 @@ BYOK is an *addition*, not a replacement: browser mode stays the default, and no
 
 ## Steps
 
-1. Open **Settings → Accounts → Bring Your Own Key (BYOK)**.
+1. Open **Settings → Model Sources → Bring Your Own Key (BYOK)**.
 2. Click **Add instance**.
 3. Fill in the fields:
 

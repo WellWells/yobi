@@ -3,6 +3,7 @@ import type { Cookie } from 'electron';
 import { isExpiredCookie } from '../helpers';
 import { WORKER_USER_AGENTS } from '../userAgent';
 import { CHATGPT_LOGIN_URL } from './chatgpt';
+import { CLAUDE_LOGIN_URL, isClaudeSessionCookie } from './claudeSession';
 import { isPerplexitySessionCookie } from './perplexity';
 import { PROVIDER_URLS, AUTH_PROVIDERS } from '../../shared/types';
 import type { AccountStatus, AuthProvider, Provider } from '../../shared/types';
@@ -30,6 +31,10 @@ const STORAGE_CONFIG: Record<Provider, ProviderStorage> = {
       'https://openai.com',
     ],
   },
+  claude: {
+    cookieUrls: ['https://claude.ai/'],
+    resetOrigins: ['https://claude.ai', 'https://www.claude.ai'],
+  },
   gemini: {
     cookieUrls: ['https://gemini.google.com/'],
     resetOrigins: [
@@ -49,10 +54,6 @@ const STORAGE_CONFIG: Record<Provider, ProviderStorage> = {
     cookieUrls: ['https://www.perplexity.ai/'],
     resetOrigins: ['https://www.perplexity.ai', 'https://perplexity.ai'],
   },
-  duckai: {
-    cookieUrls: ['https://duck.ai/'],
-    resetOrigins: ['https://duck.ai', 'https://duckduckgo.com'],
-  },
 };
 
 const GEMINI_SESSION_COOKIES = ['__Secure-1PSID', '__Secure-3PSID', 'SID'];
@@ -63,6 +64,11 @@ const AUTH_CONFIG: Record<AuthProvider, AuthProviderConfig> = {
     userAgent: WORKER_USER_AGENTS.chatgpt,
     isSessionCookie: (c) =>
       c.name.startsWith('__Secure-next-auth.session-token') && !isExpiredCookie(c.expirationDate),
+  },
+  claude: {
+    loginUrl: CLAUDE_LOGIN_URL,
+    userAgent: WORKER_USER_AGENTS.claude,
+    isSessionCookie: isClaudeSessionCookie,
   },
   gemini: {
     loginUrl: PROVIDER_URLS.gemini,

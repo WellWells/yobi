@@ -5,6 +5,7 @@ import { sendLog, sendWebNotification, createTaskId } from './helpers';
 import {
   captureSelectedText,
   checkMacosAccessibility,
+  isClipboardCaptureInFlight,
   promptMacosAccessibility,
 } from './clipboard';
 import { getLangCache } from './i18n';
@@ -33,6 +34,13 @@ export function bindHotkey(deps: HotkeyDeps): boolean {
         _accessibilityPrompted = true;
         promptMacosAccessibility();
       }
+      return;
+    }
+
+    // Asked before the call so the log says which of the two happened: a capture is already
+    // polling (the press is dropped on purpose), or there really was nothing selected.
+    if (isClipboardCaptureInFlight()) {
+      sendLog('⏳ Still capturing the previous selection — ignoring this press');
       return;
     }
 

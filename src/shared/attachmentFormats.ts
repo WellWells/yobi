@@ -85,11 +85,14 @@ export const ATTACHMENT_ACCEPT = [
   ...[...UPLOADABLE_EXTENSIONS].sort().map((ext) => `.${ext}`),
 ].join(',');
 
-const CHATGPT_ATTACHMENT_ACCEPT = [
+const SOURCE_FILE_ATTACHMENT_ACCEPT = [
   ATTACHMENT_ACCEPT,
   ...[...TEXT_EXTENSIONS].sort().map((ext) => `.${ext}`),
 ].join(',');
 
+/** Composers measured to take source and data files as real uploads, not just images and documents. */
+const SOURCE_FILE_PROVIDERS: ReadonlySet<Provider> = new Set(['chatgpt', 'claude']);
+
 export function attachmentAcceptFor(provider: Provider): string {
-  return provider === 'chatgpt' ? CHATGPT_ATTACHMENT_ACCEPT : ATTACHMENT_ACCEPT;
+  return SOURCE_FILE_PROVIDERS.has(provider) ? SOURCE_FILE_ATTACHMENT_ACCEPT : ATTACHMENT_ACCEPT;
 }

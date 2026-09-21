@@ -3,7 +3,9 @@ import type { FlowAssessResult, FlowAssessment, FlowGenerationResult, TriggerTyp
 import { PROVIDER_URLS, isByokTargetUrl } from '../../shared/types';
 import {
   ALWAYS_INCLUDED_SKILLS,
+  MAX_ASSESS_QUESTIONS,
   buildFlowAssessPrompt,
+  buildFlowAssessRepairPrompt,
   buildFlowGenerationPrompt,
   buildFlowRepairPrompt,
   resolveSelectedSkills,
@@ -16,12 +18,36 @@ import { llmLane } from './lanes';
 import type { FlowExecutorDeps } from './types';
 
 const DEFAULT_GENERATION_TIMEOUT_MS = 120_000;
-const MAX_ATTEMPTS = 2;
+
+/**
+ * How many times a phase may ask before giving up, counting the first try.
+ *
+ * Both phases share it because both fail the same way: a browser-UI model answers with a
+ * sentence, or with JSON wrapped in chatter, and one rejected reply is not evidence that the
+ * model cannot do it. The assessment had NO retry at all — a single chatty reply ended the whole
+ * build at "understand", which is the failure users actually hit.
+ *
+ * Three, not more: each attempt is a full provider round trip, and a model that has been shown
+ * its own rejected output twice and still will not emit JSON is not going to on the fourth.
+ */
+export const MAX_ATTEMPTS = 3;
 
 const FALLBACK_PROVIDER_URL = PROVIDER_URLS.gemini;
 
-export interface FlowGenerationOptions {
+/** Shared by both phases: which model to ask, and how each attempt reports itself. */
+export interface FlowPhaseOptions {
   providerUrl?: string;
+  /**
+   * The model the request actually went to, once per phase. Not always the one asked for:
+   * `pickProvider` substitutes when the chosen model cannot hold the prompt, and with a model
+   * picker in the UI that substitution has to be visible or the panel is telling the user their
+   * choice was honoured when it was not.
+   */
+  onProvider?: (resolvedUrl: string) => void;
+  onAttempt?: (attempt: number, lastError?: string) => void;
+}
+
+export interface FlowGenerationOptions extends FlowPhaseOptions {
   preselected?: readonly string[];
   triggerHint?: TriggerType;
 }
@@ -111,6 +137,7 @@ export function validateAssessment(json: unknown): FlowAssessResult {
       trigger,
       outline: readStringArray(obj.outline, 10),
       gaps: readStringArray(obj.gaps, 6),
+      questions: readStringArray(obj.questions, MAX_ASSESS_QUESTIONS),
       verdict,
     },
   };
@@ -119,36 +146,61 @@ export function validateAssessment(json: unknown): FlowAssessResult {
 export async function assessFlowSupport(
   goal: string,
   deps: FlowExecutorDeps,
-  providerUrl?: string,
+  options: FlowPhaseOptions = {},
 ): Promise<FlowAssessResult> {
+  const { providerUrl, onAttempt } = options;
   const trimmed = goal.trim();
   if (!trimmed) return { ok: false, error: 'Empty description' };
 
-  const prompt = buildFlowAssessPrompt(trimmed);
-  const picked = pickProvider(prompt, providerUrl);
-  if (picked.error) {
-    sendLog(`❌ [Flow] ${picked.error}`);
-    return { ok: false, error: picked.error };
-  }
-  const notReady = await ensureProviderReady(picked.url, deps);
-  if (notReady) return { ok: false, error: notReady };
-
   const timeoutMs = deps.getResponseTimeoutMs?.() ?? DEFAULT_GENERATION_TIMEOUT_MS;
-  sendLog(`🔎 [Flow] Assessing skill coverage via ${getProviderLabel(picked.url)}…`);
-  try {
-    const response = await askProvider(prompt, picked.url, deps, timeoutMs);
-    const result = validateAssessment(extractJsonFromLlmResponse(response));
-    if (result.ok) {
-      sendLog(`✅ [Flow] Assessment: ${result.assessment.verdict}, ${result.assessment.skills.length} skills`);
-    } else {
-      sendLog(`❌ [Flow] Assessment rejected: ${result.error}`);
+  let lastError = 'The assessment must be a single JSON object';
+  let lastResponse = '';
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const prompt = attempt === 1
+      ? buildFlowAssessPrompt(trimmed)
+      : buildFlowAssessRepairPrompt(trimmed, lastResponse, lastError);
+
+    const picked = pickProvider(prompt, providerUrl);
+    if (picked.error) {
+      // On a retry the original prompt already fitted, so stop with the reason the reply was
+      // rejected rather than with a size complaint about the prompt that was never sent.
+      if (attempt > 1) return { ok: false, error: lastError };
+      sendLog(`❌ [Flow] ${picked.error}`);
+      return { ok: false, error: picked.error };
     }
-    return result;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    sendLog(`❌ [Flow] Assessment failed: ${message}`);
-    return { ok: false, error: message };
+    const notReady = await ensureProviderReady(picked.url, deps);
+    if (notReady) return { ok: false, error: notReady };
+
+    if (attempt === 1) options.onProvider?.(picked.url);
+    onAttempt?.(attempt, attempt > 1 ? lastError : undefined);
+    sendLog(attempt === 1
+      ? `🔎 [Flow] Assessing skill coverage via ${getProviderLabel(picked.url)}…`
+      : `🔁 [Flow] Assessment attempt ${attempt}/${MAX_ATTEMPTS} — asking ${getProviderLabel(picked.url)} to fix: ${lastError}`);
+
+    try {
+      lastResponse = await askProvider(prompt, picked.url, deps, timeoutMs);
+    } catch (err) {
+      // A request that never came back is not a model that answered badly. Retrying it would
+      // spend another full timeout on the same broken worker, so it ends the phase.
+      const message = err instanceof Error ? err.message : String(err);
+      sendLog(`❌ [Flow] Assessment failed: ${message}`);
+      return { ok: false, error: message };
+    }
+
+    const result = validateAssessment(extractJsonFromLlmResponse(lastResponse));
+    if (result.ok) {
+      const suffix = attempt > 1 ? ` (attempt ${attempt})` : '';
+      sendLog(`✅ [Flow] Assessment: ${result.assessment.verdict}, ${result.assessment.skills.length} skills${suffix}`);
+      return result;
+    }
+
+    lastError = result.error;
+    const willRetry = attempt < MAX_ATTEMPTS;
+    sendLog(`❌ [Flow] Assessment rejected: ${lastError}${willRetry ? ' — asking again' : ` (gave up after ${MAX_ATTEMPTS} attempts)`}`);
   }
+
+  return { ok: false, error: lastError };
 }
 
 export async function generateFlowDefinition(
@@ -162,7 +214,7 @@ export async function generateFlowDefinition(
   let skills = options.preselected ? [...options.preselected] : [];
   let triggerHint = options.triggerHint;
   if (skills.length === 0) {
-    const assessed = await assessFlowSupport(trimmed, deps, options.providerUrl);
+    const assessed = await assessFlowSupport(trimmed, deps, { ...(options.providerUrl ? { providerUrl: options.providerUrl } : {}) });
     if (!assessed.ok) return { ok: false, error: assessed.error };
     if (assessed.assessment.verdict === 'none') {
       return {
@@ -179,6 +231,7 @@ export async function generateFlowDefinition(
   let lastResponse = '';
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    options.onAttempt?.(attempt, attempt > 1 ? lastError : undefined);
     const promptText = attempt === 1
       ? buildFlowGenerationPrompt(trimmed, skills, triggerHint)
       : buildFlowRepairPrompt(trimmed, skills, lastResponse, lastError, triggerHint);
@@ -195,9 +248,10 @@ export async function generateFlowDefinition(
     const notReady = await ensureProviderReady(picked.url, deps);
     if (notReady) return { ok: false, error: notReady };
 
+    if (attempt === 1) options.onProvider?.(picked.url);
     sendLog(attempt === 1
       ? `🤖 [Flow] Generating flow via ${getProviderLabel(picked.url)} (${skills.length} skills disclosed)…`
-      : `🔁 [Flow] Retrying — asking ${getProviderLabel(picked.url)} to fix: ${lastError}`);
+      : `🔁 [Flow] Generation attempt ${attempt}/${MAX_ATTEMPTS} — asking ${getProviderLabel(picked.url)} to fix: ${lastError}`);
 
     try {
       lastResponse = await askProvider(promptText, picked.url, deps, timeoutMs);
@@ -221,7 +275,7 @@ export async function generateFlowDefinition(
     }
 
     const willRetry = attempt < MAX_ATTEMPTS;
-    sendLog(`❌ [Flow] Invalid generated flow: ${lastError}${willRetry ? ' — retrying once' : ''}`);
+    sendLog(`❌ [Flow] Invalid generated flow: ${lastError}${willRetry ? ' — asking again' : ` (gave up after ${MAX_ATTEMPTS} attempts)`}`);
   }
 
   return { ok: false, error: lastError };

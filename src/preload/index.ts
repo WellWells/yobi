@@ -1,21 +1,32 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/types';
+import type { GeminiModelChoice, GeminiModelState } from '../shared/geminiModels';
+import type { ClaudeModelChoice, ClaudeModelState } from '../shared/claudeModels';
+import type { ChatgptModelChoice, ChatgptModelState } from '../shared/chatgptModels';
+import type { MemoryEditResult, MemoryNote, UserMemoryBotSelf, UserMemorySnapshot } from '../shared/userMemory';
+import type {
+  MemoryCurateApplyResult,
+  MemoryCuratePick,
+  MemoryCurateProposeRequest,
+  MemoryCurateProposeResult,
+} from '../shared/memoryCurate';
 import type {
   AccountStatus, AttachmentStashRequest, AuthProvider, BackupCategoryId, BackupCategoryInfo, BackupExportResult,
   BackupImportResult, BackupInspectResult, BotBuiltinCommands, BotByokCommandInfo, BotLlmDirectConfig, ByokConnectionProbe, ByokGroupSaveRequest, ByokInstanceSaveRequest, ByokModelsResult,
   ByokSettingsSnapshot, ByokTestResult, CaptureSettings, ChatCommandResult, ChatTurnEvent, HotkeyBindResult,
-  QuickExportSettings, DuckaiModelInfo,
+  QuickExportSettings,
   FeedCandidate, FlowDefinition, FlowExecutionEvent, FlowExecutionLog, FlowExecutionResult, HiddenSources,
   ScraperPickRequest, ScraperPickResult,
-  FlowGenerationResult, MarkdownCaptureRequest, MarkdownCaptureResult, MetricsSnapshot, NotifyEventPrefs, OutputFile, PromptPreferences, StartedConversation,
-  ShareLinkRequest, ShareLinkResult, ShareSettings, StashedAttachment,
+  FlowBuildOutcome, FlowBuildPayload, FlowBuildRequestPayload, MarkdownCaptureRequest, MarkdownCaptureResult, MetricsSnapshot, NotifyEventPrefs, OutputFile, PromptPreferences, StartedConversation,
+  SchedulePreview, ShareLinkRequest, ShareLinkResult, ShareSettings, StashedAttachment, TriggerConfig,
 } from '../shared/types';
+import type { FlowMetricsSnapshot } from '../shared/flowMetrics';
 import type { ConversationTokenStats } from '../shared/tokenEstimate';
 import type { ShortcutOverride } from '../shared/shortcuts';
 import type {
-  PromptTriggerOptions, Provider, QueueState, EmailSettingsSnapshot, DataKeyStatus, AgentCommandResult, AgentRunSummary, AgentTracePayload, AgentConfirmPayload, AgentConfirmChoice, SearchCommandResult, SearchMode, SmtpCredentials,
+  PromptTriggerOptions, Provider, QueueState, EmailSettingsSnapshot, DataKeyStatus, AgentCommandResult, AgentRunState, AgentRunSummary, AgentTracePayload, AgentConfirmPayload, AgentConfirmChoice, SmtpCredentials,
   SelectPathRequest, SelectPathResult, SettingsSnapshot, TempChatResult, BotProviderCommand, TelegramRuntimeSnapshot,
-  TelegramSettingsSnapshot, LineSettingsSnapshot, LineRuntimeSnapshot, LineCredentialsUpdate,
+  TelegramSettingsSnapshot, LineSettingsSnapshot, LineRuntimeSnapshot, LineCredentialsUpdate, LineChatListResult,
   McpServerView, McpServerSaveRequest, McpServerActionResult, SecretHealth, SecretTarget,
   UpdateAvailablePayload, UpdateSource, UiNotificationPayload,
 } from '../shared/types';
@@ -41,6 +52,32 @@ export type ElectronAPI = {
   logoutAccount: (provider: AuthProvider) => Promise<boolean>;
   clearProviderData: (provider: Provider) => Promise<boolean>;
   onAccountStatusChanged: (cb: (status: AccountStatus) => void) => () => void;
+  getUserMemory: () => Promise<UserMemorySnapshot>;
+  setUserMemoryEnabled: (enabled: boolean) => Promise<UserMemorySnapshot>;
+  addUserMemory: (text: string) => Promise<MemoryEditResult>;
+  updateUserMemory: (id: string, text: string) => Promise<MemoryEditResult>;
+  deleteUserMemory: (id: string) => Promise<MemoryEditResult>;
+  clearUserMemory: () => Promise<UserMemorySnapshot>;
+  undoUserMemoryNote: (note: MemoryNote) => Promise<{ ok: boolean; snapshot: UserMemorySnapshot }>;
+  setUserMemoryBotSelf: (botSelf: UserMemoryBotSelf) => Promise<UserMemorySnapshot>;
+  onUserMemoryChanged: (cb: (snapshot: UserMemorySnapshot) => void) => () => void;
+  getMemoryCurateModel: () => Promise<string>;
+  proposeMemoryCuration: (request: MemoryCurateProposeRequest) => Promise<MemoryCurateProposeResult>;
+  cancelMemoryCuration: () => Promise<boolean>;
+  applyMemoryCuration: (proposalId: string, picks: MemoryCuratePick[]) => Promise<MemoryCurateApplyResult>;
+  undoMemoryCuration: () => Promise<{ ok: boolean }>;
+  getGeminiModels: () => Promise<GeminiModelState>;
+  setGeminiModel: (patch: Partial<GeminiModelChoice>) => Promise<GeminiModelState>;
+  refreshGeminiModels: () => Promise<GeminiModelState>;
+  onGeminiModelsChanged: (cb: (state: GeminiModelState) => void) => () => void;
+  getClaudeModels: () => Promise<ClaudeModelState>;
+  setClaudeModel: (patch: Partial<ClaudeModelChoice>) => Promise<ClaudeModelState>;
+  refreshClaudeModels: () => Promise<ClaudeModelState>;
+  onClaudeModelsChanged: (cb: (state: ClaudeModelState) => void) => () => void;
+  getChatgptModels: () => Promise<ChatgptModelState>;
+  setChatgptModel: (patch: Partial<ChatgptModelChoice>) => Promise<ChatgptModelState>;
+  refreshChatgptModels: () => Promise<ChatgptModelState>;
+  onChatgptModelsChanged: (cb: (state: ChatgptModelState) => void) => () => void;
   getSecretHealth: () => Promise<SecretHealth>;
   deleteBrokenSecret: (target: SecretTarget) => Promise<{ ok: boolean }>;
   onSecretHealthChanged: (cb: (health: SecretHealth) => void) => () => void;
@@ -142,6 +179,7 @@ export type ElectronAPI = {
   forgetTelegramChannel: (chatId: number) => Promise<boolean>;
 
   getLineSettings: () => Promise<LineSettingsSnapshot>;
+  listLineChats: () => Promise<LineChatListResult>;
   updateLineEnabled: (enabled: boolean) => Promise<{ ok: boolean; message?: string }>;
   updateLineCredentials: (creds: LineCredentialsUpdate) => Promise<{ ok: boolean; message?: string }>;
   updateLinePort: (port: number) => Promise<{ ok: boolean; message?: string }>;
@@ -169,6 +207,7 @@ export type ElectronAPI = {
   deleteMcpServer: (id: string) => Promise<McpServerActionResult>;
   connectMcpServer: (id: string) => Promise<McpServerActionResult>;
   disconnectMcpServer: (id: string) => Promise<McpServerActionResult>;
+  setBuiltinConnectorEnabled: (id: string, enabled: boolean) => Promise<McpServerActionResult>;
   onMcpServerStatus: (cb: (servers: McpServerView[]) => void) => () => void;
 
   getTempChatMode: () => Promise<boolean>;
@@ -182,6 +221,8 @@ export type ElectronAPI = {
   getMetricsEnabled: () => Promise<boolean>;
   updateMetricsEnabled: (enabled: boolean) => Promise<boolean>;
   onMetricsChanged: (cb: (snapshot: MetricsSnapshot) => void) => () => void;
+  getFlowMetrics: () => Promise<FlowMetricsSnapshot>;
+  onFlowMetricsChanged: (cb: (snapshot: FlowMetricsSnapshot) => void) => () => void;
 
   getCloseToTray: () => Promise<boolean>;
   updateCloseToTray: (enabled: boolean) => Promise<boolean>;
@@ -198,6 +239,7 @@ export type ElectronAPI = {
   respondCloseDialog: (action: 'quit' | 'hide', remember: boolean) => void;
 
   onAgentConfirm: (cb: (payload: AgentConfirmPayload) => void) => () => void;
+  onAgentConfirmDismiss: (cb: (id: string) => void) => () => void;
   respondAgentConfirm: (id: string, choice: AgentConfirmChoice) => void;
 
   onCloseToTrayChanged: (cb: (enabled: boolean) => void) => () => void;
@@ -215,8 +257,6 @@ export type ElectronAPI = {
   getQuickExport: () => Promise<QuickExportSettings>;
   updateQuickExport: (settings: QuickExportSettings) => Promise<HotkeyBindResult>;
 
-  fetchDuckaiModels: () => Promise<DuckaiModelInfo[]>;
-
   getFlows: () => Promise<FlowDefinition[]>;
   saveFlow: (flow: FlowDefinition) => Promise<FlowDefinition | null>;
   deleteFlow: (flowId: string) => Promise<boolean>;
@@ -227,15 +267,19 @@ export type ElectronAPI = {
   reorderFlows: (orderedIds: string[]) => Promise<FlowDefinition[]>;
   executeFlow: (flowId: string) => Promise<FlowExecutionResult>;
   runChatCommand: (flowId: string, command: string, input: string, conversationPath?: string) => Promise<ChatCommandResult>;
-  runSearchCommand: (query: string, targetUrl: string, mode?: SearchMode, conversationPath?: string, clientToken?: string) => Promise<SearchCommandResult>;
-  runAgentCommand: (goal: string, targetUrl: string, runId: string, conversationPath?: string, attachments?: string[]) => Promise<AgentCommandResult>;
+  runAgentCommand: (goal: string, targetUrl: string, runId: string, conversationPath?: string, attachments?: string[], mcpServerIds?: string[], web?: boolean) => Promise<AgentCommandResult>;
+  setConversationConnectors: (filePath: string, serverIds: string[], web?: boolean) => Promise<boolean>;
   resumeAgentRun: (runId: string, answer?: string) => Promise<AgentCommandResult>;
   cancelAgentRun: (runId: string) => Promise<boolean>;
   listResumableAgentRuns: () => Promise<AgentRunSummary[]>;
+  getAgentRun: (runId: string) => Promise<AgentRunState | null>;
   discardAgentRun: (runId: string) => Promise<boolean>;
   onAgentTrace: (cb: (payload: AgentTracePayload) => void) => () => void;
   abortFlow: (flowId: string) => Promise<boolean>;
-  generateFlow: (description: string) => Promise<FlowGenerationResult>;
+  generateFlow: (request: FlowBuildRequestPayload) => Promise<FlowBuildOutcome>;
+  onFlowBuildProgress: (cb: (payload: FlowBuildPayload) => void) => () => void;
+  getFlowAiUrl: () => Promise<string>;
+  previewSchedule: (trigger: TriggerConfig) => Promise<SchedulePreview>;
   exportFlow: (flow: FlowDefinition) => Promise<boolean>;
   exportFlowResult: (content: string, defaultFileName: string) => Promise<boolean>;
   onFlowExecutionLog: (cb: (log: FlowExecutionLog) => void) => () => void;
@@ -315,6 +359,48 @@ const api: ElectronAPI = {
     const handler = (_: Electron.IpcRendererEvent, status: AccountStatus) => cb(status);
     ipcRenderer.on(IPC.ACCOUNT_STATUS_CHANGED, handler);
     return () => ipcRenderer.removeListener(IPC.ACCOUNT_STATUS_CHANGED, handler);
+  },
+  getUserMemory: () => ipcRenderer.invoke(IPC.MEMORY_GET),
+  setUserMemoryEnabled: (enabled) => ipcRenderer.invoke(IPC.MEMORY_SET_ENABLED, enabled),
+  addUserMemory: (text) => ipcRenderer.invoke(IPC.MEMORY_ADD, text),
+  updateUserMemory: (id, text) => ipcRenderer.invoke(IPC.MEMORY_UPDATE, id, text),
+  deleteUserMemory: (id) => ipcRenderer.invoke(IPC.MEMORY_DELETE, id),
+  clearUserMemory: () => ipcRenderer.invoke(IPC.MEMORY_CLEAR),
+  undoUserMemoryNote: (note) => ipcRenderer.invoke(IPC.MEMORY_UNDO, note),
+  setUserMemoryBotSelf: (botSelf) => ipcRenderer.invoke(IPC.MEMORY_SET_BOT_SELF, botSelf),
+  onUserMemoryChanged: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, snapshot: UserMemorySnapshot) => cb(snapshot);
+    ipcRenderer.on(IPC.MEMORY_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.MEMORY_CHANGED, handler);
+  },
+  getMemoryCurateModel: () => ipcRenderer.invoke(IPC.MEMORY_CURATE_GET_MODEL),
+  proposeMemoryCuration: (request) => ipcRenderer.invoke(IPC.MEMORY_CURATE_PROPOSE, request),
+  cancelMemoryCuration: () => ipcRenderer.invoke(IPC.MEMORY_CURATE_CANCEL),
+  applyMemoryCuration: (proposalId, picks) => ipcRenderer.invoke(IPC.MEMORY_CURATE_APPLY, proposalId, picks),
+  undoMemoryCuration: () => ipcRenderer.invoke(IPC.MEMORY_CURATE_UNDO),
+  getGeminiModels: () => ipcRenderer.invoke(IPC.GEMINI_MODEL_GET),
+  setGeminiModel: (patch) => ipcRenderer.invoke(IPC.GEMINI_MODEL_SET, patch),
+  refreshGeminiModels: () => ipcRenderer.invoke(IPC.GEMINI_MODEL_REFRESH),
+  onGeminiModelsChanged: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, state: GeminiModelState) => cb(state);
+    ipcRenderer.on(IPC.GEMINI_MODEL_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.GEMINI_MODEL_CHANGED, handler);
+  },
+  getClaudeModels: () => ipcRenderer.invoke(IPC.CLAUDE_MODEL_GET),
+  setClaudeModel: (patch) => ipcRenderer.invoke(IPC.CLAUDE_MODEL_SET, patch),
+  refreshClaudeModels: () => ipcRenderer.invoke(IPC.CLAUDE_MODEL_REFRESH),
+  onClaudeModelsChanged: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, state: ClaudeModelState) => cb(state);
+    ipcRenderer.on(IPC.CLAUDE_MODEL_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.CLAUDE_MODEL_CHANGED, handler);
+  },
+  getChatgptModels: () => ipcRenderer.invoke(IPC.CHATGPT_MODEL_GET),
+  setChatgptModel: (patch) => ipcRenderer.invoke(IPC.CHATGPT_MODEL_SET, patch),
+  refreshChatgptModels: () => ipcRenderer.invoke(IPC.CHATGPT_MODEL_REFRESH),
+  onChatgptModelsChanged: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, state: ChatgptModelState) => cb(state);
+    ipcRenderer.on(IPC.CHATGPT_MODEL_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.CHATGPT_MODEL_CHANGED, handler);
   },
 
   getSecretHealth: () => ipcRenderer.invoke(IPC.GET_SECRET_HEALTH),
@@ -434,6 +520,7 @@ const api: ElectronAPI = {
   forgetTelegramChannel: (chatId) => ipcRenderer.invoke(IPC.FORGET_TELEGRAM_CHANNEL, chatId),
 
   getLineSettings: () => ipcRenderer.invoke(IPC.GET_LINE_SETTINGS),
+  listLineChats: () => ipcRenderer.invoke(IPC.LIST_LINE_CHATS),
   updateLineEnabled: (enabled) => ipcRenderer.invoke(IPC.UPDATE_LINE_ENABLED, enabled),
   updateLineCredentials: (creds) => ipcRenderer.invoke(IPC.UPDATE_LINE_CREDENTIALS, creds),
   updateLinePort: (port) => ipcRenderer.invoke(IPC.UPDATE_LINE_PORT, port),
@@ -461,6 +548,7 @@ const api: ElectronAPI = {
   deleteMcpServer: (id) => ipcRenderer.invoke(IPC.MCP_DELETE_SERVER, id),
   connectMcpServer: (id) => ipcRenderer.invoke(IPC.MCP_CONNECT_SERVER, id),
   disconnectMcpServer: (id) => ipcRenderer.invoke(IPC.MCP_DISCONNECT_SERVER, id),
+  setBuiltinConnectorEnabled: (id, enabled) => ipcRenderer.invoke(IPC.MCP_SET_BUILTIN_ENABLED, id, enabled),
   onMcpServerStatus: (cb) => {
     const handler = (_: Electron.IpcRendererEvent, servers: McpServerView[]) => cb(servers);
     ipcRenderer.on(IPC.MCP_SERVER_STATUS, handler);
@@ -490,6 +578,12 @@ const api: ElectronAPI = {
     ipcRenderer.on(IPC.METRICS_CHANGED, handler);
     return () => ipcRenderer.removeListener(IPC.METRICS_CHANGED, handler);
   },
+  getFlowMetrics: () => ipcRenderer.invoke(IPC.FLOW_METRICS_GET),
+  onFlowMetricsChanged: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, snapshot: FlowMetricsSnapshot) => cb(snapshot);
+    ipcRenderer.on(IPC.FLOW_METRICS_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.FLOW_METRICS_CHANGED, handler);
+  },
 
   getCloseToTray: () => ipcRenderer.invoke(IPC.GET_CLOSE_TO_TRAY),
   updateCloseToTray: (enabled) => ipcRenderer.invoke(IPC.UPDATE_CLOSE_TO_TRAY, enabled),
@@ -515,6 +609,11 @@ const api: ElectronAPI = {
     const handler = (_: Electron.IpcRendererEvent, payload: AgentConfirmPayload) => cb(payload);
     ipcRenderer.on(IPC.AGENT_CONFIRM_SHOW, handler);
     return () => ipcRenderer.removeListener(IPC.AGENT_CONFIRM_SHOW, handler);
+  },
+  onAgentConfirmDismiss: (cb: (id: string) => void) => {
+    const handler = (_e: unknown, id: string): void => cb(id);
+    ipcRenderer.on(IPC.AGENT_CONFIRM_DISMISS, handler);
+    return () => ipcRenderer.removeListener(IPC.AGENT_CONFIRM_DISMISS, handler);
   },
   respondAgentConfirm: (id, choice) => {
     ipcRenderer.send(IPC.AGENT_CONFIRM_RESPOND, id, choice);
@@ -551,8 +650,6 @@ const api: ElectronAPI = {
   getQuickExport: () => ipcRenderer.invoke(IPC.GET_QUICK_EXPORT),
   updateQuickExport: (settings) => ipcRenderer.invoke(IPC.UPDATE_QUICK_EXPORT, settings),
 
-  fetchDuckaiModels: () => ipcRenderer.invoke(IPC.DUCKAI_FETCH_MODELS),
-
   getFlows: () => ipcRenderer.invoke(IPC.FLOW_GET_ALL),
   saveFlow: (flow) => ipcRenderer.invoke(IPC.FLOW_SAVE, flow),
   deleteFlow: (flowId) => ipcRenderer.invoke(IPC.FLOW_DELETE, flowId),
@@ -564,16 +661,24 @@ const api: ElectronAPI = {
   executeFlow: (flowId) => ipcRenderer.invoke(IPC.FLOW_EXECUTE, flowId),
   runChatCommand: (flowId, command, input, conversationPath) =>
     ipcRenderer.invoke(IPC.FLOW_RUN_CHAT_COMMAND, flowId, command, input, conversationPath),
-  runSearchCommand: (query, targetUrl, mode, conversationPath, clientToken) =>
-    ipcRenderer.invoke(IPC.SEARCH_RUN, query, targetUrl, mode, conversationPath, clientToken),
-  runAgentCommand: (goal, targetUrl, runId, conversationPath, attachments) =>
-    ipcRenderer.invoke(IPC.AGENT_RUN, goal, targetUrl, runId, conversationPath, attachments),
+  runAgentCommand: (goal, targetUrl, runId, conversationPath, attachments, mcpServerIds, web) =>
+    ipcRenderer.invoke(IPC.AGENT_RUN, goal, targetUrl, runId, conversationPath, attachments, mcpServerIds, web),
+  setConversationConnectors: (filePath, serverIds, web) =>
+    ipcRenderer.invoke(IPC.AGENT_SET_CONNECTORS, filePath, serverIds, web),
   resumeAgentRun: (runId, answer) => ipcRenderer.invoke(IPC.AGENT_RESUME, runId, answer),
   cancelAgentRun: (runId) => ipcRenderer.invoke(IPC.AGENT_CANCEL, runId),
   listResumableAgentRuns: () => ipcRenderer.invoke(IPC.AGENT_LIST_RESUMABLE),
+  getAgentRun: (runId) => ipcRenderer.invoke(IPC.AGENT_GET_RUN, runId),
   discardAgentRun: (runId) => ipcRenderer.invoke(IPC.AGENT_DISCARD, runId),
   abortFlow: (flowId) => ipcRenderer.invoke(IPC.FLOW_ABORT, flowId),
-  generateFlow: (description) => ipcRenderer.invoke(IPC.FLOW_GENERATE, description),
+  generateFlow: (request) => ipcRenderer.invoke(IPC.FLOW_GENERATE, request),
+  getFlowAiUrl: () => ipcRenderer.invoke(IPC.FLOW_GET_AI_URL),
+  onFlowBuildProgress: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, payload: FlowBuildPayload) => cb(payload);
+    ipcRenderer.on(IPC.FLOW_BUILD_PROGRESS, handler);
+    return () => ipcRenderer.removeListener(IPC.FLOW_BUILD_PROGRESS, handler);
+  },
+  previewSchedule: (trigger) => ipcRenderer.invoke(IPC.FLOW_PREVIEW_SCHEDULE, trigger),
   exportFlow: (flow) => ipcRenderer.invoke(IPC.FLOW_EXPORT, flow),
   exportFlowResult: (content, defaultFileName) => ipcRenderer.invoke(IPC.FLOW_EXPORT_RESULT, { content, defaultFileName }),
   onFlowExecutionLog: (cb) => {

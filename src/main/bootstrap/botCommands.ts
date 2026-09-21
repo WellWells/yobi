@@ -26,7 +26,7 @@ export function listBotByokCommands(getFlowManager: () => FlowManager | null): B
     byokInstances: config.byokInstances,
     byokGroups: config.byokGroups,
     flowCommands: (getFlowManager()?.getBotCommands() ?? []).map((fc) => fc.command),
-    hidden: { providers: [], duckaiModelIds: [], byokIds: [], byokGroupIds: [] },
+    hidden: { providers: [], byokIds: [], byokGroupIds: [] },
   });
   const preview = new Map(previewSet.byok.map((bc) => [bc.targetUrl, bc.command]));
 

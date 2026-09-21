@@ -1,33 +1,43 @@
 import type {
+  FlowBuildEvent,
+  FlowBuildOutcome,
+  FlowBuildPayload,
   FlowDefinition,
   FlowExecutionEvent,
   FlowExecutionLog,
   FlowExecutionResult,
-  FlowGenerationResult,
   QueueTaskItem,
 } from '../../shared/types';
 import { executeFlow } from './executor';
 import { closeRunPages } from './skills/browserPages';
-import { generateFlowDefinition } from './flowGenerator';
+import { runFlowBuild } from './flowBuild';
+import type { FlowClarification } from '../../shared/flowSkillSchema';
 import type { FlowExecutorDeps } from './types';
 import { getWorkerAttention, sendLog, sendToRenderer, sendWebNotification } from '../helpers';
 import { config } from '../config';
-import { getLangCache, t } from '../i18n';
+import { getLangCache, localizeUserFacingError, t } from '../i18n';
 import { classifyFailure, recordTaskOutcome } from '../metrics';
+import { pruneFlowMetrics } from '../flowMetrics';
+import { recordFlowRun } from '../flowMeter';
+import { runInMetricDomain } from '../llmMeter';
 import { IPC, BOT_COMMAND_RE } from '../../shared/types';
 import { normalizeCronTrigger, shouldNormalizeCronTrigger } from '../../shared/flowSchedule';
 import { cloneFlowVariables, missingRequiredVariables, sanitizeFlowVariables } from '../../shared/flowVariables';
 import { createEntityId, loadFlowsFromDisk, saveFlowsToDisk } from './flowPersistence';
 import { pruneOrphanCheckpoints } from './checkpoint';
 import { FlowTriggerRegistry } from './flowTriggers';
+import { loadScheduleState, pruneScheduleState } from './scheduleState';
 import { FlowQueue } from './flowQueue';
 import { llmLane } from './lanes';
+import { normalizeAllowedUserIds } from '../../shared/botCommandAccess';
 
 export interface FlowBotCommandDef {
   flowId: string;
   command: string;
   description: string;
   inputVariable: string;
+  /** Empty means every paired user, which is what every flow written before this field meant. */
+  allowedUserIds: string[];
 }
 
 type FlowExecutionSource = 'ui' | 'bot' | 'system' | 'chat';
@@ -38,8 +48,8 @@ export class FlowManager {
   private _running = new Set<string>();
   private _abortControllers = new Map<string, AbortController>();
   private _onBotCommandsChanged: (() => void) | null = null;
-  private triggers = new FlowTriggerRegistry((flowId) => {
-    void this.queueExecution(flowId);
+  private triggers = new FlowTriggerRegistry((flowId, extraContext) => {
+    void this.queueExecution(flowId, extraContext);
   });
   private queue = new FlowQueue();
 
@@ -53,8 +63,10 @@ export class FlowManager {
     if (JSON.stringify(this.flows) !== JSON.stringify(loadedFlows)) {
       await saveFlowsToDisk(this.flows);
     }
+    await loadScheduleState();
+    pruneScheduleState(this.flows.map((flow) => flow.id));
     this.triggers.registerAll(this.flows);
-    if (this.flows.length > 0) this.pruneCheckpoints();
+    if (this.flows.length > 0) this.pruneFlowData();
     sendLog(`📋 [Flow] Loaded ${this.flows.length} flow(s)`);
   }
 
@@ -63,12 +75,14 @@ export class FlowManager {
     sendLog('🛑 [Flow] Shut down — all triggers unregistered');
   }
 
-  private pruneCheckpoints(): void {
+  /** Anything keyed by a flow or step that no longer exists: checkpoints and counters alike. */
+  private pruneFlowData(): void {
     const activeStepIds = new Set<string>();
     for (const flow of this.flows) {
       for (const step of flow.steps) activeStepIds.add(step.id);
     }
     void pruneOrphanCheckpoints(activeStepIds);
+    pruneFlowMetrics(new Set(this.flows.map((flow) => flow.id)), activeStepIds);
   }
 
   async reload(): Promise<void> {
@@ -114,6 +128,7 @@ export class FlowManager {
           command,
           description: trigger.botCommandDescription ?? '',
           inputVariable: trigger.botInputVariable?.trim() || 'input',
+          allowedUserIds: normalizeAllowedUserIds(trigger.botAllowedUserIds),
         });
       }
     }
@@ -170,7 +185,7 @@ export class FlowManager {
       this._onBotCommandsChanged?.();
     }
 
-    this.pruneCheckpoints();
+    this.pruneFlowData();
     return normalizedFlow;
   }
 
@@ -184,7 +199,7 @@ export class FlowManager {
     if (hadBotTrigger) {
       this._onBotCommandsChanged?.();
     }
-    this.pruneCheckpoints();
+    this.pruneFlowData();
     return true;
   }
 
@@ -202,7 +217,7 @@ export class FlowManager {
     if (hadBotTrigger) {
       this._onBotCommandsChanged?.();
     }
-    this.pruneCheckpoints();
+    this.pruneFlowData();
     return true;
   }
 
@@ -305,7 +320,7 @@ export class FlowManager {
     clientToken?: string,
   ): Promise<T> {
     const taskId = createEntityId();
-    return this.queue.enqueue(taskId, name, () => run(taskId), makeErrorResult, undefined, agentRunId, clientToken);
+    return this.queue.enqueue(taskId, name, () => run(taskId), makeErrorResult, undefined, agentRunId, clientToken, true);
   }
 
   setQueueTaskProgress(taskId: string, progress: string): void {
@@ -409,22 +424,49 @@ export class FlowManager {
     return saved;
   }
 
-  async queueGeneration(description: string, queueLabel = 'AI Flow'): Promise<FlowGenerationResult> {
+  /**
+   * One build attempt, streamed to the renderer under `buildId`. Answers arriving on a second
+   * call are what makes the ask gate one round deep: with any answer in hand the build no longer
+   * stops to ask, so it cannot loop back to the user twice for the same request.
+   */
+  async queueBuild(
+    description: string,
+    options: {
+      buildId: string;
+      answers?: readonly FlowClarification[];
+      queueLabel?: string;
+      providerUrl?: string;
+    },
+  ): Promise<FlowBuildOutcome> {
     const taskId = createEntityId();
-    return this.queue.enqueue<FlowGenerationResult>(
+    const { buildId } = options;
+    const answers = options.answers ?? [];
+    const emit = (event: FlowBuildEvent): void => {
+      sendToRenderer(IPC.FLOW_BUILD_PROGRESS, { buildId, event } satisfies FlowBuildPayload);
+    };
+    return this.queue.enqueue<FlowBuildOutcome>(
       taskId,
-      `[Flow] ${queueLabel}`,
+      `[Flow] ${options.queueLabel ?? 'AI Flow'}`,
       async () => {
         try {
-          const outcome = await generateFlowDefinition(description, this.deps);
-          if (!outcome.ok) return outcome;
-          const saved = await this.saveGeneratedFlow(outcome.flow);
-          return { ok: true, flow: saved };
+          return await runFlowBuild({
+            goal: description,
+            deps: this.deps,
+            save: (flow) => this.saveGeneratedFlow(flow),
+            answers,
+            askUser: answers.length === 0,
+            emit,
+            ...(options.providerUrl ? { providerUrl: options.providerUrl } : {}),
+          });
         } finally {
           this.blankWorkerWhenIdle();
         }
       },
-      (err) => ({ ok: false, error: err instanceof Error ? err.message : String(err) }),
+      (err) => {
+        const error = err instanceof Error ? err.message : String(err);
+        emit({ kind: 'failed', phase: 'build', error });
+        return { status: 'failed', phase: 'build', error };
+      },
     );
   }
 
@@ -472,7 +514,10 @@ export class FlowManager {
       const onLog = (log: FlowExecutionLog): void => {
         sendToRenderer(IPC.FLOW_EXECUTION_LOG, log);
       };
-      const result = await executeFlow(flow, this.deps, onLog, extraContext, controller.signal);
+      const result = await runInMetricDomain(
+        'flow',
+        () => executeFlow(flow, this.deps, onLog, extraContext, controller.signal),
+      );
       this.recordRunMetrics(result);
       this.notifyRunOutcome(flow, result);
       return result;
@@ -485,9 +530,16 @@ export class FlowManager {
     }
   }
 
+  /**
+   * Two tallies from one run: the domain-wide one the headline success rate reads, and the
+   * per-flow one. `degraded` is the bridge between them — a run that lost steps to
+   * `emitFailFlag` still counts as a success here, and would otherwise leave no trace at all.
+   */
   private recordRunMetrics(result: FlowExecutionResult): void {
     if (result.aborted) return;
-    recordTaskOutcome('flow', result.success ? 'success' : classifyFailure(result.error));
+    const outcome = result.success ? 'success' : classifyFailure(result.error);
+    recordTaskOutcome('flow', outcome);
+    recordFlowRun({ flowId: result.flowId, outcome, degraded: (result.softFailures ?? 0) > 0 });
   }
 
   private notifyRunOutcome(flow: FlowDefinition, result: FlowExecutionResult): void {
@@ -500,7 +552,7 @@ export class FlowManager {
         'success',
       );
     } else if (!result.success && config.notifyEvents.flowFailure) {
-      const compactError = (result.error ?? '').replace(/\s+/g, ' ').trim();
+      const compactError = localizeUserFacingError(result.error ?? '', strings).replace(/\s+/g, ' ').trim();
       const displayError = compactError.length > 90 ? `${compactError.slice(0, 90)}…` : compactError;
       sendWebNotification(
         t(strings, 'notify.flow.failure.title'),

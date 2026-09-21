@@ -1,8 +1,11 @@
 import { clipboard } from 'electron';
 import type { FlowDefinition, FlowExecutionResult, SkillInstance, SkillType } from '../../shared/types';
+import type { FlowStepOutcome } from '../../shared/flowMetrics';
+import { METRIC_SILENT_STEP_TYPES } from '../../shared/flowMetrics';
 import { sendLog } from '../helpers';
 import { getLangCache, t } from '../i18n';
 import { measureTokens } from '../tokenMeter';
+import { recordFlowStep } from '../flowMeter';
 import type { FlowExecutorDeps, LogCallback } from './types';
 import {
   escapeRegExp,
@@ -34,10 +37,35 @@ interface RunProgress {
   completed: number;
   stopped: boolean;
   aborted: boolean;
+  /** Steps lost to `emitFailFlag` in this run — the run still succeeds, so nothing else records it. */
+  softFailures: number;
   error?: string;
   finalOutput?: string;
   lastLlmProvider?: string;
   titleHint?: string;
+}
+
+/**
+ * Every step execution is counted, including each pass through a loop body: a nested step that
+ * fails on four of five items is the exact shape this exists to surface, and `progress.completed`
+ * cannot see it because it only advances at depth 0.
+ */
+function noteStep(
+  flowId: string,
+  step: SkillInstance,
+  outcome: FlowStepOutcome,
+  startedAt: number,
+  error?: string,
+): void {
+  if (outcome === 'ok' && METRIC_SILENT_STEP_TYPES.has(step.type)) return;
+  recordFlowStep({
+    flowId,
+    stepId: step.id,
+    type: step.type,
+    outcome,
+    durationMs: Date.now() - startedAt,
+    error,
+  });
 }
 
 export function titleHintFor(type: SkillType, subVars: Record<string, string>): string {
@@ -91,7 +119,7 @@ export function unwrapStepOutput(type: SkillType, raw: string): StepOutput {
     }
     return { output: raw, subVars: {} };
   }
-  if (type === 'stock' || type === 'forex' || type === 'weather' || type === 'air_quality' || type === 'gmap_reviews' || type === 'research' || type === 'sysinfo' || type === 'share') {
+  if (type === 'stock' || type === 'forex' || type === 'weather' || type === 'air_quality' || type === 'gmap_reviews' || type === 'research' || type === 'sysinfo' || type === 'share' || type === 'line_read') {
     try {
       const env = JSON.parse(raw) as Record<string, unknown>;
       if (env && typeof env.output === 'string') {
@@ -124,7 +152,9 @@ export function unwrapStepOutput(type: SkillType, raw: string): StepOutput {
   return { output: raw, subVars: {} };
 }
 
-async function resolveStepConfig(
+// Exported for the test suite: the __attachmentAllowlist injection is the wiring half of the
+// attachment gate, and a step type missing from it fails open into "no file may be sent".
+export async function resolveStepConfig(
   step: SkillInstance,
   context: Map<string, string>,
   flowId: string,
@@ -150,6 +180,9 @@ async function resolveStepConfig(
   }
   if (step.type === 'llm') {
     resolvedConfig.__flowId = flowId;
+    resolvedConfig.__attachmentAllowlist = JSON.stringify(getProducedFiles(context));
+  }
+  if (step.type === 'email_send') {
     resolvedConfig.__attachmentAllowlist = JSON.stringify(getProducedFiles(context));
   }
   if (step.type === 'browser_open' || step.type === 'browser_close') {
@@ -313,6 +346,7 @@ async function runRange(
       sendLog(`⏳ [${trace}] ${stepLabel}`);
     }
 
+    const startedAt = Date.now();
     try {
       const resolvedConfig = await resolveStepConfig(step, context, flow.id);
       const rawOutput = await runStep(step, resolvedConfig, deps, signal);
@@ -348,6 +382,7 @@ async function runRange(
         emitLog(onLog, flow.id, step.id, i, 'completed', output);
       }
       sendLog(`✅ [${trace}] ${stepLabel} — ${output.length} chars`);
+      noteStep(flow.id, step, 'ok', startedAt);
 
       if (step.type === 'loop' && i + 1 < endIndex) {
         i = await expandLoop(flow, i, endIndex, step, output, context, deps, onLog, progress, depth, trace, signal);
@@ -422,12 +457,15 @@ async function runRange(
         context.set(`${step.id}.output`, '');
         emitLog(onLog, flow.id, step.id, i, 'completed', '', msg);
         if (depth === 0) progress.completed++;
+        progress.softFailures++;
+        noteStep(flow.id, step, 'soft', startedAt, msg);
         sendLog(`⚠️ [${trace}] ${stepLabel} failed (isFailed=1), continuing: ${msg}`);
         continue;
       }
 
       const errorMsg = err instanceof Error ? err.message : String(err);
       emitLog(onLog, flow.id, step.id, i, 'error', undefined, errorMsg);
+      noteStep(flow.id, step, 'hard', startedAt, errorMsg);
       sendLog(`❌ [${trace}] ${stepLabel} failed: ${errorMsg}`);
 
       for (let j = i + 1; j < flow.steps.length; j++) {
@@ -479,7 +517,7 @@ async function runFlowSteps(
     }
   }
 
-  const progress: RunProgress = { completed: 0, stopped: false, aborted: false };
+  const progress: RunProgress = { completed: 0, stopped: false, aborted: false, softFailures: 0 };
 
   const trace = flowTrace(flow);
   sendLog(`▶️ [${trace}] Executing flow (${flow.steps.length} steps)`);
@@ -496,6 +534,7 @@ async function runFlowSteps(
       completedSteps: progress.completed,
       totalSteps: flow.steps.length,
       completedAt: new Date().toISOString(),
+      softFailures: progress.softFailures,
     };
   }
 
@@ -509,6 +548,7 @@ async function runFlowSteps(
       completedSteps: progress.completed,
       totalSteps: flow.steps.length,
       completedAt: new Date().toISOString(),
+      softFailures: progress.softFailures,
     };
   }
 
@@ -526,5 +566,6 @@ async function runFlowSteps(
     finalOutput: progress.finalOutput,
     lastLlmProvider: progress.lastLlmProvider,
     titleHint: progress.titleHint,
+    softFailures: progress.softFailures,
   };
 }

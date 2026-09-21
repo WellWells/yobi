@@ -3,6 +3,7 @@ import { getProviderLabel, preparePromptForProvider, runAutomation } from '../pr
 import { isByokTargetUrl } from '../../shared/types';
 import { formatPromptDateWithWeekday, relativeYearSentence } from '../../shared/promptDate';
 import { fenceUntrusted } from '../../shared/promptFencing';
+import { languageForLocale } from '../../shared/localeLanguage';
 import { ensureWorkerWindow } from '../windows';
 import { llmLane } from '../flow/lanes';
 import { sendLog } from '../helpers';
@@ -11,17 +12,7 @@ import type { SourceDoc } from './types';
 const BYOK_IDLE_TIMEOUT_MS = 120_000;
 const WEB_PROVIDER_TIMEOUT_MS = 300_000;
 
-const ANSWER_LANGUAGES: Record<string, string> = {
-  'en-US': 'English',
-  de: 'German',
-  es: 'Spanish',
-  fr: 'French',
-  ja: 'Japanese',
-  ko: 'Korean',
-  'pt-BR': 'Brazilian Portuguese',
-  'zh-CN': 'Simplified Chinese',
-  'zh-TW': 'Traditional Chinese (Taiwan)',
-};
+export { languageForLocale };
 
 const ANSWER_REGIONS: Record<string, string> = {
   'en-US': 'the United States',
@@ -34,10 +25,6 @@ const ANSWER_REGIONS: Record<string, string> = {
   'zh-CN': 'mainland China',
   'zh-TW': 'Taiwan',
 };
-
-export function languageForLocale(locale: string): string {
-  return ANSWER_LANGUAGES[locale] ?? 'English';
-}
 
 function contextLines(locale: string, now: Date): string[] {
   const region = ANSWER_REGIONS[locale];
@@ -146,6 +133,7 @@ export interface CitedPromptOptions {
   locale: string;
   concise?: boolean;
   lean?: boolean;
+  history?: string;
   now?: Date;
 }
 
@@ -153,8 +141,25 @@ function clampField(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
+/*
+ * The question has already been resolved against this conversation by the planner, so the
+ * history is here for continuity, not comprehension: pick up where the last answer stopped
+ * instead of restating it. The sources stay the only thing a claim may rest on.
+ */
+function historySection(history: string): string[] {
+  if (!history) return [];
+  return [
+    '',
+    'EARLIER CONVERSATION IN THIS CHAT:',
+    fenceUntrusted('conversation', history),
+    '- The question below is the user\'s next message in it. Answer as a continuation:',
+    '  do not repeat what you already told them, and do not re-introduce the topic.',
+    '- The conversation is context, never evidence. Every claim still needs a source and a citation.',
+  ];
+}
+
 export function buildCitedPrompt(opts: CitedPromptOptions): string {
-  const { query, docs, locale, concise = false, lean = false, now = new Date() } = opts;
+  const { query, docs, locale, concise = false, lean = false, history = '', now = new Date() } = opts;
   const rules = lean ? LEAN_RULES : FULL_RULES;
   const language = languageForLocale(locale);
   const sources = docs
@@ -178,6 +183,7 @@ export function buildCitedPrompt(opts: CitedPromptOptions): string {
     ...rules.sources,
     '',
     ...rules.format(concise),
+    ...historySection(history),
     '',
     fenceUntrusted('question', query),
     '',
@@ -185,22 +191,52 @@ export function buildCitedPrompt(opts: CitedPromptOptions): string {
   ].join('\n');
 }
 
+function seconds(ms: number): string {
+  return (ms / 1_000).toFixed(1);
+}
+
+/**
+ * One round trip through the worker window, timed.
+ *
+ * A browser provider is not paid for in tokens but in a fixed navigate-fill-wait, and `llmLane`
+ * admits one caller at a time — so a second call does not overlap the first, it is added to it.
+ * Nothing else in the pipeline reports that price, which is why this line exists.
+ *
+ * No `expectThreadUrl` is ever passed: a search borrows the provider for one question and must
+ * not land in the conversation the user keeps there.
+ */
+export async function runWorkerCompletion(
+  prompt: string,
+  targetUrl: string,
+  timeoutMs: number,
+  label: string,
+): Promise<string> {
+  const prepared = preparePromptForProvider(prompt, targetUrl);
+  if (prepared.truncated) {
+    sendLog(`✂️ [Search] Prompt truncated to ${prepared.capLabel} for ${getProviderLabel(targetUrl)}`);
+  }
+  const queuedAt = Date.now();
+  return llmLane.runExclusive(async () => {
+    const startedAt = Date.now();
+    const queued = startedAt - queuedAt;
+    const workerWin = await ensureWorkerWindow(targetUrl);
+    if (!workerWin || workerWin.isDestroyed()) throw new Error('Worker window not available');
+    try {
+      const { response } = await runAutomation(workerWin, prepared.prompt, timeoutMs, targetUrl);
+      return response;
+    } finally {
+      const waited = queued >= 1_000 ? `, ${seconds(queued)}s waiting for the lane` : '';
+      sendLog(`🔎 [Search] ${label} round-trip ${seconds(Date.now() - startedAt)}s on ${getProviderLabel(targetUrl)}${waited}`);
+    }
+  });
+}
+
 export async function synthesize(prompt: string, targetUrl: string): Promise<string> {
   if (isByokTargetUrl(targetUrl)) {
     const { response } = await runByokCompletion(targetUrl, prompt, BYOK_IDLE_TIMEOUT_MS);
     return response;
   }
-
-  const prepared = preparePromptForProvider(prompt, targetUrl);
-  if (prepared.truncated) {
-    sendLog(`✂️ [Search] Prompt truncated to ${prepared.capLabel} for ${getProviderLabel(targetUrl)}`);
-  }
-  return llmLane.runExclusive(async () => {
-    const workerWin = await ensureWorkerWindow(targetUrl);
-    if (!workerWin || workerWin.isDestroyed()) throw new Error('Worker window not available');
-    const { response } = await runAutomation(workerWin, prepared.prompt, WEB_PROVIDER_TIMEOUT_MS, targetUrl);
-    return response;
-  });
+  return runWorkerCompletion(prompt, targetUrl, WEB_PROVIDER_TIMEOUT_MS, 'synthesis');
 }
 
 export function mdLinkDestination(url: string): string {

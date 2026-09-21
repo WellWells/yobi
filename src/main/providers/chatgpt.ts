@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron';
-import { navigateAndWait, sleep, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
+import { sleep, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
+import { ensureOnPage, PAGE_REUSE } from './pageReuse';
 import { executeAutomationWithTimeout, dispatchFocusEvents, settledElementCount } from './automationExecutor';
 import { isExpiredCookie, sendLog } from '../helpers';
 import { showLoginWindowIfNeeded } from '../windows';
@@ -7,7 +8,9 @@ import { PROVIDER_URLS } from '../../shared/types';
 import { WORKER_USER_AGENTS } from '../userAgent';
 import { applyWorkerUserAgent } from '../clientHints';
 import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_SUBMIT_JS } from './chatgptSendScript';
+import { CHATGPT_READ_JS, cleanChatgptTitle } from './chatgptReadScript';
 import { uploadFilesToChatgpt } from './chatgptUpload';
+import { syncChatgptModel } from './chatgptModelSync';
 
 const CHATGPT_HOME = PROVIDER_URLS.chatgpt;
 export const CHATGPT_LOGIN_URL = 'https://auth.openai.com/log-in-or-create-account';
@@ -116,14 +119,18 @@ export async function runChatgptAutomation(
   timeoutMs = 60_000,
   targetUrl: string = CHATGPT_HOME,
   attachments?: string[],
+  _wantTitle = false,
+  continuingThread = false,
 ): Promise<{ response: string; title: string }> {
   const wc = workerWin.webContents;
 
   applyWorkerUserAgent(wc, WORKER_USER_AGENTS.chatgpt);
 
-  await navigateAndWait(wc, targetUrl);
+  const landing = await ensureOnPage(wc, targetUrl, PAGE_REUSE.chatgpt, { continuingThread });
+  const reused = landing === 'reused';
+  if (reused) sendLog('♻️ ChatGPT page kept open — typing straight into it, no reload');
 
-  await waitForChatgptComposerOrTimeout(wc);
+  if (!reused) await waitForChatgptComposerOrTimeout(wc);
 
   const authSignals = await getChatgptAuthSignals(workerWin);
   const pageSignals = await getChatgptPageSignals(workerWin);
@@ -134,6 +141,8 @@ export async function runChatgptAutomation(
     );
   }
 
+  await syncChatgptModel(wc);
+
   if (attachments && attachments.length > 0) {
     const uploadLog = await uploadFilesToChatgpt(wc, attachments, 120_000);
     for (const line of uploadLog) sendLog(`[chatgpt-upload] ${line}`);
@@ -141,9 +150,12 @@ export async function runChatgptAutomation(
 
   await dispatchFocusEvents(wc);
 
-  const baseline = await settledElementCount(wc, CHATGPT_ASSISTANT_TURN_SELECTOR);
+  // Called for the settling, not the count: the baseline that matters is taken in the page
+  // after the composer is filled, because history can still be hydrating out here. A page kept
+  // from the previous turn finished hydrating long ago, so it has nothing left to settle.
+  if (!reused) await settledElementCount(wc, CHATGPT_ASSISTANT_TURN_SELECTOR);
 
-  const autoScript = buildChatgptAutomationScript(prompt, baseline, timeoutMs);
+  const autoScript = buildChatgptAutomationScript(prompt, timeoutMs);
   const result = await executeAutomationWithTimeout<{ response: string; title: string }>(
     wc,
     autoScript,
@@ -157,13 +169,12 @@ export async function runChatgptAutomation(
 
   return {
     response: result.response.trim(),
-    title: (result.title || '').trim(),
+    title: cleanChatgptTitle(result.title || ''),
   };
 }
 
 function buildChatgptAutomationScript(
   prompt: string,
-  baselineMessageCount: number,
   timeoutMs: number,
 ): string {
   const escapedPrompt = JSON.stringify(prompt);
@@ -171,102 +182,13 @@ function buildChatgptAutomationScript(
   return `
 (async function chatgptAutomate() {
   var TIMEOUT  = ${timeoutMs};
-  var BASELINE = ${baselineMessageCount};
   ${INJECTED_SLEEP_JS}
   ${INJECTED_WAIT_FOR_JS}
-
-  function getAssistantTurns() {
-    return document.querySelectorAll(${JSON.stringify(CHATGPT_ASSISTANT_TURN_SELECTOR)});
-  }
-
-  function getLatestAssistantTurn() {
-    var turns = getAssistantTurns();
-    return turns[turns.length - 1] || null;
-  }
-
-  function getTurnText(turn) {
-    if (!turn) return '';
-    var markdown = turn.querySelector('.markdown.prose, .markdown, [class*="markdown"]');
-    if (markdown && (markdown.innerText || '').trim()) {
-      return (markdown.innerText || '').trim();
-    }
-    return (turn.innerText || '').trim();
-  }
-
-  function findCopyButtonForTurn(turn) {
-    if (!turn) return null;
-    
-    var turnContainer = turn.closest('.agent-turn') || turn.closest('.group\\\\/turn-messages') || turn.parentElement.parentElement;
-    var searchContext = turnContainer || document;
-
-    var selectors = [
-      'button[data-testid="copy-turn-action-button"]'
-    ];
-
-    for (var i = 0; i < selectors.length; i++) {
-      var btns = searchContext.querySelectorAll(selectors[i]);
-      if (btns && btns.length > 0) return btns[btns.length - 1]; 
-    }
-    return null;
-  }
-
   ${INJECTED_INTERCEPT_COPY_JS}
-
   ${CHATGPT_SUBMIT_JS}
+  ${CHATGPT_READ_JS}
 
   var submitted = await chatgptSubmit(${escapedPrompt});
-  BASELINE = submitted.assistantBaseline;
-
-  await waitFor(function() {
-    return getAssistantTurns().length > BASELINE;
-  }, 'new ChatGPT response', TIMEOUT, 350);
-
-  await waitFor(function() {
-    var turn = getLatestAssistantTurn();
-    return !!getTurnText(turn);
-  }, 'ChatGPT response text', TIMEOUT, 350);
-
-  var stableText = '';
-  var stableCount = 0;
-  var NO_CHANGE_LIMIT = TIMEOUT;   
-  var chatLastChangeAt = null;
-  var copyBtn = null;
-  while (true) {
-    var turn = getLatestAssistantTurn();
-    var text = getTurnText(turn);
-    copyBtn = findCopyButtonForTurn(turn);
-    if (copyBtn && text) break;
-    if (text !== stableText) {
-      stableText = text;
-      stableCount = 0;
-      if (text) chatLastChangeAt = Date.now();
-    } else if (text) {
-      stableCount += 1;
-    }
-    if (stableText && stableCount >= 3) break;
-    if (chatLastChangeAt !== null && Date.now() - chatLastChangeAt > NO_CHANGE_LIMIT) {
-      if (stableText) break;
-      throw new Error('ChatGPT automation timed out: response stopped updating');
-    }
-    await sleep(250);
-  }
-
-  var latestTurn = getLatestAssistantTurn();
-  if (!latestTurn) throw new Error('ChatGPT response block not found');
-
-  if (!copyBtn) copyBtn = findCopyButtonForTurn(latestTurn);
-
-  var answerText = getTurnText(latestTurn);
-  var copiedText = copyBtn ? ((await interceptCopy(copyBtn)) || '').trim() : '';
-  
-  var finalAnswer = copiedText || answerText;
-  if (!finalAnswer) throw new Error('ChatGPT response is empty');
-
-  var title = '';
-  try {
-    title = (document.title || '').replace(/\\s*-\\s*ChatGPT$/i, '').trim();
-  } catch (e) {}
-
-  return { response: finalAnswer, title: title };
+  return await chatgptWaitAndRead(submitted, { timeoutMs: TIMEOUT });
 })()`;
 }

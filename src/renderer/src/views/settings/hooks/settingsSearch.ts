@@ -1,4 +1,4 @@
-export type Category = 'general' | 'shortcuts' | 'appearance' | 'export' | 'ai' | 'accounts' | 'connectors' | 'bots' | 'stats' | 'system';
+export type Category = 'general' | 'shortcuts' | 'appearance' | 'export' | 'ai' | 'memory' | 'accounts' | 'connectors' | 'bots' | 'stats' | 'system';
 
 export const TAG_SETS = {
   hotkey: ['settings.hotkey', 'settings.search.alias.hotkey'],
@@ -16,6 +16,7 @@ export const TAG_SETS = {
   shareLink: ['settings.share', 'settings.search.alias.shareLink'],
   timeout: ['settings.responseTimeout', 'settings.search.alias.timeout'],
   prompt: ['settings.prompt', 'settings.youtube.prompt', 'settings.search.alias.prompt'],
+  memory: ['settings.memory', 'settings.search.alias.memory'],
   accounts: ['settings.accounts', 'settings.modelSources', 'settings.search.alias.accounts'],
   byok: ['settings.byok', 'settings.search.alias.byok'],
   mcp: ['settings.mcp', 'settings.search.alias.mcp'],
@@ -34,6 +35,7 @@ export const CATEGORY_TAG_MAP: Record<Category, (keyof typeof TAG_SETS)[]> = {
   appearance: ['theme', 'reading'],
   export: ['quickExport', 'cardStyle', 'shareLink'],
   ai: ['timeout', 'prompt'],
+  memory: ['memory'],
   accounts: ['accounts', 'byok'],
   connectors: ['mcp'],
   bots: ['bots'],

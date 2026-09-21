@@ -9,6 +9,21 @@ export class TaskHardTimeoutError extends Error {
   }
 }
 
+/**
+ * The user stopped waiting for the running task.
+ *
+ * Skipping used to resolve the race rather than reject it, so no outcome was reported at all:
+ * the renderer's thinking bubble is only ever cleared by a CHAT_TURN, and the task the log
+ * called "skipped" carried on regardless. Nothing here can actually cancel provider
+ * automation — the point is that the user is told exactly once what happened.
+ */
+export class TaskSkippedError extends Error {
+  constructor(taskId: string) {
+    super(`Task ${taskId} was skipped by the user`);
+    this.name = 'TaskSkippedError';
+  }
+}
+
 export class QueueManager {
   private queue: Task[] = [];
   private running = false;
@@ -107,8 +122,8 @@ export class QueueManager {
             this.TASK_HARD_TIMEOUT_MS,
           );
         });
-        const skipSignal = new Promise<void>((resolve) => {
-          this.skipCurrentTask = resolve;
+        const skipSignal = new Promise<void>((_resolve, reject) => {
+          this.skipCurrentTask = () => reject(new TaskSkippedError(task.id));
         });
         await Promise.race([this.worker(task), hardTimeout, skipSignal]).finally(() => {
           clearTimeout(hardTimeoutId);

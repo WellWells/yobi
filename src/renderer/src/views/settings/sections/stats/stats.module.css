@@ -1,0 +1,14 @@
+/* Hover lightens on every theme: Mantine's subtle variants darken, which reads as
+   "disabled" on Yobi's dark themes. */
+.legendAction:hover {
+  background: var(--mantine-color-bg-tertiary);
+}
+
+.legendAction:focus-visible {
+  outline: 2px solid var(--mantine-color-accent);
+  outline-offset: 1px;
+}
+
+.keyRow + .keyRow {
+  border-top: 1px solid var(--mantine-color-default-border);
+}

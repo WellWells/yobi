@@ -52,7 +52,12 @@ export async function resolveUserPath(raw: string): Promise<string> {
   return path.isAbsolute(expanded) ? expanded : path.join(await getOutputDir(), expanded);
 }
 
-async function resolveWritePath(folderRaw: string, filenameRaw: string): Promise<string> {
+/**
+ * Exported because the agent sandbox has to predict this EXACTLY. Resolving `folder` and
+ * `filename` any other way is a bypass: an absolute `filename` makes `folder` irrelevant, and
+ * the `..`-segment filter below only ever sees the filename.
+ */
+export async function resolveWritePath(folderRaw: string, filenameRaw: string): Promise<string> {
   const expanded = filenameRaw ? expandFilenameTokens(filenameRaw) : autoFileName();
   if (path.isAbsolute(expanded)) {
     const base = sanitizeDownloadName(path.basename(expanded)) || autoFileName();
@@ -68,11 +73,41 @@ async function resolveWritePath(folderRaw: string, filenameRaw: string): Promise
   return path.join(dir, relative);
 }
 
+/**
+ * The first free `name-2.txt`, `name-3.txt`… for a `noClobber` write. Bounded, because a caller
+ * that has collided a thousand times has a naming problem, not a disk problem.
+ */
+async function freeSiblingPath(resolved: string): Promise<string> {
+  const dir = path.dirname(resolved);
+  const ext = path.extname(resolved);
+  const stem = path.basename(resolved, ext);
+  for (let n = 2; n <= 1_000; n++) {
+    const candidate = path.join(dir, `${stem}-${n}${ext}`);
+    try {
+      await fs.access(candidate);
+    } catch {
+      return candidate;
+    }
+  }
+  throw new Error(`too many files named like ${path.basename(resolved)}`);
+}
+
 export async function execFileWrite(config: Record<string, string>): Promise<string> {
   const content = config.content ?? '';
   try {
-    const resolved = await resolveWritePath((config.folder ?? '').trim(), (config.filename ?? '').trim());
+    let resolved = await resolveWritePath((config.folder ?? '').trim(), (config.filename ?? '').trim());
     await fs.mkdir(path.dirname(resolved), { recursive: true });
+    // `noClobber` is set by `/agent`, never by a flow: a flow author who names a file means that
+    // file, but the agent picks names from a model and must not silently truncate one that
+    // already exists.
+    if (config.noClobber === 'true') {
+      try {
+        await fs.access(resolved);
+        resolved = await freeSiblingPath(resolved);
+      } catch {
+        // Nothing there — the chosen name is free.
+      }
+    }
     await fs.writeFile(resolved, content, 'utf-8');
     sendLog(`📝 [Flow] File written: ${resolved}`);
     return resolved;

@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { Box, Text } from '@mantine/core';
 import { closestCenter, DndContext, type DragEndEvent } from '@dnd-kit/core';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
@@ -6,11 +6,29 @@ import {
   arrayMove, SortableContext, useSortable, verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import type { FlowDefinition } from '../../../../shared/types';
+import type { FlowIssue } from '../../../../shared/flowIssues';
 import { FlowSidebarItem } from './FlowSidebarItem';
+import { useFlowIssues } from '../../hooks/useFlowIssues';
 import { useFlowSensors } from './dnd';
 import styles from './FlowSidebarItem.module.css';
 
 const LONG_PRESS_MS = 500;
+
+/** Shared empty array so a healthy row does not get a new prop identity each render. */
+const EMPTY_ISSUES: FlowIssue[] = [];
+
+/**
+ * Bring the row of `flowId` into view inside `container`.
+ * `block: 'nearest'` leaves an already-visible row untouched, so this never
+ * yanks the list while the user is reading it.
+ * Exported for the test suite.
+ */
+export function scrollFlowRowIntoView(container: HTMLElement | null, flowId: string): void {
+  if (!container) return;
+  const rows = Array.from(container.querySelectorAll<HTMLElement>('[data-flow-id]'));
+  const row = rows.find((el) => el.dataset.flowId === flowId);
+  row?.scrollIntoView({ block: 'nearest' });
+}
 
 export interface FlowSidebarListProps {
   flows: FlowDefinition[];
@@ -59,12 +77,24 @@ export const FlowSidebarList: React.FC<FlowSidebarListProps> = ({
 }) => {
   const sensors = useFlowSensors({ delay: LONG_PRESS_MS });
   const ids = useMemo(() => flows.map((f) => f.id), [flows]);
+  const listRef = useRef<HTMLDivElement>(null);
+  // Read from the store rather than the `flows` prop: which flow wins a duplicated
+  // command depends on the whole list, so a filtered view would name the wrong one.
+  const issues = useFlowIssues();
+
+  // A newly created / duplicated / imported flow is selected while sitting below
+  // the fold, so follow the selection with the scroll position.
+  useEffect(() => {
+    if (!selectedFlowId) return;
+    scrollFlowRowIntoView(listRef.current, selectedFlowId);
+  }, [selectedFlowId]);
 
   const renderItem = (flow: FlowDefinition): React.ReactNode => (
     <FlowSidebarItem
       flow={flow}
       selected={selectedFlowId === flow.id}
       isRunning={runningFlowIds.includes(flow.id)}
+      issues={issues.get(flow.id) ?? EMPTY_ISSUES}
       t={t}
       selectMode={selectMode}
       checked={isSelected(flow.id)}
@@ -85,7 +115,7 @@ export const FlowSidebarList: React.FC<FlowSidebarListProps> = ({
   };
 
   return (
-    <Box flex={1} style={{ overflowY: 'auto', padding: '4px 0' }}>
+    <Box ref={listRef} flex={1} style={{ overflowY: 'auto', padding: '4px 0' }}>
       {flows.length === 0 ? (
         <Text p="20px 14px" c="dimmed" fz="sm" ta="center">{t('flow.flowList.empty')}</Text>
       ) : selectMode ? (

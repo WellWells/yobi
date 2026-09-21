@@ -1,5 +1,6 @@
-import { marked, Renderer } from 'marked';
+import { Marked, Renderer, type TokenizerAndRendererExtension } from 'marked';
 import { t } from '../i18n';
+import { promoteDisplayMath, promoteInlineMath } from '../../shared/inlineMathDelimiters';
 
 export function escapeTelegramHtml(text: string): string {
   return text
@@ -7,6 +8,47 @@ export function escapeTelegramHtml(text: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 }
+
+const DISPLAY_MATH = /^ {0,3}\$\$[ \t]*\n([\s\S]*?)\n {0,3}\$\$[ \t]*(?:\n+|$)/;
+/** A later line that opens a `$$` fence. marked hands `start` the source minus its first character. */
+const DISPLAY_MATH_START = /\n {0,3}\$\$[ \t]*\n/;
+const INLINE_MATH = /^\$\$([^$]+?)\$\$/;
+
+/**
+ * Telegram cannot typeset math, so a formula goes out as the TeX the model wrote. Left to
+ * marked, that TeX is markdown: `\\`, `\{` and `\,` lose their backslash as escapes and `a*b*c`
+ * turns into italics. These tokens claim a formula before any of that runs — a `$$` fence as
+ * <pre>, a `$$…$$` span as <code> — while backticks still reach marked's own code tokenizers.
+ */
+const displayMath: TokenizerAndRendererExtension = {
+  name: 'displayMath',
+  level: 'block',
+  start: (src) => {
+    const match = DISPLAY_MATH_START.exec(src);
+    return match ? match.index + 1 : undefined;
+  },
+  tokenizer: (src) => {
+    const match = DISPLAY_MATH.exec(src);
+    return match ? { type: 'displayMath', raw: match[0], text: match[1] } : undefined;
+  },
+  renderer: (token) => `<pre>${escapeTelegramHtml(String(token.text))}</pre>\n`,
+};
+
+const inlineMath: TokenizerAndRendererExtension = {
+  name: 'inlineMath',
+  level: 'inline',
+  start: (src) => {
+    const index = src.indexOf('$$');
+    return index < 0 ? undefined : index;
+  },
+  tokenizer: (src) => {
+    const match = INLINE_MATH.exec(src);
+    return match ? { type: 'inlineMath', raw: match[0], text: match[1].trim() } : undefined;
+  },
+  renderer: (token) => `<code>${escapeTelegramHtml(String(token.text))}</code>`,
+};
+
+const telegramMarked = new Marked({ extensions: [displayMath, inlineMath] });
 
 function escapeTelegramAttribute(text: string): string {
   return escapeTelegramHtml(text).replace(/"/g, '&quot;');
@@ -111,10 +153,14 @@ export function formatResponseForTelegramHtml(input: string): string {
   renderer.blockquote = ({ tokens }) => `<blockquote>${renderBlock(tokens).trim()}</blockquote>\n`;
   renderer.paragraph = ({ tokens }) => `${renderInline(tokens)}\n\n`;
   renderer.list = ({ items }) => `${items.map((item) => renderer.listitem(item)).join('')}\n`;
+  // Telegram has no checkbox: marked's default renders `<input type="checkbox">`, which is not
+  // in Telegram's tag set and fails the WHOLE send with a 400.
+  renderer.checkbox = ({ checked }) => (checked ? '☑ ' : '☐ ');
   renderer.listitem = (item) => {
     const rendered = renderBlock(item.tokens).trim();
     const compact = rendered.replace(/\n{2,}/g, '\n').replace(/\n/g, ' ').trim();
-    return `• ${compact}\n`;
+    // A task item already leads with its own ☐/☑; a bullet as well reads as two markers.
+    return item.task ? `${compact}\n` : `• ${compact}\n`;
   };
   renderer.heading = ({ tokens }) => `${renderInline(tokens)}\n`;
   renderer.hr = () => '\n';
@@ -139,14 +185,35 @@ export function formatResponseForTelegramHtml(input: string): string {
     return `${lines.join('\n')}\n`;
   };
 
-  const parsed = marked.parse(normalized, {
+  // The app's own `$`/`$$` repair, so what renders as a formula there is sent as one here.
+  const parsed = telegramMarked.parse(promoteInlineMath(promoteDisplayMath(normalized)), {
     renderer,
     gfm: true,
     breaks: true,
     async: false,
   });
   if (typeof parsed !== 'string') return '';
-  return linkifyRawUrlsInHtml(parsed).replace(/\n{3,}/g, '\n\n').trim();
+  return escapeUnsupportedTags(linkifyRawUrlsInHtml(parsed)).replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/**
+ * Exactly the tags this formatter emits. Deliberately narrower than Telegram's own list:
+ * anything else appearing in the output did not come from here.
+ */
+const SUPPORTED_TAG =
+  /^<\/(?:a|b|i|code|pre|blockquote)>$|^<(?:b|i|code|pre|blockquote)>$|^<a href="[^"<>]*">$|^<code class="language-[^"<>]*">$/;
+
+/**
+ * Last line of defence before parse_mode='HTML'.
+ *
+ * Telegram rejects the ENTIRE message with a 400 on one unknown tag, which fails the whole flow
+ * step — so a tag we did not mean to emit must degrade into visible text, never into a lost
+ * send. marked's checkbox token is how this was found: the renderer overrode `html`, `image`
+ * and `br`, but a token type nobody had thought about still reached the wire as
+ * `<input type="checkbox">`. Escaping by whitelist covers the next one too.
+ */
+export function escapeUnsupportedTags(html: string): string {
+  return html.replace(/<[^<>]*>/g, (tag) => (SUPPORTED_TAG.test(tag) ? tag : escapeTelegramHtml(tag)));
 }
 
 function normalizeSourceUrl(rawHref: string | null | undefined): string {

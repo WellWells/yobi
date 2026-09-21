@@ -74,12 +74,16 @@ function isFileProducerStep(s: SkillInstance): boolean {
 export const AvailableVarsHint: React.FC<{
   prevSteps: SkillInstance[];
   flowTrigger?: TriggerConfig;
+  hasHotkeyTrigger?: boolean;
   loopVars?: LoopVarHint[];
   allPrevSteps?: SkillInstance[];
   flowVariables?: FlowVariable[];
   onInsert: (token: string) => void;
   t: (k: string) => string;
-}> = ({ prevSteps, flowTrigger, loopVars = [], allPrevSteps = [], flowVariables = [], onInsert, t }) => {
+}> = ({
+  prevSteps, flowTrigger, hasHotkeyTrigger = false, loopVars = [], allPrevSteps = [],
+  flowVariables = [], onInsert, t,
+}) => {
   const insertHint = t('flow.availableVars.insert');
   const inputVar = flowTrigger?.type === 'bot'
     ? (flowTrigger.botInputVariable?.trim() || 'input')
@@ -96,6 +100,14 @@ export const AvailableVarsHint: React.FC<{
       <Text fz="xs" c="dimmed">{t('flow.availableVars')}</Text>
       <VarChip token="clipboard" color="dimmed" insertHint={insertHint} onInsert={onInsert} />
       <VarChip token="timestamp" color="dimmed" insertHint={insertHint} onInsert={onInsert} />
+      {hasHotkeyTrigger && (
+        <VarChip
+          token="selection"
+          color="dimmed"
+          insertHint={t('flow.availableVars.selectionHint')}
+          onInsert={onInsert}
+        />
+      )}
       {
 }
       {flowVariables.map((variable) => (

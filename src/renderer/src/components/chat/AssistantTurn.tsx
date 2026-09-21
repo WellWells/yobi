@@ -5,10 +5,14 @@ import type { TurnMeta } from '../../../../shared/conversationDoc';
 import type { CaptureFormat, CaptureTurn } from '../../../../shared/types';
 import type { TokenUsage } from '../../../../shared/tokenEstimate';
 import { useAppStore } from '../../store/appStore';
+import { useAgentRunStore, type AgentChoicePick } from '../../store/useAgentRunStore';
 import { clipboardApi } from '../../api/electronApi';
+import { AppButton } from '../AppButton';
 import { TokenUsageLabel } from './TokenUsageLabel';
 import { chatModeLabelKeyForCommand } from '../../config/chatModes';
 import { MessageMarkdown } from './MessageMarkdown';
+import { TurnTrace } from './TurnTrace';
+import { MemoryNotes } from './MemoryNotes';
 import styles from './AssistantTurn.module.css';
 
 const CAPTURE_ACTIONS = [
@@ -23,13 +27,19 @@ interface AssistantTurnProps {
   t: (key: string) => string;
   turnIndex?: number;
   onCaptureAs?: (format: CaptureFormat, turn: CaptureTurn) => Promise<boolean>;
+  /** Answers the agent's waiting question with the picked choice, addressed to the run that asked it. */
+  onChoose?: (pick: AgentChoicePick) => void;
 }
 
-export const AssistantTurn = React.memo<AssistantTurnProps>(({ response, meta, formattedTime, t, turnIndex, onCaptureAs }) => {
+export const AssistantTurn = React.memo<AssistantTurnProps>(({ response, meta, formattedTime, t, turnIndex, onCaptureAs, onChoose }) => {
   const [copied, setCopied] = useState(false);
   const [capturing, setCapturing] = useState<CaptureFormat | null>(null);
   const [captured, setCaptured] = useState<CaptureFormat | null>(null);
   const showTokenUsage = useAppStore((state) => state.showTokenUsage);
+  // Only the question still waiting is marked: an answered one is just part of the conversation.
+  const awaiting = useAgentRunStore((state) => Boolean(meta.r) && state.pendingQuestion?.runId === meta.r);
+  const runId = meta.r;
+  const choices = awaiting && onChoose && runId ? meta.ch ?? [] : [];
 
   const commandLabel = meta.c
     ? (() => {
@@ -83,6 +93,11 @@ export const AssistantTurn = React.memo<AssistantTurnProps>(({ response, meta, f
             {commandLabel}
           </Badge>
         )}
+        {awaiting && (
+          <Badge variant="light" size="sm" radius="sm">
+            {t('agent.question.waiting')}
+          </Badge>
+        )}
         {
 }
         {meta.m === 'replay' && (
@@ -111,6 +126,28 @@ export const AssistantTurn = React.memo<AssistantTurnProps>(({ response, meta, f
       >
         <MessageMarkdown>{response}</MessageMarkdown>
       </Box>
+
+      {meta.mem && <MemoryNotes raw={meta.mem} t={t} />}
+
+      {choices.length > 0 && (
+        <Group gap={6} mt={10} wrap="wrap">
+          {choices.map((choice) => (
+            <AppButton
+              key={choice}
+              variant="light"
+              size="compact-sm"
+              h="auto"
+              py={4}
+              styles={{ label: { whiteSpace: 'normal', textAlign: 'left', lineHeight: 1.5 } }}
+              onClick={() => { if (runId) onChoose?.({ runId, text: choice }); }}
+            >
+              {choice}
+            </AppButton>
+          ))}
+        </Group>
+      )}
+
+      {meta.r && <TurnTrace runId={meta.r} t={t} />}
 
       {
 }

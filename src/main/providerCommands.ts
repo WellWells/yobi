@@ -6,7 +6,6 @@ import {
   DEFAULT_PROVIDER_COMMANDS,
   PROVIDERS,
   PROVIDER_URLS,
-  buildDuckaiModelUrl,
   isModelUrlHidden,
 } from '../shared/types';
 import type {
@@ -31,9 +30,9 @@ export interface ResolvedProviderCommand {
 
 const PROVIDER_DESCRIPTION_KEYS: Record<Provider, string> = {
   chatgpt: 'telegram.commands.gpt',
+  claude: 'telegram.commands.claude',
   gemini: 'telegram.commands.gemini',
   perplexity: 'telegram.commands.pplx',
-  duckai: 'telegram.commands.duck',
 };
 
 const BOT_RESERVED_STATIC_COMMANDS = [
@@ -90,15 +89,10 @@ export function resolveProviderCommands(
     if (!command) continue;
     taken.add(command);
 
-    const modelId = provider === 'duckai' ? (cfg.modelId ?? '').trim() : '';
-    const targetUrl = provider === 'duckai' && modelId
-      ? buildDuckaiModelUrl(modelId)
-      : PROVIDER_URLS[provider];
-
     resolved.push({
       provider,
       command,
-      targetUrl,
+      targetUrl: PROVIDER_URLS[provider],
       descriptionKey: PROVIDER_DESCRIPTION_KEYS[provider],
     });
   }

@@ -52,6 +52,7 @@ export function createLineRuntime(deps: {
         lineReplyTarget: { userId: request.userId, chatId: request.chatId },
         requesterName: getLinePairedDisplayName(request.userId),
         sessionKey,
+        ...(resolved.prompt !== request.text ? { external: true } : {}),
         ...(conversationPath ? { conversationPath } : {}),
       });
       sendLog(`[${id}] LINE message queued`);
@@ -61,9 +62,9 @@ export function createLineRuntime(deps: {
     getProviderCommands: () => resolveBotCommands(getFlowManager).providers,
     getByokCommands: () => resolveBotCommands(getFlowManager).byok,
     getBuiltinCommands: () => resolveBotCommands(getFlowManager).builtins,
-    onBuiltinCommand: (key, input, targetUrl, chatId, userId) => runBotBuiltinCommand(
+    onBuiltinCommand: (key, input, targetUrl, chatId, userId, plain) => runBotBuiltinCommand(
       { getFlowManager, getStrings: getLangCache },
-      { key, input, targetUrl, chatKey: botChatKey('line', chatId, userId) },
+      { key, input, targetUrl, chatKey: botChatKey('line', chatId, userId), ...(plain ? { plain: true } : {}) },
     ),
     onAgentAnswer: async (answer, chatId, userId) => {
       const chatKey = botChatKey('line', chatId, userId);

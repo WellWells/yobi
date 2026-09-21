@@ -1,5 +1,6 @@
 import type { BrowserWindow, WebContents } from 'electron';
-import { sleep, navigateAndWait, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
+import { sleep, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
+import { ensureOnPage, PAGE_REUSE } from './pageReuse';
 import { executeAutomationWithTimeout, countElements, settledElementCount } from './automationExecutor';
 import { PROVIDER_URLS } from '../../shared/types';
 import { WORKER_USER_AGENTS } from '../userAgent';
@@ -7,9 +8,12 @@ import { applyWorkerUserAgent } from '../clientHints';
 import { sendLog } from '../helpers';
 import { showLoginWindowIfNeeded } from '../windows';
 import { uploadFilesToGemini } from './geminiUpload';
+import { syncGeminiModel } from './geminiModelSync';
 import {
   GEMINI_COPY_BTN_SELECTOR as COPY_BTN_SELECTOR,
   GEMINI_INPUT_SELECTOR as INPUT_SELECTOR,
+  GEMINI_NEW_CHAT_SELECTOR,
+  GEMINI_STOP_SELECTOR,
   INJECTED_GEMINI_WAIT_AND_READ_JS,
 } from './geminiReadScript';
 
@@ -51,18 +55,25 @@ async function runGeminiAttempt(
 
   applyWorkerUserAgent(wc, WORKER_USER_AGENTS.gemini);
 
-  await navigateAndWait(wc, targetUrl);
-  await waitForInputArea(wc, 15_000);
+  const landing = await ensureOnPage(wc, targetUrl, PAGE_REUSE.gemini, { continuingThread });
+  const reused = landing === 'reused';
+  if (reused) sendLog('♻️ Gemini page kept open — typing straight into it, no reload');
+  if (!reused) await waitForInputArea(wc, 15_000);
 
   await applyVisibilityPatch(wc);
+  // Before anything is typed: the model and thinking switch apply to the next message only.
+  await syncGeminiModel(wc);
 
   if (attachments && attachments.length > 0) {
     const uploadLog = await uploadFilesToGemini(wc, attachments, 120_000);
     for (const line of uploadLog) sendLog(`[gemini-upload] ${line}`);
   }
 
-  const baseline = await settledElementCount(wc, COPY_BTN_SELECTOR);
-  const responseBaseline = continuingThread ? await settledElementCount(wc, 'model-response') : 0;
+  // A kept page finished its last turn under this same lane, so its counts are already final.
+  // Waiting for them to settle again is pure hydration latency that no longer applies.
+  const countNow = reused ? countElements : settledElementCount;
+  const baseline = await countNow(wc, COPY_BTN_SELECTOR);
+  const responseBaseline = continuingThread ? await countNow(wc, 'model-response') : 0;
 
   wc.focus();
 
@@ -123,6 +134,12 @@ async function runGeminiAttempt(
 async function applyVisibilityPatch(wc: WebContents): Promise<void> {
   await wc.executeJavaScript(`
     (function patchVisibility() {
+      if (window.__yobiVisibilityPatched) {
+        window.dispatchEvent(new FocusEvent('focus', { bubbles: false }));
+        document.dispatchEvent(new FocusEvent('focus', { bubbles: true }));
+        return;
+      }
+      window.__yobiVisibilityPatched = true;
       try {
         Object.defineProperty(document, 'hidden', { get: function() { return false; }, configurable: true });
         Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; }, configurable: true });
@@ -206,9 +223,7 @@ export function buildGeminiAutomationScript(
     return document.querySelectorAll('model-response').length;
   }
   function generationActive() {
-    var c = document.querySelector('[data-test-id="send-button-container"]');
-    if (c && c.querySelector('mat-icon[fonticon="stop"]')) return true;
-    return !!document.querySelector('[data-test-id="stop-button"]');
+    return !!document.querySelector(${JSON.stringify(GEMINI_STOP_SELECTOR)});
   }
   function readySendButton() {
     var container = document.querySelector('[data-test-id="send-button-container"]');
@@ -225,7 +240,7 @@ export function buildGeminiAutomationScript(
   }
 
   if (!CONTINUING && countResponses() > 0) {
-    var newChatBtn = document.querySelector('[data-test-id="new-chat-button"]');
+    var newChatBtn = document.querySelector(${JSON.stringify(GEMINI_NEW_CHAT_SELECTOR)});
     if (newChatBtn) {
       newChatBtn.click();
       try {
@@ -252,12 +267,8 @@ export function buildGeminiAutomationScript(
     el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true }));
     el.dispatchEvent(new PointerEvent('pointerup',   { bubbles: true, composed: true }));
     document.execCommand('selectAll', false, null);
-    var dt = new DataTransfer();
-    dt.setData('text/plain', PROMPT);
-    el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-    if (!(el.innerText || '').trim()) {
-      document.execCommand('insertText', false, PROMPT);
-    }
+    // Keep prompts as text instead of invoking the site's paste-to-file handler.
+    document.execCommand('insertText', false, PROMPT);
     el.dispatchEvent(new InputEvent('input', {
       bubbles: true, cancelable: true, inputType: 'insertText'
     }));

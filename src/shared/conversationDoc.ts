@@ -1,10 +1,32 @@
+import { repairSplitTableRows } from './markdownTableRepair';
+import type { MemoryNote } from './userMemory';
+
 export interface ThreadMeta {
   v: 1;
   provider?: string;
   threadUrl?: string;
   threadTurns?: number;
+  /**
+   * When the provider thread was started — the send time of its first message, which carried the
+   * memory as it was then. A native follow-up lists only what changed after it.
+   */
+  threadAt?: string;
   summary?: string;
   summarizedTurns?: number;
+  /**
+   * MCP server ids the user disclosed for this conversation, so reopening it keeps disclosing
+   * them without retyping the connector command. Ids, never display names: a connector can be
+   * renamed and its slash command can move to another server.
+   */
+  mcp?: string[];
+  /**
+   * The "web" capability for this conversation. Only `true` is ever written: absent means off,
+   * the default. (It used to be the other way round, with only `false` written; a conversation
+   * saved then reopens with web off, like any new one.) Kept out of `mcp` deliberately — that
+   * array is server ids, and a sentinel id in it would be looked up as a server by everything
+   * downstream.
+   */
+  web?: boolean;
 }
 
 export interface TurnMeta {
@@ -18,6 +40,12 @@ export interface TurnMeta {
   ti?: number;
   to?: number;
   tx?: 1;
+  /** Agent run id, so the turn can reopen the reasoning trace that produced it. */
+  r?: string;
+  /** Choices offered by an agent question, rendered as buttons while that question is unanswered. */
+  ch?: string[];
+  /** What this reply changed in the user's memory, as the program applied it. */
+  mem?: MemoryNote[];
 }
 
 export function attachmentMetaNames(paths: readonly string[]): string[] {
@@ -66,6 +94,18 @@ const MARKER_RE = /^<!--\s*yobi:(thread|turn)\s+(\{.*\})\s*-->$/;
 const FENCE_RE = /^(?:```|~~~)/;
 const H1_RE = /^#\s+(.+)$/;
 const H2_RE = /^##\s+(.+)$/;
+const ESCAPED_HEADING_RE = /^\\(?=#)/;
+
+/**
+ * A conversation file re-saved by a CRLF editor or a sync tool used to parse as zero turns:
+ * `$` is not multiline and `.` never matches `\r`, so `## Prompt\r` matched no heading while
+ * the markers (which are trimmed) still read fine. The document then looked like a fresh
+ * one-turn file whose `threadTurns` was already past it, and every later turn silently
+ * replayed with no history.
+ */
+function splitLines(raw: string): string[] {
+  return raw.split(/\r?\n/);
+}
 
 function classify(heading: string, aliases: ConversationHeadingAliases): HeadingKind | null {
   if (aliases.provider.has(heading)) return 'provider';
@@ -75,20 +115,51 @@ function classify(heading: string, aliases: ConversationHeadingAliases): Heading
   return null;
 }
 
-function scan(lines: string[], aliases: ConversationHeadingAliases): ScannedLine[] {
-  let inFence = false;
-  return lines.map((line) => {
-    const trimmed = line.trim();
-    const plain = (fenced: boolean): ScannedLine => ({
-      heading: null, isHeading: false, marker: null, markerJson: null, fenced,
-    });
-    if (FENCE_RE.test(trimmed)) {
-      inFence = !inFence;
-      return plain(true);
+/**
+ * Marks the lines that sit inside a fenced code block. A fence that is never closed does not
+ * count as one.
+ *
+ * Two requirements pull against each other here and both are real. A marker quoted inside a
+ * genuine code block has to stay quoted, or a model echoing this format back invents turns
+ * that nothing can tell apart from real ones. But a model answer that opens a fence and never
+ * closes it used to swallow every turn written after it — the file then parsed as fewer turns
+ * than `threadTurns` claimed, so native continuation was lost and the replay it fell back to
+ * carried raw markers as if they were part of the conversation.
+ *
+ * Requiring the closer separates the two: the quoted marker keeps its fence, the malformed one
+ * never had a fence to begin with.
+ */
+function fencedLines(lines: string[]): boolean[] {
+  const fenced = new Array<boolean>(lines.length).fill(false);
+  let openerIndex = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const isFence = FENCE_RE.test(lines[i].trim());
+    if (openerIndex < 0) {
+      if (isFence) {
+        openerIndex = i;
+        fenced[i] = true;
+      }
+      continue;
     }
-    if (inFence) return plain(true);
+    fenced[i] = true;
+    if (isFence) openerIndex = -1;
+  }
+  // The last fence was never closed, so it opened nothing.
+  if (openerIndex >= 0) {
+    for (let i = openerIndex; i < lines.length; i++) fenced[i] = false;
+  }
+  return fenced;
+}
 
-    const markerMatch = MARKER_RE.exec(trimmed);
+function scan(lines: string[], aliases: ConversationHeadingAliases): ScannedLine[] {
+  const fenced = fencedLines(lines);
+  return lines.map((line, index) => {
+    const plain = (isFenced: boolean): ScannedLine => ({
+      heading: null, isHeading: false, marker: null, markerJson: null, fenced: isFenced,
+    });
+    if (fenced[index]) return plain(true);
+
+    const markerMatch = MARKER_RE.exec(line.trim());
     if (markerMatch) {
       return {
         heading: null,
@@ -112,16 +183,12 @@ function scan(lines: string[], aliases: ConversationHeadingAliases): ScannedLine
 }
 
 export function extractTurnMetas(raw: string): TurnMeta[] {
+  const lines = splitLines(raw);
+  const fenced = fencedLines(lines);
   const metas: TurnMeta[] = [];
-  let inFence = false;
-  for (const line of raw.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (FENCE_RE.test(trimmed)) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue;
-    const match = MARKER_RE.exec(trimmed);
+  for (let i = 0; i < lines.length; i++) {
+    if (fenced[i]) continue;
+    const match = MARKER_RE.exec(lines[i].trim());
     if (match?.[1] === 'turn') metas.push(parseMarkerJson(match[2]) as TurnMeta);
   }
   return metas;
@@ -160,7 +227,7 @@ export function parseConversationDoc(
   raw: string,
   aliases: ConversationHeadingAliases,
 ): ConversationDoc {
-  const lines = raw.split('\n');
+  const lines = splitLines(raw);
   const scanned = scan(lines, aliases);
 
   let title: string | null = null;
@@ -200,8 +267,10 @@ export function parseConversationDoc(
       if (scanned[i].heading === 'response') { responseIdx = i; break; }
     }
     const promptEnd = responseIdx >= 0 ? responseIdx : end;
-    const prompt = lines.slice(start + 1, promptEnd).join('\n').trim();
-    const response = responseIdx >= 0 ? lines.slice(responseIdx + 1, end).join('\n').trim() : '';
+    const prompt = unescapeSectionHeadings(lines.slice(start + 1, promptEnd).join('\n').trim());
+    const response = responseIdx >= 0
+      ? unescapeSectionHeadings(lines.slice(responseIdx + 1, end).join('\n').trim())
+      : '';
     const meta = markerLine >= 0
       ? (parseMarkerJson(scanned[markerLine].markerJson) as TurnMeta)
       : {};
@@ -217,6 +286,33 @@ export function parseConversationDoc(
   };
 }
 
+/**
+ * Escapes a section heading the user typed so it is not read back as this turn's structure.
+ * A prompt whose own line is `## Response` would otherwise end the prompt there and prepend
+ * the rest of it to the answer. `\##` is the CommonMark escape, so it still renders as the
+ * text the user wrote.
+ *
+ * The guard covers the labels the document is being written with, which is the case that
+ * matters: the parser accepts every installed locale's labels, so a prompt carrying a
+ * DIFFERENT locale's heading text is still ambiguous and still splits at that line.
+ */
+export function escapeSectionHeadings(text: string, labels: TurnLabels): string {
+  const guarded = new Set([labels.prompt.trim(), labels.response.trim()]);
+  return splitLines(text)
+    .map((line) => {
+      const h2 = H2_RE.exec(line);
+      return h2 && guarded.has(h2[1].trim()) ? `\\${line}` : line;
+    })
+    .join('\n');
+}
+
+function unescapeSectionHeadings(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => line.replace(ESCAPED_HEADING_RE, ''))
+    .join('\n');
+}
+
 export function appendTurn(
   raw: string,
   turn: { prompt: string; response: string; meta: TurnMeta },
@@ -227,18 +323,18 @@ export function appendTurn(
     `<!-- yobi:turn ${JSON.stringify(turn.meta ?? {})} -->`,
     `## ${labels.prompt}`,
     '',
-    turn.prompt.trim(),
+    escapeSectionHeadings(turn.prompt.trim(), labels),
     '',
     `## ${labels.response}`,
     '',
-    turn.response.trim(),
+    repairSplitTableRows(turn.response.trim()),
     '',
   ];
   return body ? [body, '', ...block].join('\n') : block.join('\n');
 }
 
 export function stripConversationMarkers(raw: string): string {
-  return raw.split('\n').filter((line) => !MARKER_RE.test(line.trim())).join('\n');
+  return splitLines(raw).filter((line) => !MARKER_RE.test(line.trim())).join('\n');
 }
 
 function blockquote(text: string): string {
@@ -246,7 +342,7 @@ function blockquote(text: string): string {
 }
 
 function withoutMetaSections(raw: string, aliases: ConversationHeadingAliases): string {
-  const lines = raw.split('\n');
+  const lines = splitLines(raw);
   const scanned = scan(lines, aliases);
   const kept: string[] = [];
   let dropping = false;
@@ -285,7 +381,7 @@ export function buildShareMarkdown(raw: string, aliases: ConversationHeadingAlia
 
 export function writeThreadMeta(raw: string, meta: ThreadMeta): string {
   const line = `<!-- yobi:thread ${JSON.stringify({ ...meta, v: 1 })} -->`;
-  const lines = raw.split('\n');
+  const lines = splitLines(raw);
   const scanned = scan(lines, { provider: new Set(), time: new Set(), prompt: new Set(), response: new Set() });
 
   const existing = scanned.findIndex((info) => info.marker === 'thread');

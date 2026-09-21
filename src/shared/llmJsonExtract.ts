@@ -46,12 +46,19 @@ function repairParse(text: string): unknown | undefined {
   }
 }
 
-function attemptParse(text: string): unknown | undefined {
+/** `repaired` marks a parse that only survived jsonrepair, which rewrites structure. */
+interface Parsed {
+  value: unknown;
+  repaired: boolean;
+}
+
+function attemptParse(text: string): Parsed | undefined {
   const direct = tryParse(text);
-  if (direct !== undefined) return direct;
+  if (direct !== undefined) return { value: direct, repaired: false };
   const noTrailing = tryParse(stripTrailingCommas(text));
-  if (noTrailing !== undefined) return noTrailing;
-  return repairParse(text);
+  if (noTrailing !== undefined) return { value: noTrailing, repaired: false };
+  const repaired = repairParse(text);
+  return repaired === undefined ? undefined : { value: repaired, repaired: true };
 }
 
 function scanBalanced(text: string, start: number): string | null {
@@ -99,58 +106,94 @@ function looksLikeFlow(value: unknown): boolean {
   return Array.isArray(inner.steps);
 }
 
-type Picker = (parsed: unknown | undefined) => unknown | null;
+type Picker = (parsed: Parsed | undefined, whole: boolean) => unknown | null;
+
+/**
+ * Candidates are ranked by SHAPE, not by the order the recovery ladder happened to reach them.
+ * Arrival order was the old rule and it misread the ladder in both directions: a jsonrepair of
+ * the whole body that swallowed a markdown citation footer (`[1]: https://…`, which a provider
+ * running its own web search appends under every answer) into a top-level list arrived before the
+ * clean object sitting inside it, and a clean parse of an inner `[…]` fragment arrived before the
+ * repair that rescued the object around it. Both shipped the wrong value to callers that all want
+ * one object.
+ *
+ * WHOLE outranks OBJECT because a candidate body that parsed cleanly end to end needs no salvage
+ * at all — without it, `[{…},{…}]` would be mined for the first element instead of returned. It
+ * is withheld from a scalar, which no caller can use: a fenced `42` must not beat a real object
+ * found further down the reply.
+ */
+const RANK_FLOW = 4;
+const RANK_WHOLE = 3;
+const RANK_OBJECT = 2;
+const RANK_OTHER = 1;
+
+function isContainer(value: unknown): boolean {
+  return typeof value === 'object' && value !== null;
+}
+
+function rankOf(parsed: Parsed, whole: boolean): number {
+  if (looksLikeFlow(parsed.value)) return RANK_FLOW;
+  if (whole && !parsed.repaired && isContainer(parsed.value)) return RANK_WHOLE;
+  if (isContainer(parsed.value) && !Array.isArray(parsed.value)) return RANK_OBJECT;
+  return RANK_OTHER;
+}
 
 function makePicker(): { consider: Picker; fallback: () => unknown | null } {
-  let fallback: unknown | null = null;
+  let best: unknown | null = null;
+  let bestRank = 0;
   return {
-    consider: (parsed) => {
-      if (parsed === undefined || parsed === null) return null;
-      if (looksLikeFlow(parsed)) return parsed;
-      if (fallback === null) fallback = parsed;
+    consider: (parsed, whole) => {
+      if (parsed === undefined || parsed.value === null || parsed.value === undefined) return null;
+      const rank = rankOf(parsed, whole);
+      // Flow-shaped is the one rank that ends the search: nothing can outrank it.
+      if (rank === RANK_FLOW) return parsed.value;
+      if (rank > bestRank) {
+        best = parsed.value;
+        bestRank = rank;
+      }
       return null;
     },
-    fallback: () => fallback,
+    fallback: () => best,
   };
 }
 
-function extractFromBody(body: string, consider: Picker): unknown | null {
-  const direct = consider(attemptParse(body));
+function sweep(body: string, consider: Picker): unknown | null {
+  const direct = consider(attemptParse(body), true);
   if (direct !== null) return direct;
 
   for (const start of candidateStarts(body)) {
     const balanced = scanBalanced(body, start);
     if (balanced) {
-      const hit = consider(attemptParse(balanced));
+      const hit = consider(attemptParse(balanced), false);
       if (hit !== null) return hit;
     }
     const end = body.lastIndexOf(body[start] === '{' ? '}' : ']');
     if (end > start) {
-      const hit = consider(attemptParse(body.slice(start, end + 1)));
+      const hit = consider(attemptParse(body.slice(start, end + 1)), false);
       if (hit !== null) return hit;
     }
   }
   return null;
 }
 
-export function extractJsonFromLlmResponse(text: string): unknown | null {
-  if (!text) return null;
-  const body = text.trim();
-  const picker = makePicker();
-
+function candidateBodies(body: string): string[] {
+  const bodies: string[] = [];
   for (const fence of body.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) {
     const content = fence[1]?.trim();
-    if (!content) continue;
-    const hit = extractFromBody(content, picker.consider);
-    if (hit !== null) return hit;
+    if (content) bodies.push(content);
   }
+  bodies.push(body);
+  if (/[“”]/.test(body)) bodies.push(body.replace(/[“”]/g, '"'));
+  return bodies;
+}
 
-  const hit = extractFromBody(body, picker.consider);
-  if (hit !== null) return hit;
+export function extractJsonFromLlmResponse(text: string): unknown | null {
+  if (!text) return null;
+  const picker = makePicker();
 
-  if (/[“”]/.test(body)) {
-    const curly = extractFromBody(body.replace(/[“”]/g, '"'), picker.consider);
-    if (curly !== null) return curly;
+  for (const body of candidateBodies(text.trim())) {
+    const hit = sweep(body, picker.consider);
+    if (hit !== null) return hit;
   }
   return picker.fallback();
 }

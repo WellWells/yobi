@@ -5,15 +5,17 @@ import styles from './ComposerPill.module.css';
 
 export type ComposerPillVariant = 'outline' | 'subtle';
 
-interface ComposerPillProps {
+interface ComposerPillProps extends React.ComponentPropsWithoutRef<typeof UnstyledButton> {
   icon: React.ReactNode;
-  label: string;
+  label: React.ReactNode;
   open: boolean;
   onClick: () => void;
   disabled?: boolean;
   variant?: ComposerPillVariant;
   accent?: boolean;
   ariaLabel?: string;
+  /** Off for a pill that toggles instead of opening a menu. */
+  chevron?: boolean;
 }
 
 export const ComposerPill = React.forwardRef<HTMLButtonElement, ComposerPillProps>(({
@@ -25,6 +27,8 @@ export const ComposerPill = React.forwardRef<HTMLButtonElement, ComposerPillProp
   variant = 'outline',
   accent = false,
   ariaLabel,
+  chevron = true,
+  ...rest
 }, ref) => {
   const outlined = variant === 'outline';
   const className = [
@@ -35,10 +39,16 @@ export const ComposerPill = React.forwardRef<HTMLButtonElement, ComposerPillProp
 
   return (
     <UnstyledButton
+      // Mantine's Menu.Target clones aria-haspopup / aria-expanded / id and the `data-expanded`
+      // attribute onto its child. Dropping them left the pill unlabelled to a screen reader and
+      // made every `[data-expanded]` rule in the CSS module dead.
+      {...rest}
       ref={ref}
       onClick={onClick}
       disabled={disabled}
-      aria-label={ariaLabel ?? label}
+      // What the module's hover rules key on; a disabled pill must not light up under the pointer.
+      data-disabled={disabled || undefined}
+      aria-label={ariaLabel ?? (typeof label === 'string' ? label : undefined)}
       className={className}
       style={{
         display: 'inline-flex',
@@ -56,19 +66,22 @@ export const ComposerPill = React.forwardRef<HTMLButtonElement, ComposerPillProp
         fontSize: 'var(--font-size-base)',
         fontWeight: accent ? 600 : 400,
         cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.45 : 1,
         transition: 'background 0.15s ease, border-color 0.15s ease',
       }}
     >
       {icon}
       {label}
-      <ChevronDown
-        size={12}
-        style={{
-          color: accent ? 'var(--mantine-color-accent)' : 'var(--mantine-color-dimmed)',
-          marginLeft: 1,
-          transform: open ? 'rotate(180deg)' : 'none',
-        }}
-      />
+      {chevron && (
+        <ChevronDown
+          size={12}
+          style={{
+            color: accent ? 'var(--mantine-color-accent)' : 'var(--mantine-color-dimmed)',
+            marginLeft: 1,
+            transform: open ? 'rotate(180deg)' : 'none',
+          }}
+        />
+      )}
     </UnstyledButton>
   );
 });

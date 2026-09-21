@@ -28,9 +28,7 @@ export function resolveContextMode(
 ): ContextMode {
   if (!thread.threadUrl?.trim()) return 'replay';
   if (isByokTargetUrl(targetUrl)) return 'replay';
-  const provider = detectProvider(targetUrl);
-  if (provider === 'duckai') return 'replay';
-  if (provider !== thread.provider) return 'replay';
+  if (detectProvider(targetUrl) !== thread.provider) return 'replay';
   return thread.threadTurns === turnCount ? 'native' : 'replay';
 }
 
@@ -77,6 +75,25 @@ export function truncateByMeasure(text: string, max: number, measure: (text: str
   const last = lo > 0 ? text.charCodeAt(lo - 1) : 0;
   if (last >= 0xd8_00 && last <= 0xdb_ff) lo--;
   return text.slice(0, lo);
+}
+
+/**
+ * How many of `turns` sit behind a summary that covered `covered` of the overflow.
+ *
+ * The overflow only holds turns worth replaying — one with an empty response (an image-only
+ * reply, or an answer that was nothing but a title marker) is filtered out before it. Counting
+ * the overflow therefore under-counts the document, and the offset persisted as
+ * `summarizedTurns` shifts: a turn ends up both summarised AND replayed, for good.
+ */
+export function turnsConsumedBySummary(
+  turns: ConversationTurn[],
+  overflow: ConversationTurn[],
+  covered: number,
+): number {
+  const last = overflow[covered - 1];
+  if (!last) return 0;
+  const index = turns.indexOf(last);
+  return index < 0 ? covered : index + 1;
 }
 
 export function packReplayPrompt(args: {

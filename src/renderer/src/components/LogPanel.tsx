@@ -110,8 +110,13 @@ const LogEntry = React.memo<LogEntryProps>(({
 LogEntry.displayName = 'LogEntry';
 
 export const LogPanel: React.FC = () => {
-  const { logs, clearLogs } = useAppStore(
-    useShallow((s) => ({ logs: s.logs, clearLogs: s.clearLogs })),
+  const { logs, clearLogs, logLevelRequest, clearLogLevelRequest } = useAppStore(
+    useShallow((s) => ({
+      logs: s.logs,
+      clearLogs: s.clearLogs,
+      logLevelRequest: s.logLevelRequest,
+      clearLogLevelRequest: s.clearLogLevelRequest,
+    })),
   );
   const { t } = useI18nStore();
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -120,6 +125,16 @@ export const LogPanel: React.FC = () => {
   const [query, setQuery] = useState('');
   const [levels, setLevels] = useState<LogLevel[]>([...LOG_LEVELS]);
   const [scope, setScope] = useState('');
+
+  // Arriving from another view that asked for a specific level, e.g. the failure count in
+  // the statistics page. Consumed once so the filter stays the user's after that.
+  useEffect(() => {
+    if (!logLevelRequest) return;
+    setLevels([...logLevelRequest]);
+    setQuery('');
+    setScope('');
+    clearLogLevelRequest();
+  }, [logLevelRequest, clearLogLevelRequest]);
 
   const allLevels = isAllLevels(levels);
   const isFiltering = query.trim().length > 0 || !allLevels || scope !== '';

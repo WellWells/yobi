@@ -4,16 +4,14 @@ import { ipcEvents } from '../api/electronApi';
 import type { UiNotificationPayload } from '../../../shared/types';
 
 /**
- * Renders the notices main already emits, in the window.
+ * Renders, in the window, the notices the OS could not show.
  *
- * Main sends every notice on two channels: a native OS notification and this one. The
- * native one is right while the window is hidden — which is most of the time for a global
- * hotkey — but it is also the one an OS can refuse without telling anybody: macOS shows
- * nothing at all until the app is allowed in System Settings, and suppresses banners for
- * the frontmost app even when it is. Electron cannot ask whether it is allowed, so the two
- * channels are run in parallel rather than as a fallback, and a failure is never silent
- * wherever the user happens to be looking. This channel had no subscriber at all until
- * a quick export failed on a Mac and said so to nobody.
+ * Main tries the native OS notification first and sends on this channel only when
+ * Electron reports it did not go out: the platform has no notifications, the OS answered
+ * `failed` (macOS before the app is allowed in System Settings), or it never answered
+ * `show` inside the grace period. So a notice appears once, never as a banner and a toast
+ * together, and a failure is still never silent. This channel had no subscriber at all
+ * until a quick export failed on a Mac and said so to nobody.
  */
 const LEVEL_COLORS: Record<NonNullable<UiNotificationPayload['level']>, string> = {
   success: 'var(--success)',

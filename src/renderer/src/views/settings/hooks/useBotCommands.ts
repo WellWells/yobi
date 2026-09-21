@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { botApi, settingsApi } from '../../../api/electronApi';
+import { botApi } from '../../../api/electronApi';
 
 import { useAppStore } from '../../../store/appStore';
 
@@ -9,7 +9,6 @@ import type {
   BotBuiltinCommands,
   BotByokCommandInfo,
   BotProviderCommand,
-  DuckaiModelInfo,
   Provider,
 } from '../../../../../shared/types';
 
@@ -17,7 +16,6 @@ export function useBotCommands() {
   const [providerCommands, setProviderCommands] = useState<Record<Provider, BotProviderCommand> | null>(null);
   const [builtinCommands, setBuiltinCommands] = useState<BotBuiltinCommands | null>(null);
   const [byokCommands, setByokCommands] = useState<BotByokCommandInfo[]>([]);
-  const [duckaiModels, setDuckaiModels] = useState<DuckaiModelInfo[]>([]);
   const [botCommandsBusy, setBotCommandsBusy] = useState(false);
   const providerCommandsRef = useRef<Record<Provider, BotProviderCommand> | null>(null);
   providerCommandsRef.current = providerCommands;
@@ -41,10 +39,6 @@ export function useBotCommands() {
   useEffect(() => {
     void loadBotCommands();
   }, [loadBotCommands, byokSignature]);
-
-  useEffect(() => {
-    void settingsApi.fetchDuckaiModels().then(setDuckaiModels).catch(() => setDuckaiModels([]));
-  }, []);
 
   const handleUpdateProviderCommand = useCallback(async (provider: Provider, patch: Partial<BotProviderCommand>) => {
     const current = providerCommandsRef.current;
@@ -98,7 +92,6 @@ export function useBotCommands() {
     providerCommands,
     builtinCommands,
     byokCommands,
-    duckaiModels,
     botCommandsBusy,
     loadBotCommands,
     handleUpdateProviderCommand,

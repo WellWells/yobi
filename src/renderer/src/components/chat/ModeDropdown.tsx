@@ -1,21 +1,74 @@
-import React, { useState } from 'react';
-import { Menu, Text } from '@mantine/core';
-import { Check } from 'lucide-react';
-import { CHAT_MODES, DEFAULT_CHAT_MODE, findChatMode, type ChatMode } from '../../config/chatModes';
+import React, { useMemo, useState } from 'react';
+import { Divider, Group, Menu, Text } from '@mantine/core';
+import { Check, Globe, MessageSquare, Waypoints, X } from 'lucide-react';
+import type { ChatMode } from '../../config/chatModes';
+import { renderConnectorIcon } from '../../config/connectorIcons';
+import { findCatalogEntry } from '../../../../shared/mcpCatalog';
 import { ComposerPill } from './ComposerPill';
 
+export interface ConnectorChoice {
+  id: string;
+  name: string;
+  url: string;
+  /** Keyword auto-attach only fires for a server a run could actually reach. */
+  connected: boolean;
+}
+
 interface ModeDropdownProps {
+  /** Derived, never picked: what the current capabilities add up to. Shown, not chosen. */
   value: ChatMode;
-  onChange: (mode: ChatMode) => void;
+  web: boolean;
+  onToggleWeb: () => void;
+  /** Every connector the user could disclose, already filtered to the agent-enabled ones. */
+  connectors: ConnectorChoice[];
+  activeConnectorIds: readonly string[];
+  onToggleConnector: (id: string) => void;
   t: (key: string) => string;
 }
 
 const MENU_WIDTH = 300;
-export const ModeDropdown: React.FC<ModeDropdownProps> = ({ value, onChange, t }) => {
+/** Past this the pill would out-grow the composer footer, so the rest become a count. */
+const NAMES_IN_PILL = 2;
+
+function pillLabel(
+  base: string,
+  names: string[],
+  overflowLabel: (count: number) => string,
+): string {
+  if (names.length === 0) return base;
+  const shown = names.slice(0, NAMES_IN_PILL).join(', ');
+  const rest = names.length - NAMES_IN_PILL;
+  return `${base} · ${shown}${rest > 0 ? ` ${overflowLabel(rest)}` : ''}`;
+}
+
+export const ModeDropdown: React.FC<ModeDropdownProps> = ({
+  value,
+  web,
+  onToggleWeb,
+  connectors,
+  activeConnectorIds,
+  onToggleConnector,
+  t,
+}) => {
   const [open, setOpen] = useState(false);
-  const current = findChatMode(value);
-  const CurrentIcon = current.icon;
-  const accented = value !== DEFAULT_CHAT_MODE;
+  const active = useMemo(
+    () => connectors.filter((connector) => activeConnectorIds.includes(connector.id)),
+    [connectors, activeConnectorIds],
+  );
+  const activeNames = useMemo(
+    () => [...(web ? [t('chat.capability.web.label')] : []), ...active.map((connector) => connector.name)],
+    [web, active, t],
+  );
+  const CurrentIcon = value === 'agent' ? Waypoints : MessageSquare;
+  // The pill names the form the send will take, because that is the part with consequences: an
+  // agent send cannot continue the provider's own thread, and the user should see which one
+  // they are about to get without opening the menu.
+  const label = pillLabel(
+    t(value === 'agent' ? 'chat.mode.agent.label' : 'chat.mode.chat.label'),
+    activeNames,
+    (count) => t('chat.mode.connectors.more').replace('{{count}}', String(count)),
+  );
+  const anythingActive = web || active.length > 0;
 
   return (
     <Menu
@@ -25,6 +78,7 @@ export const ModeDropdown: React.FC<ModeDropdownProps> = ({ value, onChange, t }
       offset={6}
       withinPortal
       zIndex={20}
+      closeOnItemClick={false}
       styles={{
         dropdown: {
           background: 'var(--mantine-color-default)',
@@ -41,39 +95,75 @@ export const ModeDropdown: React.FC<ModeDropdownProps> = ({ value, onChange, t }
       <Menu.Target>
         <ComposerPill
           icon={<CurrentIcon size={14} />}
-          label={t(current.labelKey)}
+          label={label}
           open={open}
-          accent={accented}
+          accent={anythingActive}
           onClick={() => setOpen((prev) => !prev)}
         />
       </Menu.Target>
 
       <Menu.Dropdown>
-        {CHAT_MODES.map((option) => {
-          const Icon = option.icon;
-          const isSelected = option.mode === value;
-          return (
-            <Menu.Item
-              key={option.mode}
-              onClick={() => onChange(option.mode)}
-              leftSection={<Icon size={15} />}
-              rightSection={isSelected ? <Check size={13} color="var(--mantine-color-accent)" /> : null}
-              style={{
-                background: isSelected ? 'var(--mantine-color-accent-dim)' : undefined,
-                color: isSelected ? 'var(--mantine-color-accent)' : undefined,
-              }}
-            >
-              <Text fz="var(--font-size-md)" fw={isSelected ? 600 : 400} lh={1.3}>
-                {t(option.labelKey)}
+        <Menu.Label>
+          <Group gap={6} justify="space-between" wrap="nowrap">
+            <Text fz="var(--font-size-sm)" c="var(--mantine-color-dimmed)">
+              {t('chat.mode.connectors.title')}
+            </Text>
+            {anythingActive && (
+              <Text
+                component="span"
+                fz="var(--font-size-sm)"
+                c="var(--mantine-color-dimmed)"
+                style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                onClick={() => {
+                  active.forEach((connector) => onToggleConnector(connector.id));
+                  if (web) onToggleWeb();
+                }}
+              >
+                <X size={11} />
+                {t('chat.mode.connectors.clear')}
               </Text>
-              {
-}
-              <Text fz="var(--font-size-sm)" c="var(--mantine-color-dimmed)" lh={1.35} mt={2}>
-                {t(option.descriptionKey)}
-              </Text>
-            </Menu.Item>
-          );
-        })}
+            )}
+          </Group>
+        </Menu.Label>
+
+        <Menu.Item
+          onClick={onToggleWeb}
+          leftSection={<Globe size={15} />}
+          rightSection={web ? <Check size={13} color="var(--mantine-color-accent)" /> : null}
+          style={{
+            background: web ? 'var(--mantine-color-accent-dim)' : undefined,
+            color: web ? 'var(--mantine-color-accent)' : undefined,
+          }}
+        >
+          <Text fz="var(--font-size-md)" fw={web ? 600 : 400} lh={1.3}>
+            {t('chat.capability.web.label')}
+          </Text>
+        </Menu.Item>
+
+        {connectors.length > 0 && (
+          <>
+            <Divider my={4} color="var(--mantine-color-default-border)" />
+            {connectors.map((connector) => {
+              const isActive = activeConnectorIds.includes(connector.id);
+              return (
+                <Menu.Item
+                  key={connector.id}
+                  onClick={() => onToggleConnector(connector.id)}
+                  leftSection={renderConnectorIcon(findCatalogEntry(connector.url), 15)}
+                  rightSection={isActive ? <Check size={13} color="var(--mantine-color-accent)" /> : null}
+                  style={{
+                    background: isActive ? 'var(--mantine-color-accent-dim)' : undefined,
+                    color: isActive ? 'var(--mantine-color-accent)' : undefined,
+                  }}
+                >
+                  <Text fz="var(--font-size-md)" fw={isActive ? 600 : 400} lh={1.3}>
+                    {connector.name}
+                  </Text>
+                </Menu.Item>
+              );
+            })}
+          </>
+        )}
       </Menu.Dropdown>
     </Menu>
   );

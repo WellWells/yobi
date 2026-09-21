@@ -2,6 +2,8 @@ import { BrowserWindow, net } from 'electron';
 import { TextDecoder } from 'node:util';
 import { CLEAN_UA } from './userAgent';
 import { SILENT_WEB_PREFERENCES, muteWindow } from './silentWindow';
+import { markHeadless, unmarkHeadless } from './requestFilter';
+import { appendLogLine, fileStamp } from './logFile';
 
 const LOAD_TIMEOUT_MS = 25_000;
 
@@ -113,9 +115,25 @@ export async function loadPageHtml(url: string, validateRedirectHost?: (host: st
   return (await loadPageResult(url, validateRedirectHost)).html;
 }
 
+async function snapshotDom(win: BrowserWindow): Promise<PageLoadResult> {
+  let execTimer: ReturnType<typeof setTimeout> | undefined;
+  const execTimeout = new Promise<never>((_, rej) => {
+    execTimer = setTimeout(
+      () => rej(new Error(`DOM serialization timed out after ${JS_EXEC_TIMEOUT_MS / 1_000}s`)),
+      JS_EXEC_TIMEOUT_MS,
+    );
+  });
+  const html = (await Promise.race([
+    win.webContents.executeJavaScript('document.documentElement.innerHTML'),
+    execTimeout,
+  ]).finally(() => clearTimeout(execTimer))) as string;
+  return { html, finalUrl: win.webContents.getURL() };
+}
+
 export function loadPageResult(url: string, validateRedirectHost?: (host: string) => void): Promise<PageLoadResult> {
   return new Promise((resolve, reject) => {
     let settled = false;
+    let domReady = false;
     let settleTimer: ReturnType<typeof setTimeout> | null = null;
 
     const win = new BrowserWindow({
@@ -140,6 +158,26 @@ export function loadPageResult(url: string, validateRedirectHost?: (host: string
     win.webContents.setUserAgent(CLEAN_UA);
     muteWindow(win);
 
+    // Nobody looks at this window, so the request filter may drop frames, images and fonts.
+    const contentsId = win.webContents.id;
+    markHeadless(contentsId);
+
+    const teardown = (): void => {
+      unmarkHeadless(contentsId);
+      safeDestroy(win);
+    };
+
+    const finish = async (): Promise<void> => {
+      try {
+        const result = await snapshotDom(win);
+        teardown();
+        resolve(result);
+      } catch (err) {
+        teardown();
+        reject(err);
+      }
+    };
+
     if (validateRedirectHost) {
       const guardNavigation = (event: Electron.Event, targetUrl: string): void => {
         let host = '';
@@ -152,7 +190,7 @@ export function loadPageResult(url: string, validateRedirectHost?: (host: string
           settled = true;
           if (settleTimer) clearTimeout(settleTimer);
           clearTimeout(timeout);
-          safeDestroy(win);
+          teardown();
           reject(err instanceof Error ? err : new Error(String(err)));
         }
       };
@@ -160,39 +198,32 @@ export function loadPageResult(url: string, validateRedirectHost?: (host: string
       win.webContents.on('will-navigate', guardNavigation);
     }
 
+    // The ceiling is not the end of the road: on ad-heavy pages the article DOM is ready in
+    // seconds while third-party frames keep `load` from ever firing. Salvage what rendered.
     const timeout = setTimeout(() => {
       if (settled) return;
       settled = true;
       if (settleTimer) clearTimeout(settleTimer);
-      safeDestroy(win);
+      if (domReady) {
+        appendLogLine(`[${fileStamp(new Date())}] ⚠️ [Page] load never fired within ${LOAD_TIMEOUT_MS / 1_000}s, serializing the DOM as it stands: ${url}`);
+        void finish();
+        return;
+      }
+      teardown();
       reject(new Error(`Page load timed out after ${LOAD_TIMEOUT_MS / 1_000}s`));
     }, LOAD_TIMEOUT_MS);
 
+    win.webContents.on('dom-ready', () => {
+      domReady = true;
+    });
+
     win.webContents.on('did-finish-load', () => {
       if (settled) return;
-      settleTimer = setTimeout(async () => {
+      settleTimer = setTimeout(() => {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
-        try {
-          let execTimer: ReturnType<typeof setTimeout> | undefined;
-          const execTimeout = new Promise<never>((_, rej) => {
-            execTimer = setTimeout(
-              () => rej(new Error(`DOM serialization timed out after ${JS_EXEC_TIMEOUT_MS / 1_000}s`)),
-              JS_EXEC_TIMEOUT_MS,
-            );
-          });
-          const html = (await Promise.race([
-            win.webContents.executeJavaScript('document.documentElement.innerHTML'),
-            execTimeout,
-          ]).finally(() => clearTimeout(execTimer))) as string;
-          const finalUrl = win.webContents.getURL();
-          safeDestroy(win);
-          resolve({ html, finalUrl });
-        } catch (err) {
-          safeDestroy(win);
-          reject(err);
-        }
+        void finish();
       }, JS_SETTLE_MS);
     });
 
@@ -203,7 +234,7 @@ export function loadPageResult(url: string, validateRedirectHost?: (host: string
       settled = true;
       clearTimeout(timeout);
       if (settleTimer) clearTimeout(settleTimer);
-      safeDestroy(win);
+      teardown();
       reject(new Error(`Failed to load page: ${errorDescription} (${errorCode})`));
     });
 
@@ -212,7 +243,7 @@ export function loadPageResult(url: string, validateRedirectHost?: (host: string
       settled = true;
       clearTimeout(timeout);
       if (settleTimer) clearTimeout(settleTimer);
-      safeDestroy(win);
+      teardown();
       reject(err);
     });
   });

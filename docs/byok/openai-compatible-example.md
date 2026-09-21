@@ -4,7 +4,7 @@ The **OpenAI-compatible** provider type works with any service that speaks the O
 
 ## Steps
 
-**Settings → Accounts → Bring Your Own Key (BYOK) → Add instance**, choose provider **OpenAI-compatible**, then set the Base URL and Model for your service and paste your key.
+**Settings → Model Sources → Bring Your Own Key (BYOK) → Add instance**, choose provider **OpenAI-compatible**, then set the Base URL and Model for your service and paste your key.
 
 | Field | Value |
 | ----- | ----- |

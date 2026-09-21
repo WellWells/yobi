@@ -1,6 +1,7 @@
 import type { Bot } from 'grammy';
-import type { TelegramChannel } from '../../shared/types';
+import type { TelegramChannel, TelegramChatKind } from '../../shared/types';
 import type { TelegramContext } from './commands';
+import { canPostFromMember } from './directory';
 
 export interface ChannelMemberEvent {
   chatId: number;
@@ -9,6 +10,7 @@ export interface ChannelMemberEvent {
   username?: string;
   status: string;
   canPostMessages?: boolean;
+  isMember?: boolean;
   fromUserId: number;
 }
 
@@ -20,10 +22,17 @@ export interface ChannelReduceResult {
   channel?: TelegramChannel;
 }
 
-function canPublish(event: ChannelMemberEvent): boolean {
-  if (event.status === 'creator') return true;
-  if (event.status !== 'administrator') return false;
-  return event.canPostMessages !== false;
+function asChatKind(chatType: string): TelegramChatKind | null {
+  if (chatType === 'channel' || chatType === 'group' || chatType === 'supergroup') return chatType;
+  return null;
+}
+
+function canPublish(kind: TelegramChatKind, event: ChannelMemberEvent): boolean {
+  return canPostFromMember(kind, {
+    status: event.status,
+    ...(event.canPostMessages === undefined ? {} : { canPostMessages: event.canPostMessages }),
+    ...(event.isMember === undefined ? {} : { isMember: event.isMember }),
+  });
 }
 
 export function reduceChannelState(
@@ -32,7 +41,8 @@ export function reduceChannelState(
   isPairedUser: (userId: number) => boolean,
   now: string,
 ): ChannelReduceResult {
-  if (event.chatType !== 'channel') return { next: channels, change: 'ignored' };
+  const kind = asChatKind(event.chatType);
+  if (!kind) return { next: channels, change: 'ignored' };
   if (!Number.isFinite(event.chatId) || event.chatId === 0) return { next: channels, change: 'ignored' };
 
   const index = channels.findIndex((item) => item.chatId === event.chatId);
@@ -43,11 +53,12 @@ export function reduceChannelState(
   const username = event.username?.replace(/^@/, '').trim() ?? '';
   const title = event.title.trim();
 
-  if (canPublish(event)) {
+  if (canPublish(kind, event)) {
     const channel: TelegramChannel = {
       chatId: event.chatId,
       title: title || existing?.title || '',
       ...(username ? { username } : {}),
+      chatType: kind,
       canPost: true,
       discoveredAt: existing?.discoveredAt ?? now,
     };
@@ -62,6 +73,7 @@ export function reduceChannelState(
     ...existing,
     title: title || existing.title,
     ...(username ? { username } : {}),
+    chatType: kind,
     canPost: false,
     lostAt: existing.lostAt ?? now,
   };
@@ -88,23 +100,24 @@ export function attachChannelDiscovery(
   bot.on('my_chat_member', (ctx, next) => {
     const update = ctx.myChatMember;
     const chat = update.chat;
-    if (chat.type !== 'channel') return next();
+    if (chat.type === 'private') return next();
 
     const member = update.new_chat_member;
     const event: ChannelMemberEvent = {
       chatId: chat.id,
       chatType: chat.type,
       title: chat.title,
-      username: chat.username,
+      username: 'username' in chat ? chat.username : undefined,
       status: member.status,
       canPostMessages: 'can_post_messages' in member ? member.can_post_messages : undefined,
+      isMember: 'is_member' in member ? member.is_member : undefined,
       fromUserId: update.from.id,
     };
 
     const label = event.title || `chat ${event.chatId}`;
     if (!options.isPairedUser(event.fromUserId)) {
       options.onLog(
-        `[telegram] channel "${label}" change by unpaired user ${event.fromUserId} — ignored (pair that account first)`,
+        `[telegram] ${chat.type} "${label}" change by unpaired user ${event.fromUserId} — ignored (pair that account first)`,
       );
       return next();
     }
@@ -119,9 +132,9 @@ export function attachChannelDiscovery(
 
     options.saveChannels(result.next);
     if (result.change === 'lost') {
-      options.onLog(`[telegram] channel "${label}" can no longer be posted to (status: ${event.status})`);
+      options.onLog(`[telegram] ${chat.type} "${label}" can no longer be posted to (status: ${event.status})`);
     } else {
-      options.onLog(`[telegram] channel "${label}" ${result.change} (${event.chatId})`);
+      options.onLog(`[telegram] ${chat.type} "${label}" ${result.change} (${event.chatId})`);
     }
     return next();
   });

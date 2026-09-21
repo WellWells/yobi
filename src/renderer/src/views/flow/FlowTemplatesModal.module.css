@@ -1,38 +1,79 @@
-/* Template gallery tile. Hover state is CSS-driven (no JS hover state), matching
-   the flow sidebar row. Mantine's focus ring on UnstyledButton is left as-is.
-   These rules override UnstyledButton's background/border/padding reset, which
-   only holds because main.tsx imports Mantine's stylesheet before any app CSS. */
+/* Template gallery. A category is one horizontally scrolling rail rather than a wrapped
+   grid: sixteen templates in a grid pushed the modal to near-full height, and each tile
+   carried a two-line clamped description that ellipsised the longer half of the catalogue.
+   The description moved to a tooltip, so nothing in here truncates.
+
+   These rules override UnstyledButton's background/border/padding reset, which only holds
+   because main.tsx imports Mantine's stylesheet before any app CSS. */
+.rail {
+  display: flex;
+  /* Stretch is what keeps a title safe: a tile whose name wraps to a second line grows
+     the whole rail instead of clipping, so no copy budget can ever cut a word off. */
+  align-items: stretch;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* globals.css sets `scrollbar-width: thin` on everything, and a set `scrollbar-width`
+     makes Chromium ignore the ::-webkit-scrollbar rules underneath it — so a rail gets
+     Windows' thin scrollbar complete with end arrows, two of which is more furniture than
+     the whole gallery. The half-visible tile at the right edge is the affordance instead;
+     the wheel handler on the rail covers mice with no horizontal axis. */
+  scrollbar-width: none;
+  /* Dragging the rail with a mouse would otherwise sweep a text selection across the tiles.
+     `touch-action` is left at its default: the browser already pans this axis on touch, and
+     pinning it to pan-x would take vertical swipes away from the modal behind it. */
+  user-select: none;
+  /* A scroll container clips everything outside its padding box, and Mantine's focus ring
+     sits 4px beyond the tile it is on — without this the ring on a tabbed-to tile is shaved
+     off on all four sides. The negative margin pulls the rail back out so the tiles still
+     line up with the search field above. */
+  margin-inline: -4px;
+  padding: 4px;
+  scroll-snap-type: x proximity;
+  /* Without this the snap target is the tile's own edge, so the rail settles at scrollLeft: 4
+     and scrolls the padding — and with it the first tile's focus ring — out of view. */
+  scroll-padding: 4px;
+}
+
 .tile {
-  height: 100%;
-  /* A button centers its content box vertically by default, which would float a
-     short tile's icon out of line with its taller row neighbours. Pin to the top. */
+  /* One fixed width puts every rail on the same rhythm. 116px of content is 8 columns of
+     `fz="sm"`, which is what it takes to hold the widest CJK title on one line — a Chinese
+     title that wraps breaks mid-run, and "YouTube 新片摘" / "要" reads as a bug. Latin
+     titles wrap at spaces, so those are free to take the second line. */
+  flex: 0 0 136px;
+  scroll-snap-align: start;
   display: flex;
   flex-direction: column;
   align-items: stretch;
+  /* A button centers its content box vertically by default, which would float a short
+     tile's icon out of line with its taller row neighbours. Pin to the top. */
   justify-content: flex-start;
+  gap: 8px;
   padding: 10px;
   border-radius: 12px;
   text-align: left;
   background: var(--mantine-color-body);
   border: 1px solid var(--mantine-color-default-border);
-  transition: background 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
+/* Lift, never darken. There is deliberately no drop shadow: a scroll container cannot have
+   `overflow-y: visible`, so the rail would clip the top half of one. */
 .tile:hover {
   background: var(--mantine-color-bg-tertiary);
   border-color: var(--mantine-color-accent);
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.08);
 }
 
-.icon {
-  flex-shrink: 0;
-  border-radius: var(--mantine-radius-md);
+.title {
+  line-height: 1.25;
+  /* CJK breaks anywhere anyway; this only bites if a future translation coins a Latin
+     word wider than the tile, and breaking it beats letting it overflow the rail. */
+  overflow-wrap: anywhere;
 }
 
-/* Clamp so every tile in a row keeps the same height regardless of copy length. */
-.desc {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+/* Pins the command chip / setup count to the bottom edge whether the title above it took
+   one line or two. */
+.meta {
+  margin-top: auto;
+  min-height: 16px;
 }

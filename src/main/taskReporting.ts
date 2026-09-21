@@ -3,7 +3,8 @@ import { listOutputFiles } from './files';
 import { discardEmptyConversation } from './output';
 import { sendToRenderer, sendWebNotification } from './helpers';
 import { getLangCache, localizeUserFacingError, t } from './i18n';
-import { TaskHardTimeoutError } from './queueManager';
+import { TaskHardTimeoutError, TaskSkippedError } from './queueManager';
+import { deleteTempAttachments } from './telegram/fileDownload';
 import { IPC } from '../shared/types';
 import type { ChatTurnEvent, Task } from '../shared/types';
 import type { TelegramRuntime } from './telegram';
@@ -54,6 +55,22 @@ export function reportChatTurnFailure(task: Task, message: string): void {
   });
 }
 
+/**
+ * A task removed from the queue before it ever ran.
+ *
+ * The renderer's "thinking" bubble is only ever cleared by an IPC.CHAT_TURN, and the queue
+ * state carries no sendId to reconcile against, so a cancel that reported nothing left the
+ * bubble spinning until the app restarted. Bot tasks have no sendId and so report nothing,
+ * which is what `reportChatTurnFailure` already decides for us. Either way the task still
+ * owns whatever temporary files were staged for it.
+ */
+export function handleDiscardedTask(task: Task): void {
+  reportChatTurnFailure(task, t(getLangCache(), 'main.error.taskCancelled'));
+  if (task.ephemeralAttachments && task.attachments?.length) {
+    void deleteTempAttachments(task.attachments);
+  }
+}
+
 export async function replyRemoteError(
   task: Task,
   deps: TaskReportDeps,
@@ -64,6 +81,18 @@ export async function replyRemoteError(
   if (task.lineReplyTarget) await deps.lineRuntime.sendTaskError(task.lineReplyTarget.chatId, payload);
 }
 
+/**
+ * Neither giving up on a task nor skipping it can actually stop the provider automation, so
+ * both messages say what really happened rather than implying the work was cancelled.
+ */
+function queueFailureMessage(err: unknown, strings: Record<string, string>): string {
+  if (err instanceof TaskHardTimeoutError) {
+    return t(strings, 'main.error.taskTimeout', { minutes: String(err.timeoutMinutes) });
+  }
+  if (err instanceof TaskSkippedError) return t(strings, 'main.error.taskSkipped');
+  return localizeUserFacingError(err instanceof Error ? err.message : String(err), strings);
+}
+
 export async function notifyQueueLevelFailure(
   task: Task,
   err: unknown,
@@ -72,9 +101,7 @@ export async function notifyQueueLevelFailure(
   onLog: (message: string) => void,
 ): Promise<void> {
   const strings = getLangCache();
-  const message = err instanceof TaskHardTimeoutError
-    ? t(strings, 'main.error.taskTimeout', { minutes: String(err.timeoutMinutes) })
-    : localizeUserFacingError(err instanceof Error ? err.message : String(err), strings);
+  const message = queueFailureMessage(err, strings);
 
   onLog(`[${task.id}] ❌ ${message}`);
   reportChatTurnFailure(task, message);

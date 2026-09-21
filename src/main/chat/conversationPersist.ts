@@ -20,6 +20,8 @@ export async function appendOrCreateConversation(args: {
   threadUrl: string | null;
   targetUrl: string;
   onLog: (message: string) => void;
+  /** Send time of a message that started a new provider thread. */
+  threadAt?: string;
 }): Promise<string> {
   const { plan, conversationPath, threadUrl, targetUrl, onLog } = args;
 
@@ -34,6 +36,7 @@ export async function appendOrCreateConversation(args: {
         threadUrl,
         targetUrl,
         previousTurnCount: plan.previousTurnCount,
+        ...(args.threadAt ? { threadAt: args.threadAt } : {}),
       });
       onLog(`💬 Appended to ${path.basename(conversationPath)}`);
       return conversationPath;
@@ -50,6 +53,7 @@ export async function appendOrCreateConversation(args: {
       provider: providerKeyFor(targetUrl),
       threadUrl,
       threadTurns: 1,
+      ...(args.threadAt ? { threadAt: args.threadAt } : {}),
     });
   }
   onLog(`💾 Saved: ${path.basename(filePath)}`);

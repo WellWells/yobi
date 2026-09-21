@@ -1,22 +1,24 @@
 import { create } from 'zustand';
 import { AUTH_PROVIDERS } from '../../../shared/types';
 import type { AccountStatus, AuthProvider, HiddenSources, OutputFile, Provider, QueueState } from '../../../shared/types';
+import type { GeminiModelState } from '../../../shared/geminiModels';
+import type { ClaudeModelState } from '../../../shared/claudeModels';
+import type { ChatgptModelState } from '../../../shared/chatgptModels';
 import { parseMarkdownBlocks, conversationAliases } from '../utils/parseMarkdownBlocks';
 import type { MarkdownBlocks } from '../utils/parseMarkdownBlocks';
 import { parseConversationDoc } from '../../../shared/conversationDoc';
 import type { ConversationDoc } from '../../../shared/conversationDoc';
 import { DEFAULT_MODEL_URL } from '../config/models';
 import type { ModelOption } from '../config/models';
+import type { LogLevel } from '../components/logFormat';
 
 export function selectHiddenSources(s: {
   hiddenProviders: Provider[];
-  hiddenDuckaiModelIds: string[];
   hiddenByokIds: string[];
   hiddenByokGroupIds: string[];
 }): HiddenSources {
   return {
     providers: s.hiddenProviders,
-    duckaiModelIds: s.hiddenDuckaiModelIds,
     byokIds: s.hiddenByokIds,
     byokGroupIds: s.hiddenByokGroupIds,
   };
@@ -86,6 +88,10 @@ interface AppState {
   tempChatConversation: ConversationDoc | null;
 
   currentView: View;
+  /** One-shot: a level filter another view asked the log panel to open with. */
+  logLevelRequest: LogLevel[] | null;
+  /** One-shot: the settings category another view asked Settings to open on. */
+  settingsCategoryRequest: string | null;
 
   layoutMode: LayoutMode;
   markdownZoom: number;
@@ -96,12 +102,16 @@ interface AppState {
   userNickname: string;
   aiUrl: string;
   aiUrlLoaded: boolean;
-  duckaiModels: ModelOption[];
   byokModels: ModelOption[];
   byokGroupModels: ModelOption[];
   byokModelsLoaded: boolean;
+  /** Gemini's cached model list and the one Gemini setting; `null` until main answers. */
+  geminiModels: GeminiModelState | null;
+  /** The models this Claude account can select, and the one Claude setting; `null` until main answers. */
+  claudeModels: ClaudeModelState | null;
+  /** What this ChatGPT account offers (models and effort steps, or the thinking toggle) and the one ChatGPT setting. */
+  chatgptModels: ChatgptModelState | null;
   hiddenProviders: Provider[];
-  hiddenDuckaiModelIds: string[];
   hiddenByokIds: string[];
   hiddenByokGroupIds: string[];
   hiddenSourcesLoaded: boolean;
@@ -120,6 +130,10 @@ interface AppState {
   setTempChatMode: (enabled: boolean) => void;
   setTempChatResult: (content: string) => void;
   setView: (view: View) => void;
+  openLogsFiltered: (levels: LogLevel[]) => void;
+  clearLogLevelRequest: () => void;
+  openSettingsCategory: (category: string) => void;
+  clearSettingsCategoryRequest: () => void;
   setLayoutMode: (mode: LayoutMode) => void;
   zoomInMarkdown: () => void;
   zoomOutMarkdown: () => void;
@@ -130,9 +144,11 @@ interface AppState {
   setUserNickname: (nickname: string) => void;
   setAiUrl: (url: string) => void;
   hydrateAiUrl: (url: string) => void;
-  setDuckaiModels: (models: ModelOption[]) => void;
   setByokModels: (models: ModelOption[]) => void;
   setByokGroupModels: (models: ModelOption[]) => void;
+  setGeminiModels: (state: GeminiModelState) => void;
+  setClaudeModels: (state: ClaudeModelState) => void;
+  setChatgptModels: (state: ChatgptModelState) => void;
   setHiddenSources: (next: HiddenSources) => void;
 }
 
@@ -153,17 +169,20 @@ export const useAppStore = create<AppState>((set) => ({
   tempChatBlocks: null,
   tempChatConversation: null,
   currentView: 'chat',
+  logLevelRequest: null,
+  settingsCategoryRequest: null,
   hotkey: 'Alt+G',
   hotkeyEnabled: true,
   userNickname: '',
   aiUrl: DEFAULT_MODEL_URL,
   aiUrlLoaded: false,
-  duckaiModels: [],
   byokModels: [],
   byokGroupModels: [],
   byokModelsLoaded: false,
+  geminiModels: null,
+  claudeModels: null,
+  chatgptModels: null,
   hiddenProviders: [],
-  hiddenDuckaiModelIds: [],
   hiddenByokIds: [],
   hiddenByokGroupIds: [],
   hiddenSourcesLoaded: false,
@@ -209,7 +228,16 @@ export const useAppStore = create<AppState>((set) => ({
       }
     }
 
-    return { files, unreadFilePaths: nextUnread };
+    // A selected file that is no longer listed has been deleted under us — most often the
+    // placeholder the main process unlinks when a new conversation's first turn fails. Holding
+    // on to it leaves the header pointing at a path with nothing behind it, so rename, share
+    // and show-in-folder all fail silently.
+    const selectionGone = Boolean(state.selectedFile) && !incomingPaths.has(state.selectedFile!.path);
+    const cleared = selectionGone
+      ? { selectedFile: null, fileContent: null, parsedBlocks: null, conversation: null }
+      : {};
+
+    return { files, unreadFilePaths: nextUnread, ...cleared };
   }),
   selectFile: (selectedFile) => set((state) => {
     const samePath = Boolean(selectedFile?.path) && selectedFile?.path === state.selectedFile?.path;
@@ -255,6 +283,10 @@ export const useAppStore = create<AppState>((set) => ({
     conversation: null,
   }),
   setView: (currentView) => set({ currentView }),
+  openLogsFiltered: (logLevelRequest) => set({ currentView: 'logs', logLevelRequest }),
+  clearLogLevelRequest: () => set({ logLevelRequest: null }),
+  openSettingsCategory: (settingsCategoryRequest) => set({ currentView: 'settings', settingsCategoryRequest }),
+  clearSettingsCategoryRequest: () => set({ settingsCategoryRequest: null }),
   setLayoutMode: (layoutMode) => {
     window.electronAPI.updateLayoutMode(layoutMode).catch(() => {});
     set({ layoutMode });
@@ -271,12 +303,13 @@ export const useAppStore = create<AppState>((set) => ({
   setUserNickname: (userNickname) => set({ userNickname }),
   setAiUrl: (aiUrl) => set({ aiUrl, aiUrlLoaded: true }),
   hydrateAiUrl: (aiUrl) => set((s) => (s.aiUrlLoaded ? s : { aiUrl, aiUrlLoaded: true })),
-  setDuckaiModels: (duckaiModels) => set({ duckaiModels }),
   setByokModels: (byokModels) => set({ byokModels, byokModelsLoaded: true }),
   setByokGroupModels: (byokGroupModels) => set({ byokGroupModels }),
+  setGeminiModels: (geminiModels) => set({ geminiModels }),
+  setClaudeModels: (claudeModels) => set({ claudeModels }),
+  setChatgptModels: (chatgptModels) => set({ chatgptModels }),
   setHiddenSources: (next) => set({
     hiddenProviders: next.providers,
-    hiddenDuckaiModelIds: next.duckaiModelIds,
     hiddenByokIds: next.byokIds,
     hiddenByokGroupIds: next.byokGroupIds,
     hiddenSourcesLoaded: true,

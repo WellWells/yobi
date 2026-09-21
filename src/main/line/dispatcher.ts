@@ -1,5 +1,7 @@
 import { t } from '../i18n';
 import { BUILTIN_NEW_COMMAND } from '../../shared/types';
+import { isBotUserAllowed } from '../../shared/botCommandAccess';
+import { summarizeFlowError } from '../../shared/flowErrorReason';
 import type { BotBuiltinCommandKey, BotLlmDirectConfig } from '../../shared/types';
 import type { BotBuiltinRunResult } from '../botBuiltinCommands';
 import type { ByokCommandDef } from '../byokCommands';
@@ -32,6 +34,8 @@ export interface LineFlowCommandDef {
   command: string;
   description: string;
   inputVariable: string;
+  /** Empty means every paired user, which is what every flow written before this field meant. */
+  allowedUserIds: string[];
 }
 
 export interface LineDispatcherDeps {
@@ -50,6 +54,7 @@ export interface LineDispatcherDeps {
     targetUrl: string,
     chatId: string,
     userId: string,
+    plain?: boolean,
   ) => Promise<BotBuiltinRunResult>;
   onAgentAnswer: (answer: string, chatId: string, userId: string) => Promise<BotBuiltinRunResult | null>;
   hasPendingAgentAsk: (chatId: string, userId: string) => boolean;
@@ -62,7 +67,7 @@ export interface LineDispatcherDeps {
     inputVariable: string,
     input: string,
     userId: string,
-  ) => Promise<{ taskId: string; result: Promise<{ success: boolean }> }>;
+  ) => Promise<{ taskId: string; result: Promise<{ success: boolean; error?: string }> }>;
 }
 
 export class LineDispatcher {
@@ -111,7 +116,7 @@ export class LineDispatcher {
       }));
       return;
     }
-    await this.enqueueTask(event, event.text, direct.targetUrl || undefined);
+    await this.runDirectMessage(event, event.text, direct.targetUrl);
   }
 
   private async dispatchGroupMessage(event: LineTextEvent): Promise<void> {
@@ -134,13 +139,13 @@ export class LineDispatcher {
       await this.reply(event, t(s, 'line.direct.disabledHintGroup'));
       return;
     }
-    await this.enqueueTask(event, event.text, direct.targetUrl || undefined);
+    await this.runDirectMessage(event, event.text, direct.targetUrl);
   }
 
   private async handleCommand(event: LineTextEvent, command: LineCommand): Promise<void> {
     const s = this.deps.getStrings();
     if (isHelpCommand(command)) {
-      await this.reply(event, this.usageText());
+      await this.reply(event, this.usageText(event.userId));
       return;
     }
     this.deps.onDropAgentAsk(event.chatId, event.userId);
@@ -166,6 +171,13 @@ export class LineDispatcher {
 
     const flow = this.deps.getFlowCommands?.().find((fc) => fc.command === command.name);
     if (flow && this.deps.onFlowCommand) {
+      // Narrower than pairing: a command over a private data source stays registered on the bot
+      // but only answers the ids its author listed.
+      if (!isBotUserAllowed(flow.allowedUserIds, event.userId)) {
+        this.deps.onLog(`[line] /${command.name} refused for ${event.userId} — not on the command's allow list`);
+        await this.reply(event, t(s, 'line.cmd.flowNotAllowed'));
+        return;
+      }
       await this.runFlowCommand(event, flow, command.argument);
       return;
     }
@@ -184,7 +196,7 @@ export class LineDispatcher {
 
     await this.reply(event, t(s, 'line.cmd.unknown', {
       command: command.name,
-      commands: this.commandList(),
+      commands: this.commandList(event.userId),
     }));
   }
 
@@ -210,18 +222,33 @@ export class LineDispatcher {
       await this.reply(event, t(s, 'line.cmd.usage', { command: command.name }));
       return;
     }
+    await this.runBuiltin(event, builtin.key, command.argument, builtin.targetUrl, command.name);
+  }
+
+  /**
+   * A plain message is an agent turn too — working out whether a question needs the web is the
+   * agent's job, not something the user should have to declare by typing /search first — but on
+   * the narrow chat scope, which is what `plain` selects.
+   */
+  private async runDirectMessage(event: LineTextEvent, text: string, targetUrl: string): Promise<void> {
+    await this.runBuiltin(event, 'agent', text, targetUrl, 'direct', true);
+  }
+
+  private async runBuiltin(
+    event: LineTextEvent,
+    key: BotBuiltinCommandKey,
+    input: string,
+    targetUrl: string,
+    label: string,
+    plain?: boolean,
+  ): Promise<void> {
+    const s = this.deps.getStrings();
     await this.reply(event, t(s, 'line.cmd.queued'));
     try {
-      const result = await this.deps.onBuiltinCommand(
-        builtin.key,
-        command.argument,
-        builtin.targetUrl,
-        event.chatId,
-        event.userId,
-      );
+      const result = await this.deps.onBuiltinCommand(key, input, targetUrl, event.chatId, event.userId, plain);
       await this.pushResult(event, result);
     } catch (err: unknown) {
-      this.deps.onLog(`[line] built-in /${command.name} failed: ${err instanceof Error ? err.message : String(err)}`);
+      this.deps.onLog(`[line] built-in /${label} failed: ${err instanceof Error ? err.message : String(err)}`);
       await safePush(this.deps.getClient(), event.chatId, t(s, 'line.cmd.queueFailed'), this.deps.onLog);
     }
   }
@@ -259,7 +286,7 @@ export class LineDispatcher {
     await this.reply(event, t(s, 'line.cmd.queued'));
 
     let taskId: string;
-    let result: Promise<{ success: boolean }>;
+    let result: Promise<{ success: boolean; error?: string }>;
     try {
       ({ taskId, result } = await this.deps.onFlowCommand!(
         flow.flowId,
@@ -276,7 +303,7 @@ export class LineDispatcher {
 
     void result.then(async (flowResult) => {
       if (flowResult.success) return;
-      await safePush(this.deps.getClient(), event.chatId, t(s, 'line.cmd.flowFailed'), this.deps.onLog);
+      await safePush(this.deps.getClient(), event.chatId, this.flowFailedText(flowResult.error), this.deps.onLog);
     }).catch(async (err: unknown) => {
       this.deps.onLog(`[line] flow command failed: ${err instanceof Error ? err.message : String(err)}`);
       await safePush(this.deps.getClient(), event.chatId, t(s, 'line.cmd.flowFailed'), this.deps.onLog);
@@ -305,7 +332,7 @@ export class LineDispatcher {
     }
     this.pairAttempts.reset(userId);
     this.deps.onLog(`[line] paired user ${userId}${displayName ? ` (${displayName})` : ''}`);
-    await this.reply(event, `${t(s, 'line.pair.completed')}\n\n${this.usageText()}`);
+    await this.reply(event, `${t(s, 'line.pair.completed')}\n\n${this.usageText(userId)}`);
   }
 
   private async enqueueTask(event: LineTextEvent, text: string, targetUrl?: string): Promise<void> {
@@ -325,12 +352,25 @@ export class LineDispatcher {
     }
   }
 
-  private commandList(): string {
+  /**
+   * A bare "the flow failed" leaves the sender with nowhere to go — the run's real complaint
+   * lives in the app's log, which is not where they are.
+   */
+  private flowFailedText(error?: string): string {
+    const s = this.deps.getStrings();
+    const reason = summarizeFlowError(error);
+    return reason ? t(s, 'line.cmd.flowFailedReason', { reason }) : t(s, 'line.cmd.flowFailed');
+  }
+
+  /** Listing a command someone is not allowed to run only invites them to try it. */
+  private commandList(userId?: string): string {
     const builtinCommands = [
       `/${BUILTIN_NEW_COMMAND}`,
       ...this.deps.getBuiltinCommands().map((bc) => `/${bc.command}`),
     ];
-    const flowCommands = (this.deps.getFlowCommands?.() ?? []).map((fc) => `/${fc.command}`);
+    const flowCommands = (this.deps.getFlowCommands?.() ?? [])
+      .filter((fc) => userId === undefined || isBotUserAllowed(fc.allowedUserIds, userId))
+      .map((fc) => `/${fc.command}`);
     const byokCommands = (this.deps.getByokCommands?.() ?? []).map((bc) => `/${bc.command}`);
     return [
       listProviderCommands(this.deps.getProviderCommands()),
@@ -342,9 +382,9 @@ export class LineDispatcher {
       .join('  ');
   }
 
-  private usageText(): string {
+  private usageText(userId?: string): string {
     const key = this.deps.getLlmDirect().enabled ? 'line.help.usageDirect' : 'line.help.usageCommands';
-    return t(this.deps.getStrings(), key, { commands: this.commandList() });
+    return t(this.deps.getStrings(), key, { commands: this.commandList(userId) });
   }
 
   private reply(event: LineTextEvent, text: string): Promise<void> {

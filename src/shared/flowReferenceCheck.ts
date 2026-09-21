@@ -5,6 +5,8 @@ import { isShareLinkFormat } from './shareFormat';
 const FILE_PRODUCER_TYPES = new Set<string>(['capture', 'file_write', 'file_download']);
 const LLM_EXPORT_FORMATS = new Set<string>(['png', 'webp', 'pdf']);
 const BOT_TRIGGER_VARS = new Set<string>(['bot.triggerChatId', 'bot.triggerUserId', 'bot.triggerPlatform']);
+/** Seeded by a hotkey press only, so a cron-only flow referencing it would always read "". */
+export const HOTKEY_SELECTION_VAR = 'selection';
 const VAR_REF_RE = /\{\{([^{}]+)\}\}/g;
 
 function isFileProducer(step: SkillInstance): boolean {
@@ -34,10 +36,13 @@ export function checkVariableReferences(
   variables: FlowVariable[] = [],
 ): string | null {
   const hasBotTrigger = triggers.some((t) => t.type === 'bot');
+  const hasHotkeyTrigger = triggers.some((t) => t.type === 'hotkey');
   const exactVars = new Set<string>(['clipboard', 'timestamp', 'flow.name', ...triggerInputVariables(triggers)]);
   if (hasBotTrigger) BOT_TRIGGER_VARS.forEach((v) => exactVars.add(v));
+  if (hasHotkeyTrigger) exactVars.add(HOTKEY_SELECTION_VAR);
   for (const variable of variables) exactVars.add(`${FLOW_VAR_PREFIX}.${variable.key}`);
   const exactRoots = new Set<string>(['clipboard', 'timestamp', 'flow', FLOW_VAR_PREFIX]);
+  if (hasHotkeyTrigger) exactRoots.add(HOTKEY_SELECTION_VAR);
 
   const keyDefinedAt = new Map<string, number>();
   steps.forEach((step, i) => {

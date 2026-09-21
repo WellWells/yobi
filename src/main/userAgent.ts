@@ -31,6 +31,6 @@ export const FIREFOX_UA = buildFirefoxUserAgent();
 export const WORKER_USER_AGENTS: Record<Provider, string> = {
   gemini: FIREFOX_UA,
   chatgpt: CLEAN_UA,
+  claude: CLEAN_UA,
   perplexity: CLEAN_UA,
-  duckai: CLEAN_UA,
 };

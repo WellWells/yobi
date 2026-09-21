@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { getConfigPath } from '../config';
 import { getFlowDataDir } from '../flow';
 import { getOutputDir } from '../files';
+import { USER_MEMORY_DIR, userMemoryDir } from '../memory/memoryStore';
 import { BACKUP_CATEGORY_IDS } from '../../shared/types';
 import type { BackupCategoryId } from '../../shared/types';
 
@@ -55,6 +56,13 @@ export const CATEGORY_DEFS: Record<BackupCategoryId, CategoryDef> = {
     kind: 'dir',
     zipPrefix: 'flow-memory',
     resolveSource: () => path.join(app.getPath('userData'), 'flow-memory'),
+    replaceMode: 'whole-dir',
+  },
+  userMemory: {
+    id: 'userMemory',
+    kind: 'dir',
+    zipPrefix: USER_MEMORY_DIR,
+    resolveSource: () => userMemoryDir(),
     replaceMode: 'whole-dir',
   },
   outputs: {

@@ -6,14 +6,31 @@
  */
 export const PPLX_RESPONSE_SELECTOR = '[id^="markdown-content-"], .prose[data-renderer="lm"]';
 
-/** Wrapper Perplexity adds around an answer only once it has finished streaming. */
+/** Every shape the ask box has taken. One source, shared with the page-reuse gate. */
+export const PPLX_INPUT_SELECTORS = [
+  '#ask-input[contenteditable="true"]',
+  'div.chat-input-container #ask-input',
+  'div[role="textbox"][contenteditable="true"]',
+  'div[contenteditable="true"][data-lexical-editor="true"]',
+];
+
+/**
+ * Wrapper around an answer's final-text step. It is NOT a completion signal: measured on the
+ * live page (2026-09-18) it is mounted with the first streamed token.
+ */
 export const PPLX_FINAL_TEXT_SELECTOR = '[data-workflow-final-text]';
 
+/** Icon id of the control Perplexity swaps in for the send button while it answers. */
+export const PPLX_STOP_ICON_ID = '#pplx-icon-player-stop-filled';
+
 const ANCHOR = JSON.stringify(PPLX_RESPONSE_SELECTOR);
-const FINAL_TEXT = JSON.stringify(PPLX_FINAL_TEXT_SELECTOR);
+
+/** How long the text must sit still, stop control gone, before an answer with no action row counts as done. */
+const QUIET_MS = 3_000;
 
 export const INJECTED_PPLX_READ_JS = `
   var PPLX_REGENERATE_ICONS = ['pplx-icon-repeat', 'pplx-icon-arrow-fork'];
+  var PPLX_STOP_ICON_ID = ${JSON.stringify(PPLX_STOP_ICON_ID)};
 
   function getResponseNodes() {
     return document.querySelectorAll(${ANCHOR});
@@ -169,15 +186,48 @@ export const INJECTED_PPLX_READ_JS = `
       hasGeneratedImageAsset(content) || hasGeneratedImageAsset(anchor);
   }
 
-  /** Perplexity wraps a turn in the final-text marker only after its last token lands,
-   *  so it settles the answer even when the action row renders no copy control. */
+  /** Up from the moment a turn is sent until its last token lands (measured 2026-09-18). */
+  function isPerplexityGenerating() {
+    var uses = document.querySelectorAll('[data-ask-input-container="true"] button use');
+    for (var i = 0; i < uses.length; i++) {
+      if (getUseHref(uses[i]) === PPLX_STOP_ICON_ID) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Finished means the stop control is gone and the turn shows it: its action row, or an image
+   * answer's toolbar. Settling on the final-text wrapper returned answers cut off after their
+   * first sentence and left Perplexity still answering, so the next send reloaded the page.
+   */
   function isAnswerSettled(anchor) {
-    if (!anchor) return false;
-    var wrapper = anchor.closest ? anchor.closest(${FINAL_TEXT}) : null;
-    // A wrapper holding more than this one answer would belong to an earlier turn, and
-    // trusting it would report a still-streaming follow-up as finished.
-    if (wrapper && wrapper.querySelectorAll(${ANCHOR}).length <= 1) return true;
+    if (!anchor || isPerplexityGenerating()) return false;
     return findCopyButtonFor(anchor) !== null || findImageActionToolbarFor(anchor) !== null;
+  }
+
+  function answerTextOf(anchor) {
+    var node = getAnswerNode(anchor);
+    return node ? (node.innerText || '').trim() : '';
+  }
+
+  /** The newest answer before a send: the one a new turn has to displace. */
+  function snapshotLatestAnswer() {
+    var anchor = getLatestResponseAnchor();
+    return { anchor: anchor, text: answerTextOf(anchor) };
+  }
+
+  /**
+   * A long thread keeps only its latest answers mounted (five, measured 2026-09-18) and unmounts
+   * the oldest as a new one mounts, so the count stops growing. The newest answer no longer being
+   * the one seen before the send says the same thing — with different text, because a re-render
+   * can hand back an equivalent node for the previous answer.
+   */
+  function hasNewResponse(baseline, seen) {
+    if (getResponseNodes().length > baseline) return true;
+    if (!seen || !seen.anchor) return false;
+    var latest = getLatestResponseAnchor();
+    if (!latest || latest === seen.anchor) return false;
+    return answerTextOf(latest) !== seen.text && hasAnswerContent(latest);
   }
 
   /** Thread title. The heading element is gone from the current renderer, which leaves
@@ -190,9 +240,13 @@ export const INJECTED_PPLX_READ_JS = `
     return docTitle === 'Perplexity' ? '' : docTitle;
   }
 
-  async function perplexityWaitAndRead(baseline) {
+  async function perplexityWaitAndRead(baseline, opts) {
+    opts = opts || {};
+    var seen = opts.seen || null;
+    var QUIET_MS = opts.quietMs === undefined ? ${QUIET_MS} : opts.quietMs;
+
     await waitFor(function() {
-      return getResponseNodes().length > baseline;
+      return hasNewResponse(baseline, seen);
     }, 'new Perplexity response node', TIMEOUT, 350);
 
     await waitFor(function() {
@@ -212,6 +266,8 @@ export const INJECTED_PPLX_READ_JS = `
         pplxLastLen = curLen;
         pplxLastChangeAt = Date.now();
       }
+      // A finished answer whose action row never renders.
+      if (!isPerplexityGenerating() && Date.now() - pplxLastChangeAt >= QUIET_MS) break;
       if (pplxLastChangeAt !== null && Date.now() - pplxLastChangeAt > NO_CHANGE_LIMIT) {
         throw new Error('Timeout: Perplexity response stopped updating');
       }

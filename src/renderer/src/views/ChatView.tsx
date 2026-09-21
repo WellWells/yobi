@@ -32,31 +32,33 @@ import { useRewriteTask } from '../hooks/useRewriteTask';
 import { useChatCommands, type ChatCommand } from '../hooks/useChatCommands';
 import { useChatCommandRunner } from '../hooks/useChatCommandRunner';
 import { useAgentRunner } from '../hooks/useAgentRunner';
+import { useMcpCommands } from '../hooks/useMcpCommands';
+import { useConversationConnectors } from '../hooks/useConversationConnectors';
+import { MCP_COMMAND_ID_PREFIX, parseMcpCommandFlowId } from '../../../shared/mcpCommand';
 import { useAgentRunStore } from '../store/useAgentRunStore';
 import { useConversationTurns } from '../hooks/useConversationTurns';
 import { ConversationView } from './chat/ConversationView';
+import { shouldShowConversationView } from './chat/conversationViewRouting';
 import { AgentResumeBanner } from '../components/chat/AgentResumeBanner';
 import { ConversationSearchOverlay } from '../components/chat/ConversationSearchOverlay';
 import { SelectionToolbar, type SelectionAction } from '../components/chat/SelectionToolbar';
 import { useChatSelection } from '../hooks/useChatSelection';
 import { parseCitationSources, resolveSelectionCitations } from '../../../shared/citations';
 import { accountApi, agentApi, fileApi, settingsApi, clipboardApi } from '../api/electronApi';
-import { DEFAULT_MODEL_URL, nextModelUrl, visibleModels } from '../config/models';
-import { DEFAULT_CHAT_MODE, type ChatMode } from '../config/chatModes';
+import { DEFAULT_MODEL_URL, visibleModels } from '../config/models';
+import { buildModelStops, nextModelStop, type ModelStop } from '../config/modelStops';
+import { chooseModelStop, modelStopSources } from '../hooks/useModelStops';
+import { chatModeForCapabilities, type ChatMode } from '../config/chatModes';
 import {
   BUILTIN_AGENT_COMMAND,
   BUILTIN_AGENT_FLOW_ID,
   BUILTIN_CHAT_COMMAND,
   BUILTIN_CHAT_FLOW_ID,
+  BUILTIN_MODEL_COMMAND,
+  BUILTIN_MODEL_FLOW_ID,
   BUILTIN_NEW_ALIAS,
   BUILTIN_NEW_COMMAND,
   BUILTIN_NEW_FLOW_ID,
-  BUILTIN_QUICKSEARCH_ALIAS,
-  BUILTIN_QUICKSEARCH_COMMAND,
-  BUILTIN_QUICKSEARCH_FLOW_ID,
-  BUILTIN_SEARCH_ALIAS,
-  BUILTIN_SEARCH_COMMAND,
-  BUILTIN_SEARCH_FLOW_ID,
   isByokTargetUrl,
   isModelUrlHidden,
   loginRequiredProviderForUrl,
@@ -100,7 +102,27 @@ export const ChatView: React.FC = React.memo(() => {
   const pendingSelectedTurns = useAppStore((s) => (s.pendingTurns[s.selectedFile?.path ?? ''] ?? []).length);
 
   const activeModelUrl = useAppStore((s) => s.aiUrl);
-  const [chatMode, setChatMode] = useState<ChatMode>(DEFAULT_CHAT_MODE);
+  // Reopening a conversation restores its capabilities; the mode follows from them, so nothing
+  // has to be told about it separately.
+  const noop = useCallback((): void => {}, []);
+  const {
+    connectors,
+    activeIds: activeConnectorIds,
+    web,
+    toggleWeb,
+    setWeb,
+    discloseAll: discloseConnectors,
+    toggle: toggleConnector,
+    remove: removeConnectors,
+    clear: clearConnectors,
+  } = useConversationConnectors(noop);
+  // Derived, never stored. A send that holds a capability has something to act with and runs as
+  // an agent; one that holds none is an ordinary chat turn — the only shape that can continue
+  // the provider's own thread natively.
+  const chatMode = useMemo<ChatMode>(
+    () => chatModeForCapabilities(web, activeConnectorIds),
+    [web, activeConnectorIds],
+  );
   const [pendingLoginModel, setPendingLoginModel] = useState<{ provider: LoginRequiredProvider; url: string } | null>(null);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -123,14 +145,26 @@ export const ChatView: React.FC = React.memo(() => {
   const { sendTurn } = useConversationTurns(handleTurnError);
 
   const flowCommands = useChatCommands();
+  const builtinNames = useMemo(() => new Set([
+    BUILTIN_NEW_COMMAND, BUILTIN_NEW_ALIAS,
+    BUILTIN_MODEL_COMMAND,
+    BUILTIN_CHAT_COMMAND,
+    BUILTIN_AGENT_COMMAND,
+  ]), []);
+  // Flow commands are reserved against connector commands as well as built-ins: a flow the user
+  // wrote wins its own name, matching how bot commands settle the same clash.
+  const reservedNames = useMemo(
+    () => new Set([...builtinNames, ...flowCommands.map((c) => c.command)]),
+    [builtinNames, flowCommands],
+  );
+  const describeMcpCommand = useCallback(
+    ({ connected }: { connected: boolean }) => (connected
+      ? t('chat.command.mcp.description')
+      : t('chat.command.mcp.disconnected')),
+    [t],
+  );
+  const mcpCommands = useMcpCommands(reservedNames, describeMcpCommand);
   const chatCommands = useMemo<ChatCommand[]>(() => {
-    const builtinNames = new Set([
-      BUILTIN_NEW_COMMAND, BUILTIN_NEW_ALIAS,
-      BUILTIN_CHAT_COMMAND,
-      BUILTIN_SEARCH_COMMAND, BUILTIN_SEARCH_ALIAS,
-      BUILTIN_QUICKSEARCH_COMMAND, BUILTIN_QUICKSEARCH_ALIAS,
-      BUILTIN_AGENT_COMMAND,
-    ]);
     return [
       {
         flowId: BUILTIN_NEW_FLOW_ID,
@@ -138,6 +172,11 @@ export const ChatView: React.FC = React.memo(() => {
         aliases: [BUILTIN_NEW_ALIAS],
         description: t('chat.command.new.description'),
         action: true,
+      },
+      {
+        flowId: BUILTIN_MODEL_FLOW_ID,
+        command: BUILTIN_MODEL_COMMAND,
+        description: t('chat.command.model.description'),
       },
       {
         flowId: BUILTIN_CHAT_FLOW_ID,
@@ -149,23 +188,17 @@ export const ChatView: React.FC = React.memo(() => {
         command: BUILTIN_AGENT_COMMAND,
         description: t('agent.command.description'),
       },
-      {
-        flowId: BUILTIN_SEARCH_FLOW_ID,
-        command: BUILTIN_SEARCH_COMMAND,
-        aliases: [BUILTIN_SEARCH_ALIAS],
-        description: t('search.command.description'),
-      },
-      {
-        flowId: BUILTIN_QUICKSEARCH_FLOW_ID,
-        command: BUILTIN_QUICKSEARCH_COMMAND,
-        aliases: [BUILTIN_QUICKSEARCH_ALIAS],
-        description: t('quicksearch.command.description'),
-      },
+      ...mcpCommands,
       ...flowCommands.filter((c) => !builtinNames.has(c.command)),
     ];
-  }, [flowCommands, t]);
+  }, [builtinNames, flowCommands, mcpCommands, t]);
   const { runCommand } = useChatCommandRunner(setExportToast);
-  const { run: runAgentCommand, resume: resumeAgentRun, discard: discardAgentRun } = useAgentRunner();
+  const {
+    run: runAgentCommand,
+    resume: resumeAgentRun,
+    answer: answerAgentQuestion,
+    discard: discardAgentRun,
+  } = useAgentRunner(handleTurnError);
   const resumableAgentRuns = useAgentRunStore((s) => s.resumable);
 
   useEffect(() => {
@@ -208,8 +241,36 @@ export const ChatView: React.FC = React.memo(() => {
   const handleNewConversation = useCallback((): void => {
     selectFile(null);
     setFileContent(null);
+    // Disclosure is scoped to one conversation: a new one starts with nothing on the table —
+    // web included, which is off by default and turned on per conversation.
+    clearConnectors();
+    setWeb(false);
     focusPromptInput();
-  }, [selectFile, setFileContent, focusPromptInput]);
+  }, [selectFile, setFileContent, clearConnectors, setWeb, focusPromptInput]);
+
+  // `/chat` and `/agent` still work; with the mode derived, they set the capabilities that imply
+  // it. `/chat` clears everything — that is what makes an ordinary, natively-threaded turn
+  // reachable at all — and `/agent` switches the web back on.
+  const handleChangeMode = useCallback((mode: ChatMode): void => {
+    if (mode === 'agent') {
+      setWeb(true);
+      return;
+    }
+    setWeb(false);
+    clearConnectors();
+  }, [clearConnectors, setWeb]);
+
+  const handleDiscloseConnectors = useCallback((ids: readonly string[]): readonly string[] =>
+    discloseConnectors(ids), [discloseConnectors]);
+
+  const handleDiscloseConnector = useCallback(
+    (id: string): readonly string[] => handleDiscloseConnectors([id]),
+    [handleDiscloseConnectors],
+  );
+
+  const handleToggleConnector = useCallback((id: string): void => {
+    toggleConnector(id);
+  }, [toggleConnector]);
 
   const openSearch = useCallback((): void => setSearchOpen(true), []);
 
@@ -219,9 +280,15 @@ export const ChatView: React.FC = React.memo(() => {
     void settingsApi.updateAiUrl(url);
   }, [setAiUrl]);
 
+  // Steps through each provider's own models too, not just the providers: stopping on one is the
+  // same as picking its row in the model menu.
   const handleCycleModel = useCallback((): void => {
     const state = useAppStore.getState();
-    selectModel(nextModelUrl(state.aiUrl, visibleModels(state, selectHiddenSources(state))));
+    const sources = modelStopSources(state);
+    const next = nextModelStop(buildModelStops(sources), state.aiUrl, sources);
+    if (!next) return;
+    chooseModelStop(next);
+    selectModel(next.url);
   }, [selectModel]);
 
   useGlobalHotkeys({
@@ -306,15 +373,19 @@ export const ChatView: React.FC = React.memo(() => {
     return true;
   }, [activeModelUrl, attachments, clearAttachments, sendTurn]);
 
-  const handleRunChatCommand = useCallback((command: ChatCommand, input: string): boolean => {
+  const handleRunChatCommand = useCallback((
+    command: ChatCommand,
+    input: string,
+    connectorIds?: readonly string[],
+    webOverride?: boolean,
+  ): boolean => {
     if (command.flowId === BUILTIN_NEW_FLOW_ID) {
       handleNewConversation();
       return true;
     }
     if (
-      command.flowId === BUILTIN_SEARCH_FLOW_ID
-      || command.flowId === BUILTIN_QUICKSEARCH_FLOW_ID
-      || command.flowId === BUILTIN_AGENT_FLOW_ID
+      command.flowId === BUILTIN_AGENT_FLOW_ID
+      || command.flowId.startsWith(MCP_COMMAND_ID_PREFIX)
     ) {
       const gated = loginRequiredProviderForUrl(activeModelUrl);
       if (gated && useAppStore.getState().accountStatuses[gated] === false) {
@@ -322,21 +393,31 @@ export const ChatView: React.FC = React.memo(() => {
         return false;
       }
     }
-    if (command.flowId === BUILTIN_AGENT_FLOW_ID) {
+    const directConnector = parseMcpCommandFlowId(command.flowId);
+    if (command.flowId === BUILTIN_AGENT_FLOW_ID || directConnector) {
       if (!input.trim()) {
         setExportToast({ id: Date.now(), message: t('agent.error.empty') });
         return false;
       }
+      // `connectorIds` wins when the caller has just disclosed one: React has not flushed the
+      // state update yet, so reading `activeConnectorIds` here would miss the connector the user
+      // named in this very keystroke.
+      const scope = connectorIds
+        ?? (directConnector ? handleDiscloseConnector(directConnector) : activeConnectorIds);
+      // Attachments ride along even with a connector disclosed. They used not to, because a
+      // connector run dropped every built-in tool and had nothing to open a file with; it keeps
+      // them now, so there is nothing left to protect the user from.
       const attachmentPaths = attachments.map((a) => a.path).filter(Boolean);
-      void runAgentCommand(input, activeModelUrl, attachmentPaths);
-      if (attachments.length > 0) clearAttachments();
+      // Web too: a send that has just turned it on has not flushed that into `web` either.
+      void runAgentCommand(input, activeModelUrl, attachmentPaths, scope, webOverride ?? web);
+      if (attachmentPaths.length > 0) clearAttachments();
       return true;
     }
-    void runCommand(command, input, activeModelUrl);
+    void runCommand(command, input);
     return true;
   }, [
-    activeModelUrl, attachments, clearAttachments,
-    handleNewConversation, runCommand, runAgentCommand, t,
+    activeModelUrl, attachments, clearAttachments, activeConnectorIds, handleDiscloseConnector,
+    handleNewConversation, runCommand, runAgentCommand, web, t,
   ]);
 
   const handleAiUrlChange = useCallback((nextUrl: string): void => {
@@ -347,6 +428,15 @@ export const ChatView: React.FC = React.memo(() => {
     }
     selectModel(nextUrl);
   }, [selectModel]);
+
+  const handlePickModel = useCallback((stop: ModelStop): void => {
+    chooseModelStop(stop);
+    handleAiUrlChange(stop.url);
+  }, [handleAiUrlChange]);
+
+  const handleUnknownModel = useCallback((query: string): void => {
+    setExportToast({ id: Date.now(), message: t('chat.model.command.notFound').replace('{{query}}', query) });
+  }, [t]);
 
   const handleLoginConfirm = useCallback((provider: LoginRequiredProvider): void => {
     if (pendingLoginModel) selectModel(pendingLoginModel.url);
@@ -380,12 +470,12 @@ export const ChatView: React.FC = React.memo(() => {
     startTransition(() => setFileContent(updated));
   }, [headerEditValue, selectedFile, selectFile, setFileContent, setFiles]);
 
-  const singleTurnDocumentView = layoutMode === 'side-by-side'
-    && (conversation?.turns.length ?? 0) <= 1;
-
-  const awaitingFirstTurn = pendingSelectedTurns > 0 && (conversation?.turns.length ?? 0) === 0;
-  const showConversationView = Boolean(fileContent) && Boolean(conversation)
-    && (awaitingFirstTurn || ((conversation?.turns.length ?? 0) > 0 && !singleTurnDocumentView));
+  const showConversationView = shouldShowConversationView({
+    layoutMode,
+    turnCount: conversation?.turns.length ?? 0,
+    pendingTurnCount: pendingSelectedTurns,
+    hasContent: Boolean(fileContent) && Boolean(conversation),
+  });
 
   const handleCaptureTurnAs = useCallback(
     (format: CaptureFormat, turn: CaptureTurn) => captureExport.captureTurnAs(format, turn, quickExportZip),
@@ -419,8 +509,11 @@ export const ChatView: React.FC = React.memo(() => {
     return resolveSelectionCitations(selection.text, selection.blockText, parseCitationSources(response));
   }, [selection, activeConversation]);
 
-  const searchChatCommand = useMemo(
-    () => chatCommands.find((command) => command.flowId === BUILTIN_SEARCH_FLOW_ID) ?? null,
+  // "Verify this" used to run /search. That command is gone from the chat — checking a claim is
+  // exactly the judgement call the agent makes for itself now, and it still reaches the same
+  // pipeline through its research tool.
+  const verifyChatCommand = useMemo(
+    () => chatCommands.find((command) => command.flowId === BUILTIN_AGENT_FLOW_ID) ?? null,
     [chatCommands],
   );
 
@@ -442,18 +535,18 @@ export const ChatView: React.FC = React.memo(() => {
         Icon: Library,
         run: () => setSourcesOpen((open) => !open),
       });
-    } else if (searchChatCommand) {
+    } else if (verifyChatCommand) {
       actions.push({
         id: 'verify',
         label: t('chat.selection.verify'),
         Icon: SearchCheck,
         run: () => {
-          if (handleRunChatCommand(searchChatCommand, selection.text)) clearSelection();
+          if (handleRunChatCommand(verifyChatCommand, selection.text)) clearSelection();
         },
       });
     }
     return actions;
-  }, [selection, selectionSources, searchChatCommand, handleRunChatCommand, clearSelection, t]);
+  }, [selection, selectionSources, verifyChatCommand, handleRunChatCommand, clearSelection, t]);
 
   const handleOpenSource = useCallback((url: string): void => {
     void clipboardApi.openExternalUrl(url);
@@ -511,6 +604,7 @@ export const ChatView: React.FC = React.memo(() => {
               conversation={conversation}
               conversationPath={selectedFile?.path ?? ''}
               onCaptureTurnAs={handleCaptureTurnAs}
+              onChooseAnswer={answerAgentQuestion}
             />
           ) : fileContent && parsedBlocks ? (
             <MarkdownView content={fileContent} blocks={parsedBlocks} />
@@ -519,7 +613,7 @@ export const ChatView: React.FC = React.memo(() => {
               {t('main.loading')}
             </Flex>
           ) : tempChatMode && tempChatConversation && tempChatConversation.turns.length > 0 ? (
-            <ConversationView conversation={tempChatConversation} conversationPath={NEW_CONVERSATION_KEY} />
+            <ConversationView conversation={tempChatConversation} conversationPath={NEW_CONVERSATION_KEY} onChooseAnswer={answerAgentQuestion} />
           ) : pendingNewTurns > 0 ? (
             <ConversationView conversation={EMPTY_CONVERSATION} conversationPath={NEW_CONVERSATION_KEY} />
           ) : tempChatMode && tempChatContent && tempChatBlocks ? (
@@ -546,6 +640,8 @@ export const ChatView: React.FC = React.memo(() => {
           t={t}
           activeModelUrl={activeModelUrl}
           onChangeModel={handleAiUrlChange}
+          onPickModel={handlePickModel}
+          onUnknownModel={handleUnknownModel}
           onSend={handleSendPrompt}
           attachments={attachments}
           notice={attachmentNotice}
@@ -558,7 +654,15 @@ export const ChatView: React.FC = React.memo(() => {
           onRunCommand={handleRunChatCommand}
           onUnknownCommand={handleUnknownCommand}
           chatMode={chatMode}
-          onChangeMode={setChatMode}
+          web={web}
+          onToggleWeb={toggleWeb}
+          onSetWeb={setWeb}
+          onChangeMode={handleChangeMode}
+          connectors={connectors}
+          activeConnectorIds={activeConnectorIds}
+          onToggleConnector={handleToggleConnector}
+          onDiscloseConnectors={handleDiscloseConnectors}
+          onRemoveConnectors={removeConnectors}
         />
       </Stack>
       </ChatDropZone>
@@ -685,4 +789,4 @@ export const ChatView: React.FC = React.memo(() => {
     </Flex>
   );
 });
-
+

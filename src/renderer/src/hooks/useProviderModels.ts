@@ -17,7 +17,6 @@ export interface ProviderModels {
 export function useProviderModels(keepVisibleUrl?: string): ProviderModels {
   const extras = useAppStore(
     useShallow((s) => ({
-      duckaiModels: s.duckaiModels,
       byokModels: s.byokModels,
       byokGroupModels: s.byokGroupModels,
     })),

@@ -1,0 +1,66 @@
+/* One grid shape behind every date choice in the schedule editor: month days, months, and the
+   one-off calendar. Hover lightens (never darkens) so it still reads as a lift on dark themes. */
+.grid {
+  display: grid;
+  gap: 4px;
+}
+
+.cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 4px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--mantine-color-text);
+  font-size: var(--font-size-sm);
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.cell:hover:not(:disabled) {
+  background: var(--mantine-color-default-hover);
+}
+
+.cell:disabled {
+  color: var(--mantine-color-dimmed);
+  cursor: default;
+  opacity: 0.45;
+}
+
+.cell[data-selected='true'],
+.cell[data-selected='true']:hover {
+  background: var(--mantine-color-accent-dim);
+  border-color: var(--mantine-color-accent);
+  font-weight: 600;
+}
+
+/* Today is marked with a ring, not a fill, so it never competes with the selected state. */
+.cell[data-today='true']:not([data-selected='true']) {
+  border-color: var(--mantine-color-default-border);
+}
+
+.cell:focus-visible {
+  outline: 2px solid var(--mantine-color-accent);
+  outline-offset: 1px;
+}
+
+.wide {
+  grid-column: 1 / -1;
+}
+
+.header {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  margin-bottom: 2px;
+}
+
+.headerCell {
+  text-align: center;
+  font-size: var(--font-size-xs);
+  color: var(--mantine-color-dimmed);
+}

@@ -2,11 +2,13 @@ import type { BrowserWindow } from 'electron';
 import { runGeminiAutomation } from './gemini';
 import { isPerplexityLoginRequiredError, runPerplexityAutomation } from './perplexity';
 import { isChatgptLoginRequiredError, runChatgptAutomation } from './chatgpt';
-import { runDuckaiAutomation } from './duckai';
+import { runClaudeAutomation } from './claude';
+import { isClaudeLoginRequiredError } from './claudeSession';
 import { getByokLabel } from './byokClient';
-import { navigateAndWait } from './common';
+import { ensureOnPage, isSamePage, PAGE_REUSE, pageIdentity, parseHttpUrl, waitForThreadSettled } from './pageReuse';
 import { meterText } from '../tokenMeter';
-import { PROVIDER_LABELS, isByokTargetUrl } from '../../shared/types';
+import { meterLlmRequest } from '../llmMeter';
+import { PROVIDER_LABELS, isByokTargetUrl, migrateRemovedTargetUrl, providerFromUrl } from '../../shared/types';
 import type { Provider } from '../../shared/types';
 import { utf8Len, truncateToBytes, charsPlusBreaks, truncateToCharsPlusBreaks } from '../../shared/textBudget';
 
@@ -27,7 +29,7 @@ const PROVIDER_RUNNER: Record<
   gemini: runGeminiAutomation,
   perplexity: runPerplexityAutomation,
   chatgpt: runChatgptAutomation,
-  duckai: runDuckaiAutomation,
+  claude: runClaudeAutomation,
 };
 
 export interface ProviderPromptPolicy {
@@ -37,9 +39,9 @@ export interface ProviderPromptPolicy {
 
 export const PROVIDER_PROMPT_POLICIES: Record<Provider, ProviderPromptPolicy> = {
   chatgpt: { maxBytes: 65_535, maxCharsPlusBreaks: null },
+  claude: { maxBytes: 100_000, maxCharsPlusBreaks: null },
   perplexity: { maxBytes: 40_000, maxCharsPlusBreaks: null },
   gemini: { maxBytes: null, maxCharsPlusBreaks: 33_499 },
-  duckai: { maxBytes: 12_000, maxCharsPlusBreaks: null },
 };
 
 export interface PreparedPromptInfo {
@@ -63,14 +65,7 @@ function removeBlankLines(input: string): { text: string; removed: boolean } {
 }
 
 export function detectProvider(url: string): Provider {
-  try {
-    const host = new URL(url).hostname.toLowerCase();
-    if (host.includes('perplexity.ai')) return 'perplexity';
-    if (host.includes('chatgpt.com') || host.includes('chat.openai.com')) return 'chatgpt';
-    if (host.includes('duck.ai')) return 'duckai';
-  } catch {
-  }
-  return 'gemini';
+  return providerFromUrl(url);
 }
 
 export function getProviderLabel(url: string): string {
@@ -114,41 +109,25 @@ export function preparePromptForProvider(prompt: string, targetUrl: string): Pre
   };
 }
 
-const THREAD_PATH_PATTERNS: Record<Provider, RegExp | null> = {
+const THREAD_PATH_PATTERNS: Record<Provider, RegExp> = {
   gemini: /^\/app\/[^/]+\/?$/,
   chatgpt: /^\/c\/[^/]+\/?$/,
+  claude: /^\/chat\/[^/]+\/?$/,
   perplexity: /^\/search\/[^/]+\/?$/,
-  duckai: null,
 };
-
-function parseUrlOrNull(url: string): URL | null {
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function threadIdentity(parsed: URL): string {
-  return `${parsed.origin}${parsed.pathname.replace(/\/+$/, '')}`;
-}
 
 export function extractThreadUrl(provider: Provider, url: string): string | null {
   const pattern = THREAD_PATH_PATTERNS[provider];
-  if (!pattern) return null;
-  const parsed = parseUrlOrNull(url);
+  const parsed = parseHttpUrl(url);
   if (!parsed) return null;
   if (detectProvider(parsed.href) !== provider) return null;
   if (!pattern.test(parsed.pathname)) return null;
-  return threadIdentity(parsed);
+  return pageIdentity(parsed);
 }
 
+/** A thread is one page, so telling two threads apart is telling two pages apart. */
 export function isSameThread(a: string, b: string): boolean {
-  const left = parseUrlOrNull(a);
-  const right = parseUrlOrNull(b);
-  if (!left || !right) return false;
-  return threadIdentity(left) === threadIdentity(right);
+  return isSamePage(a, b);
 }
 
 export interface AutomationResult {
@@ -182,19 +161,29 @@ export async function runAutomation(
 
   if (expectThreadUrl) {
     try {
-      await navigateAndWait(workerWin.webContents, expectThreadUrl);
+      // Reuse rather than reload when the worker is still parked on the thread: the runner
+      // asks for the very same page next, and that ask is then free as well.
+      await ensureOnPage(
+        workerWin.webContents, expectThreadUrl, PAGE_REUSE[provider], { continuingThread: true },
+      );
     } catch {
       return { response: '', title: '', threadUrl: null, threadLost: true };
     }
     if (!isSameThread(currentUrl(workerWin), expectThreadUrl)) {
       return { response: '', title: '', threadUrl: null, threadLost: true };
     }
+    // Still on the thread at `load` is not proof for every provider: Claude shows a dead thread's
+    // shell first and leaves for its landing page a moment later.
+    if ((await waitForThreadSettled(workerWin.webContents, expectThreadUrl, PAGE_REUSE[provider])) === 'left') {
+      return { response: '', title: '', threadUrl: null, threadLost: true };
+    }
   }
 
-  const navigationTarget = expectThreadUrl ?? targetUrl;
-  const result = await PROVIDER_RUNNER[provider](
+  const navigationTarget = expectThreadUrl ?? migrateRemovedTargetUrl(targetUrl);
+  // Only the send itself is a model request; a lost thread never reached the provider.
+  const result = await meterLlmRequest(() => PROVIDER_RUNNER[provider](
     workerWin, prompt, timeoutMs, navigationTarget, attachments, wantTitle, Boolean(expectThreadUrl),
-  );
+  ));
   meterText(prompt, result.response);
   return { ...result, threadUrl: extractThreadUrl(provider, currentUrl(workerWin)) };
 }
@@ -203,6 +192,9 @@ export function isLoginRequiredError(targetUrl: string, err: unknown): boolean {
   const provider = detectProvider(targetUrl);
   if (provider === 'chatgpt') {
     return isChatgptLoginRequiredError(err);
+  }
+  if (provider === 'claude') {
+    return isClaudeLoginRequiredError(err);
   }
   if (provider === 'gemini') {
     const msg = err instanceof Error ? err.message : String(err ?? '');

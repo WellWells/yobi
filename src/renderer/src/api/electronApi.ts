@@ -1,3 +1,13 @@
+import type { GeminiModelChoice, GeminiModelState } from '../../../shared/geminiModels';
+import type { ClaudeModelChoice, ClaudeModelState } from '../../../shared/claudeModels';
+import type { ChatgptModelChoice, ChatgptModelState } from '../../../shared/chatgptModels';
+import type { MemoryEditResult, MemoryNote, UserMemoryBotSelf, UserMemorySnapshot } from '../../../shared/userMemory';
+import type {
+  MemoryCurateApplyResult,
+  MemoryCuratePick,
+  MemoryCurateProposeRequest,
+  MemoryCurateProposeResult,
+} from '../../../shared/memoryCurate';
 import type {
   AccountStatus,
   AgentConfirmChoice,
@@ -24,7 +34,6 @@ import type {
   CaptureSettings,
   QuickExportSettings,
   ChatCommandResult,
-  DuckaiModelInfo,
   FeedCandidate,
   ScraperPickRequest,
   ScraperPickResult,
@@ -32,7 +41,9 @@ import type {
   FlowExecutionEvent,
   FlowExecutionLog,
   FlowExecutionResult,
-  FlowGenerationResult,
+  FlowBuildOutcome,
+  FlowBuildPayload,
+  FlowBuildRequestPayload,
   HiddenSources,
   MarkdownCaptureRequest,
   ShareLinkRequest,
@@ -49,10 +60,9 @@ import type {
   Provider,
   QueueState,
   AgentCommandResult,
+  AgentRunState,
   AgentRunSummary,
   AgentTracePayload,
-  SearchCommandResult,
-  SearchMode,
   SecretHealth,
   SecretTarget,
   SelectPathRequest,
@@ -62,6 +72,7 @@ import type {
   TelegramRuntimeSnapshot,
   TelegramSettingsSnapshot,
   LineSettingsSnapshot,
+  LineChatListResult,
   LineRuntimeSnapshot,
   LineCredentialsUpdate,
   EmailSettingsSnapshot,
@@ -72,6 +83,7 @@ import type {
   UiNotificationPayload,
   HotkeyBindResult,
 } from '../../../shared/types';
+import type { FlowMetricsSnapshot } from '../../../shared/flowMetrics';
 import type { ConversationTokenStats } from '../../../shared/tokenEstimate';
 
 import type { ShortcutOverride } from '../../../shared/shortcuts';
@@ -142,7 +154,6 @@ export const settingsApi = {
   updateCaptureSettings: (settings: CaptureSettings): Promise<boolean> => window.electronAPI.updateCaptureSettings(settings),
   getQuickExport: (): Promise<QuickExportSettings> => window.electronAPI.getQuickExport(),
   updateQuickExport: (settings: QuickExportSettings): Promise<HotkeyBindResult> => window.electronAPI.updateQuickExport(settings),
-  fetchDuckaiModels: (): Promise<DuckaiModelInfo[]> => window.electronAPI.fetchDuckaiModels(),
 };
 
 export const tempChatApi = {
@@ -156,6 +167,10 @@ export const metricsApi = {
   reset: (): Promise<MetricsSnapshot> => window.electronAPI.resetMetrics(),
   getEnabled: (): Promise<boolean> => window.electronAPI.getMetricsEnabled(),
   updateEnabled: (enabled: boolean): Promise<boolean> => window.electronAPI.updateMetricsEnabled(enabled),
+};
+
+export const flowMetricsApi = {
+  get: (): Promise<FlowMetricsSnapshot> => window.electronAPI.getFlowMetrics(),
 };
 
 export const telegramApi = {
@@ -198,6 +213,7 @@ export const botApi = {
 
 export const lineApi = {
   getSettings: (): Promise<LineSettingsSnapshot> => window.electronAPI.getLineSettings(),
+  listChats: (): Promise<LineChatListResult> => window.electronAPI.listLineChats(),
   updateEnabled: (enabled: boolean): Promise<{ ok: boolean; message?: string }> =>
     window.electronAPI.updateLineEnabled(enabled),
   updateCredentials: (creds: LineCredentialsUpdate): Promise<{ ok: boolean; message?: string }> =>
@@ -250,6 +266,8 @@ export const mcpApi = {
   remove: (id: string): Promise<McpServerActionResult> => window.electronAPI.deleteMcpServer(id),
   connect: (id: string): Promise<McpServerActionResult> => window.electronAPI.connectMcpServer(id),
   disconnect: (id: string): Promise<McpServerActionResult> => window.electronAPI.disconnectMcpServer(id),
+  setBuiltin: (id: string, enabled: boolean): Promise<McpServerActionResult> =>
+    window.electronAPI.setBuiltinConnectorEnabled(id, enabled),
   onServerStatus: (cb: (servers: McpServerView[]) => void): (() => void) => window.electronAPI.onMcpServerStatus(cb),
 };
 
@@ -259,6 +277,46 @@ export const accountApi = {
   logout: (provider: AuthProvider): Promise<boolean> => window.electronAPI.logoutAccount(provider),
   clearData: (provider: Provider): Promise<boolean> => window.electronAPI.clearProviderData(provider),
   onStatusChanged: (cb: (status: AccountStatus) => void) => window.electronAPI.onAccountStatusChanged(cb),
+};
+
+export const userMemoryApi = {
+  get: (): Promise<UserMemorySnapshot> => window.electronAPI.getUserMemory(),
+  setEnabled: (enabled: boolean): Promise<UserMemorySnapshot> => window.electronAPI.setUserMemoryEnabled(enabled),
+  add: (text: string): Promise<MemoryEditResult> => window.electronAPI.addUserMemory(text),
+  update: (id: string, text: string): Promise<MemoryEditResult> => window.electronAPI.updateUserMemory(id, text),
+  remove: (id: string): Promise<MemoryEditResult> => window.electronAPI.deleteUserMemory(id),
+  clear: (): Promise<UserMemorySnapshot> => window.electronAPI.clearUserMemory(),
+  undo: (note: MemoryNote): Promise<{ ok: boolean; snapshot: UserMemorySnapshot }> => window.electronAPI.undoUserMemoryNote(note),
+  setBotSelf: (botSelf: UserMemoryBotSelf): Promise<UserMemorySnapshot> => window.electronAPI.setUserMemoryBotSelf(botSelf),
+  onChanged: (cb: (snapshot: UserMemorySnapshot) => void) => window.electronAPI.onUserMemoryChanged(cb),
+  getCurateModel: (): Promise<string> => window.electronAPI.getMemoryCurateModel(),
+  proposeCuration: (request: MemoryCurateProposeRequest): Promise<MemoryCurateProposeResult> =>
+    window.electronAPI.proposeMemoryCuration(request),
+  cancelCuration: (): Promise<boolean> => window.electronAPI.cancelMemoryCuration(),
+  applyCuration: (proposalId: string, picks: MemoryCuratePick[]): Promise<MemoryCurateApplyResult> =>
+    window.electronAPI.applyMemoryCuration(proposalId, picks),
+  undoCuration: (): Promise<{ ok: boolean }> => window.electronAPI.undoMemoryCuration(),
+};
+
+export const geminiModelApi = {
+  get: (): Promise<GeminiModelState> => window.electronAPI.getGeminiModels(),
+  set: (patch: Partial<GeminiModelChoice>): Promise<GeminiModelState> => window.electronAPI.setGeminiModel(patch),
+  refresh: (): Promise<GeminiModelState> => window.electronAPI.refreshGeminiModels(),
+  onChanged: (cb: (state: GeminiModelState) => void) => window.electronAPI.onGeminiModelsChanged(cb),
+};
+
+export const claudeModelApi = {
+  get: (): Promise<ClaudeModelState> => window.electronAPI.getClaudeModels(),
+  set: (patch: Partial<ClaudeModelChoice>): Promise<ClaudeModelState> => window.electronAPI.setClaudeModel(patch),
+  refresh: (): Promise<ClaudeModelState> => window.electronAPI.refreshClaudeModels(),
+  onChanged: (cb: (state: ClaudeModelState) => void) => window.electronAPI.onClaudeModelsChanged(cb),
+};
+
+export const chatgptModelApi = {
+  get: (): Promise<ChatgptModelState> => window.electronAPI.getChatgptModels(),
+  set: (patch: Partial<ChatgptModelChoice>): Promise<ChatgptModelState> => window.electronAPI.setChatgptModel(patch),
+  refresh: (): Promise<ChatgptModelState> => window.electronAPI.refreshChatgptModels(),
+  onChanged: (cb: (state: ChatgptModelState) => void) => window.electronAPI.onChatgptModelsChanged(cb),
 };
 
 export const secretApi = {
@@ -344,6 +402,7 @@ export const ipcEvents = {
   onNavigateSettings: (cb: () => void) => window.electronAPI.onNavigateSettings(cb),
   onShowCloseDialog: (cb: () => void) => window.electronAPI.onShowCloseDialog(cb),
   onAgentConfirm: (cb: (payload: AgentConfirmPayload) => void) => window.electronAPI.onAgentConfirm(cb),
+  onAgentConfirmDismiss: (cb: (id: string) => void) => window.electronAPI.onAgentConfirmDismiss(cb),
   onFlowCreated: (cb: (flow: FlowDefinition) => void) => window.electronAPI.onFlowCreated(cb),
   onNotifyOnCompleteChanged: (cb: (enabled: boolean) => void) =>
     window.electronAPI.onNotifyOnCompleteChanged(cb),
@@ -353,6 +412,8 @@ export const ipcEvents = {
     window.electronAPI.onCloseToTrayChanged(cb),
   onMetricsChanged: (cb: (snapshot: MetricsSnapshot) => void) =>
     window.electronAPI.onMetricsChanged(cb),
+  onFlowMetricsChanged: (cb: (snapshot: FlowMetricsSnapshot) => void) =>
+    window.electronAPI.onFlowMetricsChanged(cb),
   onTempChatModeChanged: (cb: (enabled: boolean) => void) =>
     window.electronAPI.onTempChatModeChanged(cb),
   onTempChatResult: (cb: (payload: TempChatResult) => void) =>
@@ -381,24 +442,26 @@ export const flowApi = {
   runChatCommand: (flowId: string, command: string, input: string, conversationPath?: string): Promise<ChatCommandResult> =>
     window.electronAPI.runChatCommand(flowId, command, input, conversationPath),
   abort: (flowId: string): Promise<boolean> => window.electronAPI.abortFlow(flowId),
-  generate: (description: string): Promise<FlowGenerationResult> => window.electronAPI.generateFlow(description),
+  build: (request: FlowBuildRequestPayload): Promise<FlowBuildOutcome> => window.electronAPI.generateFlow(request),
+  onBuildProgress: (cb: (payload: FlowBuildPayload) => void): (() => void) =>
+    window.electronAPI.onFlowBuildProgress(cb),
+  getAiUrl: (): Promise<string> => window.electronAPI.getFlowAiUrl(),
   exportFlow: (flow: FlowDefinition): Promise<boolean> => window.electronAPI.exportFlow(flow),
   exportFlowResult: (content: string, defaultFileName: string): Promise<boolean> =>
     window.electronAPI.exportFlowResult(content, defaultFileName),
 };
 
-export const searchApi = {
-  run: (query: string, targetUrl: string, mode?: SearchMode, conversationPath?: string, clientToken?: string): Promise<SearchCommandResult> =>
-    window.electronAPI.runSearchCommand(query, targetUrl, mode, conversationPath, clientToken),
-};
 
 export const agentApi = {
-  run: (goal: string, targetUrl: string, runId: string, conversationPath?: string, attachments?: string[]): Promise<AgentCommandResult> =>
-    window.electronAPI.runAgentCommand(goal, targetUrl, runId, conversationPath, attachments),
+  run: (goal: string, targetUrl: string, runId: string, conversationPath?: string, attachments?: string[], mcpServerIds?: string[], web?: boolean): Promise<AgentCommandResult> =>
+    window.electronAPI.runAgentCommand(goal, targetUrl, runId, conversationPath, attachments, mcpServerIds, web),
+  setConversationConnectors: (filePath: string, serverIds: string[], web?: boolean): Promise<boolean> =>
+    window.electronAPI.setConversationConnectors(filePath, serverIds, web),
   resume: (runId: string, answer?: string): Promise<AgentCommandResult> =>
     window.electronAPI.resumeAgentRun(runId, answer),
   cancel: (runId: string): Promise<boolean> => window.electronAPI.cancelAgentRun(runId),
   listResumable: (): Promise<AgentRunSummary[]> => window.electronAPI.listResumableAgentRuns(),
+  getRun: (runId: string): Promise<AgentRunState | null> => window.electronAPI.getAgentRun(runId),
   discard: (runId: string): Promise<boolean> => window.electronAPI.discardAgentRun(runId),
   onTrace: (cb: (payload: AgentTracePayload) => void): (() => void) => window.electronAPI.onAgentTrace(cb),
 };

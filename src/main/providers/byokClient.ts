@@ -4,6 +4,10 @@ import { config } from '../config';
 import type { ByokInstance } from '../configTypes';
 import { sendLog } from '../helpers';
 import { meterReported, meterText } from '../tokenMeter';
+import { meterLlmRequest, noteKeyCooldown, noteKeyResult } from '../llmMeter';
+import { classifyFailure } from '../metricsNormalize';
+import { estimateTokens } from '../../shared/tokenEstimate';
+import { Semaphore } from '../flow/lanes';
 
 export const BYOK_INSTANCE_MISSING_ERROR = 'BYOK provider not found — the instance may have been deleted';
 export const BYOK_GROUP_MISSING_ERROR = 'BYOK group not found — it may have been deleted';
@@ -104,6 +108,49 @@ const groupRotation = new Map<string, number>();
 
 const keyCooldown = new Map<string, number>();
 
+/**
+ * One request in flight per key, across the whole app.
+ *
+ * Callers nest: an `/agent` batch runs several `research` calls at once and each one's map phase
+ * runs at `byokConcurrencyCeiling`, so a three-key group of free-tier keys saw nine requests at
+ * once and the cooldown below only learnt about it from the 429s. Keyed by instance, not by the
+ * group URL, because a key that belongs to two groups is still one key to the provider's limiter.
+ */
+const keySlots = new Map<string, Semaphore>();
+
+export function byokKeySlot(id: string): Semaphore {
+  let slot = keySlots.get(id);
+  if (!slot) {
+    slot = new Semaphore(1);
+    keySlots.set(id, slot);
+  }
+  return slot;
+}
+
+function isKeyBusy(id: string | undefined): boolean {
+  return id ? keySlots.get(id)?.busy === true : false;
+}
+
+/**
+ * Runs `call` holding the key's slot. A cancel lands immediately even while queued behind another
+ * caller's request, and is reported the way an in-flight cancel always has been.
+ */
+async function callInKeySlot<T>(id: string, call: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  const slot = byokKeySlot(id);
+  try {
+    await slot.acquire(signal);
+  } catch {
+    throw new Error(`${BYOK_REQUEST_FAILED_PREFIX}aborted`);
+  }
+  try {
+    // A request that waited out someone else's call may have been cancelled as the slot came free.
+    if (signal?.aborted) throw new Error(`${BYOK_REQUEST_FAILED_PREFIX}aborted`);
+    return await call();
+  } finally {
+    slot.release();
+  }
+}
+
 function cooldownUntil(id: string | undefined): number {
   return id ? keyCooldown.get(id) ?? 0 : 0;
 }
@@ -124,7 +171,12 @@ export function orderGroupMembers(groupId: string, members: ByokInstance[]): Byo
     rotated.push(members[(start + offset) % members.length]);
   }
   const now = Date.now();
-  const ready = rotated.filter((instance) => cooldownUntil(instance.id) <= now);
+  // An idle key first, so concurrent callers spread across the group instead of queueing on the
+  // one the rotation happened to name. Only among READY keys: a busy key frees up in seconds,
+  // while a cooling one is likely to answer the next request with another 429.
+  const ready = rotated
+    .filter((instance) => cooldownUntil(instance.id) <= now)
+    .sort((a, b) => Number(isKeyBusy(a.id)) - Number(isKeyBusy(b.id)));
   const cooling = rotated
     .filter((instance) => cooldownUntil(instance.id) > now)
     .sort((a, b) => cooldownUntil(a.id) - cooldownUntil(b.id));
@@ -254,7 +306,7 @@ function parseModelIds(bodyText: string): string[] {
   return Array.from(ids).sort((a, b) => a.localeCompare(b));
 }
 
-async function fetchWithByokTimeout(
+export async function fetchWithByokTimeout(
   url: string,
   init: RequestInit,
   timeoutMs: number,
@@ -518,32 +570,68 @@ export async function listByokModels(cfg: ByokEndpoint, timeoutMs: number): Prom
   return parseModelIds(bodyText);
 }
 
+export interface ByokKeyRunOptions<T> {
+  signal?: AbortSignal;
+  /** Token counts for the stats page when the endpoint reported none. */
+  estimate: (result: T) => ByokUsage;
+  /** Members able to serve this call; the rest of a group are skipped, not charged. */
+  accept?: (endpoint: ByokEndpoint) => boolean;
+  /** Thrown when `accept` leaves no member to call. */
+  noneAccepted?: string;
+  /** Whether a failure is worth handing to the next key. Every failure is, unless this says no. */
+  failOver?: (err: unknown) => boolean;
+}
+
+/** Runs one model request on the key (or the first working key of the group) behind a BYOK URL. */
+export async function runOnByokKeys<T extends { usage: ByokUsage | null }>(
+  targetUrl: string,
+  call: (endpoint: ByokEndpoint) => Promise<T>,
+  options: ByokKeyRunOptions<T>,
+): Promise<T> {
+  const { signal } = options;
+  const resolved = resolveByokTryList(targetUrl);
+  const tryList = options.accept ? resolved.filter(options.accept) : resolved;
+  if (tryList.length === 0) throw new Error(options.noneAccepted ?? BYOK_GROUP_EMPTY_ERROR);
+  // One call is one model request however many keys it burns through; each attempt is also
+  // charged to the key that served it, so a failover shows up on both keys, not just the winner.
+  return meterLlmRequest(async () => {
+    let lastError: unknown;
+    for (let index = 0; index < tryList.length; index++) {
+      if (signal?.aborted) throw new Error(`${BYOK_REQUEST_FAILED_PREFIX}aborted`);
+      const endpoint = tryList[index];
+      try {
+        const result = endpoint.id ? await callInKeySlot(endpoint.id, () => call(endpoint), signal) : await call(endpoint);
+        noteKeyResult(endpoint.id, 'success', result.usage ?? options.estimate(result));
+        return result;
+      } catch (err: unknown) {
+        lastError = err;
+        if (signal?.aborted) throw err;
+        noteKeyResult(endpoint.id, classifyFailure(err instanceof Error ? err.message : String(err)));
+        if (err instanceof ByokFailure && endpoint.id && COOLDOWN_STATUSES.has(err.status ?? 0)) {
+          markKeyCooling(endpoint.id, err.retryAfterMs);
+          noteKeyCooldown(endpoint.id);
+        }
+        if (options.failOver && !options.failOver(err)) break;
+        if (index < tryList.length - 1) {
+          const detail = err instanceof Error ? err.message : String(err);
+          sendLog(`⚠️ BYOK key "${endpoint.label ?? 'key'}" failed, trying next in group — ${detail}`);
+        }
+      }
+    }
+    throw lastError instanceof Error
+      ? lastError
+      : new Error(`${BYOK_REQUEST_FAILED_PREFIX}all keys in the group failed`);
+  }, signal);
+}
+
 export async function runByokCompletion(
   targetUrl: string,
   prompt: string,
   timeoutMs: number,
   signal?: AbortSignal,
 ): Promise<{ response: string; title: string; usage: ByokUsage | null }> {
-  const tryList = resolveByokTryList(targetUrl);
-  let lastError: unknown;
-  for (let index = 0; index < tryList.length; index++) {
-    if (signal?.aborted) throw new Error(`${BYOK_REQUEST_FAILED_PREFIX}aborted`);
-    const endpoint = tryList[index];
-    try {
-      return await callByokChat(endpoint, prompt, timeoutMs, signal);
-    } catch (err: unknown) {
-      lastError = err;
-      if (signal?.aborted) throw err;
-      if (err instanceof ByokFailure && endpoint.id && COOLDOWN_STATUSES.has(err.status ?? 0)) {
-        markKeyCooling(endpoint.id, err.retryAfterMs);
-      }
-      if (index < tryList.length - 1) {
-        const detail = err instanceof Error ? err.message : String(err);
-        sendLog(`⚠️ BYOK key "${endpoint.label ?? 'key'}" failed, trying next in group — ${detail}`);
-      }
-    }
-  }
-  throw lastError instanceof Error
-    ? lastError
-    : new Error(`${BYOK_REQUEST_FAILED_PREFIX}all keys in the group failed`);
+  return runOnByokKeys(targetUrl, (endpoint) => callByokChat(endpoint, prompt, timeoutMs, signal), {
+    signal,
+    estimate: (result) => ({ input: estimateTokens(prompt), output: estimateTokens(result.response) }),
+  });
 }

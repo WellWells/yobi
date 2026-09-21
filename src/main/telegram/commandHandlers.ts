@@ -9,6 +9,8 @@ import type {
   TelegramReplyTarget,
 } from '../../shared/types';
 import type { ResolvedBuiltinCommand, ResolvedProviderCommand } from '../providerCommands';
+import { isBotUserAllowed } from '../../shared/botCommandAccess';
+import { summarizeFlowError } from '../../shared/flowErrorReason';
 import { t } from '../i18n';
 
 type TelegramSessionData = Record<string, never>;
@@ -28,6 +30,12 @@ export interface TelegramBuiltinRequest {
   input: string;
   targetUrl: string;
   replyTarget: TelegramReplyTarget;
+  /**
+   * A plain message rather than a typed command. It still runs as an agent — deciding whether a
+   * question needs the web is the agent's job, not something the user should have to declare by
+   * typing /search — but on a deliberately narrow tool scope.
+   */
+  plain?: boolean;
 }
 
 export interface TelegramAgentAnswerRequest {
@@ -58,7 +66,13 @@ export interface TelegramCommandOptions {
   onAgentAnswer?: (request: TelegramAgentAnswerRequest) => Promise<void>;
   onDropAgentAsk?: (chatId: number, userId: number) => void;
   onNewConversation?: (chatId: number, userId: number) => Promise<boolean>;
-  getFlowCommands?: () => Array<{ flowId: string; command: string; description: string; inputVariable: string }>;
+  getFlowCommands?: () => Array<{
+    flowId: string;
+    command: string;
+    description: string;
+    inputVariable: string;
+    allowedUserIds: string[];
+  }>;
   onFlowCommand?: (
     flowId: string,
     inputVariable: string,
@@ -134,25 +148,36 @@ export async function handleBuiltinCommand(
     return;
   }
 
+  await dispatchBuiltin(ctx, options, { key: spec.key, input, targetUrl: spec.targetUrl, command: spec.command });
+}
+
+/** The queued-ack / run / report dance, shared by typed commands and plain messages. */
+async function dispatchBuiltin(
+  ctx: TelegramContext,
+  options: TelegramCommandOptions,
+  run: { key: BotBuiltinCommandKey; input: string; targetUrl: string; command: string; plain?: boolean },
+): Promise<void> {
+  if (!ctx.chat || !ctx.from || !options.onBuiltinCommand) return;
   const s = options.getStrings();
   let queuedMessageId: number | undefined;
   try {
     const queuedMessage = await ctx.reply(t(s, 'telegram.cmd.queued'));
     queuedMessageId = queuedMessage.message_id;
     await options.onBuiltinCommand({
-      key: spec.key,
-      input,
-      targetUrl: spec.targetUrl,
+      key: run.key,
+      input: run.input,
+      targetUrl: run.targetUrl,
+      ...(run.plain ? { plain: true } : {}),
       replyTarget: {
         chatId: ctx.chat.id,
         userId: ctx.from.id,
         requestMessageId: ctx.message?.message_id,
         queuedMessageId: queuedMessage.message_id,
-        command: spec.command,
+        command: run.command,
       },
     });
   } catch (err: unknown) {
-    options.onLog(`[telegram] built-in /${spec.command} failed: ${(err as Error).message}`);
+    options.onLog(`[telegram] built-in /${run.command} failed: ${(err as Error).message}`);
     if (queuedMessageId) {
       try {
         await ctx.api.editMessageText(ctx.chat.id, queuedMessageId, t(s, 'telegram.cmd.queueFailed'));
@@ -251,7 +276,9 @@ export async function handleDirectMessage(ctx: TelegramContext, options: Telegra
       await ctx.reply(t(s, 'telegram.direct.disabledHint'));
       return;
     }
-    await queueTaskWithAck(ctx, options, { command: 'direct', prompt: text, targetUrl: direct.targetUrl });
+    await dispatchBuiltin(ctx, options, {
+      key: 'agent', input: text, targetUrl: direct.targetUrl, command: 'direct', plain: true,
+    });
     return;
   }
 
@@ -275,7 +302,9 @@ export async function handleDirectMessage(ctx: TelegramContext, options: Telegra
     await ctx.reply(t(s, 'telegram.direct.disabledHint'));
     return;
   }
-  await queueTaskWithAck(ctx, options, { command: 'direct', prompt: match.prompt, targetUrl: direct.targetUrl });
+  await dispatchBuiltin(ctx, options, {
+    key: 'agent', input: match.prompt, targetUrl: direct.targetUrl, command: 'direct', plain: true,
+  });
 }
 
 export function extractBotMention(
@@ -359,6 +388,17 @@ export async function handleOutputCommand(ctx: TelegramContext, options: Telegra
   }));
 }
 
+/**
+ * A bare "the flow failed" leaves the sender with nowhere to go — the run's real complaint lives
+ * in the app's log, which is not where they are. The reason rides back with it when there is one.
+ */
+function flowFailedText(strings: Record<string, string>, error?: string): string {
+  const reason = summarizeFlowError(error);
+  return reason
+    ? t(strings, 'telegram.cmd.flowFailedReason', { reason })
+    : t(strings, 'telegram.cmd.flowFailed');
+}
+
 export async function handleFlowCommand(
   ctx: TelegramContext,
   options: TelegramCommandOptions,
@@ -378,6 +418,13 @@ export async function handleFlowCommand(
   const liveCmds = options.getFlowCommands?.() ?? [];
   const match = liveCmds.find((fc) => fc.command === commandName);
   if (!match) return;
+  // Narrower than pairing: a command over a private data source stays registered on the bot but
+  // only answers the ids its author listed.
+  if (!isBotUserAllowed(match.allowedUserIds, String(ctx.from.id))) {
+    options.onLog(`[telegram] /${commandName} refused for user ${ctx.from.id} — not on the command's allow list`);
+    await ctx.reply(t(options.getStrings(), 'telegram.cmd.flowNotAllowed'));
+    return;
+  }
 
   const input = extractCommandPrompt(ctx.message?.text ?? '');
   const s = options.getStrings();
@@ -399,7 +446,7 @@ export async function handleFlowCommand(
       if (!queuedMsgId) return;
       if (!flowResult.success) {
         try {
-          await ctx.api.editMessageText(chatId, queuedMsgId, t(s, 'telegram.cmd.flowFailed'));
+          await ctx.api.editMessageText(chatId, queuedMsgId, flowFailedText(s, flowResult.error));
         } catch {
         }
         return;

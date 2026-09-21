@@ -1,17 +1,15 @@
 import React, { useState } from 'react';
-import { ActionIcon, Badge, Box, Checkbox, Group, Loader, Menu, Stack, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Badge, Box, Group, Loader, Menu, Stack, Text } from '@mantine/core';
 import { CircleUserRound, LogIn, LogOut, MoreVertical, RotateCcw } from 'lucide-react';
 import { SectionCard, SectionTitle, VisibilityToggle } from '../components';
 import { AppButton } from '../../../components/AppButton';
 import { WebDialog } from '../../../components/WebDialog';
 import { getModelIconByUrl } from '../../../config/models';
-import { useAppStore } from '../../../store/appStore';
 import { useHiddenSources } from '../hooks/useHiddenSources';
-import type { HiddenSourcesController } from '../hooks/useHiddenSources';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import type { useAccountSettings } from '../hooks/useAccountSettings';
 import {
-  AUTH_PROVIDERS, PROVIDERS, PROVIDER_LABELS, PROVIDER_URLS, duckaiModelIdFromUrl,
+  AUTH_PROVIDERS, PROVIDERS, PROVIDER_LABELS, PROVIDER_URLS,
 } from '../../../../../shared/types';
 import type { AuthProvider, HiddenSources, Provider } from '../../../../../shared/types';
 import { Z_POPOVER } from '../../../config/zLayers';
@@ -50,57 +48,6 @@ const StatusPill: React.FC<{ state: PillState; t: (key: string) => string }> = (
     <Badge variant="light" color={state === 'out' ? 'gray' : 'teal'} radius="sm" size="sm" tt="none" fw={500}>
       {label}
     </Badge>
-  );
-};
-
-const DuckaiModelList: React.FC<{
-  sources: HiddenSourcesController;
-  t: (key: string) => string;
-}> = ({ sources, t }) => {
-  const duckaiModels = useAppStore((s) => s.duckaiModels);
-
-  if (duckaiModels.length === 0) {
-    return (
-      <Text fz="var(--font-size-sm)" c="dimmed">{t('settings.modelSources.duckaiEmpty')}</Text>
-    );
-  }
-
-  return (
-    <Stack gap={10}>
-      {duckaiModels.map((model) => {
-        const id = duckaiModelIdFromUrl(model.url);
-        if (!id) return null;
-        const modelHidden = sources.hidden.duckaiModelIds.includes(id);
-        const afterHiding: HiddenSources = {
-          ...sources.hidden,
-          duckaiModelIds: [...sources.hidden.duckaiModelIds, id],
-        };
-        const blocked = !modelHidden && !sources.canApply(afterHiding);
-        const name = model.shortLabel ?? model.label;
-        return (
-          <Tooltip key={id} label={t('settings.modelSources.lastOne')} disabled={!blocked}>
-            {}
-            <Box w="fit-content" maw="100%">
-              <Checkbox
-                size="sm"
-                checked={!modelHidden}
-                disabled={sources.busy || blocked}
-                onChange={() => sources.toggleDuckaiModel(id)}
-                label={
-                  <Text
-                    fz="var(--font-size-sm)"
-                    c="var(--mantine-color-default-color)"
-                    opacity={modelHidden ? 0.55 : 1}
-                  >
-                    {name}
-                  </Text>
-                }
-              />
-            </Box>
-          </Tooltip>
-        );
-      })}
-    </Stack>
   );
 };
 
@@ -169,17 +116,12 @@ export const ModelSourcesSection: React.FC<Props> = ({ account, t, showSection, 
                   : loggedIn
                     ? 'in'
                     : 'out';
-              const isDuckai = provider === 'duckai';
               const providerHidden = sources.hidden.providers.includes(provider);
               const afterHiding: HiddenSources = {
                 ...sources.hidden,
                 providers: [...sources.hidden.providers, provider],
               };
               const blocked = !providerHidden && !sources.canApply(afterHiding);
-              const showDuckaiCount = isDuckai
-                && !providerHidden
-                && sources.duckaiTotalCount > 0
-                && sources.duckaiVisibleCount < sources.duckaiTotalCount;
               return (
                 <Box
                   key={provider}
@@ -205,12 +147,6 @@ export const ModelSourcesSection: React.FC<Props> = ({ account, t, showSection, 
                           </Text>
                           {}
                           <StatusPill state={pillState} t={t} />
-                          {showDuckaiCount && (
-                            <Badge variant="light" color="gray" radius="sm" size="sm" tt="none" fw={500}>
-                              {t('settings.modelSources.shownCount')}{' '}
-                              {sources.duckaiVisibleCount}/{sources.duckaiTotalCount}
-                            </Badge>
-                          )}
                         </Group>
                         <Text fz="var(--font-size-sm)" c="dimmed" lh={1.5}>
                           {t(`settings.accounts.necessity.${provider}`)}
@@ -249,12 +185,6 @@ export const ModelSourcesSection: React.FC<Props> = ({ account, t, showSection, 
                       />
                     </Group>
                   </Group>
-
-                  {isDuckai && !providerHidden && (
-                    <Box pl={22} ml={12} mt={10} style={{ borderLeft: '2px solid var(--mantine-color-default-border)' }}>
-                      <DuckaiModelList sources={sources} t={t} />
-                    </Box>
-                  )}
                 </Box>
               );
             })}

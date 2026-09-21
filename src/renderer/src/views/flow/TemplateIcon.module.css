@@ -1,0 +1,8 @@
+/* Mantine sets `color-scheme` on :root, so `light-dark()` picks the right glyph tone without
+   the component having to know which theme is active. */
+.chip {
+  flex-shrink: 0;
+  border-radius: var(--mantine-radius-md);
+  background: var(--tpl-bg);
+  color: light-dark(var(--tpl-fg-light), var(--tpl-fg-dark));
+}

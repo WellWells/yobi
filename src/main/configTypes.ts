@@ -4,10 +4,25 @@ import { DEFAULT_SHARE_INSTANCE } from '../shared/types';
 import { DEFAULT_CAPTURE_BACKGROUND_STYLE, DEFAULT_CAPTURE_PALETTE } from '../shared/capturePalettes';
 import { DEFAULT_AGENT_ASK_TTL_MINUTES } from '../shared/types';
 import type { ShortcutOverride } from '../shared/shortcuts';
-import type { BotBuiltinCommands, BotByokCommands, BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureRange, CaptureSettings, CardLayout, QuickExportSettings, LinePairingState, McpServerConfig, NotifyEventPrefs, PromptPreferences, Provider, ShareSettings, TelegramChannel, TelegramPairingState } from '../shared/types';
+import { EMPTY_GEMINI_CHOICE } from '../shared/geminiModels';
+import type { GeminiModelCatalog, GeminiModelChoice } from '../shared/geminiModels';
+import { EMPTY_CLAUDE_CHOICE } from '../shared/claudeModels';
+import type { ClaudeModelCatalog, ClaudeModelChoice } from '../shared/claudeModels';
+import { EMPTY_CHATGPT_CHOICE } from '../shared/chatgptModels';
+import type { ChatgptModelCatalog, ChatgptModelChoice } from '../shared/chatgptModels';
+import type { BotBuiltinCommands, BotByokCommands, BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureRange, CaptureSettings, CardLayout, QuickExportSettings, LinePairingState, McpServerConfig, NotifyEventPrefs, PromptPreferences, Provider, ShareSettings, TelegramChannel, TelegramKnownUser, TelegramPairingState } from '../shared/types';
 
 export interface Config {
   targetUrl: string;
+  /**
+   * Which model the Flow Builder's "create with AI" uses. Deliberately NOT `targetUrl`: the chat
+   * model is chosen for conversation, while this one only ever has to return a large JSON object,
+   * and the provider that is best at one is often not the other. Empty means "whatever
+   * `pickProvider` falls back to", which is how every existing install reads.
+   */
+  flowGenerateUrl: string;
+  /** Which model tidies the personal memory. Empty follows the chat model. */
+  memoryCurateUrl: string;
   hotkey: string;
   hotkeyEnabled: boolean;
   shortcuts: Record<string, ShortcutOverride>;
@@ -32,10 +47,25 @@ export interface Config {
   byokInstances: ByokInstance[];
   byokGroups: ByokGroup[];
   mcpServers: McpServerConfig[];
+  /** Opt-in: host the built-in LINE PC reader as an in-process MCP connector. */
+  lineReaderEnabled: boolean;
+  /** Opt-in: relay the Thunderbird MCP add-on through an in-process MCP connector. */
+  thunderbirdEnabled: boolean;
   hiddenProviders: Provider[];
-  hiddenDuckaiModelIds: string[];
   hiddenByokIds: string[];
   hiddenByokGroupIds: string[];
+  /** Yobi's one Gemini setting; the page is switched to match it before every send. */
+  geminiModel: GeminiModelChoice;
+  /** Gemini's model picker as it was last read — the cache the model menu draws from. */
+  geminiModelCatalog: GeminiModelCatalog | null;
+  /** Yobi's one Claude setting (model, effort, thinking); the page is matched to it before every send. */
+  claudeModel: ClaudeModelChoice;
+  /** The models this Claude account can select, as last read from its picker. */
+  claudeModelCatalog: ClaudeModelCatalog | null;
+  /** Yobi's one ChatGPT setting (model, effort, thinking); the page is matched to it before every send. */
+  chatgptModel: ChatgptModelChoice;
+  /** The models, effort steps or thinking toggle this ChatGPT account offers, as last read. */
+  chatgptModelCatalog: ChatgptModelCatalog | null;
   closeToTray: boolean;
   closeActionDecided: boolean;
   launchAtStartup: boolean;
@@ -66,6 +96,7 @@ export interface TelegramConfig {
   llmDirect: BotLlmDirectConfig;
   pairing: TelegramPairingState;
   channels: TelegramChannel[];
+  knownUsers: TelegramKnownUser[];
 }
 
 export interface LineConfig {
@@ -107,6 +138,8 @@ export type StoredConfig = Omit<Config, 'telegram' | 'line' | 'smtp' | 'byokInst
 
 export const defaultStored: StoredConfig = {
   targetUrl: PROVIDER_URLS.gemini,
+  flowGenerateUrl: '',
+  memoryCurateUrl: '',
   hotkey: defaultMainHotkey(process.platform === 'darwin'),
   hotkeyEnabled: true,
   shortcuts: {},
@@ -170,9 +203,9 @@ export const defaultStored: StoredConfig = {
   },
   providerCommands: {
     chatgpt: { enabled: true, command: '' },
+    claude: { enabled: true, command: '' },
     gemini: { enabled: true, command: '' },
     perplexity: { enabled: true, command: '' },
-    duckai: { enabled: true, command: '', modelId: '' },
   },
   builtinCommands: {
     agent: { enabled: true, command: '', targetUrl: '' },
@@ -190,6 +223,7 @@ export const defaultStored: StoredConfig = {
     llmDirect: { enabled: false, targetUrl: '' },
     pairing: { pendingCodes: [], pairedUsers: [] },
     channels: [],
+    knownUsers: [],
   },
   line: {
     enabled: false,
@@ -209,8 +243,15 @@ export const defaultStored: StoredConfig = {
   byokInstances: [],
   byokGroups: [],
   mcpServers: [],
+  lineReaderEnabled: false,
+  thunderbirdEnabled: false,
   hiddenProviders: [],
-  hiddenDuckaiModelIds: [],
   hiddenByokIds: [],
   hiddenByokGroupIds: [],
+  geminiModel: EMPTY_GEMINI_CHOICE,
+  geminiModelCatalog: null,
+  claudeModel: EMPTY_CLAUDE_CHOICE,
+  claudeModelCatalog: null,
+  chatgptModel: EMPTY_CHATGPT_CHOICE,
+  chatgptModelCatalog: null,
 };

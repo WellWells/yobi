@@ -13,9 +13,11 @@ export type FlowAccess =
   | 'screen'
   | 'clipboard'
   | 'sendData'
-  | 'thirdPartyAi';
+  | 'thirdPartyAi'
+  /** Reading the user's own LINE conversations. Not 'readFiles': "reads files" understates it. */
+  | 'lineMessages';
 
-export type FlowSetup = 'bot' | 'email';
+export type FlowSetup = 'bot' | 'email' | 'line';
 
 const RISK_BY_SKILL: Partial<Record<SkillType, FlowRisk>> = {
   shell: 'execute',
@@ -39,6 +41,7 @@ const ACCESS_BY_SKILL: Partial<Record<SkillType, FlowAccess>> = {
   email_send: 'sendData',
   llm: 'thirdPartyAi',
   research: 'thirdPartyAi',
+  line_read: 'lineMessages',
 };
 
 function accessKindsFor(step: SkillInstance): FlowAccess[] {
@@ -53,7 +56,7 @@ function accessKindsFor(step: SkillInstance): FlowAccess[] {
 
 export const FLOW_RISKS: readonly FlowRisk[] = ['execute', 'system', 'delete'] as const;
 export const FLOW_ACCESS: readonly FlowAccess[] = [
-  'readFiles', 'writeFiles', 'screen', 'clipboard', 'sendData', 'thirdPartyAi',
+  'readFiles', 'writeFiles', 'screen', 'clipboard', 'sendData', 'thirdPartyAi', 'lineMessages',
 ] as const;
 
 export function llmProviderLabel(providerUrl: string | undefined): string {
@@ -96,6 +99,7 @@ export function analyzeFlow(flow: FlowDefinition): FlowCapabilities {
     for (const kind of accessKindsFor(step)) access.add(kind);
     if (step.type === 'bot') setup.add('bot');
     if (step.type === 'email_send') setup.add('email');
+    if (step.type === 'line_read') setup.add('line');
   });
 
   for (const trigger of [flow.trigger, ...(flow.extraTriggers ?? [])]) {
@@ -128,6 +132,7 @@ const SUMMARY_KEYS: Partial<Record<SkillType, string[]>> = {
   search: ['query'],
   research: ['query'],
   gmap_reviews: ['url'],
+  line_read: ['chat', 'query'],
   youtube: ['url'],
   youtube_subs: ['channels'],
   llm: ['prompt'],

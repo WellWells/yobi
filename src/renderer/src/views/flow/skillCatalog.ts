@@ -19,6 +19,7 @@ export const SKILL_CATALOG: SkillCategory[] = [
     { type: 'research', keywords: ['research', 'deep', 'investigate', 'report', 'cited', 'sources', 'analyze', 'answer', '研究', '深度', '調查', '報告', '引用', '來源', '分析'] },
     { type: 'scraper', keywords: ['scrape', 'crawl', 'css', '爬蟲', '擷取'] },
     { type: 'gmap_reviews', keywords: ['google maps', 'map', 'reviews', 'rating', 'place', '地圖', '評論', '評價', '星等', '店家'] },
+    { type: 'line_read', keywords: ['line', 'chat', 'message', 'group', 'community', 'history', 'transcript', 'summarize', 'track', 'LINE', '訊息', '聊天', '群組', '社群', '群聊', '對話', '紀錄', '摘要', '追蹤'] },
     { type: 'browser', keywords: ['fetch', 'web', 'page', '網頁', '瀏覽'] },
     { type: 'rss',     keywords: ['feed', '訂閱'] },
     { type: 'http',    keywords: ['api', 'request', '請求'] },

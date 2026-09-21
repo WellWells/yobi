@@ -6,6 +6,10 @@ import { getLangCache, t } from './i18n';
 import { getAuthProviderConfig, getAccountStatus, clearProviderSession } from './providers/authStatus';
 import { runGoogleSignInLanguageReset } from './providers/googleSignInLanguage';
 import { applyWorkerUserAgent } from './clientHints';
+import { clearClaudeModels } from './providers/claudeModelSync';
+import { refreshClaudeModelList } from './ipc/claudeModel';
+import { clearChatgptModels } from './providers/chatgptModelSync';
+import { refreshChatgptModelList } from './ipc/chatgptModel';
 
 const WORKER_PARTITION = 'persist:gemini';
 const POLL_INTERVAL_MS = 1_500;
@@ -18,6 +22,12 @@ let programmaticClose = false;
 function broadcastStatus(provider: AuthProvider, loggedIn: boolean): void {
   const status: AccountStatus = { provider, loggedIn };
   sendToRenderer(IPC.ACCOUNT_STATUS_CHANGED, status);
+}
+
+/** Claude's and ChatGPT's model lists depend on the account's plan, so a sign-in reads them again. */
+function afterSignIn(provider: AuthProvider): void {
+  if (provider === 'claude') void refreshClaudeModelList(true);
+  if (provider === 'chatgpt') void refreshChatgptModelList(true);
 }
 
 function stopPolling(): void {
@@ -78,6 +88,7 @@ export async function openAccountLoginWindow(provider: AuthProvider): Promise<bo
       if (!loggedIn) return;
       stopPolling();
       broadcastStatus(provider, true);
+      afterSignIn(provider);
       sendWebNotification(
         t(strings, 'notify.completed.title'),
         t(strings, 'settings.accounts.login.success', { provider: providerLabel }),
@@ -103,6 +114,7 @@ export async function openAccountLoginWindow(provider: AuthProvider): Promise<bo
       } catch {
       }
       broadcastStatus(provider, loggedIn);
+      if (loggedIn) afterSignIn(provider);
     })();
   });
 
@@ -117,6 +129,8 @@ export async function clearProviderData(provider: Provider): Promise<boolean> {
   const label = PROVIDER_LABELS[provider];
   try {
     await clearProviderSession(provider);
+    if (provider === 'claude') clearClaudeModels();
+    if (provider === 'chatgpt') clearChatgptModels();
     if (isAuthProvider(provider)) {
       broadcastStatus(provider, false);
     } else {

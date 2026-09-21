@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { getFlowDataDir } from './paths';
 import { LEGACY_SKILL_TYPES } from '../../shared/flowSkillSchema';
+import { migrateRemovedTargetUrl } from '../../shared/types';
 import type { FlowDefinition } from '../../shared/types';
 
 export function createEntityId(): string {
@@ -17,6 +18,8 @@ export function migrateLoadedFlows(flows: FlowDefinition[]): FlowDefinition[] {
     for (const step of flow.steps ?? []) {
       const migrated = LEGACY_SKILL_TYPES[step.type];
       if (migrated) step.type = migrated;
+      const provider = step.config?.provider;
+      if (typeof provider === 'string' && provider) step.config.provider = migrateRemovedTargetUrl(provider);
     }
   }
   return flows;

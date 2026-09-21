@@ -1,8 +1,7 @@
 import { useCallback } from 'react';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
-import { flowApi, searchApi } from '../api/electronApi';
-import { BUILTIN_QUICKSEARCH_FLOW_ID, BUILTIN_SEARCH_FLOW_ID } from '../../../shared/types';
+import { flowApi } from '../api/electronApi';
 import { useCommandTurn } from './useCommandTurn';
 import type { ChatCommand } from './useChatCommands';
 import type { ExportToast } from './useCaptureExport';
@@ -22,32 +21,8 @@ export function useChatCommandRunner(setToast: (toast: ExportToast) => void) {
     setToast({ id: Date.now(), message: t('chat.command.done').replace('{{command}}', command) });
   }, [setToast, t]);
 
-  const runCommand = useCallback(async (cmd: ChatCommand, input: string, targetUrl?: string): Promise<void> => {
+  const runCommand = useCallback(async (cmd: ChatCommand, input: string): Promise<void> => {
     const conversationPath = useAppStore.getState().selectedFile?.path;
-
-    if (cmd.flowId === BUILTIN_SEARCH_FLOW_ID || cmd.flowId === BUILTIN_QUICKSEARCH_FLOW_ID) {
-      if (!input.trim()) {
-        setToast({ id: Date.now(), message: t('search.error.empty') });
-        return;
-      }
-      const mode = cmd.flowId === BUILTIN_QUICKSEARCH_FLOW_ID ? 'quick' : 'standard';
-      const clientToken = crypto.randomUUID();
-      const sendId = begin(input, clientToken);
-      try {
-        const { success, error, filePath } = await searchApi.run(input, targetUrl ?? '', mode, conversationPath, clientToken);
-        if (!success) {
-          fail(sendId);
-          failToast(cmd.command, error ?? '');
-          return;
-        }
-        await finish(sendId, filePath);
-        if (!filePath) doneToast(cmd.command);
-      } catch (err: unknown) {
-        fail(sendId);
-        failToast(cmd.command, err instanceof Error ? err.message : String(err));
-      }
-      return;
-    }
 
     const sendId = begin(input);
     try {

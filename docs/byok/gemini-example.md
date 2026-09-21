@@ -11,7 +11,7 @@ Google offers the Gemini API free of charge at a limited usage tier, and exposes
 
 ## 2. Add the instance in Yobi
 
-**Settings → Accounts → Bring Your Own Key (BYOK) → Add instance**, then:
+**Settings → Model Sources → Bring Your Own Key (BYOK) → Add instance**, then:
 
 | Field | Value |
 | ----- | ----- |

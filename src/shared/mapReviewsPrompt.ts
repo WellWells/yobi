@@ -1,17 +1,7 @@
-const LANGUAGE_NAMES: Record<string, string> = {
-  de: 'German',
-  'en-US': 'English',
-  es: 'Spanish',
-  fr: 'French',
-  ja: 'Japanese',
-  ko: 'Korean',
-  'pt-BR': 'Brazilian Portuguese',
-  'zh-CN': 'Simplified Chinese',
-  'zh-TW': 'Traditional Chinese (Taiwan)',
-};
+import { LOCALE_LANGUAGE_NAMES } from './localeLanguage';
 
 export function localeInstruction(locale: string): string {
-  const name = LANGUAGE_NAMES[locale];
+  const name = LOCALE_LANGUAGE_NAMES[locale];
   return name
     ? `Write the entire response in ${name} [${locale}].`
     : `Write the entire response in the language identified by the IETF tag ${locale}.`;

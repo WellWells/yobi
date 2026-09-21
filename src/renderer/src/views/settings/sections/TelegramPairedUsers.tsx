@@ -1,10 +1,11 @@
 import React from 'react';
 import { ActionIcon, Badge, Group, Stack, Text, Tooltip } from '@mantine/core';
 import { Shield, ShieldCheck, Unlink } from 'lucide-react';
-import type { TelegramPairedUser } from '../../../../../shared/types';
+import type { BotContact, TelegramPairedUser } from '../../../../../shared/types';
 
 interface Props {
   pairedUsers: TelegramPairedUser[];
+  contacts: BotContact[];
   adminUserIds: number[];
   onToggleAdmin: (userId: number) => void;
   onUnpair: (userId: number) => void;
@@ -18,7 +19,7 @@ function displayName(user: TelegramPairedUser): string {
 }
 
 export const TelegramPairedUsers: React.FC<Props> = ({
-  pairedUsers, adminUserIds, onToggleAdmin, onUnpair, t,
+  pairedUsers, contacts, adminUserIds, onToggleAdmin, onUnpair, t,
 }) => {
   if (pairedUsers.length === 0) {
     return (
@@ -32,6 +33,10 @@ export const TelegramPairedUsers: React.FC<Props> = ({
     <Stack gap={6}>
       {pairedUsers.map((user) => {
         const isAdmin = adminUserIds.includes(user.userId);
+        const reachability = contacts
+          .find((entry) => entry.kind === 'user' && entry.id === String(user.userId))
+          ?.reachability;
+        const unreachable = reachability && reachability !== 'ok' ? reachability : null;
         const adminAction = isAdmin
           ? t('settings.telegram.admin.remove')
           : t('settings.telegram.admin.add');
@@ -52,6 +57,11 @@ export const TelegramPairedUsers: React.FC<Props> = ({
               {isAdmin && (
                 <Badge size="xs" variant="light" style={{ flexShrink: 0 }}>
                   {t('settings.telegram.admin.badge')}
+                </Badge>
+              )}
+              {unreachable && (
+                <Badge size="xs" variant="light" color="orange" style={{ flexShrink: 0 }}>
+                  {t(`settings.telegram.reach.${unreachable}`)}
                 </Badge>
               )}
             </Group>

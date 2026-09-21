@@ -1,7 +1,7 @@
-import { app, nativeTheme } from 'electron';
+import { app } from 'electron';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
-import Store from 'electron-store';
+import { openStoreWithRecovery } from './configStore';
 import { PROVIDER_URLS, byokIdFromUrl, byokGroupIdFromUrl } from '../shared/types';
 import type { HiddenSources, SecretFailure, SecretScope } from '../shared/types';
 import { defaultStored } from './configTypes';
@@ -17,6 +17,9 @@ import {
   normalizeHiddenSources,
   normalizeNotifyEvents,
   normalizePromptPreferences,
+  normalizeGeminiModelChoice,
+  normalizeClaudeModelChoice,
+  normalizeChatgptModelChoice,
   normalizeByokInstances,
   normalizeLine,
   normalizeSmtp,
@@ -65,11 +68,7 @@ const configDir = getConfigDir();
 migrateLegacyWindowsConfigIfNeeded(configDir);
 migrateProviderCommandsIfNeeded(configDir);
 
-const store = new Store<StoredConfig>({
-  name: 'config',
-  cwd: configDir,
-  defaults: defaultStored,
-});
+const store = openStoreWithRecovery<StoredConfig>('config', configDir, defaultStored);
 
 function buildConfigFromStore(): Config {
   const stored = store.store as StoredConfig & {
@@ -353,10 +352,12 @@ function wipeSensitiveConfig(): void {
   clearAllSecretFailures();
 }
 
+// `theme` is deliberately left at the shipped default of 'auto'. Resolving it to whatever the
+// OS happened to be showing pinned it, so a factory reset stopped following the system theme
+// while a fresh install still did.
 function getDefaultConfig(): Config {
   const { telegram: { botTokenEncrypted: _enc, ...telegramRest }, ...rest } = defaultStored;
-  const systemTheme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
-  return normalizeConfig({ ...rest, theme: systemTheme, telegram: { ...telegramRest, botToken: '' } });
+  return normalizeConfig({ ...rest, telegram: { ...telegramRest, botToken: '' } });
 }
 
 function importConfigFromJson(raw: unknown): Config | null {
@@ -435,6 +436,11 @@ function importConfigFromJson(raw: unknown): Config | null {
   if (!Array.isArray(rawConfig.byokGroups)) {
     normalized.byokGroups = config.byokGroups;
   }
+  // Absent means the backup predates the feature, not "delete what is connected". An empty
+  // ARRAY is still honoured, so a backup can deliberately clear the list.
+  if (!Array.isArray(rawConfig.mcpServers)) {
+    normalized.mcpServers = config.mcpServers;
+  }
   const importedByokId = byokIdFromUrl(normalized.targetUrl);
   const importedGroupId = byokGroupIdFromUrl(normalized.targetUrl);
   if (importedByokId && !normalized.byokInstances.some((instance) => instance.id === importedByokId)) {
@@ -458,7 +464,6 @@ function importConfigFromJson(raw: unknown): Config | null {
 function getHiddenSources(): HiddenSources {
   return {
     providers: config.hiddenProviders,
-    duckaiModelIds: config.hiddenDuckaiModelIds,
     byokIds: config.hiddenByokIds,
     byokGroupIds: config.hiddenByokGroupIds,
   };
@@ -483,5 +488,8 @@ export {
   normalizeShareSettings,
   normalizeHiddenSources,
   normalizeNotifyEvents,
+  normalizeGeminiModelChoice,
+  normalizeClaudeModelChoice,
+  normalizeChatgptModelChoice,
 };
 export type { Config, TelegramConfig, LineConfig };

@@ -4,6 +4,7 @@ import type {
   TelegramSettingsSnapshot,
 } from '../shared/types';
 import { normalizePairingState } from './telegram';
+import { listBotContacts } from './botDirectory';
 import { config, saveConfig } from './config';
 import { maskToken, sendLog } from './helpers';
 import { getLangCache, localizeUserFacingError, t } from './i18n';
@@ -33,7 +34,7 @@ export function isTelegramAdminUser(userId: number): boolean {
     .includes(userId);
 }
 
-export function buildTelegramSettingsSnapshot(): TelegramSettingsSnapshot {
+export async function buildTelegramSettingsSnapshot(): Promise<TelegramSettingsSnapshot> {
   const normalizedPairing = normalizePairingState(config.telegram.pairing);
   const pairedSet = new Set(normalizedPairing.pairedUsers.map((user) => user.userId));
   const normalizedAdmins = [...new Set(
@@ -61,6 +62,8 @@ export function buildTelegramSettingsSnapshot(): TelegramSettingsSnapshot {
     runtime: _telegramRuntimeSnapshot,
     pairing: normalizedPairing,
     channels: config.telegram.channels,
+    knownUsers: config.telegram.knownUsers,
+    contacts: await listBotContacts({ platform: 'telegram' }),
   };
 }
 

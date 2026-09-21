@@ -32,6 +32,17 @@ export function resolveTimeGroup(timestamp: string, now: Date): TimeGroupKey {
   return 'older';
 }
 
+/**
+ * The group header to draw above each timestamp, or null where the row continues the bucket above
+ * it. A list that falls entirely in one bucket gets no header at all: a lone "today" over
+ * everything labels nothing. Timestamps are expected in the order they will be rendered.
+ */
+export function buildTimeGroupHeads(timestamps: readonly string[], now: Date): (TimeGroupKey | null)[] {
+  const groups = timestamps.map((timestamp) => resolveTimeGroup(timestamp, now));
+  if (new Set(groups).size < 2) return groups.map(() => null);
+  return groups.map((group, index) => (group === groups[index - 1] ? null : group));
+}
+
 export function buildSidebarRows(files: OutputFile[], now: Date): SidebarRowModel {
   const rows: SidebarRow[] = [];
   const rowIndexByFileIndex: number[] = [];

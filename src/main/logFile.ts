@@ -10,6 +10,16 @@ const FLUSH_INTERVAL_MS = 1_000;
 const LOG_FILE_NAME = 'yobi.log';
 const LOG_DIR_NAME = 'logs';
 
+function pad2(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
+/** Local-time stamp used at the head of every line in the log file. */
+export function fileStamp(now: Date): string {
+  const date = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+  return `${date} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
+}
+
 const IS_TEST = Boolean(process.env.VITEST);
 
 export interface LogFileSink {

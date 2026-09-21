@@ -37,11 +37,27 @@ function isPendingAsk(turn: AgentTurnRecord): boolean {
   return turn.tool === AGENT_ASK_TOOL && turn.observation === '';
 }
 
+/**
+ * A bot user answers a numbered question with "2". The model would have to line that up with a list
+ * it may no longer see, so the pick is spelled out next to the number the user sent.
+ */
+function expandChoice(turn: AgentTurnRecord, answer: string): string {
+  const picked = /^\s*(\d{1,2})\s*[.)。]?\s*$/.exec(answer);
+  if (!picked || !turn.config.choices) return answer;
+  try {
+    const choices: unknown = JSON.parse(turn.config.choices);
+    const choice = Array.isArray(choices) ? choices[Number(picked[1]) - 1] : undefined;
+    return typeof choice === 'string' ? `${picked[1]}. ${choice}` : answer;
+  } catch {
+    return answer;
+  }
+}
+
 export function applyAnswer(turns: AgentTurnRecord[], answer: string): AgentTurnRecord[] {
   const index = turns.findIndex(isPendingAsk);
   if (index < 0) return turns.slice();
   const next = turns.slice();
-  next[index] = { ...next[index], observation: answer };
+  next[index] = { ...next[index], observation: expandChoice(next[index], answer) };
   return next;
 }
 
@@ -62,6 +78,27 @@ function isRunState(value: unknown): value is AgentRunState {
   );
 }
 
+/**
+ * The connectors a run disclosed, whichever shape it was written in.
+ *
+ * SECURITY: this migration is not cosmetic. Runs saved by the version that only knew
+ * `mcpServerId` stay on disk for a week, and a resume that read only `mcpServerIds` would find
+ * nothing, disclose nothing, and quietly continue as an unscoped run — the model would be handed
+ * a set of servers the user never named for it.
+ */
+export function readRunConnectors(state: AgentRunState): string[] {
+  const plural = state.mcpServerIds ?? [];
+  const ids = plural.length > 0 ? plural : (state.mcpServerId ? [state.mcpServerId] : []);
+  return [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+}
+
+/** Normalises a loaded run onto the plural shape so nothing downstream reads the legacy field. */
+function migrateRunState(state: AgentRunState): AgentRunState {
+  const ids = readRunConnectors(state);
+  const { mcpServerId: _legacy, ...rest } = state;
+  return { ...rest, ...(ids.length > 0 ? { mcpServerIds: ids } : {}) };
+}
+
 export async function saveRunState(state: AgentRunState): Promise<void> {
   await fs.mkdir(runsDir(), { recursive: true });
   await fs.writeFile(runFile(state.runId), JSON.stringify(state), 'utf-8');
@@ -70,7 +107,7 @@ export async function saveRunState(state: AgentRunState): Promise<void> {
 export async function loadRunState(runId: string): Promise<AgentRunState | null> {
   try {
     const parsed = JSON.parse(await fs.readFile(runFile(runId), 'utf-8'));
-    return isRunState(parsed) ? parsed : null;
+    return isRunState(parsed) ? migrateRunState(parsed) : null;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw err;
@@ -94,7 +131,7 @@ async function readAllStates(): Promise<AgentRunState[]> {
     if (!file.endsWith('.json')) continue;
     try {
       const parsed = JSON.parse(await fs.readFile(path.join(runsDir(), file), 'utf-8'));
-      if (isRunState(parsed)) states.push(parsed);
+      if (isRunState(parsed)) states.push(migrateRunState(parsed));
     } catch {
     }
   }
@@ -109,12 +146,15 @@ export async function listResumableRuns(): Promise<AgentRunSummary[]> {
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
+/**
+ * Age is the only reason to reclaim a run now. Deleting on `status === 'done'` meant the finished
+ * runs — the ones whose answer you go back and check against what actually changed — were the
+ * only ones that left no record at all, while failures were kept for a week.
+ */
 export async function pruneOldRuns(nowMs: number): Promise<void> {
   const states = await readAllStates().catch(() => []);
   for (const state of states) {
-    if (state.status === 'done' || isStale(state, nowMs)) {
-      await deleteRunState(state.runId).catch(() => {});
-    }
+    if (isStale(state, nowMs)) await deleteRunState(state.runId).catch(() => {});
   }
 }
 

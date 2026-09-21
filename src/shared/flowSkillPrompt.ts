@@ -1,6 +1,7 @@
 import type { SkillSpec, SkillType } from './flowSkillSpecs';
 import { SKILL_OUTPUT, SKILL_SPECS, SKILLS_WITHOUT_OUTPUT_KEY } from './flowSkillSpecs';
 import { SKILL_NOTES } from './flowSkillNotes';
+import type { FlowClarification } from './types';
 
 export const ALWAYS_INCLUDED_SKILLS: readonly SkillType[] = [
   'loop', 'end_loop', 'if', 'end_if', 'stop', 'break', 'continue', 'comment',
@@ -71,11 +72,31 @@ const ASSESS_EXAMPLE = JSON.stringify(
       'Send each summary to Telegram',
     ],
     gaps: [],
+    questions: ['Which feed should it read?'],
     verdict: 'full',
   },
   null,
   2,
 );
+
+export const MAX_ASSESS_QUESTIONS = 3;
+
+/**
+ * The request with the answers the user gave folded in, so assessment and generation read the
+ * same text. One helper rather than a parameter on each builder: the "MUST be []" rule in the
+ * assess prompt keys off this exact wording, and a second place to write it is a second place
+ * for it to drift out of step.
+ */
+export function withClarifications(
+  goal: string,
+  answered: readonly FlowClarification[],
+): string {
+  const lines = answered
+    .filter((entry) => entry.question.trim() && entry.answer.trim())
+    .map((entry) => `- ${entry.question.trim()} → ${entry.answer.trim()}`);
+  if (lines.length === 0) return goal.trim();
+  return [goal.trim(), '', 'Answers the user already gave:', ...lines].join('\n');
+}
 
 export function buildFlowAssessPrompt(goal: string): string {
   return [
@@ -92,6 +113,7 @@ export function buildFlowAssessPrompt(goal: string): string {
     '  "trigger": "cron" | "hotkey" | "bot" | "chat" | "manual",',
     '  "outline": [ ...3-8 short steps describing what the flow will do, in order... ],',
     '  "gaps": [ ...parts of the request no trigger or skill can do; [] when there are none... ],',
+    '  "questions": [ ...what you would have to invent a value for; [] when nothing is missing... ],',
     '  "verdict": "full" | "partial" | "none"',
     '}',
     '- "skills": ONLY names from the list below — never invent one. Include every skill the flow',
@@ -102,11 +124,26 @@ export function buildFlowAssessPrompt(goal: string): string {
     '  those itself. Never report scheduling, repetition or background running as a gap.',
     '- "outline" describes the FLOW, not your reasoning: one line per meaningful step. When the',
     '  trigger is "cron", say the schedule in the first line so the user can check it.',
+    `- "questions": ask ONLY for a value a skill above cannot run without and the request does not`,
+    '  give — which feed, which recipient, which folder, which report. At most',
+    `  ${MAX_ASSESS_QUESTIONS}, each one short and answerable in a line. Asking is expensive: it stops the build and`,
+    '  puts the work back on the user, so ask only where inventing a value would send mail to the',
+    '  wrong person or read the wrong source.',
+    '- Anything with a safe default is NOT a question. The schedule, the trigger, the AI provider,',
+    '  the wording of a summary, how many items to process: choose sensibly and say so in "outline".',
+    '- "questions" is [] whenever the request already names what it acts on. That is the common',
+    '  case, and it is the one that must not be slowed down.',
+    '- "gaps" and "questions" are different: a gap is something Yobi CANNOT do, a question is',
+    '  something it can do as soon as the user says which one. Never report the same thing as both.',
     '- "verdict": "full" when Yobi covers the whole request, "partial" when a flow can be built',
     '  but part of the request is left out, "none" when no useful flow can be built at all.',
+    '- A missing value is not a reason for "partial" or "none" — ask for it in "questions" and',
+    '  judge the verdict as though the answer were already given.',
     '- Judge ONLY against the triggers and skills below. Never refuse on a belief about what the',
     '  app cannot do that is not stated here.',
-    '- Write "outline" and "gaps" in the SAME language as the user request.',
+    '- When the request below ends with answers the user has already given, "questions" MUST be []',
+    '  — they have answered once and asking again is the same as not having listened.',
+    '- Write "outline", "gaps" and "questions" in the SAME language as the user request.',
     '',
     'TRIGGERS — how a flow starts:',
     ...TRIGGER_BRIEFS,
@@ -114,15 +151,19 @@ export function buildFlowAssessPrompt(goal: string): string {
     'SKILLS — what a flow does:',
     buildSkillIndex(),
     '',
-    'EXAMPLE (request: "every morning summarize my RSS feed and send it to Telegram"):',
+    'EXAMPLE (request: "every morning summarize my RSS feed and send it to Telegram" — the',
+    'schedule and the AI are decided for the user, but which feed is theirs to say):',
     ASSESS_EXAMPLE,
     '',
     'USER REQUEST:',
+    // Already carries the answers when there are any: they are the user's words too, so they
+    // belong inside this block. Only a RULE after them would be one their text could talk over.
     goal.trim(),
   ].join('\n');
 }
 
-const EXAMPLE_FLOW_JSON = JSON.stringify(
+/** Exported for the test suite: the flow we teach the model must pass our own checks. */
+export const EXAMPLE_FLOW_JSON = JSON.stringify(
   {
     name: 'RSS Digest to Telegram',
     description: 'Summarize each new RSS article and send it to Telegram on weekday mornings.',
@@ -139,7 +180,7 @@ const EXAMPLE_FLOW_JSON = JSON.stringify(
       { type: 'if', label: 'Skip if the LLM failed', config: { left: '{{llm_1.isFailed}}', operator: 'equals', right: '1' }, outputKey: '' },
       { type: 'continue', label: 'Next article', config: {}, outputKey: '' },
       { type: 'end_if', label: 'End If', config: {}, outputKey: '' },
-      { type: 'bot', label: 'Send to Telegram', config: { message: '{{llm_1}}', chatId: '', attachment: '{{browser_1.image}}' }, outputKey: 'bot_1' },
+      { type: 'bot', label: 'Send to Telegram', config: { message: '{{llm_1}}', chatId: '', attachment: '{{browser_1.image}}', emitFailFlag: 'true' }, outputKey: 'bot_1' },
       { type: 'end_loop', label: 'End Loop', config: {}, outputKey: '' },
     ],
   },
@@ -176,7 +217,7 @@ export function buildFlowGenerationPrompt(
     'TRIGGER:',
     '- manual: {"type":"manual"} (default when unsure)',
     '- hotkey: {"type":"hotkey","keys":"CommandOrControl+Shift+Y"}  (a keyboard accelerator: "+"-joined modifiers CommandOrControl/Alt/Shift/Super plus ONE key, or a bare media/volume/function key like "MediaPlayPause"; pick an uncommon combo to avoid collisions)',
-    '- cron:   {"type":"cron","cronExpression":"0 8 * * 1-5"}  (standard 5-field cron: minute hour day-of-month month day-of-week; a 6th LEADING seconds field is allowed for sub-minute schedules; prefer "*" for day-of-month and month — other shapes still run but the visual schedule editor cannot display them)',
+    '- cron:   {"type":"cron","cronExpression":"0 8 * * 1-5"}  (standard 5-field cron: minute hour day-of-month month day-of-week; a 6th LEADING seconds field is allowed for sub-minute schedules; day-of-month accepts "L" for the month end — uneven steps like "*/7" still run but the visual schedule editor cannot display them)',
     '- bot:    {"type":"bot","botCommand":"my_cmd","botCommandDescription":"...","botInputVariable":"input"}  (a Telegram /command)',
     '- chat:   {"type":"chat","chatCommand":"my_cmd","chatCommandDescription":"...","chatInputVariable":"input"}  (a /command run from the in-app chat)',
     'Infer the trigger from the request (e.g. "every morning at 8" -> cron "0 8 * * *").',
@@ -185,7 +226,8 @@ export function buildFlowGenerationPrompt(
       : []),
     '- botCommand/chatCommand grammar: start with a lowercase letter, then only a-z 0-9 _, max 32 chars, no leading "/" (e.g. "daily_digest").',
     '- A bot/chat trigger seeds the user\'s argument text as the variable named by botInputVariable/chatInputVariable (default {{input}}); a bot trigger also exposes {{bot.triggerChatId}} (the sender\'s chat id, e.g. for a bot step\'s chatId) and {{bot.triggerUserId}}.',
-    '- hotkey/cron/manual triggers seed NO input variable — such a flow must start from a data-producing step (rss, browser, clipboard, …), never from {{input}}.',
+    '- A hotkey trigger seeds {{selection}} with the text selected in the foreground app at the moment of the press (empty when nothing was selected) — that is how "select text, press keys, act on it" flows start. It does NOT seed {{input}}.',
+    '- cron/manual triggers seed NO input variable — such a flow must start from a data-producing step (rss, browser, clipboard, …), never from {{input}} or {{selection}}.',
     '- Multiple triggers: keep the primary in "trigger" and put the rest in the OPTIONAL "extraTriggers" array (same shape) — e.g. a cron PLUS a chat command. Omit "extraTriggers" entirely for a single-trigger flow.',
     '',
     'STEPS — these skills were selected for this request; use ONLY these:',
@@ -196,7 +238,7 @@ export function buildFlowGenerationPrompt(
     '- "outputKey" is a unique snake_case id (e.g. "rss_1", "llm_1"); reference a prior step output with {{outputKey}}.',
     '- A {{outputKey}} reference must point to a step that appears EARLIER in the steps array.',
     '- Each step\'s OUTPUT (above) states exactly what {{outputKey}} resolves to — match a downstream reference to that shape (a JSON array → loop it; a plain string → use it directly).',
-    '- Built-in variables: {{clipboard}} (clipboard text snapshotted at flow start), {{timestamp}} (ISO-8601 UTC time at flow start), {{flow.name}}. Loop body: {{item}}, {{item.<field>}} (or the custom loopVar name).',
+    '- Built-in variables: {{clipboard}} (clipboard text snapshotted at flow start), {{timestamp}} (ISO-8601 UTC time at flow start), {{flow.name}}, and — hotkey triggers ONLY — {{selection}}. Loop body: {{item}}, {{item.<field>}} (or the custom loopVar name).',
     '- Sub-variables: some steps also expose {{outputKey.field}} extras (see each skill\'s OUTPUT, e.g. {{yt_1.title}}, {{weather_1.temp}}, {{stock_1.price}}); only reference the sub-variables named in that skill\'s OUTPUT. Exception: every field of an object LOOP item is available as {{<loopVar>.<field>}}.',
     '- Any other {{variable}} is INVALID: an unknown or misspelled reference silently resolves to "" at runtime, and the app rejects flows that contain one — use only variables defined above or produced by an EARLIER step.',
     '- Magic {{file}}: capture, file_write, file_download, and an llm step with exportFormat set the most-recently produced file path as {{file}}; to send or delete that file, reference {{file}} (NOT the step\'s outputKey).',
@@ -213,6 +255,31 @@ export function buildFlowGenerationPrompt(
     '',
     'USER REQUEST:',
     description.trim(),
+  ].join('\n');
+}
+
+/**
+ * Ask again after a rejected assessment. Same shape as `buildFlowRepairPrompt`: what was wrong,
+ * what was said, then the whole original prompt — so the retry still ends with the user request
+ * and still carries every rule, rather than being a bare "that was not JSON, try again" that has
+ * lost the skill list it was supposed to choose from.
+ */
+export function buildFlowAssessRepairPrompt(
+  goal: string,
+  previousResponse: string,
+  error: string,
+): string {
+  return [
+    'Your previous attempt at this assessment was REJECTED.',
+    `Validation error: ${error}`,
+    '',
+    'Your previous output (for reference — do not repeat its mistake):',
+    previousResponse.trim().slice(0, 1_000),
+    '',
+    'Answer again, obeying ALL of these rules. Output the JSON object and nothing else — no',
+    'greeting, no explanation, no markdown code fence:',
+    '',
+    buildFlowAssessPrompt(goal),
   ].join('\n');
 }
 

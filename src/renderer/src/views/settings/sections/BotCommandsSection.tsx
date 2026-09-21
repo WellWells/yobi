@@ -34,7 +34,6 @@ export const BotCommandsSection: React.FC<Props> = ({
         <BotProviderCommands
           providerCommands={botCommands.providerCommands}
           byokCommands={botCommands.byokCommands}
-          duckaiModels={botCommands.duckaiModels}
           busy={botCommands.botCommandsBusy}
           onUpdate={(provider, patch) => { void botCommands.handleUpdateProviderCommand(provider, patch); }}
           onToggleByok={(id, enabled) => { void botCommands.handleToggleByokCommand(id, enabled); }}

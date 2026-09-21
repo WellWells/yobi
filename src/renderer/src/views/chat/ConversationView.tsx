@@ -5,6 +5,7 @@ import type { ConversationDoc } from '../../../../shared/conversationDoc';
 import type { CaptureFormat, CaptureTurn } from '../../../../shared/types';
 import { sumTurnUsage } from '../../../../shared/tokenEstimate';
 import { useAppStore, type PendingTurn } from '../../store/appStore';
+import type { AgentChoicePick } from '../../store/useAgentRunStore';
 import { useI18nStore } from '../../store/i18nStore';
 import { useFormatTime } from '../../hooks/useFormatTime';
 import { useStickToBottom } from '../../hooks/useStickToBottom';
@@ -23,9 +24,11 @@ interface ConversationViewProps {
   conversation: ConversationDoc;
   conversationPath: string;
   onCaptureTurnAs?: (format: CaptureFormat, turn: CaptureTurn) => Promise<boolean>;
+  /** Answers the agent's waiting question with a choice it offered. */
+  onChooseAnswer?: (pick: AgentChoicePick) => void;
 }
 
-function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs }: ConversationViewProps) {
+function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs, onChooseAnswer }: ConversationViewProps) {
   const { t } = useI18nStore();
   const formatTime = useFormatTime();
   const markdownZoom = useAppStore((state) => state.markdownZoom);
@@ -125,6 +128,7 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
                     t={t}
                     turnIndex={index}
                     onCaptureAs={onCaptureTurnAs}
+                    onChoose={onChooseAnswer}
                   />
                 ) : null}
               </Box>
@@ -154,6 +158,7 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
                     t={t}
                     turnIndex={index}
                     onCaptureAs={onCaptureTurnAs}
+                    onChoose={onChooseAnswer}
                   />
                 )
                 : null}

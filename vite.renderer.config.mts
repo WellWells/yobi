@@ -18,10 +18,29 @@ function hotReloadLanguageFiles(): Plugin {
   };
 }
 
+const KATEX_STYLESHEET = /\/node_modules\/katex\/dist\/katex(?:\.min)?\.css$/;
+const NON_WOFF2_FONT_SOURCE = /,\s*url\([^)]*\.(?:woff|ttf)\)\s*format\(["'](?:woff|truetype)["']\)/g;
+
+/**
+ * KaTeX's stylesheet lists every font as woff2, woff and ttf, and Vite emits whatever it lists.
+ * Chromium always takes the woff2, so the other two only add ~0.8 MB to the bundle.
+ * Exported for the test suite.
+ */
+export function katexWoff2Only(): Plugin {
+  return {
+    name: 'katex-woff2-only',
+    enforce: 'pre',
+    transform(code, id) {
+      if (!KATEX_STYLESHEET.test(id.split('?')[0].replace(/\\/g, '/'))) return null;
+      return code.replace(NON_WOFF2_FONT_SOURCE, '');
+    },
+  };
+}
+
 export default defineConfig({
   root: resolve(import.meta.dirname, 'src/renderer'),
   base: './',
-  plugins: [react(), hotReloadLanguageFiles()],
+  plugins: [react(), hotReloadLanguageFiles(), katexWoff2Only()],
   resolve: {
     alias: {
       '@renderer': resolve(import.meta.dirname, 'src/renderer/src'),

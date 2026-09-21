@@ -3,6 +3,7 @@ import type { ChatTurnEvent } from '../../../shared/types';
 import { attachmentMetaNames } from '../../../shared/conversationDoc';
 import { fileApi, promptApi, ipcEvents } from '../api/electronApi';
 import { NEW_CONVERSATION_KEY, useAppStore } from '../store/appStore';
+import { resolveSendTarget } from './sendTarget';
 
 export interface SendTurnRequest {
   prompt: string;
@@ -22,7 +23,12 @@ export function useConversationTurns(onError: (message: string) => void) {
   const sendTurn = useCallback(({ prompt, targetUrl, attachments }: SendTurnRequest): void => {
     void (async () => {
       const state = useAppStore.getState();
-      let conversationPath = state.selectedFile?.path ?? '';
+      const target = resolveSendTarget({
+        selectedFilePath: state.selectedFile?.path ?? '',
+        tempChatMode: state.tempChatMode,
+      });
+      let conversationPath = target.conversationPath;
+      if (target.releaseSelectedFile) state.selectFile(null);
 
       if (!conversationPath && !state.tempChatMode) {
         const started = await fileApi.startConversation(prompt);
@@ -85,9 +91,11 @@ async function handleChatTurn(
   }
 
   const latest = await fileApi.getList();
+  // Read BEFORE the list is applied: setFiles releases a selection that is no longer listed,
+  // and this question is about whether the user has navigated away, not about that.
+  const stillHere = (useAppStore.getState().selectedFile?.path ?? '') === (origin ?? '');
   store.setFiles(latest);
 
-  const stillHere = (useAppStore.getState().selectedFile?.path ?? '') === (origin ?? '');
   const file = latest.find((candidate) => candidate.path === event.conversationPath);
   if (!stillHere || !file) {
     store.clearPendingTurn(event.sendId);

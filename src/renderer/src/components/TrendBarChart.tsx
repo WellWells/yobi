@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Box, Group, Stack, Text } from '@mantine/core';
 
 export interface TrendBarSeries {
@@ -12,52 +12,69 @@ interface Props {
   labels: string[];
   series: TrendBarSeries[];
   height?: number;
-  viewWidth?: number;
-  axisMax?: number;
+  totalLabel?: string;
   formatValue?: (value: number) => string;
 }
 
-const PAD_LEFT = 24;
+const PAD_LEFT = 30;
 const PAD_RIGHT = 10;
 const PAD_TOP = 12;
 const PAD_BOTTOM = 22;
+const VIEW_W = 520;
+
+/** A rare failure is 0.02% of a busy day. Without a floor its segment never draws at all. */
+const MIN_SEGMENT_H = 2.5;
+const SEGMENT_GAP = 1;
 
 function formatTick(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
+function niceAxisMax(value: number): number {
+  if (value <= 0) return 1;
+  const pow = 10 ** Math.floor(Math.log10(value));
+  const norm = value / pow;
+  const nice = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
+  return nice * pow;
+}
+
+/**
+ * Stacked day columns. Stacked rather than grouped on purpose: these series are parts of one
+ * day's total, and side-by-side bars make the smaller series unreadable whenever one dominates
+ * — which is the normal case for both outcomes (successes swamp failures) and tokens (input
+ * swamps output).
+ */
 export const TrendBarChart: React.FC<Props> = ({
   labels,
   series,
   height = 150,
-  viewWidth = 520,
-  axisMax,
+  totalLabel,
   formatValue = formatTick,
 }) => {
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const count = labels.length;
 
-  const VIEW_W = viewWidth;
   const innerW = VIEW_W - PAD_LEFT - PAD_RIGHT;
   const innerH = height - PAD_TOP - PAD_BOTTOM;
-  const maxValue = Math.max(1, axisMax ?? Math.max(1, ...series.flatMap((s) => s.values)));
+
+  const totals = useMemo(
+    () => labels.map((_, index) => series.reduce((sum, s) => sum + (s.values[index] ?? 0), 0)),
+    [labels, series],
+  );
+  const maxValue = niceAxisMax(Math.max(0, ...totals));
 
   const slotW = count > 0 ? innerW / count : innerW;
   const baseY = PAD_TOP + innerH;
   const slotCenter = (index: number): number => PAD_LEFT + slotW * (index + 0.5);
   const y = (value: number): number => baseY - (innerH * value) / maxValue;
-
-  const seriesCount = Math.max(1, series.length);
-  const groupW = slotW * 0.62;
-  const barW = groupW / seriesCount;
+  const barW = Math.min(slotW * 0.62, 34);
 
   const handleMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     if (rect.width === 0 || count === 0) return;
     const viewX = ((event.clientX - rect.left) / rect.width) * VIEW_W;
-    const index = Math.floor((viewX - PAD_LEFT) / slotW);
-    setHoverIndex(Math.max(0, Math.min(count - 1, index)));
-  }, [count, slotW, VIEW_W]);
+    setHoverIndex(Math.max(0, Math.min(count - 1, Math.floor((viewX - PAD_LEFT) / slotW))));
+  }, [count, slotW]);
 
   if (count === 0) return null;
 
@@ -65,12 +82,7 @@ export const TrendBarChart: React.FC<Props> = ({
   const tooltipOnLeft = hoverIndex !== null && hoverIndex > (count - 1) / 2;
 
   return (
-    <Box
-      w="100%"
-      pos="relative"
-      onMouseMove={handleMouseMove}
-      onMouseLeave={() => setHoverIndex(null)}
-    >
+    <Box w="100%" pos="relative" onMouseMove={handleMouseMove} onMouseLeave={() => setHoverIndex(null)}>
       <svg viewBox={`0 0 ${VIEW_W} ${height}`} width="100%" role="img" style={{ display: 'block' }}>
         {[1, 0.5, 0].map((fraction) => (
           <line
@@ -94,30 +106,35 @@ export const TrendBarChart: React.FC<Props> = ({
             opacity={0.25}
           />
         )}
-        {series.map((s, si) => (
-          <g key={s.id}>
-            {s.values.map((value, index) => {
-              if (value <= 0) return null;
-              const bx = PAD_LEFT + slotW * index + (slotW - groupW) / 2 + barW * si;
-              const barH = Math.max(baseY - y(value), 1.5);
-              return (
-                <rect
-                  key={index}
-                  x={bx}
-                  y={baseY - barH}
-                  width={Math.max(1, barW - 1.5)}
-                  height={barH}
-                  rx={1.5}
-                  fill={s.color}
-                />
-              );
-            })}
-          </g>
-        ))}
+        {labels.map((label, index) => {
+          let top = baseY;
+          return (
+            <g key={label}>
+              {series.map((s) => {
+                const value = s.values[index] ?? 0;
+                if (value <= 0) return null;
+                const segH = Math.max(innerH * (value / maxValue), MIN_SEGMENT_H);
+                const bottom = top;
+                top -= segH + SEGMENT_GAP;
+                return (
+                  <rect
+                    key={s.id}
+                    x={PAD_LEFT + slotW * index + (slotW - barW) / 2}
+                    y={bottom - segH}
+                    width={barW}
+                    height={segH}
+                    rx={1.5}
+                    fill={s.color}
+                  />
+                );
+              })}
+            </g>
+          );
+        })}
         {[maxValue, maxValue / 2, 0].map((tickValue, tickIndex) => (
           <text
             key={tickIndex}
-            x={PAD_LEFT - 4}
+            x={PAD_LEFT - 5}
             y={y(tickValue) + 3}
             fontSize={9}
             fill="var(--mantine-color-dimmed)"
@@ -144,7 +161,7 @@ export const TrendBarChart: React.FC<Props> = ({
           pos="absolute"
           top={2}
           left={`${(slotCenter(hoverIndex) / VIEW_W) * 100}%`}
-          miw={120}
+          miw={128}
           p="8px 10px"
           style={{
             transform: tooltipOnLeft ? 'translateX(calc(-100% - 12px))' : 'translateX(12px)',
@@ -156,9 +173,16 @@ export const TrendBarChart: React.FC<Props> = ({
             boxShadow: 'var(--shadow-md)',
           }}
         >
-          <Text fz="var(--font-size-sm)" fw={700} mb={5} c="var(--mantine-color-text)">
-            {labels[hoverIndex]}
-          </Text>
+          <Group justify="space-between" gap={16} wrap="nowrap" mb={5}>
+            <Text fz="var(--font-size-sm)" fw={700} c="var(--mantine-color-text)">
+              {labels[hoverIndex]}
+            </Text>
+            {totalLabel !== undefined && (
+              <Text fz="var(--font-size-sm)" fw={700} style={{ fontVariantNumeric: 'tabular-nums' }}>
+                {formatValue(totals[hoverIndex] ?? 0)}
+              </Text>
+            )}
+          </Group>
           <Stack gap={3}>
             {series.map((s) => (
               <Group key={s.id} justify="space-between" gap={16} wrap="nowrap">

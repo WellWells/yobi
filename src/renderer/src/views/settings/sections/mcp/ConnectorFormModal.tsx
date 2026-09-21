@@ -7,6 +7,7 @@ import { AppModal } from '../../../../components/AppModal';
 import { AppTextInput } from '../../../../components/AppTextInput';
 import { AppPasswordInput } from '../../../../components/AppPasswordInput';
 import type { useMcpServers } from '../../hooks/useMcpServers';
+import { defaultMcpCommandName, slugifyCommandName } from '../../../../../../shared/mcpCommand';
 
 type McpServers = ReturnType<typeof useMcpServers>;
 
@@ -19,6 +20,15 @@ export const ConnectorFormModal: React.FC<Props> = ({ mcp, t }) => {
   const { form, servers } = mcp;
   const editing = form?.id ? servers.find((s) => s.id === form.id) : undefined;
   const title = form?.id ? t('settings.mcp.edit') : t('settings.mcp.addCustom');
+
+  // Slugified on save, never on keystroke. Rewriting the field on every change stripped the
+  // separator the user had just typed — it is always trailing at that moment — so `my_server`
+  // was literally untypeable. Showing the resolved name is honest without fighting the caret.
+  const typed = form?.commandName.trim() ?? '';
+  const resolved = typed ? slugifyCommandName(typed) : '';
+  const commandHint = resolved && resolved !== typed
+    ? `${t('settings.mcp.command.hint')} → /${resolved}`
+    : t('settings.mcp.command.hint');
 
   return (
     <AppModal
@@ -58,6 +68,15 @@ export const ConnectorFormModal: React.FC<Props> = ({ mcp, t }) => {
             placeholder={t('settings.mcp.header.placeholder')}
             value={form.headerName}
             onChange={(e) => mcp.updateForm({ headerName: e.target.value })}
+            mono
+            size="sm"
+          />
+          <AppTextInput
+            label={t('settings.mcp.command')}
+            placeholder={`/${defaultMcpCommandName({ name: form.name, url: form.url })}`}
+            description={commandHint}
+            value={form.commandName}
+            onChange={(e) => mcp.updateForm({ commandName: e.target.value })}
             mono
             size="sm"
           />

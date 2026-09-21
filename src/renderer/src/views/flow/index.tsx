@@ -38,7 +38,7 @@ export const FlowView: React.FC = () => {
   const {
     flows, selectedFlowId, runningFlowIds,
     selectFlow, createFlow, deleteFlow, deleteFlows, setFlowsEnabled, duplicateFlow,
-    saveFlow, updateFlow, moveFlow, reorderFlows, executeFlow, importFlows, generateFlow,
+    saveFlow, updateFlow, moveFlow, reorderFlows, executeFlow, importFlows, buildFlow,
     adoptFlow, appendExecutionLog, markFlowRunning, markFlowDone,
   } = useFlowStore(
     useShallow((s) => ({
@@ -57,7 +57,7 @@ export const FlowView: React.FC = () => {
       reorderFlows: s.reorderFlows,
       executeFlow: s.executeFlow,
       importFlows: s.importFlows,
-      generateFlow: s.generateFlow,
+      buildFlow: s.buildFlow,
       adoptFlow: s.adoptFlow,
       appendExecutionLog: s.appendExecutionLog,
       markFlowRunning: s.markFlowRunning,
@@ -382,18 +382,27 @@ export const FlowView: React.FC = () => {
           onCancel={() => setBulkDeleteOpen(false)}
         />
 
+        {/* The gallery stays mounted underneath the wizard (Z_MODAL_NESTED), so backing out of
+            setup lands back on it with the search and scroll position intact rather than on the
+            flow list. It only closes once a flow has actually been created. */}
         <FlowTemplatesModal
           open={templatesOpen}
           t={t}
           onClose={() => setTemplatesOpen(false)}
-          onPick={(tpl) => { setWizardTemplate(tpl); setTemplatesOpen(false); }}
+          onPick={(tpl) => setWizardTemplate(tpl)}
+          escapeDisabled={wizardTemplate !== null}
         />
 
         <FlowSetupWizard
           template={wizardTemplate}
           t={t}
           onClose={() => setWizardTemplate(null)}
-          onCreate={(flow) => { void importFlows([{ ...flow, enabled: true }]); setWizardTemplate(null); }}
+          onNavigateAway={() => { setWizardTemplate(null); setTemplatesOpen(false); }}
+          onCreate={(flow) => {
+            void importFlows([{ ...flow, enabled: true }]);
+            setWizardTemplate(null);
+            setTemplatesOpen(false);
+          }}
         />
 
         <FlowImportModal
@@ -414,7 +423,7 @@ export const FlowView: React.FC = () => {
           open={generateOpen}
           t={t}
           onClose={() => setGenerateOpen(false)}
-          onGenerate={generateFlow}
+          onBuild={buildFlow}
         />
 
         <FlowRenameModal

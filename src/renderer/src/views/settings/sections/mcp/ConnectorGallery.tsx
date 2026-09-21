@@ -1,15 +1,19 @@
 import React, { useMemo, useState } from 'react';
-import { Box, Chip, Group, SimpleGrid, Text } from '@mantine/core';
-import { Plug, Plus, Search } from 'lucide-react';
+import { Box, Chip, Group, SimpleGrid, Stack, Text } from '@mantine/core';
+import { Mail, MessageSquare, Plug, Plus, Search } from 'lucide-react';
 import { SectionCard, SectionTitle } from '../../components';
 import { AppButton } from '../../../../components/AppButton';
 import { AppTextInput } from '../../../../components/AppTextInput';
 import { WebDialog } from '../../../../components/WebDialog';
+import { BuiltinConnectorCard } from './BuiltinConnectorCard';
 import { ConnectorCard } from './ConnectorCard';
 import { ConnectorFormModal } from './ConnectorFormModal';
 import { ConnectorToolsModal } from './ConnectorToolsModal';
+import { ThunderbirdSetup } from './ThunderbirdSetup';
 import { buildTiles, matchesFilter, matchesQuery } from './connectorTiles';
 import { MCP_CATEGORIES } from '../../../../../../shared/mcpCatalog';
+import { BUILTIN_THUNDERBIRD_SERVER_ID, THUNDERBIRD_UNAVAILABLE_ERROR } from '../../../../../../shared/builtinConnectors';
+import { BUILTIN_LINE_SERVER_ID } from '../../../../../../shared/types';
 import type { useMcpServers } from '../../hooks/useMcpServers';
 import type { McpServerView } from '../../../../../../shared/types';
 
@@ -64,8 +68,6 @@ export const ConnectorGallery: React.FC<Props> = ({ mcp, t, sectionGap }) => {
             <Chip value="connected" size="xs" variant="light">
               {`${t('settings.mcp.filter.connected')}${connectedCount > 0 ? ` (${connectedCount})` : ''}`}
             </Chip>
-            {
-}
             <Chip value="open" size="xs" variant="light">{t('settings.mcp.filter.open')}</Chip>
             {MCP_CATEGORIES.map((category) => (
               <Chip key={category} value={category} size="xs" variant="light">
@@ -79,8 +81,33 @@ export const ConnectorGallery: React.FC<Props> = ({ mcp, t, sectionGap }) => {
           <Text fz="var(--font-size-sm)" c="red" mb={10}>{mcp.error}</Text>
         )}
 
-        {
-}
+        <Stack gap={10} mb={10}>
+          <BuiltinConnectorCard
+            mcp={mcp}
+            t={t}
+            id={BUILTIN_LINE_SERVER_ID}
+            icon={<MessageSquare size={16} />}
+            iconColor="#06C755"
+            title={t('settings.mcp.line.title')}
+            description={t('settings.mcp.line.desc')}
+            toggleLabel={t('settings.mcp.line.toggle')}
+            onOpenTools={setToolsFor}
+          />
+          <BuiltinConnectorCard
+            mcp={mcp}
+            t={t}
+            id={BUILTIN_THUNDERBIRD_SERVER_ID}
+            icon={<Mail size={16} />}
+            iconColor="#0A84FF"
+            title={t('settings.mcp.thunderbird.title')}
+            description={t('settings.mcp.thunderbird.desc')}
+            toggleLabel={t('settings.mcp.thunderbird.toggle')}
+            onOpenTools={setToolsFor}
+            waitingError={THUNDERBIRD_UNAVAILABLE_ERROR}
+            setup={<ThunderbirdSetup t={t} />}
+          />
+        </Stack>
+
         {visible.length === 0 ? (
           <Text fz="var(--font-size-sm)" c="dimmed">{t('settings.mcp.empty')}</Text>
         ) : (

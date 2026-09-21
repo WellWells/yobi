@@ -11,7 +11,9 @@ const DROPZONE_SELECTORS = [
   'chat-window-content',
 ];
 const LOGIN_SELECTOR = 'a[gem-open-account-menu], sidenav-mavatar-footer .mavatar-image';
-const CHIP_SELECTOR = 'uploader-file-preview-container uploader-file-preview';
+/** Attachment chips pinned to the composer. Exported so the page-reuse gate can refuse a
+ *  composer that is still holding the previous run's files. */
+export const GEMINI_CHIP_SELECTOR = 'uploader-file-preview-container uploader-file-preview';
 
 const CONSENT_DISMISS_SCRIPT = `(function () {
   var sels = [
@@ -73,7 +75,7 @@ export async function uploadFilesToGemini(
         consentAccepted = true;
         add('accepted first-upload consent dialog');
       }
-      count = (await wc.executeJavaScript(`document.querySelectorAll(${JSON.stringify(CHIP_SELECTOR)}).length`)) as number;
+      count = (await wc.executeJavaScript(`document.querySelectorAll(${JSON.stringify(GEMINI_CHIP_SELECTOR)}).length`)) as number;
       if (count >= paths.length) break;
       await sleep(300);
     }

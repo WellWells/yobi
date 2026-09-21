@@ -7,6 +7,7 @@ import {
   contextBudgetFor,
   packReplayPrompt,
   resolveContextMode,
+  turnsConsumedBySummary,
   type ContextMode,
 } from './conversationContext';
 import { commitConversationTurn, loadConversation } from './conversationStore';
@@ -64,8 +65,9 @@ export async function planTurn(args: {
   let summary = doc.thread.summary ?? '';
   let summarizedTurns = doc.thread.summarizedTurns ?? 0;
 
+  const pending = doc.turns.slice(summarizedTurns);
   let packed = packReplayPrompt({
-    turns: doc.turns.slice(summarizedTurns),
+    turns: pending,
     summary,
     newPrompt: userPrompt,
     budget,
@@ -73,15 +75,18 @@ export async function planTurn(args: {
   });
 
   if (packed.overflow.length > 0) {
-    const nextSummary = await summarizeTurns({
+    const result = await summarizeTurns({
       turns: packed.overflow,
       previousSummary: summary,
       targetUrl,
       timeoutMs,
     });
-    if (nextSummary) {
-      summarizedTurns += packed.overflow.length;
-      summary = nextSummary;
+    if (result) {
+      // Advance by what the summary actually covered, measured against the DOCUMENT: the
+      // overflow leaves out turns with no answer, and the summariser may have covered fewer
+      // turns than it was offered to stay inside the provider's prompt limit.
+      summarizedTurns += turnsConsumedBySummary(pending, packed.overflow, result.covered);
+      summary = result.summary;
       packed = packReplayPrompt({
         turns: doc.turns.slice(summarizedTurns),
         summary,
@@ -124,6 +129,11 @@ export async function executeConversationalSend(args: {
   userPrompt: string;
   replanAsReplay: () => Promise<ConversationSendPlan | null>;
   withInstruction: (prompt: string) => string;
+  /**
+   * What a native follow-up carries instead of the full instruction, which the thread already
+   * received in its first message. Absent = the prompt goes out exactly as typed.
+   */
+  withNativeReminder?: (prompt: string) => string;
   runBrowser: (prompt: string, expectThreadUrl?: string) => Promise<{
     response: string; title: string; threadUrl: string | null; threadLost?: true;
     sentPrompt?: string;
@@ -136,7 +146,8 @@ export async function executeConversationalSend(args: {
 
   const promptFor = (current: ConversationSendPlan | null): string => {
     const base = current ? current.promptToSend : userPrompt;
-    return current?.mode === 'native' ? base : withInstruction(base);
+    if (current?.mode !== 'native') return withInstruction(base);
+    return args.withNativeReminder ? args.withNativeReminder(base) : base;
   };
 
   if (isByokTargetUrl(targetUrl)) {
@@ -172,6 +183,8 @@ export async function recordConversationTurn(args: {
   threadUrl: string | null;
   targetUrl: string;
   previousTurnCount: number;
+  /** Set when this send started a new provider thread; a native follow-up keeps the old value. */
+  threadAt?: string;
 }): Promise<void> {
   const { threadUrl, targetUrl, previousTurnCount } = args;
   const thread: ThreadMeta = threadUrl
@@ -181,6 +194,7 @@ export async function recordConversationTurn(args: {
       provider: providerKeyFor(targetUrl),
       threadUrl,
       threadTurns: previousTurnCount + 1,
+      ...(args.threadAt ? { threadAt: args.threadAt } : {}),
     }
     : { ...args.thread, v: 1 };
 

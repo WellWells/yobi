@@ -4,12 +4,14 @@ import type {
   FlowDefinition,
   FlowExecutionLog,
   FlowExecutionResult,
-  FlowGenerationResult,
+  FlowBuildOutcome,
+  FlowClarification,
   SkillInstance,
   SkillType,
   TriggerConfig,
 } from '../../../shared/types';
 import { flowApi } from '../api/electronApi';
+import { useFlowBuildStore } from './useFlowBuildStore';
 import { cloneFlow, createDefaultFlow, createDefaultStep, createId, findMatchingMarker, DEFAULT_OUTPUT_BASE } from './flowHelpers';
 import { SKILLS_WITHOUT_OUTPUT_KEY } from '../../../shared/flowSkillSchema';
 
@@ -35,7 +37,12 @@ interface ActionState {
   reorderFlows: (orderedIds: string[]) => Promise<void>;
   executeFlow: (flowId: string) => Promise<FlowExecutionResult | null>;
   abortFlow: (flowId: string) => Promise<void>;
-  generateFlow: (description: string) => Promise<FlowGenerationResult>;
+  buildFlow: (
+    description: string,
+    buildId: string,
+    answers?: FlowClarification[],
+    providerUrl?: string,
+  ) => Promise<FlowBuildOutcome>;
   adoptFlow: (flow: FlowDefinition) => void;
   restoreFlow: (flowId: string) => void;
   addStep: (flowId: string, type?: SkillType) => void;
@@ -224,9 +231,15 @@ export const useFlowStore = create<ActionState>((set, get) => ({
     await flowApi.abort(flowId);
   },
 
-  generateFlow: async (description) => {
-    const result = await flowApi.generate(description);
-    if (result.ok) {
+  buildFlow: async (description, buildId, answers, providerUrl) => {
+    useFlowBuildStore.getState().startBuild(buildId);
+    const result = await flowApi.build({
+      description,
+      buildId,
+      ...(answers?.length ? { answers: [...answers] } : {}),
+      ...(providerUrl ? { providerUrl } : {}),
+    });
+    if (result.status === 'created') {
       const { flow } = result;
       set((state) => ({
         flows: [...state.flows.filter((existing) => existing.id !== flow.id), flow],

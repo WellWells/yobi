@@ -5,34 +5,29 @@ import type { TurnMeta } from './conversationDoc';
 import type { TokenUsage } from './tokenEstimate';
 import type { Theme } from './themes';
 
-export interface DuckaiModelInfo {
-  id: string;
-  label: string;
-  isActive: boolean;
-}
-
 export const PROVIDER_URLS = {
   gemini: 'https://gemini.google.com/',
-  perplexity: 'https://www.perplexity.ai/',
+  claude: 'https://claude.ai/new',
   chatgpt: 'https://chatgpt.com/',
-  duckai: 'https://duck.ai/',
+  perplexity: 'https://www.perplexity.ai/',
 } as const;
 
 export type Provider = keyof typeof PROVIDER_URLS;
 
 export const PROVIDER_LABELS: Record<Provider, string> = {
   gemini: 'Gemini',
-  perplexity: 'Perplexity',
+  claude: 'Claude',
   chatgpt: 'ChatGPT',
-  duckai: 'Duck AI',
+  perplexity: 'Perplexity',
 } as const;
 
-export const PROVIDERS = ['chatgpt', 'gemini', 'perplexity', 'duckai'] as const;
+/** Display order everywhere providers are listed: the model menu, Settings, bot commands. */
+export const PROVIDERS = ['gemini', 'claude', 'chatgpt', 'perplexity'] as const;
 
-export const AUTH_PROVIDERS = ['chatgpt', 'gemini', 'perplexity'] as const;
+export const AUTH_PROVIDERS = ['gemini', 'claude', 'chatgpt', 'perplexity'] as const;
 export type AuthProvider = (typeof AUTH_PROVIDERS)[number];
 
-export const LOGIN_REQUIRED_PROVIDERS = ['chatgpt', 'perplexity'] as const;
+export const LOGIN_REQUIRED_PROVIDERS = ['claude', 'chatgpt', 'perplexity'] as const;
 export type LoginRequiredProvider = (typeof LOGIN_REQUIRED_PROVIDERS)[number];
 
 export function loginRequiredProviderForUrl(url: string): LoginRequiredProvider | null {
@@ -41,9 +36,9 @@ export function loginRequiredProviderForUrl(url: string): LoginRequiredProvider 
 
 export const DEFAULT_PROVIDER_COMMANDS: Record<Provider, string> = {
   chatgpt: 'gpt',
+  claude: 'claude',
   gemini: 'gemini',
   perplexity: 'pplx',
-  duckai: 'duck',
 } as const;
 
 export const BOT_COMMAND_RE = /^[a-z][a-z0-9_]{0,31}$/;
@@ -60,31 +55,29 @@ export const DEFAULT_AGENT_ASK_TTL_MINUTES = 5;
 export const AGENT_ASK_TTL_MIN_MINUTES = 1;
 export const AGENT_ASK_TTL_MAX_MINUTES = 5;
 
-export function buildDuckaiModelUrl(modelId: string): string {
-  const url = new URL(PROVIDER_URLS.duckai);
-  url.searchParams.set('model', modelId);
-  return url.toString();
-}
-
-export function duckaiModelIdFromUrl(url: string): string | null {
-  try {
-    const parsed = new URL(url);
-    if (!parsed.hostname.toLowerCase().includes('duck.ai')) return null;
-    return parsed.searchParams.get('model');
-  } catch {
-    return null;
-  }
-}
-
 export function providerFromUrl(url: string): Provider {
   try {
     const host = new URL(url).hostname.toLowerCase();
     if (host.includes('perplexity.ai')) return 'perplexity';
     if (host.includes('chatgpt.com') || host.includes('chat.openai.com')) return 'chatgpt';
-    if (host.includes('duck.ai')) return 'duckai';
+    if (host === 'claude.ai' || host.endsWith('.claude.ai')) return 'claude';
   } catch {
   }
   return 'gemini';
+}
+
+/**
+ * Duck.ai was removed in 2026-09. A target saved before then (chat model, bot command, flow step)
+ * still names it, and `providerFromUrl` would call it Gemini while the runner navigated to duck.ai.
+ * Every stored target passes through here so it lands on Gemini instead.
+ */
+export function migrateRemovedTargetUrl(url: string): string {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (host === 'duck.ai' || host.endsWith('.duck.ai')) return PROVIDER_URLS.gemini;
+  } catch {
+  }
+  return url;
 }
 
 export const BYOK_PROVIDER_TYPES = [
@@ -100,6 +93,8 @@ export const BYOK_PROVIDER_TYPES = [
   'qwen',
   'moonshot',
   'cerebras',
+  'minimax',
+  'zai',
   'custom',
 ] as const;
 export type ByokProviderType = (typeof BYOK_PROVIDER_TYPES)[number];
@@ -117,6 +112,8 @@ export const BYOK_PROVIDER_TYPE_LABELS: Record<ByokProviderType, string> = {
   qwen: 'Qwen (DashScope)',
   moonshot: 'Kimi (Moonshot)',
   cerebras: 'Cerebras',
+  minimax: 'MiniMax',
+  zai: 'GLM (Z.ai)',
   custom: 'OpenAI-compatible',
 } as const;
 
@@ -133,6 +130,8 @@ export const BYOK_DEFAULT_BASE_URLS: Record<ByokProviderType, string> = {
   qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
   moonshot: 'https://api.moonshot.ai/v1',
   cerebras: 'https://api.cerebras.ai/v1',
+  minimax: 'https://api.minimax.io/v1',
+  zai: 'https://api.z.ai/api/paas/v4',
   custom: '',
 } as const;
 
@@ -149,6 +148,8 @@ export const BYOK_MODEL_EXAMPLES: Record<ByokProviderType, string> = {
   qwen: 'qwen-plus',
   moonshot: 'kimi-k2-0905-preview',
   cerebras: 'llama-3.3-70b',
+  minimax: 'MiniMax-M3',
+  zai: 'glm-5.3',
   custom: '',
 } as const;
 
@@ -160,6 +161,15 @@ export function detectByokProviderType(baseUrl: string): ByokProviderType {
     if (known && trimmed === known.toLowerCase()) return type;
   }
   return 'custom';
+}
+
+/** Google's own Gemini API host, the only BYOK endpoint that accepts a YouTube URL as video input. */
+export function isGeminiApiBaseUrl(baseUrl: string): boolean {
+  try {
+    return new URL(baseUrl.trim()).hostname.toLowerCase() === new URL(BYOK_DEFAULT_BASE_URLS.gemini).hostname;
+  } catch {
+    return false;
+  }
 }
 
 const BYOK_URL_PREFIX = 'byok://';
@@ -202,7 +212,6 @@ export function isByokTargetUrl(url: string): boolean {
 
 export interface HiddenSources {
   providers: Provider[];
-  duckaiModelIds: string[];
   byokIds: string[];
   byokGroupIds: string[];
 }
@@ -212,10 +221,6 @@ export function isModelUrlHidden(url: string, hidden: HiddenSources): boolean {
   if (byokId !== null) return hidden.byokIds.includes(byokId);
   const byokGroupId = byokGroupIdFromUrl(url);
   if (byokGroupId !== null) return hidden.byokGroupIds.includes(byokGroupId);
-  const duckaiModelId = duckaiModelIdFromUrl(url);
-  if (duckaiModelId !== null) {
-    return hidden.providers.includes('duckai') || hidden.duckaiModelIds.includes(duckaiModelId);
-  }
   return hidden.providers.includes(providerFromUrl(url));
 }
 
@@ -281,6 +286,9 @@ export interface ByokTestResult {
   message?: string;
 }
 
+/** Stable id/command of the in-process, opt-in LINE PC reader connector. */
+export const BUILTIN_LINE_SERVER_ID = 'builtin-line';
+
 export interface McpServerConfig {
   id: string;
   name: string;
@@ -290,6 +298,23 @@ export interface McpServerConfig {
   headerName?: string;
   agentEnabled?: boolean;
   autoApproveWrites?: boolean;
+  /** Slash command that drives this server on its own (`/notion`). Persisted so a rename cannot move it. */
+  commandName?: string;
+}
+
+/** The in-process LINE connector's descriptor. Single source shared by the registry (which
+ * hosts it) and the agent IPC (which resolves a disclosed `/line` command against config). */
+export function builtinLineServerConfig(): McpServerConfig {
+  return {
+    id: BUILTIN_LINE_SERVER_ID,
+    name: 'LINE',
+    url: 'builtin://line',
+    enabled: true,
+    agentEnabled: true,
+    autoApproveWrites: false,
+    createdAt: new Date(0).toISOString(),
+    commandName: 'line',
+  };
 }
 
 export type McpConnectionStatus = 'disconnected' | 'connecting' | 'needs_auth' | 'connected' | 'error';
@@ -316,6 +341,7 @@ export interface McpServerSaveRequest {
   headerName?: string;
   agentEnabled?: boolean;
   autoApproveWrites?: boolean;
+  commandName?: string;
 }
 
 export interface McpServerActionResult {
@@ -356,9 +382,20 @@ export interface ProviderAttachmentPolicy {
 export const PROVIDER_ATTACHMENT_POLICIES: Record<Provider, ProviderAttachmentPolicy> = {
   gemini: { maxFiles: 10 },
   chatgpt: { maxFiles: 10 },
+  claude: { maxFiles: 10 },
   perplexity: { maxFiles: 0 },
-  duckai: { maxFiles: 0 },
 };
+
+/**
+ * The providers that accept uploads, named for the three places that disclose the capability:
+ * the skill spec sent to the model, the flow config hint and the bot's rejection reply. Derived
+ * from the policies above on purpose — ChatGPT gained uploads while all three still said "Gemini
+ * only", which made the app tell users (and the model) that a working feature did not exist.
+ */
+export const UPLOAD_CAPABLE_PROVIDER_LABELS = PROVIDERS
+  .filter((provider) => PROVIDER_ATTACHMENT_POLICIES[provider].maxFiles > 0)
+  .map((provider) => PROVIDER_LABELS[provider])
+  .join(' / ');
 
 export const IPC = {
   LOG: 'log',
@@ -463,6 +500,7 @@ export const IPC = {
   GENERATE_LINE_PAIRING_CODE: 'line:generate-pairing-code',
   REVOKE_LINE_PAIRING_CODE: 'line:revoke-pairing-code',
   UNPAIR_LINE_USER: 'line:unpair-user',
+  LIST_LINE_CHATS: 'line:list-chats',
   REFRESH_LINE_ACCOUNT: 'line:refresh-account',
   GET_EMAIL_SETTINGS: 'email:get-settings',
   UPDATE_EMAIL_ENABLED: 'email:update-enabled',
@@ -483,7 +521,32 @@ export const IPC = {
   UPDATE_LAUNCH_AT_STARTUP: 'startup:update-launch',
   LAUNCH_AT_STARTUP_CHANGED: 'startup:launch-changed',
   NOTIFY_ON_COMPLETE_CHANGED: 'notify:on-complete-changed',
-  DUCKAI_FETCH_MODELS: 'duckai:fetch-models',
+  MEMORY_GET: 'memory:get',
+  MEMORY_SET_ENABLED: 'memory:set-enabled',
+  MEMORY_ADD: 'memory:add',
+  MEMORY_UPDATE: 'memory:update',
+  MEMORY_DELETE: 'memory:delete',
+  MEMORY_CLEAR: 'memory:clear',
+  MEMORY_UNDO: 'memory:undo',
+  MEMORY_SET_BOT_SELF: 'memory:set-bot-self',
+  MEMORY_CHANGED: 'memory:changed',
+  MEMORY_CURATE_GET_MODEL: 'memory:curate-get-model',
+  MEMORY_CURATE_PROPOSE: 'memory:curate-propose',
+  MEMORY_CURATE_CANCEL: 'memory:curate-cancel',
+  MEMORY_CURATE_APPLY: 'memory:curate-apply',
+  MEMORY_CURATE_UNDO: 'memory:curate-undo',
+  GEMINI_MODEL_GET: 'gemini-model:get',
+  GEMINI_MODEL_SET: 'gemini-model:set',
+  GEMINI_MODEL_REFRESH: 'gemini-model:refresh',
+  GEMINI_MODEL_CHANGED: 'gemini-model:changed',
+  CLAUDE_MODEL_GET: 'claude-model:get',
+  CLAUDE_MODEL_SET: 'claude-model:set',
+  CLAUDE_MODEL_REFRESH: 'claude-model:refresh',
+  CLAUDE_MODEL_CHANGED: 'claude-model:changed',
+  CHATGPT_MODEL_GET: 'chatgpt-model:get',
+  CHATGPT_MODEL_SET: 'chatgpt-model:set',
+  CHATGPT_MODEL_REFRESH: 'chatgpt-model:refresh',
+  CHATGPT_MODEL_CHANGED: 'chatgpt-model:changed',
   BYOK_GET_SETTINGS: 'byok:get-settings',
   BYOK_SAVE_INSTANCE: 'byok:save-instance',
   BYOK_DELETE_INSTANCE: 'byok:delete-instance',
@@ -496,12 +559,20 @@ export const IPC = {
   MCP_DELETE_SERVER: 'mcp:delete-server',
   MCP_CONNECT_SERVER: 'mcp:connect-server',
   MCP_DISCONNECT_SERVER: 'mcp:disconnect-server',
+  MCP_SET_BUILTIN_ENABLED: 'mcp:set-builtin-enabled',
   MCP_SERVER_STATUS: 'mcp:server-status',
   NAVIGATE_SETTINGS: 'navigate:settings',
   SHOW_CLOSE_DIALOG: 'close-dialog:show',
   RESPOND_CLOSE_DIALOG: 'close-dialog:respond',
   AGENT_CONFIRM_SHOW: 'agent-confirm:show',
   AGENT_CONFIRM_RESPOND: 'agent-confirm:respond',
+  /**
+   * Main has already settled a confirmation the renderer is still showing (it timed out, the run
+   * was cancelled, or the window closed). Without it the stale modal stays up and the NEXT
+   * request pops into the same box under the user's cursor — one click lands on nothing, the
+   * second lands on a command they never read.
+   */
+  AGENT_CONFIRM_DISMISS: 'agent-confirm:dismiss',
   CLOSE_TO_TRAY_CHANGED: 'tray:close-to-tray-changed',
   GET_THEME: 'theme:get',
   UPDATE_THEME: 'theme:update',
@@ -535,19 +606,23 @@ export const IPC = {
   FLOW_RUN_CHAT_COMMAND: 'flow:run-chat-command',
   FLOW_ABORT: 'flow:abort',
   FLOW_GENERATE: 'flow:generate',
+  FLOW_BUILD_PROGRESS: 'flow:build-progress',
+  FLOW_GET_AI_URL: 'flow:get-ai-url',
   FLOW_CREATED: 'flow:created',
   FLOW_EXECUTION_LOG: 'flow:execution-log',
   FLOW_EXECUTION_STARTED: 'flow:execution-started',
   FLOW_EXECUTION_ENDED: 'flow:execution-ended',
+  FLOW_PREVIEW_SCHEDULE: 'flow:preview-schedule',
   FLOW_EXPORT: 'flow:export',
   FLOW_EXPORT_RESULT: 'flow:export-result',
-  SEARCH_RUN: 'search:run',
   AGENT_RUN: 'agent:run',
   AGENT_TRACE: 'agent:trace',
   AGENT_CANCEL: 'agent:cancel',
   AGENT_RESUME: 'agent:resume',
   AGENT_LIST_RESUMABLE: 'agent:list-resumable',
+  AGENT_GET_RUN: 'agent:get-run',
   AGENT_DISCARD: 'agent:discard',
+  AGENT_SET_CONNECTORS: 'agent:set-connectors',
   RSS_HAS_CHECKPOINT: 'rss:has-checkpoint',
   RSS_CLEAR_CHECKPOINT: 'rss:clear-checkpoint',
   RSS_DISCOVER_FEED: 'rss:discover-feed',
@@ -561,6 +636,8 @@ export const IPC = {
   METRICS_CONVERSATION_TOKENS: 'metrics:conversation-tokens',
   METRICS_RESET: 'metrics:reset',
   METRICS_CHANGED: 'metrics:changed',
+  FLOW_METRICS_GET: 'flow-metrics:get',
+  FLOW_METRICS_CHANGED: 'flow-metrics:changed',
   GET_METRICS_ENABLED: 'metrics:get-enabled',
   UPDATE_METRICS_ENABLED: 'metrics:update-enabled',
   GET_NOTIFY_EVENTS: 'notify:get-events',
@@ -596,17 +673,42 @@ export interface TokenCounts {
   output: number;
 }
 
-export interface DailyMetricCounts {
-  chat: MetricCounts;
-  flow: MetricCounts;
+/** Per BYOK key. `cooldowns` counts rate-limit backoffs, which are not request failures. */
+export interface KeyMetrics {
+  requests: MetricCounts;
   tokens: TokenCounts;
+  cooldowns: number;
+}
+
+/**
+ * Two levels, deliberately separate: `runs` is what the user started (one queued chat task,
+ * one whole flow run), `requests` is how many times that reached a model. A single `/agent`
+ * run is one chat run and many requests; a flow with three llm steps is one flow run and
+ * three requests. Collapsing them is what made "total executions" unreadable.
+ */
+export interface DomainMetrics {
+  runs: MetricCounts;
+  requests: MetricCounts;
+  tokens: TokenCounts;
+  keys: Record<string, KeyMetrics>;
+}
+
+export interface DailyMetricCounts {
+  chat: DomainMetrics;
+  flow: DomainMetrics;
+  /** Every metered token, including calls made outside a chat or flow (e.g. flow authoring). */
+  tokens: TokenCounts;
+  keys: Record<string, KeyMetrics>;
 }
 
 export interface MetricsSnapshot {
-  chat: MetricCounts;
-  flow: MetricCounts;
+  chat: DomainMetrics;
+  flow: DomainMetrics;
   tokens: TokenCounts;
+  keys: Record<string, KeyMetrics>;
   daily: Record<string, DailyMetricCounts>;
+  /** YYYY-MM-DD of the first recorded day; empty until something is recorded. */
+  since: string;
 }
 
 export interface FlowExecutionEvent {
@@ -643,13 +745,14 @@ export interface SelectPathResult {
   content?: string;
 }
 
-export type BackupCategoryId = 'config' | 'flows' | 'checkpoints' | 'memory' | 'outputs';
+export type BackupCategoryId = 'config' | 'flows' | 'checkpoints' | 'memory' | 'userMemory' | 'outputs';
 
 export const BACKUP_CATEGORY_IDS: readonly BackupCategoryId[] = [
   'config',
   'flows',
   'checkpoints',
   'memory',
+  'userMemory',
   'outputs',
 ] as const;
 
@@ -821,19 +924,50 @@ export interface TelegramPairingState {
   pairedUsers: TelegramPairedUser[];
 }
 
+export type TelegramChatKind = 'group' | 'supergroup' | 'channel';
+
 export interface TelegramChannel {
   chatId: number;
   title: string;
   username?: string;
+  chatType?: TelegramChatKind;
   canPost: boolean;
   discoveredAt: string;
   lostAt?: string;
 }
 
+export type BotContactKind = 'user' | 'chat';
+
+export type BotReachability = 'ok' | 'blocked' | 'deactivated' | 'removed' | 'not_found' | 'no_rights';
+
+export interface BotContact {
+  platform: BotPlatform;
+  kind: BotContactKind;
+  id: string;
+  title?: string;
+  username?: string;
+  firstName?: string;
+  lastName?: string;
+  chatType?: TelegramChatKind;
+  pairedAt?: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  reachability: BotReachability;
+  unreachableSince?: string;
+  lastError?: string;
+}
+
+export interface TelegramKnownUser {
+  userId: number;
+  username?: string;
+  firstName?: string;
+  lastName?: string;
+  resolvedAt: string;
+}
+
 export interface BotProviderCommand {
   enabled: boolean;
   command: string;
-  modelId?: string;
 }
 
 export interface BotLlmDirectConfig {
@@ -889,6 +1023,8 @@ export interface TelegramSettingsSnapshot {
   runtime: TelegramRuntimeSnapshot;
   pairing: TelegramPairingState;
   channels: TelegramChannel[];
+  knownUsers: TelegramKnownUser[];
+  contacts: BotContact[];
 }
 
 export type LineRuntimeStatus = 'idle' | 'starting' | 'running' | 'error';
@@ -942,6 +1078,21 @@ export interface LineReplyTarget {
   chatId: string;
 }
 
+/** One pickable conversation for the line_read step's chat picker. */
+export interface LineChatOption {
+  id: string;
+  name: string;
+  type: string;
+}
+
+/**
+ * `reason` is what the picker renders: 'disabled' earns a link to Settings, anything else is a
+ * plain message. A failure must never look like "you have no chats".
+ */
+export type LineChatListResult =
+  | { ok: true; chats: LineChatOption[] }
+  | { ok: false; reason: 'disabled' | 'error'; message: string };
+
 export interface LineSettingsSnapshot {
   enabled: boolean;
   hasChannelAccessToken: boolean;
@@ -976,6 +1127,13 @@ export interface DataKeyStatus {
 
 export const DATA_KEY_MOENV = 'moenv';
 
+/**
+ * The LINE PC wxSQLite3 passphrase. Scanning it out of LINE's process memory takes ~80s, so it
+ * is kept between launches — in the data-key store rather than config.json, because that store
+ * is the one secret file the backup archive does NOT collect.
+ */
+export const DATA_KEY_LINE_DB = 'line.dbKey';
+
 export interface SmtpCredentials {
   host: string;
   port: number;
@@ -1000,6 +1158,8 @@ export interface Task {
   placeholderTitle?: string;
   sendId?: string;
   sessionKey?: string;
+  /** The prompt carries fetched outside content (a page or a transcript), not only what the user typed. */
+  external?: boolean;
 }
 
 export interface PromptTriggerOptions {
@@ -1426,7 +1586,7 @@ export interface MarkdownCaptureResult {
   canceled?: boolean;
 }
 
-export type SkillType = 'shell' | 'run' | 'js' | 'browser' | 'browser_open' | 'browser_js' | 'browser_close' | 'llm' | 'clipboard' | 'delay' | 'notify' | 'capture' | 'share' | 'bot' | 'rss' | 'stop' | 'comment' | 'scraper' | 'search' | 'research' | 'gmap_reviews' | 'loop' | 'end_loop' | 'if' | 'end_if' | 'on_change' | 'sysinfo' | 'http' | 'youtube' | 'youtube_subs' | 'power' | 'restart_app' | 'file_write' | 'file_read' | 'file_list' | 'file_delete' | 'file_download' | 'email_send' | 'text' | 'stock' | 'forex' | 'weather' | 'air_quality' | 'random' | 'break' | 'continue';
+export type SkillType = 'shell' | 'run' | 'js' | 'browser' | 'browser_open' | 'browser_js' | 'browser_close' | 'llm' | 'clipboard' | 'delay' | 'notify' | 'capture' | 'share' | 'bot' | 'rss' | 'stop' | 'comment' | 'scraper' | 'search' | 'research' | 'gmap_reviews' | 'line_read' | 'loop' | 'end_loop' | 'if' | 'end_if' | 'on_change' | 'sysinfo' | 'http' | 'youtube' | 'youtube_subs' | 'power' | 'restart_app' | 'file_write' | 'file_read' | 'file_list' | 'file_delete' | 'file_download' | 'email_send' | 'text' | 'stock' | 'forex' | 'weather' | 'air_quality' | 'random' | 'break' | 'continue';
 
 export interface SkillInstance {
   id: string;
@@ -1444,7 +1604,7 @@ export const BOT_PLATFORMS: readonly BotPlatform[] = ['telegram', 'line'] as con
 export function isBotPlatform(value: string): value is BotPlatform {
   return (BOT_PLATFORMS as readonly string[]).includes(value);
 }
-export type ScheduleMode = 'interval' | 'weekly';
+export type ScheduleMode = 'interval' | 'daily' | 'weekly' | 'monthly' | 'yearly' | 'once';
 
 export interface TriggerConfig {
   type: TriggerType;
@@ -1461,19 +1621,41 @@ export interface TriggerConfig {
   repeatEveryUnit?: 'minutes' | 'hours';
   endHour?: number;
   endMinute?: number;
+  /** interval + hours: fire at this minute past the hour. */
+  intervalMinuteOffset?: number;
+  /** monthly: days 1-31, plus LAST_DAY_OF_MONTH (-1) for the month's final day. */
+  monthDays?: number[];
+  /** yearly: 1-12. */
+  scheduleMonth?: number;
+  /** yearly: 1-31. */
+  scheduleDay?: number;
+  /** once: 'YYYY-MM-DD'. */
+  onceDate?: string;
+  /** Run once on next launch when the machine was off at the scheduled time. */
+  catchUpMissed?: boolean;
   botCommand?: string;
   botCommandDescription?: string;
   botInputVariable?: string;
+  /** Bot user ids allowed to run this command; empty or absent means every paired user. */
+  botAllowedUserIds?: string[];
   chatCommand?: string;
   chatCommandDescription?: string;
   chatInputVariable?: string;
 }
 
+export interface SchedulePreview {
+  /** ISO timestamps of the next fire times, straight from the scheduler that will run them. */
+  runs: string[];
+  expression: string;
+  expired?: boolean;
+  error?: string;
+}
+
 export type FlowVariableType =
-  | 'text' | 'number' | 'select' | 'chat' | 'folder' | 'file' | 'feed' | 'url';
+  | 'text' | 'number' | 'select' | 'chat' | 'lineChat' | 'folder' | 'file' | 'feed' | 'url';
 
 export const FLOW_VARIABLE_TYPES: readonly FlowVariableType[] =
-  ['text', 'number', 'select', 'chat', 'folder', 'file', 'feed', 'url'] as const;
+  ['text', 'number', 'select', 'chat', 'lineChat', 'folder', 'file', 'feed', 'url'] as const;
 
 export interface FlowVariableOption {
   value: string;
@@ -1540,6 +1722,11 @@ export interface FlowExecutionResult {
   finalOutput?: string;
   lastLlmProvider?: string;
   titleHint?: string;
+  /**
+   * Steps that failed but were swallowed by `emitFailFlag`. The run still reports `success`,
+   * so this is the only place the loss is visible to the caller.
+   */
+  softFailures?: number;
 }
 
 export interface ChatCommandResult {
@@ -1553,6 +1740,9 @@ export const BUILTIN_NEW_ALIAS = 'clear';
 
 export const BUILTIN_CHAT_COMMAND = 'chat';
 export const BUILTIN_CHAT_FLOW_ID = '__builtin:chat__';
+
+export const BUILTIN_MODEL_COMMAND = 'model';
+export const BUILTIN_MODEL_FLOW_ID = '__builtin:model__';
 
 export const BUILTIN_SEARCH_COMMAND = 'search';
 export const BUILTIN_SEARCH_FLOW_ID = '__builtin:search__';
@@ -1580,11 +1770,43 @@ export interface AgentCommandResult {
   error?: string;
   filePath?: string;
   question?: string;
+  /** Answers the question offers, in the order shown; the chosen text is sent back as the answer. */
+  choices?: string[];
   runId?: string;
+  /**
+   * The connectors the run itself holds, reported with a question. A run resumed from the banner has
+   * no composer scope to record, and the reply typed under its connector still has to match one.
+   */
+  mcpServerIds?: string[];
+}
+
+/**
+ * One change the agent proposed and what became of it — the persisted, renderer-safe view of the
+ * main process's action record. Read by the next turn in the conversation and by the trace view.
+ */
+export interface AgentActionSummary {
+  step: number;
+  server: string;
+  tool: string;
+  label: string;
+  at: string;
+  verdict: 'ready' | 'blocked';
+  reasons?: { code: string; message: string }[];
+  confirmed?: 'auto' | 'approved' | 'denied';
+  outcome?: string;
+  summary?: string;
+  verification?: { status: string; evidence: string };
 }
 
 export interface AgentTurnRecord {
+  /** The step: one per call, the number the model and the trace rows use. */
   index: number;
+  /**
+   * The model decision that produced this step. A `call_tools` batch files several steps under one
+   * turn, and a resumed run continues the TURN count from here. Absent on records written before
+   * batches existed, where a turn was always exactly one step and `index` is it.
+   */
+  turn?: number;
   thought: string;
   tool: string;
   config: Record<string, string>;
@@ -1600,7 +1822,38 @@ export interface AgentRunState {
   providerUrl: string;
   conversationPath?: string;
   attachments?: string[];
+  /**
+   * The MCP servers the user disclosed for this run. Persisted, so a resume discloses the same
+   * set. Read through `readRunConnectors` — runs written before this was plural hold a singular
+   * `mcpServerId`, and a resume that silently loses its scope widens what the agent may touch.
+   */
+  mcpServerIds?: readonly string[];
+  /** Legacy single-server scope. Migrated on read; never written. */
+  mcpServerId?: string;
+  /** The slash command that started the run, for the conversation badge. */
+  mcpCommandName?: string;
+  /**
+   * The "web" capability this run was started with. `undefined` means on — the default, and what
+   * every run written before the toggle existed had. A resume must keep it: re-enabling the web
+   * on resume would widen a run the user deliberately narrowed.
+   */
+  web?: boolean;
   status: AgentRunStatus;
+  /**
+   * The step ceiling this run negotiated for itself. Absent on runs written before the ceiling
+   * was self-assessed, and on runs that never raised it — a resume falls back to the default,
+   * which is what those runs had anyway.
+   */
+  maxTurns?: number;
+  /** What the first action said the GOAL lets this run change. Kept so a resume starts from it. */
+  intent?: { change: string[]; content: string };
+  /** The append-only checklist and completed item numbers, preserved across resumes. */
+  plan?: { steps: string[]; done: number[] };
+  /**
+   * The facts this run read and every change it proposed, with what became of each. A later turn in
+   * the same conversation loads these instead of trusting the answer text written about them.
+   */
+  evidence?: { facts: unknown[]; actions: AgentActionSummary[] };
   turns: AgentTurnRecord[];
   result?: { title: string; content: string };
   error?: string;
@@ -1616,7 +1869,11 @@ export interface AgentRunSummary {
   updatedAt: string;
 }
 
-export type AgentStageLabel = 'planning' | 'fetching' | 'read' | 'analyzing' | 'synthesizing' | 'repairing';
+export type AgentStageLabel =
+  | 'planning' | 'fetching' | 'read' | 'analyzing' | 'synthesizing' | 'repairing'
+  | 'delegating' | 'confirming' | 'verifying'
+  /** Flow building: matching the request against the skill list, and writing the steps. */
+  | 'discovering' | 'building';
 
 export type AgentTraceEvent =
   | { kind: 'thinking'; turn: number; provider?: string }
@@ -1626,7 +1883,7 @@ export type AgentTraceEvent =
   | { kind: 'observation'; turn: number; tool: string; status: 'ok' | 'error'; preview: string }
   | { kind: 'synthesizing' }
   | { kind: 'done'; title: string }
-  | { kind: 'question'; question: string }
+  | { kind: 'question'; question: string; choices?: string[] }
   | { kind: 'failed'; error: string }
   | { kind: 'cancelled' };
 
@@ -1644,6 +1901,12 @@ export interface FlowAssessment {
   trigger: TriggerType;
   outline: string[];
   gaps: string[];
+  /**
+   * What the assessor could not work out from the request, and would otherwise have invented a
+   * value for — a missing feed URL, recipient or report source. Empty when the request is
+   * concrete enough to build from, which is the common case and the one that must stay fast.
+   */
+  questions: string[];
   verdict: 'full' | 'partial' | 'none';
 }
 
@@ -1651,12 +1914,110 @@ export type FlowAssessResult =
   | { ok: true; assessment: FlowAssessment }
   | { ok: false; error: string };
 
+/** The five phases of building a flow, in the order they run. */
+export const FLOW_BUILD_PHASES = ['understand', 'discover', 'plan', 'build', 'verify'] as const;
+
+export type FlowBuildPhase = typeof FLOW_BUILD_PHASES[number];
+
+/** An integration a step needs before it can do anything, and that the user has to set up once. */
+export type FlowSetupNeed = 'bot' | 'email' | 'line';
+
+export interface FlowBuildBlocker {
+  skill: SkillType;
+  need: FlowSetupNeed;
+}
+
+export type FlowBuildIssueKind =
+  /** A required config field the generator left blank or filled with a placeholder. */
+  | 'blank'
+  /** An in-loop step that would strand the whole batch when one item fails. */
+  | 'failsoft'
+  /** A step whose integration is not set up yet. */
+  | 'setup';
+
+export interface FlowBuildIssue {
+  kind: FlowBuildIssueKind;
+  /** 1-based, matching how steps are numbered everywhere else the user sees them. */
+  step: number;
+  skill: SkillType;
+  /** The config key at fault for 'blank'; the integration for 'setup'. */
+  detail: string;
+}
+
+export interface FlowBuildReport {
+  skills: SkillType[];
+  steps: number;
+  trigger: TriggerType;
+  issues: FlowBuildIssue[];
+  gaps: string[];
+}
+
+export type FlowBuildEvent =
+  | { kind: 'phase'; phase: FlowBuildPhase; status: 'active' | 'done' | 'failed'; detail?: string }
+  /** The model the request actually went to — not always the one the user picked. */
+  | { kind: 'provider'; label: string }
+  /** What the request resolved to, and what of it is not set up yet. */
+  | { kind: 'tools'; skills: SkillType[]; blocked: FlowBuildBlocker[] }
+  | { kind: 'outline'; outline: string[] }
+  | { kind: 'questions'; questions: string[] }
+  | { kind: 'done'; report: FlowBuildReport; flowName: string }
+  | { kind: 'failed'; phase: FlowBuildPhase; error: string; blocked?: FlowBuildBlocker[] };
+
+export interface FlowBuildPayload {
+  buildId: string;
+  event: FlowBuildEvent;
+}
+
+/** One question the build asked, paired with what the user answered. */
+export interface FlowClarification {
+  question: string;
+  answer: string;
+}
+
+/** One build attempt; `answers` is present only on a retry that carries the user's replies. */
+export interface FlowBuildRequestPayload {
+  description: string;
+  buildId: string;
+  answers?: FlowClarification[];
+  /** The model the user picked for this build. Empty falls back the way it always has. */
+  providerUrl?: string;
+}
+
+export type FlowBuildOutcome =
+  | { status: 'created'; flow: FlowDefinition; report: FlowBuildReport }
+  | { status: 'questions'; questions: string[] }
+  | { status: 'failed'; phase: FlowBuildPhase; error: string; blocked?: FlowBuildBlocker[] };
+
 export type AgentConfirmRequestData =
   | { kind: 'flow'; flowName: string; stepTypes: string[]; sensitiveTypes: string[] }
-  | { kind: 'mcp'; serverName: string; toolName: string; argsPreview: string };
+  | {
+    kind: 'mcp';
+    serverName: string;
+    toolName: string;
+    argsPreview: string;
+    /** Resolved facts the user can judge (which account, which message, who receives it). */
+    rows?: AgentConfirmRow[];
+    /** False for sending, deleting and built-in connectors, where "always allow" cannot apply. */
+    allowAlways?: boolean;
+    danger?: boolean;
+  }
+  | { kind: 'shell'; command: string; interpreter: string; cwd: string };
+
+export interface AgentConfirmRow {
+  key: string;
+  value: string;
+  /** Localized value instead of `value`, with `vars` interpolated. */
+  valueKey?: string;
+  vars?: Record<string, string>;
+}
 
 export type AgentConfirmPayload = AgentConfirmRequestData & { id: string };
 
+/**
+ * `approveAlways` means different things per kind and deliberately so: for `mcp` it is
+ * persisted into that server's settings, for `shell` it lasts only until this run ends. Never
+ * unify them — a shell allow-all that survived the app restart is a different product.
+ */
 export type AgentConfirmChoice = 'approve' | 'approveAlways' | 'deny';
 
 export type PromptTone = 'default' | 'professional' | 'casual' | 'direct';

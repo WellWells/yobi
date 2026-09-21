@@ -5,10 +5,13 @@ import type { MarkdownCapturePayload } from '../../../shared/types';
 import { captureBackgroundCss, paletteCardTheme } from '../../../shared/capturePalettes';
 import { getProviderLabel, preparePromptForProvider, runAutomation } from '../../providers';
 import { runByokCompletion } from '../../providers/byokClient';
+import { repairSplitTableRows } from '../../../shared/markdownTableRepair';
 import { PROVIDER_ATTACHMENT_POLICIES, isBotPlatform, isByokTargetUrl, providerFromUrl } from '../../../shared/types';
 import type { BotPlatform } from '../../../shared/types';
 import { parseAttachmentList, resolveSafeLocalAttachment } from '../../attachmentGuard';
 import { ensureHttpScheme, fetchAndParse } from '../../urlParser';
+import { isFetchableWebUrl } from '../../../shared/webUrl';
+import { parseWebUrlList } from './urlList';
 import { sendLog, sendWebNotification } from '../../helpers';
 import { clipboardLane, llmLane, pageFetchLane } from '../lanes';
 import { FlowAbortError, resolveDelayMs, withAbort, withStepTimeout } from '../runtime';
@@ -16,10 +19,25 @@ import type { FlowExecutorDeps } from '../types';
 import { closePage, closeRunPages, openPage, runPageScript } from './browserPages';
 import { inferTelegramSendAs, isCaptureFormat } from '../interpolation';
 import { appendMemory, buildMemoryAugmentedPrompt, parseAndStripNewMemory, readMemory } from '../flowMemory';
+import { renderFlowMemoryBlock } from '../../memory/memoryPrompt';
+import { resolveMemory } from '../../memory/memoryContext';
 
 const execAsync = promisify(exec);
 
-export async function execShell(config: Record<string, string>, timeoutMs: number): Promise<string> {
+/**
+ * `cwd` is honored but deliberately NOT a declared spec field. `/agent` sets it after the action
+ * has been validated — and `validateAgentAction` drops every key the spec does not declare — so
+ * the model cannot choose its own working directory, only inherit the one the engine pins.
+ * A user-authored flow leaves it blank and keeps the process cwd, as it always did.
+ *
+ * `signal` aborts the direct child only. A command that detaches (`start /b`, `Start-Process`,
+ * `schtasks`) outlives both this and the timeout — do not present either as containment.
+ */
+export async function execShell(
+  config: Record<string, string>,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<string> {
   const command = config.command ?? '';
   if (!command) return '';
   let shell: string | undefined;
@@ -34,7 +52,13 @@ export async function execShell(config: Record<string, string>, timeoutMs: numbe
       shell = process.env.SHELL ?? (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash');
     }
   }
-  const { stdout, stderr } = await execAsync(command, { timeout: timeoutMs, shell });
+  const cwd = (config.cwd ?? '').trim();
+  const { stdout, stderr } = await execAsync(command, {
+    timeout: timeoutMs,
+    shell,
+    ...(cwd ? { cwd } : {}),
+    ...(signal ? { signal } : {}),
+  });
   return (stdout || stderr).trim();
 }
 
@@ -45,6 +69,8 @@ async function fetchPage(url: string): Promise<{ text: string; image: string }> 
   return { text: cleanedText, image };
 }
 
+const NON_WEB_URL_ERROR = 'browser: only http:// and https:// pages can be fetched.';
+
 export async function execBrowser(config: Record<string, string>): Promise<string> {
   const url = config.url ?? '';
   if (!url) return '';
@@ -54,16 +80,7 @@ export async function execBrowser(config: Record<string, string>): Promise<strin
   const urlPreview = url.length > 120 ? `${url.slice(0, 120)}…` : url;
   sendLog(`🌐 [Flow] Browser step URL: ${urlPreview}`);
 
-  let urlArray: string[] | null = null;
-  try {
-    const parsed: unknown = JSON.parse(url);
-    if (Array.isArray(parsed) && parsed.every((u): u is string => typeof u === 'string')) {
-      urlArray = parsed.map((u) => ensureHttpScheme(u)).filter(Boolean);
-    }
-  } catch {
-    const candidates = url.split(/[\n\r,]+/).map((s) => ensureHttpScheme(s)).filter(Boolean);
-    if (candidates.length > 1) urlArray = candidates;
-  }
+  const urlArray = parseWebUrlList(url);
 
   if (urlArray && urlArray.length > 0) {
     if (includeImage) sendLog('🖼️ [Flow] Browser: cover image is single-URL only — skipped for batch input');
@@ -85,6 +102,8 @@ export async function execBrowser(config: Record<string, string>): Promise<strin
     sendLog(`🌐 [Flow] Batch complete: ${parts.length}/${urlArray.length} succeeded`);
     return parts.join('\n\n---\n\n');
   }
+
+  if (!isFetchableWebUrl(url)) throw new Error(NON_WEB_URL_ERROR);
 
   const { text, image } = await fetchPage(url);
   sendLog(`✅ [Flow] Browser: ${text.length} chars`);
@@ -182,6 +201,12 @@ export async function execLlm(
   const useMemory = config.useMemory === 'true';
   const flowId = (config.__flowId ?? '').trim();
   let effectivePrompt = prompt;
+  if (config.useUserMemory === 'true') {
+    // Ahead of the prompt, which stays last. Read-only: nothing a flow's model says is remembered.
+    const { entries } = await resolveMemory({ surface: 'flow', flowOptIn: true });
+    const block = renderFlowMemoryBlock(entries);
+    if (block) effectivePrompt = `${block}\n\n${effectivePrompt}`;
+  }
   if (useMemory && flowId) {
     try {
       effectivePrompt = buildMemoryAugmentedPrompt(prompt, await readMemory(flowId));
@@ -233,6 +258,11 @@ export async function execLlm(
     );
     response = result.response;
   }
+
+  // A wrapped table row has to be rejoined here rather than at each sink: this answer goes on
+  // to a file, an email body, a bot message and the next step's input, and only one of those
+  // ends up in a document the renderer would have repaired on the way out.
+  response = repairSplitTableRows(response);
 
   let finalResponse = response;
   if (useMemory && flowId) {

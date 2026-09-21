@@ -1,4 +1,4 @@
-/* SlashCommandMenu row highlight.
+/* Row highlight for the lists above the composer (slash commands, /model).
    The highlight is driven entirely by NavLink's `active` prop, which
    PromptInputArea keeps in sync with the pointer via onMouseEnter. Mantine's
    built-in :hover background paints a light grey instantly, one frame before
@@ -36,5 +36,15 @@
 }
 
 .item[data-active] .section {
+  color: inherit;
+}
+
+/* The model name after the provider in a /model row: dimmed like the icon,
+   and following the active foreground for the same reason. */
+.secondary {
+  color: var(--mantine-color-dimmed);
+}
+
+.item[data-active] .secondary {
   color: inherit;
 }

@@ -16,7 +16,7 @@ let restartDeadline = 0;
 
 function launchElectron() {
   electronProcess?.kill();
-  electronProcess = spawn(electronBin, ['out/main/index.js'], {
+  electronProcess = spawn(electronBin, ['out/main/entry.cjs'], {
     stdio: ['ignore', 'inherit', 'inherit'],
     env: { ...process.env, ELECTRON_RENDERER_URL: rendererUrl },
   });

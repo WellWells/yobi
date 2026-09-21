@@ -1,4 +1,5 @@
-import Store from 'electron-store';
+import type Store from 'electron-store';
+import { openStoreWithRecovery } from '../configStore';
 import { getConfigDir } from '../configPaths';
 import { decryptToken, decryptTokenChecked, encryptToken } from '../configEncryption';
 import { clearSecretFailures, recordSecretFailure } from '../secretHealth';
@@ -26,7 +27,7 @@ let store: Store<AuthStoreShape> | null = null;
 
 function getStore(): Store<AuthStoreShape> {
   if (!store) {
-    store = new Store<AuthStoreShape>({ name: 'mcp-auth', cwd: getConfigDir(), defaults: { records: {} } });
+    store = openStoreWithRecovery<AuthStoreShape>('mcp-auth', getConfigDir(), { records: {} });
   }
   return store;
 }
@@ -52,6 +53,18 @@ export function clearAuthRecord(serverId: string): void {
   if (!(serverId in records)) return;
   delete records[serverId];
   getStore().set('records', records);
+}
+
+/**
+ * Drops every stored authorization. Only a factory reset does this: the records live in their
+ * own file, so clearing `config.mcpServers` leaves the OAuth tokens behind, orphaned by an id
+ * nothing references — and re-adding a server under that id would silently reuse them.
+ */
+export function clearAllAuthRecords(): void {
+  for (const serverId of Object.keys(getStore().store.records)) {
+    clearSecretFailures('mcp', serverId);
+  }
+  getStore().set('records', {});
 }
 
 /**

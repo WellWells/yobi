@@ -1,5 +1,6 @@
 import { BrowserWindow, session } from 'electron';
 import { CLEAN_UA } from './userAgent';
+import { youtubeLane } from './flow/lanes';
 import { SILENT_WEB_PREFERENCES, muteWindow } from './silentWindow';
 
 const LOAD_TIMEOUT_MS = 25_000;
@@ -70,6 +71,15 @@ export function isYoutubeUrl(url: string): boolean {
 export function fetchYoutubeVideo(
   url: string,
   opts: { onLog?: (message: string) => void; show?: boolean } = {},
+): Promise<YoutubeVideoResult> {
+  // Inside the module rather than at each call site: the retry's clearStorageData() is what
+  // makes two concurrent fetches destroy each other, and it is not visible from out there.
+  return youtubeLane.runExclusive(() => fetchYoutubeVideoExclusive(url, opts));
+}
+
+function fetchYoutubeVideoExclusive(
+  url: string,
+  opts: { onLog?: (message: string) => void; show?: boolean },
 ): Promise<YoutubeVideoResult> {
   const log = opts.onLog ?? (() => {});
   const visible = opts.show === true;

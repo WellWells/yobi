@@ -7,6 +7,7 @@ import { ToggleSwitch } from '../../../components/ToggleSwitch';
 import { applyCapturePalette, buildCapturePaletteOptions } from './captureConfig';
 import { PROVIDER_DROPDOWN_MAX_HEIGHT, providerSectionsToSelectData } from '../../../config/models';
 import { useProviderModels } from '../../../hooks/useProviderModels';
+import { UPLOAD_CAPABLE_PROVIDER_LABELS } from '../../../../../shared/types';
 import type { SkillConfigProps } from './types';
 
 export const LlmConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
@@ -46,7 +47,9 @@ export const LlmConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
       mono
     />
     {(step.config.attachments ?? '').trim() && (
-      <Text fz="xs" c="dimmed">{t('flow.skill.llm.attachments.hint')}</Text>
+      <Text fz="xs" c="dimmed">
+        {t('flow.skill.llm.attachments.hint').replace('{{providers}}', UPLOAD_CAPABLE_PROVIDER_LABELS)}
+      </Text>
     )}
     <SelectDropdown
       label={t('flow.skill.utility.export.format')}
@@ -112,6 +115,15 @@ export const LlmConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
     />
     {step.config.useMemory === 'true' && (
       <Text fz="xs" c="dimmed">{t('flow.skill.llm.useMemory.hint')}</Text>
+    )}
+    <ToggleSwitch
+      label={t('flow.skill.llm.useUserMemory')}
+      size="sm"
+      checked={step.config.useUserMemory === 'true'}
+      onChange={(e) => onChange({ ...step.config, useUserMemory: e.currentTarget.checked ? 'true' : 'false' })}
+    />
+    {step.config.useUserMemory === 'true' && (
+      <Text fz="xs" c="dimmed">{t('flow.skill.llm.useUserMemory.hint')}</Text>
     )}
     <ToggleSwitch
       label={t('flow.skill.llm.emitFailFlag')}

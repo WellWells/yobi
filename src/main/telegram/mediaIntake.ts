@@ -11,6 +11,7 @@ import { deleteTempAttachments, downloadTelegramFile, readTextAttachment } from 
 import { extractBotMention, type TelegramCommandOptions, type TelegramContext } from './commandHandlers';
 import { getErrorMessage } from './errors';
 import { fenceUntrusted } from '../../shared/promptFencing';
+import { UPLOAD_CAPABLE_PROVIDER_LABELS } from '../../shared/types';
 
 const ALBUM_DEBOUNCE_MS = 1_500;
 const MAX_ALBUM_ITEMS = 10;
@@ -242,7 +243,9 @@ async function processBatch(
 
   if (batch.attachments.length === 0 && batch.inlineBlocks.length === 0) {
     if (batch.rejections.length > 0) {
-      await ctx.reply(t(strings, REJECT_KEYS[batch.rejections[0]]));
+      await ctx.reply(t(strings, REJECT_KEYS[batch.rejections[0]], {
+        providers: UPLOAD_CAPABLE_PROVIDER_LABELS,
+      }));
     } else {
       await ctx.reply(t(strings, 'telegram.media.reject.downloadFailed'));
     }

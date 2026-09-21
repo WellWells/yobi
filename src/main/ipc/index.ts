@@ -1,11 +1,10 @@
 import { ipcMain, nativeImage, shell } from 'electron';
 import * as fs from 'node:fs/promises';
-import { IPC, PROVIDER_URLS } from '../../shared/types';
+import { IPC } from '../../shared/types';
 import type { AgentConfirmChoice, PromptTriggerOptions, SelectPathRequest, SelectPathResult } from '../../shared/types';
 import { resolveAgentConfirm } from '../chat/agentConfirmBridge';
 import { config, saveConfig } from '../config';
 import { getProviderLabel } from '../providers';
-import { fetchDuckaiModels } from '../providers/duckai';
 import {
   sendLog,
   sendToRenderer,
@@ -26,7 +25,6 @@ import {
 import type { QueueManager } from '../queueManager';
 import type { TelegramRuntime } from '../telegram';
 import type { LineRuntime } from '../line';
-import type { DuckaiModelInfo } from '../providers/duckai';
 import type { FlowManager } from '../flow';
 import type { IpcContext } from './context';
 import { showOpenDialogForWin } from './context';
@@ -38,7 +36,6 @@ import { registerLocaleHandlers } from './locale';
 import { registerSettingsHandlers } from './settings';
 import { registerBackupHandlers } from './backup';
 import { registerFlowHandlers } from './flow';
-import { registerSearchHandlers } from './search';
 import { registerAgentHandlers } from './agent';
 import { registerAccountHandlers } from './account';
 import { registerEmailHandlers } from './email';
@@ -46,8 +43,11 @@ import { registerDataKeyHandlers } from './dataKeys';
 import { registerByokHandlers } from './byok';
 import { registerMcpHandlers } from './mcp';
 import { registerShareHandlers } from './share';
-
-let duckaiModelsCache: DuckaiModelInfo[] | null = null;
+import { registerGeminiModelHandlers } from './geminiModel';
+import { registerClaudeModelHandlers } from './claudeModel';
+import { registerChatgptModelHandlers } from './chatgptModel';
+import { registerMemoryHandlers } from './memory';
+import { registerMemoryCurateHandlers } from './memoryCurate';
 
 let _ipcInitialized = false;
 
@@ -114,6 +114,7 @@ export function setupIpcHandlers(deps: SetupDeps): void {
       conversationPath: conversation?.conversationPath,
       placeholderTitle: titleFromPrompt(text),
       sendId: conversation?.sendId,
+      ...(resolved.prompt !== text ? { external: true } : {}),
     });
     sendLog(`[${id}] 🎯 UI prompt queued for ${getProviderLabel(finalTargetUrl)}`);
     return id;
@@ -199,7 +200,9 @@ export function setupIpcHandlers(deps: SetupDeps): void {
 
   ipcMain.handle(IPC.FORCE_SKIP_ACTIVE_TASK, () => {
     const skipped = queue.forceSkipActive();
-    if (skipped) sendLog('⏭️ Active task force-skipped by user');
+    // Honest wording: nothing here can abort provider automation, so the task is only
+    // released from the queue — it may still finish and save its answer.
+    if (skipped) sendLog('⏭️ Stopped waiting for the active task — it may still finish');
     return skipped;
   });
 
@@ -223,19 +226,6 @@ export function setupIpcHandlers(deps: SetupDeps): void {
     }
   });
 
-  ipcMain.handle(IPC.DUCKAI_FETCH_MODELS, async () => {
-    if (duckaiModelsCache !== null) return duckaiModelsCache;
-    try {
-      const win = await ensureWorkerWindow(PROVIDER_URLS.duckai);
-      if (!win) return [];
-      duckaiModelsCache = await fetchDuckaiModels(win);
-      return duckaiModelsCache;
-    } catch (err: unknown) {
-      sendLog(`⚠️ Duck AI model fetch failed: ${(err as Error).message}`);
-      return [];
-    }
-  });
-
   registerFileHandlers();
   registerTelegramHandlers(ctx);
   registerLineHandlers(ctx);
@@ -244,7 +234,6 @@ export function setupIpcHandlers(deps: SetupDeps): void {
   registerSettingsHandlers(ctx);
   registerBackupHandlers(ctx);
   registerFlowHandlers(ctx);
-  registerSearchHandlers(ctx);
   registerAgentHandlers(ctx);
   registerAccountHandlers();
   registerEmailHandlers();
@@ -252,4 +241,9 @@ export function setupIpcHandlers(deps: SetupDeps): void {
   registerByokHandlers(ctx);
   registerMcpHandlers();
   registerShareHandlers();
+  registerGeminiModelHandlers();
+  registerClaudeModelHandlers();
+  registerChatgptModelHandlers();
+  registerMemoryHandlers();
+  registerMemoryCurateHandlers();
 }

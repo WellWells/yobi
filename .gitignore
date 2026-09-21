@@ -35,8 +35,12 @@ Thumbs.db
 
 config.json
 metrics.json
+flow-metrics.json
 mcp-auth.json
 bot-conversations.json
+bot-directory.json
+user-memory/
+flow-schedule-state.json
 data-keys.json
 secret-health.json
 

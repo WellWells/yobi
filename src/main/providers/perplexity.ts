@@ -1,8 +1,10 @@
 import type { BrowserWindow, Cookie, WebContents } from 'electron';
-import { navigateAndWait, isCloudflareChallengeActive, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
-import { executeAutomationWithTimeout, dispatchFocusEvents, settledElementCount } from './automationExecutor';
+import { isCloudflareChallengeActive, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
+import { ensureOnPage, PAGE_REUSE } from './pageReuse';
+import { countElements, executeAutomationWithTimeout, dispatchFocusEvents, settledElementCount } from './automationExecutor';
 import { INJECTED_PPLX_READ_JS, PPLX_RESPONSE_SELECTOR } from './perplexityReadScript';
-import { isExpiredCookie } from '../helpers';
+import { PPLX_SUBMIT_JS } from './perplexitySendScript';
+import { isExpiredCookie, sendLog } from '../helpers';
 import { showInteractiveWorkerWindow, showLoginWindowIfNeeded } from '../windows';
 import { raiseVerificationChallenge, VERIFICATION_CHALLENGE_ERROR_NAME } from './verificationChallenge';
 import { PROVIDER_LABELS, PROVIDER_URLS } from '../../shared/types';
@@ -41,12 +43,17 @@ export async function runPerplexityAutomation(
   prompt: string,
   timeoutMs = 60_000,
   targetUrl: string = PROVIDER_URLS.perplexity,
+  _attachments?: string[],
+  _wantTitle = false,
+  continuingThread = false,
 ): Promise<{ response: string; title: string }> {
   const wc = workerWin.webContents;
 
   applyWorkerUserAgent(wc, WORKER_USER_AGENTS.perplexity);
 
-  await navigateAndWait(wc, targetUrl);
+  const landing = await ensureOnPage(wc, targetUrl, PAGE_REUSE.perplexity, { continuingThread });
+  const reused = landing === 'reused';
+  if (reused) sendLog('♻️ Perplexity page kept open — typing straight into it, no reload');
 
   if (await isCloudflareChallengeActive(wc)) {
     await showInteractiveWorkerWindow(targetUrl);
@@ -66,7 +73,10 @@ export async function runPerplexityAutomation(
 
   await dispatchFocusEvents(wc);
 
-  const baseline = await settledElementCount(wc, PPLX_RESPONSE_SELECTOR);
+  // A kept page settled its counts on the previous turn; only a fresh load can still hydrate.
+  const baseline = reused
+    ? await countElements(wc, PPLX_RESPONSE_SELECTOR)
+    : await settledElementCount(wc, PPLX_RESPONSE_SELECTOR);
 
   type PplxResult = { response: string; title: string; isImageOnly?: boolean };
   let fullyNavigated = false;
@@ -146,79 +156,12 @@ function buildPerplexityAutomationScript(
   ${INJECTED_INTERCEPT_COPY_JS}
   ${INJECTED_PPLX_READ_JS}
 
-  var INPUT_SELECTORS = [
-    '#ask-input[contenteditable="true"]',
-    'div.chat-input-container #ask-input',
-    'div[role="textbox"][contenteditable="true"]',
-    'div[contenteditable="true"][data-lexical-editor="true"]',
-  ];
+  ${PPLX_SUBMIT_JS}
 
-  var input = null;
-  await waitFor(function() {
-    for (var i = 0; i < INPUT_SELECTORS.length; i++) {
-      var el = document.querySelector(INPUT_SELECTORS[i]);
-      if (el) { input = el; return true; }
-    }
-    return false;
-  }, 'Perplexity input area', 15000, 200);
+  // Taken before the send: in a thread long enough to unmount old answers the count never moves.
+  var seen = snapshotLatestAnswer();
+  await perplexitySubmit(${escapedPrompt});
 
-  if (!input) throw new Error('Perplexity input area not found');
-
-  input.focus();
-  input.textContent = '';
-  input.dispatchEvent(new InputEvent('input', {
-    bubbles: true, cancelable: true, inputType: 'deleteContent'
-  }));
-  await sleep(80);
-  var dt = new DataTransfer();
-  dt.setData('text/plain', ${escapedPrompt});
-  input.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-  await sleep(150);
-  if (!(input.innerText || '').trim()) {
-    document.execCommand('insertText', false, ${escapedPrompt});
-  }
-  input.dispatchEvent(new InputEvent('input', {
-    bubbles: true, cancelable: true, inputType: 'insertText'
-  }));
-  await sleep(250);
-
-  var SUBMIT_ICONS = ['pplx-icon-arrow-up', 'pplx-icon-arrow-right'];
-
-  function findSubmitBtn() {
-    var container = document.querySelector('[data-ask-input-container="true"]');
-    if (!container) return null;
-    var btn = container.querySelector('button.bg-button-bg');
-    if (btn) return btn;
-    // The send control is icon-only and its aria-label is localized, so the arrow icon
-    // is the stable marker: pointing right on a new thread, up in a follow-up composer.
-    var buttons = container.querySelectorAll('button');
-    for (var i = buttons.length - 1; i >= 0; i--) {
-      if (buttonHasAnyIcon(buttons[i], SUBMIT_ICONS)) return buttons[i];
-    }
-    return null;
-  }
-
-  var sent = false;
-  for (var attempt = 0; attempt < 28 && !sent; attempt++) {
-    var sendBtn = findSubmitBtn();
-    if (sendBtn && !sendBtn.disabled) {
-      sendBtn.click();
-      sent = true;
-      break;
-    }
-    if (!sent) await sleep(120);
-  }
-
-  if (!sent) {
-    input.dispatchEvent(new KeyboardEvent('keydown', {
-      key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true, cancelable: true
-    }));
-    await sleep(40);
-    input.dispatchEvent(new KeyboardEvent('keyup', {
-      key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true
-    }));
-  }
-
-  return await perplexityWaitAndRead(BASELINE);
+  return await perplexityWaitAndRead(BASELINE, { seen: seen });
 })()`;
 }

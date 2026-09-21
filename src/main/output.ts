@@ -4,6 +4,8 @@ import dayjs from 'dayjs';
 import { getUniquePath } from './files';
 import { cleanTitle } from '../shared/conversationTitle';
 import type { TurnMeta } from '../shared/conversationDoc';
+import { escapeSectionHeadings } from '../shared/conversationDoc';
+import { repairSplitTableRows } from '../shared/markdownTableRepair';
 
 export interface MarkdownOptions {
   prompt: string;
@@ -44,11 +46,11 @@ export function buildOutputMarkdown({
     ...(turnMeta ? [`<!-- yobi:turn ${JSON.stringify(turnMeta)} -->`] : []),
     `## ${promptLabel}`,
     '',
-    prompt,
+    escapeSectionHeadings(prompt, { prompt: promptLabel, response: responseLabel }),
     '',
     `## ${responseLabel}`,
     '',
-    response,
+    repairSplitTableRows(response),
     '',
   ].join('\n');
 }

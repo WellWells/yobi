@@ -1,21 +1,20 @@
 import type { ComponentType } from 'react';
-import { MessageSquare, Search, SquarePen, Waypoints, Workflow, Zap } from 'lucide-react';
+import { BrainCircuit, MessageSquare, SquarePen, Waypoints, Workflow } from 'lucide-react';
 import {
   BUILTIN_AGENT_FLOW_ID,
   BUILTIN_CHAT_FLOW_ID,
+  BUILTIN_MODEL_FLOW_ID,
   BUILTIN_NEW_FLOW_ID,
-  BUILTIN_QUICKSEARCH_FLOW_ID,
-  BUILTIN_SEARCH_FLOW_ID,
 } from '../../../shared/types';
 
 export type CommandIcon = ComponentType<{ size?: number }>;
 
 export const BUILTIN_COMMAND_ICONS = new Map<string, CommandIcon>([
   [BUILTIN_NEW_FLOW_ID, SquarePen],
+  // Not a provider's mark: those stand for the providers in the model menu right below.
+  [BUILTIN_MODEL_FLOW_ID, BrainCircuit],
   [BUILTIN_CHAT_FLOW_ID, MessageSquare],
   [BUILTIN_AGENT_FLOW_ID, Waypoints],
-  [BUILTIN_SEARCH_FLOW_ID, Search],
-  [BUILTIN_QUICKSEARCH_FLOW_ID, Zap],
 ]);
 
 export const FLOW_COMMAND_ICON: CommandIcon = Workflow;
@@ -24,7 +23,7 @@ export function commandIcon(flowId: string): CommandIcon {
   return BUILTIN_COMMAND_ICONS.get(flowId) ?? FLOW_COMMAND_ICON;
 }
 
-export type ChatMode = 'chat' | 'agent' | 'search' | 'quicksearch';
+export type ChatMode = 'chat' | 'agent';
 
 export interface ChatModeOption {
   mode: ChatMode;
@@ -58,26 +57,6 @@ export const CHAT_MODES: ChatModeOption[] = [
     takesAttachments: true,
     icon: commandIcon(BUILTIN_AGENT_FLOW_ID),
   },
-  {
-    mode: 'search',
-    commandId: BUILTIN_SEARCH_FLOW_ID,
-    flowId: BUILTIN_SEARCH_FLOW_ID,
-    labelKey: 'chat.mode.search.label',
-    descriptionKey: 'chat.mode.search.description',
-    placeholderKey: 'chat.mode.search.placeholder',
-    takesAttachments: false,
-    icon: commandIcon(BUILTIN_SEARCH_FLOW_ID),
-  },
-  {
-    mode: 'quicksearch',
-    commandId: BUILTIN_QUICKSEARCH_FLOW_ID,
-    flowId: BUILTIN_QUICKSEARCH_FLOW_ID,
-    labelKey: 'chat.mode.quicksearch.label',
-    descriptionKey: 'chat.mode.quicksearch.description',
-    placeholderKey: 'chat.mode.quicksearch.placeholder',
-    takesAttachments: false,
-    icon: commandIcon(BUILTIN_QUICKSEARCH_FLOW_ID),
-  },
 ];
 
 export const DEFAULT_CHAT_MODE: ChatMode = 'chat';
@@ -92,6 +71,16 @@ export function chatModeFlowId(mode: ChatMode): string | null {
 
 export function chatModeForCommandId(commandId: string): ChatMode | null {
   return CHAT_MODES.find((option) => option.commandId === commandId)?.mode ?? null;
+}
+
+/**
+ * Which form a send takes. There is no mode picker any more: holding a capability — the web, or
+ * any connector — IS the statement that this send should be able to act, so it runs as an agent.
+ * With every capability off there is nothing to act with, and a plain chat turn is both faster
+ * and the only shape that can continue the provider's own thread natively.
+ */
+export function chatModeForCapabilities(web: boolean, connectorIds: readonly string[]): ChatMode {
+  return web || connectorIds.length > 0 ? 'agent' : 'chat';
 }
 
 export function chatModeLabelKeyForCommand(command: string): string | null {

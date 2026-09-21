@@ -42,9 +42,11 @@ export function useCommandTurn() {
     }
 
     const latest = await fileApi.getList();
+    // Read BEFORE the list is applied: setFiles releases a selection that is no longer listed,
+    // and this question is about whether the user has navigated away, not about that.
+    const stillHere = (useAppStore.getState().selectedFile?.path ?? '') === (origin ?? '');
     useAppStore.getState().setFiles(latest);
 
-    const stillHere = (useAppStore.getState().selectedFile?.path ?? '') === (origin ?? '');
     const file = latest.find((candidate) => candidate.path === filePath);
     if (!stillHere || !file) {
       useAppStore.getState().clearPendingTurn(sendId);

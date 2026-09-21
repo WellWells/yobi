@@ -1,9 +1,12 @@
 import { ipcMain } from 'electron';
 import { IPC } from '../../shared/types';
-import type { LineCredentialsUpdate } from '../../shared/types';
+import type { LineChatListResult, LineCredentialsUpdate } from '../../shared/types';
 import { config, saveConfig } from '../config';
 import { normalizeLlmDirect } from '../configNormalizers';
 import { sendLog } from '../helpers';
+import { getLangCache, t } from '../i18n';
+import { namedChats } from '../line/reader';
+import { MAX_LIMIT } from '../line/schema';
 import { issueLinePairingCode, revokeLinePairingCode, unpairLineUser } from '../line';
 import { buildLineSettingsSnapshot } from '../lineBridge';
 import type { IpcContext } from './context';
@@ -87,6 +90,27 @@ export function registerLineHandlers(ctx: IpcContext): void {
     config.line.pairing = unpairLineUser(config.line.pairing, String(userId ?? '').trim());
     saveConfig({ line: config.line });
     return { ok: true as const, snapshot: buildLineSettingsSnapshot() };
+  });
+
+  /**
+   * Backs the chat picker on the line_read flow step. Reading is opt-in, so a disabled
+   * connector is reported as such rather than as an empty chat list. The native driver is
+   * imported lazily for the same reason the MCP registry does it.
+   */
+  ipcMain.handle(IPC.LIST_LINE_CHATS, async (): Promise<LineChatListResult> => {
+    if (!config.lineReaderEnabled) {
+      return { ok: false, reason: 'disabled', message: t(getLangCache(), 'lineRead.picker.disabled') };
+    }
+    try {
+      const { getSharedLineService } = await import('../line/sharedService');
+      const reader = await getSharedLineService().getReader();
+      const chats = namedChats(reader.listChats({ limit: MAX_LIMIT }));
+      return { ok: true, chats: chats.map((chat) => ({ id: chat.chat_id, name: chat.name, type: chat.type })) };
+    } catch (err: unknown) {
+      const message = (err as Error).message;
+      sendLog(`⚠️ Failed to list LINE chats: ${message}`);
+      return { ok: false, reason: 'error', message };
+    }
   });
 
   ipcMain.handle(IPC.REFRESH_LINE_ACCOUNT, async () => {

@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { getLanguageDir, getUserLanguageDir } from './files';
+import { formatResetTime, parseClaudeUsageLimit } from './providers/claudeUsageLimit';
 import type { PromptPreferences } from '../shared/types';
 
 export function isValidLocaleTag(tag: string): boolean {
@@ -72,11 +73,19 @@ export function t(
 }
 
 export function localizeUserFacingError(raw: string, strings: Record<string, string>): string {
+  const usageLimit = parseClaudeUsageLimit(raw);
+  if (usageLimit) {
+    return usageLimit.resetsAt === null
+      ? t(strings, 'main.error.claudeUsageLimitNoTime', { notice: usageLimit.noticeText }).trim()
+      : t(strings, 'main.error.claudeUsageLimit', { time: formatResetTime(usageLimit.resetsAt) });
+  }
+
   const exactMap: Record<string, string> = {
     'ChatGPT returned empty response': t(strings, 'main.error.chatgptEmptyResponse'),
     'ChatGPT input area not found': t(strings, 'main.error.chatgptInputNotFound'),
     'ChatGPT response block not found': t(strings, 'main.error.chatgptResponseBlockNotFound'),
     'ChatGPT response is empty': t(strings, 'main.error.chatgptResponseEmpty'),
+    'Claude returned empty response': t(strings, 'main.error.claudeEmptyResponse'),
     'Gemini input area not found — is the page logged in?': t(strings, 'main.error.geminiInputNotFound'),
     'Clipboard interceptor returned empty text': t(strings, 'main.error.geminiClipboardEmpty'),
     'Gemini answer element present but its text was empty': t(strings, 'main.error.geminiCopyNoText'),
@@ -96,6 +105,7 @@ export function localizeUserFacingError(raw: string, strings: Record<string, str
 
   const prefixHandlers: [string, string][] = [
     ['ChatGPT automation failed: ', 'main.error.chatgptAutomationFailed'],
+    ['Claude automation failed: ', 'main.error.claudeAutomationFailed'],
     ['Gemini automation failed: ', 'main.error.geminiAutomationFailed'],
     ['Perplexity automation failed: ', 'main.error.pplxAutomationFailed'],
     ['BYOK configuration incomplete: ', 'main.error.byokConfigIncomplete'],

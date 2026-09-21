@@ -3,18 +3,14 @@ import { useShallow } from 'zustand/react/shallow';
 import { settingsApi } from '../../../api/electronApi';
 import { visibleModels } from '../../../config/models';
 import { selectHiddenSources, useAppStore } from '../../../store/appStore';
-import { duckaiModelIdFromUrl } from '../../../../../shared/types';
 import type { HiddenSources, Provider } from '../../../../../shared/types';
 
 export interface HiddenSourcesController {
   hidden: HiddenSources;
   busy: boolean;
   toggleProvider: (provider: Provider) => void;
-  toggleDuckaiModel: (modelId: string) => void;
   toggleByok: (instanceId: string) => void;
   toggleByokGroup: (groupId: string) => void;
-  duckaiVisibleCount: number;
-  duckaiTotalCount: number;
   canApply: (next: HiddenSources) => boolean;
 }
 
@@ -24,7 +20,6 @@ function toggleId(list: string[], id: string): string[] {
 
 export function useHiddenSources(): HiddenSourcesController {
   const hidden = useAppStore(useShallow(selectHiddenSources));
-  const duckaiModels = useAppStore((s) => s.duckaiModels);
   const setHiddenSources = useAppStore((s) => s.setHiddenSources);
   const [busy, setBusy] = useState(false);
 
@@ -56,10 +51,6 @@ export function useHiddenSources(): HiddenSourcesController {
     }));
   }, [apply]);
 
-  const toggleDuckaiModel = useCallback((modelId: string) => {
-    apply((current) => ({ ...current, duckaiModelIds: toggleId(current.duckaiModelIds, modelId) }));
-  }, [apply]);
-
   const toggleByok = useCallback((instanceId: string) => {
     apply((current) => ({ ...current, byokIds: toggleId(current.byokIds, instanceId) }));
   }, [apply]);
@@ -68,20 +59,12 @@ export function useHiddenSources(): HiddenSourcesController {
     apply((current) => ({ ...current, byokGroupIds: toggleId(current.byokGroupIds, groupId) }));
   }, [apply]);
 
-  const duckaiHiddenCount = duckaiModels.filter((model) => {
-    const id = duckaiModelIdFromUrl(model.url);
-    return id !== null && hidden.duckaiModelIds.includes(id);
-  }).length;
-
   return {
     hidden,
     busy,
     toggleProvider,
-    toggleDuckaiModel,
     toggleByok,
     toggleByokGroup,
-    duckaiVisibleCount: duckaiModels.length - duckaiHiddenCount,
-    duckaiTotalCount: duckaiModels.length,
     canApply,
   };
 }

@@ -29,6 +29,7 @@ export interface StepCardProps {
   flowId: string;
   prevSteps: SkillInstance[];
   flowTrigger?: TriggerConfig;
+  hasHotkeyTrigger?: boolean;
   loopVars?: LoopVarHint[];
   allPrevSteps?: SkillInstance[];
   flowVariables?: FlowVariable[];
@@ -37,7 +38,8 @@ export interface StepCardProps {
 }
 
 export const StepCard: React.FC<StepCardProps> = ({
-  step, index, total, flowId, prevSteps, flowTrigger, loopVars = [], allPrevSteps = [],
+  step, index, total, flowId, prevSteps, flowTrigger, hasHotkeyTrigger = false,
+  loopVars = [], allPrevSteps = [],
   flowVariables = [], dragHandle, t,
 }) => {
   const { updateStep, removeStep, moveStep } = useFlowStore(
@@ -161,6 +163,7 @@ export const StepCard: React.FC<StepCardProps> = ({
             <AvailableVarsHint
               prevSteps={prevSteps}
               flowTrigger={flowTrigger}
+              hasHotkeyTrigger={hasHotkeyTrigger}
               loopVars={loopVars}
               allPrevSteps={allPrevSteps}
               flowVariables={flowVariables}

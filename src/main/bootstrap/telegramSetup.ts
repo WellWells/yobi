@@ -4,9 +4,14 @@ import { resolveLlmDirectTarget } from '../providerCommands';
 import { relaunchApp, sendLog, sendToRenderer, sendWebNotification, createTaskId } from '../helpers';
 import { getLangCache } from '../i18n';
 import { resolveUrlPrompt } from '../urlParser';
-import { TelegramRuntime, normalizePairingState } from '../telegram';
+import { TelegramRuntime, normalizePairingState, parseRecipientIds } from '../telegram';
 import { sweepOrphanTempAttachments } from '../telegram/fileDownload';
-import { clearBotConversation, getBotConversation } from '../botConversations';
+import {
+  clearBotConversation,
+  collectPairedUserIdsFromKeys,
+  getBotConversation,
+  listBotConversationKeys,
+} from '../botConversations';
 import { resolveBotCommands } from './botCommands';
 import {
   botChatKey,
@@ -23,6 +28,7 @@ import {
   setTelegramRuntimeSnapshot,
   exportTelegramResultDocument,
 } from '../telegramBridge';
+import { listBotContacts, listBotPairedContacts } from '../botDirectory';
 import type { QueueManager } from '../queueManager';
 import type { FlowManager } from '../flow';
 
@@ -55,6 +61,23 @@ export function createTelegramRuntime(deps: {
       saveConfig({ telegram: config.telegram });
       sendToRenderer(IPC.TELEGRAM_RUNTIME, getTelegramRuntimeSnapshot());
     },
+    getKnownUsers: () => config.telegram.knownUsers,
+    saveKnownUsers: (next) => {
+      config.telegram.knownUsers = next;
+      saveConfig({ telegram: config.telegram });
+      sendToRenderer(IPC.TELEGRAM_RUNTIME, getTelegramRuntimeSnapshot());
+    },
+    getDirectorySources: async () => {
+      const contacts = await listBotContacts({ platform: 'telegram', kind: 'chat' });
+      const paired = await listBotPairedContacts('telegram');
+      return {
+        adminUserIds: config.telegram.adminUserIds,
+        flowRecipientIds: collectFlowRecipientIds(getFlowManager()),
+        conversationUserIds: collectPairedUserIdsFromKeys(await listBotConversationKeys(), 'telegram'),
+        ledgerChatIds: contacts.map((entry) => Number(entry.id)).filter((id) => Number.isFinite(id)),
+        ledgerPairedUserIds: paired.map((entry) => Number(entry.id)).filter((id) => Number.isFinite(id)),
+      };
+    },
     isAdminUser: (userId) => isTelegramAdminUser(userId),
     getEffectiveTargetUrl: () => resolveLlmDirectTarget(
       config.telegram.llmDirect,
@@ -85,6 +108,7 @@ export function createTelegramRuntime(deps: {
         replyTarget: request.replyTarget,
         requesterName: request.requesterName,
         sessionKey,
+        ...(resolved.prompt !== request.prompt ? { external: true } : {}),
         ...(request.attachments?.length
           ? { attachments: request.attachments, ephemeralAttachments: true }
           : {}),
@@ -127,7 +151,7 @@ export function createTelegramRuntime(deps: {
       ];
     },
     getBuiltinCommands: () => resolveBotCommands(getFlowManager).builtins,
-    onBuiltinCommand: (key, input, targetUrl, chatId, userId, onProgressText) => runBotBuiltinCommand(
+    onBuiltinCommand: (key, input, targetUrl, chatId, userId, onProgressText, plain) => runBotBuiltinCommand(
       { getFlowManager, getStrings: getLangCache },
       {
         key,
@@ -135,6 +159,7 @@ export function createTelegramRuntime(deps: {
         targetUrl,
         chatKey: botChatKey('telegram', String(chatId), String(userId)),
         onProgressText,
+        ...(plain ? { plain: true } : {}),
       },
     ),
     onAgentAnswer: async (answer, chatId, userId, onProgressText) => {
@@ -183,4 +208,18 @@ export function createTelegramRuntime(deps: {
       return execution;
     },
   });
+}
+
+function collectFlowRecipientIds(flowManager: FlowManager | null): number[] {
+  if (!flowManager) return [];
+  const raw: string[] = [];
+  for (const flow of flowManager.getAll()) {
+    for (const step of flow.steps) {
+      if (step.type !== 'bot') continue;
+      const platform = step.config.platform;
+      if (platform === 'line') continue;
+      raw.push(String(step.config.chatIds ?? ''), String(step.config.chatId ?? ''));
+    }
+  }
+  return parseRecipientIds(raw);
 }

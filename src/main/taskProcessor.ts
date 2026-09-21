@@ -9,7 +9,10 @@ import type { AutomationResult } from './providers';
 import { runByokCompletion } from './providers/byokClient';
 import { executeConversationalSend, planConversationSend, planTurn } from './chat/conversationTurnRunner';
 import type { ConversationSendPlan } from './chat/conversationTurnRunner';
+import { resolveTaskChatContext } from './chat/taskChatContext';
 import { appendOrCreateConversation } from './chat/conversationPersist';
+import { resolveTaskMemory, settleTaskMemory, taskMemoryInstruction, taskNativeReminder } from './chat/taskMemory';
+import { withMemoryNotes } from './memory';
 import {
   claimChatTurnReport,
   claimLocalNotification,
@@ -30,7 +33,7 @@ import {
 } from './output';
 import { config } from './config';
 import { deliverTempChatResult, getTempChatConversation, isTempChatMode } from './tempChat';
-import { IPC, isByokTargetUrl, providerFromUrl } from '../shared/types';
+import { IPC, isByokTargetUrl } from '../shared/types';
 import type { ChatTurnEvent, PromptPreferences, Task } from '../shared/types';
 import { extractTitleMarker, pickConversationTitle } from '../shared/conversationTitle';
 import type { TurnMeta } from '../shared/conversationDoc';
@@ -45,8 +48,9 @@ import {
 } from './helpers';
 import { setBotConversation } from './botConversations';
 import { deleteTempAttachments } from './telegram/fileDownload';
-import { backupClipboard, restoreClipboard } from './clipboard';
+import { backupClipboard, restoreClipboardAfterTask } from './clipboard';
 import { classifyFailure, recordTaskOutcome } from './metrics';
+import { runInMetricDomain } from './llmMeter';
 import { llmLane } from './flow/lanes';
 import { listOutputFiles, getOutputDir } from './files';
 import {
@@ -69,10 +73,14 @@ function resolvePromptPrefs(task: Task): PromptPreferences {
 }
 
 function providerNamesItsThread(targetUrl: string): boolean {
-  return !isByokTargetUrl(targetUrl) && providerFromUrl(targetUrl) !== 'duckai';
+  return !isByokTargetUrl(targetUrl);
 }
 
 export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
+  return runInMetricDomain('chat', () => runTask(task, deps));
+}
+
+async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
   const { telegramRuntime, lineRuntime } = deps;
   const { id, prompt } = task;
   const promptForOutput = task.displayPrompt?.trim() ? task.displayPrompt.trim() : stripSystemInstruction(prompt);
@@ -80,11 +88,17 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
   const preview = promptForOutput.length > 100 ? `${promptForOutput.slice(0, 100)}…` : promptForOutput;
   const providerLabel = getProviderLabel(targetUrl);
 
-  sendLog(`[${id}] 📤 ${task.source ?? 'ui'} → ${providerLabel}${task.conversationPath ? ' (follow-up)' : ''}: "${preview}"`);
+  // Sampled once: planning and delivery must agree even if the user toggles temporary chat
+  // while the provider is still answering.
+  const chatContext = resolveTaskChatContext(task, isTempChatMode());
+
+  sendLog(`[${id}] 📤 ${task.source ?? 'ui'} → ${providerLabel}${chatContext.conversationPath ? ' (follow-up)' : ''}: "${preview}"`);
 
   const clipboardSnapshot = await backupClipboard();
   let preservePerplexitySiteData = false;
   let lastError: unknown;
+  // Kept for the finally: the clipboard is only put back if it is still holding this.
+  let providerAnswer = '';
 
   try {
     const t0 = Date.now();
@@ -92,10 +106,11 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
 
     const planTurnFor = async (allowNative: boolean): Promise<ConversationSendPlan | null> => {
       const shared = { targetUrl, userPrompt: prompt, timeoutMs: config.responseTimeout, allowNative };
-      if (task.conversationPath) {
-        return planConversationSend({ conversationPath: task.conversationPath, ...shared });
+      if (chatContext.conversationPath) {
+        return planConversationSend({ conversationPath: chatContext.conversationPath, ...shared });
       }
-      const tempDoc = isTempChatMode() ? await getTempChatConversation() : null;
+      if (!chatContext.useTemporaryContext) return null;
+      const tempDoc = await getTempChatConversation();
       return tempDoc ? planTurn({ doc: tempDoc, ...shared }) : null;
     };
     const plan = await planTurnFor(true);
@@ -118,7 +133,11 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
       sendLog(`[${id}] 🏷️ ${providerLabel} has no thread title — asking the model to name this conversation`);
     }
 
-    const dynamicInstruction = buildCombinedPromptFromPrefs(resolvePromptPrefs(task), getLangCache());
+    const memory = await resolveTaskMemory(task, chatContext.temporary);
+    const dynamicInstruction = [
+      buildCombinedPromptFromPrefs(resolvePromptPrefs(task), getLangCache()),
+      taskMemoryInstruction(memory),
+    ].filter(Boolean).join('\n');
     const instruction = buildTaskInstruction(
       dynamicInstruction,
       config.syncSystemLanguageToModel,
@@ -157,20 +176,32 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
       });
     };
 
+    // Taken before the send: an entry this very answer adds must count as newer than the thread.
+    const sentAt = new Date().toISOString();
+    const withNativeReminder = taskNativeReminder(memory, plan?.thread.threadAt);
     const sent = await executeConversationalSend({
       plan,
       targetUrl,
       userPrompt: prompt,
       replanAsReplay: () => planTurnFor(false),
       withInstruction,
+      ...(withNativeReminder ? { withNativeReminder } : {}),
       runBrowser: runBrowserTask,
       runByok: (outgoing) => runByokCompletion(targetUrl, outgoing, config.responseTimeout),
       onThreadLost: () => sendLog(`[${id}] 🧵 Stored conversation thread is gone — continuing with a text recap`),
     });
     const stripMarker = !providerNamesItsThread(targetUrl);
-    const { title: markerTitle, body: response } = stripMarker
+    const { title: markerTitle, body: markedResponse } = stripMarker
       ? extractTitleMarker(sent.response)
       : { title: '', body: sent.response };
+    const { text: response, notes: memoryNotes } = await settleTaskMemory(
+      task,
+      memory,
+      markedResponse,
+      promptForOutput,
+      chatContext.conversationPath,
+    );
+    providerAnswer = sent.response;
     const { title } = sent;
     if (markerTitle) sendLog(`[${id}] 🏷️ Model named this conversation "${markerTitle}"`);
 
@@ -191,6 +222,7 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
       ti: usage.input,
       to: usage.output,
       ...(usage.exact ? { tx: 1 as const } : {}),
+      ...(memoryNotes.length > 0 ? { mem: memoryNotes } : {}),
     };
 
     const outputDir = await getOutputDir();
@@ -220,7 +252,7 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
       turnMeta,
     };
 
-    const temporaryReply = isTempChatMode() && !task.replyTarget && !task.lineReplyTarget;
+    const temporaryReply = chatContext.temporary;
     let savedFileName = '';
     let conversationPath = '';
     if (temporaryReply) {
@@ -232,7 +264,7 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
     } else {
       conversationPath = await appendOrCreateConversation({
         plan: sent.plan,
-        conversationPath: task.conversationPath,
+        conversationPath: chatContext.conversationPath ?? undefined,
         markdownOptions,
         outputDir,
         prompt: promptForOutput,
@@ -241,6 +273,7 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
         threadUrl: sent.threadUrl,
         targetUrl,
         onLog: (message) => sendLog(`[${id}] ${message}`),
+        ...(sent.plan?.mode === 'native' ? {} : { threadAt: sentAt }),
       });
       savedFileName = path.basename(conversationPath);
 
@@ -273,7 +306,10 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
       } satisfies ChatTurnEvent);
     }
 
-    if (config.notifyEvents.chatComplete) {
+    // Claim-gated like the failure path: a task the queue gave up on keeps running to
+    // completion, and without this the user got "saved as …" minutes after being told it
+    // had failed, for the same question.
+    if (config.notifyEvents.chatComplete && claimLocalNotification(task)) {
       const notifyTitle = langData?.['notify.completed.title'] ?? 'Yobi';
       const notifyBodyTemplate = temporaryReply
         ? (langData?.['notify.completed.temp.body'] ?? '"{{prompt}}" — temporary chat, not saved')
@@ -289,18 +325,20 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
     }
 
     if (claimRemoteReply(task)) {
+      // A bot message has no place under the reply for the notes, so they ride at its end.
+      const remoteResponse = withMemoryNotes(response, memoryNotes, (key, vars) => t(getLangCache(), key, vars));
       if (task.replyTarget) {
         await telegramRuntime.sendTaskSuccess(task.replyTarget, {
           providerLabel,
           savedFileName,
-          response,
+          response: remoteResponse,
           prompt: promptForOutput,
           title: finalTitle,
           elapsedSeconds: elapsed,
         });
       }
       if (task.lineReplyTarget) {
-        await lineRuntime.sendTaskSuccess(task.lineReplyTarget.chatId, response);
+        await lineRuntime.sendTaskSuccess(task.lineReplyTarget.chatId, remoteResponse);
       }
     }
   } catch (err: unknown) {
@@ -363,7 +401,7 @@ export async function processTask(task: Task, deps: TaskProcessorDeps): Promise<
     if (task.ephemeralAttachments && task.attachments?.length) {
       await deleteTempAttachments(task.attachments);
     }
-    await restoreClipboard(clipboardSnapshot);
+    await restoreClipboardAfterTask(clipboardSnapshot, providerAnswer);
     if (!preservePerplexitySiteData) {
       await clearPerplexitySiteDataIfNeeded(targetUrl);
     }

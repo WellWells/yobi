@@ -263,6 +263,11 @@ export async function execHttp(config: Record<string, string>, timeoutMs: number
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(`HTTP request timed out after ${Math.ceil(timeoutMs / 1_000)}s`);
     }
+    // undici throws a bare "fetch failed" and puts the reason on `cause`. That reason is the
+    // whole diagnosis — DNS, a refused port, a bad certificate — so it travels with the message.
+    if (err instanceof Error && err.cause instanceof Error) {
+      throw new Error(`${err.message}: ${err.cause.message}`);
+    }
     throw err;
   } finally {
     clearTimeout(timer);

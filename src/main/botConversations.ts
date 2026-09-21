@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { getFlowDataDir } from './flow/paths';
 import { sendLog } from './helpers';
+import type { BotPlatform } from '../shared/types';
 
 type SessionMap = Record<string, string>;
 
@@ -71,6 +72,52 @@ export async function clearBotConversation(chatKey: string): Promise<boolean> {
   delete sessions[chatKey];
   await persist();
   return true;
+}
+
+/**
+ * A key only lands here after handleDirectMessage cleared isPairedUser, so the store is also the
+ * only surviving record of which accounts once held a pairing.
+ */
+export async function listBotConversationKeys(): Promise<string[]> {
+  return Object.keys(await load());
+}
+
+export function parseBotChatKey(
+  key: string,
+): { platform: string; chatId: string; userId: string } | null {
+  const parts = key.split(':');
+  if (parts.length !== 3) return null;
+  const [platform, chatId, userId] = parts;
+  if (!platform || !chatId || !userId) return null;
+  return { platform, chatId, userId };
+}
+
+export function collectPairedUserIdsFromKeys(keys: string[], platform: BotPlatform): number[] {
+  const ids = new Set<number>();
+  for (const key of keys) {
+    const parsed = parseBotChatKey(key);
+    if (!parsed || parsed.platform !== platform) continue;
+    const userId = Number(parsed.userId);
+    if (!Number.isFinite(userId) || userId <= 0) continue;
+    ids.add(userId);
+  }
+  return [...ids];
+}
+
+/**
+ * Revoking a pairing has to drop the ledger entry too, or the next start would read it as proof of a
+ * prior pairing and hand the access straight back.
+ */
+export async function clearBotConversationsForUser(platform: BotPlatform, userId: number): Promise<number> {
+  const sessions = await load();
+  const doomed = Object.keys(sessions).filter((key) => {
+    const parsed = parseBotChatKey(key);
+    return parsed?.platform === platform && Number(parsed.userId) === userId;
+  });
+  if (doomed.length === 0) return 0;
+  for (const key of doomed) delete sessions[key];
+  await persist();
+  return doomed.length;
 }
 
 export function __resetBotConversationCache(): void {

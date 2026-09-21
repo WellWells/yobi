@@ -30,6 +30,8 @@ import { useAccountSettings } from './settings/hooks/useAccountSettings';
 import { useByokSettings } from './settings/hooks/useByokSettings';
 import { useByokGroups } from './settings/hooks/useByokGroups';
 import { useMcpServers } from './settings/hooks/useMcpServers';
+import { useUserMemory } from './settings/hooks/useUserMemory';
+import { MemorySection } from './settings/sections/MemorySection';
 import { useSettingsNav } from './settings/hooks/useSettingsNav';
 import type { Category } from './settings/hooks/useSettingsNav';
 import { GeneralSection } from './settings/sections/GeneralSection';
@@ -75,6 +77,7 @@ export const SettingsView: React.FC = () => {
   const byok = useByokSettings();
   const byokGroups = useByokGroups(byok.snapshot, byok.applySnapshot);
   const mcp = useMcpServers();
+  const userMemory = useUserMemory();
   const nav = useSettingsNav();
   // Only the scopes that live in this view light up a nav entry; SMTP and data keys are
   // configured inside flow steps, so their alerts belong there instead.
@@ -267,6 +270,18 @@ export const SettingsView: React.FC = () => {
               t={t}
               locale={locale}
               showSection={(tags) => nav.showSection(tags, 'ai')}
+              sectionGap={SECTION_GAP}
+            />
+          ))}
+
+          {categoryBlock('memory', (
+            <MemorySection
+              memory={userMemory}
+              telegramUsers={telegram.telegramSettings?.pairing.pairedUsers ?? []}
+              lineUsers={line.lineSettings?.pairing.pairedUsers ?? []}
+              t={t}
+              locale={locale}
+              showSection={(tags) => nav.showSection(tags, 'memory')}
               sectionGap={SECTION_GAP}
             />
           ))}

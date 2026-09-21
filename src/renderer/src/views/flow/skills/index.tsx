@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  Terminal, Globe, MessageSquare, Clipboard, Timer, Bell, Camera, Bot, Rss, OctagonX, StickyNote, ListTree, Repeat, IterationCcw, Split, Merge, Cpu, Webhook, MonitorPlay, ListVideo, Rocket, Braces, Power, RotateCcw, AppWindow, SquareCode, SquareX, FilePen, FileText, Share2, FolderOpen, Mail, Trash2, Type, TrendingUp, ArrowRightLeft, Cloud, Wind, Download, Dices, CircleStop, SkipForward, Search, MapPin, Microscope, GitCompare,
+  Terminal, Globe, MessageSquare, Clipboard, Timer, Bell, Camera, Bot, Rss, OctagonX, StickyNote, ListTree, Repeat, IterationCcw, Split, Merge, Cpu, Webhook, MonitorPlay, ListVideo, Rocket, Braces, Power, RotateCcw, AppWindow, SquareCode, SquareX, FilePen, FileText, Share2, FolderOpen, Mail, Trash2, Type, TrendingUp, ArrowRightLeft, Cloud, Wind, Download, Dices, CircleStop, SkipForward, Search, MapPin, Microscope, GitCompare, MessagesSquare,
 } from 'lucide-react';
 import type { SkillType } from '../../../../../shared/types';
 import type { SkillConfigProps, SkillConfigEditorMap } from './types';
@@ -24,6 +24,7 @@ import { ScraperConfig } from './ScraperConfig';
 import { SearchConfig } from './SearchConfig';
 import { ResearchConfig } from './ResearchConfig';
 import { GmapReviewsConfig } from './GmapReviewsConfig';
+import { LineReadConfig } from './LineReadConfig';
 import { LoopConfig } from './LoopConfig';
 import { IfConfig } from './IfConfig';
 import { SysInfoConfig } from './SysInfoConfig';
@@ -71,6 +72,7 @@ export const STEP_CONFIG_EDITOR: SkillConfigEditorMap = {
   search: SearchConfig,
   research: ResearchConfig,
   gmap_reviews: GmapReviewsConfig,
+  line_read: LineReadConfig,
   loop: LoopConfig,
   end_loop: NoConfig,
   if: IfConfig,
@@ -120,6 +122,7 @@ export const SKILL_ICON: Record<SkillType, React.ReactNode> = {
   search: <Search size={14} />,
   research: <Microscope size={14} />,
   gmap_reviews: <MapPin size={14} />,
+  line_read: <MessagesSquare size={14} />,
   loop: <Repeat size={14} />,
   end_loop: <IterationCcw size={14} />,
   if: <Split size={14} />,

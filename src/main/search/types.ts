@@ -1,8 +1,13 @@
 export type TemporalFilter = 'day' | 'week' | 'month' | 'none';
 
+/** The most queries one plan may hold. They are sent together, so this also sizes the DDG gate. */
+export const MAX_PLAN_QUERIES = 3;
+
 export interface QueryPlan {
   temporal: TemporalFilter;
   queries: string[];
+  /** A follow-up rewritten to stand on its own, once the planner had the conversation to resolve it. */
+  resolved?: string;
 }
 
 export interface SerpHit {

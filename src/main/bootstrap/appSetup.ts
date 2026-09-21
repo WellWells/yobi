@@ -13,6 +13,7 @@ import {
   createMainWindow,
   createWorkerWindow,
   getMainWin,
+  getWorkerWin,
   revealWorkerWindow,
 } from '../windows';
 import { initializeUpdater } from '../updater';
@@ -58,11 +59,16 @@ export function setupWindows(): void {
  * on-demand path already goes through `ensureWorkerWindow`, so a slow or failed
  * main window only costs the head start, never the feature.
  */
-function warmWorkerWindowAfterMainWindow(mainWin: Electron.BrowserWindow | null): void {
+// Exported for the test suite.
+export function warmWorkerWindowAfterMainWindow(mainWin: Electron.BrowserWindow | null): void {
   let started = false;
   const start = (): void => {
     if (started) return;
     started = true;
+    // A bot backlog message or a flow due at boot can beat the warm-up to it, and
+    // createWorkerWindow destroys whatever is already there — killing a task mid-run. The
+    // head start is worth nothing if it costs the first real request.
+    if (getWorkerWin()) return;
     createWorkerWindow(config.targetUrl);
   };
 

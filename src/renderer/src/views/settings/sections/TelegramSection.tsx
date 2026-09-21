@@ -209,6 +209,7 @@ export const TelegramSection: React.FC<Props> = ({
             </Group>
             <TelegramChannels
               channels={channels}
+              contacts={settings?.contacts ?? []}
               onForget={(chatId) => { void telegram.handleForgetTelegramChannel(chatId); }}
               t={t}
             />
@@ -281,6 +282,7 @@ export const TelegramSection: React.FC<Props> = ({
 
               <TelegramPairedUsers
                 pairedUsers={pairedUsers}
+                contacts={settings?.contacts ?? []}
                 adminUserIds={adminUserIds}
                 onToggleAdmin={(userId) => { void telegram.handleToggleTelegramAdmin(userId); }}
                 onUnpair={(userId) => { void telegram.handleUnpairTelegramUser(userId); }}

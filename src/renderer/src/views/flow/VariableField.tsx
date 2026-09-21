@@ -5,6 +5,7 @@ import { AppButton } from '../../components/AppButton';
 import { AppNumberInput } from '../../components/AppNumberInput';
 import { AppTextInput } from '../../components/AppTextInput';
 import { AppTextarea } from '../../components/AppTextarea';
+import { LineChatPicker } from '../../components/LineChatPicker';
 import { ChatRecipientPicker } from '../../components/ChatRecipientPicker';
 import { SelectDropdown } from '../../components/SelectDropdown';
 import { systemApi, scraperApi } from '../../api/electronApi';
@@ -73,6 +74,17 @@ export const VariableField: React.FC<VariableFieldProps> = ({
         error={error}
         emptyHint={t('flow.skill.bot.chatId.noPaired')}
         onBeforeNavigate={onBeforeNavigate}
+      />
+    );
+  }
+
+  if (variable.type === 'lineChat') {
+    return (
+      <LineChatPicker
+        value={variable.value}
+        onChange={onChange}
+        label={label}
+        hint={variable.hint}
       />
     );
   }

@@ -5,6 +5,7 @@ import { sendLog } from '../../helpers';
 import type { SearchMode } from '../../../shared/types';
 import type { SearchProgress } from '../../search';
 import type { FlowExecutorDeps } from '../types';
+import { parseWebUrls } from './urlList';
 
 const MIN_SOURCES = 1;
 const MAX_SOURCES = 8;
@@ -43,11 +44,13 @@ export async function execResearch(
   const providerUrl = (skillConfig.provider ?? '').trim() || deps.getTargetUrl();
   const mode = resolveMode(skillConfig.depth ?? '');
   const maxSources = resolveSources(skillConfig.sources ?? '');
+  const urls = parseWebUrls(skillConfig.urls ?? '');
 
   const scope = maxSources === undefined ? '' : `, sources=${maxSources}`;
-  sendLog(`🔬 [Flow] Research step — "${query}" (depth=${mode}${scope})`);
+  const given = urls.length > 0 ? `, ${urls.length} given url(s)` : '';
+  sendLog(`🔬 [Flow] Research step — "${query}" (depth=${mode}${scope}${given})`);
   try {
-    const outcome = await runWebSearch(query, providerUrl, config.locale, reportStage(deps), mode, maxSources);
+    const outcome = await runWebSearch(query, providerUrl, config.locale, reportStage(deps), mode, maxSources, '', urls);
     sendLog(`🔬 [Flow] Research: ${outcome.sources.length} source(s) → ${outcome.answer.length} chars`);
     return JSON.stringify({
       output: outcome.answer,

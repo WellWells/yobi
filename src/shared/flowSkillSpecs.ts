@@ -1,7 +1,7 @@
 import type { SkillType } from './types';
 
 export type { SkillType };
-import { PROVIDER_URLS } from './types';
+import { PROVIDER_URLS, UPLOAD_CAPABLE_PROVIDER_LABELS } from './types';
 
 export const DEFAULT_SKILL_CONFIG: Record<SkillType, Record<string, string>> = {
   shell: { command: '', shell: '' },
@@ -24,6 +24,7 @@ export const DEFAULT_SKILL_CONFIG: Record<SkillType, Record<string, string>> = {
     exportShowTimestamp: 'false',
     palette: '',
     useMemory: 'false',
+    useUserMemory: 'false',
   },
   clipboard: { action: 'read', text: '' },
   delay: { delayMs: '1000' },
@@ -40,8 +41,9 @@ export const DEFAULT_SKILL_CONFIG: Record<SkillType, Record<string, string>> = {
   comment: { note: '' },
   scraper: { url: '', itemSelector: '', titleSelector: '', linkSelector: '', maxItems: '5' },
   search: { query: '', limit: '10' },
-  research: { query: '', depth: 'standard', sources: '', emitFailFlag: 'false' },
+  research: { query: '', urls: '', depth: 'standard', sources: '', emitFailFlag: 'false' },
   gmap_reviews: { url: '', sort: 'mixed', count: '100' },
+  line_read: { chat: '', limit: '200', query: '', range: 'all', since: '', until: '', sinceLastRun: 'false' },
   loop: { input: '', loopVar: 'item', limitIterations: 'true', maxIterations: '5' },
   end_loop: {},
   if: { left: '', operator: 'is_true', right: '' },
@@ -51,7 +53,7 @@ export const DEFAULT_SKILL_CONFIG: Record<SkillType, Record<string, string>> = {
   continue: {},
   sysinfo: { format: 'text', fields: '' },
   http: { method: 'GET', url: '', headers: '', body: '' },
-  youtube: { url: '' },
+  youtube: { url: '', fallbackProvider: '' },
   youtube_subs: { channels: '', perChannel: '3', skipShorts: 'true' },
   power: { action: '' },
   restart_app: {},
@@ -60,7 +62,7 @@ export const DEFAULT_SKILL_CONFIG: Record<SkillType, Record<string, string>> = {
   file_list: { directory: '' },
   file_delete: { path: '' },
   file_download: { url: '', filename: '', folder: '', maxSizeMb: '100' },
-  email_send: { to: '', subject: '', body: '', fromName: '' },
+  email_send: { to: '', subject: '', body: '', fromName: '', attachments: '' },
   text: { text: '' },
   stock: { symbol: '' },
   forex: { base: 'USD', target: '', amount: '', precision: '4' },
@@ -96,9 +98,24 @@ export interface SkillSpec {
   brief: string;
   summary: string;
   fields: SkillConfigField[];
+  /**
+   * This skill's output is already a finished, user-facing answer, so `/agent` may hand it over
+   * verbatim with the `deliver` action instead of paying a round trip to reword it. Only set it
+   * where that is true: delivering a skill that returns JSON or a handle shows the user plumbing.
+   */
+  deliverable?: boolean;
 }
 
 const PROVIDER_URL_LIST = Object.values(PROVIDER_URLS).join(', ');
+
+/**
+ * Skills whose output is already a finished answer, so `/agent` may hand it to the user
+ * verbatim. Derived from the specs rather than listed again, so a new `deliverable: true`
+ * cannot be honored in one place and forgotten in the other.
+ */
+export function isDeliverableSkill(type: string): boolean {
+  return SKILL_SPECS.some((spec) => spec.type === type && spec.deliverable === true);
+}
 
 export const SKILL_SPECS: SkillSpec[] = [
   {
@@ -111,7 +128,8 @@ export const SKILL_SPECS: SkillSpec[] = [
       { key: 'saveToHistory', desc: '"true"|"false" — also save the answer as a Markdown history file' },
       { key: 'emitFailFlag', desc: '"true"|"false" — on failure set {{<outputKey>.isFailed}}=1 and continue instead of aborting' },
       { key: 'useMemory', desc: '"true"|"false" — load this flow\'s memory into the prompt and let the model append to it via a "new_memory:" line' },
-      { key: 'attachments', desc: 'optional local file paths to upload with the prompt (comma or newline separated) — typically {{file}} from an earlier share/capture/file_write step. Only files produced by this run or living in the app output folder are allowed. Supported by Gemini only; other providers send the prompt as text and log a note' },
+      { key: 'useUserMemory', desc: '"true"|"false" — add what the user asked Yobi to remember about them (read-only); only when the result goes to the user themself' },
+      { key: 'attachments', desc: `optional local file paths to upload with the prompt (comma or newline separated) — typically {{file}} from an earlier share/capture/file_write step. Only files produced by this run or living in the app output folder are allowed. Supported by ${UPLOAD_CAPABLE_PROVIDER_LABELS}; other providers send the prompt as text and log a note` },
       { key: 'exportFormat', desc: '""|"png"|"webp"|"pdf" — when set, render the answer to an image/pdf file' },
       { key: 'exportTitle', desc: 'when exportFormat is set, the heading shown on the exported card; may embed {{variables}} (default "Yobi LLM Export")' },
       { key: 'exportFileName', desc: 'when exportFormat is set, the output file name (blank auto-generates a unique name)' },
@@ -229,9 +247,11 @@ export const SKILL_SPECS: SkillSpec[] = [
   {
     type: 'research',
     brief: "Research a question end-to-end and return a written, cited answer. Use when you want conclusions, not links.",
-    summary: 'Research a QUESTION on the web end-to-end in ONE step and return a written, cited answer: it plans several query angles, reads the top pages, ranks them by relevance and synthesizes the result. Exposes {{<outputKey>}} = the written answer with [n] citation markers, {{<outputKey>.sources}} = a JSON array of the {title, link} pages it read, and {{<outputKey>.count}} = how many. Use this when you want conclusions; use search when you only need a ranked link list to loop over.',
+    summary: 'Research a QUESTION on the web end-to-end in ONE step and return a written, cited answer: it plans several query angles, reads the top pages, ranks them by relevance and synthesizes the result. Give "urls" instead to skip searching and read exactly those pages — that is how you summarize several long articles at once, because it reads each one in full rather than cramming them all into a single prompt. Exposes {{<outputKey>}} = the written answer with [n] citation markers, {{<outputKey>.sources}} = a JSON array of the {title, link} pages it read, and {{<outputKey>.count}} = how many. Use this when you want conclusions; use search when you only need a ranked link list to loop over.',
+    deliverable: true,
     fields: [
       { key: 'query', desc: 'the question to research (a question, not keywords); may embed {{variables}}', required: true },
+      { key: 'urls', desc: 'optional — read exactly these pages instead of searching: a JSON array of URLs, or a comma/newline separated list. Use it when the pages to read are already known (the user pasted links, or an earlier step produced them)' },
       { key: 'depth', desc: '"standard" (default) or "quick" — quick reads 2 sources into a deliberately small prompt: much faster, shallower' },
       { key: 'sources', desc: 'how many pages to read, 1-8; blank = the per-provider default (3 on a web provider, 12 on BYOK)' },
       { key: 'emitFailFlag', desc: '"true"|"false" — when the research fails, set {{<outputKey>}}="" and {{<outputKey>.isFailed}}=1 and continue instead of aborting; essential inside a loop' },
@@ -253,6 +273,7 @@ export const SKILL_SPECS: SkillSpec[] = [
     summary: "Fetch a YouTube video's transcript AND title. Exposes {{<outputKey>}} = transcript (empty if no captions), {{<outputKey>.title}} = video title, {{<outputKey>.image}} = thumbnail URL, and {{<outputKey>.isFailed}} = \"0\" on success / \"1\" on failure (no captions / invalid URL). Follow with an if on {{<outputKey>.isFailed}} to branch on success/failure, then an llm step referencing {{<outputKey>}} and {{<outputKey>.title}} to summarize it.",
     fields: [
       { key: 'url', desc: 'the YouTube video URL (watch / youtu.be / shorts); may embed {{variables}}', required: true },
+      { key: 'fallbackProvider', desc: 'a Gemini API key the user picks in the editor; when the video has no captions, Gemini watches it and transcribes it instead. Leave ""' },
     ],
   },
   {
@@ -463,6 +484,7 @@ export const SKILL_SPECS: SkillSpec[] = [
       { key: 'subject', desc: 'the email subject; may embed {{variables}}', required: true },
       { key: 'body', desc: 'the plain-text email body; may embed {{variables}}' },
       { key: 'fromName', desc: 'optional sender display name (the address is the configured SMTP user)' },
+      { key: 'attachments', desc: 'optional local file paths to attach (comma or newline separated) — typically {{file}} from an earlier share/capture/file_write/file_download step. Only files produced by this run or living in the app output folder are allowed, and URLs are NOT accepted: download one with file_download first, then attach {{file}}. A file that cannot be attached fails the step rather than sending the mail without it' },
     ],
   },
   {
@@ -525,6 +547,20 @@ export const SKILL_SPECS: SkillSpec[] = [
     ],
   },
   {
+    type: 'line_read',
+    brief: 'Read your own LINE messages — one chat, several at once, or a keyword across all of them. Use to summarize or track what a group is saying.',
+    summary: 'Read messages from the LINE desktop app\'s own local store (Windows only, and the user must have switched the LINE connector on in Settings). Nothing is sent to LINE and nothing is marked as read. {{<outputKey>}} = a plain-text transcript, OLDEST first, one line per message ("HH:MM name: text") under a date header; attachments appear as a short placeholder. Pick SEVERAL chats and each one gets its own "## <chat name>" section and its own "limit" — chats are never interleaved; pick one and the transcript has no heading at all. A chat with nothing to show is left out entirely, so "" means every selected chat was empty. Sub-vars {{<outputKey>.count/.dropped/.chatName/.chatCount/.firstAt/.lastAt/.isFirstRun}}. A chat name that matches nothing, or several chats, ABORTS the run with the candidate names rather than reading the wrong chat — so "" always means "no messages", never "something went wrong". The transcript is trimmed to fit the AI provider\'s input limit by dropping the OLDEST messages, with the budget shared evenly between the chats and any unused share passed on; {{<outputKey>.dropped}} says how many were cut. Typical shape: line_read -> stop -> llm -> bot.',
+    fields: [
+      { key: 'chat', desc: 'the chats to read, SEPARATED BY COMMAS: group / open-chat / person names as they appear in LINE, or chat ids. Each one is read separately, up to "limit" messages each, into its own section. Leave BLANK to search every chat at once as a single combined list — which is what you want together with "query"' },
+      { key: 'limit', desc: 'most messages to read PER selected chat (default "200"); with "chat" left blank it is the total for the whole-account search instead' },
+      { key: 'query', desc: 'optional keyword; keeps only messages containing it. Matches the message text and attachment details such as a filename or a link title' },
+      { key: 'range', desc: '"all" (default) | "today" | "yesterday" | "last7d" | "last30d" | "custom" — keep only messages inside that window, counted in whole days on this computer\'s own clock ("last7d" includes today). Prefer these over "custom" in a scheduled flow: a fixed pair of dates would freeze the flow on the day it was written' },
+      { key: 'since', desc: 'only with range="custom" — the first day to include, "YYYY-MM-DD", inclusive. Leave blank for no lower bound. Anything that is not a real date ABORTS the run rather than quietly reading all of history' },
+      { key: 'until', desc: 'only with range="custom" — the last day to include, "YYYY-MM-DD", inclusive. Leave blank for no upper bound' },
+      { key: 'sinceLastRun', desc: '"true"|"false" — remember where this step stopped and return ONLY what arrived since, per chat. This is what makes a scheduled summary cover just the new messages instead of repeating yesterday\'s. Nothing new gives {{<outputKey>}}="" so a following stop step halts the flow; the first run brings back the latest "limit" messages. Combines with "range": a message must satisfy both. State is per step (deleting or replacing the step resets it)' },
+    ],
+  },
+  {
     type: 'on_change',
     brief: "Pass a value through only when it CHANGED since last run. Use to turn a repeating check into a one-shot alert.",
     summary: "Edge trigger: remember what this step saw last run and only let the value through when it CHANGED. Passing the same value again yields \"\", so a following stop step halts the flow. This is what turns a repeating check into a one-shot alert — a threshold flow that runs hourly would otherwise re-notify every hour the condition stays true. Typical shape: a js step returns a marker like \"hit\" or \"\" -> on_change -> stop -> bot. Falling back below the threshold stores \"\" and re-arms it, so the next crossing alerts again. State is remembered per step (deleting or replacing the step resets it).",
@@ -556,6 +592,7 @@ export const SKILL_OUTPUT: Record<SkillType, string> = {
   research: '{{<outputKey>}} = the written, cited answer (prose with [n] markers — NOT a list, do not loop over it); {{<outputKey>.sources}} = a JSON array of the {title, link} pages that were read (loop over THIS to walk the sources, using {{item.title}} / {{item.link}}); {{<outputKey>.count}} = how many were read. With emitFailFlag="true", a failure sets {{<outputKey>}}="" and {{<outputKey>.isFailed}} = "0"/"1" instead of aborting the flow.',
   search: '{{<outputKey>}} = a JSON array of {title, link, snippet} ranked by relevance ("[]" when nothing matched OR the search failed — failures are logged and never abort the flow; follow with a stop step to halt on an empty list); loop over it and use {{item.title}} / {{item.link}} / {{item.snippet}} (snippet = the result-page summary, may be "").',
   gmap_reviews: '{{<outputKey>}} = a JSON array of {author, rating, date, text, reply} sorted newest-first ("[]" when the place has no reviews OR the fetch failed — failures are logged and never abort the flow); {{<outputKey>.place}} = the place name; {{<outputKey>.rating}} = the place\'s overall Google star rating (e.g. "4.2"), {{<outputKey>.total}} = its total review count (e.g. "2953"), {{<outputKey>.distribution}} = the star breakdown "5★=… 4★=… … 1★=…", {{<outputKey>.positive}} = the positive share as a whole percent (4-5★ over total, e.g. "91"), {{<outputKey>.verdict}} = a Steam-style overall verdict label computed deterministically from the rating + count (e.g. "Very Positive" / "極度好評", localized), {{<outputKey>.tier}} = its tier number "0"–"9" (9 best, 0 = not enough reviews). These are read from the rendered place page (verdict derived from them) and are "" if it could not be read. Loop over the array with {{item.author}} / {{item.rating}} / {{item.date}} / {{item.text}} / {{item.reply}}, or interpolate the whole thing plus {{<outputKey>.rating}}/.total/.distribution into an llm prompt.',
+  line_read: '{{<outputKey>}} = the transcript text, one "## <chat name>" section per chat when several were picked and no heading at all when one was ("" when nothing matched, or when sinceLastRun found no new messages in ANY of them — follow with a stop step to halt the flow); {{<outputKey>.count}} = how many messages the transcript holds in total, {{<outputKey>.dropped}} = how many were cut to fit the provider input limit (oldest first, "0" when nothing was cut), {{<outputKey>.chatName}} = the resolved chat name, or the names that actually had something to show, comma-separated ("" in a whole-account search), {{<outputKey>.chatCount}} = how many chats contributed, {{<outputKey>.firstAt}} / {{<outputKey>.lastAt}} = the timestamps the transcript spans, {{<outputKey>.isFirstRun}} = "1" when sinceLastRun had no memory yet. There is no failure flag: an unreadable chat or an impossible date range aborts the run instead, so an empty output unambiguously means there were no messages.',
   loop: 'Inside the block each iteration sets {{<loopVar>}} (the string item, or the item JSON for an object item) and {{<loopVar>.<field>}} for EVERY field of an object item (e.g. {{item.title}} / {{item.link}}); inside the block the loop step\'s own {{<outputKey>}}/{{<outputKey>.<field>}} are re-bound to the current item as well.',
   end_loop: '',
   if: '',

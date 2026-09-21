@@ -19,11 +19,13 @@ import type { Config } from '../config';
 import { sendLog, normalizeAiUrl, applyLaunchAtStartup, relaunchApp } from '../helpers';
 import { getLogDir } from '../logFile';
 import { getMetricsSnapshot, resetMetrics } from '../metrics';
+import { getFlowMetricsSnapshot, resetFlowMetrics } from '../flowMetrics';
 import { getConversationTokenStats } from '../conversationTokenStats';
 import { loadLanguageData, setLangCache, setEnCache } from '../i18n';
 import { requestFactoryReset } from '../factoryReset';
 import { getSecretHealth, isSecretEncryptionAvailable } from '../secretHealth';
 import { clearAuthRecord } from '../mcp/mcpTokenStore';
+import { getMcpRegistry } from '../mcp';
 import { setDataKey } from '../dataKeyStore';
 import { flushPendingTempChatResult, isTempChatMode, setTempChatMode } from '../tempChat';
 import { getWorkerWin } from '../windows';
@@ -58,6 +60,10 @@ export function applyImportedConfigLiveEffects(importedConfig: Config, ctx: IpcC
   void loadLanguageData('en-US').then((data) => {
     if (data) setEnCache(data);
   });
+
+  // The registry builds its runtime table once, so an imported server list is invisible to it
+  // until this runs — the view would keep listing the servers from before the import.
+  getMcpRegistry()?.syncWithConfig();
 
   void ctx.telegramRuntime.syncWithConfig();
   void ctx.lineRuntime.syncWithConfig();
@@ -100,11 +106,20 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
     if (!isRegisterableAccelerator(newHotkey)) return 'taken';
     if (wouldCollide(newHotkey, config.hotkey, config.quickExport.hotkey)) return 'conflict';
 
-    saveConfig({ hotkey: newHotkey });
+    // Bind BEFORE persisting. registerHotkey releases the current accelerator to try the new
+    // one, so a combo the OS refuses leaves the app with no hotkey at all — and writing it
+    // first meant that dead combo survived every restart.
+    const previous = config.hotkey;
     config.hotkey = newHotkey;
-    const ok = ctx.bindHotkey();
+    if (!ctx.bindHotkey()) {
+      config.hotkey = previous;
+      ctx.bindHotkey();
+      sendLog(`⌨️  ${newHotkey} was refused by the system — keeping ${previous}`);
+      return 'taken';
+    }
+    saveConfig({ hotkey: newHotkey });
     sendLog(`⌨️  Hotkey updated to: ${newHotkey}`);
-    return ok ? 'ok' : 'taken';
+    return 'ok';
   });
 
   ipcMain.handle(IPC.SET_HOTKEY_PAUSED, (_event, paused: boolean) => {
@@ -150,12 +165,10 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
   ipcMain.handle(IPC.UPDATE_HIDDEN_SOURCES, (_event, raw: unknown) => {
     const next = normalizeHiddenSources(raw);
     config.hiddenProviders = next.providers;
-    config.hiddenDuckaiModelIds = next.duckaiModelIds;
     config.hiddenByokIds = next.byokIds;
     config.hiddenByokGroupIds = next.byokGroupIds;
     saveConfig({
       hiddenProviders: config.hiddenProviders,
-      hiddenDuckaiModelIds: config.hiddenDuckaiModelIds,
       hiddenByokIds: config.hiddenByokIds,
       hiddenByokGroupIds: config.hiddenByokGroupIds,
     });
@@ -280,17 +293,32 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
     const next = normalizeQuickExport(settings);
     if (wouldCollide(next.hotkey, config.quickExport.hotkey, config.hotkey)) return 'conflict';
 
-    const previous = quickExportAccelerator(config.quickExport);
+    const previousHotkey = config.quickExport.hotkey;
+    const previousAccelerator = quickExportAccelerator(config.quickExport);
     config.quickExport = next;
+    if (quickExportAccelerator(next) === previousAccelerator) {
+      saveConfig({ quickExport: config.quickExport });
+      return 'ok';
+    }
+    if (!ctx.bindQuickExportHotkey()) {
+      // Only the combo goes back — everything else the user just changed still applies.
+      config.quickExport = { ...next, hotkey: previousHotkey };
+      ctx.bindQuickExportHotkey();
+      saveConfig({ quickExport: config.quickExport });
+      sendLog(`⌨️  ${next.hotkey} was refused by the system — keeping ${previousHotkey}`);
+      return 'taken';
+    }
     saveConfig({ quickExport: config.quickExport });
-    if (quickExportAccelerator(config.quickExport) === previous) return 'ok';
-    return ctx.bindQuickExportHotkey() ? 'ok' : 'taken';
+    return 'ok';
   });
 
   ipcMain.handle(IPC.METRICS_GET, () => getMetricsSnapshot());
+  ipcMain.handle(IPC.FLOW_METRICS_GET, () => getFlowMetricsSnapshot());
   ipcMain.handle(IPC.METRICS_CONVERSATION_TOKENS, () => getConversationTokenStats());
+  // One button, one mental model: "clear statistics" leaves nothing behind in either store.
   ipcMain.handle(IPC.METRICS_RESET, () => {
     sendLog('📊 Usage statistics cleared');
+    resetFlowMetrics();
     return resetMetrics();
   });
   ipcMain.handle(IPC.GET_METRICS_ENABLED, () => config.metricsEnabled);

@@ -1,9 +1,12 @@
 import { useMemo } from 'react';
 import { useFlowStore } from '../store/useFlowStore';
+import { MCP_COMMAND_ID_PREFIX } from '../../../shared/mcpCommand';
 import {
   BOT_COMMAND_RE,
   BUILTIN_AGENT_FLOW_ID,
   BUILTIN_CHAT_FLOW_ID,
+  BUILTIN_MODEL_COMMAND,
+  BUILTIN_MODEL_FLOW_ID,
   BUILTIN_NEW_FLOW_ID,
   BUILTIN_QUICKSEARCH_FLOW_ID,
   BUILTIN_SEARCH_FLOW_ID,
@@ -15,11 +18,15 @@ export interface ChatCommand {
   description: string;
   aliases?: string[];
   action?: true;
+  /** Connector endpoint, for MCP commands only — the menu resolves it to that brand's mark. */
+  connectorUrl?: string;
 }
 
-export type CommandGroup = 'action' | 'builtin' | 'flow';
+export type CommandGroup = 'action' | 'builtin' | 'mcp' | 'flow';
 
-const ACTION_FLOW_IDS = new Set<string>([BUILTIN_NEW_FLOW_ID]);
+// `/model` acts on the app rather than asking anything, so it sits with `/new` even though it
+// takes an argument where `/new` runs at once.
+const ACTION_FLOW_IDS = new Set<string>([BUILTIN_NEW_FLOW_ID, BUILTIN_MODEL_FLOW_ID]);
 const BUILTIN_FLOW_IDS = new Set<string>([
   BUILTIN_CHAT_FLOW_ID,
   BUILTIN_AGENT_FLOW_ID,
@@ -27,11 +34,14 @@ const BUILTIN_FLOW_IDS = new Set<string>([
   BUILTIN_QUICKSEARCH_FLOW_ID,
 ]);
 
-const GROUP_ORDER: CommandGroup[] = ['action', 'builtin', 'flow'];
+const GROUP_ORDER: CommandGroup[] = ['action', 'builtin', 'mcp', 'flow'];
 
 export function commandGroup(command: ChatCommand): CommandGroup {
   if (ACTION_FLOW_IDS.has(command.flowId)) return 'action';
   if (BUILTIN_FLOW_IDS.has(command.flowId)) return 'builtin';
+  // A prefix test, not a Set: connector ids are unbounded. Still never a plain-object lookup,
+  // so an id like 'toString' cannot pass itself off as a group.
+  if (command.flowId.startsWith(MCP_COMMAND_ID_PREFIX)) return 'mcp';
   return 'flow';
 }
 
@@ -63,6 +73,17 @@ export function parseSlashCommand(text: string): { command: string; args: string
 export function slashMenuQuery(text: string): string | null {
   const match = /^\/([a-zA-Z0-9_]*)$/.exec(text);
   return match ? match[1].toLowerCase() : null;
+}
+
+const MODEL_MENU_RE = new RegExp(`^/${BUILTIN_MODEL_COMMAND}[ \\t\\u3000]+(.*)$`, 'i');
+
+/**
+ * What `/model ` has been followed by so far, or `null` when the box does not read as one. The
+ * space is what opens the list: `/model` alone is still being typed as a command.
+ */
+export function modelMenuQuery(text: string): string | null {
+  const match = MODEL_MENU_RE.exec(text);
+  return match ? match[1] : null;
 }
 
 export function useChatCommands(): ChatCommand[] {

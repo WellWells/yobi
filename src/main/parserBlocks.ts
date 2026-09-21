@@ -61,9 +61,11 @@ export function parseRssFeed(rawXml: string): RssFeedItem[] {
       const link = href || text;
       if (!link || !/^https?:\/\//i.test(link)) return;
       const title = $xml(el).find('title').first().text().trim() || undefined;
+      // <published> first: YouTube re-touches <updated> on uploads months old, which made
+      // them sort first and pass the freshness check as if they had just been posted.
       const rawDate =
-        $xml(el).find('updated').first().text().trim() ||
-        $xml(el).find('published').first().text().trim();
+        $xml(el).find('published').first().text().trim() ||
+        $xml(el).find('updated').first().text().trim();
       const pubDate = toIso(rawDate);
       items.push({ link, title, pubDate });
     });

@@ -261,6 +261,15 @@ textarea:focus-visible {
 
 .md-content p { margin: 0.75em 0; }
 
+/* KaTeX sets a display formula `white-space: nowrap` and gives it no overflow of its own,
+   so one wider than the chat column would drag the whole answer sideways. Scroll the
+   formula instead; the vertical padding keeps the scrollport off a tall fraction's edge. */
+.md-content .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
+}
+
 .md-content code {
   background: var(--bg-tertiary);
   color: var(--accent);

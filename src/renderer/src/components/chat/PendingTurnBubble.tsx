@@ -6,6 +6,8 @@ import { useAgentRunStore, type AgentTraceTurn } from '../../store/useAgentRunSt
 import { queueProgressForRun, queueWaitAhead } from '../../utils/queueProgress';
 import { UserBubble } from './UserBubble';
 import { AgentTraceRows } from '../AgentTraceRows';
+import { FlowBuildProgressView } from '../FlowBuildProgress';
+import { useFlowBuildStore } from '../../store/useFlowBuildStore';
 
 interface PendingTurnBubbleProps {
   turn: PendingTurn;
@@ -23,14 +25,22 @@ function PendingTurnBubbleInner({ turn, t }: PendingTurnBubbleProps) {
   const trace = useAgentRunStore(useShallow((state) => (runId ? state.traces[runId] : undefined)));
   const plan = useAgentRunStore(useShallow((state) => (runId ? state.plans[runId] : undefined)));
   const synthesizing = useAgentRunStore((state) => (runId ? Boolean(state.synthesizing[runId]) : false));
+  // A flow build inside this run draws its own five phases; the run id is the build id.
+  const flowBuild = useFlowBuildStore(useShallow((state) => (runId ? state.builds[runId] : undefined)));
 
   const steps = useMemo(() => visibleTraceSteps(trace), [trace]);
+  // The run is parked on the user or re-reading what it just did — neither should read as "thinking".
+  const latestStage = trace && trace.length > 0 ? trace[trace.length - 1].stage?.label : undefined;
 
   const header = waitAhead >= 0
     ? t('agent.queue.waiting').replace('{{count}}', String(waitAhead))
     : synthesizing
       ? t('agent.stage.answering')
-      : t('chat.thinking');
+      : latestStage === 'confirming'
+        ? t('agent.pending.confirming')
+        : latestStage === 'verifying'
+          ? t('agent.pending.verifying')
+          : t('chat.thinking');
 
   return (
     <Stack gap={20}>
@@ -48,6 +58,11 @@ function PendingTurnBubbleInner({ turn, t }: PendingTurnBubbleProps) {
                 {`${plan.done.includes(index + 1) ? '✓' : '○'} ${index + 1}. ${step}`}
               </Text>
             ))}
+          </Box>
+        )}
+        {flowBuild && (
+          <Box pl={24}>
+            <FlowBuildProgressView state={flowBuild} />
           </Box>
         )}
         {steps.length > 0 ? (

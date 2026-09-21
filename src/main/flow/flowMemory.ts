@@ -1,5 +1,6 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { Mutex } from './lanes';
 import { app } from 'electron';
 
 const MEMORY_TITLE = '# Flow Memory';
@@ -54,12 +55,24 @@ export async function readMemory(flowId: string): Promise<string[]> {
   }
 }
 
+/**
+ * Serialized because the body is a read-modify-write across an await.
+ *
+ * The llm step appends AFTER releasing `llmLane`, so once more than one flow can run at a
+ * time two appends to the same flow's memory can interleave and silently drop one of them.
+ * Kept private to this module for the same reason as the YouTube lane: the hazard is not
+ * visible from the call site.
+ */
+const memoryWrites = new Mutex();
+
 export async function appendMemory(flowId: string, entry: string): Promise<void> {
   const trimmed = entry.trim();
   if (!trimmed) return;
-  const entries = await readMemory(flowId);
-  entries.push(trimmed);
-  const file = memoryFilePath(flowId);
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  await fs.writeFile(file, renderMemory(entries), 'utf-8');
+  await memoryWrites.runExclusive(async () => {
+    const entries = await readMemory(flowId);
+    entries.push(trimmed);
+    const file = memoryFilePath(flowId);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, renderMemory(entries), 'utf-8');
+  });
 }

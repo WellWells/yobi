@@ -31,6 +31,10 @@ let mainWin: BrowserWindow | null = null;
 let workerWin: BrowserWindow | null = null;
 let workerVisibleBounds: Electron.Rectangle | null = null;
 let workerWindowMode: WorkerWindowMode | null = null;
+// Whether the worker is on screen for the user. NOT the same question as `isVisible()`:
+// background workers are mapped and then parked (opacity 0, offscreen) because a window that
+// has never been shown stalls Chromium's rendering, so `isVisible()` is true for those too.
+let workerRevealed = false;
 let isAppQuitting = false;
 
 type MainWinCloseHandler = (event: Electron.Event) => void;
@@ -129,7 +133,9 @@ export function createMainWindow(): void {
   mainWin.on('closed', () => { mainWin = null; });
 }
 
-function destroyWorkerWindowForModeSwitch(): void {
+// Exported for the test suite, which needs a worker with no history between cases.
+export function destroyWorkerWindowForModeSwitch(): void {
+  workerRevealed = false;
   if (!workerWin || workerWin.isDestroyed()) return;
   const previousWorkerWin = workerWin;
   previousWorkerWin.removeAllListeners('close');
@@ -221,6 +227,7 @@ export function createWorkerWindow(initialUrl: string, mode: WorkerWindowMode = 
   workerWin.on('closed', () => {
     workerWin = null;
     workerWindowMode = null;
+    workerRevealed = false;
   });
 }
 
@@ -241,10 +248,12 @@ export function revealWorkerWindow(): void {
   workerWin.focus();
   if (!app.isPackaged) workerWin.webContents.openDevTools({ mode: 'detach' });
   rememberWorkerVisibleBounds();
+  workerRevealed = true;
   setWorkerAttention('idle');
 }
 
 export function hideWorkerWindow(): void {
+  workerRevealed = false;
   if (!workerWin || workerWin.isDestroyed()) return;
   rememberWorkerVisibleBounds();
   muteWindow(workerWin);
@@ -263,10 +272,19 @@ function rememberWorkerVisibleBounds(): void {
   workerVisibleBounds = workerWin.getBounds();
 }
 
+/**
+ * Whether a mode change may rebuild the worker.
+ *
+ * Going back to automation must happen as soon as the user is done with the window they were
+ * shown, because the interactive window deliberately carries no worker preload — every
+ * `applyWorkerStealth` patch is missing from it. This used to ask `isVisible()`, which a
+ * parked background window answers `true` to for its whole life, so the answer after any
+ * sign-in was permanently "keep the interactive one".
+ */
 function shouldSwitchWorkerMode(desired: WorkerWindowMode): boolean {
   if (desired === 'interactive') return true;
   if (!workerWin || workerWin.isDestroyed()) return true;
-  return !workerWin.isVisible();
+  return !workerRevealed;
 }
 
 export async function ensureWorkerWindow(
