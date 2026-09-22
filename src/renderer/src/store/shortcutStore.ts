@@ -54,10 +54,6 @@ export function resolvedCombo(id: ShortcutId): string {
   return resolvedCombos(id)[0] ?? '';
 }
 
-export function isShortcutOff(id: ShortcutId): boolean {
-  return useShortcutStore.getState().overrides[id]?.off === true;
-}
-
 export function matchesShortcut(event: KeyboardEventLike, id: ShortcutId): boolean {
   return resolvedCombos(id).some((combo) => matchesCombo(event, combo, [], { isMac }));
 }

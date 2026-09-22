@@ -161,8 +161,6 @@ const DefinitionRow: React.FC<DefinitionRowProps> = ({
 
       <Divider my={2} />
 
-      {
-}
       <VariableField variable={variable} onChange={(value) => onPatch({ value })} t={t} />
 
       <Group justify="space-between" align="center">
@@ -267,8 +265,6 @@ export const FlowVariablesPanel: React.FC<FlowVariablesPanelProps> = ({ flow, t,
           <Text fz="xs" c="dimmed" style={{ lineHeight: 1.6 }}>{t('flow.variables.empty')}</Text>
         ) : (
           <>
-            {
-}
             <Text fz="xs" c="dimmed" style={{ lineHeight: 1.6 }}>
               {t('flow.variables.howto')}
             </Text>

@@ -11,10 +11,7 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "esModuleInterop": true,
-    "outDir": "out",
-    "paths": {
-      "@shared/*": ["./src/shared/*"]
-    }
+    "outDir": "out"
   },
   "include": [
     "vite.main.config.*",

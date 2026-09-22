@@ -22,6 +22,23 @@ const baseTheme: MantineThemeOverride = {
   luminanceThreshold: 0.3,
   fontFamily: 'var(--font-sans)',
   fontFamilyMonospace: 'var(--font-mono)',
+  // Mantine ships a `fontSizes`/`radius` scale under the SAME key names as the CSS-var
+  // scale in globals.css but with different values, so `fz="sm"` and `fz="var(--font-size-sm)"`
+  // rendered 14px and 12px — which of the two a component got came down to the spelling its
+  // author happened to reach for. These point the colliding keys at the CSS-var scale using
+  // the pixel values Mantine already renders today, so the change moves nothing on screen and
+  // only removes the ambiguity.
+  //
+  // `md` is deliberately left out: --mantine-font-size-md is the document base size and the
+  // fallback for every <Text> without an explicit size, so remapping it shrinks the whole app
+  // (see the note above the font-size scale in globals.css).
+  fontSizes: {
+    xs: 'var(--font-size-sm)',
+    sm: 'var(--font-size-md)',
+  },
+  radius: {
+    lg: 'var(--radius-lg)',
+  },
   defaultRadius: 'md',
   cursorType: 'pointer',
   respectReducedMotion: true,

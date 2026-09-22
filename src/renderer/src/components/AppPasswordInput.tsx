@@ -1,6 +1,6 @@
 import React from 'react';
 import { PasswordInput, type PasswordInputProps } from '@mantine/core';
-import { buildInputStyles, type AppInputTone } from './inputStyles';
+import { buildInputStyles, mergeInputStyles, type AppInputTone } from './inputStyles';
 
 interface AppPasswordInputProps extends PasswordInputProps {
   tone?: AppInputTone;
@@ -10,13 +10,14 @@ interface AppPasswordInputProps extends PasswordInputProps {
 export const AppPasswordInput = React.forwardRef<HTMLInputElement, AppPasswordInputProps>(({
   tone = 'default',
   mono = false,
+  styles,
   ...props
 }, ref) => (
   <PasswordInput
     ref={ref}
     size="sm"
     variant="default"
-    styles={buildInputStyles({ tone, mono })}
+    styles={mergeInputStyles(buildInputStyles({ tone, mono }), styles)}
     {...props}
   />
 ));

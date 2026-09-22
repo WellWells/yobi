@@ -122,19 +122,6 @@ export async function fetchAndParse(url: string, options?: FetchAndParseOptions)
   return parseHtml(html, url);
 }
 
-export async function fetchAndParseMany(urls: string[], options?: FetchAndParseOptions): Promise<UrlParseResult[]> {
-  const results: UrlParseResult[] = [];
-  for (const url of urls) {
-    try {
-      results.push(await fetchAndParse(url, options));
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[urlParser] Skipping ${url}: ${msg}`);
-    }
-  }
-  return results;
-}
-
 export function buildUrlAnalysisPrompt(
   result: UrlParseResult,
   promptTemplate: string,

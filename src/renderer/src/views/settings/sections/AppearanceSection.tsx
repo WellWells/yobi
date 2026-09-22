@@ -78,8 +78,6 @@ export const AppearanceSection: React.FC<Props> = ({ t, showSection, sectionGap 
     <Box display={showSection(TAG_SETS.theme, 'appearance') || showSection(TAG_SETS.reading, 'appearance') ? 'block' : 'none'}>
       <SectionCard style={{ marginBottom: sectionGap, display: showSection(TAG_SETS.theme, 'appearance') ? 'block' : 'none' }}>
         <SectionTitle icon={<Palette size={15} />} label={t('settings.theme')} />
-        {
-}
         <Group
           gap={10}
           wrap="wrap"

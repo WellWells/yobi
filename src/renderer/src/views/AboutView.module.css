@@ -28,6 +28,24 @@
   to   { transform: rotate(360deg); }
 }
 
+/* Mantine's `respectReducedMotion` covers its own components but cannot reach a keyframe
+   declared in a CSS module, so these kept running with Windows animation effects off —
+   two of them forever. Each is redefined as its own resting frame rather than switched off
+   on the consumer: glowPulse rests at opacity 0.2 / scale(0.8), and `animation: none` would
+   leave a full-opacity, full-size blurred blob behind the icon.
+   `spin` is deliberately left alone — it is the update check's only progress signal. */
+@media (prefers-reduced-motion: reduce) {
+  @keyframes fadeInUp {
+    from, to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes floatIcon {
+    0%, 100% { transform: translateY(0px); }
+  }
+  @keyframes glowPulse {
+    0%, 100% { opacity: 0.2; transform: scale(0.8); }
+  }
+}
+
 /* ── Hero ──────────────────────────────────────────────────────────────── */
 
 .hero {
@@ -109,18 +127,14 @@
   animation: none;
 }
 
-/* ── Tech stack row hover ──────────────────────────────────────────────── */
+/* ── Tech stack row ────────────────────────────────────────────────────── */
 
+/* No :hover — this is a static list of dependencies, not a menu. It used to slide 4px and
+   light up under the pointer, which is the app's vocabulary for "you can click this". */
 .techRow {
   border-radius: 6px;
-  transition: background 0.15s ease, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   padding: 2px 8px;
   margin: 0 -8px;
-}
-
-.techRow:hover {
-  background: var(--mantine-color-default-hover);
-  transform: translateX(4px);
 }
 
 /* ── Update check button spinning ──────────────────────────────────────── */

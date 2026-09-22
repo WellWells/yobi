@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Box, Flex, Stack } from '@mantine/core';
 
 import { Search } from 'lucide-react';
@@ -79,6 +79,17 @@ export const SettingsView: React.FC = () => {
   const mcp = useMcpServers();
   const userMemory = useUserMemory();
   const nav = useSettingsNav();
+
+  // Back to the top when the category changes. Nine of the eleven categories are taller than
+  // the viewport and the view never unmounts, so without this every entry point — the nav
+  // click, the secret-health deep link, the openShortcuts shortcut — lands at whatever offset
+  // the previous category was left at. Keyed on `isSearching`, not the query text, or the
+  // scroller yanks on every keystroke.
+  const contentRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    contentRef.current?.scrollTo({ top: 0 });
+  }, [nav.activeCategory, nav.isSearching]);
+
   // Only the scopes that live in this view light up a nav entry; SMTP and data keys are
   // configured inside flow steps, so their alerts belong there instead.
   const secretScopes = useSecretHealthStore(useShallow((s) => s.failures.map((failure) => failure.scope)));
@@ -180,7 +191,9 @@ export const SettingsView: React.FC = () => {
         bg="var(--mantine-color-default)"
         style={{ borderRight: '1px solid var(--mantine-color-default-border)', overflow: 'hidden', flexShrink: 0 }}
       >
-        <PanelToolbar>
+        {/* No bottom border: the pane beside this rail has no top strip, so the rule would
+            stop dead at the divider instead of crossing the window. */}
+        <PanelToolbar withBottomBorder={false}>
           <ToolbarSearchInput
             ref={nav.searchInputRef}
             value={nav.searchQuery}
@@ -189,8 +202,6 @@ export const SettingsView: React.FC = () => {
             clearLabel={t('settings.search.clear')}
           />
         </PanelToolbar>
-        {
-}
         <Box px="8px" py="8px" flex={1} style={{ overflowY: 'auto', minHeight: 0 }}>
           <Stack gap={4}>
             {nav.navCategoryDefs.map((cat) => (
@@ -208,7 +219,7 @@ export const SettingsView: React.FC = () => {
         </Box>
       </Stack>
 
-      <Box flex={1} p="24px 20px 40px" style={{ overflowY: 'auto' }}>
+      <Box flex={1} ref={contentRef} p="24px 20px 40px" style={{ overflowY: 'auto' }}>
         <Box maw={560} mx="auto">
           {categoryBlock('general', (
             <>

@@ -50,9 +50,11 @@ export const TelegramPairingPanel: React.FC<Props> = ({
             </Tooltip>
             <Menu position="bottom-end" withinPortal>
               <Menu.Target>
-                <ActionIcon variant="subtle" size={26} aria-label={t('settings.telegram.pairing.more')}>
-                  <MoreVertical size={13} />
-                </ActionIcon>
+                <Tooltip label={t('common.moreActions')} position="bottom">
+                  <ActionIcon variant="subtle" size={26} aria-label={t('common.moreActions')}>
+                    <MoreVertical size={13} />
+                  </ActionIcon>
+                </Tooltip>
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Item leftSection={<Copy size={13} />} onClick={() => onCopyCode(item.code)}>

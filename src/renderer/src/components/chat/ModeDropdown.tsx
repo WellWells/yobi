@@ -4,15 +4,8 @@ import { Check, Globe, MessageSquare, Waypoints, X } from 'lucide-react';
 import type { ChatMode } from '../../config/chatModes';
 import { renderConnectorIcon } from '../../config/connectorIcons';
 import { findCatalogEntry } from '../../../../shared/mcpCatalog';
+import type { KeywordCandidate } from '../../../../shared/connectorKeywords';
 import { ComposerPill } from './ComposerPill';
-
-export interface ConnectorChoice {
-  id: string;
-  name: string;
-  url: string;
-  /** Keyword auto-attach only fires for a server a run could actually reach. */
-  connected: boolean;
-}
 
 interface ModeDropdownProps {
   /** Derived, never picked: what the current capabilities add up to. Shown, not chosen. */
@@ -20,7 +13,7 @@ interface ModeDropdownProps {
   web: boolean;
   onToggleWeb: () => void;
   /** Every connector the user could disclose, already filtered to the agent-enabled ones. */
-  connectors: ConnectorChoice[];
+  connectors: KeywordCandidate[];
   activeConnectorIds: readonly string[];
   onToggleConnector: (id: string) => void;
   t: (key: string) => string;

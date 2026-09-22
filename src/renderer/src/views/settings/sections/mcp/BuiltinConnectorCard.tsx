@@ -37,6 +37,7 @@ export const BuiltinConnectorCard: React.FC<Props> = ({
     <Box
       p={12}
       className={classes.card}
+      data-interactive={interactive || undefined}
       style={{
         border: '1px solid var(--border)',
         borderRadius: 'var(--mantine-radius-md)',

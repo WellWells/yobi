@@ -1,22 +1,24 @@
 import { app, BrowserWindow, nativeImage, nativeTheme, shell } from 'electron';
 import * as path from 'node:path';
 import { existsSync } from 'node:fs';
-import { sendLog, sendWebNotification, getAssetPath, setWorkerAttention } from './helpers';
+import { sendLog, sendToRenderer, sendWebNotification, getAssetPath, setWorkerAttention } from './helpers';
 import { toggleTempChatMode } from './tempChat';
 import { getLangCache, t } from './i18n';
 import { CLEAN_UA } from './userAgent';
 import { applyWorkerUserAgent } from './clientHints';
 import { SILENT_WEB_PREFERENCES, muteWindow, parkWindowOffscreen, unparkWindow } from './silentWindow';
-import { PROVIDER_URLS, isByokTargetUrl } from '../shared/types';
+import { IPC, PROVIDER_URLS, isByokTargetUrl } from '../shared/types';
 import { themeBackground } from '../shared/themes';
 import { config } from './config';
 import { activeCombos, fromElectronInput, matchesCombo, shortcutById } from '../shared/shortcuts';
 import { isHotkeyPaused } from './hotkey';
+import { restoredWindowOptions, shouldStartMaximized, trackWindowBounds } from './windowBounds';
 
 const WORKER_PARTITION = 'persist:gemini';
 type WorkerWindowMode = 'automation' | 'interactive';
 
-function getWindowIcon(): Electron.NativeImage {
+/** Exported so every window Yobi opens wears Yobi's icon, not Electron's default. */
+export function getWindowIcon(): Electron.NativeImage {
   if (process.platform === 'darwin') {
     return nativeImage.createFromPath(getAssetPath('icon-mac.png'));
   }
@@ -56,18 +58,14 @@ export function setAppQuitting(value: boolean): void {
   isAppQuitting = value;
 }
 
-export function isAllWindowsClosed(): boolean {
-  return (mainWin === null || mainWin.isDestroyed()) &&
-    (workerWin === null || workerWin.isDestroyed());
-}
-
 export function createMainWindow(): void {
   const isDev = !app.isPackaged;
   const preloadPath = path.join(__dirname, '../preload/index.js');
 
   mainWin = new BrowserWindow({
-    width: 1_100,
-    height: 700,
+    // Size and position come from the last session; without x/y Electron centres the window,
+    // which is what a first run (or an unplugged monitor) should get.
+    ...restoredWindowOptions(),
     minWidth: 700,
     minHeight: 500,
     title: 'Yobi',
@@ -93,6 +91,17 @@ export function createMainWindow(): void {
   } else {
     mainWin.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
+
+  if (shouldStartMaximized()) mainWin.maximize();
+  trackWindowBounds(mainWin);
+
+  // The title bar is ours, so the maximize button has to be told when the state changes —
+  // otherwise it keeps the "maximize" glyph and tooltip while the window is already maximized.
+  // The renderer also asks once on mount, for the restored-maximized case that happens before
+  // it has loaded.
+  const emitMaximized = (): void => sendToRenderer(IPC.WINDOW_MAXIMIZED_CHANGED, mainWin?.isMaximized() === true);
+  mainWin.on('maximize', emitMaximized);
+  mainWin.on('unmaximize', emitMaximized);
 
   mainWin.setMenuBarVisibility(false);
 

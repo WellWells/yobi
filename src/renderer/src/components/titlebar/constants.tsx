@@ -25,9 +25,15 @@ export function doWindowAction(action: 'minimize' | 'maximize' | 'close'): void 
   window.electronAPI.closeWindow();
 }
 
-export function getWindowActionTitle(t: (k: string) => string, action: 'minimize' | 'maximize' | 'close'): string {
+export function getWindowActionTitle(
+  t: (k: string) => string,
+  action: 'minimize' | 'maximize' | 'close',
+  maximized = false,
+): string {
   if (action === 'minimize') return t('window.minimize');
-  if (action === 'maximize') return t('window.maximize');
+  // The same button restores once the window is maximized; saying "maximize" there described
+  // the opposite of what it does.
+  if (action === 'maximize') return t(maximized ? 'window.restore' : 'window.maximize');
   return t('window.close');
 }
 
@@ -51,8 +57,21 @@ export const winButtonDefs: Array<{ action: WinBtnAction }> = [
   { action: 'close' },
 ];
 
+/** Windows 11 draws two offset squares once the window is maximized. */
+const windowsRestoreIcon = (
+  <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+    <rect x="1.25" y="2.75" width="6" height="6" fill="none" stroke="currentColor" strokeWidth="1.2" shapeRendering="crispEdges" />
+    <path d="M3.25 2.75V1.25h5.5v5.5H7.25" fill="none" stroke="currentColor" strokeWidth="1.2" shapeRendering="crispEdges" />
+  </svg>
+);
+
 export const winButtonIcons: Record<WinBtnAction, React.ReactNode> = {
   minimize: <Minus size={14} strokeWidth={2.1} />,
   maximize: windowsMaximizeIcon,
   close: <X size={14} strokeWidth={2.1} />,
 };
+
+export function winButtonIcon(action: WinBtnAction, maximized: boolean): React.ReactNode {
+  if (action === 'maximize' && maximized) return windowsRestoreIcon;
+  return winButtonIcons[action];
+}

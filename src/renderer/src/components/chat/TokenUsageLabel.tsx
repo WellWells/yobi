@@ -25,7 +25,6 @@ export const TokenUsageLabel: React.FC<TokenUsageLabelProps> = ({ usage, labelKe
         c="dimmed"
         style={{ cursor: 'help', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}
       >
-        {}
         {`${usage.exact ? '' : '~'}${t(labelKey).replace('{{total}}', formatTokenCount(total))}`}
       </Text>
     </Tooltip>

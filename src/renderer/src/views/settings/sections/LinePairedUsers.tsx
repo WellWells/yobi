@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { ActionIcon, Group, Stack, Text, Tooltip } from '@mantine/core';
 import { Trash2 } from 'lucide-react';
 
+import { WebDialog } from '../../../components/WebDialog';
 import type { LinePairedUser } from '../../../../../shared/types';
 
 interface Props {
@@ -11,6 +12,9 @@ interface Props {
 }
 
 export const LinePairedUsers: React.FC<Props> = ({ pairedUsers, onUnpair, t }) => {
+  // Confirmed, like the other permanent removals: unpairing revokes someone's access to the
+  // bot, and it used to happen on one click of a 26px icon.
+  const [pending, setPending] = useState<LinePairedUser | null>(null);
   if (pairedUsers.length === 0) {
     return <Text fz="var(--font-size-sm)" c="dimmed">{t('settings.line.paired.empty')}</Text>;
   }
@@ -44,7 +48,7 @@ export const LinePairedUsers: React.FC<Props> = ({ pairedUsers, onUnpair, t }) =
             <ActionIcon
               variant="subtle"
               size={26}
-              onClick={() => onUnpair(user.userId)}
+              onClick={() => setPending(user)}
               aria-label={t('settings.line.paired.remove')}
             >
               <Trash2 size={13} />
@@ -52,6 +56,21 @@ export const LinePairedUsers: React.FC<Props> = ({ pairedUsers, onUnpair, t }) =
           </Tooltip>
         </Group>
       ))}
+
+      <WebDialog
+        open={pending !== null}
+        title={t('settings.line.paired.remove.title')}
+        description={pending?.displayName || pending?.userId || ''}
+        confirmText={t('settings.line.paired.remove')}
+        cancelText={t('dialog.cancel')}
+        danger
+        onConfirm={() => {
+          const target = pending;
+          setPending(null);
+          if (target) onUnpair(target.userId);
+        }}
+        onCancel={() => setPending(null)}
+      />
     </Stack>
   );
 };

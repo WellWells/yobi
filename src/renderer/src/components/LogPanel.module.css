@@ -1,38 +1,5 @@
 /* LogPanel.module.css */
 
-.panel {
-  height: 100%;
-  overflow: hidden;
-}
-
-.toolbar {
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--mantine-color-default-border);
-  background: var(--mantine-color-default);
-  flex-shrink: 0;
-}
-
-.toolbarTitle {
-  font-size: var(--font-size-base);
-  font-weight: 700;
-  color: var(--mantine-color-text);
-  letter-spacing: -0.01em;
-}
-
-.entryCount {
-  font-size: var(--font-size-sm);
-  color: var(--mantine-color-dimmed);
-}
-
-.logList {
-  flex: 1;
-  overflow-y: auto;
-  padding: 10px 14px;
-  font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
-  background: var(--mantine-color-body);
-}
-
 .logEntry {
   display: flex;
   align-items: flex-start;
@@ -167,11 +134,4 @@
   overflow: hidden;
   text-overflow: ellipsis;
   user-select: text;
-}
-
-.empty {
-  flex: 1;
-  padding-top: 40px;
-  color: var(--mantine-color-dimmed);
-  opacity: 0.6;
 }

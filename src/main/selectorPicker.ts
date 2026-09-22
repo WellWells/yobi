@@ -1,6 +1,7 @@
 import { BrowserWindow } from 'electron';
 import { CLEAN_UA } from './userAgent';
 import { SILENT_WEB_PREFERENCES, muteWindow } from './silentWindow';
+import { getWindowIcon } from './windows';
 import { URL_PARSER_PARTITION, ensureHttpScheme } from './pageLoader';
 import { executeAutomationWithTimeout } from './providers/automationExecutor';
 import { buildPickerScript, type PickerStrings } from './selectorPickerScript';
@@ -95,6 +96,9 @@ export async function pickSelector(args: ScraperPickRequest): Promise<ScraperPic
     height: 900,
     show: false,
     title: t(strings, 'flow.skill.scraper.pickWindowTitle'),
+    // Same as the sign-in window: Yobi's icon, and no native menu bar on Windows.
+    icon: getWindowIcon(),
+    autoHideMenuBar: true,
     webPreferences: {
       partition: URL_PARSER_PARTITION,
       contextIsolation: true,

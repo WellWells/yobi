@@ -1,6 +1,6 @@
 import React, { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActionIcon, Box, Button, Flex, Group, Stack, Text } from '@mantine/core';
-import { Library, Quote, SearchCheck, X } from 'lucide-react';
+import { Box, Flex, Stack } from '@mantine/core';
+import { Library, Quote, SearchCheck } from 'lucide-react';
 import { Sidebar } from '../components/Sidebar';
 import { MarkdownView } from '../components/MarkdownView';
 import { ExportDialog } from '../components/ExportDialog';
@@ -26,6 +26,7 @@ import {
   type ExportToast,
   type CaptureDirection,
 } from '../hooks/useCaptureExport';
+import { hideAppNotices, showAppNotice } from '../hooks/useUiNotifications';
 import { useExportSettingsStore } from '../store/exportSettingsStore';
 import type { CaptureFormat, CaptureTurn } from '../../../shared/types';
 import { useRewriteTask } from '../hooks/useRewriteTask';
@@ -126,7 +127,6 @@ export const ChatView: React.FC = React.memo(() => {
   const [pendingLoginModel, setPendingLoginModel] = useState<{ provider: LoginRequiredProvider; url: string } | null>(null);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [exportToast, setExportToast] = useState<ExportToast>(null);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const shareMarkdown = useMemo(
     () => buildShareMarkdown(fileContent ?? '', conversationAliases()),
@@ -135,12 +135,30 @@ export const ChatView: React.FC = React.memo(() => {
   const [headerEditing, setHeaderEditing] = useState(false);
   const [headerEditValue, setHeaderEditValue] = useState('');
 
+  /*
+   * Everything this view has to say goes to the app's one notice surface. It used to draw its
+   * own card, pinned bottom-right — directly over the composer's send button, which is exactly
+   * where main.tsx says a notice must never sit — with a hard 4.5s timer that did not pause on
+   * hover and no severity at all, so "copied to clipboard" and "export failed" looked identical.
+   */
+  const setExportToast = useCallback((toast: ExportToast): void => {
+    if (!toast) {
+      hideAppNotices();
+      return;
+    }
+    showAppNotice({
+      message: toast.fileName ? `${toast.message} ${toast.fileName}` : toast.message,
+      level: toast.level,
+      filePath: toast.filePath,
+    });
+  }, []);
+
   const captureExport = useCaptureExport(setExportToast);
   const quickExportZip = useExportSettingsStore((s) => s.quick.zip);
   const { startRewrite } = useRewriteTask(setExportToast);
 
   const handleTurnError = useCallback((message: string): void => {
-    setExportToast({ id: Date.now(), message: message || t('chat.command.error') });
+    setExportToast({ message: message || t('chat.command.error'), level: 'error' });
   }, [t]);
   const { sendTurn } = useConversationTurns(handleTurnError);
 
@@ -215,7 +233,7 @@ export const ChatView: React.FC = React.memo(() => {
   }, [discardAgentRun]);
 
   const handleUnknownCommand = useCallback((command: string): void => {
-    setExportToast({ id: Date.now(), message: t('chat.command.notFound').replace('{{command}}', command) });
+    setExportToast({ message: t('chat.command.notFound').replace('{{command}}', command), level: 'warning' });
   }, [t]);
 
   const {
@@ -339,16 +357,10 @@ export const ChatView: React.FC = React.memo(() => {
     selectModel(next.url);
   }, [activeModelUrl, hidden, hiddenSourcesLoaded, aiUrlLoaded, selectModel]);
 
+  // The notices this window raised describe the conversation that was open; drop them when
+  // the user moves to another one. Mantine owns the timers, so there is no interval to clear.
   useEffect(() => {
-    if (!exportToast) return;
-    const timer = window.setTimeout(() => setExportToast((cur) => (
-      cur?.id === exportToast.id ? null : cur
-    )), 4_500);
-    return () => window.clearTimeout(timer);
-  }, [exportToast]);
-
-  useEffect(() => {
-    setExportToast(null);
+    hideAppNotices();
   }, [selectedFile?.path]);
 
   useEffect(() => {
@@ -396,7 +408,7 @@ export const ChatView: React.FC = React.memo(() => {
     const directConnector = parseMcpCommandFlowId(command.flowId);
     if (command.flowId === BUILTIN_AGENT_FLOW_ID || directConnector) {
       if (!input.trim()) {
-        setExportToast({ id: Date.now(), message: t('agent.error.empty') });
+        setExportToast({ message: t('agent.error.empty'), level: 'warning' });
         return false;
       }
       // `connectorIds` wins when the caller has just disclosed one: React has not flushed the
@@ -435,7 +447,7 @@ export const ChatView: React.FC = React.memo(() => {
   }, [handleAiUrlChange]);
 
   const handleUnknownModel = useCallback((query: string): void => {
-    setExportToast({ id: Date.now(), message: t('chat.model.command.notFound').replace('{{query}}', query) });
+    setExportToast({ message: t('chat.model.command.notFound').replace('{{query}}', query), level: 'warning' });
   }, [t]);
 
   const handleLoginConfirm = useCallback((provider: LoginRequiredProvider): void => {
@@ -558,8 +570,6 @@ export const ChatView: React.FC = React.memo(() => {
 
       <ChatDropZone onFiles={addFiles} overlayLabel={t('attach.drop.hint')}>
       <Stack gap={0} flex={1} pos="relative" bg="var(--mantine-color-body)" style={{ overflow: 'hidden' }}>
-        {
-}
         {!selectedFile && (
           <ChatHeaderRow>
             <Box ml="auto">
@@ -740,51 +750,6 @@ export const ChatView: React.FC = React.memo(() => {
         onCancel={() => captureExport.setCaptureDialogOpen(false)}
       />
 
-      {exportToast && (
-        <Stack
-          gap={8}
-          pos="fixed"
-          right={14}
-          bottom={14}
-          miw={280}
-          maw={400}
-          bg="var(--mantine-color-default)"
-          p={10}
-          style={{
-            zIndex: 120,
-            border: '1px solid var(--mantine-color-default-border)',
-            borderRadius: 'var(--mantine-radius-sm)',
-            boxShadow: 'var(--shadow-md)',
-          }}
-        >
-          <Group justify="space-between" gap={8}>
-            <Text fz="var(--font-size-base)" fw={700} c="var(--mantine-color-text)">
-              {exportToast.fileName ? `${exportToast.message} ${exportToast.fileName}` : exportToast.message}
-            </Text>
-            <ActionIcon variant="transparent" size="sm" c="dimmed" onClick={() => setExportToast(null)}
-            >
-              <X size={14} />
-            </ActionIcon>
-          </Group>
-          {exportToast.filePath && (
-            <Group gap={8}>
-              <Button
-                variant="default"
-                size="compact-xs"
-                onClick={() => void window.electronAPI.showInFolder(exportToast.filePath!)}
-              >
-                {t('capture.toast.openFolder')}
-              </Button>
-              <Button
-                size="compact-xs"
-                onClick={() => void window.electronAPI.openPath(exportToast.filePath!)}
-              >
-                {t('capture.toast.openNow')}
-              </Button>
-            </Group>
-          )}
-        </Stack>
-      )}
 
     </Flex>
   );

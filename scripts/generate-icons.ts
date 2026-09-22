@@ -1,8 +1,6 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const pngToIco = (require('png-to-ico') as { default: (input: string | Buffer | string[]) => Promise<Buffer> }).default;
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const png2icons = require('png2icons') as {
   createICNS: (input: Buffer, scaler: number, numChannels: number) => Buffer | null;
   BICUBIC: number;

@@ -22,8 +22,8 @@ const store = new Store<FlowMetricsSnapshot>({
   clearInvalidConfig: true,
 });
 
-/** Same bargain as `metrics.ts`: half a second of counters is an acceptable loss on a hard kill. */
-const FLUSH_DELAY_MS = 500;
+/** Same bargain as `metrics.ts`: a few seconds of counters is an acceptable loss on a hard kill. */
+const FLUSH_DELAY_MS = 5_000;
 
 let pending: FlowMetricsSnapshot | null = null;
 let flushTimer: ReturnType<typeof setTimeout> | null = null;

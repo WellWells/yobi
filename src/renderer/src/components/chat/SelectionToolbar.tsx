@@ -67,7 +67,6 @@ export const SelectionToolbar: React.FC<SelectionToolbarProps> = ({
       <Group gap={0} wrap="nowrap" align="stretch">
         {actions.map(({ id, label, Icon, run }, index) => (
           <React.Fragment key={id}>
-            {}
             {index > 0 && <Box my={7} w={1} bg="var(--border)" style={{ flexShrink: 0 }} />}
             <Button
               variant="subtle"

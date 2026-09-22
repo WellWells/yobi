@@ -165,7 +165,7 @@ export const AgentConfirmDialog: React.FC = () => {
         )}
 
         {isFlow && dangerous && (
-          <Text fz="var(--font-size-sm)" c="var(--danger)" style={{ lineHeight: 1.6 }}>
+          <Text fz="var(--font-size-sm)" c="var(--error)" style={{ lineHeight: 1.6 }}>
             {t('agent.flow.confirm.warning')
               .replace('{{types}}', current.sensitiveTypes.map((type) => t(`flow.skill.${type}`)).join('、'))}
           </Text>

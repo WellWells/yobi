@@ -78,8 +78,6 @@ const LogEntry = React.memo<LogEntryProps>(({
           {time}
         </Text>
       )}
-      {
-}
       <Flex gap={6} align="flex-start" style={{ flex: 1, minWidth: 0, paddingLeft: depth * 14 }}>
         {scope && (
           <UnstyledButton
@@ -98,8 +96,6 @@ const LogEntry = React.memo<LogEntryProps>(({
           fw={startsRun ? 600 : undefined}
           className={styles.logText}
         >
-          {
-}
           {shortenUrls(text)}
         </Text>
       </Flex>
@@ -218,8 +214,6 @@ export const LogPanel: React.FC = () => {
   return (
     <Stack gap={0} h="100%" style={{ overflow: 'hidden' }}>
       <PanelToolbar>
-        {
-}
         <Group gap={8} wrap="nowrap" style={{ minWidth: 0 }}>
           <ToolbarSearchInput
             ref={filterInputRef}
@@ -231,8 +225,6 @@ export const LogPanel: React.FC = () => {
             clearLabel={t('log.filter.clear')}
           />
 
-          {
-}
           <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
             <Chip
               size="xs"
@@ -257,8 +249,6 @@ export const LogPanel: React.FC = () => {
             ))}
           </Group>
 
-          {
-}
           {scope && (
             <Pill
               size="sm"

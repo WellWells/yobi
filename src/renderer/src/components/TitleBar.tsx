@@ -123,7 +123,6 @@ export const TitleBar: React.FC = () => {
 
   const navItems = useMemo(
     () => NAV_ORDER.map((id) => ({ id, label: t(NAV_META[id].labelKey), icon: NAV_META[id].icon })),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [locale],
   );
   const altHeld = useAltKeyHeld();

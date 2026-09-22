@@ -86,15 +86,15 @@ export function useRewriteTask(setExportToast: (toast: ExportToast) => void) {
     const modelLabel = findModelOption(nextUrl, extraModels).label;
     const taskId = await promptApi.triggerWithOptions({ prompt, targetUrl: nextUrl });
     if (!taskId) {
-      setExportToast({ id: Date.now(), message: t('rewrite.enqueueFailed') });
+      setExportToast({ message: t('rewrite.enqueueFailed'), level: 'error' });
       return;
     }
     setRewriteTaskId(taskId);
     setRewriteSourcePath(selectedFile.path);
     setRewriteStartedAt(Date.now());
     setExportToast({
-      id: Date.now(),
       message: t('rewrite.queued').replace('{{model}}', modelLabel),
+      level: 'info',
     });
   }, [selectedFile, fileContent, parsedBlocks, t, setExportToast, extraModels]);
 

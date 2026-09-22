@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Flex, Group, Stack, Text } from '@mantine/core';
 import { useShallow } from 'zustand/react/shallow';
 import type { ConversationDoc } from '../../../../shared/conversationDoc';
@@ -43,6 +43,20 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
   const pendingCount = pending.length;
   const sideBySide = layoutMode === 'side-by-side' && turnCount > 0;
 
+  /*
+   * `AssistantTurn` is memoized on its props, so building the meta object inline would hand it a
+   * new identity on every render and re-render every answered turn for a zoom step, a layout
+   * toggle or an unrelated pending turn. The conversation's provider is only a fallback for a
+   * turn that did not record its own, so a turn that has one keeps the object the parser made.
+   */
+  const turnMetas = useMemo(
+    () => conversation.turns.map((turn) => {
+      const provider = turn.meta.p ?? conversation.provider ?? undefined;
+      return provider === turn.meta.p ? turn.meta : { ...turn.meta, p: provider };
+    }),
+    [conversation.turns, conversation.provider],
+  );
+
   const contentRef = useRef<HTMLDivElement>(null);
   const { follow, release } = useStickToBottom(contentRef, sideBySide ? 'side' : 'stacked');
   const seenRef = useRef({ path: conversationPath, turns: turnCount, pending: pendingCount });
@@ -54,6 +68,34 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
     if (switched) release();
     else if (appended) follow();
   }, [conversationPath, turnCount, pendingCount, follow, release]);
+
+  /*
+   * Which turn just arrived, decided during render rather than in an effect: an effect would
+   * commit the row once without the class and only then add it, so the animation would restart
+   * after a frame at full opacity — a visible flash. This is React's "adjust state when props
+   * change" pattern; the re-render happens before anything is painted.
+   *
+   * It has to be latched to a single index. This view lives under `display: none`, which cancels
+   * and replays CSS animations, so an unlatched class would re-run on every return to chat — and
+   * the keys are positional (`turn-${index}`), so a conversation switch would animate old rows as
+   * if they were new. The class is dropped again on animationend (see `handleTurnAnimationEnd`).
+   */
+  const [seenTurns, setSeenTurns] = useState({ path: conversationPath, count: turnCount });
+  const [arrivedIndex, setArrivedIndex] = useState(-1);
+  if (seenTurns.path !== conversationPath) {
+    setSeenTurns({ path: conversationPath, count: turnCount });
+    setArrivedIndex(-1);
+  } else if (seenTurns.count !== turnCount) {
+    setSeenTurns({ path: conversationPath, count: turnCount });
+    setArrivedIndex(turnCount > seenTurns.count ? turnCount - 1 : -1);
+  }
+
+  // animationend bubbles, so a descendant finishing its own animation would clear the latch
+  // early; only the row's own entrance counts.
+  const handleTurnAnimationEnd = useCallback((event: React.AnimationEvent<HTMLDivElement>) => {
+    if (event.target === event.currentTarget) setArrivedIndex(-1);
+  }, []);
+  const turnEnterClass = (index: number): string | undefined => (index === arrivedIndex ? 'turn-enter' : undefined);
 
   const totalUsage = showTokenUsage ? sumTurnUsage(conversation.turns) : null;
 
@@ -100,6 +142,8 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
           {conversation.turns.map((turn, index) => (
             <Flex
               key={`turn-${index}`}
+              className={turnEnterClass(index)}
+              onAnimationEnd={handleTurnAnimationEnd}
               align="stretch"
               wrap="nowrap"
               style={{ borderTop: index > 0 ? '1px solid var(--border)' : undefined }}
@@ -123,7 +167,7 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
                 {turn.response ? (
                   <AssistantTurn
                     response={turn.response}
-                    meta={{ ...turn.meta, p: turn.meta.p ?? conversation.provider ?? undefined }}
+                    meta={turnMetas[index]}
                     formattedTime={formatTime(turn.meta.t ?? conversation.time ?? '') || null}
                     t={t}
                     turnIndex={index}
@@ -147,13 +191,18 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
           {title}
 
           {conversation.turns.map((turn, index) => (
-            <Stack gap={20} key={`turn-${index}`}>
+            <Stack
+              gap={20}
+              key={`turn-${index}`}
+              className={turnEnterClass(index)}
+              onAnimationEnd={handleTurnAnimationEnd}
+            >
               <UserBubble prompt={turn.prompt} t={t} attachments={turn.meta.a} />
               {turn.response
                 ? (
                   <AssistantTurn
                     response={turn.response}
-                    meta={{ ...turn.meta, p: turn.meta.p ?? conversation.provider ?? undefined }}
+                    meta={turnMetas[index]}
                     formattedTime={formatTime(turn.meta.t ?? conversation.time ?? '') || null}
                     t={t}
                     turnIndex={index}

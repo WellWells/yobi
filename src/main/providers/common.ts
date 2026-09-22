@@ -25,6 +25,18 @@ export async function navigateAndWait(
   });
 }
 
+/** Waits out a navigation already in flight; `navigateAndWait` starts one instead. */
+export async function waitForPageLoad(wc: WebContents, timeoutMs: number): Promise<void> {
+  if (!wc.isLoading()) return;
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`Post-navigation page load timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+    wc.once('did-finish-load', () => { clearTimeout(timer); resolve(); });
+  });
+}
+
 export async function isCloudflareChallengeActive(wc: WebContents): Promise<boolean> {
   try {
     return (await wc.executeJavaScript(

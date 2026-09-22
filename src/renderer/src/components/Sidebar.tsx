@@ -1,17 +1,18 @@
 import React, { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Menu as MMenu, Stack, Text, Tooltip } from '@mantine/core';
+import { Box, Menu as MMenu, Stack, Tooltip } from '@mantine/core';
 import { useVirtualizer, observeElementRect, measureElement } from '@tanstack/react-virtual';
 import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import type { OutputFile } from '../../../shared/types';
 import { PanelToolbar, ToolbarButton, ToolbarIconButton } from './PanelToolbar';
+import { EmptyState } from './EmptyState';
 import { WebDialog } from './WebDialog';
 import { ContextMenuPortal } from './ContextMenuPortal';
 import { GroupHeader } from './GroupHeader';
 import { ShortcutHint } from './ShortcutHint';
 import { SelectionActionBar } from './SelectionActionBar';
-import { FolderOpen, ListChecks, Pencil, Search, SquarePen, Trash2 } from 'lucide-react';
+import { FolderOpen, ListChecks, MessageSquare, Pencil, Search, SquarePen, Trash2 } from 'lucide-react';
 import { fileApi } from '../api/electronApi';
 import { FileItem } from './sidebar/FileItem';
 import { useSidebarFileActions } from './sidebar/useSidebarFileActions';
@@ -71,8 +72,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
     return latest;
   }, [setFiles]);
 
+  // The list starts as `[]`, which is indistinguishable from "you have no saved chats" — on a
+  // cold file cache the first read stats and reads every .md, so the rail told a returning user
+  // their conversations were gone for as long as that took.
+  const [filesLoaded, setFilesLoaded] = useState(false);
   useEffect(() => {
-    void loadFiles();
+    void loadFiles().finally(() => setFilesLoaded(true));
     const unsub = window.electronAPI.onFileListUpdate((nextFiles) => {
       setFiles(nextFiles, { markUnread: true });
     });
@@ -196,7 +201,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
     window.requestAnimationFrame(() => {
       fileItemRefs.current.get(selectedFile.path ?? '')?.focus();
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedFile?.path, pendingDeleteFile, editingPath]);
 
   useEffect(() => {
@@ -209,7 +213,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
     const activeItem = fileItemRefs.current.get(selectedFile.path);
     if (!activeItem) return;
     window.requestAnimationFrame(() => activeItem.focus());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingDeleteFile, selectedFile?.path, editingPath]);
 
   const formatTime = useFormatTime();
@@ -249,14 +252,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
 
       <Box ref={sidebarViewportRef} flex={1} style={{ overflowY: 'auto', padding: '6px 0' }} onKeyDown={selection.selectMode ? undefined : handleListKeyDown}>
         {visibleFiles.length === 0 ? (
-          <Text
-            p="20px 14px"
-            c="dimmed"
-            fz="var(--font-size-base)"
-            ta="center"
-          >
-            {t('sidebar.empty')}
-          </Text>
+          <EmptyState icon={MessageSquare} label={t('sidebar.empty')} busy={!filesLoaded} />
         ) : (
           <Box style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>
             {rowVirtualizer.getVirtualItems().map((virtualRow) => {

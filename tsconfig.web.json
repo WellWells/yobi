@@ -14,11 +14,7 @@
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
-    "jsx": "react-jsx",
-    "paths": {
-      "@renderer/*": ["./src/renderer/src/*"],
-      "@shared/*": ["./src/shared/*"]
-    }
+    "jsx": "react-jsx"
   },
   "include": [
     "src/renderer/src/**/*",

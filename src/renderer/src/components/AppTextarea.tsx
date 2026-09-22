@@ -1,6 +1,6 @@
 import React from 'react';
 import { Textarea, type TextareaProps } from '@mantine/core';
-import { buildInputStyles, type AppInputResize, type AppInputTone } from './inputStyles';
+import { buildInputStyles, mergeInputStyles, type AppInputResize, type AppInputTone } from './inputStyles';
 
 type AppTextareaTone = AppInputTone | 'prompt';
 
@@ -32,6 +32,7 @@ export const AppTextarea = React.forwardRef<HTMLTextAreaElement, AppTextareaProp
   tone = 'default',
   mono = false,
   resize = 'none',
+  styles,
   ...props
 }, ref) => {
   if (tone === 'prompt') {
@@ -42,7 +43,7 @@ export const AppTextarea = React.forwardRef<HTMLTextAreaElement, AppTextareaProp
         autosize
         minRows={3}
         maxRows={3}
-        styles={PROMPT_TEXTAREA_STYLES}
+        styles={mergeInputStyles(PROMPT_TEXTAREA_STYLES, styles)}
         {...props}
       />
     );
@@ -53,7 +54,7 @@ export const AppTextarea = React.forwardRef<HTMLTextAreaElement, AppTextareaProp
         ref={ref}
         size="sm"
         variant="default"
-        styles={buildInputStyles({ tone, mono, resize })}
+        styles={mergeInputStyles(buildInputStyles({ tone, mono, resize }), styles)}
         {...props}
       />
     );

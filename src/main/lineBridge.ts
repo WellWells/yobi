@@ -24,10 +24,6 @@ const pairingBridge = createLinePairingBridge(
   },
 );
 
-export function getLineRuntimeSnapshot(): LineRuntimeSnapshot {
-  return _lineRuntimeSnapshot;
-}
-
 export function setLineRuntimeSnapshot(snapshot: LineRuntimeSnapshot): void {
   _lineRuntimeSnapshot = snapshot;
 }

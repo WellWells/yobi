@@ -33,7 +33,6 @@ import type {
 
 export type ElectronAPI = {
   showWorker: () => void;
-  hideWorker: () => void;
   minimizeWindow: () => void;
   maximizeWindow: () => void;
   closeWindow: () => void;
@@ -235,6 +234,9 @@ export type ElectronAPI = {
   onNotifyOnCompleteChanged: (cb: (enabled: boolean) => void) => () => void;
   onLaunchAtStartupChanged: (cb: (enabled: boolean) => void) => () => void;
 
+  isWindowMaximized: () => Promise<boolean>;
+  onWindowMaximizedChanged: (cb: (maximized: boolean) => void) => () => void;
+
   onShowCloseDialog: (cb: () => void) => () => void;
   respondCloseDialog: (action: 'quit' | 'hide', remember: boolean) => void;
 
@@ -301,7 +303,6 @@ export type ElectronAPI = {
 
 const api: ElectronAPI = {
   showWorker: () => ipcRenderer.send(IPC.SHOW_WORKER),
-  hideWorker: () => ipcRenderer.send(IPC.HIDE_WORKER),
   minimizeWindow: () => ipcRenderer.send(IPC.WINDOW_MINIMIZE),
   maximizeWindow: () => ipcRenderer.send(IPC.WINDOW_MAXIMIZE),
   closeWindow: () => ipcRenderer.send(IPC.WINDOW_CLOSE),
@@ -595,6 +596,13 @@ const api: ElectronAPI = {
     const handler = () => cb();
     ipcRenderer.on(IPC.NAVIGATE_SETTINGS, handler);
     return () => ipcRenderer.removeListener(IPC.NAVIGATE_SETTINGS, handler);
+  },
+
+  isWindowMaximized: () => ipcRenderer.invoke(IPC.WINDOW_IS_MAXIMIZED),
+  onWindowMaximizedChanged: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, maximized: boolean) => cb(maximized);
+    ipcRenderer.on(IPC.WINDOW_MAXIMIZED_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.WINDOW_MAXIMIZED_CHANGED, handler);
   },
 
   onShowCloseDialog: (cb) => {

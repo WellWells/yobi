@@ -75,7 +75,9 @@ export const LinePairingPanel: React.FC<Props> = ({ pendingCodes, account, busy,
             >
               <Group justify="space-between" align="center" gap={8}>
                 <Group gap={10} align="center">
-                  <Text fz="var(--font-size-lg)" fw={700} ff="var(--font-mono)" c="var(--mantine-color-default-color)">
+                  {/* Inherits the surrounding size on purpose: the fz here used to name an
+                      undefined --font-size-lg, so it has always rendered inherited. */}
+                  <Text fw={700} ff="var(--font-mono)" c="var(--mantine-color-default-color)">
                     {pending.code}
                   </Text>
                   <Text fz="var(--font-size-sm)" c="dimmed">

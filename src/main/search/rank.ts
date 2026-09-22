@@ -83,7 +83,3 @@ export function rankSourcesScored(docs: SourceDoc[], query: string): ScoredSourc
     .map((doc, index) => ({ doc, score: scores[index] }))
     .sort((a, b) => b.score - a.score);
 }
-
-export function rankSources(docs: SourceDoc[], query: string): SourceDoc[] {
-  return rankSourcesScored(docs, query).map((entry) => entry.doc);
-}

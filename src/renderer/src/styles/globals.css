@@ -119,6 +119,18 @@ textarea {
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 
+/* Press feedback. Mantine gives this to Button/ActionIcon/CloseButton only (`.mantine-active`),
+   and every row, tile, pill and date cell in the app is an UnstyledButton — which renders a real
+   <button> but gets no sink — so a click on the send icon answered and a click on the mode pill
+   beside it did not. Same 1px as Mantine's own rule; `.mantine-active` is excluded so those keep
+   their scale-aware value. Deliberately outside the transition above: a press must land on the
+   frame it happens, not ease in over 150ms.
+   `data-no-press` opts out the window caption buttons — neither Windows 11 controls nor macOS
+   traffic lights move when pressed. */
+button:active:not(:disabled):not([data-disabled]):not([data-no-press]):not(.mantine-active) {
+  transform: translateY(1px);
+}
+
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
@@ -171,15 +183,6 @@ textarea:focus-visible {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(128, 128, 128, 0.28); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(128, 128, 128, 0.46); }
-
-/* ── Highlight.js overrides (use theme variables) ───────────────────────── */
-.hljs {
-  background: var(--bg-tertiary) !important;
-  padding: 1em !important;
-  border-radius: var(--radius) !important;
-  font-family: var(--font-mono) !important;
-  font-size: 13px !important;
-}
 
 /* ── Shiki code block container ─────────────────────────────────────────── */
 /* Override Shiki's inline background so the wrapper's --code-bg controls it */
@@ -347,19 +350,44 @@ textarea:focus-visible {
 }
 
 /* ── Animations ──────────────────────────────────────────────────────────── */
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
+
+/* The arrival of a finished answer. There is no streaming, so the pending spinner and the
+   whole answer swap in a single React commit — the app's most-repeated moment was a one-frame
+   cut. Transform and opacity only: animating height re-triggers the ResizeObserver behind
+   useStickToBottom and the scroll double-jumps.
+   ConversationView removes this class on animationend, which matters beyond tidiness — the
+   `both` fill-mode would otherwise leave a transform on the row forever, and a transformed
+   ancestor is a containing block that breaks the sticky question column in side-by-side. */
+@keyframes turnEnter {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
 }
 
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(4px); }
-  to   { opacity: 1; transform: translateY(0); }
+.turn-enter {
+  animation: turnEnter 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @keyframes turnEnter {
+    from, to { opacity: 1; transform: none; }
+  }
 }
 
 @keyframes pulse {
   0%, 100% { opacity: 1; transform: translateY(-50%) scale(1); }
   50% { opacity: 0.4; transform: translateY(-50%) scale(0.8); }
+}
+
+/* `respectReducedMotion` in the Mantine theme only reaches Mantine's own components, so
+   keyframes declared here keep running with Windows animation effects off. Redefining the
+   keyframe as a single resting frame — rather than `animation: none` on the consumer — keeps
+   the translateY(-50%) that centres the dot; dropping the animation would shift it 4px.
+   The <Loader> spin is deliberately NOT touched: freezing the only work-in-progress
+   affordance in the app reads as "hung", which is worse than the motion. */
+@media (prefers-reduced-motion: reduce) {
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: translateY(-50%) scale(1); }
+  }
 }
 
 /* (Button system removed — now handled by Mantine) */
@@ -369,6 +397,32 @@ textarea:focus-visible {
 
 /* ── Template chip buttons (prompt section) ─────────────────────────────── */
 /* (Removed — now handled by Mantine Button/ActionIcon) */
+
+/* ── The window's one notice surface ─────────────────────────────────────── */
+/* Mantine mounts a container for EVERY position — all six, always, whether or not a notice is
+   in it — and each one gets whatever the provider passes through `styles.root`. So an offset
+   handed to the provider also lands on the three `bottom-*` containers, which already carry
+   `bottom`, and a `position: fixed` box with both `top` and `bottom` set does not stay its
+   content's height: it stretches to fill the gap. That turned the bottom three into invisible
+   440px columns spanning the window from the title bar to the composer — together the full
+   width — and every click below the title bar landed on one of them. Hence the offset lives
+   here, keyed on the containers it is actually about.
+   The number clears the 48px title bar (TitleBar.module.css) and the caption buttons. */
+.mantine-Notifications-root[data-position^='top-'] {
+  top: 56px;
+}
+
+/* An empty container must not take a click, whatever its box ends up being — the failure above
+   was invisible precisely because a notice surface has nothing to show. Mantine puts the
+   hover-to-pause and dismiss handlers on each notification, not on the container, so nothing
+   is lost by making the container itself transparent to the pointer. */
+.mantine-Notifications-root {
+  pointer-events: none;
+}
+
+.mantine-Notifications-root > * {
+  pointer-events: auto;
+}
 
 /* ── Mantine Menu & Combobox & Select custom theme overrides ─────────────── */
 .mantine-Menu-dropdown,

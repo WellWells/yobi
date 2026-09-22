@@ -58,8 +58,6 @@ export const CardStyleSample: React.FC<CardStyleSampleProps> = ({
 
   return (
     <Stack gap={8}>
-      {
-}
       <Box style={{ maxWidth: 420 }}>
         <ScaledCardFrame request={request} />
       </Box>

@@ -1,9 +1,10 @@
 import React from 'react';
-import { Box, Collapse, Group, Stack, Switch, Text, UnstyledButton } from '@mantine/core';
+import { Box, Collapse, Group, Stack, Text, UnstyledButton } from '@mantine/core';
 import { ChevronRight } from 'lucide-react';
 import type { CaptureFormat, CaptureRange, CardLayout } from '../../../../shared/types';
 import { CAPTURE_WIDTHS, captureWidthLabelKey } from '../../../../shared/types';
 import { AppSegmentedControl } from '../AppSegmentedControl';
+import { ToggleSwitch } from '../ToggleSwitch';
 import { AppTextInput } from '../AppTextInput';
 import { BackgroundStylePicker, DirectionGrid, PaletteSwatchGrid } from '../capture/PalettePicker';
 import type {
@@ -60,13 +61,12 @@ const ToggleChip: React.FC<{
   label: string;
   description?: string;
 }> = ({ checked, onChange, label, description }) => (
-  <Switch
+  <ToggleSwitch
     checked={checked}
     onChange={(e) => onChange(e.currentTarget.checked)}
     label={label}
     description={description}
     size="sm"
-    withThumbIndicator={false}
   />
 );
 
@@ -249,8 +249,6 @@ export const ExportSettingsPanel: React.FC<ExportSettingsPanelProps> = ({
           <Box>
             <SectionLabel>{t('capture.visible')}</SectionLabel>
             <Stack gap={10}>
-              {
-}
               {!mustShowPrompt(cardLayout, range === 'last' ? 1 : turnCount) && (
                 <ToggleChip checked={showPrompt} onChange={setShowPrompt} label={t('capture.showPrompt')} />
               )}
@@ -276,8 +274,6 @@ export const ExportSettingsPanel: React.FC<ExportSettingsPanelProps> = ({
             </Stack>
           </Box>
 
-          {
-}
           {backgroundStyle === 'gradient' && (
             <Box>
               <SectionLabel>{t('capture.direction')}</SectionLabel>

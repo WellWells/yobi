@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ActionIcon, Badge, Box, Group, Loader, Menu, Stack, Text } from '@mantine/core';
+import { ActionIcon, Badge, Box, Group, Loader, Menu, Stack, Text, Tooltip } from '@mantine/core';
 import { CircleUserRound, LogIn, LogOut, MoreVertical, RotateCcw } from 'lucide-react';
 import { SectionCard, SectionTitle, VisibilityToggle } from '../components';
 import { AppButton } from '../../../components/AppButton';
@@ -9,7 +9,7 @@ import { useHiddenSources } from '../hooks/useHiddenSources';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import type { useAccountSettings } from '../hooks/useAccountSettings';
 import {
-  AUTH_PROVIDERS, PROVIDERS, PROVIDER_LABELS, PROVIDER_URLS,
+  PROVIDERS, PROVIDER_LABELS, PROVIDER_URLS,
 } from '../../../../../shared/types';
 import type { AuthProvider, HiddenSources, Provider } from '../../../../../shared/types';
 import { Z_POPOVER } from '../../../config/zLayers';
@@ -23,11 +23,7 @@ interface Props {
   sectionGap: number;
 }
 
-function isAuthProvider(provider: Provider): provider is AuthProvider {
-  return (AUTH_PROVIDERS as readonly string[]).includes(provider);
-}
-
-type PillState = 'in' | 'out' | 'checking' | 'ready';
+type PillState = 'in' | 'out' | 'checking';
 
 const StatusPill: React.FC<{ state: PillState; t: (key: string) => string }> = ({ state, t }) => {
   if (state === 'checking') {
@@ -38,12 +34,9 @@ const StatusPill: React.FC<{ state: PillState; t: (key: string) => string }> = (
       </Group>
     );
   }
-  const label =
-    state === 'in'
-      ? t('settings.accounts.status.loggedIn')
-      : state === 'out'
-        ? t('settings.accounts.status.loggedOut')
-        : t('settings.accounts.status.ready');
+  const label = state === 'in'
+    ? t('settings.accounts.status.loggedIn')
+    : t('settings.accounts.status.loggedOut');
   return (
     <Badge variant="light" color={state === 'out' ? 'gray' : 'teal'} radius="sm" size="sm" tt="none" fw={500}>
       {label}
@@ -59,9 +52,11 @@ const RowMenu: React.FC<{
 }> = ({ busy, onLogout, onReset, t }) => (
   <Menu position="bottom-end" radius="sm" withinPortal zIndex={Z_POPOVER}>
     <Menu.Target>
-      <ActionIcon variant="default" size={30} aria-label={t('settings.accounts.menu.more')} loading={busy}>
-        <MoreVertical size={14} />
-      </ActionIcon>
+      <Tooltip label={t('common.moreActions')} position="bottom">
+        <ActionIcon variant="default" size={30} aria-label={t('common.moreActions')} loading={busy}>
+          <MoreVertical size={14} />
+        </ActionIcon>
+      </Tooltip>
     </Menu.Target>
     <Menu.Dropdown>
       {onLogout && (
@@ -85,8 +80,7 @@ export const ModelSourcesSection: React.FC<Props> = ({ account, t, showSection, 
   const sources = useHiddenSources();
   const confirmLabel = confirmLogout ? PROVIDER_LABELS[confirmLogout] : '';
   const resetLabel = confirmReset ? PROVIDER_LABELS[confirmReset] : '';
-  const resetSignsOut =
-    confirmReset !== null && isAuthProvider(confirmReset) && account.statuses[confirmReset] === true;
+  const resetSignsOut = confirmReset !== null && account.statuses[confirmReset] === true;
   const resetDetailKey = resetSignsOut
     ? 'settings.accounts.reset.confirm.detailSignOut'
     : 'settings.accounts.reset.confirm.detail';
@@ -106,16 +100,9 @@ export const ModelSourcesSection: React.FC<Props> = ({ account, t, showSection, 
           <Stack gap={0}>
             {PROVIDERS.map((provider, index) => {
               const Icon = getModelIconByUrl(PROVIDER_URLS[provider]);
-              const isAuth = isAuthProvider(provider);
-              const loggedIn = isAuth ? account.statuses[provider] : null;
+              const loggedIn = account.statuses[provider];
               const busy = account.busy[provider];
-              const pillState: PillState = !isAuth
-                ? 'ready'
-                : loggedIn === null
-                  ? 'checking'
-                  : loggedIn
-                    ? 'in'
-                    : 'out';
+              const pillState: PillState = loggedIn === null ? 'checking' : loggedIn ? 'in' : 'out';
               const providerHidden = sources.hidden.providers.includes(provider);
               const afterHiding: HiddenSources = {
                 ...sources.hidden,
@@ -145,7 +132,6 @@ export const ModelSourcesSection: React.FC<Props> = ({ account, t, showSection, 
                           <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-default-color)">
                             {PROVIDER_LABELS[provider]}
                           </Text>
-                          {}
                           <StatusPill state={pillState} t={t} />
                         </Group>
                         <Text fz="var(--font-size-sm)" c="dimmed" lh={1.5}>
@@ -155,8 +141,7 @@ export const ModelSourcesSection: React.FC<Props> = ({ account, t, showSection, 
                     </Group>
 
                     <Group gap={8} align="center" wrap="nowrap" style={{ flexShrink: 0 }}>
-                      {}
-                      {isAuth && loggedIn === false && (
+                      {loggedIn === false && (
                         <AppButton
                           variant="filled"
                           size="xs"
@@ -170,7 +155,7 @@ export const ModelSourcesSection: React.FC<Props> = ({ account, t, showSection, 
 
                       <RowMenu
                         busy={busy}
-                        onLogout={isAuth && loggedIn === true ? () => setConfirmLogout(provider) : undefined}
+                        onLogout={loggedIn === true ? () => setConfirmLogout(provider) : undefined}
                         onReset={() => setConfirmReset(provider)}
                         t={t}
                       />

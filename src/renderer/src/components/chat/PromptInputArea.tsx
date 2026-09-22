@@ -45,8 +45,7 @@ import {
   type PromptAttachment,
 } from '../../../../shared/types';
 import { mcpCommandFlowId, parseMcpCommandFlowId } from '../../../../shared/mcpCommand';
-import { matchConnectorKeywords } from '../../../../shared/connectorKeywords';
-import type { ConnectorChoice } from './ModeDropdown';
+import { matchConnectorKeywords, type KeywordCandidate } from '../../../../shared/connectorKeywords';
 import { useResolvedCombo } from '../../store/shortcutStore';
 
 interface PromptInputAreaProps {
@@ -86,7 +85,7 @@ interface PromptInputAreaProps {
   web: boolean;
   onToggleWeb: () => void;
   onSetWeb: (on: boolean) => void;
-  connectors: ConnectorChoice[];
+  connectors: KeywordCandidate[];
   activeConnectorIds: readonly string[];
   onToggleConnector: (id: string) => void;
   /** Discloses connectors and switches to agent mode; returns the resulting active set. */
@@ -626,7 +625,6 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
           />
         </Box>
 
-        {}
         <Flex align="center" justify="space-between" gap={8} p="8px 12px">
           <Flex align="center" gap={6}>
           <ComposerAddButton

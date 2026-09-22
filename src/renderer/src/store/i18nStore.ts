@@ -146,6 +146,11 @@ export const useI18nStore = create<I18nState>((set, get) => ({
   },
 
   setLocale: async (locale: string, options?: { persist?: boolean }) => {
+    // The three HTML entry points ship a static `lang`; nothing ever updated it, so an English
+    // user's window claimed to be Traditional Chinese to screen readers, to the spell checker
+    // and to CSS `:lang()` for the rest of the session.
+    document.documentElement.lang = locale;
+
     const cachedTranslations = get().localeTranslations[locale];
     if (cachedTranslations) {
       set((state) => ({ locale, translations: cachedTranslations, t: makeT(cachedTranslations, state.enTranslations) }));

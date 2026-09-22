@@ -29,7 +29,7 @@ import {
 } from '../shared/capturePalettes';
 import { defaultStored } from './configTypes';
 import { normalizeInstanceUrl } from './share/privatebin';
-import type { ByokInstance, Config, LineConfig, SmtpConfig, TelegramConfig } from './configTypes';
+import type { ByokInstance, Config, LineConfig, SmtpConfig, TelegramConfig, WindowBounds } from './configTypes';
 import { canonicalise, SHORTCUTS } from '../shared/shortcuts';
 import type { ShortcutOverride } from '../shared/shortcuts';
 
@@ -74,6 +74,7 @@ export function normalizeConfig(raw: unknown): Config {
     quickExport: normalizeQuickExport(obj.quickExport),
     shortcuts: normalizeShortcuts(obj.shortcuts),
     share: normalizeShareSettings(obj.share),
+    windowBounds: normalizeWindowBounds(obj.windowBounds),
     promptPreferences: normalizePromptPreferences(obj.promptPreferences),
     providerCommands: normalizeProviderCommands(
       obj.providerCommands ?? (obj.telegram as LegacyTelegramConfig | undefined)?.providerCommands,
@@ -452,6 +453,27 @@ export function normalizeCaptureSettings(raw: unknown): CaptureSettings {
     margin: clampCaptureMargin(obj.margin),
     pixelRatio: obj.pixelRatio === 2 ? 2 : 1,
     zip: obj.zip === true,
+  };
+}
+
+/**
+ * Anything that is not four finite numbers plus a flag is dropped: the value goes straight to
+ * `setBounds()`, and a hand-edited or half-written config.json must not be able to put the
+ * window somewhere it cannot be reached. Position is still range-checked against the actual
+ * displays at restore time (`windowBounds.ts`) — a monitor can disappear between runs.
+ */
+export function normalizeWindowBounds(raw: unknown): WindowBounds | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Partial<WindowBounds>;
+  const nums = [obj.x, obj.y, obj.width, obj.height];
+  if (!nums.every((value) => typeof value === 'number' && Number.isFinite(value))) return null;
+  if ((obj.width as number) < 1 || (obj.height as number) < 1) return null;
+  return {
+    x: Math.round(obj.x as number),
+    y: Math.round(obj.y as number),
+    width: Math.round(obj.width as number),
+    height: Math.round(obj.height as number),
+    maximized: obj.maximized === true,
   };
 }
 

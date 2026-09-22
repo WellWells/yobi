@@ -1,5 +1,5 @@
 import type { BrowserWindow, WebContents } from 'electron';
-import { sleep, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
+import { sleep, waitForPageLoad, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
 import { ensureOnPage, PAGE_REUSE } from './pageReuse';
 import { executeAutomationWithTimeout, countElements, settledElementCount } from './automationExecutor';
 import { PROVIDER_URLS } from '../../shared/types';
@@ -166,17 +166,6 @@ async function waitForInputArea(wc: WebContents, timeoutMs: number): Promise<voi
     await sleep(INTERVAL);
   }
   throw new Error('Gemini input area not found after navigation');
-}
-
-async function waitForPageLoad(wc: WebContents, timeoutMs: number): Promise<void> {
-  if (!wc.isLoading()) return;
-  return new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error(`Post-navigation page load timed out after ${timeoutMs}ms`)),
-      timeoutMs,
-    );
-    wc.once('did-finish-load', () => { clearTimeout(timer); resolve(); });
-  });
 }
 
 export function buildGeminiAutomationScript(

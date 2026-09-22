@@ -57,7 +57,7 @@ export async function listOutputFiles(): Promise<OutputFile[]> {
   const dir = await getOutputDir();
   try {
     const headingAliases = await loadMarkdownHeadingAliases();
-    const filePaths = getOutputMarkdownPaths(dir);
+    const filePaths = await getOutputMarkdownPaths(dir);
     const files = await Promise.all(
       filePaths.map(async (filePath) => {
         try {
@@ -94,31 +94,43 @@ export async function searchOutputFiles(query: string): Promise<OutputFile[]> {
   const dir = await getOutputDir();
   try {
     const headingAliases = await loadMarkdownHeadingAliases();
-    const filePaths = getOutputMarkdownPaths(dir);
-    const matches: OutputFile[] = [];
-    for (const filePath of filePaths) {
-      try {
-        const content = await fs.readFile(filePath, 'utf-8');
-        const searchable = `${path.basename(filePath)}\n${content}`.toLowerCase();
-        if (!searchable.includes(keyword)) continue;
-        matches.push(buildOutputFile(filePath, content, headingAliases));
-      } catch {
-      }
-    }
-    return matches.sort(compareOutputFilesByTime);
+    const filePaths = await getOutputMarkdownPaths(dir);
+    // Read concurrently, like `listOutputFiles`: the search palette debounces at 80ms, so a
+    // sequential pass over the whole archive lands on the main process once per keystroke and
+    // grows with every conversation ever saved.
+    const matches = await Promise.all(
+      filePaths.map(async (filePath) => {
+        try {
+          const content = await fs.readFile(filePath, 'utf-8');
+          const searchable = `${path.basename(filePath)}\n${content}`.toLowerCase();
+          if (!searchable.includes(keyword)) return null;
+          return buildOutputFile(filePath, content, headingAliases);
+        } catch {
+          return null;
+        }
+      }),
+    );
+    return matches
+      .filter((file): file is OutputFile => file !== null)
+      .sort(compareOutputFilesByTime);
   } catch {
     return [];
   }
 }
 
-export function getOutputMarkdownPaths(dir: string): string[] {
+/**
+ * Crawled off the main thread on purpose: this runs after every saved answer, on every
+ * debounced search keystroke and once per flow history write, and a sync crawl blocks IPC and
+ * window events for as long as it takes — which grows with the size of the archive.
+ */
+export async function getOutputMarkdownPaths(dir: string): Promise<string[]> {
   if (!existsSync(dir)) return [];
-  return new fdir()
+  const paths = await new fdir()
     .withFullPaths()
     .filter((entryPath, isDirectory) => isDirectory || entryPath.endsWith('.md'))
     .crawl(dir)
-    .sync()
-    .sort((a, b) => path.basename(b).localeCompare(path.basename(a)));
+    .withPromise();
+  return paths.sort((a, b) => path.basename(b).localeCompare(path.basename(a)));
 }
 
 function addHeadingAlias(aliasSet: Set<string>, value: unknown): void {

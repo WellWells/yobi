@@ -9,15 +9,6 @@
   /* WebkitAppRegion must stay in inline style (Electron-specific, not CSS-accessible) */
 }
 
-.brand {
-  padding: 0 10px;
-  font-weight: 700;
-  font-size: var(--font-size-md);
-  color: var(--mantine-color-accent);
-  letter-spacing: 0.2px;
-  flex-shrink: 0;
-}
-
 .spacer {
   flex: 1;
   min-width: 4px;
@@ -116,7 +107,7 @@
   padding: 8px 12px;
   border-bottom: 1px solid var(--mantine-color-default-border);
   font-size: var(--font-size-md);
-  color: var(--mantine-color-text-primary);
+  color: var(--mantine-color-text);
   font-weight: 700;
   letter-spacing: 0.3px;
   flex-shrink: 0;
@@ -137,7 +128,7 @@
   border: 1px solid var(--mantine-color-default-border);
   border-radius: var(--mantine-radius-sm);
   padding: 7px 10px;
-  background: var(--mantine-color-bg-secondary);
+  background: var(--mantine-color-default);
   margin-bottom: 6px;
   transition: background 0.12s ease, border-color 0.12s ease;
   display: flex;
@@ -150,19 +141,8 @@
   margin-bottom: 0;
 }
 
-.queueItem:hover {
-  border-color: var(--mantine-color-border-hover);
-  background: var(--mantine-color-bg-tertiary);
-}
-
-/* Unused — kept for safety */
-.queueItemHeader {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-  min-width: 0;
-}
+/* No :hover on the row: only the buttons inside it do anything (QueuePopover.tsx), so a row
+   that lights up reads as clickable and is not. */
 
 .queueItemTitleWrapper {
   display: flex;
@@ -198,7 +178,7 @@
 .queueItemTitle {
   font-size: var(--font-size-xs);
   font-weight: 600;
-  color: var(--mantine-color-text-primary);
+  color: var(--mantine-color-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -208,7 +188,7 @@
   font-size: 10px;
   font-family: var(--font-mono);
   font-weight: 500;
-  color: var(--mantine-color-text-muted);
+  color: var(--mantine-color-dimmed);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -223,26 +203,12 @@
   white-space: nowrap;
 }
 
-.queueItemSummary {
-  font-size: var(--font-size-sm);
-  color: var(--mantine-color-text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  line-height: 1.4;
-}
-
 /* Right-side: badge + action button in a row */
 .queueItemRight {
   display: flex;
   flex-direction: row;
   align-items: center;
   gap: 6px;
-  flex-shrink: 0;
-}
-
-/* Kept for compatibility but no longer used as a block row */
-.queueItemAction {
   flex-shrink: 0;
 }
 

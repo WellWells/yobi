@@ -40,6 +40,7 @@ export const ConnectorCard: React.FC<ConnectorCardProps> = ({
     <Box
       p={12}
       className={classes.card}
+      data-interactive={interactive || undefined}
       style={{
         border: '1px solid var(--border)',
         borderRadius: 'var(--mantine-radius-md)',
@@ -106,9 +107,11 @@ export const ConnectorCard: React.FC<ConnectorCardProps> = ({
           {server && (
             <Menu position="bottom-end" withinPortal zIndex={Z_POPOVER}>
               <Menu.Target>
-                <ActionIcon variant="subtle" size={30} aria-label={t('settings.mcp.more')}>
-                  <MoreVertical size={15} />
-                </ActionIcon>
+                <Tooltip label={t('common.moreActions')} position="bottom">
+                  <ActionIcon variant="subtle" size={30} aria-label={t('common.moreActions')}>
+                    <MoreVertical size={15} />
+                  </ActionIcon>
+                </Tooltip>
               </Menu.Target>
               <Menu.Dropdown>
                 {connected && (

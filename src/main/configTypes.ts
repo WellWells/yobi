@@ -12,6 +12,19 @@ import { EMPTY_CHATGPT_CHOICE } from '../shared/chatgptModels';
 import type { ChatgptModelCatalog, ChatgptModelChoice } from '../shared/chatgptModels';
 import type { BotBuiltinCommands, BotByokCommands, BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureRange, CaptureSettings, CardLayout, QuickExportSettings, LinePairingState, McpServerConfig, NotifyEventPrefs, PromptPreferences, Provider, ShareSettings, TelegramChannel, TelegramKnownUser, TelegramPairingState } from '../shared/types';
 
+/**
+ * The main window's last geometry. `x`/`y`/`width`/`height` are the *restored* rect even when
+ * the window was maximized (Electron's `getNormalBounds()`), so un-maximizing after a restart
+ * lands back where the user left it rather than at the default size.
+ */
+export interface WindowBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  maximized: boolean;
+}
+
 export interface Config {
   targetUrl: string;
   /**
@@ -72,6 +85,8 @@ export interface Config {
   layoutMode: 'stacked' | 'side-by-side';
   markdownZoom: number;
   showTokenUsage: boolean;
+  /** Where the main window was last left. `null` until the first run has produced one. */
+  windowBounds: WindowBounds | null;
   captureSettings: CaptureSettings;
   quickExport: QuickExportSettings;
   share: ShareSettings;
@@ -164,6 +179,7 @@ export const defaultStored: StoredConfig = {
   layoutMode: 'stacked',
   markdownZoom: 100,
   showTokenUsage: true,
+  windowBounds: null,
   captureSettings: {
     palette: DEFAULT_CAPTURE_PALETTE,
     backgroundStyle: DEFAULT_CAPTURE_BACKGROUND_STYLE,

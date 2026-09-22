@@ -46,7 +46,7 @@ export const FlowSearchOverlay: React.FC<FlowSearchOverlayProps> = ({ opened, on
       emptyLabel={t('flow.search.empty')}
       renderRow={(flow) => (
         <Stack gap={2}>
-          <Text fz="var(--font-size-xs)" fw={500} lineClamp={1} c="var(--mantine-color-text)">
+          <Text fz="var(--font-size-sm)" fw={500} lineClamp={1} c="var(--mantine-color-text)">
             {flow.name || t('flow.flowName')}
           </Text>
           <Group gap={4}>
@@ -54,7 +54,7 @@ export const FlowSearchOverlay: React.FC<FlowSearchOverlayProps> = ({ opened, on
             {flow.extraTriggers && flow.extraTriggers.length > 0 && (
               <Badge size="xs" variant="light" color="gray">{`+${flow.extraTriggers.length}`}</Badge>
             )}
-            <Text fz="xs" c="dimmed">
+            <Text fz="var(--font-size-xs)" c="dimmed">
               {flow.steps.length} {t('flow.steps').toLowerCase()}
             </Text>
           </Group>

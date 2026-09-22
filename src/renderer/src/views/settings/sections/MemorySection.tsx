@@ -6,6 +6,7 @@ import { MemoryCurateModal } from './MemoryCurateModal';
 import { AppButton } from '../../../components/AppButton';
 import { MultiSelectDropdown } from '../../../components/MultiSelectDropdown';
 import { WebDialog } from '../../../components/WebDialog';
+import { EmptyState } from '../../../components/EmptyState';
 import { GroupHeader } from '../../../components/GroupHeader';
 import { SectionCard, SectionTitle, SettingDivider, SettingField, SettingRow, ToggleSwitch } from '../components';
 import { buildTimeGroupHeads } from '../../../utils/timeGroups';
@@ -38,7 +39,8 @@ const EntryRow: React.FC<{
   memory: UserMemory;
   maxChars: number;
   t: (key: string) => string;
-}> = ({ entry, memory, maxChars, t }) => {
+  onRequestDelete: (entry: UserMemoryEntry) => void;
+}> = ({ entry, memory, maxChars, t, onRequestDelete }) => {
   const editing = memory.formTarget === entry.id;
   return (
     <Box>
@@ -65,7 +67,9 @@ const EntryRow: React.FC<{
             </ActionIcon>
           </Tooltip>
           <Tooltip label={t('settings.memory.delete')} position="top">
-            <ActionIcon variant="subtle" size={26} aria-label={t('settings.memory.delete')} onClick={() => { void memory.remove(entry.id); }}>
+            {/* Confirmed like every other permanent deletion in the app: forgetting is final by
+                design — there is no backup file, precisely so "forget this" really forgets. */}
+            <ActionIcon variant="subtle" size={26} aria-label={t('settings.memory.delete')} onClick={() => onRequestDelete(entry)}>
               <Trash2 size={13} />
             </ActionIcon>
           </Tooltip>
@@ -91,6 +95,7 @@ export const MemorySection: React.FC<Props> = ({
   memory, telegramUsers, lineUsers, t, locale, showSection, sectionGap,
 }) => {
   const [confirmClear, setConfirmClear] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<UserMemoryEntry | null>(null);
   const [curate, setCurate] = useState<{ focus: string } | null>(null);
   const curateRequest = useUserMemoryStore((s) => s.curateRequest);
   const snapshot = memory.snapshot;
@@ -110,7 +115,15 @@ export const MemorySection: React.FC<Props> = ({
       : []),
   ], [telegramUsers, lineUsers]);
 
-  if (!snapshot) return null;
+  // Was `return null`, i.e. the whole section vanished while the snapshot loaded — with the
+  // nav entry still pointing at it, that reads as a broken page rather than a wait.
+  if (!snapshot) {
+    return (
+      <Box display={showSection(TAG_SETS.memory, 'memory') ? 'block' : 'none'}>
+        <EmptyState icon={Brain} label="" busy />
+      </Box>
+    );
+  }
   const visible = showSection(TAG_SETS.memory, 'memory');
   const full = memoryNearlyFull(snapshot.usedChars);
   // Entries are stored oldest first, so the buckets of when Yobi learned them already run in order.
@@ -196,7 +209,7 @@ export const MemorySection: React.FC<Props> = ({
                   // Same time buckets as the conversation sidebar, so they share its labels.
                   <GroupHeader label={t(`sidebar.group.${groupHeads[index]}`)} />
                 )}
-                <EntryRow entry={entry} memory={memory} maxChars={snapshot.entryMaxChars} t={t} />
+                <EntryRow entry={entry} memory={memory} maxChars={snapshot.entryMaxChars} t={t} onRequestDelete={setConfirmDelete} />
               </React.Fragment>
             ))}
             {memory.formTarget === 'new' && (
@@ -243,6 +256,21 @@ export const MemorySection: React.FC<Props> = ({
             )}
         </SettingField>
       </SectionCard>
+
+      <WebDialog
+        open={confirmDelete !== null}
+        title={t('settings.memory.delete.title')}
+        description={confirmDelete?.text ?? ''}
+        confirmText={t('common.delete')}
+        cancelText={t('dialog.cancel')}
+        danger
+        onConfirm={() => {
+          const target = confirmDelete;
+          setConfirmDelete(null);
+          if (target) void memory.remove(target.id);
+        }}
+        onCancel={() => setConfirmDelete(null)}
+      />
 
       <WebDialog
         open={confirmClear}

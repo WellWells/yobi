@@ -405,9 +405,7 @@ export const IPC = {
   UPDATE_NOT_AVAILABLE: 'update:not-available',
   UPDATE_ERROR: 'update:error',
   FILE_LIST: 'file:list',
-  FILE_CONTENT: 'file:content',
   UI_NOTIFICATION: 'ui:notification',
-  HOTKEY_CHANGED: 'hotkey:changed',
   TELEGRAM_RUNTIME: 'telegram:runtime',
   LINE_RUNTIME: 'line:runtime',
   ACCOUNT_STATUS_CHANGED: 'account:status-changed',
@@ -418,8 +416,9 @@ export const IPC = {
   WINDOW_MINIMIZE: 'window:minimize',
   WINDOW_MAXIMIZE: 'window:maximize',
   WINDOW_CLOSE: 'window:close',
+  WINDOW_IS_MAXIMIZED: 'window:is-maximized',
+  WINDOW_MAXIMIZED_CHANGED: 'window:maximized-changed',
   SHOW_WORKER: 'show-worker',
-  HIDE_WORKER: 'hide-worker',
   GET_ACCOUNT_STATUSES: 'account:get-statuses',
   OPEN_ACCOUNT_LOGIN: 'account:open-login',
   ACCOUNT_LOGOUT: 'account:logout',
@@ -576,7 +575,6 @@ export const IPC = {
   CLOSE_TO_TRAY_CHANGED: 'tray:close-to-tray-changed',
   GET_THEME: 'theme:get',
   UPDATE_THEME: 'theme:update',
-  THEME_CHANGED: 'theme:changed',
   GET_LAYOUT_MODE: 'ui:get-layout-mode',
   UPDATE_LAYOUT_MODE: 'ui:update-layout-mode',
   GET_SHOW_TOKEN_USAGE: 'ui:get-show-token-usage',
@@ -1746,11 +1744,9 @@ export const BUILTIN_MODEL_FLOW_ID = '__builtin:model__';
 
 export const BUILTIN_SEARCH_COMMAND = 'search';
 export const BUILTIN_SEARCH_FLOW_ID = '__builtin:search__';
-export const BUILTIN_SEARCH_ALIAS = 's';
 
 export const BUILTIN_QUICKSEARCH_COMMAND = 'quicksearch';
 export const BUILTIN_QUICKSEARCH_FLOW_ID = '__builtin:quicksearch__';
-export const BUILTIN_QUICKSEARCH_ALIAS = 'qs';
 
 export type SearchMode = 'standard' | 'quick';
 

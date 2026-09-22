@@ -357,10 +357,6 @@ export function activeCombos(
   return shipped;
 }
 
-export function rebindableShortcuts(): ShortcutDef[] {
-  return SHORTCUTS.filter((s) => s.rebindable);
-}
-
 export const SHORTCUT_VIEWS: readonly ShortcutView[] = ['chat', 'flow', 'logs', 'settings', 'about'];
 
 export function collisionCombos(

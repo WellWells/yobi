@@ -12,13 +12,13 @@ export function useChatCommandRunner(setToast: (toast: ExportToast) => void) {
 
   const failToast = useCallback((command: string, error: string): void => {
     setToast({
-      id: Date.now(),
       message: t('chat.command.error').replace('{{command}}', command).replace('{{error}}', error),
+      level: 'error',
     });
   }, [setToast, t]);
 
   const doneToast = useCallback((command: string): void => {
-    setToast({ id: Date.now(), message: t('chat.command.done').replace('{{command}}', command) });
+    setToast({ message: t('chat.command.done').replace('{{command}}', command) });
   }, [setToast, t]);
 
   const runCommand = useCallback(async (cmd: ChatCommand, input: string): Promise<void> => {

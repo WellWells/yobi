@@ -98,8 +98,6 @@ export const AssistantTurn = React.memo<AssistantTurnProps>(({ response, meta, f
             {t('agent.question.waiting')}
           </Badge>
         )}
-        {
-}
         {meta.m === 'replay' && (
           <Badge variant="light" size="sm" radius="sm">
             {t('chat.context.degraded')}
@@ -149,8 +147,6 @@ export const AssistantTurn = React.memo<AssistantTurnProps>(({ response, meta, f
 
       {meta.r && <TurnTrace runId={meta.r} t={t} />}
 
-      {
-}
       <Group
         gap={4}
         mt={6}

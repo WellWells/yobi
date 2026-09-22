@@ -108,8 +108,6 @@ export const AvailableVarsHint: React.FC<{
           onInsert={onInsert}
         />
       )}
-      {
-}
       {flowVariables.map((variable) => (
         <VarChip
           key={variable.key}

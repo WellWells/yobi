@@ -5,8 +5,6 @@ import { DEFAULT_MODEL_URL, makeByokGroupModels, makeByokModelOption } from '../
 import { BYOK_DEFAULT_BASE_URLS, buildByokUrl } from '../../../../../shared/types';
 import type { ByokConnectionProbe, ByokInstanceSnapshot, ByokProviderType, ByokSettingsSnapshot } from '../../../../../shared/types';
 
-type ByokProbePayload = ByokConnectionProbe;
-
 export interface ByokFormState {
   id: string | null;
   name: string;
@@ -124,7 +122,7 @@ export function useByokSettings() {
     && (form.apiKey.trim().length > 0 || form.id !== null);
   const canTest = canProbe && form !== null && form.model.trim().length > 0;
 
-  const buildProbe = useCallback((): ByokProbePayload | null => {
+  const buildProbe = useCallback((): ByokConnectionProbe | null => {
     if (!form) return null;
     return {
       id: form.id ?? undefined,

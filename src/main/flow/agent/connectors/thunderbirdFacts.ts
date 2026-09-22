@@ -132,10 +132,6 @@ export function accountForFolder(ledger: LedgerView, folderPath: string): MailId
   return byLocal.length === 1 ? byLocal[0] : undefined;
 }
 
-export function draftsFolderFor(ledger: LedgerView, accountId: string, type: 'drafts' | 'sent'): string | undefined {
-  return ledger.facts(TB_FOLDER).find((fact) => fact.fields.accountId === accountId && fact.fields.type === type)?.fields.path;
-}
-
 export function emailsIn(text: string): string[] {
   return (text.match(/[^\s<>,;:"'()]+@[^\s<>,;:"'()]+\.[a-z]{2,}/gi) ?? []).map((email) => email.toLowerCase());
 }

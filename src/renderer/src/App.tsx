@@ -1,8 +1,9 @@
-import React, { Suspense, useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { AppWindow, LogOut } from 'lucide-react';
 import { Modal, Button, Group, Text, Checkbox, Box, Flex, Stack, Loader } from '@mantine/core';
 import { TitleBar } from './components/TitleBar';
 import { AgentConfirmDialog } from './components/AgentConfirmDialog';
+import { ViewBoundary } from './components/ViewBoundary';
 import { ChatView } from './views/ChatView';
 import { onIdle } from './utils/idle';
 import { useAppStore } from './store/appStore';
@@ -80,16 +81,16 @@ export const App: React.FC = () => {
           <ChatView />
         </Box>
         <Box display={currentView === 'logs' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
-          <Suspense fallback={null}><MemoLogView /></Suspense>
+          <ViewBoundary><MemoLogView /></ViewBoundary>
         </Box>
         <Box display={currentView === 'settings' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
-          <Suspense fallback={null}><MemoSettingsView /></Suspense>
+          <ViewBoundary><MemoSettingsView /></ViewBoundary>
         </Box>
         <Box display={currentView === 'about' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
-          <Suspense fallback={null}><MemoAboutView /></Suspense>
+          <ViewBoundary><MemoAboutView /></ViewBoundary>
         </Box>
         <Box display={currentView === 'flow' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
-          <Suspense fallback={null}><MemoFlowView /></Suspense>
+          <ViewBoundary><MemoFlowView /></ViewBoundary>
         </Box>
       </Flex>
 

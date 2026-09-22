@@ -9,7 +9,6 @@ import type { Config } from '../configTypes';
 import { assertPublicHttpUrl, guardedFetch } from '../net/ssrfGuard';
 import { slugifyCommandName } from '../../shared/mcpCommand';
 import { BUILTIN_CONNECTORS, findBuiltinConnector } from '../../shared/builtinConnectors';
-import { BUILTIN_LINE_SERVER_ID } from '../../shared/types';
 import type { McpConnectionStatus, McpServerActionResult, McpServerConfig, McpServerSaveRequest, McpServerView } from '../../shared/types';
 import type { McpTool, McpToolResult } from './mcpTypes';
 import { McpAuthProvider } from './mcpAuthProvider';
@@ -53,9 +52,6 @@ interface ServerRuntime {
   kind: 'http' | 'builtin';
   close?: () => Promise<void>;
 }
-
-// Stable id for the in-process LINE connector. `builtin://` is never network-dialed.
-export const BUILTIN_LINE_ID = BUILTIN_LINE_SERVER_ID;
 
 export interface ConnectedServerTools {
   serverId: string;

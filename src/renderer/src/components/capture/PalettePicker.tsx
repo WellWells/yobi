@@ -104,8 +104,6 @@ export const PaletteSwatchGrid: React.FC<PaletteSwatchGridProps> = ({
   t,
 }) => (
   <Stack gap={12}>
-    {
-}
     {CAPTURE_PALETTE_GROUPS.map((group) => {
       const items = palettes.filter((p) => p.group === group);
       if (items.length === 0) return null;

@@ -13,6 +13,7 @@ import { resolveUrlPrompt } from './urlParser';
 import { runQuickExport } from './quickExport';
 import type { QueueManager } from './queueManager';
 import type { QuickExportSettings } from '../shared/types';
+import { compactPreview } from '../shared/textBudget';
 
 export interface HotkeyDeps {
   queue: QueueManager;
@@ -73,10 +74,7 @@ export function bindHotkey(deps: HotkeyDeps): boolean {
 
     const notifyTitle = langData['notify.queued.title'] ?? 'Yobi';
     const notifyBodyTemplate = langData['notify.queued.body'] ?? 'Queued: "{{prompt}}"';
-    const compactPrompt = prompt.replace(/\s+/g, ' ').trim().slice(0, 36);
-    const displayPrompt = compactPrompt.length < prompt.replace(/\s+/g, ' ').trim().length
-      ? `${compactPrompt}…`
-      : compactPrompt;
+    const displayPrompt = compactPreview(prompt, 36);
     sendWebNotification(notifyTitle, notifyBodyTemplate.replace('{{prompt}}', displayPrompt), 'info');
   });
 

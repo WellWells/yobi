@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { ActionIcon, Badge, Group, Stack, Text, Tooltip } from '@mantine/core';
 import { Trash2 } from 'lucide-react';
+import { WebDialog } from '../../../components/WebDialog';
 import type { BotContact, TelegramChannel } from '../../../../../shared/types';
 
 interface Props {
@@ -11,6 +12,9 @@ interface Props {
 }
 
 export const TelegramChannels: React.FC<Props> = ({ channels, contacts, onForget, t }) => {
+  // Confirmed like the other permanent removals: forgetting a channel drops it from the
+  // directory, and every flow that sends there stops knowing its name.
+  const [pending, setPending] = useState<TelegramChannel | null>(null);
   if (channels.length === 0) {
     return (
       <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>
@@ -67,7 +71,7 @@ export const TelegramChannels: React.FC<Props> = ({ channels, contacts, onForget
             <ActionIcon
               variant="subtle"
               size={26}
-              onClick={() => onForget(channel.chatId)}
+              onClick={() => setPending(channel)}
               aria-label={t('settings.telegram.channels.forget')}
             >
               <Trash2 size={13} />
@@ -76,6 +80,21 @@ export const TelegramChannels: React.FC<Props> = ({ channels, contacts, onForget
         </Group>
         );
       })}
+
+      <WebDialog
+        open={pending !== null}
+        title={t('settings.telegram.channels.forget.title')}
+        description={pending?.title || String(pending?.chatId ?? '')}
+        confirmText={t('settings.telegram.channels.forget')}
+        cancelText={t('dialog.cancel')}
+        danger
+        onConfirm={() => {
+          const target = pending;
+          setPending(null);
+          if (target) onForget(target.chatId);
+        }}
+        onCancel={() => setPending(null)}
+      />
     </Stack>
   );
 };

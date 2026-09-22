@@ -384,6 +384,8 @@ export const backupApi = {
 export const windowApi = {
   minimize: (): void => window.electronAPI.minimizeWindow(),
   maximize: (): void => window.electronAPI.maximizeWindow(),
+  isMaximized: (): Promise<boolean> => window.electronAPI.isWindowMaximized(),
+  onMaximizedChanged: (cb: (maximized: boolean) => void) => window.electronAPI.onWindowMaximizedChanged(cb),
   close: (): void => window.electronAPI.closeWindow(),
   respondCloseDialog: (action: 'quit' | 'hide', remember: boolean): void =>
     window.electronAPI.respondCloseDialog(action, remember),

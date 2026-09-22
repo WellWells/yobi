@@ -14,16 +14,22 @@ export function useMetrics() {
   const settingsVisible = useAppStore((state) => state.currentView === 'settings');
 
   useEffect(() => {
-    void metricsApi.get().then(setSnapshot);
     void metricsApi.getEnabled().then(setEnabled);
-    return ipcEvents.onMetricsChanged(setSnapshot);
   }, []);
 
   /**
-   * Only while the page is open. Flow counters flush per step rather than per run, so a busy
-   * loop broadcasts twice a second — and every view stays mounted, so an ungated subscription
-   * would re-render settings that nobody is looking at for the length of the run.
+   * Both snapshots, only while the page is open. Counters flush per flow step and per model
+   * call rather than per run, so a busy loop or an `/agent` run broadcasts repeatedly — and
+   * every view stays mounted, so an ungated subscription would re-render settings that nobody
+   * is looking at for the length of the run. `useMetrics` is called by `SettingsView` itself,
+   * so that re-render is the whole page, not just the statistics section.
    */
+  useEffect(() => {
+    if (!settingsVisible) return;
+    void metricsApi.get().then(setSnapshot);
+    return ipcEvents.onMetricsChanged(setSnapshot);
+  }, [settingsVisible]);
+
   useEffect(() => {
     if (!settingsVisible) return;
     void flowMetricsApi.get().then(setFlowSnapshot).catch(() => {});

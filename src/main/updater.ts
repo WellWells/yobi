@@ -1,8 +1,8 @@
-import { app, Notification } from 'electron';
+import { app } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { IPC } from '../shared/types';
 import type { UpdateAvailablePayload } from '../shared/types';
-import { isHttpUrl } from './helpers';
+import { isHttpUrl, sendWebNotification } from './helpers';
 import { getLangCache, t } from './i18n';
 
 interface UpdaterDeps {
@@ -87,14 +87,17 @@ export function initializeUpdater(deps: UpdaterDeps): void {
     sendLogRef(`⬆️ Update available: ${version}`);
     sendToRendererRef(IPC.UPDATE_AVAILABLE, payload);
 
-    if (Notification.isSupported()) {
-      const strings = getLangCache();
-      new Notification({
-        title: t(strings, 'notify.update.available.title', { version }),
-        body: t(strings, 'notify.update.available.body'),
-        silent: false,
-      }).show();
-    }
+    // Through the shared helper, not a raw Notification: this was the one call site in the
+    // main process that skipped the "notify me" switch, so a user who had turned notifications
+    // off still got a banner — on every launch, since autoDownload is false and the update
+    // re-announces itself. The helper also brings the in-app fallback for a Mac that has not
+    // granted permission yet.
+    const strings = getLangCache();
+    sendWebNotification(
+      t(strings, 'notify.update.available.title', { version }),
+      t(strings, 'notify.update.available.body'),
+      'info',
+    );
   });
 
   autoUpdater.on('update-not-available', () => {

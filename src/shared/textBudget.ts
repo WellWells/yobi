@@ -1,5 +1,11 @@
 const encoder = new TextEncoder();
 
+/** One-line preview for a notification, log row or queue entry: whitespace collapsed, ellipsis past `limit`. */
+export function compactPreview(text: string, limit: number): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  return compact.length > limit ? `${compact.slice(0, limit)}…` : compact;
+}
+
 export function utf8Len(text: string): number {
   return encoder.encode(text).length;
 }

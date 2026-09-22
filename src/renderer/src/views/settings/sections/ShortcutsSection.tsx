@@ -96,7 +96,6 @@ export const ShortcutsSection: React.FC<Props> = ({
           <Stack gap={0}>
             {defs.map((def, index) => (
               <React.Fragment key={def.id}>
-                {}
                 {defs[index - 1]?.rebindable && !def.rebindable && <SettingDivider my={8} />}
                 <ShortcutRow
                   def={def}
@@ -112,8 +111,6 @@ export const ShortcutsSection: React.FC<Props> = ({
         </SectionCard>
       ))}
 
-      {
-}
       <SectionCard style={{ marginBottom: sectionGap }}>
         <SectionTitle icon={<Keyboard size={15} />} label={t('settings.shortcut.group.flowTriggers')} />
         {shortcuts.flowHotkeys.length === 0 ? (

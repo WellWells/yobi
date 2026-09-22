@@ -1,11 +1,12 @@
 import { BrowserWindow } from 'electron';
-import { IPC, PROVIDER_LABELS, AUTH_PROVIDERS } from '../shared/types';
+import { IPC, PROVIDER_LABELS } from '../shared/types';
 import type { AccountStatus, AuthProvider, Provider } from '../shared/types';
 import { sendLog, sendToRenderer, sendWebNotification } from './helpers';
 import { getLangCache, t } from './i18n';
 import { getAuthProviderConfig, getAccountStatus, clearProviderSession } from './providers/authStatus';
 import { runGoogleSignInLanguageReset } from './providers/googleSignInLanguage';
 import { applyWorkerUserAgent } from './clientHints';
+import { getWindowIcon } from './windows';
 import { clearClaudeModels } from './providers/claudeModelSync';
 import { refreshClaudeModelList } from './ipc/claudeModel';
 import { clearChatgptModels } from './providers/chatgptModelSync';
@@ -54,6 +55,9 @@ export async function openAccountLoginWindow(provider: AuthProvider): Promise<bo
     width: 480,
     height: 760,
     title: t(strings, 'settings.accounts.loginWindow.title', { provider: providerLabel }),
+    // Without this it wears Electron's default icon in the taskbar and Alt+Tab, which is how a
+    // window the app opened on purpose ends up looking like a stray browser.
+    icon: getWindowIcon(),
     autoHideMenuBar: true,
     webPreferences: {
       partition: WORKER_PARTITION,
@@ -121,26 +125,15 @@ export async function openAccountLoginWindow(provider: AuthProvider): Promise<bo
   return true;
 }
 
-function isAuthProvider(provider: Provider): provider is AuthProvider {
-  return (AUTH_PROVIDERS as readonly string[]).includes(provider);
-}
-
 export async function clearProviderData(provider: Provider): Promise<boolean> {
   const label = PROVIDER_LABELS[provider];
   try {
     await clearProviderSession(provider);
     if (provider === 'claude') clearClaudeModels();
     if (provider === 'chatgpt') clearChatgptModels();
-    if (isAuthProvider(provider)) {
-      broadcastStatus(provider, false);
-    } else {
-      const strings = getLangCache();
-      sendWebNotification(
-        t(strings, 'notify.completed.title'),
-        t(strings, 'settings.accounts.reset.done', { provider: label }),
-        'success',
-      );
-    }
+    // Every Provider is an AuthProvider today. If one ever is not, this stops
+    // type-checking rather than silently skipping the status broadcast.
+    broadcastStatus(provider, false);
     sendLog(`🧹 Cleared ${label} data`);
     return true;
   } catch (err: unknown) {

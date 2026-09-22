@@ -8,6 +8,7 @@ import type {
   FlowExecutionResult,
   QueueTaskItem,
 } from '../../shared/types';
+import { compactPreview } from '../../shared/textBudget';
 import { executeFlow } from './executor';
 import { closeRunPages } from './skills/browserPages';
 import { runFlowBuild } from './flowBuild';
@@ -552,8 +553,7 @@ export class FlowManager {
         'success',
       );
     } else if (!result.success && config.notifyEvents.flowFailure) {
-      const compactError = localizeUserFacingError(result.error ?? '', strings).replace(/\s+/g, ' ').trim();
-      const displayError = compactError.length > 90 ? `${compactError.slice(0, 90)}…` : compactError;
+      const displayError = compactPreview(localizeUserFacingError(result.error ?? '', strings), 90);
       sendWebNotification(
         t(strings, 'notify.flow.failure.title'),
         t(strings, 'notify.flow.failure.body', { flow: flow.name, error: displayError }),

@@ -1,0 +1,15 @@
+/* WelcomeScreen.module.css */
+
+.stepCard {
+  border: 1px solid var(--mantine-color-default-border);
+  background: var(--mantine-color-default);
+  border-radius: var(--radius-lg);
+  padding: 10px 14px;
+  font-size: var(--font-size-base);
+  color: var(--mantine-color-default-color);
+  box-shadow: var(--shadow-sm);
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* No :hover — these cards are instructions, not targets (WelcomeScreen.tsx renders a plain
+   Box with no onClick). Lighting up under the pointer promises a click that never happens. */

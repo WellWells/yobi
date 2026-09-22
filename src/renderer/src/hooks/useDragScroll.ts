@@ -56,8 +56,6 @@ export function createDragScroll(threshold: number = DRAG_SCROLL_THRESHOLD_PX) {
   };
 }
 
-export type DragScroll = ReturnType<typeof createDragScroll>;
-
 export interface DragScrollHandlers {
   onPointerDown: React.PointerEventHandler<HTMLDivElement>;
   onPointerMove: React.PointerEventHandler<HTMLDivElement>;

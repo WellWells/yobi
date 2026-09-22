@@ -55,7 +55,6 @@ interface ActionState {
   updateExtraTrigger: (flowId: string, index: number, trigger: TriggerConfig) => void;
   removeExtraTrigger: (flowId: string, index: number) => void;
   appendExecutionLog: (log: FlowExecutionLog) => void;
-  clearExecutionLogs: () => void;
   markFlowRunning: (flowId: string) => void;
   markFlowDone: (flowId: string) => void;
   importFlows: (flows: FlowDefinition[]) => Promise<void>;
@@ -419,10 +418,6 @@ export const useFlowStore = create<ActionState>((set, get) => ({
     set((state) => ({
       executionLogs: [...state.executionLogs.slice(-499), log],
     }));
-  },
-
-  clearExecutionLogs: () => {
-    set({ executionLogs: [] });
   },
 
   markFlowRunning: (flowId) => {

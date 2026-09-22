@@ -48,7 +48,6 @@ export const ExportSection: React.FC<Props> = ({
       <Text fz="var(--font-size-sm)" c="dimmed" mb={14} style={{ lineHeight: 1.6 }}>
         {t('settings.quickExport.hint')}
       </Text>
-      {}
       <Stack gap={14}>
         <SettingRow
           icon={<ImageIcon size={13} />}
@@ -63,7 +62,6 @@ export const ExportSection: React.FC<Props> = ({
             />
           )}
         />
-        {}
         <Box display={quickExport.format === 'text' ? 'none' : 'block'}>
           <SettingRow
             icon={<FileDown size={13} />}
@@ -86,8 +84,6 @@ export const ExportSection: React.FC<Props> = ({
         {t('settings.cardStyle.hint')}
       </Text>
       <Stack gap={14}>
-        {
-}
         <SettingField icon={<Palette size={13} />} label={t('common.background')}>
           <Stack gap={10}>
             <BackgroundStylePicker
@@ -104,7 +100,6 @@ export const ExportSection: React.FC<Props> = ({
             />
           </Stack>
         </SettingField>
-        {}
         {preferences.backgroundStyle === 'gradient' && (
           <SettingField icon={<Palette size={13} />} label={t('capture.direction')}>
             <DirectionGrid value={preferences.direction} onChange={preferences.setDirection} />
@@ -156,8 +151,6 @@ export const ExportSection: React.FC<Props> = ({
           hint={t('capture.hiDpi.desc')}
           control={<ToggleSwitch checked={preferences.hiDpi} onChange={(e) => preferences.setHiDpi(e.currentTarget.checked)} />}
         />
-        {
-}
         <SettingField icon={<Eye size={13} />} label={t('capture.preview')}>
           <CardStyleSample
             palette={preferences.palette}
@@ -173,8 +166,6 @@ export const ExportSection: React.FC<Props> = ({
       </Stack>
     </SectionCard>
 
-    {
-}
     <SectionCard style={{ marginBottom: sectionGap, display: showSection(TAG_SETS.shareLink, 'export') ? 'block' : 'none' }}>
       <SectionTitle icon={<Link2 size={15} />} label={t('settings.share.title')} />
       <SettingField icon={<Server size={13} />} label={t('settings.share.instance')} hint={t('settings.share.instanceHint')}>

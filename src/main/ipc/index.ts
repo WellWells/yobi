@@ -19,13 +19,8 @@ import { titleFromPrompt } from '../output';
 import { resolveUrlPrompt } from '../urlParser';
 import {
   revealWorkerWindow,
-  hideWorkerWindow,
   ensureWorkerWindow,
 } from '../windows';
-import type { QueueManager } from '../queueManager';
-import type { TelegramRuntime } from '../telegram';
-import type { LineRuntime } from '../line';
-import type { FlowManager } from '../flow';
 import type { IpcContext } from './context';
 import { showOpenDialogForWin } from './context';
 import { registerFileHandlers } from './files';
@@ -51,23 +46,7 @@ import { registerMemoryCurateHandlers } from './memoryCurate';
 
 let _ipcInitialized = false;
 
-interface SetupDeps {
-  queue: QueueManager;
-  telegramRuntime: TelegramRuntime;
-  lineRuntime: LineRuntime;
-  telegramSessionId: string;
-  getMainWin: () => import('electron').BrowserWindow | null;
-  bindHotkey: () => boolean;
-  bindQuickExportHotkey: () => boolean;
-  checkForUpdates: () => Promise<boolean>;
-  onTraySettingsChanged?: () => void;
-  onTrayMenuRebuild?: () => void;
-  onHideToTray?: () => void;
-  onQuitApp?: () => void;
-  flowManager?: FlowManager;
-}
-
-export function setupIpcHandlers(deps: SetupDeps): void {
+export function setupIpcHandlers(deps: IpcContext): void {
   if (_ipcInitialized) {
     console.warn('[ipcHandlers] setupIpcHandlers called multiple times — skipping duplicate registration');
     return;
@@ -75,7 +54,7 @@ export function setupIpcHandlers(deps: SetupDeps): void {
   _ipcInitialized = true;
 
   const { queue, getMainWin, checkForUpdates } = deps;
-  const ctx: IpcContext = deps;
+  const ctx = deps;
 
   async function enqueuePromptFromUi(
     rawPrompt: string,
@@ -124,7 +103,6 @@ export function setupIpcHandlers(deps: SetupDeps): void {
     await ensureWorkerWindow(config.targetUrl);
     revealWorkerWindow();
   });
-  ipcMain.on(IPC.HIDE_WORKER, () => hideWorkerWindow());
   ipcMain.handle(IPC.UPDATE_CHECK, () => checkForUpdates());
 
   ipcMain.on(IPC.WINDOW_MINIMIZE, () => getMainWin()?.minimize());
@@ -134,6 +112,7 @@ export function setupIpcHandlers(deps: SetupDeps): void {
     else win?.maximize();
   });
   ipcMain.on(IPC.WINDOW_CLOSE, () => getMainWin()?.close());
+  ipcMain.handle(IPC.WINDOW_IS_MAXIMIZED, () => getMainWin()?.isMaximized() === true);
 
   ipcMain.handle(IPC.GET_APP_ICON_DATA_URL, () => {
     const iconFile = process.platform === 'darwin' ? 'icon-mac.png' : 'icon-win.png';

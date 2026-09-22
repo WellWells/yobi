@@ -130,7 +130,7 @@ export const StatsSection: React.FC<Props> = ({ metrics, t, showSection, section
             </Stack>
           ) : (
             <SectionCard>
-              <EmptyState icon={ChartLine} label={t('settings.stats.empty')} />
+              <EmptyState icon={ChartLine} label={t('settings.stats.empty')} busy={snapshot === null} />
             </SectionCard>
           )}
         </>

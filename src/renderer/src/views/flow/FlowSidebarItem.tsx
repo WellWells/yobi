@@ -49,7 +49,7 @@ export const FlowSidebarItem: React.FC<FlowSidebarItemProps> = ({
           />
         )}
         <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
-          <Text fz="var(--font-size-xs)" fw={500} lineClamp={1}>
+          <Text fz="var(--font-size-sm)" fw={500} lineClamp={1}>
             {flow.name || t('flow.flowName')}
           </Text>
           <Group gap={4}>
@@ -57,7 +57,7 @@ export const FlowSidebarItem: React.FC<FlowSidebarItemProps> = ({
             {flow.extraTriggers && flow.extraTriggers.length > 0 && (
               <Badge size="xs" variant="light" color="gray">{`+${flow.extraTriggers.length}`}</Badge>
             )}
-            <Text fz="xs" c="dimmed">
+            <Text fz="var(--font-size-xs)" c="dimmed">
               {flow.steps.length} {t('flow.steps').toLowerCase()}
             </Text>
           </Group>

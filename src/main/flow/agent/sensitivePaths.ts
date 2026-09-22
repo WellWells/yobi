@@ -134,11 +134,6 @@ const CREDENTIAL_FILE_PATTERNS: readonly RegExp[] = [
   /^unattend(\.xml)?$/, /^sysprep\.inf$/,
 ];
 
-export interface SensitiveHit {
-  /** A short, model-facing reason. Never contains the resolved absolute path. */
-  reason: string;
-}
-
 /** The part of `target` under the longest matching allowed root, or the whole path if none match. */
 function belowRoot(target: string, roots: readonly string[]): string {
   let best = '';

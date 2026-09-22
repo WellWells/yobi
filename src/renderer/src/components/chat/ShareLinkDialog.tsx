@@ -121,8 +121,6 @@ export const ShareLinkDialog: React.FC<ShareLinkDialogProps> = ({ open, onClose,
               {t('share.consent.intro').replace('{{instance}}', settings?.instanceUrl ?? '')}
             </Text>
 
-            {
-}
             <ShareConsentPoints points={SHARE_CONSENT_KEYS.map((key) => ({ key, text: t(key) }))} />
 
             <Group justify="flex-end" gap={8}>
@@ -212,8 +210,6 @@ export const ShareLinkDialog: React.FC<ShareLinkDialogProps> = ({ open, onClose,
             )}
 
             <Group justify="space-between" gap={8}>
-              {
-}
               <AppButton
                 variant="subtle"
                 color="red"
@@ -227,8 +223,6 @@ export const ShareLinkDialog: React.FC<ShareLinkDialogProps> = ({ open, onClose,
               <Group gap={8}>
                 {!revoked && (
                   <>
-                    {
-}
                     <Tooltip label={t('share.open.burnBlocked')} disabled={!result.burned} position="top" maw={280} multiline>
                       <Box>
                         <AppButton

@@ -79,14 +79,6 @@ export function emptyFlowMetrics(): FlowMetricsSnapshot {
   return { flows: {}, daily: {}, since: '' };
 }
 
-export function stepFailures(step: FlowStepMetrics): number {
-  return step.soft + step.hard;
-}
-
-export function stepRuns(step: FlowStepMetrics): number {
-  return step.ok + step.soft + step.hard;
-}
-
 /** The reason bucket with the most hits, used as the one-word diagnosis on a step row. */
 export function topReason(reasons: Partial<Record<FlowErrorReason, number>>): FlowErrorReason | null {
   let best: FlowErrorReason | null = null;

@@ -1,3 +1,5 @@
+import type { CSSProperties } from 'react';
+
 type AppInputTone = 'default' | 'body' | 'tertiary' | 'accent' | 'recording';
 type AppInputResize = 'none' | 'vertical';
 
@@ -59,4 +61,27 @@ export function buildInputStyles({
   } as const;
 }
 
-export type { AppInputTone, AppInputResize };
+type InputStyleSlots = Record<string, CSSProperties>;
+
+/**
+ * Merges the shared input styling with whatever the caller passed, slot by slot.
+ *
+ * The wrappers spread `{...props}` after `styles=`, so a caller passing `styles` replaced the
+ * whole shared object rather than adding to it: SearchPalette asked for a transparent
+ * background and silently lost the font size, the label weight, the section colour and the
+ * error size along with it. AppModal and SelectDropdown already merge; these now match.
+ *
+ * Object form only, like `SelectDropdown` — Mantine also accepts a function, but nothing in
+ * the app passes one and merging one would mean wrapping the callback.
+ */
+export function mergeInputStyles(base: InputStyleSlots, override: unknown): InputStyleSlots {
+  const merged: InputStyleSlots = { ...base };
+  if (!override || typeof override !== 'object') return merged;
+  for (const [slot, value] of Object.entries(override as Record<string, unknown>)) {
+    if (!value || typeof value !== 'object') continue;
+    merged[slot] = { ...(merged[slot] ?? {}), ...(value as CSSProperties) };
+  }
+  return merged;
+}
+
+export type { AppInputTone, AppInputResize, InputStyleSlots };

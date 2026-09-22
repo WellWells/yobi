@@ -72,7 +72,6 @@ const DocumentSingle: React.FC<{ request: MarkdownCaptureRequest }> = ({ request
 
 const DocumentBody: React.FC<{ request: MarkdownCaptureRequest }> = ({ request }) => (
   <>
-    {}
     <MetaRow
       provider={request.options.showProvider ? request.payload.provider : ''}
       time={request.options.showTimestamp ? request.payload.timestamp : ''}
@@ -130,7 +129,6 @@ export const CaptureCard: React.FC<CaptureCardProps> = ({ request, rootId }) => 
             background: options.background,
           } as React.CSSProperties}
         >
-          {}
           <div
             className="capture-scene"
             style={{ background: options.background, ...(options.margin === undefined ? {} : { padding: options.margin }) }}

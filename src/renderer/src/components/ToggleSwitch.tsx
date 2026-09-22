@@ -7,6 +7,9 @@ export interface ToggleSwitchProps {
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
   disabled?: boolean;
   label?: React.ReactNode;
+  /** Secondary line under the label. Added so the export dialog could stop hand-rolling a
+      bare <Switch>, which was the only switch in the app that turned accent-blue. */
+  description?: React.ReactNode;
   'aria-label'?: string;
 }
 
@@ -16,6 +19,7 @@ export const ToggleSwitch: React.FC<ToggleSwitchProps> = ({
   size = 'md',
   disabled,
   label,
+  description,
   'aria-label': ariaLabel,
 }) => (
   <Switch
@@ -26,6 +30,7 @@ export const ToggleSwitch: React.FC<ToggleSwitchProps> = ({
     withThumbIndicator={false}
     disabled={disabled}
     label={label}
+    description={description}
     aria-label={ariaLabel}
     styles={{
       track: {

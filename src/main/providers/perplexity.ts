@@ -1,5 +1,5 @@
-import type { BrowserWindow, Cookie, WebContents } from 'electron';
-import { isCloudflareChallengeActive, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
+import type { BrowserWindow, Cookie } from 'electron';
+import { isCloudflareChallengeActive, waitForPageLoad, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
 import { ensureOnPage, PAGE_REUSE } from './pageReuse';
 import { countElements, executeAutomationWithTimeout, dispatchFocusEvents, settledElementCount } from './automationExecutor';
 import { INJECTED_PPLX_READ_JS, PPLX_RESPONSE_SELECTOR } from './perplexityReadScript';
@@ -110,17 +110,6 @@ export async function runPerplexityAutomation(
     response: result.response.trim(),
     title: (result.title || '').trim(),
   };
-}
-
-async function waitForPageLoad(wc: WebContents, timeoutMs: number): Promise<void> {
-  if (!wc.isLoading()) return;
-  return new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error(`Post-navigation page load timed out after ${timeoutMs}ms`)),
-      timeoutMs,
-    );
-    wc.once('did-finish-load', () => { clearTimeout(timer); resolve(); });
-  });
 }
 
 function buildPerplexityReadScript(

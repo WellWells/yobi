@@ -73,6 +73,15 @@ export function isMainWindowAlive(): boolean {
   return _mainWin !== null && !_mainWin.isDestroyed();
 }
 
+/**
+ * Whether the user is looking at Yobi right now. Callers use this to skip a banner that would
+ * only repeat what is already on screen — it is deliberately NOT consulted inside
+ * `emitNotification()`: a security notice or a login prompt has to arrive whatever has focus.
+ */
+export function isMainWindowFocused(): boolean {
+  return getMainWindow()?.isFocused() === true;
+}
+
 export function setWorkerAttention(state: WorkerAttention): void {
   _workerAttention = state;
 }

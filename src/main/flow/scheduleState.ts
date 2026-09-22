@@ -15,7 +15,6 @@ type ScheduleState = Record<string, TriggerRunState>;
 const WRITE_DEBOUNCE_MS = 1_000;
 
 let state: ScheduleState = {};
-let loaded = false;
 let writeTimer: NodeJS.Timeout | null = null;
 
 /** Kept out of flows.json: a cron tick must not rewrite the user's flow definitions. */
@@ -35,11 +34,6 @@ export async function loadScheduleState(): Promise<void> {
   } catch {
     state = {};
   }
-  loaded = true;
-}
-
-export function isScheduleStateLoaded(): boolean {
-  return loaded;
 }
 
 export function getTriggerState(key: string): TriggerRunState | undefined {
@@ -69,12 +63,6 @@ export function patchTriggerState(key: string, patch: TriggerRunState): void {
   scheduleWrite();
 }
 
-export function clearTriggerState(key: string): void {
-  if (!(key in state)) return;
-  delete state[key];
-  scheduleWrite();
-}
-
 /** Drops entries for flows that no longer exist, so the file cannot grow without bound. */
 export function pruneScheduleState(liveFlowIds: Iterable<string>): void {
   const live = new Set(liveFlowIds);
@@ -92,5 +80,4 @@ export function pruneScheduleState(liveFlowIds: Iterable<string>): void {
 /** Test seam: Vitest imports this module directly and needs a clean slate per case. */
 export function resetScheduleStateForTests(next: ScheduleState = {}): void {
   state = next;
-  loaded = true;
 }

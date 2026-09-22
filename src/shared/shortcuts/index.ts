@@ -31,7 +31,6 @@ export {
   digitPrefixOf,
   isDispatchable,
   SHORTCUT_VIEWS,
-  rebindableShortcuts,
   resolveDefaultCombo,
   shortcutById,
 } from './registry';

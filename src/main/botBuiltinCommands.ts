@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_AGENT_ASK_TTL_MINUTES } from '../shared/types';
-import type { AgentRunState, AgentTurnRecord, BotBuiltinCommandKey } from '../shared/types';
+import type { AgentRunState, AgentTurnRecord, BotBuiltinCommandKey, BotPlatform } from '../shared/types';
 import { config } from './config';
 import { executeAgentRun } from './chat/agentCommand';
 import { BOT_CHAT_TOOL_SCOPE } from './flow/agent/agentTools';
@@ -18,8 +18,6 @@ import type { FlowManager } from './flow';
 import { botChatMemoryContext, withMemoryNotes } from './memory';
 
 type Strings = Record<string, string>;
-
-export type BotPlatform = 'telegram' | 'line';
 
 export interface BotBuiltinDeps {
   getFlowManager: () => FlowManager | null;

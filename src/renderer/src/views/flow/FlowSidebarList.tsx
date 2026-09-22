@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef } from 'react';
-import { Box, Text } from '@mantine/core';
+import { Box } from '@mantine/core';
+import { Workflow } from 'lucide-react';
 import { closestCenter, DndContext, type DragEndEvent } from '@dnd-kit/core';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import {
@@ -10,6 +11,7 @@ import type { FlowIssue } from '../../../../shared/flowIssues';
 import { FlowSidebarItem } from './FlowSidebarItem';
 import { useFlowIssues } from '../../hooks/useFlowIssues';
 import { useFlowSensors } from './dnd';
+import { EmptyState } from '../../components/EmptyState';
 import styles from './FlowSidebarItem.module.css';
 
 const LONG_PRESS_MS = 500;
@@ -57,6 +59,7 @@ const SortableFlowRow: React.FC<{
       {...attributes}
       {...listeners}
       className={styles.sortableWrap}
+      data-dragging={isDragging || undefined}
       style={{
         transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
         transition,
@@ -117,7 +120,7 @@ export const FlowSidebarList: React.FC<FlowSidebarListProps> = ({
   return (
     <Box ref={listRef} flex={1} style={{ overflowY: 'auto', padding: '4px 0' }}>
       {flows.length === 0 ? (
-        <Text p="20px 14px" c="dimmed" fz="sm" ta="center">{t('flow.flowList.empty')}</Text>
+        <EmptyState icon={Workflow} label={t('flow.flowList.empty')} />
       ) : selectMode ? (
         flows.map((flow) => <React.Fragment key={flow.id}>{renderItem(flow)}</React.Fragment>)
       ) : (

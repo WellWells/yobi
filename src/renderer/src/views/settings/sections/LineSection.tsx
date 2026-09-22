@@ -130,7 +130,6 @@ export const LineSection: React.FC<Props> = ({ line, t, showSection, isSearching
                 </Text>
               </SettingField>
 
-              {}
               <Group justify="flex-end">
                 <MButton
                   variant="default"

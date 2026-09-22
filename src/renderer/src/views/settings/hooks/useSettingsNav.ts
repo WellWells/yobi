@@ -65,7 +65,6 @@ export function useSettingsNav() {
     return CATEGORY_TAG_MAP[category].some((key) => sectionVisible(TAG_SETS[key]));
   };
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   const navCategoryDefs = useMemo(() => [
     { id: 'general' as Category, label: t('settings.group.general'), icon: React.createElement(SlidersHorizontal, { size: 14 }) },
     { id: 'shortcuts' as Category, label: t('settings.group.shortcuts'), icon: React.createElement(Keyboard, { size: 14 }) },
@@ -78,7 +77,6 @@ export function useSettingsNav() {
     { id: 'bots' as Category, label: t('settings.group.bots'), icon: React.createElement(Bot, { size: 14 }) },
     { id: 'stats' as Category, label: t('settings.group.stats'), icon: React.createElement(ChartLine, { size: 14 }) },
     { id: 'system' as Category, label: t('settings.group.system'), icon: React.createElement(DatabaseBackup, { size: 14 }) },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [locale]);
 
   return {

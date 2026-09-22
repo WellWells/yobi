@@ -5,7 +5,6 @@ import * as path from 'node:path';
 import * as readline from 'node:readline';
 import { isBuildCurrent, RESTART_SENTINEL } from './devRestart';
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const electronBin = require('electron') as string;
 
 let electronProcess: ChildProcess | null = null;

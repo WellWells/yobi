@@ -10,6 +10,7 @@ import type {
 } from '../../shared/types';
 import { pickConversationTitle } from '../../shared/conversationTitle';
 import { attachmentMetaNames } from '../../shared/conversationDoc';
+import { compactPreview } from '../../shared/textBudget';
 import { listOutputFiles } from '../files';
 import { deliverCommandResultToTempChat, saveCommandOutput } from './commandOutput';
 import { runUrlShortcut } from './urlShortcut';
@@ -79,8 +80,7 @@ export interface AgentRunOutcome extends AgentCommandResult {
 }
 
 function summarizeGoal(goal: string): string {
-  const compact = goal.replace(/\s+/g, ' ').trim();
-  return compact.length > 96 ? `${compact.slice(0, 96)}…` : compact;
+  return compactPreview(goal, 96);
 }
 
 function progressText(progress: AgentProgress, strings: Strings): string {

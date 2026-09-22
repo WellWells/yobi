@@ -139,13 +139,10 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
         </>
       ) : (
         <>
-          {
-}
           <Group align="stretch" gap={12} wrap="nowrap">
             <Stack gap={10} flex={1} miw={0} onMouseLeave={() => setHoveredPalette(null)}>
               <Stack gap={6}>
                 <Text fz="var(--font-size-sm)" c="dimmed">{payload.strings.theme}</Text>
-                {}
                 <Group gap={5} wrap="wrap">
                   {CAPTURE_PALETTES.map((item) => (
                     <PaletteSwatch
@@ -218,8 +215,6 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
         <AppButton variant="subtle" color="gray" disabled={busy} onClick={onCancel}>
           {payload.strings.cancel}
         </AppButton>
-        {
-}
         {!sharing && (
           <AppButton
             variant="outline"
@@ -231,7 +226,6 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
             {payload.strings.save}
           </AppButton>
         )}
-        {}
         <AppButton
           leftSection={sharing ? <Link2 size={14} /> : <Copy size={14} />}
           loading={pending === 'copy' || pending === 'share'}

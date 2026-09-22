@@ -1,4 +1,5 @@
 import type { QueueState, QueueTaskItem, Task } from '../shared/types';
+import { compactPreview } from '../shared/textBudget';
 
 type QueueListener = (state: QueueState) => void;
 
@@ -140,7 +141,5 @@ export class QueueManager {
 }
 
 function summarizePrompt(prompt: string): string {
-  const compact = prompt.replace(/\s+/g, ' ').trim();
-  if (!compact) return '(empty prompt)';
-  return compact.length > 96 ? `${compact.slice(0, 96)}…` : compact;
+  return compactPreview(prompt, 96) || '(empty prompt)';
 }

@@ -39,10 +39,12 @@ import { extractTitleMarker, pickConversationTitle } from '../shared/conversatio
 import type { TurnMeta } from '../shared/conversationDoc';
 import { attachmentMetaNames } from '../shared/conversationDoc';
 import { estimateUsage } from '../shared/tokenEstimate';
+import { compactPreview } from '../shared/textBudget';
 import {
   sendLog,
   sendToRenderer,
   sendWebNotification,
+  isMainWindowFocused,
   clearPerplexitySiteDataIfNeeded,
   sanitizeRequesterName,
 } from './helpers';
@@ -309,15 +311,18 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
     // Claim-gated like the failure path: a task the queue gave up on keeps running to
     // completion, and without this the user got "saved as …" minutes after being told it
     // had failed, for the same question.
-    if (config.notifyEvents.chatComplete && claimLocalNotification(task)) {
+    // A message sent from Yobi's own chat window ends with the answer on screen, so a banner
+    // saying it was saved is pure noise — and a user trained to dismiss these dismisses the one
+    // that matters (a background flow failed) too. Only `ui` is skipped: a hotkey send captures
+    // from another app, and bot tasks are remote, so both keep their banner even if Yobi happens
+    // to be focused. The unlabelled case keeps notifying — failing loud beats failing silent.
+    const answerAlreadyOnScreen = task.source === 'ui' && isMainWindowFocused();
+    if (config.notifyEvents.chatComplete && !answerAlreadyOnScreen && claimLocalNotification(task)) {
       const notifyTitle = langData?.['notify.completed.title'] ?? 'Yobi';
       const notifyBodyTemplate = temporaryReply
         ? (langData?.['notify.completed.temp.body'] ?? '"{{prompt}}" — temporary chat, not saved')
         : (langData?.['notify.completed.body'] ?? '"{{prompt}}" saved as {{file}}');
-      const compactPrompt = promptForOutput.replace(/\s+/g, ' ').trim().slice(0, 36);
-      const displayPrompt = compactPrompt.length < promptForOutput.replace(/\s+/g, ' ').trim().length
-        ? `${compactPrompt}…`
-        : compactPrompt;
+      const displayPrompt = compactPreview(promptForOutput, 36);
       sendWebNotification(
         notifyTitle,
         notifyBodyTemplate.replace('{{prompt}}', displayPrompt).replace('{{file}}', savedFileName),
@@ -381,8 +386,7 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
       && error.name !== VERIFICATION_CHALLENGE_ERROR_NAME
       && claimLocalNotification(task)
     ) {
-      const compactError = localizeUserFacingError(rawMessage, strings).replace(/\s+/g, ' ').trim();
-      const displayError = compactError.length > 90 ? `${compactError.slice(0, 90)}…` : compactError;
+      const displayError = compactPreview(localizeUserFacingError(rawMessage, strings), 90);
       sendWebNotification(
         t(strings, 'notify.chat.failure.title'),
         t(strings, 'notify.chat.failure.body', { provider: providerLabel, error: displayError }),

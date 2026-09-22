@@ -218,11 +218,6 @@ export function parseVideoResult(raw: string | null): YoutubeVideoResult {
   }
 }
 
-export function parseExtractionResult(raw: string | null): YoutubeTranscriptResult | null {
-  const result = parseVideoResult(raw);
-  return result.ok ? { title: result.title, transcript: result.transcript } : null;
-}
-
 function safeDestroy(win: BrowserWindow): void {
   try {
     if (!win.isDestroyed()) win.destroy();

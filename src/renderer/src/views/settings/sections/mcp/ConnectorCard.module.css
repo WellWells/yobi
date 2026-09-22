@@ -4,7 +4,9 @@
   transition: background-color 120ms ease, border-color 120ms ease;
 }
 
-.card:hover {
+/* `[data-interactive]` only: the card opens its tool list when it is connected AND has tools,
+   and until then the lift promised a click that did nothing. */
+.card[data-interactive]:hover {
   background-color: var(--bg-tertiary);
   border-color: var(--border-hover);
 }

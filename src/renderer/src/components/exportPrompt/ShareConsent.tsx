@@ -18,7 +18,6 @@ export const ShareConsent: React.FC<Props> = ({ share, strings, cancelLabel, onA
       {strings.consentIntro}
     </Text>
 
-    {}
     <Box style={{ maxHeight: 260, overflowY: 'auto' }}>
       <ShareConsentPoints points={share.consentPoints} />
     </Box>

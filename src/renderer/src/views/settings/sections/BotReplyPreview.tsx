@@ -12,7 +12,7 @@ interface Props {
 
 const BUBBLE_STYLE = {
   border: '1px solid var(--mantine-color-default-border)',
-  borderRadius: 'var(--radius-md)',
+  borderRadius: 'var(--radius)',
   borderBottomLeftRadius: 4,
 } as const;
 
@@ -37,7 +37,7 @@ export const BotReplyPreview: React.FC<Props> = ({ compactReply, mode, note, t }
   return (
     <Stack gap={6}>
       <Text fz="var(--font-size-sm)" c="dimmed">{t('settings.telegram.preview.label')}</Text>
-      <Box maw={360} p="8px 10px" bg="var(--mantine-color-bg-secondary)" style={BUBBLE_STYLE}>
+      <Box maw={360} p="8px 10px" bg="var(--mantine-color-default)" style={BUBBLE_STYLE}>
         {isDocument ? (
           <Group gap={8} align="center" wrap="nowrap">
             <FileText size={22} color="var(--mantine-color-accent)" style={{ flexShrink: 0 }} />

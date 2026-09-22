@@ -29,8 +29,6 @@ export const NotificationsSection: React.FC<Props> = ({ system, t, showSection, 
             control={<ToggleSwitch checked={enabled} onChange={() => { void system.handleToggleNotification(); }} />}
           />
           <SettingDivider />
-          {
-}
           <Box style={{ opacity: enabled ? 1 : 0.45, pointerEvents: enabled ? 'auto' : 'none' }}>
             <Stack gap={14}>
               <SettingRow

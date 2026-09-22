@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../store/appStore';
 import { useMcpStore } from '../store/useMcpStore';
 import { agentApi } from '../api/electronApi';
-import type { ConnectorChoice } from '../components/chat/ModeDropdown';
+import type { KeywordCandidate } from '../../../shared/connectorKeywords';
 
 function scopeKey(ids: readonly string[], web: boolean): string {
   return `${web ? 'w' : '-'}:${[...ids].sort().join(',')}`;
@@ -11,7 +11,7 @@ function scopeKey(ids: readonly string[], web: boolean): string {
 
 export interface ConversationConnectors {
   /** Every connector the user could disclose — the agent-enabled ones, connected or not. */
-  connectors: ConnectorChoice[];
+  connectors: KeywordCandidate[];
   activeIds: readonly string[];
   /**
    * Whether this conversation may go online. Off by default — a send that holds no capability is
@@ -58,7 +58,7 @@ export function useConversationConnectors(
   const [activeIds, setActiveIds] = useState<readonly string[]>([]);
   const [web, setWeb] = useState(false);
 
-  const connectors = useMemo<ConnectorChoice[]>(
+  const connectors = useMemo<KeywordCandidate[]>(
     () => servers
       .filter((server) => server.agentEnabled !== false)
       .map((server) => ({

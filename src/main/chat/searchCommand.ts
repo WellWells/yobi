@@ -1,6 +1,7 @@
 import { BUILTIN_QUICKSEARCH_COMMAND, BUILTIN_SEARCH_COMMAND, IPC } from '../../shared/types';
 import type { SearchCommandResult, SearchMode } from '../../shared/types';
 import { pickConversationTitle } from '../../shared/conversationTitle';
+import { compactPreview } from '../../shared/textBudget';
 import { config } from '../config';
 import { listOutputFiles } from '../files';
 import { deliverCommandResultToTempChat, saveCommandOutput } from './commandOutput';
@@ -47,8 +48,7 @@ function buildSourcesSection(sources: SourceDoc[], heading: string): string {
 }
 
 function summarizeQuery(query: string): string {
-  const compact = query.replace(/\s+/g, ' ').trim();
-  return compact.length > 96 ? `${compact.slice(0, 96)}…` : compact;
+  return compactPreview(query, 96);
 }
 
 function progressText(progress: SearchProgress, strings: Strings): string {

@@ -113,8 +113,6 @@ export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
         </Group>
       )}
 
-      {
-}
       <Group gap={6} wrap="nowrap" ml="auto" style={{ flexShrink: 0 }}>
         {fileContentExists && (
           <Button
@@ -148,10 +146,10 @@ export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
             }}
           >
             <MMenu.Target>
-              <Tooltip label={t('header.moreActions')} position="bottom">
+              <Tooltip label={t('common.moreActions')} position="bottom">
                 <ActionIcon
                   onClick={onToggleViewMenu}
-                  aria-label={t('header.moreActions')}
+                  aria-label={t('common.moreActions')}
                   variant="subtle"
                   size="md"
                   radius="xl"
@@ -173,8 +171,6 @@ export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
                   <MMenu.Sub.Dropdown
                     style={{ maxHeight: 320, overflowY: 'auto' }}
                   >
-                    {
-}
                     <ModelMenuItems
                       value=""
                       onChange={(url) => {
@@ -223,8 +219,6 @@ export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
 
               <MMenu.Divider />
 
-              {
-}
               <Box px={10} py={6}>
                 <Stack gap={8}>
                   <Group justify="space-between" gap={10} wrap="nowrap">

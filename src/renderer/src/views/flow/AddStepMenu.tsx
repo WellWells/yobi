@@ -133,7 +133,6 @@ export const AddStepMenu: React.FC<AddStepMenuProps> = ({ position = 'bottom', t
             )}
           </Box>
           <Divider />
-          {}
           <Group gap={6} justify="center" py={4}>
             <ShortcutHint combo="Enter" />
             <Text size="xs" c="dimmed">{t('flow.skillSearch.hint.add')}</Text>

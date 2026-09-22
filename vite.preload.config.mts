@@ -11,9 +11,6 @@ const EXTERNALIZED = [
 export default defineConfig({
   resolve: {
     conditions: ['node'],
-    alias: {
-      '@shared': resolve(import.meta.dirname, 'src/shared'),
-    },
   },
   ssr: {
     external: EXTERNALIZED,

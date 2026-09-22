@@ -60,8 +60,6 @@ export const AirQualityConfig: React.FC<SkillConfigProps> = ({ step, onChange, t
       />
       <Text fz="xs" c="dimmed">{t(`flow.skill.air_quality.source.${source}.hint`)}</Text>
 
-      {
-}
       {source !== 'global' && (
         <>
           <Divider my={4} />

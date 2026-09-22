@@ -1,55 +1,22 @@
 import React, { useMemo, useState } from 'react';
 import { Modal, Button, Box, Flex, Group, Text, Tooltip } from '@mantine/core';
-import type { CaptureFormat, CaptureRange, CardLayout, MarkdownCaptureRequest } from '../../../shared/types';
+import type { MarkdownCaptureRequest } from '../../../shared/types';
 import { Clipboard, Download, Image as ImageIcon, ImageDown, Save } from 'lucide-react';
 import { ExportSettingsPanel } from './exportDialog/ExportSettingsPanel';
+import type { ExportSettingsPanelProps } from './exportDialog/ExportSettingsPanel';
 import { ExportPreviewPanel } from './exportDialog/ExportPreviewPanel';
 import { AppButton } from './AppButton';
 import { captureBackgroundCss, paletteCardTheme } from '../../../shared/capturePalettes';
-import type {
-  CaptureBackgroundStyle,
-  CaptureDirection,
-  CapturePalette,
-} from '../../../shared/capturePalettes';
+import type { CaptureDirection } from '../../../shared/capturePalettes';
 
-interface ExportDialogProps {
+/**
+ * Every capture setting belongs to the panel; the dialog only adds the shell around it. Restating
+ * the 30 names here is how the two lists drift apart, so they are one list plus the shell's own.
+ * `onHoverPalette` is the dialog's, not the caller's: hovering drives its live preview.
+ */
+interface ExportDialogProps extends Omit<ExportSettingsPanelProps, 'onHoverPalette'> {
   open: boolean;
-  palettes: readonly CapturePalette[];
-  selectedPalette: string;
-  setSelectedPalette: (value: string) => void;
-  backgroundStyle: CaptureBackgroundStyle;
-  setBackgroundStyle: (value: CaptureBackgroundStyle) => void;
-  direction: string;
-  setDirection: (value: string) => void;
-  showPrompt: boolean;
-  setShowPrompt: (value: boolean) => void;
-  showProvider: boolean;
-  setShowProvider: (value: boolean) => void;
-  showTimestamp: boolean;
-  setShowTimestamp: (value: boolean) => void;
-  showTokens: boolean;
-  setShowTokens: (value: boolean) => void;
-  title: string;
-  setTitle: (value: string) => void;
-  fileName: string;
-  setFileName: (value: string) => void;
-  format: CaptureFormat;
-  setFormat: (value: CaptureFormat) => void;
-  cardLayout: CardLayout;
-  setCardLayout: (value: CardLayout) => void;
-  range: CaptureRange;
-  setRange: (value: CaptureRange) => void;
-  turnCount: number;
-  width: number;
-  setWidth: (value: number) => void;
-  margin: number;
-  setMargin: (value: number) => void;
-  hiDpi: boolean;
-  setHiDpi: (value: boolean) => void;
-  zip: boolean;
-  setZip: (value: boolean) => void;
   request: MarkdownCaptureRequest | null;
-  t: (key: string) => string;
   busy: boolean;
   busyMode: 'copy' | 'save' | null;
   onCopy: () => void;
@@ -59,48 +26,15 @@ interface ExportDialogProps {
 
 export const ExportDialog: React.FC<ExportDialogProps> = ({
   open,
-  palettes,
-  selectedPalette,
-  setSelectedPalette,
-  backgroundStyle,
-  setBackgroundStyle,
-  direction,
-  setDirection,
-  showPrompt,
-  setShowPrompt,
-  showProvider,
-  setShowProvider,
-  showTimestamp,
-  setShowTimestamp,
-  showTokens,
-  setShowTokens,
-  title,
-  setTitle,
-  fileName,
-  setFileName,
-  format,
-  setFormat,
-  cardLayout,
-  setCardLayout,
-  range,
-  setRange,
-  turnCount,
-  width,
-  setWidth,
-  margin,
-  setMargin,
-  hiDpi,
-  setHiDpi,
-  zip,
-  setZip,
   request,
-  t,
   busy,
   busyMode,
   onCopy,
   onSave,
   onCancel,
+  ...settings
 }) => {
+  const { palettes, backgroundStyle, direction, format, t } = settings;
   const [hoveredPalette, setHoveredPalette] = useState<string | null>(null);
   const previewRequest = useMemo(() => {
     if (!request) return null;
@@ -159,44 +93,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
     >
 
       <Flex flex={1} style={{ minHeight: 0, overflow: 'hidden' }}>
-        <ExportSettingsPanel
-          palettes={palettes}
-          backgroundStyle={backgroundStyle}
-          setBackgroundStyle={setBackgroundStyle}
-          selectedPalette={selectedPalette}
-          setSelectedPalette={setSelectedPalette}
-          direction={direction}
-          setDirection={setDirection}
-          showPrompt={showPrompt}
-          setShowPrompt={setShowPrompt}
-          showProvider={showProvider}
-          setShowProvider={setShowProvider}
-          showTimestamp={showTimestamp}
-          setShowTimestamp={setShowTimestamp}
-          showTokens={showTokens}
-          setShowTokens={setShowTokens}
-          title={title}
-          setTitle={setTitle}
-          fileName={fileName}
-          setFileName={setFileName}
-          format={format}
-          setFormat={setFormat}
-          cardLayout={cardLayout}
-          setCardLayout={setCardLayout}
-          range={range}
-          setRange={setRange}
-          turnCount={turnCount}
-          width={width}
-          setWidth={setWidth}
-          margin={margin}
-          setMargin={setMargin}
-          hiDpi={hiDpi}
-          setHiDpi={setHiDpi}
-          zip={zip}
-          setZip={setZip}
-          onHoverPalette={setHoveredPalette}
-          t={t}
-        />
+        <ExportSettingsPanel {...settings} onHoverPalette={setHoveredPalette} />
 
         <ExportPreviewPanel request={previewRequest} t={t} />
       </Flex>
@@ -211,8 +108,6 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
         <Button variant="subtle" onClick={onCancel}>
           {t('dialog.cancel')}
         </Button>
-        {
-}
         <Tooltip label={t('capture.copy.pdf.hint')} position="top" disabled={!isPdf} maw={300} multiline>
           <AppButton
             variant="outline"

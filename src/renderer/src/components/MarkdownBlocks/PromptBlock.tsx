@@ -66,17 +66,20 @@ export const PromptBlock = React.memo<PromptBlockProps>(({
         {label}
       </Group>
 
+      {/* Expanded means "show the whole thing" — it used to mean "show it in a 32vh box with
+          its own scrollbar", which put a scroll container inside the page's, so the wheel did
+          one thing over the prompt and another one pixel outside it. The collapse button below
+          is the way back. */}
       <Box
         className="md-content md-prompt"
         style={{
-          overflow: expanded ? 'auto' : 'hidden',
+          overflow: 'hidden',
           fontSize: 'var(--font-size-md)',
           lineHeight: 1.6,
           color: 'var(--text-secondary)',
           whiteSpace: 'pre-wrap',
           overflowWrap: isSideBySide ? 'anywhere' : undefined,
           wordBreak: isSideBySide ? 'break-word' : undefined,
-          maxHeight: expanded ? (isSideBySide ? '40vh' : '32vh') : undefined,
         } as React.CSSProperties}
       >
         {displayPrompt}

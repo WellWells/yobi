@@ -28,7 +28,11 @@ function Root() {
       cssVariablesResolver={cssVariablesResolver}
     >
       <ModalsProvider>
-        {/* Top-right, so a notice never covers the composer at the bottom. */}
+        {/* The window's only notice surface — see hooks/useUiNotifications.
+            Top-right, so a notice never covers the composer at the bottom. The offset that
+            clears the title bar is in globals.css, not in `styles` here: the provider renders
+            a container per position and `styles.root` reaches all six of them, so an offset
+            passed here also stretched the bottom three over the whole window. */}
         <Notifications position="top-right" />
         <App />
       </ModalsProvider>

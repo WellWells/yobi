@@ -33,7 +33,7 @@ async function readTurnFields(filePath: string): Promise<TurnTokenFields[]> {
 
 export async function getConversationTokenStats(): Promise<ConversationTokenStats> {
   try {
-    const paths = getOutputMarkdownPaths(await getOutputDir());
+    const paths = await getOutputMarkdownPaths(await getOutputDir());
     const perConversation = await Promise.all(paths.map(readTurnFields));
     if (cache.size > paths.length) {
       const live = new Set(paths);

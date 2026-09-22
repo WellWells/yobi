@@ -9,7 +9,7 @@ import { useProviderModels } from '../../hooks/useProviderModels';
 import { ShortcutHint } from '../ShortcutHint';
 import { useResolvedCombo } from '../../store/shortcutStore';
 import { resolveGreeting } from './greeting';
-import styles from '../../views/ChatView.module.css';
+import styles from './WelcomeScreen.module.css';
 
 const WelcomeStepCard: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <Box className={styles.stepCard}>{children}</Box>

@@ -128,18 +128,6 @@ async function runScan(): Promise<string> {
   return stdout;
 }
 
-/** Scan LINE memory once and return ranked key candidates (Windows only). */
-export async function scanForKeyCandidates(): Promise<string[]> {
-  const stdout = await runScan();
-  if (stdout.includes('ERR:LINE_NOT_RUNNING')) {
-    throw new LineError('LINE_NOT_RUNNING', 'LINE is not running. Start LINE, sign in, and try again.');
-  }
-  if (stdout.includes('ERR:MEMORY_READ_FAILED')) {
-    throw new LineError('MEMORY_READ_FAILED', 'Could not open LINE process memory. Try running as Administrator.');
-  }
-  return parseKeyCandidates(stdout);
-}
-
 export interface ExtractKeyDeps {
   platform?: NodeJS.Platform;
   scan?: () => Promise<string>;

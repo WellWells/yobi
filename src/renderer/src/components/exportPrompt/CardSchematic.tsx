@@ -48,7 +48,6 @@ export const CardSchematic: React.FC<Props> = ({
           overflow: 'hidden',
         }}
       >
-        {}
         <Box
           style={{
             width: '54%',

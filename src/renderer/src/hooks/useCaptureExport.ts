@@ -16,6 +16,7 @@ import {
 } from './captureTheme';
 import { buildCaptureRequest, buildTurnCaptureRequest } from './captureRequest';
 import type { CaptureLook } from './captureRequest';
+import type { NoticeLevel } from './useUiNotifications';
 import type {
   CaptureFormat,
   CaptureTurn,
@@ -28,9 +29,15 @@ import { DEFAULT_CAPTURE_WIDTH, clampCaptureMargin } from '../../../shared/types
 export { CAPTURE_PALETTES, captureBackgroundCss };
 export type { CaptureBackgroundStyle, CaptureDirection };
 
+/**
+ * A notice raised from inside the window. It carries a `level` because the surface it lands on
+ * colours by severity — the hand-rolled card this replaced had no level at all, so "copied to
+ * clipboard" and "export failed" were the same grey box for the same 4.5 seconds.
+ * `null` retracts whatever this window has up.
+ */
 export type ExportToast = {
-  id: number;
   message: string;
+  level?: NoticeLevel;
   filePath?: string;
   fileName?: string;
 } | null;
@@ -223,24 +230,24 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
       if (result.canceled) return;
       if (!result.ok) {
         setExportToast({
-          id: Date.now(),
           message: result.error ? `${t('capture.failed')}: ${result.error}` : t('capture.failed'),
+          level: 'error',
         });
         return;
       }
       if (mode === 'copy') {
-        setExportToast({ id: Date.now(), message: t('capture.copied') });
+        setExportToast({ message: t('capture.copied') });
         return;
       }
       if (!result.filePath) {
-        setExportToast({ id: Date.now(), message: t('capture.failed') });
+        setExportToast({ message: t('capture.failed'), level: 'error' });
         return;
       }
       const fileName = result.filePath.split(/[\\/]/).pop() || result.filePath;
-      setExportToast({ id: Date.now(), message: t('capture.savedPrefix'), filePath: result.filePath, fileName });
+      setExportToast({ message: t('capture.savedPrefix'), filePath: result.filePath, fileName });
       setCaptureDialogOpen(false);
     } catch {
-      setExportToast({ id: Date.now(), message: t('capture.failed') });
+      setExportToast({ message: t('capture.failed'), level: 'error' });
     } finally {
       setCaptureBusy(false);
       setCaptureBusyMode(null);
@@ -265,12 +272,12 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
       }));
       if (result.ok) return true;
       setExportToast({
-        id: Date.now(),
         message: result.error ? `${t('capture.failed')}: ${result.error}` : t('capture.failed'),
+        level: 'error',
       });
       return false;
     } catch {
-      setExportToast({ id: Date.now(), message: t('capture.failed') });
+      setExportToast({ message: t('capture.failed'), level: 'error' });
       return false;
     }
   }, [captureLook, captureTitle, captureFileName, parsedBlocks?.title, selectedFile?.name, t, setExportToast]);

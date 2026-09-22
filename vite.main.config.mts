@@ -54,9 +54,6 @@ export default defineConfig({
   plugins: [copyLanguageFilesPlugin(), copyEntryStubPlugin()],
   resolve: {
     conditions: ['node'],
-    alias: {
-      '@shared': resolve(import.meta.dirname, 'src/shared'),
-    },
   },
   ssr: {
     external: EXTERNALIZED,

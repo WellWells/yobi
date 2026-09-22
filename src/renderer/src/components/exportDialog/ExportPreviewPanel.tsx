@@ -27,8 +27,6 @@ export const ExportPreviewPanel: React.FC<ExportPreviewPanelProps> = ({ request,
   return (
     <Stack gap={12} p={16} flex={1} bg="var(--bg-tertiary)" style={{ minHeight: 0, overflowY: 'auto' }}>
       <SectionLabel>{t('capture.preview')}</SectionLabel>
-      {
-}
       <Box flex={1} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'safe center' }}>
         <ScaledCardFrame request={request} onMeasure={setLogicalHeight} />
       </Box>

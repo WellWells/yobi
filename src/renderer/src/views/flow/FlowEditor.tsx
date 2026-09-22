@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActionIcon, Badge, Box, Button, Flex, Group, Loader, Menu, Stack, Text,
+  ActionIcon, Badge, Box, Button, Flex, Group, Loader, Menu, Stack, Text, Tooltip,
 } from '@mantine/core';
 import {
   ArrowDown, ArrowUp, Copy, Download, MoreVertical, Play, RotateCcw, Save, Square, Trash2,
@@ -67,6 +67,14 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
       void saveFlow(flow);
     }
   }, [flow, saveFlow]);
+
+  // Back to the top when a different flow is opened. The editor stays mounted across the
+  // switch, so without this you land wherever the previous flow was scrolled to — on a long
+  // flow that means the new one's name, description and trigger card start off-screen, which
+  // reads as "it opened the wrong thing". useLayoutEffect, or the old offset flashes for a frame.
+  useLayoutEffect(() => {
+    viewportRef.current?.scrollTo({ top: 0 });
+  }, [flow.id]);
 
   useEffect(() => {
     const sentinel = sentinelRef.current;
@@ -151,7 +159,11 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
             )}
             <Menu position="bottom-end" withArrow shadow="md">
               <Menu.Target>
-                <ActionIcon variant="default" size="md"><MoreVertical size={14} /></ActionIcon>
+                <Tooltip label={t('common.moreActions')} position="bottom">
+                  <ActionIcon variant="default" size="md" aria-label={t('common.moreActions')}>
+                    <MoreVertical size={14} />
+                  </ActionIcon>
+                </Tooltip>
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Item leftSection={<Copy size={14} />} onClick={onDuplicate}>{t('flow.duplicateFlow')}</Menu.Item>

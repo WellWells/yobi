@@ -11,6 +11,7 @@ import type {
   TelegramRuntimeSnapshot,
   TelegramRuntimeStatus,
 } from '../../shared/types';
+import { Mutex } from '../flow/lanes';
 import { createPairingBridge } from './dmPolicy';
 import { attachChannelDiscovery } from './channels';
 import { collectDirectoryCandidates, runDirectoryBackfill } from './directory';
@@ -113,7 +114,7 @@ export class TelegramRuntime {
   private currentToken = '';
   private currentAllowGroupCommands = false;
   private pollerActive = false;
-  private lock: Promise<void> = Promise.resolve();
+  private readonly lock = new Mutex();
   private mediaIntake: MediaIntake | null = null;
   private readonly registry = new ExportTokenRegistry();
   private readonly msgCtx: TelegramMessagingContext;
@@ -167,7 +168,7 @@ export class TelegramRuntime {
   }
 
   async syncWithConfig(): Promise<void> {
-    await this.runLocked(async () => {
+    await this.lock.runExclusive(async () => {
       const enabled = this.deps.getEnabled();
       const token = this.deps.getToken().trim();
       const allowGroupCommands = this.deps.getAllowGroupCommands();
@@ -202,14 +203,14 @@ export class TelegramRuntime {
   }
 
   async shutdown(): Promise<void> {
-    await this.runLocked(async () => {
+    await this.lock.runExclusive(async () => {
       await this.stopInternal();
       this.updateStatus('idle');
     });
   }
 
   async refreshBotCommands(): Promise<void> {
-    await this.runLocked(async () => {
+    await this.lock.runExclusive(async () => {
       const bot = this.bot;
       if (!bot || !this.pollerActive) return;
       try {
@@ -516,11 +517,6 @@ export class TelegramRuntime {
 
   private emitRuntime(): void {
     this.deps.onRuntime(this.getSnapshot());
-  }
-
-  private async runLocked(work: () => Promise<void>): Promise<void> {
-    this.lock = this.lock.then(work, work);
-    await this.lock;
   }
 }
 

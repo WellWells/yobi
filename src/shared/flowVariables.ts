@@ -115,10 +115,6 @@ export function sanitizeFlowVariables(raw: unknown): FlowVariable[] {
   return variables;
 }
 
-export function flowVariableTokens(variables: FlowVariable[] | undefined): string[] {
-  return (variables ?? []).map((v) => `${FLOW_VAR_PREFIX}.${v.key}`);
-}
-
 export function missingRequiredVariables(flow: FlowDefinition): FlowVariable[] {
   return (flow.variables ?? []).filter((v) => v.required && !v.value.trim());
 }

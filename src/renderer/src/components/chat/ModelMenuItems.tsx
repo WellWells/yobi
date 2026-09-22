@@ -69,49 +69,22 @@ export const ModelMenuItems: React.FC<ModelMenuItemsProps> = ({ value, onChange 
               { geminiModels, claudeModels, chatgptModels, needsLogin },
             )?.provider;
 
+            const row = {
+              model,
+              isSelected,
+              badges,
+              itemStyle,
+              itemRef: isSelected ? scrollSelectedIntoView : undefined,
+              onChange,
+            };
             if (subProvider === 'gemini' && geminiModels) {
-              return (
-                <GeminiModelSubmenu
-                  key={model.url}
-                  model={model}
-                  state={geminiModels}
-                  isSelected={isSelected}
-                  badges={badges}
-                  itemStyle={itemStyle}
-                  itemRef={isSelected ? scrollSelectedIntoView : undefined}
-                  onChange={onChange}
-                />
-              );
+              return <GeminiModelSubmenu key={model.url} {...row} state={geminiModels} />;
             }
-
             if (subProvider === 'claude' && claudeModels) {
-              return (
-                <ClaudeModelSubmenu
-                  key={model.url}
-                  model={model}
-                  state={claudeModels}
-                  isSelected={isSelected}
-                  badges={badges}
-                  itemStyle={itemStyle}
-                  itemRef={isSelected ? scrollSelectedIntoView : undefined}
-                  onChange={onChange}
-                />
-              );
+              return <ClaudeModelSubmenu key={model.url} {...row} state={claudeModels} />;
             }
-
             if (subProvider === 'chatgpt' && chatgptModels) {
-              return (
-                <ChatgptModelSubmenu
-                  key={model.url}
-                  model={model}
-                  state={chatgptModels}
-                  isSelected={isSelected}
-                  badges={badges}
-                  itemStyle={itemStyle}
-                  itemRef={isSelected ? scrollSelectedIntoView : undefined}
-                  onChange={onChange}
-                />
-              );
+              return <ChatgptModelSubmenu key={model.url} {...row} state={chatgptModels} />;
             }
 
             return (

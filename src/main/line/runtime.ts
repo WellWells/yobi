@@ -1,4 +1,5 @@
 import type { LineAccountInfo, LineRuntimeSnapshot, LineRuntimeStatus } from '../../shared/types';
+import { Mutex } from '../flow/lanes';
 import { t } from '../i18n';
 import { createLineClient } from './client';
 import type { LineClient } from './client';
@@ -30,7 +31,7 @@ export class LineRuntime {
   private currentToken = '';
   private currentSecret = '';
   private currentPort = 0;
-  private lock: Promise<void> = Promise.resolve();
+  private readonly lock = new Mutex();
   private readonly dispatcher: LineDispatcher;
 
   constructor(private readonly deps: LineRuntimeDeps) {
@@ -50,7 +51,7 @@ export class LineRuntime {
   }
 
   async syncWithConfig(): Promise<void> {
-    await this.runLocked(async () => {
+    await this.lock.runExclusive(async () => {
       const enabled = this.deps.getEnabled();
       const token = this.deps.getChannelAccessToken().trim();
       const secret = this.deps.getChannelSecret().trim();
@@ -81,7 +82,7 @@ export class LineRuntime {
   }
 
   async shutdown(): Promise<void> {
-    await this.runLocked(async () => {
+    await this.lock.runExclusive(async () => {
       await this.stopInternal();
       this.updateStatus('idle');
     });
@@ -192,10 +193,5 @@ export class LineRuntime {
 
   private emitRuntime(): void {
     this.deps.onRuntime(this.getSnapshot());
-  }
-
-  private async runLocked(work: () => Promise<void>): Promise<void> {
-    this.lock = this.lock.then(work, work);
-    await this.lock;
   }
 }

@@ -32,10 +32,6 @@ export const GeneralSection: React.FC<Props> = ({
 }) => (
   <Box display={showSection(TAG_SETS.hotkey, 'general') || showSection(TAG_SETS.tray, 'general') || showSection(TAG_SETS.language, 'general') ? 'block' : 'none'}>
 
-    {
-}
-    {
-}
     <SectionCard style={{ marginBottom: sectionGap, display: showSection(TAG_SETS.language, 'general') ? 'block' : 'none' }}>
       <SettingRow
         icon={<Keyboard size={13} />}

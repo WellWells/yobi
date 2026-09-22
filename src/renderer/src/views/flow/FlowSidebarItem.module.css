@@ -1,25 +1,37 @@
 /* Sidebar flow row. Hover/selected states are CSS-driven (no JS hover state).
    No drag handle and no reserved gutter: the whole row is full-width, and a
    long press anywhere on it picks it up for reordering. */
+/* Same vocabulary as the chat rail (`Sidebar.module.css .fileItem`) and the command palette
+   (`SearchPalette.module.css .row`): flat, transparent, selected marked by a left accent bar.
+   This rail swaps in place when switching Chat ↔ Flows, and it used to swap language too —
+   outlined cards that lifted on hover against flat strips with a left bar. The vertical margin
+   stays larger than the chat rail's 2px: these rows are two lines plus badges plus a switch,
+   and they no longer have a border to separate them from the row below. */
 .row {
-  padding: 8px 10px;
+  padding: 6px 10px;
   margin: 4px 8px;
-  border-radius: 10px;
-  background: var(--mantine-color-body);
-  border: 1px solid var(--mantine-color-default-border);
+  border-radius: 8px;
+  background: transparent;
+  border-left: 2px solid transparent;
   cursor: pointer;
-  transition: background 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  user-select: none;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .row:hover {
-  background: var(--mantine-color-bg-tertiary);
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.08);
+  background: var(--mantine-color-default-hover);
 }
 
 .row[data-selected='true'],
 .row[data-selected='true']:hover {
   background: var(--mantine-color-accent-dim);
-  border-color: var(--mantine-color-accent);
+  border-left-color: var(--mantine-color-accent);
+}
+
+/* dnd-kit drags this row in place — there is no DragOverlay, the original just gets
+   opacity 0.9 — so a transparent fill would let the rows underneath show through it. */
+.sortableWrap[data-dragging='true'] .row {
+  background: var(--mantine-color-default);
 }
 
 /* dnd-kit's sortable wrapper carries tabIndex (via {...attributes}), so it is

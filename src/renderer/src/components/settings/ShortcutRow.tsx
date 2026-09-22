@@ -56,7 +56,6 @@ export const ShortcutRow: React.FC<ShortcutRowProps> = ({
           {hint && <Text fz="var(--font-size-xs)" c="dimmed" lh={1.5}>{hint}</Text>}
         </Stack>
 
-        {}
         <Box w={RESET_WIDTH} style={{ flexShrink: 0, display: 'flex', justifyContent: 'center' }}>
           {modified && onReset && !recorder.recording && (
             <Tooltip label={resetLabel} position="top" withArrow>
@@ -135,7 +134,7 @@ export const ShortcutRow: React.FC<ShortcutRowProps> = ({
           <Text
             fz="var(--font-size-xs)"
             pb={6}
-            c={shown?.level === 'refuse' ? 'var(--danger)' : 'var(--warning)'}
+            c={shown?.level === 'refuse' ? 'var(--error)' : 'var(--warning)'}
           >
             {shown?.text ?? ''}
           </Text>

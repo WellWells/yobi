@@ -41,12 +41,6 @@ export default defineConfig({
   root: resolve(import.meta.dirname, 'src/renderer'),
   base: './',
   plugins: [react(), hotReloadLanguageFiles(), katexWoff2Only()],
-  resolve: {
-    alias: {
-      '@renderer': resolve(import.meta.dirname, 'src/renderer/src'),
-      '@shared': resolve(import.meta.dirname, 'src/shared'),
-    },
-  },
   build: {
     outDir: resolve(import.meta.dirname, 'out/renderer'),
     emptyOutDir: true,
