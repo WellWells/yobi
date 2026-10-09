@@ -17,22 +17,6 @@ let checking = false;
 let sendLogRef: UpdaterDeps['sendLog'] = () => {};
 let sendToRendererRef: UpdaterDeps['sendToRenderer'] = () => {};
 
-function isNetworkError(error: unknown): boolean {
-  const msg = getErrorMessage(error).toLowerCase();
-  return (
-    msg.includes('getaddrinfo') ||
-    msg.includes('enotfound') ||
-    msg.includes('econnrefused') ||
-    msg.includes('etimedout') ||
-    msg.includes('enetunreach') ||
-    msg.includes('socket hang up') ||
-    msg.includes('network timeout') ||
-    msg.includes('failed to fetch') ||
-    msg.includes('err_internet_disconnected') ||
-    msg.includes('err_name_not_resolved')
-  );
-}
-
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
@@ -87,11 +71,7 @@ export function initializeUpdater(deps: UpdaterDeps): void {
     sendLogRef(`⬆️ Update available: ${version}`);
     sendToRendererRef(IPC.UPDATE_AVAILABLE, payload);
 
-    // Through the shared helper, not a raw Notification: this was the one call site in the
-    // main process that skipped the "notify me" switch, so a user who had turned notifications
-    // off still got a banner — on every launch, since autoDownload is false and the update
-    // re-announces itself. The helper also brings the in-app fallback for a Mac that has not
-    // granted permission yet.
+    // Through the shared helper so the "notify me" switch and the in-app fallback both apply.
     const strings = getLangCache();
     sendWebNotification(
       t(strings, 'notify.update.available.title', { version }),
@@ -108,11 +88,8 @@ export function initializeUpdater(deps: UpdaterDeps): void {
   autoUpdater.on('error', (error: unknown) => {
     const msg = getErrorMessage(error);
     sendLogRef(`⚠️ Update check failed: ${msg}`);
-    if (isNetworkError(error)) {
-      sendToRendererRef(IPC.UPDATE_NOT_AVAILABLE);
-    } else {
-      sendToRendererRef(IPC.UPDATE_ERROR);
-    }
+    // Offline included: a check that never reached the server has not shown we are up to date.
+    sendToRendererRef(IPC.UPDATE_ERROR);
   });
 
   initialized = true;

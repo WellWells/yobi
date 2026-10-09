@@ -45,7 +45,6 @@ export const BOT_STATIC_COMMANDS = [
 ];
 
 const BUILTIN_DESCRIPTION_KEYS: Record<BotBuiltinCommandKey, string> = {
-  agent: 'telegram.commands.agent',
   search: 'telegram.commands.search',
 };
 

@@ -1,7 +1,9 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { writeFileAtomic } from './atomicWrite';
 import { getFlowDataDir } from './flow/paths';
 import { sendLog } from './helpers';
+import { extractTurnMetas } from '../shared/conversationDoc';
 import type { BotPlatform } from '../shared/types';
 
 type SessionMap = Record<string, string>;
@@ -36,7 +38,7 @@ function persist(): Promise<void> {
     .then(async () => {
       const file = storePath();
       await fs.mkdir(path.dirname(file), { recursive: true });
-      await fs.writeFile(file, JSON.stringify(snapshot, null, 2), 'utf-8');
+      await writeFileAtomic(file, JSON.stringify(snapshot, null, 2));
     })
     .catch((err: unknown) => {
       sendLog(`⚠️ [Bot] could not save conversation sessions: ${err instanceof Error ? err.message : String(err)}`);
@@ -44,18 +46,38 @@ function persist(): Promise<void> {
   return writeChain;
 }
 
-export async function getBotConversation(chatKey: string): Promise<string | null> {
+/**
+ * A chat quiet this long starts a new conversation on its next message, as if `/new` had been sent.
+ * The agent replays recent turns regardless of age; lasting facts belong in personal memory.
+ */
+export const BOT_CONVERSATION_IDLE_MS = 6 * 60 * 60_000;
+
+/** When the conversation last had a turn: the newest turn's own time, else the file's. */
+async function lastActivityAt(conversationPath: string): Promise<number> {
+  const raw = await fs.readFile(conversationPath, 'utf-8');
+  const stamp = extractTurnMetas(raw).at(-1)?.t;
+  const parsed = stamp ? Date.parse(stamp) : Number.NaN;
+  if (Number.isFinite(parsed)) return parsed;
+  return (await fs.stat(conversationPath)).mtimeMs;
+}
+
+export async function getBotConversation(chatKey: string, now = Date.now()): Promise<string | null> {
   const sessions = await load();
   const conversationPath = sessions[chatKey];
   if (!conversationPath) return null;
+  let lastAt: number;
   try {
-    await fs.access(conversationPath);
-    return conversationPath;
+    lastAt = await lastActivityAt(conversationPath);
   } catch {
     delete sessions[chatKey];
     await persist();
     return null;
   }
+  if (now - lastAt < BOT_CONVERSATION_IDLE_MS) return conversationPath;
+  // The entry stays until the new file replaces it: the keys double as the record of who was once
+  // paired (listBotConversationKeys), and a reply that fails must not erase that.
+  sendLog(`[Bot] ${chatKey} idle since ${new Date(lastAt).toISOString()} — starting a new conversation`);
+  return null;
 }
 
 export async function setBotConversation(chatKey: string, conversationPath: string): Promise<void> {

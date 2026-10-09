@@ -6,45 +6,55 @@ import type {
   AgentTraceEvent,
   AgentTracePayload,
   AgentTurnRecord,
-  FlowBuildPayload,
+  FlowDefinition,
 } from '../../shared/types';
+import { conversationFlowRefs } from '../flow/flowEdit';
 import { pickConversationTitle } from '../../shared/conversationTitle';
 import { attachmentMetaNames } from '../../shared/conversationDoc';
 import { compactPreview } from '../../shared/textBudget';
 import { listOutputFiles } from '../files';
 import { deliverCommandResultToTempChat, saveCommandOutput } from './commandOutput';
 import { runUrlShortcut } from './urlShortcut';
-import { isTempChatMode } from '../tempChat';
+import { getTempChatConversation, isTempChatMode } from '../tempChat';
 import { sendLog, sendToRenderer } from '../helpers';
-import { localizeUserFacingError, t } from '../i18n';
+import { buildCombinedPromptFromPrefs, localizeUserFacingError, t } from '../i18n';
+import { agentPromptPrefs, agentRunIsOwner, renderAgentPrefsBlock } from './agentPrefs';
 import { getProviderLabel } from '../providers';
 import { runAgent } from '../flow/agent/agentEngine';
-// Straight from the pure module, not through the engine's barrel: delivery needs the fact, not
-// the loop, and routing it through `agentEngine` makes every test that stubs the engine drop it.
+import { sendBuildEvent } from '../flow/flowBuildBroadcast';
+// Straight from the pure module, not the engine's barrel: delivery needs the fact, not the loop.
 import { withWriteFailureNotice, writesAllFailed } from '../flow/agent/writeOutcome';
 import { buildActionFooter, withActionFooter } from '../flow/agent/actionOutcome';
+import { completionNotice, withCompletionNotice } from '../flow/agent/completion';
+import { extractRecapLine } from './recapLine';
+import { agentRecapBlock } from './recapPrompt';
+import { currentRecap } from '../../shared/recap';
 import { mergeSnapshots } from '../flow/agent/evidenceLedger';
 import type { ActionRecord, EvidenceSnapshot } from '../flow/agent/evidenceLedger';
 import type { GoalIntent } from '../flow/agent/actionGate';
 import type { Fact } from '../flow/agent/toolContracts';
 import { loadConversation } from './conversationStore';
-// Imported from agentTools, not through the engine's re-export: a test that mocks the engine
-// would otherwise lose it and take an unrelated error path down with it.
-import { AgentScopeError, BOT_TOOL_SCOPE, FULL_TOOL_SCOPE, withWebCapability } from '../flow/agent/agentTools';
+import {
+  AgentRunError, AgentScopeError, BOT_TOOL_SCOPE, FULL_TOOL_SCOPE, isAllowedTool, isWebTool, withWebCapability,
+} from '../flow/agent/agentTools';
+import { isBuiltinTool } from '../flow/agent/agentBuiltins';
+import type { AgentBuiltinTool } from '../flow/agent/agentBuiltins';
 import type { AgentToolScope } from '../flow/agent/agentTools';
-import type { AgentScopeFailure } from '../flow/agent/agentTools';
-import { buildAgentConfirm } from './agentConfirm';
+import type { AgentRunFailure, AgentScopeFailure } from '../flow/agent/agentTools';
+import { buildAgentConfirm, shellApprovalText } from './agentConfirm';
 import { measureTokens } from '../tokenMeter';
 import type { TokenUsage } from '../../shared/tokenEstimate';
-import type { AgentProgress } from '../flow/agent/agentEngine';
+import type { AgentProgress, ShellConfirmRequest } from '../flow/agent/agentEngine';
 import {
   deleteRunState, loadRunState, readRunConnectors, registerRun, saveRunState, unregisterRun,
 } from '../flow/agent/agentRunStore';
 import type { CommandOrigin } from './commandOrigin';
 import type { FlowManager } from '../flow';
 import type { MemoryNote } from '../../shared/userMemory';
-import type { MemoryAccessContext } from '../memory';
+import type { AgentMemoryContext } from './agentMemory';
 import { agentMemoryBlock, resolveAgentMemory, settleAgentMemory } from './agentMemory';
+import { noteRunOutcome, runInMetricDomain } from '../llmMeter';
+import { agentRunMetricOutcome } from './agentRunMetrics';
 
 type Strings = Record<string, string>;
 
@@ -52,6 +62,25 @@ const SCOPE_ERROR_KEYS: Record<AgentScopeFailure, string> = {
   'not-connected': 'mcp.command.notConnected',
   'no-room': 'mcp.command.noRoom',
 };
+
+/** The model's rejected JSON is not something a person can act on, so it never reaches one. */
+const RUN_ERROR_KEYS: Record<AgentRunFailure, string> = {
+  invalid_output: 'agent.error.incomplete',
+  step_limit: 'agent.error.stepLimit',
+  stale_provider: 'agent.error.staleProvider',
+};
+
+/**
+ * What a failed run tells the user — the chat toast, the trace and bot replies alike. The engine's
+ * English stays in the log line and in the run file's `errorDetail`.
+ */
+function agentFailureText(err: unknown, strings: Strings, command: string, providerUrl: string): string {
+  if (err instanceof AgentScopeError) return t(strings, SCOPE_ERROR_KEYS[err.reason], { command });
+  if (err instanceof AgentRunError) {
+    return t(strings, RUN_ERROR_KEYS[err.reason], { provider: err.provider || getProviderLabel(providerUrl) });
+  }
+  return localizeUserFacingError(err instanceof Error ? err.message : String(err), strings);
+}
 
 export interface AgentRunDeps {
   flowManager?: FlowManager;
@@ -69,7 +98,19 @@ export interface AgentRunRequest {
    * still applies on top, so the composer's switch cannot be talked around by a caller. */
   toolScope?: AgentToolScope;
   /** Who is asking, for the memory: a bot caller says whether this is the user's own private chat. */
-  memory?: MemoryAccessContext;
+  memory?: AgentMemoryContext;
+  /** A Maps link with a question is answered from its reviews, not the tool loop. Only for a caller
+   * whose tools are read-only lookups, so the words around the link cannot be a task. */
+  linkQuestions?: boolean;
+  /** Only these MCP servers exist for the run (a bot account's per-connector grants). */
+  allowedMcpServerIds?: readonly string[];
+  /**
+   * A bot account holding the shell grant: each shell command is put to it as a question in the
+   * chat and runs when the answer approves it. Without this a bot run never runs one.
+   */
+  shellInChat?: boolean;
+  /** Name prefix for the file the answer starts when there is no conversation yet (a bot chat's). */
+  fileLabel?: string;
 }
 
 export interface AgentRunOutcome extends AgentCommandResult {
@@ -83,15 +124,24 @@ function summarizeGoal(goal: string): string {
   return compactPreview(goal, 96);
 }
 
-function progressText(progress: AgentProgress, strings: Strings): string {
-  if (progress.stage === 'tool') {
-    return t(strings, 'agent.progress.tool', {
-      tool: progress.tool,
-      index: String(progress.index),
-      total: String(progress.total),
-    });
-  }
-  return t(strings, 'agent.progress.thinking');
+const BUILTIN_PROGRESS_KEYS: Record<AgentBuiltinTool, string> = {
+  assess_flow: 'agent.progress.assessFlow',
+  build_flow: 'agent.progress.buildFlow',
+  edit_flow: 'agent.progress.editFlow',
+  delegate: 'agent.progress.delegate',
+};
+
+/**
+ * The line a bot's progress message and the app's queue show. It names what the user would call
+ * the tool — the skill's translated name, the connector's own name — never an id like `research`
+ * or `mcp:notion-search`.
+ */
+export function progressText(progress: AgentProgress, strings: Strings): string {
+  if (progress.stage !== 'tool') return t(strings, 'agent.progress.thinking');
+  if (progress.server) return t(strings, 'agent.progress.tool', { tool: progress.server });
+  if (isBuiltinTool(progress.tool)) return t(strings, BUILTIN_PROGRESS_KEYS[progress.tool]);
+  if (!isAllowedTool(progress.tool)) return t(strings, 'agent.progress.connector');
+  return t(strings, 'agent.progress.tool', { tool: t(strings, `flow.skill.${progress.tool}`) });
 }
 
 /** How far back a conversation's earlier runs are read for what they really did. */
@@ -111,22 +161,39 @@ function snapshotOf(run: AgentRunState, withObservations: boolean): EvidenceSnap
   };
 }
 
+interface PriorRuns {
+  runs: AgentRunState[];
+  userWords: string;
+}
+
 /**
- * The evidence of earlier runs in this conversation, read from their run files rather than from the
- * answers written about them. A temporary chat keeps no run files, so it has none to offer.
+ * The earlier runs of this conversation, read from their run files rather than from the answers
+ * written about them. A temporary chat keeps no run files, so it has none to offer.
  */
-async function loadPriorEvidence(state: AgentRunState, resuming: boolean): Promise<EvidenceSnapshot | undefined> {
-  const snapshots: EvidenceSnapshot[] = [];
-  if (state.conversationPath && !isTempChatMode()) {
-    const doc = (await loadConversation(state.conversationPath))?.doc;
-    const runIds = [...new Set((doc?.turns ?? [])
-      .map((turn) => turn.meta.r)
-      .filter((id): id is string => Boolean(id) && id !== state.runId))].slice(-PRIOR_RUNS_LIMIT);
-    const runs = await Promise.all(runIds.map((id) => loadRunState(id).catch(() => null)));
-    for (const run of runs) if (run) snapshots.push(snapshotOf(run, true));
-    const userWords = (doc?.turns ?? []).map((turn) => turn.prompt).join('\n');
-    if (userWords) snapshots.push({ facts: [], actions: [], userWords });
-  }
+async function loadPriorRuns(state: AgentRunState): Promise<PriorRuns> {
+  if (!state.conversationPath || isTempChatMode()) return { runs: [], userWords: '' };
+  const doc = (await loadConversation(state.conversationPath))?.doc;
+  const runIds = [...new Set((doc?.turns ?? [])
+    .map((turn) => turn.meta.r)
+    .filter((id): id is string => Boolean(id) && id !== state.runId))].slice(-PRIOR_RUNS_LIMIT);
+  const runs = await Promise.all(runIds.map((id) => loadRunState(id).catch(() => null)));
+  return {
+    runs: runs.filter((run): run is AgentRunState => run !== null),
+    userWords: (doc?.turns ?? []).map((turn) => turn.prompt).join('\n'),
+  };
+}
+
+/** Where the conversation stood before this run, for the recap rule; a temporary chat is read from memory. */
+async function conversationRecap(state: AgentRunState, origin: CommandOrigin): Promise<string | undefined> {
+  const doc = isEphemeralDelivery(origin)
+    ? await getTempChatConversation()
+    : state.conversationPath ? (await loadConversation(state.conversationPath))?.doc : null;
+  return doc ? currentRecap(doc)?.text : undefined;
+}
+
+function priorEvidenceOf(prior: PriorRuns, state: AgentRunState, resuming: boolean): EvidenceSnapshot | undefined {
+  const snapshots: EvidenceSnapshot[] = prior.runs.map((run) => snapshotOf(run, true));
+  if (prior.userWords) snapshots.push({ facts: [], actions: [], userWords: prior.userWords });
   if (resuming && state.evidence) snapshots.push(snapshotOf(state, false));
   return snapshots.length > 0 ? mergeSnapshots(snapshots) : undefined;
 }
@@ -147,13 +214,15 @@ interface DeliverArgs {
   runId?: string;
   choices?: string[];
   memoryNotes?: MemoryNote[];
+  /** The turn's recap line as `recapFor` resolves it; undefined keeps the previous recap. */
+  recap?: string;
+  fileLabel?: string;
+  /** `Date.now()` when this run (or its resumption) started, for the turn's duration. */
+  startedAt?: number;
 }
 
 /**
- * Temporary chat promises the turn is not written down. That has to cover the run file too:
- * keeping finished runs for their trace is right for an ordinary conversation and wrong here,
- * where it would leave a week of goals and observations on disk for a chat the user asked not
- * to keep. One definition, used by both the delivery path and the run's own bookkeeping.
+ * Temporary chat writes nothing down, run files included; shared by delivery and the run's bookkeeping.
  */
 function isEphemeralDelivery(origin: CommandOrigin): boolean {
   return origin === 'app' && isTempChatMode();
@@ -162,7 +231,7 @@ function isEphemeralDelivery(origin: CommandOrigin): boolean {
 async function deliverResult(args: DeliverArgs): Promise<AgentRunOutcome> {
   const {
     prompt, title, answer, resolvedTarget, strings, origin, command,
-    conversationPath, usage, attachments, runId, choices, memoryNotes,
+    conversationPath, usage, attachments, runId, choices, memoryNotes, recap, fileLabel, startedAt,
   } = args;
   const conversationTitle = pickConversationTitle({ resolved: title, prompt });
   const attached = attachmentMetaNames(attachments ?? []);
@@ -196,6 +265,8 @@ async function deliverResult(args: DeliverArgs): Promise<AgentRunOutcome> {
       ...(runId ? { runId } : {}),
       ...(choices?.length ? { choices } : {}),
       ...(memoryNotes?.length ? { memoryNotes } : {}),
+      ...(recap !== undefined ? { recap } : {}),
+      ...(startedAt !== undefined ? { startedAt } : {}),
     });
     return { success: true, answer, title: conversationTitle, ...(memoryNotes?.length ? { memoryNotes } : {}) };
   }
@@ -211,6 +282,9 @@ async function deliverResult(args: DeliverArgs): Promise<AgentRunOutcome> {
     ...(runId ? { runId } : {}),
     ...(choices?.length ? { choices } : {}),
     ...(memoryNotes?.length ? { memoryNotes } : {}),
+    ...(recap !== undefined ? { recap } : {}),
+    ...(fileLabel ? { fileLabel } : {}),
+    ...(startedAt !== undefined ? { startedAt } : {}),
     usage,
   });
   sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
@@ -237,8 +311,22 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
   };
 
   const controller = registerRun(runId);
+  // Reset when the run leaves the queue, so the turn's duration is the run, not the wait.
+  let startedAt = Date.now();
+  const deliver = (args: DeliverArgs): Promise<AgentRunOutcome> => deliverResult({
+    ...args,
+    startedAt,
+    ...(request.fileLabel ? { fileLabel: request.fileLabel } : {}),
+  });
 
-  const run = async (taskId?: string): Promise<AgentRunOutcome> => {
+  // The app's chat keeps a recap, written by the model with the answer; with no line the previous one stays.
+  // A bot run in the same conversation leaves a stop instead: it was never asked for one.
+  const recapFor = (line: string | null | undefined): string | undefined => (
+    origin === 'app' ? (line || undefined) : ''
+  );
+
+  const attempt = async (taskId?: string): Promise<AgentRunOutcome> => {
+    startedAt = Date.now();
     try {
       const report = (progress: AgentProgress): void => {
         const text = progressText(progress, strings);
@@ -252,6 +340,8 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
         void saveRunState(state);
       };
       const turnAttachments = resumeFrom?.length ? undefined : state.attachments;
+      // The "AI responses" settings, for the URL shortcut's single send and for the agent's answer.
+      const answerPrefs = agentPromptPrefs(await agentRunIsOwner(origin, request.memory));
 
       // Naming a connector is the user saying which server should answer, so the "goal is just
       // a URL" shortcut — which fetches a web page instead — would quietly answer a different
@@ -260,7 +350,10 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
       if (state.web !== false && connectors.length === 0 && !resumeFrom?.length && !state.attachments?.length) {
         report({ stage: 'thinking' });
         const { result: shortcut, usage: shortcutUsage } = await measureTokens(
-          () => runUrlShortcut(goal, providerUrl, flowManager.getExecutorDeps(), strings, controller.signal),
+          () => runUrlShortcut(goal, providerUrl, flowManager.getExecutorDeps(), strings, controller.signal, {
+            mapQuestions: request.linkQuestions === true,
+            ...(answerPrefs ? { instruction: buildCombinedPromptFromPrefs(answerPrefs, strings) } : {}),
+          }),
         );
         if (shortcut) {
           const shortcutAnswer = shortcut.answer.trim();
@@ -271,7 +364,8 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
           }
           const shortcutTitle = shortcut.title?.trim() ?? '';
           emit({ kind: 'done', title: shortcutTitle });
-          return await deliverResult({
+          // Fetching the pasted page IS going online, so the composer is told as for a web tool.
+          const delivered = await deliver({
             prompt: deliveredPrompt,
             title: shortcutTitle,
             answer: shortcutAnswer,
@@ -281,20 +375,36 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
             command,
             conversationPath: state.conversationPath,
             usage: shortcutUsage,
+            // The shortcut writes no recap line; `recapFor` decides what the turn keeps.
+            recap: recapFor(null),
           });
+          return { ...delivered, usedWeb: true };
         }
       }
 
       await saveRunState(state);
 
       const resuming = Boolean(resumeFrom?.length);
-      const priorEvidence = await loadPriorEvidence(state, resuming).catch(() => undefined);
+      const prior = await loadPriorRuns(state).catch((): PriorRuns => ({ runs: [], userWords: '' }));
+      const priorEvidence = priorEvidenceOf(prior, state, resuming);
+      // Earlier runs first, then what this run itself saved before it paused for a question.
+      const conversationFlows = conversationFlowRefs([...prior.runs, ...(resuming ? [state] : [])], () => flowManager.getAll());
+      const recordFlow = (saved: FlowDefinition): FlowDefinition => {
+        state.flows = [...(state.flows ?? []).filter((ref) => ref.id !== saved.id), { id: saved.id, name: saved.name }];
+        void saveRunState(state);
+        return saved;
+      };
       const previousActions = resuming ? state.evidence?.actions ?? [] : [];
       const persistEvidence = (evidence: EvidenceSnapshot, actions: readonly ActionRecord[]): void => {
         state.evidence = { facts: evidence.facts, actions: [...previousActions, ...actions] };
       };
       const memory = await resolveAgentMemory(origin, request.memory);
       const userMemory = agentMemoryBlock(memory);
+      const prefsBlock = answerPrefs ? renderAgentPrefsBlock(answerPrefs) : '';
+      // An unreadable conversation costs the recap its history, never the run.
+      const recapRule = origin === 'app'
+        ? agentRecapBlock(await conversationRecap(state, origin).catch(() => undefined))
+        : '';
 
       const { result: outcome, usage } = await measureTokens(() => runAgent(
         goal,
@@ -308,7 +418,9 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
           resumePlan: state.plan,
           runId,
           ...(origin === 'bot' ? { unattended: true } : {}),
+          ...(prefsBlock ? { answerPrefs: prefsBlock } : {}),
           ...(userMemory ? { userMemory } : {}),
+          ...(recapRule ? { recapRule } : {}),
           ...(priorEvidence ? { priorEvidence } : {}),
           ...(state.intent ? { intent: state.intent as GoalIntent } : {}),
           onIntent: (declared) => {
@@ -320,6 +432,9 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
           ...(state.attachments?.length ? { attachments: state.attachments } : {}),
           signal: controller.signal,
           onConfirm: buildAgentConfirm(deps.getMainWin, strings, origin),
+          ...(origin === 'bot' && request.shellInChat
+            ? { shellApproval: (req: ShellConfirmRequest) => shellApprovalText(req, strings) }
+            : {}),
           onStepBudget: (ceiling) => {
             state.maxTurns = ceiling;
             void saveRunState(state);
@@ -333,22 +448,26 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
             request.toolScope ?? (origin === 'bot' ? BOT_TOOL_SCOPE : FULL_TOOL_SCOPE),
             state.web !== false,
           ),
-          onSaveFlow: (flow) => flowManager.saveGeneratedFlow(flow),
+          onSaveFlow: async (flow) => recordFlow(await flowManager.saveGeneratedFlow(flow)),
+          onReplaceFlow: async (flow) => recordFlow(await flowManager.replaceFlowFromAgent(flow)),
+          listFlows: () => flowManager.getAll(),
+          ...(conversationFlows.length > 0 ? { conversationFlows } : {}),
           // Keyed by the run id so the chat turn and the Flow Builder panel read the same stream.
-          onFlowBuild: (event) => sendToRenderer(
-            IPC.FLOW_BUILD_PROGRESS,
-            { buildId: runId, event } satisfies FlowBuildPayload,
-          ),
+          onFlowBuild: (event) => sendBuildEvent(runId, event, strings),
           // Disclosure, not restriction: the built-in tools stay in scope so the model can
           // decide the connector is not the right instrument for this turn. Never `[]` — an
           // empty array filters every server out and, with built-ins still present, produces a
           // silent zero-connector run instead of an error.
           ...(connectors.length > 0 ? { mcpServerIds: connectors } : {}),
+          // The restriction the run was started with, read off the saved state so a resume keeps it.
+          ...(state.connectors === 'none' ? { noConnectors: true } : {}),
+          ...(request.allowedMcpServerIds ? { allowedMcpServerIds: request.allowedMcpServerIds } : {}),
         },
       ));
 
       const actions = outcome.actions ?? [];
       persistEvidence(outcome.evidence ?? { facts: [], actions: [] }, actions);
+      const usedWeb = state.turns.some((turn) => isWebTool(turn.tool));
 
       if (outcome.kind === 'question') {
         const choices = outcome.choices ?? [];
@@ -357,7 +476,7 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
         const questionText = choices.length > 0
           ? `${outcome.question}\n\n${choices.map((choice, index) => `${index + 1}. ${choice}`).join('\n')}`
           : outcome.question;
-        const delivered = await deliverResult({
+        const delivered = await deliver({
           prompt: deliveredPrompt,
           title: '',
           answer: questionText,
@@ -370,6 +489,8 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
           attachments: turnAttachments,
           ...(isEphemeralDelivery(origin) ? {} : { runId }),
           ...(choices.length > 0 ? { choices } : {}),
+          // A question is not an answer: the recap the conversation had still holds.
+          recap: recapFor(null),
         });
         state.status = 'awaiting';
         state.updatedAt = new Date().toISOString();
@@ -380,13 +501,16 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
           ...delivered,
           question: outcome.question,
           ...(choices.length > 0 ? { choices } : {}),
+          ...(usedWeb ? { usedWeb } : {}),
           runId,
           ...(state.mcpServerIds?.length ? { mcpServerIds: [...state.mcpServerIds] } : {}),
         };
       }
 
+      // Out before the memory reads the answer, as in chat; taken from any run, so a bot never shows one.
+      const { recap: recapLine, body: recapStripped } = extractRecapLine(outcome.answer.trim());
       const { text: answer, notes: memoryNotes } = await settleAgentMemory(
-        outcome.answer.trim(),
+        recapStripped,
         memory,
         state,
         origin,
@@ -401,31 +525,30 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
         return { success: false, error: state.error };
       }
 
-      // The model was asked to own a failed write; this makes it true whatever it wrote. The
-      // notice is appended, not substituted — its own text usually still names the page and the
-      // error, it just must not be allowed to end on a success it did not achieve.
-      // The footer is written from what each change really did, so it replaces the blanket notice
-      // whenever it has something to say; the notice still covers writes no footer line describes.
+      // When every write failed and there is no per-change footer, a failure notice is appended so the
+      // answer never ends on a success it did not achieve; otherwise the footer is appended.
       const footer = buildActionFooter(actions, (key, vars) => t(strings, key, vars));
+      // Same guarantee for the goal as a whole: an answer the run knows is partial says so in a line
+      // the model did not write, ahead of the footer about what each change really did.
+      const answered = withCompletionNotice(answer, completionNotice(outcome.completion, (key, vars) => t(strings, key, vars)));
       const finalAnswer = writesAllFailed(outcome.writes) && !footer
         ? withWriteFailureNotice(
-          answer,
+          answered,
           outcome.writes,
           t(strings, 'agent.writes.allFailed', { count: String(outcome.writes.attempted) }),
         )
-        : withActionFooter(answer, footer);
+        : withActionFooter(answered, footer);
 
       const ephemeral = isEphemeralDelivery(origin);
       state.status = 'done';
-      state.result = { title: outcome.title, content: finalAnswer };
+      state.result = { title: outcome.title, content: finalAnswer, completion: outcome.completion };
       state.updatedAt = new Date().toISOString();
       emit({ kind: 'done', title: outcome.title });
-      // Kept, not deleted: a finished run is exactly the one worth reopening when the answer and
-      // the page disagree, and it was the only status that left nothing behind. `pruneOldRuns`
-      // still reclaims it once stale, and `shouldOfferOnRestart` never offers a done run.
+      // A finished run is kept so its trace can be reopened; `pruneOldRuns` reclaims it once stale
+      // and `shouldOfferOnRestart` never offers a done run. Ephemeral runs leave no file.
       if (ephemeral) await deleteRunState(runId);
       else await saveRunState(state);
-      return await deliverResult({
+      const delivered = await deliver({
         prompt: deliveredPrompt,
         title: outcome.title,
         answer: finalAnswer,
@@ -436,41 +559,56 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
         conversationPath: state.conversationPath,
         usage,
         attachments: turnAttachments,
-        // No id on an ephemeral turn: the run file it would point at has just been removed.
-        // None on a turn that called no tool either. Every ordinary chat message is an agent run
-        // now, and a "show the reasoning" toggle under each one that opens onto an empty list is
-        // noise on the common case — there is nothing to reopen when nothing was looked up.
+        // No run id when ephemeral (the file was just removed) or when no tool ran (an empty trace is noise).
         ...(ephemeral || state.turns.length === 0 ? {} : { runId }),
         ...(memoryNotes.length > 0 ? { memoryNotes } : {}),
+        recap: recapFor(recapLine),
       });
+      return usedWeb ? { ...delivered, usedWeb } : delivered;
     } catch (err: unknown) {
       const aborted = controller.signal.aborted;
       const message = aborted
         ? t(strings, 'agent.error.cancelled')
-        : err instanceof AgentScopeError
-          ? t(strings, SCOPE_ERROR_KEYS[err.reason], { command })
-          : localizeUserFacingError(err instanceof Error ? err.message : String(err), strings);
+        : agentFailureText(err, strings, command, providerUrl);
+      const raw = err instanceof Error ? err.message : String(err);
+      const detail = !aborted && raw !== message ? raw : undefined;
       state.status = aborted ? 'cancelled' : 'failed';
       state.error = message;
+      // The run file keeps the English the user's sentence replaced, so a copied trace still says why.
+      state.errorDetail = detail;
       state.updatedAt = new Date().toISOString();
       await saveRunState(state);
       emit(aborted ? { kind: 'cancelled' } : { kind: 'failed', error: message });
-      sendLog(`❌ [Agent] ${message}`);
+      sendLog(`❌ [Agent] ${message}${detail ? ` — ${detail}` : ''}`);
       return { success: false, error: message };
     } finally {
       unregisterRun(runId);
     }
   };
 
+  // One agent run on the stats page, whichever path answered it (the link shortcut included), and
+  // every model request inside it — delegated helpers too — attributed to it. A resume is the same
+  // run continuing, so only the call that finishes it records an outcome — and a failed run the user
+  // resumes was already counted when it failed, so its resume adds nothing.
+  const run = (taskId?: string): Promise<AgentRunOutcome> => runInMetricDomain('agent', async () => {
+    const alreadyCounted = state.metricCounted === true;
+    const result = await attempt(taskId);
+    const outcome = alreadyCounted ? null : agentRunMetricOutcome(result, state);
+    if (outcome) noteRunOutcome('agent', outcome);
+    // Only a failure is marked: a finished run cannot be resumed, and an ephemeral one's file is gone.
+    if (outcome && outcome !== 'success') {
+      state.metricCounted = true;
+      await saveRunState(state);
+    }
+    return result;
+  });
+
   return flowManager.enqueueExternalTask(
     `/${command} ${summarizeGoal(goal)}`,
     run,
     (err) => {
       unregisterRun(runId);
-      return {
-        success: false,
-        error: localizeUserFacingError(err instanceof Error ? err.message : String(err), strings),
-      };
+      return { success: false, error: agentFailureText(err, strings, command, providerUrl) };
     },
     runId,
   );

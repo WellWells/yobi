@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { Box, Group, Text, UnstyledButton } from '@mantine/core';
+import { Box, Text, UnstyledButton } from '@mantine/core';
 import { PencilLine } from 'lucide-react';
+import { GroupHeader } from '../GroupHeader';
 
 interface PromptBlockProps {
   prompt: string;
@@ -50,26 +51,10 @@ export const PromptBlock = React.memo<PromptBlockProps>(({
       marginBottom: 12,
       position: 'relative',
     }}>
-      <Group
-        gap={5}
-        align="center"
-        style={{
-          fontSize: 'var(--font-size-xs)',
-          fontWeight: 700,
-          color: 'var(--text-muted)',
-          textTransform: 'uppercase',
-          letterSpacing: '0.8px',
-          marginBottom: 6,
-        }}
-      >
-        <PencilLine size={12} />
-        {label}
-      </Group>
+      <GroupHeader variant="plain" icon={<PencilLine size={12} />} label={label} mb={6} />
 
-      {/* Expanded means "show the whole thing" — it used to mean "show it in a 32vh box with
-          its own scrollbar", which put a scroll container inside the page's, so the wheel did
-          one thing over the prompt and another one pixel outside it. The collapse button below
-          is the way back. */}
+      {/* Expanded shows the whole prompt inline, with no nested scroll container; the collapse
+          button below is the way back. */}
       <Box
         className="md-content md-prompt"
         style={{

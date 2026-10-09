@@ -10,6 +10,7 @@ import { ChatRecipientPicker } from '../../components/ChatRecipientPicker';
 import { SelectDropdown } from '../../components/SelectDropdown';
 import { systemApi, scraperApi } from '../../api/electronApi';
 import { FeedUrlField } from './FeedUrlField';
+import { recipientPlatform, variableValuePatch } from '../../../../shared/flowVariables';
 import type { FlowVariable } from '../../../../shared/types';
 
 export interface VariableFieldProps {
@@ -69,6 +70,7 @@ export const VariableField: React.FC<VariableFieldProps> = ({
       <ChatRecipientPicker
         value={variable.value}
         onChange={onChange}
+        platform={recipientPlatform(variable, allVariables ?? [])}
         label={label}
         hint={variable.hint}
         error={error}
@@ -90,13 +92,18 @@ export const VariableField: React.FC<VariableFieldProps> = ({
   }
 
   if (variable.type === 'select') {
+    const choose = (value: string): void => {
+      const patch = allVariables && onChangeMany ? variableValuePatch(allVariables, variable.key, value) : null;
+      if (patch && Object.keys(patch).length > 1) onChangeMany!(patch);
+      else onChange(value);
+    };
     return (
       <Stack gap={4}>
         <SelectDropdown
           label={label}
           options={(variable.options ?? []).map((o) => ({ value: o.value, label: o.label }))}
           value={variable.value}
-          onChange={onChange}
+          onChange={choose}
           size="sm"
           error={error}
         />

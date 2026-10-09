@@ -1,9 +1,11 @@
 import type { AgentTraceEvent, SkillType } from '../../../shared/types';
+import type { ResearchProgress } from '../../../shared/researchProgress';
 import type { FlowExecutorDeps } from '../types';
 import { executeSkill } from '../skills';
 import { unwrapStepOutput } from '../executor';
 import { FlowAbortError, resolveStepTimeoutMs, withStepTimeout } from '../runtime';
 import { sendLog } from '../../helpers';
+import { SearchBlockedError } from '../../search/blocked';
 import type { McpRegistry } from '../../mcp';
 import { denyReasonForFileTool } from './agentSandbox';
 import { sensitiveCommandReason } from './sensitivePaths';
@@ -17,6 +19,7 @@ import type { McpAction, McpRuntimeIndex } from './mcpTools';
 import type { AgentAction } from './agentTools';
 import type { EvidenceLedger } from './evidenceLedger';
 import type { GoalIntent } from './actionGate';
+import { SHELL_COMMAND_MAX } from './shellApproval';
 
 export interface ShellConfirmRequest {
   kind: 'shell';
@@ -29,10 +32,8 @@ export interface ShellConfirmRequest {
 export type AgentConfirmRequest = McpConfirmRequest | FlowWriteConfirmRequest | ShellConfirmRequest;
 
 /**
- * Tools whose every call is put to the user first. Only `shell` is here: it is the one agent tool
- * whose blast radius is not bounded by the workspace sandbox, so a confirmation is the boundary.
- * `file_write` is not — `denyReasonForFileTool` confines it to the same four folders `file_read`
- * may read, which is a bound the user does not have to re-affirm on every call.
+ * Tools confirmed on every call. Only `shell`: the workspace sandbox does not bound it, whereas
+ * `file_write` is confined by `denyReasonForFileTool`.
  */
 const CONFIRM_REQUIRED_TOOLS = new Set<SkillType>(['shell']);
 
@@ -43,26 +44,17 @@ const CONFIRM_REQUIRED_TOOLS = new Set<SkillType>(['shell']);
  */
 const WRITE_TOOLS = new Set<SkillType>(['shell', 'file_write']);
 
-// Which observations get the HIGH-ENTROPY redactor on top of the eight prefix patterns. `shell`
-// belongs here for the obvious reason: `set`, `printenv`, `git config --list` and `type .env` are
-// exactly how a model answers a configuration question, and the answer is posted to a
-// third-party web UI. Pinned by test/secretMask.test.ts — the omission fails silently otherwise.
+// Tools whose observations also get the high-entropy redactor. `shell` is here because `set`,
+// `printenv` and `type .env` are how a model answers config questions, and the output goes to a
+// third-party web UI.
 const LOCAL_SOURCE_TOOLS = new Set<SkillType>(['file_read', 'clipboard', 'sysinfo', 'shell']);
 
 const AGENT_STEP_ID = 'agent';
 
 /**
- * Why this shell call is refused outright, before the user is ever asked, or null.
- *
- * Refusing BEFORE the dialog rather than inside it is deliberate. A dialog the user is trained to
- * click through is worse than no dialog, and a command reaching for a credential store must not be
- * presented as a routine choice alongside `git status`.
- *
- * Both checks are honest about their reach. The elevation check is EXACT — a child inherits the
- * parent token, so if this process is elevated every command would be too. The command scan is
- * best-effort: `%USERPROFILE%\.claude` contains no path until cmd.exe expands it, and a name can
- * be assembled at run time, so a rename or a variable defeats it. It stops the accidental and the
- * naive, which is the case that actually occurred; `secretMask` is what has to stop the rest.
+ * Why this shell call is refused before the user is asked, or null. The elevation check is exact
+ * (a child inherits the parent token); the command scan is best-effort (env vars or renames defeat
+ * it), so `secretMask` remains the backstop.
  */
 async function shellDenyReason(config: Record<string, string>): Promise<string | null> {
   if (await isElevated()) {
@@ -88,10 +80,9 @@ async function runTool(
   signal?: AbortSignal,
 ): Promise<string> {
   const timeoutMs = Math.max(10_000, Math.min(resolveStepTimeoutMs(tool, deps, config), budgetRemainingMs));
-  // `withStepTimeout` deliberately does NOT cancel the work it gives up on, so a skill that can
-  // honour an AbortSignal has to be handed it directly. `shell` joins `llm` here because Stop
-  // has to reach a running command — it still only kills the direct child, so a command that
-  // detaches (`start /b`, `Start-Process`, `schtasks`) outlives it either way.
+  // `withStepTimeout` does not cancel abandoned work, so skills that honour an AbortSignal get it
+  // directly. For `shell` this kills only the direct child; detached processes (`start /b`,
+  // `Start-Process`) survive.
   if (tool === 'llm' || tool === 'shell') {
     return executeSkill(tool, AGENT_STEP_ID, config, deps, timeoutMs, signal);
   }
@@ -120,9 +111,16 @@ export interface CallContext {
   runId: string;
   /** Read when the call starts: a resumed run may restate the intent on its first action. */
   intent: () => GoalIntent | null;
+  /** The user's answers to this run's questions, which may allow what the intent did not. */
+  askAnswers: readonly string[];
   gate: { blocked: number; autoContext: number };
   unattended: boolean;
   askUser: (request: AgentConfirmRequest) => Promise<boolean>;
+  /**
+   * A shell call is not confirmed here but handed back as `deferred`: the run pauses with a
+   * question in the chat and runs the stored command when the answer approves it (a bot run).
+   */
+  deferShell?: boolean;
   /** Shared by every call of the run: `build_flow` reads the assessment `assess_flow` left there. */
   builtins: BuiltinDeps;
   fileRoots: string[];
@@ -142,6 +140,10 @@ export interface CallOutcome {
   landed: boolean;
   /** Held back only until something is looked at — the identical call may pass afterwards. */
   transientBlock: boolean;
+  /** A research call's checklist as it ended, kept on the record so a reopened run shows it. */
+  research?: ResearchProgress;
+  /** Nothing ran: this shell command waits for the user's answer to a question (`deferShell`). */
+  deferred?: ShellConfirmRequest;
 }
 
 function outcome(observation: string, status: 'ok' | 'error', write = false, landed = false): CallOutcome {
@@ -170,6 +172,7 @@ export async function runCall(
       ledger: ctx.ledger,
       runId: ctx.runId,
       intent: ctx.intent(),
+      answers: ctx.askAnswers,
       gate: ctx.gate,
       unattended: ctx.unattended,
       confirm: (request: McpConfirmRequest) => ctx.askUser(request),
@@ -207,44 +210,61 @@ export async function runCall(
     return outcome(`ERROR: ${denyReason}`, 'error', isWrite);
   }
   if (CONFIRM_REQUIRED_TOOLS.has(tool)) {
-    const approved = await ctx.askUser({
+    const request: ShellConfirmRequest = {
       kind: 'shell',
       command: recordConfig.command ?? '',
       interpreter: shellInterpreter(recordConfig),
       cwd: ctx.workspaceDir,
-    });
+    };
+    if (ctx.deferShell) {
+      // Refused here, not after the user said yes: a command that is never going to run must not
+      // be put to them. The question shows the whole string, so the same bound as the dialog.
+      if (request.command.length > SHELL_COMMAND_MAX) {
+        sendLog(`🔒 [Agent] shell: refused a ${request.command.length}-character command`);
+        return outcome(`ERROR: refused: the command is longer than ${SHELL_COMMAND_MAX} characters. Split the work into shorter commands.`, 'error', isWrite);
+      }
+      return { ...outcome('', 'ok'), deferred: request };
+    }
+    const approved = await ctx.askUser(request);
     if (!approved) {
       sendLog(`🔒 [Agent] the user declined a ${tool} call`);
       return outcome('ERROR: The user declined to run this command. Do not retry it or a variation of it — take a different approach, or finish and tell them what you needed to run.', 'error', isWrite);
     }
   }
-  // `cwd` is injected HERE, after validation dropped any the model tried to set, so a bare `dir`
-  // or a `> out.txt` lands in the workspace instead of wherever Electron was started — and neither
-  // key can be chosen by the model, only inherited. `noClobber` makes the "no confirmation needed"
-  // decision honest: without it, one action could replace the user's existing
-  // `Documents/taxes-2025.xlsx` with the agent's notes and nothing would ask.
+  // Injected after validation so the model cannot set them: shell runs in the workspace, and
+  // `noClobber` keeps an unconfirmed file_write from replacing an existing user file.
   const execConfig = tool === 'shell'
     ? { ...recordConfig, cwd: ctx.workspaceDir }
     : tool === 'file_write'
       ? { ...recordConfig, noClobber: 'true' }
       : recordConfig;
-  const stageDeps: FlowExecutorDeps = ctx.onTrace
-    ? { ...ctx.deps, onStage: (label, detail) => stage(label, detail) }
-    : ctx.deps;
+  let research: ResearchProgress | undefined;
+  const progressDeps: FlowExecutorDeps = {
+    ...ctx.deps,
+    onResearchProgress: (progress) => {
+      research = progress;
+      ctx.onTrace?.({ kind: 'research', turn: step, progress });
+    },
+  };
+  const withResearch = (result: CallOutcome): CallOutcome => (research ? { ...result, research } : result);
   try {
-    const raw = await runTool(tool, execConfig, stageDeps, ctx.remainingMs(), ctx.signal);
+    const raw = await runTool(tool, execConfig, progressDeps, ctx.remainingMs(), ctx.signal);
     const unwrapped = unwrapStepOutput(tool, raw);
     const observation = maskSecrets(buildObservation(unwrapped.output, unwrapped.subVars), LOCAL_SOURCE_TOOLS.has(tool));
     ctx.ledger.addObservation(observation);
-    return outcome(observation, 'ok', isWrite, isWrite);
+    return withResearch(outcome(observation, 'ok', isWrite, isWrite));
   } catch (err) {
     if (err instanceof FlowAbortError) throw err;
+    // The user-facing "try again in a few minutes" reads to a model as "retry now", so it gets
+    // its own observation.
+    if (err instanceof SearchBlockedError) {
+      sendLog(`⚠️ [Agent] ${tool} failed: web search is blocked (${err.message})`);
+      return withResearch(outcome(`ERROR: ${err.agentObservation}`, 'error', isWrite));
+    }
     const message = err instanceof Error ? err.message : String(err);
-    // Masked like the success branch. `promisify(exec)` rejects on ANY non-zero exit with
-    // `Command failed: <the whole command>` plus stderr — so the one path that carried the
-    // command line AND its stderr verbatim into the next prompt, the run file and the log
-    // was the path that had no redaction at all. A grep that matches nothing reaches it.
+    // Masked like the success branch: on any non-zero exit `promisify(exec)` rejects with the
+    // whole command line plus stderr.
     sendLog(`⚠️ [Agent] ${tool} failed: ${maskSecrets(message, true)}`);
-    return outcome(`ERROR: ${maskSecrets(message, LOCAL_SOURCE_TOOLS.has(tool))}`, 'error', isWrite);
+    return withResearch(outcome(`ERROR: ${maskSecrets(message, LOCAL_SOURCE_TOOLS.has(tool))}`, 'error', isWrite));
   }
 }

@@ -44,9 +44,13 @@ function extractKeysFromSource(src: string): string[] {
   return keys;
 }
 
+/**
+ * The renderer calls `t(`prefix.${x}`)`; main calls `t(strings, `prefix.${x}`)`, with the language
+ * data first. Both forms count, or live main-process keys would be deleted as unused.
+ */
 function extractDynamicPrefixes(sources: string[]): Set<string> {
   const prefixes = new Set<string>();
-  const re = /\bt(?:g)?\(\s*`([a-z][a-zA-Z0-9._-]*)\$\{/g;
+  const re = /\bt(?:g)?\(\s*(?:[\w.$?]+\s*,\s*)?`([a-z][a-zA-Z0-9._-]*)\$\{/g;
   for (const src of sources) {
     re.lastIndex = 0;
     let m: RegExpExecArray | null;

@@ -137,11 +137,17 @@ export function toIsoDate(date: Date): string {
   return `${date.getFullYear()}-${month}-${day}`;
 }
 
-/** True once the one-shot moment has passed — the registry must not arm it for the same day next year. */
-export function isOnceExpired(trigger: TriggerConfig, now: Date = new Date()): boolean {
+/** The local moment a one-shot is set for; null when its date cannot be read. */
+export function onceDueAt(trigger: TriggerConfig): Date | null {
   const parts = parseOnceDate(trigger.onceDate);
-  if (!parts) return true;
+  if (!parts) return null;
   const hour = clampInteger(trigger.scheduleHour, 0, 23, SCHEDULE_DEFAULTS.hour);
   const minute = clampInteger(trigger.scheduleMinute, 0, 59, SCHEDULE_DEFAULTS.minute);
-  return new Date(parts.year, parts.month - 1, parts.day, hour, minute, 0, 0).getTime() <= now.getTime();
+  return new Date(parts.year, parts.month - 1, parts.day, hour, minute, 0, 0);
+}
+
+/** True once the one-shot moment has passed — the registry must not arm it for the same day next year. */
+export function isOnceExpired(trigger: TriggerConfig, now: Date = new Date()): boolean {
+  const due = onceDueAt(trigger);
+  return !due || due.getTime() <= now.getTime();
 }

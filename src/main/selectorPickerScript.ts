@@ -17,6 +17,9 @@ export interface PickerStrings {
   cancel: string;
 }
 
+/** The attribute every counted match carries while the picker is open. */
+export const MARK_ATTR = 'data-yobi-pick-match';
+
 const PANEL_CSS = [
   'position:fixed;bottom:16px;right:16px;z-index:2147483647;width:440px;max-width:calc(100vw - 32px)',
   'background:#1a1b1e;color:#fff;border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,0.5)',
@@ -46,8 +49,23 @@ export function buildPickerScript(strings: PickerStrings, timeoutMs: number): st
       var hover = el('div', 'position:fixed;z-index:2147483645;pointer-events:none;border:2px solid #4c8dff;background:rgba(76,141,255,0.18);border-radius:2px;display:none;');
       document.documentElement.appendChild(hover);
 
-      var marks = el('div', 'position:fixed;top:0;left:0;width:0;height:0;z-index:2147483644;pointer-events:none;');
-      document.documentElement.appendChild(marks);
+      // Every match is marked by one attribute rule rather than a per-node overlay: no cap, and an
+      // outline follows its element on scroll. The constructable sheet gets past a page CSP that
+      // blocks inline <style>; the <style> is only a fallback.
+      var MARK_ATTR = ${JSON.stringify(MARK_ATTR)};
+      var MARK_RULE = '[' + MARK_ATTR + ']{outline:2px solid #34c759 !important;outline-offset:-2px !important;}';
+      var markSheet = null;
+      var markStyle = null;
+      try {
+        markSheet = new CSSStyleSheet();
+        markSheet.replaceSync(MARK_RULE);
+        document.adoptedStyleSheets = document.adoptedStyleSheets.concat([markSheet]);
+      } catch (e) {
+        markSheet = null;
+        markStyle = el('style', '', MARK_RULE);
+        document.documentElement.appendChild(markStyle);
+      }
+      var marked = [];
 
       var panel = el('div', ${JSON.stringify(PANEL_CSS)});
 
@@ -106,20 +124,21 @@ export function buildPickerScript(strings: PickerStrings, timeoutMs: number): st
       document.documentElement.appendChild(panel);
 
       function isOurs(node){
-        return !node || node === bar || node === hover || node === marks
-          || bar.contains(node) || panel.contains(node) || marks.contains(node);
+        return !node || node === bar || node === hover
+          || bar.contains(node) || panel.contains(node);
       }
 
       function fill(str, n){ return str.split('{{count}}').join(String(n)); }
 
-      var MARK_CAP = 60;
+      function clearMarks(){
+        marked.forEach(function(node){ node.removeAttribute(MARK_ATTR); });
+        marked = [];
+      }
+
       function paintMarks(nodes){
-        marks.textContent = '';
-        nodes.slice(0, MARK_CAP).forEach(function(node){
-          var r = node.getBoundingClientRect();
-          if (r.width <= 0 || r.height <= 0) return;
-          marks.appendChild(el('div', 'position:fixed;left:' + r.left + 'px;top:' + r.top + 'px;width:' + r.width + 'px;height:' + r.height + 'px;border:2px solid #34c759;background:rgba(52,199,89,0.12);border-radius:3px;pointer-events:none;'));
-        });
+        clearMarks();
+        marked = nodes.filter(function(node){ return !isOurs(node); });
+        marked.forEach(function(node){ node.setAttribute(MARK_ATTR, ''); });
       }
 
       function render(keepManual){
@@ -200,23 +219,16 @@ export function buildPickerScript(strings: PickerStrings, timeoutMs: number): st
         adopt(node);
       }
 
-      var repaint = null;
-      function onScroll(){
-        if (repaint) return;
-        repaint = requestAnimationFrame(function(){
-          repaint = null;
-          if (panel.style.display === 'block') paintMarks(state.nodes);
-        });
-      }
-
       function cleanup(){
         clearTimeout(giveUp);
         document.removeEventListener('mousemove', onMove, true);
         document.removeEventListener('click', onClick, true);
         document.removeEventListener('keydown', onKey, true);
-        window.removeEventListener('scroll', onScroll, true);
-        window.removeEventListener('resize', onScroll, true);
-        [bar, hover, marks, panel].forEach(function(n){ if (n.parentNode) n.parentNode.removeChild(n); });
+        clearMarks();
+        if (markSheet){
+          document.adoptedStyleSheets = document.adoptedStyleSheets.filter(function(s){ return s !== markSheet; });
+        }
+        [bar, hover, panel, markStyle].forEach(function(n){ if (n && n.parentNode) n.parentNode.removeChild(n); });
       }
 
       function finish(payload){ cleanup(); resolve(payload); }
@@ -244,8 +256,6 @@ export function buildPickerScript(strings: PickerStrings, timeoutMs: number): st
       document.addEventListener('mousemove', onMove, true);
       document.addEventListener('click', onClick, true);
       document.addEventListener('keydown', onKey, true);
-      window.addEventListener('scroll', onScroll, true);
-      window.addEventListener('resize', onScroll, true);
     });
   })()`;
 }

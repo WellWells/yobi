@@ -4,6 +4,7 @@ import si from 'systeminformation';
 import { formatDiskSize, formatGb, joinParts, once, safe } from './hardwareUtils';
 import { createWindowsInventory } from './windowsHardware';
 import { resolveActiveInterfaceName, resolvePrimaryMac } from './networkInfo';
+import { readPrinters } from './printers';
 
 const BYTES_PER_GB = 1024 ** 3;
 
@@ -105,6 +106,7 @@ function createSharedResolvers(): Record<string, () => Promise<string>> {
       })
       .join('; ')),
     volumes: () => safe(readVolumes),
+    printers: () => safe(readPrinters),
     netInterface: () => safe(async () => (await resolveActiveInterfaceName()) || 'unknown'),
     gateway: () => safe(() => si.networkGatewayDefault()),
   };

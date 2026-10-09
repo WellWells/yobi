@@ -1,24 +1,6 @@
 import type { ChatgptPickerSnapshot, ChatgptPickerTarget } from '../../shared/chatgptModels';
 
-/*
- * chatgpt.com's model controls, measured 2026-09-18 (Free and Plus accounts, zh-TW UI):
- *
- * - Both live in the composer form as a `.__composer-pill` button. Labels are localized, so the two
- *   kinds are told apart by ARIA: the Free "Think" pill toggles (`aria-pressed`); the Plus effort
- *   pill opens a Radix menu (`aria-haspopup="menu"`, `aria-controls` → the menu while open).
- * - The Plus menu holds `[data-testid="composer-intelligence-picker-content"]`: a header row
- *   (`menuitem[aria-expanded]`) that flips `[data-view]` from "simple" to "advanced", a slider
- *   (`[data-model-reasoning-effort-slider] [role=slider]`, `aria-valuenow` = the step) moved with
- *   ArrowLeft / ArrowRight on its `menuitem`, and the versions as `menuitemradio` rows in
- *   `[data-testid="composer-model-picker-slider-advanced-view"]` (first line = the version's name).
- *   Picking a row returns to the slider; nothing closes the menu but the trigger.
- * - Step labels other than the current one are not in the DOM. The page's own
- *   `/backend-api/models` lists every version with its presets: `id` is the slider step, `title`
- *   the label shown for it. It needs the session's bearer token — without it the list is the
- *   signed-out one.
- * - A closed menu can linger with `data-state="closed"` while its exit animation waits (hidden
- *   pages never finish it), so "open" means the trigger says so and the menu is `data-state=open`.
- */
+/* Model and reasoning-effort controls in chatgpt.com's composer (a toggle on Free, a menu on Plus). */
 export const CHATGPT_PICKER_PILL_SELECTOR = 'form button.__composer-pill[aria-haspopup="menu"], form button.__composer-pill[aria-pressed]';
 
 export type ChatgptPickerResult =
@@ -99,7 +81,6 @@ export function buildChatgptModelPickerScript(target: ChatgptPickerTarget | null
     return versions;
   }
 
-  // --- the Plus effort menu ---
   var trigger = null;
   function menu() {
     if (!trigger || trigger.getAttribute('aria-expanded') !== 'true') return null;
@@ -231,7 +212,6 @@ export function buildChatgptModelPickerScript(target: ChatgptPickerTarget | null
     }
   }
 
-  // --- the Free toggle ---
   async function runToggle(toggle) {
     var changed = false;
     var on = function() { return toggle.getAttribute('aria-pressed') === 'true'; };
@@ -256,7 +236,9 @@ export function buildChatgptModelPickerScript(target: ChatgptPickerTarget | null
   var toggles = pills('aria-pressed');
   if (pills('aria-haspopup="menu"').length > 0) {
     var slid = await runSlider();
-    if (slid.ok || toggles.length !== 1) return slid;
+    // 'no-catalog' means the Plus menu opened but its model list could not be read: falling back
+    // to a lone toggle would report a Free page and wipe the cached Plus list.
+    if (slid.ok || slid.reason === 'no-catalog' || toggles.length !== 1) return slid;
   }
   if (toggles.length !== 1) return { ok: false, reason: 'no-picker' };
   return runToggle(toggles[0]);

@@ -10,6 +10,8 @@ import { EMPTY_CLAUDE_CHOICE } from '../shared/claudeModels';
 import type { ClaudeModelCatalog, ClaudeModelChoice } from '../shared/claudeModels';
 import { EMPTY_CHATGPT_CHOICE } from '../shared/chatgptModels';
 import type { ChatgptModelCatalog, ChatgptModelChoice } from '../shared/chatgptModels';
+import { BOT_PERMISSIONS_VERSION } from '../shared/botPermissions';
+import type { BotGrant } from '../shared/botPermissions';
 import type { BotBuiltinCommands, BotByokCommands, BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureRange, CaptureSettings, CardLayout, QuickExportSettings, LinePairingState, McpServerConfig, NotifyEventPrefs, PromptPreferences, Provider, ShareSettings, TelegramChannel, TelegramKnownUser, TelegramPairingState } from '../shared/types';
 
 /**
@@ -36,6 +38,10 @@ export interface Config {
   flowGenerateUrl: string;
   /** Which model tidies the personal memory. Empty follows the chat model. */
   memoryCurateUrl: string;
+  /** Which editor the composer's Ctrl+G opens; see `ExternalEditorChoice`. */
+  externalEditor: string;
+  /** The command line for `externalEditor: 'custom'`. */
+  externalEditorCommand: string;
   hotkey: string;
   hotkeyEnabled: boolean;
   shortcuts: Record<string, ShortcutOverride>;
@@ -64,6 +70,8 @@ export interface Config {
   lineReaderEnabled: boolean;
   /** Opt-in: relay the Thunderbird MCP add-on through an in-process MCP connector. */
   thunderbirdEnabled: boolean;
+  /** Opt-in: let `/agent` search and read X through an in-process MCP connector. */
+  xConnectorEnabled: boolean;
   hiddenProviders: Provider[];
   hiddenByokIds: string[];
   hiddenByokGroupIds: string[];
@@ -107,11 +115,19 @@ export interface TelegramConfig {
   allowGroupCommands: boolean;
   defaultReplyMode: 'markdown' | 'png' | 'webp' | 'pdf';
   compactReply: boolean;
+  /**
+   * Mirror of the accounts holding the `admin` grant, written on every change so an older build
+   * still finds its admins. Read only by the one-time permissions migration.
+   */
   adminUserIds: number[];
   llmDirect: BotLlmDirectConfig;
   pairing: TelegramPairingState;
   channels: TelegramChannel[];
   knownUsers: TelegramKnownUser[];
+  /** Per-account grants, keyed by the stringified Telegram user id. No entry means no grants. */
+  permissions: Record<string, BotGrant[]>;
+  /** Missing on configs written before per-account grants; set once the migration has run. */
+  permissionsVersion?: number;
 }
 
 export interface LineConfig {
@@ -121,6 +137,10 @@ export interface LineConfig {
   port: number;
   llmDirect: BotLlmDirectConfig;
   pairing: LinePairingState;
+  /** Per-account grants, keyed by the LINE user id. No entry means no grants. */
+  permissions: Record<string, BotGrant[]>;
+  /** Missing on configs written before per-account grants; set once the migration has run. */
+  permissionsVersion?: number;
 }
 
 export interface SmtpConfig {
@@ -155,6 +175,8 @@ export const defaultStored: StoredConfig = {
   targetUrl: PROVIDER_URLS.gemini,
   flowGenerateUrl: '',
   memoryCurateUrl: '',
+  externalEditor: '',
+  externalEditorCommand: '',
   hotkey: defaultMainHotkey(process.platform === 'darwin'),
   hotkeyEnabled: true,
   shortcuts: {},
@@ -214,7 +236,6 @@ export const defaultStored: StoredConfig = {
     tone: 'default',
     length: 'auto',
     customInstructions: '',
-    customTemplates: [],
     nickname: '',
   },
   providerCommands: {
@@ -224,7 +245,6 @@ export const defaultStored: StoredConfig = {
     perplexity: { enabled: true, command: '' },
   },
   builtinCommands: {
-    agent: { enabled: true, command: '', targetUrl: '' },
     search: { enabled: true, command: '', targetUrl: '' },
     askTtlMinutes: DEFAULT_AGENT_ASK_TTL_MINUTES,
   },
@@ -236,18 +256,22 @@ export const defaultStored: StoredConfig = {
     defaultReplyMode: 'markdown',
     compactReply: false,
     adminUserIds: [],
-    llmDirect: { enabled: false, targetUrl: '' },
+    llmDirect: { targetUrl: '' },
     pairing: { pendingCodes: [], pairedUsers: [] },
     channels: [],
     knownUsers: [],
+    permissions: {},
+    permissionsVersion: BOT_PERMISSIONS_VERSION,
   },
   line: {
     enabled: false,
     channelAccessTokenEncrypted: '',
     channelSecretEncrypted: '',
     port: 3007,
-    llmDirect: { enabled: false, targetUrl: '' },
+    llmDirect: { targetUrl: '' },
     pairing: { pendingCodes: [], pairedUsers: [] },
+    permissions: {},
+    permissionsVersion: BOT_PERMISSIONS_VERSION,
   },
   smtp: {
     enabled: false,
@@ -261,6 +285,7 @@ export const defaultStored: StoredConfig = {
   mcpServers: [],
   lineReaderEnabled: false,
   thunderbirdEnabled: false,
+  xConnectorEnabled: false,
   hiddenProviders: [],
   hiddenByokIds: [],
   hiddenByokGroupIds: [],

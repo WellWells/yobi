@@ -1,16 +1,19 @@
-import { ipcMain, clipboard, shell } from 'electron';
+import { app, ipcMain, clipboard, nativeImage, shell } from 'electron';
+import type { NativeImage } from 'electron';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { IPC } from '../../shared/types';
 import type {
   AttachmentStashRequest,
+  ConversationImportResult,
   MarkdownCaptureRequest,
   MarkdownCaptureResult,
   StartedConversation,
   StashedAttachment,
 } from '../../shared/types';
 import { attachmentFromClipboard, stashAttachmentBytes } from '../attachmentStash';
-import { getMainWindow, sendLog, sendToRenderer } from '../helpers';
+import { getAssetPath, getMainWindow, sendLog, sendToRenderer } from '../helpers';
 import {
   listOutputFiles,
   searchOutputFiles,
@@ -18,14 +21,68 @@ import {
   buildSnapshotFileName,
   getOutputDir,
   getUniquePath,
+  loadMarkdownHeadingAliases,
 } from '../files';
+import { IMPORT_MAX_FILES, importConversationFiles } from '../conversationImport';
 import { createConversationPlaceholder } from '../output';
 import { captureMarkdownDocument } from '../capture';
-import { writeCaptureToClipboard, zipSingleFile } from '../captureClipboard';
+import { writeCaptureToClipboard, writeFilesToClipboard, zipSingleFile } from '../captureClipboard';
+import { openWithChooser } from '../openWith';
 import { isAllowedFilePath, showSaveDialogForWin } from './context';
 import { isManagedPageWebContents } from '../flow/skills/browserPages';
 
+let appIconCache: NativeImage | null = null;
+const fileIconCache = new Map<string, NativeImage>();
+
+/** macOS refuses a drag with an empty image, so the app icon is the last resort. */
+function appDragIcon(): NativeImage {
+  if (appIconCache && !appIconCache.isEmpty()) return appIconCache;
+  const source = nativeImage.createFromPath(getAssetPath(process.platform === 'darwin' ? 'icon-mac.png' : 'icon-win.png'));
+  appIconCache = source.isEmpty() ? source : source.resize({ width: 32, height: 32 });
+  return appIconCache;
+}
+
+/**
+ * The icon the OS shows for this file type, so the drag looks like one from Explorer or
+ * Finder. On Windows and Linux Electron still prints the path beside it — that label is
+ * drawn inside Electron and no option removes it; macOS draws the icon alone.
+ */
+async function dragIcon(filePath: string): Promise<NativeImage> {
+  const ext = path.extname(filePath).toLowerCase();
+  const cached = fileIconCache.get(ext);
+  if (cached) return cached;
+  const icon = await app.getFileIcon(filePath, { size: 'normal' }).catch(() => null);
+  if (!icon || icon.isEmpty()) return appDragIcon();
+  fileIconCache.set(ext, icon);
+  return icon;
+}
+
 export function registerFileHandlers(): void {
+  // Rows dragged out of the conversation list: the OS gets the .md itself, as a copy.
+  ipcMain.on(IPC.START_FILE_DRAG, (event, filePaths: unknown) => {
+    if (event.sender !== getMainWindow()?.webContents || !Array.isArray(filePaths)) return;
+    void (async () => {
+      const files: string[] = [];
+      for (const filePath of filePaths.slice(0, IMPORT_MAX_FILES)) {
+        if (typeof filePath !== 'string' || !await isAllowedFilePath(filePath) || !existsSync(filePath)) continue;
+        files.push(path.resolve(filePath));
+      }
+      if (files.length === 0) return;
+      const icon = await dragIcon(files[0]);
+      if (event.sender.isDestroyed()) return;
+      event.sender.startDrag({ file: files[0], files, icon });
+    })();
+  });
+
+  ipcMain.handle(IPC.IMPORT_CONVERSATIONS, async (_event, filePaths: unknown): Promise<ConversationImportResult> => {
+    const outcome = await importConversationFiles(filePaths, await getOutputDir(), await loadMarkdownHeadingAliases());
+    if (outcome.failed > 0) sendLog(`⚠️ Conversation import: ${outcome.failed} file(s) could not be read`);
+    if (outcome.imported.length > 0) sendLog(`📥 Imported ${outcome.imported.length} conversation file(s)`);
+    const files = await listOutputFiles();
+    if (outcome.imported.length > 0) sendToRenderer(IPC.FILE_LIST, files);
+    return { ...outcome, files };
+  });
+
   ipcMain.handle(IPC.GET_FILE_LIST, () => listOutputFiles());
   ipcMain.handle(IPC.SEARCH_FILE_LIST, (_event, query: string) => searchOutputFiles(query));
 
@@ -217,5 +274,19 @@ export function registerFileHandlers(): void {
   ipcMain.handle(IPC.OPEN_PATH, async (_event, filePath: string) => {
     const error = await shell.openPath(filePath);
     return error === '';
+  });
+  ipcMain.handle(IPC.OPEN_FILE_WITH, async (_event, filePath: unknown) => {
+    if (typeof filePath !== 'string' || !await isAllowedFilePath(filePath) || !existsSync(filePath)) return false;
+    return openWithChooser(path.resolve(filePath));
+  });
+  ipcMain.handle(IPC.COPY_FILES_TO_CLIPBOARD, async (_event, filePaths: unknown) => {
+    if (!Array.isArray(filePaths)) return false;
+    const files: string[] = [];
+    for (const filePath of filePaths) {
+      if (typeof filePath !== 'string' || !await isAllowedFilePath(filePath) || !existsSync(filePath)) continue;
+      files.push(path.resolve(filePath));
+    }
+    await writeFilesToClipboard(files);
+    return files.length > 0;
   });
 }

@@ -41,6 +41,34 @@ export function allowedBoundaries(intent: GoalIntent | null): Set<ActionBoundary
   return allowed;
 }
 
+/** Words that name a boundary in a user's answer. `modify` and `draft` are allowed by default. */
+const CONSENT_WORDS: ReadonlyArray<[ActionBoundary, RegExp]> = [
+  ['delete', /刪除|刪掉|删除|删掉|移除|垃圾桶|\b(delete|remove|trash)\b/i],
+  ['send', /寄出|寄送|發送|发送|送出|\bsend\b/i],
+];
+/**
+ * Anything that refuses, cancels, keeps, postpones or limits, matched anywhere in the answer:
+ * "cancel the delete", "keep it, delete next week" and "only remove the label" name the verb
+ * without agreeing to it. A plain yes that happens to contain one is held back once more.
+ */
+const NOT_CONSENT = /不|沒|没|別|别|勿|免|否|取消|保留|無須|无须|毋須|以後|之後|下次|下週|下周|改天|稍後|只|僅|仅|\b(no|not|never|cancel|keep|later|without|instead|only)\b|n't/i;
+
+/**
+ * What the user's own answers to this run's questions allow beyond the declared intent. Unlike the
+ * intent, an answer is the user's own words, so an unqualified one may widen what the gate allows.
+ * A send or delete still opens a dialog every time.
+ */
+export function consentedBoundaries(answers: readonly string[]): ActionBoundary[] {
+  const found = new Set<ActionBoundary>();
+  for (const answer of answers) {
+    if (NOT_CONSENT.test(answer)) continue;
+    for (const [boundary, pattern] of CONSENT_WORDS) {
+      if (pattern.test(answer)) found.add(boundary);
+    }
+  }
+  return [...found];
+}
+
 const BOUNDARY_WORDS: Record<ActionBoundary, string> = {
   draft: 'create a draft or open a compose window',
   modify: 'change, move or create things',
@@ -55,6 +83,8 @@ export interface GateInput {
   contract: ToolContract;
   ledger: EvidenceLedger;
   intent: GoalIntent | null;
+  /** The user's answers to this run's questions; see `consentedBoundaries`. */
+  answers?: readonly string[];
   blockedSoFar: number;
   signature: string;
 }
@@ -131,13 +161,15 @@ export function decideAction(input: GateInput): GateDecision {
   }
 
   const boundary = contract.boundary(args);
-  if (boundary && !allowedBoundaries(input.intent).has(boundary)) {
+  const declared = input.intent?.change ?? DEFAULT_CHANGE;
+  const allowed = allowedBoundaries({ change: [...declared, ...consentedBoundaries(input.answers ?? [])], content: 'none' });
+  if (boundary && !allowed.has(boundary)) {
     return {
       verdict: 'blocked',
       transient: false,
       reasons: [{
         code: 'boundary_exceeded',
-        message: `This call would ${BOUNDARY_WORDS[boundary]}, and the GOAL did not ask for that. Do only what the GOAL asks; if you believe it should, ask the user first.`,
+        message: `This call would ${BOUNDARY_WORDS[boundary]}, and the GOAL did not ask for that. Do only what the GOAL asks; if you believe it should, ask the user first — an answer that says to ${boundary} allows it.`,
       }],
     };
   }

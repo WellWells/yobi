@@ -164,7 +164,7 @@ export const BackupImportModal: React.FC<Props> = ({ open, t, onClose, onImporte
               {t('settings.backup.import.choose')}
             </AppButton>
           </Group>
-          {error && <Text fz="xs" c="red" ta="center">{error}</Text>}
+          {error && <Text fz="xs" c="var(--mantine-color-error)" ta="center">{error}</Text>}
         </Stack>
       ) : (
         <Stack gap="md">
@@ -206,7 +206,7 @@ export const BackupImportModal: React.FC<Props> = ({ open, t, onClose, onImporte
               {t('settings.backup.import.submit')}
             </AppButton>
           </Group>
-          {error && <Text fz="xs" c="red">{error}</Text>}
+          {error && <Text fz="xs" c="var(--mantine-color-error)">{error}</Text>}
         </Stack>
       )}
     </AppModal>

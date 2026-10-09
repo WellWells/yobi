@@ -1,4 +1,4 @@
-import type { Session, WebContents } from 'electron';
+import type { Session, WebContents, WebFrameMain } from 'electron';
 import {
   buildChromeBrands,
   formatBrandList,
@@ -6,6 +6,10 @@ import {
   platformHint,
   withChromeBrand,
 } from '../shared/clientHintBrands';
+import { claimsFirefox, claimsGeminiApp } from '../shared/userAgentPersona';
+import { requestUserAgent } from './userAgent';
+import type { RequestSource } from './userAgent';
+import { followDestinationIdentity, windowFollowsIdentity } from './navigationIdentity';
 
 const SEC_CH_UA_PREFIX = 'sec-ch-ua';
 
@@ -30,9 +34,10 @@ export function harmonizeClientHintHeaders(
   userAgent: string,
   url = 'https://',
 ): Record<string, string> {
+  if (claimsGeminiApp(userAgent)) return requestHeaders;
   const chromeVersion = /Chrome\/([\d.]+)/.exec(userAgent)?.[1];
   const secure = url.startsWith('https:');
-  if (/Firefox\//.test(userAgent) || !chromeVersion || !secure) {
+  if (claimsFirefox(userAgent) || !chromeVersion || !secure) {
     stripClientHints(requestHeaders);
     return requestHeaders;
   }
@@ -53,16 +58,36 @@ export function harmonizeClientHintHeaders(
   return requestHeaders;
 }
 
+export function harmonizeRequestIdentity(
+  requestHeaders: Record<string, string>,
+  url: string,
+  source: RequestSource,
+): Record<string, string> {
+  const key = findHeaderKey(requestHeaders, 'user-agent');
+  const sent = key ? String(requestHeaders[key] ?? '') : '';
+  const userAgent = key ? requestUserAgent(sent, url, source) : sent;
+  if (key && userAgent !== sent) requestHeaders[key] = userAgent;
+  return harmonizeClientHintHeaders(requestHeaders, userAgent, url);
+}
+
+function frameOrigin(frame: WebFrameMain | null | undefined): string | null {
+  try {
+    return frame?.origin ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function registerWorkerClientHints(ses: Session): void {
+  followDestinationIdentity(ses);
   ses.webRequest.onBeforeSendHeaders((details, callback) => {
-    const requestHeaders = details.requestHeaders;
-    let userAgent = '';
-    for (const [key, value] of Object.entries(requestHeaders)) {
-      if (key.toLowerCase() === 'user-agent') {
-        userAgent = String(value ?? '');
-        break;
-      }
-    }
-    callback({ requestHeaders: harmonizeClientHintHeaders(requestHeaders, userAgent, details.url) });
+    const wc = details.webContents;
+    const navigates = details.resourceType === 'mainFrame' && wc && windowFollowsIdentity(wc);
+    const source: RequestSource = {
+      resourceType: details.resourceType,
+      frameOrigin: frameOrigin(details.frame),
+      windowUserAgent: navigates ? wc.getUserAgent() : null,
+    };
+    callback({ requestHeaders: harmonizeRequestIdentity(details.requestHeaders, details.url, source) });
   });
 }

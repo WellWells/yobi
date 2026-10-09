@@ -6,6 +6,7 @@ import { applyWorkerUserAgent } from '../clientHints';
 import { navigateAndWait, sleep } from './common';
 import { countElements } from './automationExecutor';
 import { IPC, PROVIDER_URLS } from '../../shared/types';
+import { needsModelCatalogRestamp } from '../../shared/modelCatalogFreshness';
 import {
   resolveGeminiTarget,
   sameCatalogContent,
@@ -65,7 +66,9 @@ function remember(snapshot: GeminiPickerSnapshot, choice: GeminiModelChoice): vo
     : config.geminiModelCatalog;
   const catalogChanged = !sameCatalogContent(config.geminiModelCatalog, catalog);
   const choiceChanged = !sameGeminiChoice(config.geminiModel, choice);
-  if (!catalogChanged && !choiceChanged) return;
+  // Only a read that found models counts as "checked"; see MODEL_CATALOG_RESTAMP_MS.
+  const restamp = snapshot.models.length > 0 && needsModelCatalogRestamp(config.geminiModelCatalog);
+  if (!catalogChanged && !choiceChanged && !restamp) return;
   config.geminiModelCatalog = catalog;
   config.geminiModel = choice;
   saveConfig({ geminiModelCatalog: catalog, geminiModel: choice });
@@ -97,6 +100,10 @@ export async function syncGeminiModel(wc: WebContents): Promise<void> {
     if (!read.ok) {
       sendLog(`⚠️ Gemini model picker unavailable (${read.reason}) — sending with the page's current model`);
       return;
+    }
+    if (read.snapshot.models.length === 0) {
+      // The menu opened and listed nothing: a page change, not an account without models.
+      sendLog('⚠️ Gemini\'s model menu listed no models — Gemini may have changed it; keeping the cached list');
     }
     const decision = resolveGeminiTarget(config.geminiModel, config.geminiModelCatalog, read.snapshot);
     if (decision.remappedFrom) {
@@ -141,9 +148,8 @@ async function waitForPicker(wc: WebContents, timeoutMs: number): Promise<void> 
 }
 
 /**
- * For a first run with nothing cached: loads Gemini just far enough to read its picker. Runs once
- * per install, so leaving the worker on Gemini afterwards costs the next other-provider send one
- * reload at most.
+ * For a list that is missing or stale: loads Gemini just far enough to read its picker. Leaving
+ * the worker on Gemini afterwards costs the next other-provider send one reload at most.
  */
 export async function refreshGeminiModels(workerWin: BrowserWindow): Promise<void> {
   const wc = workerWin.webContents;

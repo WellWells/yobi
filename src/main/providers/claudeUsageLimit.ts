@@ -1,8 +1,6 @@
 /*
- * claude.ai's usage limit, measured 2026-09-18 on a Free account that had run out.
- *
- * Every marker is an attribute or a data shape; the notice text is localized and is only quoted
- * back when no reset time can be read.
+ * claude.ai's usage limit. Every marker is an attribute or a data shape; the notice text is
+ * localized and is only quoted back when no reset time can be read.
  */
 export const CLAUDE_USAGE_LIMIT = 'CLAUDE_USAGE_LIMIT';
 

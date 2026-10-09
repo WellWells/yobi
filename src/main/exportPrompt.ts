@@ -194,11 +194,7 @@ interface ExportPromptDefaults {
   palette?: string;
 }
 
-/**
- * `'reopen'` keeps the panel up for another attempt. The object form carries a reason to
- * show above the controls, so a failure the user can act on — a capture too tall for the
- * chosen format — costs them a re-pick rather than a dismissed panel and a lost hotkey.
- */
+/** `'reopen'` keeps the panel up for another attempt; the object form also shows a reason above the controls. */
 export type PerformOutcome = 'done' | 'reopen' | { reopen: true; notice?: string };
 
 export function retryDefaults(choice: ExportPromptChoice, previous: ExportPromptDefaults): ExportPromptDefaults {

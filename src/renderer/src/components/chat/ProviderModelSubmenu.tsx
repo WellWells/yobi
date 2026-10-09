@@ -28,12 +28,8 @@ interface ProviderModelSubmenuProps extends ProviderSubmenuRowProps {
 }
 
 /**
- * A provider row that opens the models that provider offers. Gemini, Claude and ChatGPT read the
- * same way here — what differs is only where the list comes from and which store the pick goes to,
- * so the placement rules and the click semantics below live in one place rather than three.
- *
- * Only the names are shown: every provider writes its model descriptions in the *account's*
- * language, which is not necessarily the app's (English on a zh-TW machine, measured).
+ * A provider row that opens that provider's models; shared by Gemini, Claude and ChatGPT.
+ * Only names are shown: providers write model descriptions in the account's language, not the app's.
  */
 export const ProviderModelSubmenu: React.FC<ProviderModelSubmenuProps> = ({
   model, entries, selectedModelId, summary, isSelected, badges, itemStyle, itemRef, onChange, onPickModel,
@@ -41,9 +37,8 @@ export const ProviderModelSubmenu: React.FC<ProviderModelSubmenuProps> = ({
   const Icon = model.icon;
 
   return (
-    // Fixed, because the parent dropdown scrolls: an absolutely placed submenu would be clipped by it.
-    // Left first: every model menu hangs off the right edge of the window, so opening right lands
-    // on top of the menu this one came from (the header's rewrite submenu did exactly that).
+    // Fixed: the parent dropdown scrolls and would clip an absolute submenu.
+    // Left first: model menus sit at the window's right edge, so opening right would cover the parent.
     <Menu.Sub floatingStrategy="fixed" position="left-start">
       <Menu.Sub.Target>
         <Menu.Sub.Item

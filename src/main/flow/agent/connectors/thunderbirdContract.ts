@@ -14,9 +14,9 @@ type Kind = 'read' | 'draft' | 'compose' | 'dialog' | 'mutate' | 'destroy';
 const COMPOSING_TOOLS = new Set(['saveDraft', 'sendMail', 'replyToMessage', 'forwardMessage']);
 
 /**
- * Every tool the pinned add-on (v0.7.4) lists, by what it does. `tools/list` strips the add-on's own
- * `crud` field, so this table is the only place the difference between opening a window and sending
- * mail is written down. `test/thunderbirdContract.test.ts` fails when a tag bump adds a tool.
+ * Every tool the pinned add-on lists, by what it does. `tools/list` strips the add-on's own `crud`
+ * field, so this table is the only place the difference between opening a window and sending mail
+ * is written down.
  */
 export const THUNDERBIRD_TOOL_KINDS: Readonly<Record<string, Kind>> = {
   listAccounts: 'read', listFolders: 'read', searchMessages: 'read', getMessage: 'read', getMessages: 'read',
@@ -32,6 +32,38 @@ export const THUNDERBIRD_TOOL_KINDS: Readonly<Record<string, Kind>> = {
   deleteEvent: 'destroy', deleteContact: 'destroy', deleteFilter: 'destroy',
 };
 
+/**
+ * Translated names for the result line of each tool that can change something; `tools/list` strips
+ * the add-on's own titles. Reads never get a result line.
+ */
+export const THUNDERBIRD_TOOL_TITLES: Readonly<Record<string, string>> = {
+  saveDraft: 'agent.tool.thunderbird.saveDraft',
+  sendMail: 'agent.tool.thunderbird.sendMail',
+  replyToMessage: 'agent.tool.thunderbird.replyToMessage',
+  forwardMessage: 'agent.tool.thunderbird.forwardMessage',
+  createEvent: 'agent.tool.thunderbird.createEvent',
+  createTask: 'agent.tool.thunderbird.createTask',
+  updateMessage: 'agent.tool.thunderbird.updateMessage',
+  createFolder: 'agent.tool.thunderbird.createFolder',
+  renameFolder: 'agent.tool.thunderbird.renameFolder',
+  moveFolder: 'agent.tool.thunderbird.moveFolder',
+  createContact: 'agent.tool.thunderbird.createContact',
+  updateContact: 'agent.tool.thunderbird.updateContact',
+  updateEvent: 'agent.tool.thunderbird.updateEvent',
+  updateTask: 'agent.tool.thunderbird.updateTask',
+  createFilter: 'agent.tool.thunderbird.createFilter',
+  updateFilter: 'agent.tool.thunderbird.updateFilter',
+  reorderFilters: 'agent.tool.thunderbird.reorderFilters',
+  applyFilters: 'agent.tool.thunderbird.applyFilters',
+  deleteMessages: 'agent.tool.thunderbird.deleteMessages',
+  deleteFolder: 'agent.tool.thunderbird.deleteFolder',
+  emptyTrash: 'agent.tool.thunderbird.emptyTrash',
+  emptyJunk: 'agent.tool.thunderbird.emptyJunk',
+  deleteEvent: 'agent.tool.thunderbird.deleteEvent',
+  deleteContact: 'agent.tool.thunderbird.deleteContact',
+  deleteFilter: 'agent.tool.thunderbird.deleteFilter',
+};
+
 export const THUNDERBIRD_NOTES = [
   'THUNDERBIRD NOTES:',
   '- replyToMessage, forwardMessage and sendMail only OPEN a window for the user to edit, save or send; they save nothing. saveDraft saves a NEW message that is not threaded under the original.',
@@ -41,6 +73,22 @@ export const THUNDERBIRD_NOTES = [
 
 const OVERLAP_CHARS = 80;
 const VERIFY_SKEW_MS = 120_000;
+
+/**
+ * Waits before looking a just-saved message up again: Thunderbird's search can miss an IMAP draft
+ * right after it is saved. Only a miss pays these delays.
+ */
+const VERIFY_RETRY_DELAYS_MS: readonly number[] = [2_000, 4_000];
+let retryDelays = VERIFY_RETRY_DELAYS_MS;
+
+/** Overrides the verify retry delays; the defaults add six seconds to every not-found case. */
+export function setVerifyRetryDelaysForTests(delays: readonly number[] = VERIFY_RETRY_DELAYS_MS): void {
+  retryDelays = delays;
+}
+
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
@@ -294,7 +342,13 @@ function interpretFor(tool: string, kind: Kind) {
     if (tool === 'deleteMessages' && obj) {
       const done = typeof obj.deleted === 'number' ? obj.deleted : 0;
       const missing = Array.isArray(obj.notFound) ? obj.notFound.length : 0;
-      if (missing > 0 && done === 0) return { ...failedResult('none of the messages were found in that folder', tool), failure: 'not_found' };
+      if (missing > 0 && done === 0) {
+        return {
+          ...failedResult('none of the messages were found in that folder', tool),
+          failure: 'not_found',
+          notice: { key: 'agent.outcome.deleteNoneFound', vars: {} },
+        };
+      }
       if (missing > 0) {
         return {
           outcome: 'partial',
@@ -328,26 +382,34 @@ async function verifyStored(tool: string, args: Args, at: string, ledger: Ledger
   if (!subject.trim()) return { status: 'unavailable', evidence: 'there is no subject to look it up by', notice: { key: 'agent.outcome.unverified', vars: { tool } } };
   if (identities(ledger).length === 0) await read('listAccounts', {});
   const since = (Date.parse(at) || Date.now()) - VERIFY_SKEW_MS;
-  const result = await read('searchMessages', {
-    query: `subject:${normalizeSubject(subject)}`,
-    startDate: new Date(since - 86_400_000).toISOString().slice(0, 10),
-    maxResults: 30,
-  });
-  if (result.isError || embeddedError(result.text)) {
-    return { status: 'unavailable', evidence: 'the lookup failed', notice: { key: 'agent.outcome.unverified', vars: { tool } } };
-  }
   const expected = actingIdentity(tool, args, ledger);
-  const match = rowsOf(parseJsonValue(result.text)).find((row) => normalizeSubject(str(row.subject)) === normalizeSubject(subject)
-    && isOwnAuthor(ledger, str(row.author))
-    && (!expected || emailsIn(str(row.author)).includes(expected.email.toLowerCase()))
-    && (Date.parse(str(row.date)) || 0) >= since);
+  let match: Record<string, unknown> | undefined;
+  for (let attempt = 0; attempt <= retryDelays.length && !match; attempt++) {
+    if (attempt > 0) await pause(retryDelays[attempt - 1]);
+    const result = await read('searchMessages', {
+      query: `subject:${normalizeSubject(subject)}`,
+      startDate: new Date(since - 86_400_000).toISOString().slice(0, 10),
+      maxResults: 30,
+    });
+    if (result.isError || embeddedError(result.text)) {
+      return { status: 'unavailable', evidence: 'the lookup failed', notice: { key: 'agent.outcome.unverified', vars: { tool } } };
+    }
+    match = rowsOf(parseJsonValue(result.text)).find((row) => normalizeSubject(str(row.subject)) === normalizeSubject(subject)
+      && isOwnAuthor(ledger, str(row.author))
+      && (!expected || emailsIn(str(row.author)).includes(expected.email.toLowerCase()))
+      && (Date.parse(str(row.date)) || 0) >= since);
+  }
   const where = drafts ? 'Drafts' : 'Sent';
   if (!match) {
-    const account = expected ? identityLabel(expected) : 'any account';
+    const account = expected ? identityLabel(expected) : '';
+    // No acting account known: the user's line gets its own wording rather than our English "any account".
+    const key = drafts
+      ? (account ? 'agent.outcome.draftNotFound' : 'agent.outcome.draftNotFoundAnyAccount')
+      : (account ? 'agent.outcome.sentNotFound' : 'agent.outcome.sentNotFoundAnyAccount');
     return {
       status: 'not_found',
-      evidence: `no message "${subject}" from ${account} saved since ${hhmm(new Date(since).toISOString())} was found`,
-      notice: { key: drafts ? 'agent.outcome.draftNotFound' : 'agent.outcome.sentNotFound', vars: { account, subject } },
+      evidence: `no message "${subject}" from ${account || 'any account'} saved since ${hhmm(new Date(since).toISOString())} was found`,
+      notice: { key, vars: account ? { account, subject } : { subject } },
     };
   }
   const locations = [str(match.folderPath), ...(Array.isArray(match.dupLocations) ? match.dupLocations.map(str) : [])].filter(Boolean);
@@ -444,7 +506,9 @@ function contractFor(tool: string, kind: Kind): ToolContract {
     confirm: (args) => confirmOf(riskOf(kind, args)),
     interpret: interpretFor(tool, kind),
     targetKey: targetKeyFor(tool),
-    ...(kind === 'read' ? {} : { check: checkFor(tool, kind), describe: describeFor(tool), label: labelFor(tool) }),
+    ...(kind === 'read' ? {} : {
+      check: checkFor(tool, kind), describe: describeFor(tool), label: labelFor(tool), titleKey: THUNDERBIRD_TOOL_TITLES[tool],
+    }),
     extractFacts: (args, text) => extractThunderbirdFacts(tool, args, text),
     ...(stored ? { verify: (args: Args, at: string, ledger: LedgerView, read: ReadCaller) => verifyStored(tool, args, at, ledger, read) } : {}),
   };

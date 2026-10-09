@@ -46,10 +46,9 @@ export const RssConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
         <Group gap="xs" align="center">
           <Badge
             variant="light"
-            color="teal"
+            color="var(--mantine-color-success)"
             size="sm"
             leftSection={<BookmarkCheck size={12} />}
-            radius="sm"
           >
             {t('flow.skill.rss.stateActive')}
           </Badge>

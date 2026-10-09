@@ -289,9 +289,9 @@ export const MemoryCurateModal: React.FC<Props> = ({ open, focus, snapshot, onCl
                 ? t('settings.memory.curate.undone')
                 : applied.applied > 0 ? count('settings.memory.curate.done', applied.applied) : t('settings.memory.curate.none')}
             </Text>
-            {undone === false && <Text fz="var(--font-size-sm)" c="orange">{t('settings.memory.curate.undoFailed')}</Text>}
-            {applied.skipped > 0 && <Text fz="var(--font-size-sm)" c="orange">{count('settings.memory.curate.skipped', applied.skipped)}</Text>}
-            {applied.failed > 0 && <Text fz="var(--font-size-sm)" c="orange">{count('settings.memory.curate.failedItems', applied.failed)}</Text>}
+            {undone === false && <Text fz="var(--font-size-sm)" c="var(--mantine-color-warning)">{t('settings.memory.curate.undoFailed')}</Text>}
+            {applied.skipped > 0 && <Text fz="var(--font-size-sm)" c="var(--mantine-color-warning)">{count('settings.memory.curate.skipped', applied.skipped)}</Text>}
+            {applied.failed > 0 && <Text fz="var(--font-size-sm)" c="var(--mantine-color-warning)">{count('settings.memory.curate.failedItems', applied.failed)}</Text>}
             <Group justify="flex-end" gap="xs" mt={4}>
               {applied.undoable && undone === null && (
                 <AppButton variant="default" size="xs" leftSection={<Undo2 size={13} />} loading={busy} onClick={() => { void undo(); }}>
@@ -305,7 +305,7 @@ export const MemoryCurateModal: React.FC<Props> = ({ open, focus, snapshot, onCl
 
         {screen === 'failed' && (
           <Stack gap="xs">
-            <Alert color="red" icon={<TriangleAlert size={14} />} p="xs">
+            <Alert color="var(--mantine-color-error)" icon={<TriangleAlert size={14} />} p="xs">
               <Stack gap={2}>
                 <Text fz="xs" fw={600}>{t('settings.memory.curate.failed')}</Text>
                 {error && <Text fz="xs" style={{ overflowWrap: 'anywhere' }}>{error}</Text>}

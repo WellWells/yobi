@@ -7,9 +7,12 @@ import { navigateAndWait, sleep } from './common';
 import { countElements } from './automationExecutor';
 import { isClaudeSignedOutPath } from './claudeSession';
 import { IPC, PROVIDER_URLS } from '../../shared/types';
+import { needsModelCatalogRestamp } from '../../shared/modelCatalogFreshness';
 import {
   EMPTY_CLAUDE_CHOICE,
+  claudeModelsMissedByMenu,
   mergeClaudeCatalog,
+  upgradeClaudeChoice,
   reconcileClaudeChoice,
   resolveClaudeTarget,
   sameClaudeCatalogContent,
@@ -77,10 +80,14 @@ async function runPicker(wc: WebContents, target: ClaudePickerTarget | null): Pr
 }
 
 function remember(snapshot: ClaudePickerSnapshot, choice: ClaudeModelChoice): void {
-  const catalog = mergeClaudeCatalog(config.claudeModelCatalog, snapshot, new Date().toISOString());
-  const catalogChanged = !sameClaudeCatalogContent(config.claudeModelCatalog, catalog);
+  const previous = config.claudeModelCatalog;
+  const catalog = mergeClaudeCatalog(previous, snapshot, new Date().toISOString());
+  const catalogChanged = !sameClaudeCatalogContent(previous, catalog);
   const choiceChanged = !sameClaudeChoice(config.claudeModel, choice);
-  if (!catalogChanged && !choiceChanged) return;
+  // The merge hands back the very same object when nothing could be read; only a real read
+  // counts as "checked", or a broken picker would look freshly read forever.
+  const restamp = catalog !== previous && needsModelCatalogRestamp(previous);
+  if (!catalogChanged && !choiceChanged && !restamp) return;
   const ids = (list: typeof catalog): string => (list?.models.map((m) => m.id) ?? []).sort().join();
   const listChanged = ids(catalog) !== ids(config.claudeModelCatalog);
   config.claudeModelCatalog = catalog;
@@ -88,6 +95,32 @@ function remember(snapshot: ClaudePickerSnapshot, choice: ClaudeModelChoice): vo
   saveConfig({ claudeModelCatalog: catalog, claudeModel: choice });
   if (listChanged) sendLog(`🧠 Claude models on this account: ${catalog?.models.map((m) => m.label).join(' / ')}`);
   publish();
+}
+
+/**
+ * A page change rarely fails outright: the menu still opens and simply shows fewer models. Say so
+ * in the log, so a stale list is noticed rather than trusted.
+ */
+function reportReadHealth(snapshot: ClaudePickerSnapshot): void {
+  if (snapshot.models.length === 0) {
+    sendLog(snapshot.official
+      ? '⚠️ Claude\'s model menu listed no models — claude.ai may have changed it; following claude.ai\'s account data for the names'
+      : '⚠️ Claude\'s model menu listed no models — claude.ai may have changed it; keeping the cached list');
+    return;
+  }
+  const missed = claudeModelsMissedByMenu(snapshot);
+  if (missed.length > 0) sendLog(`⚠️ Claude's model menu did not show ${missed.join(', ')} — claude.ai may have changed it`);
+}
+
+/** Moves the setting to the current version when the chosen one has become an older version. */
+function followNewerVersion(choice: ClaudeModelChoice, snapshot: ClaudePickerSnapshot): ClaudeModelChoice {
+  const previous = config.claudeModelCatalog;
+  const next = mergeClaudeCatalog(previous, snapshot, new Date().toISOString());
+  const upgrade = upgradeClaudeChoice(choice, previous, next);
+  if (!upgrade) return choice;
+  const label = (id: string): string => next?.models.find((m) => m.id === id)?.label ?? previous?.models.find((m) => m.id === id)?.label ?? id;
+  sendLog(`🧠 Claude ${label(upgrade.from)} has a newer version — switching to ${label(upgrade.choice.modelId)}`);
+  return upgrade.choice;
 }
 
 function describe(snapshot: ClaudePickerSnapshot): string {
@@ -121,7 +154,14 @@ export async function syncClaudeModel(wc: WebContents): Promise<void> {
       sendLog(`⚠️ Claude model picker unavailable (${read.reason}) — sending with the page's current model`);
       return;
     }
-    const wanted = config.claudeModel;
+    reportReadHealth(read.snapshot);
+    const wanted = followNewerVersion(config.claudeModel, read.snapshot);
+    // No rows means the menu could not be read, not that the account lost every model: nothing is
+    // switched, and the setting (effort included) stays as it was.
+    if (read.snapshot.models.length === 0) {
+      remember(read.snapshot, wanted);
+      return;
+    }
     const decision = resolveClaudeTarget(wanted, read.snapshot);
     if (decision.unavailable) {
       const now = read.snapshot.models.find((m) => m.id === decision.modelId)?.label ?? decision.modelId;

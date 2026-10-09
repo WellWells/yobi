@@ -1,4 +1,4 @@
-import { Box, Group, Text } from '@mantine/core';
+import { ActionIcon, Group, Text, Tooltip } from '@mantine/core';
 import { History, Play, Trash2 } from 'lucide-react';
 import { AppButton } from '../AppButton';
 import { useI18nStore } from '../../store/i18nStore';
@@ -6,34 +6,41 @@ import type { AgentRunSummary } from '../../../../shared/types';
 
 interface AgentResumeBannerProps {
   runs: AgentRunSummary[];
-  onResume: (runId: string, goal: string) => void;
+  onResume: (entry: AgentRunSummary) => void;
   onDiscard: (runId: string) => void;
 }
 
+/** One quiet row above the composer: a short label, the run's question, continue, discard. */
 export function AgentResumeBanner({ runs, onResume, onDiscard }: AgentResumeBannerProps) {
   const t = useI18nStore((s) => s.t);
   const top = runs[0];
   if (!top) return null;
-  const goalPreview = top.goal.length > 60 ? `${top.goal.slice(0, 60)}…` : top.goal;
+  const discardLabel = t('agent.card.discard');
 
   return (
-    <Box style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 10, padding: 10 }}>
-      <Group justify="space-between" wrap="nowrap">
-        <Group gap={8} wrap="nowrap" style={{ minWidth: 0 }}>
-          <History size={15} />
-          <Text size="sm" lineClamp={1}>
-            {t('agent.banner.title')}: {goalPreview}
-          </Text>
-        </Group>
-        <Group gap={6} wrap="nowrap">
-          <AppButton size="xs" leftSection={<Play size={13} />} onClick={() => onResume(top.runId, top.goal)}>
-            {t('agent.card.resume')}
-          </AppButton>
-          <AppButton size="xs" variant="subtle" leftSection={<Trash2 size={13} />} onClick={() => onDiscard(top.runId)}>
-            {t('agent.card.discard')}
-          </AppButton>
-        </Group>
-      </Group>
-    </Box>
+    <Group
+      gap={10}
+      wrap="nowrap"
+      py={6}
+      pl={12}
+      pr={6}
+      style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 10 }}
+    >
+      <History size={14} color="var(--text-muted)" style={{ flexShrink: 0 }} />
+      <Text size="sm" c="var(--text-muted)" style={{ flexShrink: 0 }}>
+        {t('agent.banner.title')}
+      </Text>
+      <Text size="sm" truncate="end" style={{ flex: 1, minWidth: 0 }}>
+        {top.goal.replace(/\s+/g, ' ').trim()}
+      </Text>
+      <AppButton size="xs" variant="light" leftSection={<Play size={12} />} onClick={() => onResume(top)} style={{ flexShrink: 0 }}>
+        {t('agent.card.resume')}
+      </AppButton>
+      <Tooltip label={discardLabel}>
+        <ActionIcon variant="subtle" color="gray" size="md" aria-label={discardLabel} onClick={() => onDiscard(top.runId)} style={{ flexShrink: 0 }}>
+          <Trash2 size={14} />
+        </ActionIcon>
+      </Tooltip>
+    </Group>
   );
 }

@@ -29,7 +29,7 @@ export const NavItem: React.FC<{
     active={active}
     onClick={onClick}
     rightSection={hasMatch || alert
-      ? <Box w={5} h={5} bg={alert ? 'var(--mantine-color-red-6)' : 'var(--mantine-color-accent)'} style={{ borderRadius: '50%', flexShrink: 0 }} />
+      ? <Box w={5} h={5} bg={alert ? 'var(--mantine-color-error)' : 'var(--mantine-color-accent)'} style={{ borderRadius: '50%', flexShrink: 0 }} />
       : undefined}
     styles={{
       root: {
@@ -37,7 +37,7 @@ export const NavItem: React.FC<{
         fontSize: 'var(--font-size-base)',
         color: active ? 'var(--mantine-color-accent)' : 'var(--mantine-color-default-color)',
         background: active ? 'var(--mantine-color-accent-dim)' : undefined,
-        boxShadow: alert ? 'inset 0 0 0 1px var(--mantine-color-red-6)' : undefined,
+        boxShadow: alert ? 'inset 0 0 0 1px var(--mantine-color-error)' : undefined,
       },
     }}
   />

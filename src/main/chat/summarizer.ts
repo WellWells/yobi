@@ -1,17 +1,19 @@
 import { preparePromptForProvider, runAutomation } from '../providers';
 import { runByokCompletion } from '../providers/byokClient';
 import { isByokTargetUrl } from '../../shared/types';
+import { promptAsSent } from '../../shared/conversationDoc';
 import type { ConversationTurn } from '../../shared/conversationDoc';
 import { TAG_HISTORY, TAG_SUMMARY, formatExchange, wrapTag } from './conversationFrame';
 import { getLangCache, t } from '../i18n';
 import { sendLog } from '../helpers';
 import { llmLane } from '../flow/lanes';
 import { ensureWorkerWindow } from '../windows';
+import { workerWindowUnavailable } from '../workerWindowError';
 
 function buildSummaryPrompt(turns: ConversationTurn[], previousSummary: string): string {
   const strings = getLangCache();
   const instruction = t(strings, 'chat.summarize.prompt');
-  const transcript = wrapTag(TAG_HISTORY, turns.map((turn) => formatExchange(turn.prompt, turn.response)).join('\n\n'));
+  const transcript = wrapTag(TAG_HISTORY, turns.map((turn) => formatExchange(promptAsSent(turn), turn.response)).join('\n\n'));
   const previous = previousSummary.trim()
     ? `${wrapTag(TAG_SUMMARY, previousSummary.trim())}\n\n`
     : '';
@@ -25,16 +27,9 @@ export interface SummaryResult {
 }
 
 /**
- * Fits the transcript to what the provider will actually accept, by covering FEWER turns
- * rather than by sending a truncated one.
- *
- * The prompt used to go through `preparePromptForProvider` with its `truncated` flag ignored,
- * so on a long eviction chunk the newest overflow turns were cut off the end and never reached
- * the model — while the caller advanced its offset past all of them. Those turns were then
- * missing from the summary and from every later replay at the same time, with nothing logged.
- *
- * A single turn too large to fit is still sent (truncated) and still counts: refusing would
- * make no progress at all and the same chunk would come back forever.
+ * Fits the transcript to the provider's limit by covering fewer turns, never by sending a truncated
+ * one (the caller advances its offset by `covered`). A single turn too large to fit is still sent
+ * truncated and counted, or the same chunk would come back forever.
  */
 function fitSummaryPrompt(
   turns: ConversationTurn[],
@@ -80,9 +75,7 @@ export async function summarizeTurns(args: {
 
     const response = await llmLane.runExclusive(async () => {
       const worker = await ensureWorkerWindow(targetUrl, 'automation');
-      if (!worker || worker.isDestroyed()) {
-        throw new Error('Worker window unavailable for summarization');
-      }
+      if (!worker || worker.isDestroyed()) throw workerWindowUnavailable();
       const result = await runAutomation(worker, prompt, timeoutMs, targetUrl);
       return result.response;
     });

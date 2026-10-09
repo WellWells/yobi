@@ -1,5 +1,5 @@
 import { BrowserWindow, session } from 'electron';
-import { CLEAN_UA } from './userAgent';
+import { userAgentForUrl } from './userAgent';
 import { youtubeLane } from './flow/lanes';
 import { SILENT_WEB_PREFERENCES, muteWindow } from './silentWindow';
 
@@ -112,7 +112,7 @@ function fetchYoutubeVideoExclusive(
       },
     });
 
-    win.webContents.setUserAgent(CLEAN_UA);
+    win.webContents.setUserAgent(userAgentForUrl(watchUrl));
     muteWindow(win);
 
     const finish = (result: YoutubeVideoResult): void => {

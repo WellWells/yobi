@@ -29,9 +29,8 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   lang = 'javascript',
   parser = 'babel',
   minHeight = 132,
-  // No cap by default: the editor sits in the flow step card, which is already inside the
-  // editor's scroll container, and a 360px cap made the wheel behave differently over the code
-  // than one pixel outside it. Callers that genuinely need a cap can still pass one.
+  // No cap by default: the step card is already inside a scroll container, and a nested one makes
+  // the wheel behave differently over the code.
   maxHeight,
 }) => {
   const theme = useThemeStore((s) => s.theme);

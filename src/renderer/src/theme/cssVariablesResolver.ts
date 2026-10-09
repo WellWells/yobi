@@ -1,9 +1,21 @@
 import type { CSSVariablesResolver } from '@mantine/core';
 import { THEME_DEFS, VALID_THEMES, themeDef } from '../../../shared/themes';
 import type { Theme, ThemeColors } from '../../../shared/themes';
-import { lerpHex, hexToRgba, relativeLuminance } from './colorUtils';
+import { contrastRatio, lerpHex, hexToRgba, relativeLuminance } from './colorUtils';
 
 const ON_ACCENT_LUMINANCE_THRESHOLD = 0.3;
+/** Accent opacity of `--accent-dim`, the fill of selected rows. */
+const ACCENT_DIM_ALPHA = 0.15;
+/** How far `--bg-hover` (hovered rows and menu items) moves from the elevated colour: toward white in dark themes, black in light ones. */
+const HOVER_SHIFT = 0.12;
+
+/** Accent opacity of the brand `light` variant fill in dark themes, at rest and on hover. */
+export const BRAND_LIGHT_ALPHA = 0.15;
+export const BRAND_LIGHT_HOVER_ALPHA = 0.22;
+/** WCAG AA for body text: the `light` variant carries small labels (badges, pills). */
+export const BRAND_LIGHT_MIN_CONTRAST = 4.5;
+/** The label is lifted toward white in steps of 1/BRAND_LIGHT_LIFT_STEPS. */
+export const BRAND_LIGHT_LIFT_STEPS = 20;
 
 interface ThemeCssVars {
   '--bg-primary': string;
@@ -27,6 +39,10 @@ interface ThemeCssVars {
   '--on-accent': string;
 }
 
+function hoverColor(base: ThemeColors, isLight: boolean): string {
+  return lerpHex(base.bgElevated, isLight ? '#000000' : '#ffffff', HOVER_SHIFT);
+}
+
 function expandTheme(base: ThemeColors, isLight: boolean): ThemeCssVars {
   const toward = isLight ? '#000000' : '#ffffff';
   return {
@@ -42,13 +58,49 @@ function expandTheme(base: ThemeColors, isLight: boolean): ThemeCssVars {
     '--success': base.success,
     '--warning': base.warning,
     '--error': base.error,
-    '--accent-dim': hexToRgba(base.accent, 0.15),
+    '--accent-dim': hexToRgba(base.accent, ACCENT_DIM_ALPHA),
     '--selection-bg': hexToRgba(base.accent, isLight ? 0.18 : 0.25),
-    '--bg-hover': lerpHex(base.bgElevated, toward, 0.12),
+    '--bg-hover': hoverColor(base, isLight),
     '--border-hover': lerpHex(base.border, toward, 0.25),
     '--accent-hover': lerpHex(base.accent, toward, 0.20),
     '--code-bg': base.bgSurface,
     '--on-accent': relativeLuminance(base.accent) > ON_ACCENT_LUMINANCE_THRESHOLD ? '#1b1b1b' : '#ffffff',
+  };
+}
+
+/** `color` moved toward white just far enough to reach the minimum contrast on every background. */
+function liftUntilReadable(color: string, backgrounds: readonly string[]): string {
+  for (let step = 0; step <= BRAND_LIGHT_LIFT_STEPS; step += 1) {
+    const candidate = lerpHex(color, '#ffffff', step / BRAND_LIGHT_LIFT_STEPS);
+    if (backgrounds.every((bg) => contrastRatio(candidate, bg) >= BRAND_LIGHT_MIN_CONTRAST)) return candidate;
+  }
+  return '#ffffff';
+}
+
+/**
+ * Mantine derives the dark-scheme `light` variant from shade 9, which in Yobi's palette is darker
+ * than the surface under it. Dark themes use the accent at low opacity instead, with the text lifted
+ * toward white just enough to stay readable over every backdrop a badge can sit on (page, surfaces,
+ * hovered and selected rows). Light themes keep Mantine's opaque shade 1 fill and shade 9 text.
+ */
+function brandLightVars(base: ThemeColors, isLight: boolean): Record<string, string> {
+  if (isLight) return {};
+  const backdrops = [
+    base.bgPrimary,
+    base.bgSurface,
+    base.bgElevated,
+    hoverColor(base, isLight),
+    lerpHex(base.bgPrimary, base.accent, ACCENT_DIM_ALPHA),
+    lerpHex(base.bgSurface, base.accent, ACCENT_DIM_ALPHA),
+  ];
+  const fills = backdrops.flatMap((bg) => [
+    lerpHex(bg, base.accent, BRAND_LIGHT_ALPHA),
+    lerpHex(bg, base.accent, BRAND_LIGHT_HOVER_ALPHA),
+  ]);
+  return {
+    '--mantine-color-brand-light': hexToRgba(base.accent, BRAND_LIGHT_ALPHA),
+    '--mantine-color-brand-light-hover': hexToRgba(base.accent, BRAND_LIGHT_HOVER_ALPHA),
+    '--mantine-color-brand-light-color': liftUntilReadable(base.accent, fills),
   };
 }
 
@@ -141,9 +193,11 @@ export function buildCssVariablesResolver(yobiTheme: Theme): CSSVariablesResolve
       '--mantine-color-dark-7': colors['--bg-hover'],
     };
 
+  const schemeVars = { ...allVars, ...paletteHoverOverrides, ...brandLightVars(def.colors, isLight) };
+
   return () => ({
     variables: allVars,
-    light: isLight ? { ...allVars, ...paletteHoverOverrides } : {},
-    dark: !isLight ? { ...allVars, ...paletteHoverOverrides } : {},
+    light: isLight ? schemeVars : {},
+    dark: !isLight ? schemeVars : {},
   });
 }

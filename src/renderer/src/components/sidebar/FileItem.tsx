@@ -1,8 +1,9 @@
 import React from 'react';
-import { Badge, Box, Checkbox, Flex, Stack, Text } from '@mantine/core';
+import { Box, Checkbox, Flex, Stack, Text } from '@mantine/core';
 import { Circle } from 'lucide-react';
 import type { OutputFile } from '../../../../shared/types';
 import { AppTextInput } from '../AppTextInput';
+import { ProviderTag } from '../ProviderTag';
 import styles from '../Sidebar.module.css';
 
 export type EditMode = 'filename' | 'h1' | null;
@@ -21,6 +22,8 @@ interface FileItemProps {
   onToggleSelect: (path: string) => void;
   onRowClick: (f: OutputFile, mods: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => void;
   onOpenMenu: (e: React.MouseEvent<HTMLElement>, f: OutputFile) => void;
+  /** The row is being dragged out of the window; the OS takes over from here. */
+  onDragOut: (f: OutputFile) => void;
   onCommitEdit: () => Promise<void>;
   onCancelEdit: () => void;
   timeLabel: string;
@@ -31,25 +34,13 @@ interface FileItemProps {
 export const FileItem: React.FC<FileItemProps> = React.memo(({
   file, selected, unread, unreadLabel, isEditing, editingMode, editingText, setEditingText,
   selectMode, checked, onToggleSelect,
-  onRowClick, onOpenMenu, onCommitEdit, onCancelEdit, timeLabel, turnsLabel, registerItemRef,
+  onRowClick, onOpenMenu, onDragOut, onCommitEdit, onCancelEdit, timeLabel, turnsLabel, registerItemRef,
 }) => {
   const highlighted = selectMode ? checked : selected;
   const body = (
     <>
       <Flex align="center" gap={6}>
-        {file.provider && (
-          <Badge
-            variant="outline"
-            size="s"
-            radius="xl"
-            tt="none"
-            fw={500} fz="var(--font-size-sm)" lh={1.6} px={6} py={1}
-            data-selected={String(highlighted)}
-            className={styles.providerBadge}
-          >
-            {file.provider}
-          </Badge>
-        )}
+        {file.provider && <ProviderTag provider={file.provider} selected={highlighted} />}
         {timeLabel && (
           <Text
             component="span"
@@ -113,7 +104,13 @@ export const FileItem: React.FC<FileItemProps> = React.memo(({
         if (isEditing) return;
         onRowClick(file, { ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey });
       }}
-      onContextMenu={selectMode ? undefined : (e) => onOpenMenu(e, file)}
+      onContextMenu={(e) => onOpenMenu(e, file)}
+      draggable={!isEditing}
+      onDragStart={(e) => {
+        // The browser's own drag would carry text, not the file; main starts a native one.
+        e.preventDefault();
+        onDragOut(file);
+      }}
       aria-selected={highlighted}
       data-selected={String(highlighted)}
       data-editing={String(isEditing)}

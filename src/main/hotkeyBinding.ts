@@ -5,10 +5,11 @@ import { sendLog, sendWebNotification, createTaskId } from './helpers';
 import {
   captureSelectedText,
   checkMacosAccessibility,
+  clipboardFingerprint,
   isClipboardCaptureInFlight,
   promptMacosAccessibility,
 } from './clipboard';
-import { getLangCache } from './i18n';
+import { getLangCache, t } from './i18n';
 import { resolveUrlPrompt } from './urlParser';
 import { runQuickExport } from './quickExport';
 import type { QueueManager } from './queueManager';
@@ -27,10 +28,10 @@ export function bindHotkey(deps: HotkeyDeps): boolean {
   const ok = registerHotkey('main', accelerator, async () => {
     if (process.platform === 'darwin' && !checkMacosAccessibility()) {
       const langData = getLangCache();
-      const errorMsg = langData['hotkey.error.accessibility'] ??
-        'Accessibility permission required. Go to System Preferences → Privacy & Security → Accessibility and enable this app.';
-      sendLog(`❌ ${errorMsg}`);
-      sendWebNotification('Yobi', errorMsg, 'warning');
+      const title = t(langData, 'hotkey.notify.accessibility.title');
+      const errorMsg = t(langData, 'hotkey.error.accessibility');
+      sendLog(`❌ ${title} — ${errorMsg}`);
+      sendWebNotification(title, errorMsg, 'warning');
       if (!_accessibilityPrompted) {
         _accessibilityPrompted = true;
         promptMacosAccessibility();
@@ -50,13 +51,23 @@ export function bindHotkey(deps: HotkeyDeps): boolean {
       sendLog('⚠️  Clipboard is empty — nothing to send');
       return;
     }
+    // Taken before the URL fetch below, which can take seconds: a copy made from here on is the
+    // user's, and the answer must not land on top of it.
+    const clipboardAtPress = await clipboardFingerprint();
 
     const langData = getLangCache();
+    // Sent before the link is fetched (up to half a minute) so the press is acknowledged at once.
+    // It shows the user's selection, not the resolved prompt, and names the configured provider.
+    sendWebNotification(
+      t(langData, 'notify.queued.title', { provider: getProviderLabel(config.targetUrl) }),
+      t(langData, 'notify.queued.body', { prompt: compactPreview(rawText, 36) }),
+      'info',
+    );
     const resolved = await resolveUrlPrompt(rawText, {
       langData,
       youtubePrompt: config.youtubePrompt,
+      targetUrl: config.targetUrl,
       onLog: sendLog,
-      onNotify: (title, body) => sendWebNotification(title, body, 'info'),
     });
     const prompt = resolved.prompt;
     const targetUrl = resolved.forceProviderUrl ?? config.targetUrl;
@@ -69,13 +80,10 @@ export function bindHotkey(deps: HotkeyDeps): boolean {
       targetUrl,
       title: resolved.title,
       source: 'hotkey',
+      clipboardFingerprint: clipboardAtPress,
+      ...(resolved.map ? { mapPlace: resolved.map } : {}),
     });
     sendLog(`[${id}] 🔥 Queued for ${getProviderLabel(targetUrl)} (queue size: ${queue.size + 1})`);
-
-    const notifyTitle = langData['notify.queued.title'] ?? 'Yobi';
-    const notifyBodyTemplate = langData['notify.queued.body'] ?? 'Queued: "{{prompt}}"';
-    const displayPrompt = compactPreview(prompt, 36);
-    sendWebNotification(notifyTitle, notifyBodyTemplate.replace('{{prompt}}', displayPrompt), 'info');
   });
 
   if (!accelerator) {
@@ -94,9 +102,8 @@ export function bindHotkey(deps: HotkeyDeps): boolean {
 function notifyHotkeyFailed(accelerator: string): void {
   const langData = getLangCache();
   sendWebNotification(
-    langData['hotkey.notify.title'] ?? 'Yobi',
-    (langData['hotkey.notify.failed'] ?? 'Could not register {{hotkey}} — another app may already use it')
-      .replace('{{hotkey}}', accelerator),
+    t(langData, 'hotkey.notify.title'),
+    t(langData, 'hotkey.notify.failed', { hotkey: accelerator }),
     'warning',
   );
 }

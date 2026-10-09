@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Group, Stack, Text } from '@mantine/core';
 import { useShallow } from 'zustand/react/shallow';
-import { Search, Timer, Waypoints } from 'lucide-react';
+import { Search, Timer } from 'lucide-react';
 import {
   AGENT_ASK_TTL_MAX_MINUTES,
   AGENT_ASK_TTL_MIN_MINUTES,
@@ -21,9 +21,11 @@ import { SelectDropdown, SettingRow, ToggleSwitch } from '../components';
 import { PROVIDER_DROPDOWN_MAX_HEIGHT, providerSectionsToSelectData } from '../../../config/models';
 import { useProviderModels } from '../../../hooks/useProviderModels';
 import { selectHiddenSources, useAppStore } from '../../../store/appStore';
+import { whoCanUseBuiltin, whoCanUseText } from './botPermissionsView';
+import type { BotRoster } from './botPermissionsView';
+import { BotAccessCaption } from './BotAccessCaption';
 
 const BUILTIN_ICONS: Record<BotBuiltinCommandKey, React.FC<{ size?: number }>> = {
-  agent: Waypoints,
   search: Search,
 };
 
@@ -32,6 +34,8 @@ interface Props {
   busy: boolean;
   onUpdate: (key: BotBuiltinCommandKey, patch: Partial<BotBuiltinCommand>) => void;
   onUpdateAskTtl: (minutes: number) => void;
+  /** Paired accounts and their grants, for the read-only "who can use" caption. */
+  roster: BotRoster;
   t: (key: string) => string;
 }
 
@@ -40,10 +44,11 @@ interface RowProps {
   cfg: BotBuiltinCommand;
   busy: boolean;
   onUpdate: (key: BotBuiltinCommandKey, patch: Partial<BotBuiltinCommand>) => void;
+  roster: BotRoster;
   t: (key: string) => string;
 }
 
-const BuiltinCommandRow: React.FC<RowProps> = ({ commandKey, cfg, busy, onUpdate, t }) => {
+const BuiltinCommandRow: React.FC<RowProps> = ({ commandKey, cfg, busy, onUpdate, roster, t }) => {
   const def = DEFAULT_BUILTIN_COMMANDS[commandKey];
   const [name, setName] = useState(cfg.command);
   useEffect(() => { setName(cfg.command); }, [cfg.command]);
@@ -113,6 +118,7 @@ const BuiltinCommandRow: React.FC<RowProps> = ({ commandKey, cfg, busy, onUpdate
           <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6} mt={4}>
             {t(`settings.bot.builtin.${commandKey}.hint`)}
           </Text>
+          <BotAccessCaption mt={4} text={whoCanUseText(whoCanUseBuiltin(roster, commandKey), 'command', t)} />
         </Box>
       )}
     </Stack>
@@ -120,7 +126,7 @@ const BuiltinCommandRow: React.FC<RowProps> = ({ commandKey, cfg, busy, onUpdate
 };
 
 export const BotBuiltinCommands: React.FC<Props> = ({
-  builtinCommands, busy, onUpdate, onUpdateAskTtl, t,
+  builtinCommands, busy, onUpdate, onUpdateAskTtl, roster, t,
 }) => {
   const [ttl, setTtl] = useState(String(builtinCommands.askTtlMinutes));
   useEffect(() => { setTtl(String(builtinCommands.askTtlMinutes)); }, [builtinCommands.askTtlMinutes]);
@@ -149,28 +155,27 @@ export const BotBuiltinCommands: React.FC<Props> = ({
             cfg={builtinCommands[key]}
             busy={busy}
             onUpdate={onUpdate}
+            roster={roster}
             t={t}
           />
         ))}
-        {builtinCommands.agent.enabled && (
-          <SettingRow
-            icon={<Timer size={13} />}
-            label={t('settings.bot.builtin.askTtl.label')}
-            hint={t('settings.bot.builtin.askTtl.hint')}
-            alignStart
-            control={
-              <AppNumberInput
-                w={110}
-                min={AGENT_ASK_TTL_MIN_MINUTES}
-                max={AGENT_ASK_TTL_MAX_MINUTES}
-                value={ttl}
-                onChange={(value) => setTtl(String(value))}
-                onBlur={commitTtl}
-                disabled={busy}
-              />
-            }
-          />
-        )}
+        <SettingRow
+          icon={<Timer size={13} />}
+          label={t('settings.bot.builtin.askTtl.label')}
+          hint={t('settings.bot.builtin.askTtl.hint')}
+          alignStart
+          control={
+            <AppNumberInput
+              w={110}
+              min={AGENT_ASK_TTL_MIN_MINUTES}
+              max={AGENT_ASK_TTL_MAX_MINUTES}
+              value={ttl}
+              onChange={(value) => setTtl(String(value))}
+              onBlur={commitTtl}
+              disabled={busy}
+            />
+          }
+        />
       </Stack>
     </Box>
   );

@@ -68,7 +68,7 @@ export const ShareResultPanel: React.FC<Props> = ({ title, state, onAction, onHe
       )}
 
       {state.error && (
-        <Alert color="red" variant="light" icon={<TriangleAlert size={16} />}>
+        <Alert color="var(--mantine-color-error)" variant="light" icon={<TriangleAlert size={16} />}>
           <Text fz="var(--font-size-sm)" style={{ wordBreak: 'break-word' }}>{state.error}</Text>
         </Alert>
       )}

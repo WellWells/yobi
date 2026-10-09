@@ -1,6 +1,7 @@
 import React from 'react';
 import { ActionIcon, Box, Group, Image, Text, Tooltip } from '@mantine/core';
 import { FileText, X } from 'lucide-react';
+import { formatByteSize } from '../../utils/byteSize';
 
 export interface AttachmentChipItem {
   id: string;
@@ -13,12 +14,6 @@ interface AttachmentChipsProps {
   attachments: readonly AttachmentChipItem[];
   onRemove?: (id: string) => void;
   removeLabel?: string;
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export function chipsFromNames(names: readonly string[]): AttachmentChipItem[] {
@@ -42,7 +37,7 @@ export const AttachmentChips: React.FC<AttachmentChipsProps> = ({
           key={attachment.id}
           label={attachment.size === undefined
             ? attachment.name
-            : `${attachment.name} · ${formatSize(attachment.size)}`}
+            : `${attachment.name} · ${formatByteSize(attachment.size)}`}
           position="top"
         >
           <Group

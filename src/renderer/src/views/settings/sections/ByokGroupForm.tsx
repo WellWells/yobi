@@ -52,7 +52,7 @@ export const ByokGroupForm: React.FC<Props> = ({ byokGroups, t, mt }) => {
                 <Text fz="var(--font-size-base)" c="var(--mantine-color-default-color)" truncate>
                   {key.name}
                 </Text>
-                <Badge variant="light" color="gray" radius="sm" size="sm" tt="none" fw={500}>
+                <Badge variant="light" color="gray" size="sm">
                   {BYOK_PROVIDER_TYPE_LABELS[key.providerType]}
                 </Badge>
                 <Text fz="var(--font-size-sm)" c="dimmed" ff="var(--font-mono)" truncate>

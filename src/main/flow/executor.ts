@@ -22,6 +22,7 @@ import {
   ContinueLoopSignal,
   StopFlowSignal,
   emitLog,
+  emitSkipNote,
   findIfEndIndex,
   findLoopEndIndex,
   resolveStepTimeoutMs,
@@ -29,9 +30,12 @@ import {
 } from './runtime';
 import { executeSkill } from './skills';
 import { navigatePageBlank } from './skills/browserPages';
+import { describeStepError, localizeStepError } from './userError';
 import { getProviderLabel } from '../providers';
 import { PERPLEXITY_CLOUDFLARE_ERROR_NAME } from '../providers/perplexity';
 import { FLOW_VAR_PREFIX } from '../../shared/flowVariables';
+import { botStepTargets } from '../../shared/botRecipients';
+import { checkBlockStructure, describeBlockIssue } from '../../shared/flowBlockStructure';
 
 interface RunProgress {
   completed: number;
@@ -39,7 +43,15 @@ interface RunProgress {
   aborted: boolean;
   /** Steps lost to `emitFailFlag` in this run — the run still succeeds, so nothing else records it. */
   softFailures: number;
+  /** The first of those, worded like `displayError`, so the run's notification can name it. */
+  softFailureError?: string;
   error?: string;
+  displayError?: string;
+  /**
+   * The step that threw first. A step inside a loop fails the run through the loop step, and the
+   * user is owed the name of the one that actually broke.
+   */
+  failedStep?: SkillInstance;
   finalOutput?: string;
   lastLlmProvider?: string;
   titleHint?: string;
@@ -119,7 +131,7 @@ export function unwrapStepOutput(type: SkillType, raw: string): StepOutput {
     }
     return { output: raw, subVars: {} };
   }
-  if (type === 'stock' || type === 'forex' || type === 'weather' || type === 'air_quality' || type === 'gmap_reviews' || type === 'research' || type === 'sysinfo' || type === 'share' || type === 'line_read') {
+  if (type === 'stock' || type === 'forex' || type === 'weather' || type === 'air_quality' || type === 'gmap_reviews' || type === 'research' || type === 'sysinfo' || type === 'share' || type === 'line_read' || type === 'x_thread') {
     try {
       const env = JSON.parse(raw) as Record<string, unknown>;
       if (env && typeof env.output === 'string') {
@@ -152,8 +164,8 @@ export function unwrapStepOutput(type: SkillType, raw: string): StepOutput {
   return { output: raw, subVars: {} };
 }
 
-// Exported for the test suite: the __attachmentAllowlist injection is the wiring half of the
-// attachment gate, and a step type missing from it fails open into "no file may be sent".
+// The __attachmentAllowlist injection is the wiring half of the attachment gate: a step type
+// missing from it can send no file at all.
 export async function resolveStepConfig(
   step: SkillInstance,
   context: Map<string, string>,
@@ -169,7 +181,7 @@ export async function resolveStepConfig(
       resolvedConfig.__magicUploadPath = magicFile.filePath;
       resolvedConfig.__magicUploadCaption = interpolate(captionTemplate, context).trim();
     }
-    resolvedConfig.__originalChatIdsTemplate = (step.config.chatIds ?? step.config.chatId ?? '').trim();
+    resolvedConfig.__originalChatIdsTemplate = botStepTargets(step.config);
     resolvedConfig.__attachmentAllowlist = JSON.stringify(getProducedFiles(context));
     resolvedConfig.__triggerPlatform = context.get('bot.triggerPlatform') ?? '';
   }
@@ -207,8 +219,10 @@ async function runStep(
           navigatePageBlank((resolvedConfig.page ?? '').trim());
         }
       : undefined;
+  // `withStepTimeout` rejects on Stop but never cancels the work it gives up on, so the signal also
+  // goes to the skill itself: a running shell command is killed instead of finishing after Stop.
   return withStepTimeout(
-    executeSkill(step.type, step.id, resolvedConfig, deps, stepTimeoutMs),
+    executeSkill(step.type, step.id, resolvedConfig, deps, stepTimeoutMs, signal),
     stepTimeoutMs,
     step.type,
     onStepTimeout,
@@ -373,14 +387,14 @@ async function runRange(
       if (step.type === 'llm' && output) {
         progress.lastLlmProvider = getProviderLabel((resolvedConfig.provider ?? '').trim() || deps.getTargetUrl());
       }
-      if ((step.type === 'llm' || step.type === 'browser_js' || step.type === 'bot' || step.type === 'research' || step.type === 'share') && step.config.emitFailFlag === 'true' && step.outputKey) {
+      if ((step.type === 'llm' || step.type === 'browser_js' || step.type === 'bot' || step.type === 'research' || step.type === 'share' || step.type === 'x_thread') && step.config.emitFailFlag === 'true' && step.outputKey) {
         context.set(`${step.outputKey}.isFailed`, '0');
       }
 
-      if (depth === 0) {
-        progress.completed++;
-        emitLog(onLog, flow.id, step.id, i, 'completed', output);
-      }
+      // Every pass logs its own completion (the run panel and report read each step's latest log);
+      // only the counter is top-level, since expandLoop counts each loop body step once.
+      emitLog(onLog, flow.id, step.id, i, 'completed', output);
+      if (depth === 0) progress.completed++;
       sendLog(`✅ [${trace}] ${stepLabel} — ${output.length} chars`);
       noteStep(flow.id, step, 'ok', startedAt);
 
@@ -402,8 +416,11 @@ async function runRange(
       }
     } catch (err) {
       if (err instanceof StopFlowSignal) {
-        emitLog(onLog, flow.id, step.id, i, 'skipped', undefined, err.message);
-        sendLog(`⏹️ [${trace}] ${stepLabel} stopped this run: ${err.message}`);
+        // Inside a loop a stop step only skips this item; the loop and the steps after it go on.
+        emitSkipNote(onLog, flow.id, step.id, i, depth === 0 ? 'stopped' : 'stoppedItem');
+        sendLog(depth === 0
+          ? `⏹️ [${trace}] ${stepLabel} stopped this run: ${err.message}`
+          : `↪️ [${trace}] ${stepLabel} skipped this item: ${err.message}`);
         for (let j = i + 1; j < flow.steps.length; j++) {
           emitLog(onLog, flow.id, flow.steps[j].id, j, 'skipped');
         }
@@ -418,14 +435,14 @@ async function runRange(
       if (err instanceof BreakLoopSignal || err instanceof ContinueLoopSignal) {
         const kind = err instanceof BreakLoopSignal ? 'break' : 'continue';
         if (depth === 0) {
-          emitLog(onLog, flow.id, step.id, i, 'skipped', undefined, `${kind} (no loop)`);
+          emitSkipNote(onLog, flow.id, step.id, i, 'notInLoop');
           sendLog(`⚠️ [${trace}] "${kind}" ignored — not inside a loop`);
           continue;
         }
         sendLog(kind === 'break'
           ? `↪️ [${trace}] break — leaving the loop`
           : `↪️ [${trace}] continue — skipping to the next item`);
-        emitLog(onLog, flow.id, step.id, i, 'skipped', undefined, kind);
+        emitSkipNote(onLog, flow.id, step.id, i, kind);
         for (let j = i + 1; j < endIndex; j++) {
           emitLog(onLog, flow.id, flow.steps[j].id, j, 'skipped');
         }
@@ -433,7 +450,7 @@ async function runRange(
       }
 
       if (signal?.aborted) {
-        emitLog(onLog, flow.id, step.id, i, 'skipped', undefined, 'Aborted by user');
+        emitSkipNote(onLog, flow.id, step.id, i, 'aborted');
         markAbortedFromHere(flow, i + 1, depth, onLog, progress);
         return;
       }
@@ -446,7 +463,8 @@ async function runRange(
         || step.type === 'browser_js'
         || step.type === 'bot'
         || step.type === 'research'
-        || step.type === 'share';
+        || step.type === 'share'
+        || step.type === 'x_thread';
 
       if (canFailSoft && step.config.emitFailFlag === 'true' && !isVerificationChallenge) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -455,16 +473,18 @@ async function runRange(
           context.set(`${step.outputKey}.isFailed`, '1');
         }
         context.set(`${step.id}.output`, '');
-        emitLog(onLog, flow.id, step.id, i, 'completed', '', msg);
+        emitLog(onLog, flow.id, step.id, i, 'completed', '', msg, localizeStepError(err, getLangCache()));
         if (depth === 0) progress.completed++;
         progress.softFailures++;
+        progress.softFailureError ??= describeStepError(err, step, getLangCache());
         noteStep(flow.id, step, 'soft', startedAt, msg);
         sendLog(`⚠️ [${trace}] ${stepLabel} failed (isFailed=1), continuing: ${msg}`);
         continue;
       }
 
       const errorMsg = err instanceof Error ? err.message : String(err);
-      emitLog(onLog, flow.id, step.id, i, 'error', undefined, errorMsg);
+      const strings = getLangCache();
+      emitLog(onLog, flow.id, step.id, i, 'error', undefined, errorMsg, localizeStepError(err, strings));
       noteStep(flow.id, step, 'hard', startedAt, errorMsg);
       sendLog(`❌ [${trace}] ${stepLabel} failed: ${errorMsg}`);
 
@@ -472,13 +492,41 @@ async function runRange(
         emitLog(onLog, flow.id, flow.steps[j].id, j, 'skipped');
       }
 
+      progress.failedStep ??= step;
       if (depth === 0) {
-        progress.error = `Step "${step.label}" failed: ${errorMsg}`;
+        // Keep the step's own English unwrapped: localizeUserFacingError matches on it.
+        progress.error = errorMsg;
+        progress.displayError = describeStepError(err, progress.failedStep, strings);
         return;
       }
       throw err;
     }
   }
+}
+
+/**
+ * A flow whose if/loop blocks cross (`if, loop, end_if, X, end_loop`) is refused before any step
+ * runs: the false-`if` skip would end at the crossed `end_if` and run X, the step it was guarding.
+ * Hand-edited, imported and older saved flows never went through `validateFlowCandidate`.
+ */
+function crossedBlockFailure(
+  flow: FlowDefinition,
+  onLog: LogCallback | undefined,
+): { error: string; displayError: string } | null {
+  const issue = checkBlockStructure(flow.steps);
+  if (issue?.kind !== 'crossed') return null;
+  const strings = getLangCache();
+  const error = describeBlockIssue(issue);
+  const displayError = t(strings, 'flow.error.blockStructure', {
+    step: String(issue.index + 1),
+    closer: t(strings, `flow.skill.${issue.closer}`),
+    open: t(strings, `flow.skill.${issue.open}`),
+  });
+  flow.steps.forEach((step, j) => {
+    if (j === issue.index) emitLog(onLog, flow.id, step.id, j, 'error', undefined, error, displayError);
+    else emitLog(onLog, flow.id, step.id, j, 'skipped');
+  });
+  return { error, displayError };
 }
 
 export async function executeFlow(
@@ -520,6 +568,21 @@ async function runFlowSteps(
   const progress: RunProgress = { completed: 0, stopped: false, aborted: false, softFailures: 0 };
 
   const trace = flowTrace(flow);
+  const crossed = crossedBlockFailure(flow, onLog);
+  if (crossed) {
+    sendLog(`❌ [${trace}] Refused to run: ${crossed.error}`);
+    return {
+      flowId: flow.id,
+      success: false,
+      outputs: Object.fromEntries(context),
+      error: crossed.error,
+      displayError: crossed.displayError,
+      completedSteps: 0,
+      totalSteps: flow.steps.length,
+      completedAt: new Date().toISOString(),
+      softFailures: 0,
+    };
+  }
   sendLog(`▶️ [${trace}] Executing flow (${flow.steps.length} steps)`);
 
   await runRange(flow, 0, flow.steps.length, context, deps, onLog, progress, 0, trace, signal);
@@ -545,6 +608,7 @@ async function runFlowSteps(
       success: false,
       outputs: Object.fromEntries(context),
       error: progress.error,
+      displayError: progress.displayError,
       completedSteps: progress.completed,
       totalSteps: flow.steps.length,
       completedAt: new Date().toISOString(),
@@ -567,5 +631,6 @@ async function runFlowSteps(
     lastLlmProvider: progress.lastLlmProvider,
     titleHint: progress.titleHint,
     softFailures: progress.softFailures,
+    softFailureError: progress.softFailureError,
   };
 }

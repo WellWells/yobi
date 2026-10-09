@@ -1,26 +1,27 @@
 /*
- * Artifacts, measured 2026-09-18: when Claude writes a document it calls `create_file` (the full
- * text is in `input.file_text`), publishes it with an `Artifact` block naming the same path, and
- * then says one line in chat. The copy control copies only that line, and the document renders in
- * a cross-origin `*.frame.claudeusercontent.com` frame the page script cannot read. The web app's
- * own conversation endpoint returns every block, so the answer is rebuilt from there — in the
- * order Claude produced it — whenever a reply carried an artifact.
+ * An answer that published an artifact is rebuilt from the conversation endpoint, in block order;
+ * the copy control alone returns only the chat line.
  */
 
 export type ClaudeLeafFetch =
   | { ok: true; content: unknown[] }
   | { ok: false; reason: string };
 
-/** Runs in the page (same origin, the account's own session). Never throws. */
-export const CLAUDE_FETCH_LEAF_JS = `(async function claudeFetchLeaf() {
+/**
+ * The latest message of one conversation. Runs in the page and never throws: `{ ok: true, leaf }`
+ * or `{ ok: false, reason }`. `conversation` empty means the one in the address bar.
+ */
+export const CLAUDE_CONVERSATION_LEAF_JS = `async function claudeConversationLeaf(conversation) {
   try {
     var org = '';
     var pairs = (document.cookie || '').split('; ');
     for (var i = 0; i < pairs.length; i++) {
       if (pairs[i].indexOf('lastActiveOrg=') === 0) org = decodeURIComponent(pairs[i].slice('lastActiveOrg='.length));
     }
-    var path = location.pathname.split('/');
-    var conversation = path[1] === 'chat' ? path[2] : '';
+    if (!conversation) {
+      var path = location.pathname.split('/');
+      conversation = path[1] === 'chat' ? path[2] : '';
+    }
     if (!org || !conversation) return { ok: false, reason: 'no organization or conversation id' };
     var url = '/api/organizations/' + encodeURIComponent(org) + '/chat_conversations/' + encodeURIComponent(conversation)
       + '?tree=True&rendering_mode=messages&render_all_tools=true';
@@ -28,15 +29,22 @@ export const CLAUDE_FETCH_LEAF_JS = `(async function claudeFetchLeaf() {
     if (!res.ok) return { ok: false, reason: 'HTTP ' + res.status };
     var data = await res.json();
     var messages = (data && data.chat_messages) || [];
-    var leaf = null;
     for (var j = 0; j < messages.length; j++) {
-      if (messages[j].uuid === data.current_leaf_message_uuid) leaf = messages[j];
+      if (messages[j].uuid === data.current_leaf_message_uuid) return { ok: true, leaf: messages[j] };
     }
-    if (!leaf || leaf.sender !== 'assistant') return { ok: false, reason: 'latest message is not an answer' };
-    return { ok: true, content: leaf.content || [] };
+    return { ok: false, reason: 'no latest message' };
   } catch (e) {
     return { ok: false, reason: String((e && e.message) || e) };
   }
+}`;
+
+/** The reply in the address bar's conversation, for the artifact rebuild. Never throws. */
+export const CLAUDE_FETCH_LEAF_JS = `(async function claudeFetchLeaf() {
+  ${CLAUDE_CONVERSATION_LEAF_JS}
+  var read = await claudeConversationLeaf('');
+  if (!read.ok) return read;
+  if (read.leaf.sender !== 'assistant') return { ok: false, reason: 'latest message is not an answer' };
+  return { ok: true, content: read.leaf.content || [] };
 })()`;
 
 interface ContentBlock {

@@ -52,8 +52,8 @@ export const MemoryEntryForm: React.FC<Props> = ({
       />
       {error && (
         <Group gap={6} wrap="nowrap" align="flex-start">
-          <Box c="orange" mt={2} style={{ flexShrink: 0 }}><TriangleAlert size={13} /></Box>
-          <Text fz="var(--font-size-sm)" c="orange">{t(`settings.memory.error.${error}`)}</Text>
+          <Box c="var(--mantine-color-warning)" mt={2} style={{ flexShrink: 0 }}><TriangleAlert size={13} /></Box>
+          <Text fz="var(--font-size-sm)" c="var(--mantine-color-warning)">{t(`settings.memory.error.${error}`)}</Text>
         </Group>
       )}
       <Group justify="space-between" gap={8}>

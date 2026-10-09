@@ -1,0 +1,11 @@
+.tag {
+  background: transparent;
+  border-color: var(--mantine-color-default-border);
+  color: var(--mantine-color-dimmed);
+}
+
+.tag[data-selected='true'] {
+  border-color: var(--mantine-color-accent);
+  color: var(--mantine-color-accent);
+  opacity: 1;
+}

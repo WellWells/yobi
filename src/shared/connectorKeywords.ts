@@ -34,22 +34,28 @@ export function stripUnreadableRegions(text: string): string {
     .replace(/^\s*>.*$/gm, ' ');
 }
 
+const ALNUM_EDGE = /[a-z0-9]/i;
+
 /**
  * An ASCII keyword is fenced by non-alphanumerics so `line` cannot answer for `deadline`,
  * `online` or `linear`. A CJK name has no word boundaries to anchor to, so it is matched as
- * written — which is also why the punctuation around it never has to be guessed at.
+ * written. A mixed Latin/CJK keyword is fenced only on its Latin end, so `X` followed by a CJK
+ * suffix cannot match inside `max` followed by the same suffix.
  */
 function keywordPattern(keyword: string): RegExp {
   const escaped = keyword.replace(REGEX_META, '\\$&');
-  return ASCII_ONLY.test(keyword)
-    ? new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, 'i')
-    : new RegExp(escaped, 'i');
+  if (!ASCII_ONLY.test(keyword) && !ALNUM_EDGE.test(keyword[0]) && !ALNUM_EDGE.test(keyword[keyword.length - 1])) {
+    return new RegExp(escaped, 'i');
+  }
+  const before = ALNUM_EDGE.test(keyword[0]) ? '(?<![a-z0-9])' : '';
+  const after = ALNUM_EDGE.test(keyword[keyword.length - 1]) ? '(?![a-z0-9])' : '';
+  return new RegExp(`${before}${escaped}${after}`, 'i');
 }
 
 /**
  * The display name plus, for a catalog connector, the brand's own name and its sub-services.
- * Reading the catalog name is what keeps the match alive after the user renames the connector
- * to "工作筆記" — the same reason the slash command resolves through the catalog id. A built-in
+ * Reading the catalog name keeps the match alive after the user renames the connector (say, to
+ * "Work notes"), the same reason the slash command resolves through the catalog id. A built-in
  * connector has no catalog entry, so its extra names come from the built-in table instead.
  */
 function keywordsFor(candidate: KeywordCandidate): string[] {
@@ -80,7 +86,10 @@ export function matchConnectorKeywords(
   const matched: string[] = [];
   for (const candidate of candidates) {
     if (!candidate.connected) continue;
-    if (keywordsFor(candidate).some((keyword) => keywordPattern(keyword).test(haystack))) {
+    if (
+      keywordsFor(candidate).some((keyword) => keywordPattern(keyword).test(haystack))
+      || findBuiltinConnector(candidate.id)?.mentionedIn?.(haystack) === true
+    ) {
       matched.push(candidate.id);
     }
   }

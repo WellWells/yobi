@@ -1,6 +1,7 @@
 import { PROVIDER_PROMPT_POLICIES, detectProvider } from '../providers';
 import { isByokTargetUrl } from '../../shared/types';
 import { charsPlusBreaks, utf8Len } from '../../shared/textBudget';
+import { promptAsSent } from '../../shared/conversationDoc';
 import type { ConversationTurn, ThreadMeta } from '../../shared/conversationDoc';
 import { TAG_CURRENT, TAG_HISTORY, TAG_SUMMARY, formatExchange, wrapTag } from './conversationFrame';
 
@@ -102,17 +103,22 @@ export function packReplayPrompt(args: {
   newPrompt: string;
   budget: number;
   measure: (text: string) => number;
+  /** Reference data sent ahead of the history, inside the same budget. */
+  preamble?: string;
 }): PackedReplay {
   const { turns, summary, newPrompt, budget, measure } = args;
+  const preamble = args.preamble ?? '';
 
-  const usable = turns.filter((turn) => turn.prompt.trim() !== '' && turn.response.trim() !== '');
+  const usable = turns.filter((turn) => promptAsSent(turn).trim() !== '' && turn.response.trim() !== '');
 
   const summaryText = summary.trim()
     ? truncateByMeasure(summary.trim(), Math.floor(budget * SUMMARY_SHARE), measure)
     : '';
   const summaryBlock = summaryText ? wrapTag(TAG_SUMMARY, summaryText) : '';
 
-  const turnBlock = (turn: ConversationTurn): string => formatExchange(turn.prompt, turn.response);
+  // What the model was given, not the stand-in the record shows: a pasted link's turn would
+  // otherwise come back as a bare URL, without the transcript or page text it was answered from.
+  const turnBlock = (turn: ConversationTurn): string => formatExchange(promptAsSent(turn), turn.response);
 
   const historyBlock = (summaryPart: string, blocks: string[]): string => {
     const parts = summaryPart ? [summaryPart, ...blocks] : blocks;
@@ -121,8 +127,9 @@ export function packReplayPrompt(args: {
 
   const assemble = (summaryPart: string, blocks: string[]): string => {
     const history = historyBlock(summaryPart, blocks);
-    if (!history) return newPrompt;
-    return [history, '', wrapTag(TAG_CURRENT, newPrompt)].join('\n');
+    if (!history && !preamble) return newPrompt;
+    const parts = [...(preamble ? [preamble, ''] : []), ...(history ? [history, ''] : []), wrapTag(TAG_CURRENT, newPrompt)];
+    return parts.join('\n');
   };
 
   const summaryFits = Boolean(summaryBlock) && measure(assemble(summaryBlock, [])) <= budget;

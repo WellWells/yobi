@@ -1,8 +1,8 @@
 import React from 'react';
-import { Box, Stack } from '@mantine/core';
+import { Box } from '@mantine/core';
 import { useShallow } from 'zustand/react/shallow';
 import { MessageCircle } from 'lucide-react';
-import { SelectDropdown, SettingRow, ToggleSwitch } from '../components';
+import { SelectDropdown, SettingRow } from '../components';
 import { PROVIDER_DROPDOWN_MAX_HEIGHT, providerSectionsToSelectData } from '../../../config/models';
 import { useProviderModels } from '../../../hooks/useProviderModels';
 import { selectHiddenSources, useAppStore } from '../../../store/appStore';
@@ -17,34 +17,26 @@ interface Props {
   t: (key: string) => string;
 }
 
-export const BotLlmDirectSetting: React.FC<Props> = ({ value, busy, hint, onUpdate, t }) => {
+/** The model that answers a bot message naming none; a model command such as `/gemini` picks its own. */
+export const BotDefaultModelSetting: React.FC<Props> = ({ value, busy, hint, onUpdate, t }) => {
   const hidden = useAppStore(useShallow(selectHiddenSources));
   const targetHidden = value.targetUrl !== '' && isModelUrlHidden(value.targetUrl, hidden);
   const { sections, allModels } = useProviderModels(targetHidden ? '' : value.targetUrl);
   const options = [
-    { value: '', label: t('settings.llmDirect.appDefault') },
+    { value: '', label: t('settings.bot.builtin.modelAppDefault') },
     ...providerSectionsToSelectData(sections),
   ];
   const known = !targetHidden
     && (value.targetUrl === '' || allModels.some((model) => model.url === value.targetUrl));
 
   return (
-    <Stack gap={8}>
-      <SettingRow
-        icon={<MessageCircle size={13} />}
-        label={t('settings.llmDirect.label')}
-        hint={hint}
-        alignStart
-        control={
-          <ToggleSwitch
-            checked={value.enabled}
-            disabled={busy}
-            onChange={() => onUpdate({ enabled: !value.enabled })}
-          />
-        }
-      />
-      {value.enabled && (
-        <Box maw={300}>
+    <SettingRow
+      icon={<MessageCircle size={13} />}
+      label={t('settings.bot.defaultModel.label')}
+      hint={hint}
+      alignStart
+      control={
+        <Box w={220}>
           <SelectDropdown
             value={known ? value.targetUrl : ''}
             options={options}
@@ -53,7 +45,7 @@ export const BotLlmDirectSetting: React.FC<Props> = ({ value, busy, hint, onUpda
             maxDropdownHeight={PROVIDER_DROPDOWN_MAX_HEIGHT}
           />
         </Box>
-      )}
-    </Stack>
+      }
+    />
   );
 };

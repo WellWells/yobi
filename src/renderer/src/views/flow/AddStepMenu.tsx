@@ -3,6 +3,7 @@ import { Box, Button, Divider, Group, NavLink, Popover, Stack, Text } from '@man
 import { Plus, Search } from 'lucide-react';
 import { ShortcutHint } from '../../components/ShortcutHint';
 import { AppTextInput } from '../../components/AppTextInput';
+import { GroupHeader } from '../../components/GroupHeader';
 import { SKILL_ICON } from './skills';
 import { buildSkillGroups, filterSkillGroups, flattenSkillGroups } from './skillCatalog';
 import type { SkillType } from '../../../../shared/types';
@@ -98,16 +99,9 @@ export const AddStepMenu: React.FC<AddStepMenuProps> = ({ position = 'bottom', t
               <Stack gap={2} p={6}>
                 {groups.map((group) => (
                   <Box key={group.category}>
-                    <Text
-                      size="xs"
-                      fw={700}
-                      c="dimmed"
-                      px={8}
-                      py={4}
-                      style={{ letterSpacing: '0.5px', textTransform: 'uppercase' }}
-                    >
-                      {group.category}
-                    </Text>
+                    <Box px={8} py={4}>
+                      <GroupHeader variant="plain" label={group.category} />
+                    </Box>
                     {group.items.map((skill) => {
                       const idx = visible.findIndex((v) => v.type === skill.type);
                       const active = idx === activeIndex;

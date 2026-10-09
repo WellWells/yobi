@@ -8,7 +8,7 @@ import './styles/captureCard.css';
 import { loadShiki } from './utils/shikiPlugins';
 import { loadKatex } from './utils/katexRuntime';
 import { prerenderMermaid, whenMermaidIdle } from './utils/mermaidRuntime';
-import { captureDiagramTheme } from './utils/forcedCodeTheme';
+import { captureContentTheme } from './utils/forcedCodeTheme';
 
 declare global {
   interface Window {
@@ -44,7 +44,7 @@ async function waitForRenderedLayout(): Promise<void> {
 
 window.renderCaptureCard = async (request) => {
   await Promise.all([loadShiki(), loadKatex()]);
-  await prerenderMermaid(captureMarkdownSources(request), captureDiagramTheme(request.options.cardTheme));
+  await prerenderMermaid(captureMarkdownSources(request), captureContentTheme(request.options.cardTheme));
   root.render(
     <React.StrictMode>
       <CapturePage request={request} />

@@ -21,10 +21,12 @@ interface ShareLinkDialogProps {
   open: boolean;
   onClose: () => void;
   markdown: string;
+  /** Turns the paste carries; 0 for a document that is not a conversation. */
+  turnCount: number;
   t: (key: string) => string;
 }
 
-export const ShareLinkDialog: React.FC<ShareLinkDialogProps> = ({ open, onClose, markdown, t }) => {
+export const ShareLinkDialog: React.FC<ShareLinkDialogProps> = ({ open, onClose, markdown, turnCount, t }) => {
   const [settings, setSettings] = useState<ShareSettings | null>(null);
   const [stage, setStage] = useState<Stage>('options');
   const [busy, setBusy] = useState(false);
@@ -134,6 +136,11 @@ export const ShareLinkDialog: React.FC<ShareLinkDialogProps> = ({ open, onClose,
 
         {stage === 'options' && settings && (
           <Stack gap={14}>
+            {turnCount > 0 && (
+              <Text fz="var(--font-size-sm)" c="var(--text-secondary)" lh={1.65}>
+                {t('share.dialog.scope').replace('{{count}}', String(turnCount))}
+              </Text>
+            )}
             <SettingRow
               icon={<Server size={13} />}
               label={t('share.settings.instance')}
@@ -260,7 +267,7 @@ const ShareErrorAlert: React.FC<{
   error: { code: ShareErrorCode; detail?: string };
   t: (key: string) => string;
 }> = ({ error, t }) => (
-  <Alert color="red" variant="light" icon={<TriangleAlert size={16} />}>
+  <Alert color="var(--mantine-color-error)" variant="light" icon={<TriangleAlert size={16} />}>
     <Stack gap={4}>
       <Text fz="var(--font-size-sm)">{t(`share.error.${error.code}`)}</Text>
       {error.detail && (

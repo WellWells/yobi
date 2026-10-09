@@ -40,12 +40,12 @@ export const StatsSection: React.FC<Props> = ({ metrics, t, showSection, section
     [snapshot, rangeDays, scope],
   );
 
-  // Per-flow counters are never split by chat/flow scope — they only exist for flows.
+  // Per-flow counters are never split by scope — they only exist for flows.
   const flowStats = useMemo(
     () => aggregateFlowStats(flowSnapshot, flows, rangeDays),
     [flowSnapshot, flows, rangeDays],
   );
-  const showFlowCards = scope !== 'chat';
+  const showFlowCards = scope === 'all' || scope === 'flow';
 
   const inspectFailures = useCallback(() => openLogsFiltered(['error']), [openLogsFiltered]);
 

@@ -25,8 +25,8 @@ export const PowerConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) =
       />
       {DESTRUCTIVE.has(action) && (
         <Group gap={6} align="flex-start" wrap="nowrap">
-          <TriangleAlert size={13} color="var(--mantine-color-red-6)" style={{ marginTop: 2, flexShrink: 0 }} />
-          <Text fz="xs" c="red.6">{t('flow.skill.power.warning')}</Text>
+          <TriangleAlert size={13} color="var(--mantine-color-error)" style={{ marginTop: 2, flexShrink: 0 }} />
+          <Text fz="xs" c="var(--mantine-color-error)">{t('flow.skill.power.warning')}</Text>
         </Group>
       )}
     </Stack>

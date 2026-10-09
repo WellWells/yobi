@@ -3,7 +3,7 @@
  * McpServer, linked to an SDK Client over InMemoryTransport (no network, no port).
  *
  * Loads the native driver via LineService, so the MCP registry imports this lazily
- * (dynamic import) to keep itself out of the offline test path.
+ * (dynamic import): the driver loads only when the LINE connector is used.
  */
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -18,7 +18,7 @@ export interface LineConnection {
 }
 
 export async function connectLineMcp(clientName: string, clientVersion: string): Promise<LineConnection> {
-  // Shared with the line_read flow skill so the ~80s key extraction is paid once per session.
+  // Shared with the line_read flow skill so the slow key extraction runs once per session.
   const service = getSharedLineService();
   const server = createLineMcpServer(service);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

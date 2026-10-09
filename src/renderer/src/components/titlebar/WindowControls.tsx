@@ -12,12 +12,17 @@ import {
 import { windowApi } from '../../api/electronApi';
 import styles from '../TitleBar.module.css';
 
+// Like native caption buttons, these never take focus: not a tab stop, and a press leaves focus where it was.
+const keepFocus = (event: React.MouseEvent): void => event.preventDefault();
+
 export const MacWindowControls = React.memo<{ t: (k: string) => string; focused: boolean }>(({ t, focused }) => (
   <Box className={styles.macGroup} style={noDrag}>
     {macWindowButtonDefs.map((btn) => (
       <UnstyledButton
         key={btn.action}
         onClick={() => doWindowAction(btn.action)}
+        onMouseDown={keepFocus}
+        tabIndex={-1}
         title={getWindowActionTitle(t, btn.action)}
         className={styles.macBtn}
         data-no-press
@@ -46,6 +51,8 @@ export const WindowsControls = React.memo<{ t: (k: string) => string; focused: b
         <UnstyledButton
           key={action}
           onClick={() => doWindowAction(action)}
+          onMouseDown={keepFocus}
+          tabIndex={-1}
           title={getWindowActionTitle(t, action, maximized)}
           className={`${styles.winBtn}${action === 'close' ? ` ${styles.winClose}` : ''}`}
           data-no-press

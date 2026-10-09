@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { ActionIcon, Badge, Box, Group, Loader, Menu, Stack, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Box, Group, Menu, Stack, Text, Tooltip } from '@mantine/core';
 import { CircleUserRound, LogIn, LogOut, MoreVertical, RotateCcw } from 'lucide-react';
 import { SectionCard, SectionTitle, VisibilityToggle } from '../components';
+import { AccountStatusPill, pillStateOf } from './AccountStatusPill';
 import { AppButton } from '../../../components/AppButton';
 import { WebDialog } from '../../../components/WebDialog';
 import { getModelIconByUrl } from '../../../config/models';
@@ -22,27 +23,6 @@ interface Props {
   showSection: (tags: readonly string[], category: 'accounts') => boolean;
   sectionGap: number;
 }
-
-type PillState = 'in' | 'out' | 'checking';
-
-const StatusPill: React.FC<{ state: PillState; t: (key: string) => string }> = ({ state, t }) => {
-  if (state === 'checking') {
-    return (
-      <Group gap={6} align="center" wrap="nowrap">
-        <Loader size={12} />
-        <Text fz="var(--font-size-sm)" c="dimmed">{t('settings.accounts.status.checking')}</Text>
-      </Group>
-    );
-  }
-  const label = state === 'in'
-    ? t('settings.accounts.status.loggedIn')
-    : t('settings.accounts.status.loggedOut');
-  return (
-    <Badge variant="light" color={state === 'out' ? 'gray' : 'teal'} radius="sm" size="sm" tt="none" fw={500}>
-      {label}
-    </Badge>
-  );
-};
 
 const RowMenu: React.FC<{
   busy: boolean;
@@ -102,7 +82,7 @@ export const ModelSourcesSection: React.FC<Props> = ({ account, t, showSection, 
               const Icon = getModelIconByUrl(PROVIDER_URLS[provider]);
               const loggedIn = account.statuses[provider];
               const busy = account.busy[provider];
-              const pillState: PillState = loggedIn === null ? 'checking' : loggedIn ? 'in' : 'out';
+              const pillState = pillStateOf(loggedIn);
               const providerHidden = sources.hidden.providers.includes(provider);
               const afterHiding: HiddenSources = {
                 ...sources.hidden,
@@ -132,7 +112,7 @@ export const ModelSourcesSection: React.FC<Props> = ({ account, t, showSection, 
                           <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-default-color)">
                             {PROVIDER_LABELS[provider]}
                           </Text>
-                          <StatusPill state={pillState} t={t} />
+                          <AccountStatusPill state={pillState} t={t} />
                         </Group>
                         <Text fz="var(--font-size-sm)" c="dimmed" lh={1.5}>
                           {t(`settings.accounts.necessity.${provider}`)}

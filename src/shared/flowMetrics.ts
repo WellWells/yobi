@@ -5,9 +5,8 @@ export { FLOW_ERROR_REASONS, classifyFlowError } from './flowErrorReason';
 export type { FlowErrorReason } from './flowErrorReason';
 
 /**
- * Three states, because two were hiding the majority of real failures. A step that fails with
- * `emitFailFlag` set is recorded `completed` by the executor and the run still reports success,
- * so on the old counters a flow that silently dropped every article read as 100% healthy.
+ * `soft` is a step that failed with `emitFailFlag` set: the executor records it `completed` and the
+ * run still succeeds, so it needs its own bucket to be visible.
  */
 export type FlowStepOutcome = 'ok' | 'soft' | 'hard';
 
@@ -34,7 +33,7 @@ export interface FlowStepMetrics {
 }
 
 export interface FlowRunMetrics {
-  /** Run-level outcome keeps its existing meaning, so the headline success rate stays comparable. */
+  /** Run-level outcome; a soft step failure still counts as a success here (see `degraded`). */
   runs: MetricCounts;
   /** Runs that finished but lost at least one step on the way. */
   degraded: number;

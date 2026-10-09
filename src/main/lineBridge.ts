@@ -28,6 +28,10 @@ export function setLineRuntimeSnapshot(snapshot: LineRuntimeSnapshot): void {
   _lineRuntimeSnapshot = snapshot;
 }
 
+export function getLineRuntimeSnapshot(): LineRuntimeSnapshot {
+  return _lineRuntimeSnapshot;
+}
+
 export function isLinePairedUser(userId: string): boolean {
   const id = (userId ?? '').trim();
   if (!id) return false;
@@ -68,6 +72,7 @@ export function buildLineSettingsSnapshot(): LineSettingsSnapshot {
     channelSecretPreview: maskToken(config.line.channelSecret),
     port: config.line.port,
     pairing: buildLinePairingSnapshot(),
+    permissions: config.line.permissions,
     webhookPath: LINE_WEBHOOK_PATH,
     llmDirect: config.line.llmDirect,
     runtime: _lineRuntimeSnapshot,

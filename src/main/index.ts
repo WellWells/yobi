@@ -35,10 +35,14 @@ import {
   getMainWin,
   setAppQuitting,
 } from './windows';
-import { CLEAN_UA } from './userAgent';
+import { CLEAN_UA, userAgentForUrl } from './userAgent';
 import { registerWorkerClientHints } from './clientHints';
+import { SITE_PARTITIONS } from './siteAccounts';
 import { installRequestFilter } from './requestFilter';
 import { setupIpcHandlers } from './ipc';
+import { startModelCatalogRefresh } from './modelCatalogRefresh';
+import { startPerplexityVisitorWipe } from './providers/perplexityVisitor';
+import { startOutputFileWatch } from './outputWatcher';
 import { classifyFailure, flushMetrics, recordTaskOutcome } from './metrics';
 import { flushFlowMetrics } from './flowMetrics';
 import { notifyQueueLevelFailure, processTask } from './taskProcessor';
@@ -49,6 +53,7 @@ import { destroyTray, isTrayCreated } from './tray';
 import { applyPendingFactoryReset } from './factoryReset';
 import { setupPlatformIcons, loadInitialLanguages, setupWindows } from './bootstrap/appSetup';
 import { setupTrayAndCloseBehavior, buildTrayIpcCallbacks } from './bootstrap/traySetup';
+import { setupAppMenu } from './bootstrap/appMenuSetup';
 import { initFlowManager, broadcastMergedQueueState } from './bootstrap/flowSetup';
 import { createTelegramRuntime } from './bootstrap/telegramSetup';
 import { handleDiscardedTask } from './taskReporting';
@@ -92,6 +97,7 @@ const TELEGRAM_SESSION_ID = `${app.getName().toLowerCase()}-desktop`;
 let powerSaveBlockerId: number | null = null;
 
 let flowManager: FlowManager | null = null;
+let stopOutputFileWatch: (() => void) | null = null;
 
 const queue = new QueueManager(
   async (task: Task) => {
@@ -117,7 +123,6 @@ const telegramRuntime = createTelegramRuntime({
 });
 
 const lineRuntime = createLineRuntime({
-  queue,
   getFlowManager: () => flowManager,
 });
 
@@ -133,20 +138,22 @@ app.whenReady().then(async () => {
   session.fromPartition('persist:gemini').setUserAgent(CLEAN_UA);
   session.fromPartition('persist:url-parser').setUserAgent(CLEAN_UA);
   session.fromPartition('persist:browser-flow').setUserAgent(CLEAN_UA);
+  session.fromPartition('persist:youtube').setUserAgent(userAgentForUrl('https://www.youtube.com/'));
+  session.fromPartition('persist:gmaps').setUserAgent(userAgentForUrl('https://www.google.com/maps'));
+  for (const partition of SITE_PARTITIONS) session.fromPartition(partition).setUserAgent(CLEAN_UA);
 
   // Page-fetching sessions only: the AI worker session keeps its provider pages untouched.
   installRequestFilter(session.fromPartition('persist:url-parser'));
   installRequestFilter(session.fromPartition('persist:browser-flow'));
 
-  // Every session that claims CLEAN_UA needs this, not just the worker: the UA says Chrome
-  // while Electron sends no Sec-CH-UA at all, and a bot manager reading both sees a Chrome
-  // that cannot answer for itself. Different webRequest event from installRequestFilter
-  // (onBeforeSendHeaders vs onBeforeRequest), so the two do not displace each other.
-  // persist:gmaps and persist:youtube are left out on purpose — they never claim Chrome, so
-  // harmonizing would only strip headers that are already absent.
+  // Client hints on every page-loading session, not just the worker. They hook onBeforeSendHeaders
+  // and installRequestFilter hooks onBeforeRequest, so neither displaces the other.
   registerWorkerClientHints(session.fromPartition('persist:gemini'));
   registerWorkerClientHints(session.fromPartition('persist:url-parser'));
   registerWorkerClientHints(session.fromPartition('persist:browser-flow'));
+  registerWorkerClientHints(session.fromPartition('persist:youtube'));
+  registerWorkerClientHints(session.fromPartition('persist:gmaps'));
+  for (const partition of SITE_PARTITIONS) registerWorkerClientHints(session.fromPartition(partition));
 
   initSecretHealthBridge();
   initSensitiveConfig();
@@ -168,6 +175,7 @@ app.whenReady().then(async () => {
   }
 
   setupTrayAndCloseBehavior();
+  setupAppMenu();
 
   setupIpcHandlers({
     queue,
@@ -187,6 +195,9 @@ app.whenReady().then(async () => {
   void reportSecretHealth();
   void telegramRuntime.syncWithConfig();
   void lineRuntime.syncWithConfig();
+  startModelCatalogRefresh();
+  startPerplexityVisitorWipe();
+  stopOutputFileWatch = startOutputFileWatch();
   sendLog(config.hotkeyEnabled
     ? `✅ Ready — copy text and press ${config.hotkey}`
     : '✅ Ready — the ask hotkey is switched off');
@@ -199,6 +210,7 @@ app.on('before-quit', () => {
   flushFlowMetrics();
   destroyTray();
   flowManager?.shutdown();
+  stopOutputFileWatch?.();
   void telegramRuntime.shutdown();
   void lineRuntime.shutdown();
 });

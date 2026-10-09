@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { ActionIcon, Box, Flex, Paper, Stack, Tooltip } from '@mantine/core';
-import { ArrowUp, Globe } from 'lucide-react';
+import { ArrowUp, Globe, SquarePen } from 'lucide-react';
 import { AppTextarea } from '../AppTextarea';
 import { ModelDropdown } from './ModelDropdown';
 import { ModeDropdown } from './ModeDropdown';
 import { ThinkingPill } from './ThinkingPill';
 import { AttachmentChips } from './AttachmentChips';
 import { ComposerAddButton } from './ComposerAddButton';
+import { composerMenuDirection } from './composerMenuDirection';
 import { ComposerNotice } from './ComposerNotice';
 import { QuoteChips } from './QuoteChips';
 import { SlashCommandMenu } from './SlashCommandMenu';
@@ -27,11 +28,11 @@ import {
   findChatMode,
   type ChatMode,
 } from '../../config/chatModes';
-import { renderConnectorIcon } from '../../config/connectorIcons';
-import { findCatalogEntry } from '../../../../shared/mcpCatalog';
+import { renderServerIcon } from '../../config/connectorIcons';
 import { composerNoticeText, pickComposerNotice } from '../../utils/composerNotice';
 import { looksLikeFlowRequest } from '../../../../shared/flowIntent';
 import { looksLikeWebSearchRequest } from '../../../../shared/webIntent';
+import { looksLikeToolRequest } from '../../../../shared/toolIntent';
 import { useAppStore } from '../../store/appStore';
 import { endTarget, homeTarget } from '../../utils/composerKeys';
 import { withQuotedContext } from '../../utils/composerQuotes';
@@ -42,11 +43,15 @@ import {
   BUILTIN_AGENT_FLOW_ID,
   BUILTIN_CHAT_FLOW_ID,
   BUILTIN_MODEL_FLOW_ID,
+  BUILTIN_RECAP_FLOW_ID,
   type PromptAttachment,
 } from '../../../../shared/types';
 import { mcpCommandFlowId, parseMcpCommandFlowId } from '../../../../shared/mcpCommand';
 import { matchConnectorKeywords, type KeywordCandidate } from '../../../../shared/connectorKeywords';
 import { useResolvedCombo } from '../../store/shortcutStore';
+import { deleteAllText, wantsComposerClear } from './composerClear';
+import { replaceAllText, useExternalEditor, wantsExternalEditor } from './composerExternalEditor';
+import { showAppNotice } from '../../hooks/useUiNotifications';
 
 interface PromptInputAreaProps {
   t: (key: string) => string;
@@ -78,20 +83,29 @@ interface PromptInputAreaProps {
     web?: boolean,
   ) => boolean;
   onUnknownCommand: (command: string) => void;
-  /** Derived from the capabilities below — the composer shows it, it is never picked directly. */
+  /** Agent when switched on or implied by web or a connector; chat otherwise. */
   chatMode: ChatMode;
-  /** Still used by `/chat` and `/agent`, which now set the capabilities that imply the mode. */
+  /** Mode switches the user did not pick (automatic routing and its undo); also the fallback when `onPickMode` is absent. */
   onChangeMode: (mode: ChatMode) => void;
+  /** The user picked a mode themself (menu, `/agent`, `/chat`): also what a new chat starts in. */
+  onPickMode?: (mode: ChatMode) => void;
   web: boolean;
   onToggleWeb: () => void;
   onSetWeb: (on: boolean) => void;
+  /** Bumped when an agent run went online on its own; shows the same undo notice as a typed search. */
+  autoWebSignal?: number;
   connectors: KeywordCandidate[];
   activeConnectorIds: readonly string[];
   onToggleConnector: (id: string) => void;
   /** Discloses connectors and switches to agent mode; returns the resulting active set. */
   onDiscloseConnectors: (ids: readonly string[]) => readonly string[];
   onRemoveConnectors: (ids: readonly string[]) => void;
+  /** Empty chat: the composer sits under the greeting instead of docking at the bottom edge. */
+  centered?: boolean;
 }
+
+/** The conversation column (720) plus the composer's padding; rows above the centred composer use it too. */
+export const CENTERED_MAX_WIDTH = 760;
 
 export interface PromptInputAreaHandle {
   focusPrompt: () => void;
@@ -117,34 +131,28 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
   onUnknownCommand,
   chatMode,
   onChangeMode,
+  onPickMode,
   web,
   onToggleWeb,
   onSetWeb,
+  autoWebSignal = 0,
   connectors,
   activeConnectorIds,
   onToggleConnector,
   onDiscloseConnectors,
   onRemoveConnectors,
+  centered = false,
 }, ref) => {
   const [promptInput, setPromptInput] = useState('');
   const [quotes, setQuotes] = useState<string[]>([]);
   const [inputFocused, setInputFocused] = useState(false);
   const tempChatMode = useAppStore((s) => s.tempChatMode);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
-  /**
-   * What the last send attached on its own, and the mode it was in beforehand. The mode is part
-   * of the record because undoing has to put the composer back where it was: dropping only the
-   * connector would leave the pill on Agent, so the next ordinary question would still be
-   * answered by a full agent run — the very thing the user just said no to.
-   */
+  /** What the last send attached on its own, and the mode before it, so undo restores the pill too. */
   const [autoAttached, setAutoAttached] = useState<{ ids: readonly string[]; from: ChatMode }>(
     { ids: [], from: 'chat' },
   );
-  /**
-   * Whether the last send was routed to an agent run because it read as "build me a flow", and
-   * the mode it was in beforehand. Recorded for the same reason the connector notice is: the
-   * undo has to put the pill back, or every following question keeps paying for an agent run.
-   */
+  /** Whether the last send was routed to an agent run as a flow request, and the mode before it (for undo). */
   const [autoFlow, setAutoFlow] = useState<{ active: boolean; from: ChatMode }>(
     { active: false, from: 'chat' },
   );
@@ -153,12 +161,34 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
    * the mode follows from the capabilities, so turning web back off is the whole undo.
    */
   const [autoWeb, setAutoWeb] = useState(false);
+  // An agent run that went online by itself announces it the same way, with the same undo.
+  useEffect(() => {
+    if (autoWebSignal > 0) setAutoWeb(true);
+  }, [autoWebSignal]);
   const [menuDismissed, setMenuDismissed] = useState(false);
   const cycleModelKeys = toTokens(useResolvedCombo('chat.cycleModel'), isMac).join(' + ');
   const modelTooltip = cycleModelKeys
     ? t('chat.model.tooltip').replace('{{shortcut}}', cycleModelKeys)
     : t('chat.model.tooltip').replace(' · {{shortcut}}', '').replace('{{shortcut}}', '');
   const promptInputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Ctrl+G: every save in the editor lands here as it happens; closing the editor brings the
+  // caret back, at the end of what came in.
+  const externalEditor = useExternalEditor({
+    onText: (text, closed) => {
+      const field = promptInputRef.current;
+      if (text !== null) {
+        if (!field || !replaceAllText(field, text)) setPromptInput(text);
+        setMenuDismissed(false);
+      }
+      if (closed && field) {
+        field.focus();
+        field.setSelectionRange(field.value.length, field.value.length);
+      }
+    },
+    onFailed: () => showAppNotice({ title: t('chat.editor.failed'), level: 'error' }),
+  });
+  const { finish: finishEditor, open: openEditor } = externalEditor;
 
   useImperativeHandle(ref, () => ({
     focusPrompt: () => promptInputRef.current?.focus(),
@@ -187,6 +217,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
   // Stays open with nothing matching, so the typed words visibly found nothing.
   const modelMenuOpen = modelQuery !== null && !menuDismissed;
   const listLength = modelMenuOpen ? filteredStops.length : menuOpen ? filteredCommands.length : 0;
+  const menuDirection = composerMenuDirection(centered);
 
   useEffect(() => { setHighlightedIndex(0); }, [slashQuery]);
   // An unfiltered list starts on the model already in use, so Enter there changes nothing.
@@ -202,6 +233,11 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     onChangeMode(mode);
     promptInputRef.current?.focus();
   }, [onChangeMode]);
+  // The user's own pick, as opposed to a send that switched modes by itself or an undo of one.
+  const pickMode = useCallback((mode: ChatMode) => {
+    (onPickMode ?? onChangeMode)(mode);
+    promptInputRef.current?.focus();
+  }, [onPickMode, onChangeMode]);
 
   const selectCommand = useCallback((command: ChatCommand) => {
     if (command.action) {
@@ -215,7 +251,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     if (mode) {
       setPromptInput('');
       setMenuDismissed(false);
-      handleChangeMode(mode);
+      pickMode(mode);
       return;
     }
     // Picking a connector is a declaration, not a command to run: it puts that server on the
@@ -230,7 +266,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     setPromptInput(`/${command.command} `);
     setMenuDismissed(false);
     promptInputRef.current?.focus();
-  }, [onRunCommand, handleChangeMode, onDiscloseConnectors]);
+  }, [onRunCommand, pickMode, onDiscloseConnectors]);
 
   const pickModel = useCallback((stop: ModelStop) => {
     setPromptInput('');
@@ -308,21 +344,21 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     autoWebActive: autoWeb && web,
     webLabel: t('chat.capability.web.label'),
     plain: notice ?? modeNotice,
+    editorOpen: externalEditor.editing,
   });
   const AgentGlyph = commandIcon(BUILTIN_AGENT_FLOW_ID);
   // One brand mark only when one connector is named. Showing LINE's glyph next to "LINE, Notion"
   // reads as "LINE did this", so several fall back to the generic connector icon.
   const noticeIcon = composerNotice?.kind === 'connectors'
-    ? renderConnectorIcon(
-      autoAttachedConnectors.length === 1
-        ? findCatalogEntry(autoAttachedConnectors[0].url)
-        : undefined,
-      15,
-    )
+    ? renderServerIcon(autoAttachedConnectors.length === 1 ? autoAttachedConnectors[0].url : undefined, 15)
     : composerNotice?.kind === 'flow'
       ? <AgentGlyph size={15} />
-      : composerNotice?.kind === 'web' ? <Globe size={15} /> : null;
-  const noticeAction = composerNotice?.kind === 'connectors'
+      : composerNotice?.kind === 'web' ? <Globe size={15} />
+        : composerNotice?.kind === 'editor' ? <SquarePen size={15} /> : null;
+  const finishExternalEdit = useCallback((): void => { void finishEditor(true); }, [finishEditor]);
+  const noticeAction = composerNotice?.kind === 'editor'
+    ? finishExternalEdit
+    : composerNotice?.kind === 'connectors'
     ? undoAutoAttach
     : composerNotice?.kind === 'flow'
       ? undoAutoFlow
@@ -335,7 +371,9 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
   const clearComposer = useCallback((): void => {
     setPromptInput('');
     setQuotes([]);
-  }, []);
+    // The draft went out; a later save in the editor must not refill the box.
+    void finishEditor(false);
+  }, [finishEditor]);
 
   const handleSendPrompt = useCallback(() => {
     const text = promptInput.trim();
@@ -361,15 +399,24 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
       keepFocus();
       return;
     }
+    // Not a send either: showing the recap leaves the notice about the last send, and its undo, standing.
+    const recapCommand = parsed
+      ? chatCommands.find((c) => c.flowId === BUILTIN_RECAP_FLOW_ID
+        && (c.command === parsed.command || (c.aliases ?? []).includes(parsed.command)))
+      : undefined;
+    if (recapCommand) {
+      onRunCommand(recapCommand, '');
+      clearComposer();
+      keepFocus();
+      return;
+    }
     // A send is the only place the notice can be answered for, so it starts every send clear
     // rather than being left over from the one before.
     setAutoAttached({ ids: [], from: chatMode });
     setAutoFlow({ active: false, from: chatMode });
     setAutoWeb(false);
-    // Asking for a web search in so many words turns "web" on for this conversation. It is off by
-    // default so that an ordinary question stays an ordinary chat turn; this message says
-    // otherwise. It stays on, like a connector named in a sentence, and is undone the same way.
-    // The run is handed the value rather than reading it back from state, which has not flushed.
+    // An explicit web-search request turns web on for this conversation, undone like an auto-attached connector.
+    // The run is handed the value because state has not flushed yet.
     const enableWeb = (): void => {
       onSetWeb(true);
       setAutoWeb(true);
@@ -390,7 +437,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
       const mode = chatModeForCommandId(match.flowId);
       if (mode && !parsed.args) {
         setPromptInput('');
-        handleChangeMode(mode);
+        pickMode(mode);
         return;
       }
       const connectorId = parseMcpCommandFlowId(match.flowId);
@@ -401,11 +448,8 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
           keepFocus();
           return;
         }
-        // The turn itself is an ordinary agent turn — the connector is disclosed to it, not the
-        // thing being invoked, so it keeps every built-in tool and can decide the connector does
-        // not fit this request.
-        // Falls back to the connector command itself rather than doing nothing if the agent
-        // built-in is somehow absent from the list: the run handler resolves either shape.
+        // An ordinary agent turn with the connector disclosed, not invoked; it keeps every built-in tool.
+        // Falls back to the connector command if the agent built-in is missing; the run handler accepts either.
         const runAs = chatCommands.find((c) => c.flowId === BUILTIN_AGENT_FLOW_ID) ?? match;
         if (onRunCommand(runAs, withQuotes(parsed.args), disclosed, webForAgentRun(parsed.args))) clearComposer();
         keepFocus();
@@ -459,6 +503,13 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
       keepFocus();
       return;
     }
+    // A question an agent lookup answers (weather, stock price, exchange rate) runs as an agent turn for
+    // this message only; the mode stays plain chat, which is faster and keeps the provider's thread.
+    if (!modeCommand && agentCommand && looksLikeToolRequest(text)) {
+      if (onRunCommand(agentCommand, withQuotes(text))) clearComposer();
+      keepFocus();
+      return;
+    }
     if (modeCommand) {
       if (onRunCommand(modeCommand, withQuotes(text))) clearComposer();
       keepFocus();
@@ -468,7 +519,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     keepFocus();
   }, [
     promptInput, chatCommands, chatMode, connectors, activeConnectorIds, web,
-    modeCommand, handleChangeMode, onDiscloseConnectors, onRunCommand, onUnknownCommand,
+    modeCommand, handleChangeMode, pickMode, onDiscloseConnectors, onRunCommand, onUnknownCommand,
     onSetWeb, onSend, withQuotes, clearComposer, modelStops, pickModel, onUnknownModel,
   ]);
 
@@ -501,6 +552,20 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
       }
     }
 
+    if (wantsExternalEditor(event)) {
+      event.preventDefault();
+      void openEditor(promptInput);
+      return;
+    }
+
+    if (field && wantsComposerClear(event, field, Boolean(promptInput) || quotes.length > 0)) {
+      event.preventDefault();
+      if (!deleteAllText(field)) setPromptInput('');
+      setQuotes([]);
+      setMenuDismissed(false);
+      return;
+    }
+
     if ((menuOpen || modelMenuOpen) && event.key === 'Escape') {
       event.preventDefault();
       setMenuDismissed(true);
@@ -529,8 +594,8 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
       handleSendPrompt();
     }
   }, [
-    promptInput, menuOpen, modelMenuOpen, listLength, filteredCommands, filteredStops,
-    highlightedIndex, selectCommand, pickModel, handleSendPrompt,
+    promptInput, quotes.length, menuOpen, modelMenuOpen, listLength, filteredCommands, filteredStops,
+    highlightedIndex, selectCommand, pickModel, handleSendPrompt, openEditor,
   ]);
 
   return (
@@ -538,7 +603,10 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
       gap={8}
       bg="var(--mantine-color-body)"
       p="12px"
-      style={{ borderTop: '1px solid var(--mantine-color-default-border)', flexShrink: 0 }}
+      w="100%"
+      maw={centered ? CENTERED_MAX_WIDTH : undefined}
+      mx={centered ? 'auto' : undefined}
+      style={{ borderTop: centered ? undefined : '1px solid var(--mantine-color-default-border)', flexShrink: 0 }}
     >
       <Box pos="relative">
       {menuOpen && (
@@ -549,6 +617,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
           onHover={setHighlightedIndex}
           emptyLabel={t('chat.slash.empty')}
           activeFlowIds={activeConnectorFlowIds}
+          direction={menuDirection}
         />
       )}
       {modelMenuOpen && (
@@ -559,6 +628,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
           onSelect={pickModel}
           onHover={setHighlightedIndex}
           emptyLabel={t('chat.model.command.empty')}
+          direction={menuDirection}
         />
       )}
       <Paper
@@ -635,20 +705,23 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
           />
           <ModeDropdown
             value={chatMode}
+            onChangeMode={pickMode}
             web={web}
             onToggleWeb={onToggleWeb}
             connectors={connectors}
             activeConnectorIds={activeConnectorIds}
             onToggleConnector={onToggleConnector}
             t={t}
+            menuDirection={menuDirection}
           />
           </Flex>
           <Flex align="center" gap={8}>
-          <ThinkingPill url={activeModelUrl} />
+          <ThinkingPill url={activeModelUrl} menuDirection={menuDirection} />
           <ModelDropdown
             value={activeModelUrl}
             onChange={onChangeModel}
             tooltipLabel={modelTooltip}
+            menuDirection={menuDirection}
           />
           <Tooltip label={t('input.send')} position="top">
             <ActionIcon

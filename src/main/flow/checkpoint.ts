@@ -1,5 +1,6 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { writeFileAtomic } from '../atomicWrite';
 import { CHECKPOINT_KINDS, getCheckpointPath, getFlowDataDir } from './paths';
 import type { CheckpointKind } from './paths';
 
@@ -23,9 +24,7 @@ export function makeCheckpointStore<T>(kind: CheckpointKind): CheckpointStore<T>
   async function save(stepId: string, checkpoint: T): Promise<void> {
     const filePath = getCheckpointPath(kind, stepId);
     await fs.mkdir(path.dirname(filePath), { recursive: true });
-    const tmp = `${filePath}.${Date.now()}-${process.pid}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify(checkpoint, null, 2), 'utf-8');
-    await fs.rename(tmp, filePath);
+    await writeFileAtomic(filePath, JSON.stringify(checkpoint, null, 2));
   }
 
   return { load, save };

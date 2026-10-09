@@ -4,10 +4,9 @@ import { createOnigurumaEngine } from 'shiki/engine/oniguruma';
 /**
  * Fine-grained Shiki bundle.
  *
- * The stock `shiki` entry point registers every grammar and theme it ships
- * (~360 languages, 66 themes). Vite emits one lazy chunk per entry, so the
- * renderer carried ~9.5 MB of grammars that were never requested at runtime.
- * This module registers only what Yobi actually highlights.
+ * The stock `shiki` entry point registers every grammar and theme it ships (~360 languages,
+ * 66 themes) and Vite emits a lazy chunk for each, about 9.5 MB the app never loads. This module
+ * registers only what Yobi actually highlights.
  *
  * Keys mirror Shiki's own registry: every alias is a separate key so markdown
  * fences such as ```cs, ```yml or ```c++ still resolve. Grammar dependencies

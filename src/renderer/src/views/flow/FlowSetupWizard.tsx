@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Box, Button, Group, Stack, Text } from '@mantine/core';
+import { Alert, Button, Group, Stack, Text } from '@mantine/core';
 import { TriangleAlert } from 'lucide-react';
 import { AppModal } from '../../components/AppModal';
 import { VariableField } from './VariableField';
@@ -28,7 +28,7 @@ export interface FlowSetupWizardProps {
 
 export const FlowSetupWizard: React.FC<FlowSetupWizardProps> = ({ template, t, onClose, onNavigateAway, onCreate }) => {
   const locale = useI18nStore((s) => s.locale);
-  const setView = useAppStore((s) => s.setView);
+  const openSettingsCategory = useAppStore((s) => s.openSettingsCategory);
   const [flow, setFlow] = useState<FlowDefinition | null>(null);
   const [botConfigured, setBotConfigured] = useState<boolean | null>(null);
 
@@ -65,7 +65,7 @@ export const FlowSetupWizard: React.FC<FlowSetupWizardProps> = ({ template, t, o
     } : f));
   };
 
-  const goToSettings = (): void => { setView('settings'); onNavigateAway(); };
+  const goToSettings = (): void => { openSettingsCategory('bots'); onNavigateAway(); };
 
   return (
     <AppModal
@@ -83,28 +83,18 @@ export const FlowSetupWizard: React.FC<FlowSetupWizardProps> = ({ template, t, o
         </Group>
 
         {needsBot && botConfigured === false && (
-          <Box
-            p="xs"
-            style={{
-              background: 'var(--mantine-color-orange-light)',
-              borderRadius: 'var(--mantine-radius-md)',
-              border: '1px solid var(--mantine-color-orange-filled)',
-            }}
-          >
-            <Group gap="sm" align="flex-start" wrap="nowrap">
-              <TriangleAlert size={16} color="var(--mantine-color-orange-filled)" style={{ marginTop: 2, flexShrink: 0 }} />
-              <Stack gap={6} style={{ flex: 1 }}>
-                <Text fz="xs" style={{ lineHeight: 1.6 }}>
-                  {t(template.category === 'command'
-                    ? 'flow.setup.needsBot.command'
-                    : 'flow.setup.needsBot.push')}
-                </Text>
-                <Button variant="light" color="orange" size="xs" onClick={goToSettings} style={{ alignSelf: 'flex-start' }}>
-                  {t('flow.setup.openSettings')}
-                </Button>
-              </Stack>
-            </Group>
-          </Box>
+          <Alert color="var(--mantine-color-warning)" icon={<TriangleAlert size={14} />} p="xs">
+            <Stack gap={6}>
+              <Text fz="xs" style={{ lineHeight: 1.6 }}>
+                {t(template.category === 'command'
+                  ? 'flow.setup.needsBot.command'
+                  : 'flow.setup.needsBot.push')}
+              </Text>
+              <Button variant="light" color="var(--mantine-color-warning)" size="xs" onClick={goToSettings} style={{ alignSelf: 'flex-start' }}>
+                {t('flow.setup.openSettings')}
+              </Button>
+            </Stack>
+          </Alert>
         )}
 
         {variables.length === 0 ? (
@@ -128,7 +118,7 @@ export const FlowSetupWizard: React.FC<FlowSetupWizardProps> = ({ template, t, o
 
         {missing.length > 0 && (
           <Group gap={6} align="center" wrap="nowrap">
-            <TriangleAlert size={13} color="var(--mantine-color-orange-filled)" style={{ flexShrink: 0 }} />
+            <TriangleAlert size={13} color="var(--mantine-color-warning)" style={{ flexShrink: 0 }} />
             <Text fz="xs" c="dimmed">{t('flow.setup.missingPrefix')}{missingNames}</Text>
           </Group>
         )}

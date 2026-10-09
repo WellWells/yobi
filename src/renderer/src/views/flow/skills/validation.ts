@@ -1,4 +1,5 @@
 import { OUTPUT_KEY_RE } from '../../../../../shared/flowValidation';
+import { parseXHandle, parseXPostUrl, splitXAccountLines } from '../../../../../shared/xHandles';
 
 const VAR_ONLY = /^\{\{[^}]+\}\}$/;
 const HTTP = /^https?:\/\//i;
@@ -33,6 +34,16 @@ const YT_HANDLE = /^@[\w.-]+$/;
 export function isValidYoutubeChannelListOrVar(text: string): boolean {
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   return lines.every((line) => VAR_ONLY.test(line) || HTTP.test(line) || YT_HANDLE.test(line));
+}
+
+export function isValidXAccountListOrVar(text: string): boolean {
+  return splitXAccountLines(text).every((line) => VAR_ONLY.test(line) || parseXHandle(line) !== null);
+}
+
+export function isValidXPostUrlOrVar(url: string): boolean {
+  const trimmed = url.trim();
+  if (!trimmed || VAR_ONLY.test(trimmed)) return true;
+  return parseXPostUrl(trimmed) !== null;
 }
 
 export function isValidJsonOrEmpty(text: string): boolean {

@@ -9,13 +9,7 @@ export const GEMINI_COPY_BTN_SELECTOR = 'copy-button button';
 export const GEMINI_STOP_SELECTOR =
   '[data-test-id="send-button-container"] mat-icon[fonticon="stop"], [data-test-id="stop-button"]';
 
-/**
- * The sidebar's new-chat control. `[data-test-id="new-chat-button"]` on its own is the
- * `<gem-nav-list-item>` wrapper, and it ignores every click: measured against the live page on
- * 2026-09-16, a plain `.click()`, the inner button, `closest('a')` and a full pointer-event
- * sequence all left the thread untouched. The router link inside it clears the conversation in
- * ~145 ms with no page load. Gate: `test/geminiNewChat.test.ts`.
- */
+/** The sidebar's new-chat router link; the wrapper element around it ignores clicks. */
 export const GEMINI_NEW_CHAT_SELECTOR = '[data-test-id="new-chat-button"] a[href="/app"]';
 
 export const INJECTED_GEMINI_WAIT_AND_READ_JS = `async function geminiWaitAndRead(baseline, copyBtnSel, opts) {
@@ -108,9 +102,7 @@ export const INJECTED_GEMINI_WAIT_AND_READ_JS = `async function geminiWaitAndRea
     }
     if (lastChangeAt !== null && Date.now() - lastChangeAt > IDLE_LIMIT) {
       if (sawAnswer && lastLen > 0) break;
-      // A long think renders nothing at all while the stop button is up. Reporting that as a
-      // sign-in wall shows a login window to an already signed-in user AND flips the shared
-      // worker into interactive mode, which leaves the next task without its stealth preload.
+      // Still generating with no visible text is a slow answer, not a sign-in wall.
       if (isGenerating()) {
         throw new Error('Gemini is still generating but produced no visible answer before the response timeout');
       }

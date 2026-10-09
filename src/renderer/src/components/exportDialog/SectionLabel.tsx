@@ -1,8 +1,9 @@
 import React from 'react';
 import { Text } from '@mantine/core';
 
+/** A field label above one export control: the same type as an input's label (inputStyles.ts). */
 export const SectionLabel: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <Text fz="var(--font-size-base)" fw={700} lts="0.05em" tt="uppercase" c="var(--text-muted)" mb={8}>
+  <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-default-color)" mb={8}>
     {children}
   </Text>
 );

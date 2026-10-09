@@ -5,7 +5,7 @@ import { AppPasswordInput } from '../../../components/AppPasswordInput';
 import { AppButton } from '../../../components/AppButton';
 import { AppNumberInput } from '../../../components/AppNumberInput';
 import { SectionCard, SettingRow, SettingField, SettingDivider, ToggleSwitch, SectionTitle } from '../components';
-import { BotLlmDirectSetting } from './BotLlmDirectSetting';
+import { BotDefaultModelSetting } from './BotDefaultModelSetting';
 import { BotReplyPreview } from './BotReplyPreview';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import { SecretHealthAlert } from '../../../components/SecretHealthAlert';
@@ -14,6 +14,7 @@ import { LinePairingPanel } from './LinePairingPanel';
 import { LinePairedUsers } from './LinePairedUsers';
 import { LineWebhookGuide } from './LineWebhookGuide';
 import type { useLineSettings } from '../hooks/useLineSettings';
+import type { BotAccessControls } from '../hooks/useBotAccessControls';
 
 type LineSettings = ReturnType<typeof useLineSettings>;
 
@@ -37,13 +38,15 @@ function getLineRuntimeLabel(t: (k: string) => string, status?: string): string 
 
 interface Props {
   line: LineSettings;
+  /** Each paired account's grants and owner mark, edited under its row. */
+  access: BotAccessControls;
   t: (key: string) => string;
   showSection: (tags: readonly string[], category: 'bots') => boolean;
   isSearching: boolean;
   sectionGap: number;
 }
 
-export const LineSection: React.FC<Props> = ({ line, t, showSection, isSearching, sectionGap }) => {
+export const LineSection: React.FC<Props> = ({ line, access, t, showSection, isSearching, sectionGap }) => {
   const settings = line.lineSettings;
   const runtimeStatus = settings?.runtime.status;
   const account = settings?.runtime.account;
@@ -55,14 +58,15 @@ export const LineSection: React.FC<Props> = ({ line, t, showSection, isSearching
   }, [settings?.port]);
 
   return (
-    <Box display={showSection(TAG_SETS.bots, 'bots') ? 'block' : 'none'}>
+    <Box display={showSection(TAG_SETS.line, 'bots') ? 'block' : 'none'}>
       <SectionCard style={{ marginBottom: sectionGap }}>
         <Group justify="space-between" align="center">
           <Group gap={8} align="center">
             <MessageSquare size={18} color="var(--mantine-color-accent)" style={{ flexShrink: 0 }} />
             <Text fz="var(--font-size-xl)" fw={700} c="var(--mantine-color-default-color)">LINE</Text>
           </Group>
-          <Group gap={6} align="center">
+          {/* Off is already said by the switch below; an "idle" dot beside it read as "on, waiting". */}
+          <Group gap={6} align="center" display={settings?.enabled ? 'flex' : 'none'}>
             <Box w={7} h={7} bg={getLineRuntimeColor(runtimeStatus)} style={{ borderRadius: '50%', flexShrink: 0 }} />
             <Text fz="var(--font-size-sm)" fw={600} c={getLineRuntimeColor(runtimeStatus)}>
               {getLineRuntimeLabel(t, runtimeStatus)}
@@ -172,7 +176,7 @@ export const LineSection: React.FC<Props> = ({ line, t, showSection, isSearching
                   <MButton
                     variant="default"
                     onClick={() => { void line.handleUpdateLinePort(Number(portDraft)); }}
-                    disabled={line.lineBusy || !Number(portDraft)}
+                    disabled={line.lineBusy || !Number(portDraft) || Number(portDraft) === settings?.port}
                   >
                     {t('settings.line.savePort')}
                   </MButton>
@@ -181,30 +185,6 @@ export const LineSection: React.FC<Props> = ({ line, t, showSection, isSearching
 
               {settings && (
                 <LineWebhookGuide port={settings.port} webhookPath={settings.webhookPath} t={t} />
-              )}
-            </Stack>
-
-            <SettingDivider my={16} />
-
-            <SectionTitle icon={<MessageSquare size={15} />} label={t('settings.line.section.reply')} />
-            <Stack gap={12}>
-              <BotReplyPreview
-                compactReply
-                mode="markdown"
-                note={t('settings.line.reply.note')}
-                t={t}
-              />
-
-              <SettingDivider my={4} />
-
-              {settings && (
-                <BotLlmDirectSetting
-                  value={settings.llmDirect}
-                  busy={line.lineBusy}
-                  hint={t('settings.line.llmDirect.hint')}
-                  onUpdate={(patch) => { void line.handleUpdateLineLlmDirect(patch); }}
-                  t={t}
-                />
               )}
             </Stack>
 
@@ -246,11 +226,39 @@ export const LineSection: React.FC<Props> = ({ line, t, showSection, isSearching
               <Text fz="var(--font-size-sm)" fw={600} c="var(--mantine-color-default-color)">
                 {t('settings.line.paired.title')}
               </Text>
+              <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>
+                {t('settings.bot.perm.pairedHint')}
+              </Text>
               <LinePairedUsers
                 pairedUsers={settings?.pairing.pairedUsers ?? []}
+                access={access}
                 onUnpair={(userId) => { void line.handleUnpairLineUser(userId); }}
                 t={t}
               />
+            </Stack>
+
+            <SettingDivider my={16} />
+
+            <SectionTitle icon={<MessageSquare size={15} />} label={t('settings.line.section.reply')} />
+            <Stack gap={12}>
+              <BotReplyPreview
+                compactReply
+                mode="markdown"
+                note={t('settings.line.reply.note')}
+                t={t}
+              />
+
+              <SettingDivider my={4} />
+
+              {settings && (
+                <BotDefaultModelSetting
+                  value={settings.llmDirect}
+                  busy={line.lineBusy}
+                  hint={t('settings.line.defaultModel.hint')}
+                  onUpdate={(patch) => { void line.handleUpdateLineLlmDirect(patch); }}
+                  t={t}
+                />
+              )}
             </Stack>
           </>
         )}

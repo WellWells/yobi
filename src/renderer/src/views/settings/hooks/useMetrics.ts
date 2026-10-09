@@ -18,11 +18,8 @@ export function useMetrics() {
   }, []);
 
   /**
-   * Both snapshots, only while the page is open. Counters flush per flow step and per model
-   * call rather than per run, so a busy loop or an `/agent` run broadcasts repeatedly — and
-   * every view stays mounted, so an ungated subscription would re-render settings that nobody
-   * is looking at for the length of the run. `useMetrics` is called by `SettingsView` itself,
-   * so that re-render is the whole page, not just the statistics section.
+   * Subscribe only while settings is visible: counters broadcast per step and per model call,
+   * and the always-mounted SettingsView would otherwise re-render throughout every run.
    */
   useEffect(() => {
     if (!settingsVisible) return;

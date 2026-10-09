@@ -1,7 +1,6 @@
 import React from 'react';
 import { ActionIcon, Checkbox, Group, Stack, Text, Tooltip } from '@mantine/core';
 import { Trash2, X } from 'lucide-react';
-import { AppButton } from './AppButton';
 
 interface SelectionActionBarProps {
   count: number;
@@ -59,18 +58,25 @@ export const SelectionActionBar: React.FC<SelectionActionBarProps> = ({
         </Tooltip>
       </Group>
 
-      <Group gap={6} grow wrap="nowrap">
-        {extraActions}
-        <AppButton
-          size="xs"
-          variant="light"
-          color="red"
-          leftSection={<Trash2 size={13} />}
-          disabled={!hasSelection}
-          onClick={onDelete}
-        >
-          {t('common.delete')}
-        </AppButton>
+      {/* Delete sits beside the actions as an icon, never as the widest button on the bar:
+          the most destructive choice should not also be the easiest one to hit. */}
+      <Group gap={6} wrap="nowrap">
+        <Group gap={6} grow wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
+          {extraActions}
+        </Group>
+        <Tooltip label={t('common.delete')} position="top">
+          <ActionIcon
+            size="input-xs"
+            variant="light"
+            color="red"
+            disabled={!hasSelection}
+            onClick={onDelete}
+            aria-label={t('common.delete')}
+            style={{ flexShrink: 0 }}
+          >
+            <Trash2 size={14} />
+          </ActionIcon>
+        </Tooltip>
       </Group>
     </Stack>
   );

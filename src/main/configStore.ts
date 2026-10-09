@@ -38,14 +38,9 @@ function quarantine(filePath: string): string | null {
 /**
  * Opens an `electron-store` that cannot take the app down with it.
  *
- * `conf` rethrows anything that is not ENOENT out of its store getter, and its constructor
- * reads the store straight away, so a truncated write or a hand-edited stray comma turned
- * every launch into a main-process crash box (config.json) or a running process with no
- * window at all (the secret stores, which are opened before the windows are made).
- *
- * The damaged file is moved aside rather than cleared: it is the user's settings, or the only
- * copy of an encrypted secret, and a file that cannot be parsed today may still be worth
- * something to whoever looks at it. Starting from defaults is the fallback, not the goal.
+ * `conf` rethrows any read error except ENOENT from its constructor, so a truncated or hand-edited
+ * file would otherwise crash every launch. The damaged file is moved aside rather than cleared: it
+ * may be the only copy of the user's settings or an encrypted secret.
  */
 // The constraint mirrors electron-store's own: an interface has no implicit index signature,
 // so `Record<string, unknown>` would reject every store shape in this app.

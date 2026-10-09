@@ -1,4 +1,7 @@
+import { fencedLines } from './markdownFences';
 import { repairSplitTableRows } from './markdownTableRepair';
+import { buildShareTurns } from './shareTurns';
+import type { ShareTurnLabels } from './shareTurns';
 import type { MemoryNote } from './userMemory';
 
 export interface ThreadMeta {
@@ -20,18 +23,38 @@ export interface ThreadMeta {
    */
   mcp?: string[];
   /**
-   * The "web" capability for this conversation. Only `true` is ever written: absent means off,
-   * the default. (It used to be the other way round, with only `false` written; a conversation
-   * saved then reopens with web off, like any new one.) Kept out of `mcp` deliberately — that
-   * array is server ids, and a sentinel id in it would be looked up as a server by everything
-   * downstream.
+   * The "web" capability for this conversation: `true` on, `false` switched off by the user,
+   * absent the default (the agent may turn it on itself). Kept out of `mcp` deliberately: that
+   * array is server ids, and a sentinel id in it would be looked up as a server downstream.
    */
   web?: boolean;
+  /**
+   * Agent switched on by itself, with or without the web or a connector. Only `true` is written;
+   * absent means off.
+   */
+  agent?: boolean;
+  /** The Google Maps place this conversation is about, so a replayed follow-up can re-attach its reviews. */
+  map?: MapPlaceRef;
+}
+
+export interface MapPlaceRef {
+  url: string;
+  place: string;
+}
+
+export function readMapPlaceRef(thread: ThreadMeta): MapPlaceRef | undefined {
+  const raw: unknown = thread.map;
+  if (!raw || typeof raw !== 'object') return undefined;
+  const { url, place } = raw as Record<string, unknown>;
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url) || typeof place !== 'string') return undefined;
+  return { url, place };
 }
 
 export interface TurnMeta {
   p?: string;
   t?: string;
+  /** How long the reply took, in ms, from when the send started running to the saved answer. */
+  d?: number;
   m?: 'native' | 'replay';
   c?: string;
   a?: string[];
@@ -46,6 +69,41 @@ export interface TurnMeta {
   ch?: string[];
   /** What this reply changed in the user's memory, as the program applied it. */
   mem?: MemoryNote[];
+  /**
+   * What the model received for this turn when the record shows only what the user typed (a pasted
+   * YouTube or web link becomes a summary prompt carrying the transcript or page text). Replay and
+   * the summariser read it through `promptAsSent`; nothing displays it.
+   */
+  sent?: string;
+  /**
+   * Where the conversation stood after this turn, for the composer's recap line. The model writes
+   * it at the end of a reply and the program moves it here, so nothing replays or displays it as
+   * part of the answer. `''` marks a turn made without the recap rule, after which an earlier
+   * recap may be out of date; a missing key means "unchanged" (or a turn from before the feature).
+   */
+  rc?: string;
+}
+
+/** The turn's prompt as the model received it: the stored `sent` text when there is one, else the prompt. */
+export function promptAsSent(turn: ConversationTurn): string {
+  const sent: unknown = turn.meta.sent;
+  return typeof sent === 'string' && sent.trim() ? sent : turn.prompt;
+}
+
+const MARKER_UNSAFE = new RegExp('[<>\\u2028\\u2029]', 'g');
+
+/**
+ * JSON for a `yobi:` marker line. `<` and `>` are escaped so text such as `-->` inside a value
+ * (page text, a transcript, a summary) cannot close the HTML comment early in a Markdown viewer;
+ * U+2028/U+2029 are escaped because `.` in MARKER_RE stops at them, and the whole marker — the
+ * turn's meta, and the turn boundary it marks — would then go unread. `JSON.parse` turns every
+ * escape back into the same text.
+ */
+export function stringifyMarker(value: object): string {
+  return JSON.stringify(value).replace(
+    MARKER_UNSAFE,
+    (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  );
 }
 
 export function attachmentMetaNames(paths: readonly string[]): string[] {
@@ -91,17 +149,13 @@ interface ScannedLine {
 }
 
 const MARKER_RE = /^<!--\s*yobi:(thread|turn)\s+(\{.*\})\s*-->$/;
-const FENCE_RE = /^(?:```|~~~)/;
 const H1_RE = /^#\s+(.+)$/;
 const H2_RE = /^##\s+(.+)$/;
 const ESCAPED_HEADING_RE = /^\\(?=#)/;
 
 /**
- * A conversation file re-saved by a CRLF editor or a sync tool used to parse as zero turns:
- * `$` is not multiline and `.` never matches `\r`, so `## Prompt\r` matched no heading while
- * the markers (which are trimmed) still read fine. The document then looked like a fresh
- * one-turn file whose `threadTurns` was already past it, and every later turn silently
- * replayed with no history.
+ * Splits on CRLF too: `.` never matches `\r`, so a file re-saved by a CRLF editor or sync tool
+ * would otherwise match no section heading and parse as zero turns.
  */
 function splitLines(raw: string): string[] {
   return raw.split(/\r?\n/);
@@ -113,42 +167,6 @@ function classify(heading: string, aliases: ConversationHeadingAliases): Heading
   if (aliases.prompt.has(heading)) return 'prompt';
   if (aliases.response.has(heading)) return 'response';
   return null;
-}
-
-/**
- * Marks the lines that sit inside a fenced code block. A fence that is never closed does not
- * count as one.
- *
- * Two requirements pull against each other here and both are real. A marker quoted inside a
- * genuine code block has to stay quoted, or a model echoing this format back invents turns
- * that nothing can tell apart from real ones. But a model answer that opens a fence and never
- * closes it used to swallow every turn written after it — the file then parsed as fewer turns
- * than `threadTurns` claimed, so native continuation was lost and the replay it fell back to
- * carried raw markers as if they were part of the conversation.
- *
- * Requiring the closer separates the two: the quoted marker keeps its fence, the malformed one
- * never had a fence to begin with.
- */
-function fencedLines(lines: string[]): boolean[] {
-  const fenced = new Array<boolean>(lines.length).fill(false);
-  let openerIndex = -1;
-  for (let i = 0; i < lines.length; i++) {
-    const isFence = FENCE_RE.test(lines[i].trim());
-    if (openerIndex < 0) {
-      if (isFence) {
-        openerIndex = i;
-        fenced[i] = true;
-      }
-      continue;
-    }
-    fenced[i] = true;
-    if (isFence) openerIndex = -1;
-  }
-  // The last fence was never closed, so it opened nothing.
-  if (openerIndex >= 0) {
-    for (let i = openerIndex; i < lines.length; i++) fenced[i] = false;
-  }
-  return fenced;
 }
 
 function scan(lines: string[], aliases: ConversationHeadingAliases): ScannedLine[] {
@@ -287,6 +305,56 @@ export function parseConversationDoc(
 }
 
 /**
+ * The provider that answered last. Every turn records its own `p`; the `## Provider` section is
+ * written once, by the first turn. Legacy turns carry no `p`, so the caller falls back to the
+ * section for those.
+ */
+export function latestTurnProvider(turns: readonly ConversationTurn[]): string | null {
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const provider: unknown = turns[i].meta.p;
+    if (typeof provider === 'string' && provider.trim()) return provider.trim();
+  }
+  return null;
+}
+
+/**
+ * What a reader sees of a conversation file: the title, every prompt with its attachment names,
+ * and every answer. The `## Provider` / `## Time` sections, the prompt and response headings and
+ * the `yobi:` markers are storage; searching them would match localized heading words in every
+ * file. A file with no turn structure keeps its text minus the markers, those headings and the
+ * two metadata sections.
+ */
+export function visibleConversationText(
+  raw: string,
+  aliases: ConversationHeadingAliases,
+  doc: ConversationDoc = parseConversationDoc(raw, aliases),
+): string {
+  if (doc.turns.length > 0) {
+    const attachments = (meta: TurnMeta): string[] => (Array.isArray(meta.a)
+      ? meta.a.filter((name): name is string => typeof name === 'string')
+      : []);
+    return [
+      doc.title ?? '',
+      ...doc.turns.flatMap((turn) => [turn.prompt, ...attachments(turn.meta), turn.response]),
+    ].join('\n');
+  }
+  const lines = splitLines(raw);
+  const scanned = scan(lines, aliases);
+  const kept: string[] = [];
+  let inMetaSection = false;
+  lines.forEach((line, index) => {
+    const info = scanned[index];
+    if (info.marker !== null) return;
+    if (info.isHeading) {
+      inMetaSection = info.heading === 'provider' || info.heading === 'time';
+      if (info.heading !== null) return;
+    }
+    if (!inMetaSection) kept.push(line);
+  });
+  return kept.join('\n');
+}
+
+/**
  * Escapes a section heading the user typed so it is not read back as this turn's structure.
  * A prompt whose own line is `## Response` would otherwise end the prompt there and prepend
  * the rest of it to the answer. `\##` is the CommonMark escape, so it still renders as the
@@ -320,7 +388,7 @@ export function appendTurn(
 ): string {
   const body = raw.replace(/\s+$/, '');
   const block = [
-    `<!-- yobi:turn ${JSON.stringify(turn.meta ?? {})} -->`,
+    `<!-- yobi:turn ${stringifyMarker(turn.meta ?? {})} -->`,
     `## ${labels.prompt}`,
     '',
     escapeSectionHeadings(turn.prompt.trim(), labels),
@@ -335,10 +403,6 @@ export function appendTurn(
 
 export function stripConversationMarkers(raw: string): string {
   return splitLines(raw).filter((line) => !MARKER_RE.test(line.trim())).join('\n');
-}
-
-function blockquote(text: string): string {
-  return text.split('\n').map((line) => (line.trim() ? `> ${line}` : '>')).join('\n');
 }
 
 function withoutMetaSections(raw: string, aliases: ConversationHeadingAliases): string {
@@ -366,21 +430,27 @@ function withoutMetaSections(raw: string, aliases: ConversationHeadingAliases): 
   return kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-export function buildShareMarkdown(raw: string, aliases: ConversationHeadingAliases): string {
+export function buildShareMarkdown(
+  raw: string,
+  aliases: ConversationHeadingAliases,
+  labels: ShareTurnLabels,
+): string {
   const doc = parseConversationDoc(raw, aliases);
   if (doc.turns.length === 0) return withoutMetaSections(raw, aliases);
 
-  const parts: string[] = [];
-  if (doc.title) parts.push(`# ${doc.title}`);
-  for (const turn of doc.turns) {
-    if (turn.prompt) parts.push(blockquote(turn.prompt));
-    if (turn.response) parts.push(turn.response);
-  }
-  return parts.join('\n\n');
+  // A turn without its own `p` predates turn markers: it was answered by whoever answered the
+  // turn before it, and the first one by the `## Provider` section.
+  let provider = doc.provider?.trim() || null;
+  const turns = doc.turns.map((turn) => {
+    const own: unknown = turn.meta.p;
+    if (typeof own === 'string' && own.trim()) provider = own.trim();
+    return { prompt: turn.prompt, response: turn.response, provider };
+  });
+  return buildShareTurns(doc.title, turns, labels);
 }
 
 export function writeThreadMeta(raw: string, meta: ThreadMeta): string {
-  const line = `<!-- yobi:thread ${JSON.stringify({ ...meta, v: 1 })} -->`;
+  const line = `<!-- yobi:thread ${stringifyMarker({ ...meta, v: 1 })} -->`;
   const lines = splitLines(raw);
   const scanned = scan(lines, { provider: new Set(), time: new Set(), prompt: new Set(), response: new Set() });
 

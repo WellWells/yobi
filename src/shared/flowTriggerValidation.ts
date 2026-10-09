@@ -1,5 +1,6 @@
 import type { TriggerConfig } from './types';
-import { BOT_COMMAND_RE } from './types';
+import { BOT_COMMAND_RE, SYSTEM_EVENTS } from './types';
+import type { SystemEvent } from './types';
 import { parseCronToScheduleFields } from './flowSchedule';
 
 export type TriggerValidationResult =
@@ -82,5 +83,12 @@ export function validateTrigger(raw: unknown): TriggerValidationResult {
       },
     };
   }
-  return { ok: false, error: `Unknown trigger type "${String(tr.type)}" — use "manual", "hotkey", "cron", "bot" or "chat"` };
+  if (tr.type === 'system') {
+    const event = typeof tr.systemEvent === 'string' ? tr.systemEvent.trim().toLowerCase() : '';
+    if (!(SYSTEM_EVENTS as readonly string[]).includes(event)) {
+      return { ok: false, error: `System trigger needs "systemEvent": one of ${SYSTEM_EVENTS.map((e) => `"${e}"`).join(', ')}` };
+    }
+    return { ok: true, trigger: { type: 'system', systemEvent: event as SystemEvent } };
+  }
+  return { ok: false, error: `Unknown trigger type "${String(tr.type)}" — use "manual", "hotkey", "cron", "bot", "chat" or "system"` };
 }

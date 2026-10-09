@@ -1,17 +1,16 @@
 /**
  * claude.ai's model picker, mirrored.
  *
- * Which models a user may pick depends on their plan (Free: Sonnet and Haiku; Pro/Max add Opus and
- * Fable), so the list is never hardcoded: it is whatever the page offers as selectable, read each
- * time Claude is used. Effort levels and the thinking switch belong to ONE model each — Sonnet 5
- * has five levels, Sonnet 4.6 four, Haiku none — and the page remembers them per model.
+ * Which models a user may pick depends on their plan, so the list is never hardcoded: it is
+ * whatever the page offers as selectable, read each time Claude is used. Effort levels and the
+ * thinking switch belong to one model each, and the page remembers them per model.
  *
- * Yobi keeps ONE Claude setting and makes the page match it before every send, like Gemini's.
+ * Yobi keeps one Claude setting and makes the page match it before every send, like Gemini's.
  * Labels are the page's own text, cached as-is.
  */
 
 export interface ClaudeOptionInfo {
-  /** `data-model-id` / `data-effort-id` — language independent. */
+  /** Language-independent id the page gives the option. */
   id: string;
   label: string;
   sublabel: string;
@@ -31,6 +30,20 @@ export interface ClaudeModelOptions {
 export interface ClaudeModelInfo extends ClaudeOptionInfo {
   /** `null` until the model has been selected on the page at least once. */
   options: ClaudeModelOptions | null;
+  /**
+   * `true`: an older version the page keeps under "All models"; `false`: known to be current;
+   * absent: not known (a list cached before this was recorded, or read where the page cannot tell).
+   */
+  legacy?: boolean;
+}
+
+/** One model in the page's own account data — every model the app knows, whatever the plan. */
+export interface ClaudeOfficialModel {
+  id: string;
+  /** "Claude Sonnet 5.5" */
+  name: string;
+  /** Listed under "All models" rather than with the current versions. */
+  legacy: boolean;
 }
 
 export interface ClaudeModelCatalog {
@@ -59,7 +72,12 @@ type Selectable<T> = T & { selected: boolean };
 
 /** The picker as read: the selectable models, plus the options of the one the page has selected. */
 export interface ClaudePickerSnapshot {
-  models: Selectable<ClaudeOptionInfo>[];
+  /** `more`: read from a submenu ("All models") rather than the main menu. */
+  models: (Selectable<ClaudeOptionInfo> & { more?: boolean })[];
+  /** Models shown but locked to another plan. */
+  locked?: string[];
+  /** The page's account data, or `null` when it could not be read. */
+  official?: ClaudeOfficialModel[] | null;
   /**
    * True when the page listed the models in its own order (a new chat's featured list); false
    * inside a conversation, where the main menu holds only the current model.
@@ -144,19 +162,26 @@ function stripSelection<T extends { selected: boolean }>(entry: T): Omit<T, 'sel
 /**
  * The cached list after a read: the page's selectable models, each keeping the options it showed
  * the last time it was selected; the selected one takes what was just read. An empty read keeps
- * the previous list — a menu that renders nothing for a moment is not news.
+ * the previous list.
  *
- * Order: inside a conversation the page's main menu holds only the current model and "More
- * models" the rest (measured), so that order would reshuffle Yobi's menu on every switch. Only a
- * new chat's featured list sets the order; other reads keep the previous one, with models not
- * seen before going last, in page order.
+ * Only a new chat's featured list sets the order (inside a conversation the main menu holds just
+ * the current model, which would reshuffle Yobi's menu on every switch). Other reads keep the
+ * previous order, with models not seen before going last, in page order.
  */
 export function mergeClaudeCatalog(
   previous: ClaudeModelCatalog | null,
   snapshot: ClaudePickerSnapshot,
   updatedAt: string,
 ): ClaudeModelCatalog | null {
-  if (snapshot.models.length === 0) return previous;
+  if (snapshot.models.length === 0) return catalogFromOfficial(previous, snapshot.official ?? null, updatedAt);
+  const official = new Map((snapshot.official ?? []).map((model) => [model.id, model]));
+  const before = new Map((previous?.models ?? []).map((model) => [model.id, model]));
+  // Which versions are current: the account data says so outright; failing that, a new chat's
+  // menu does (current ones in the main menu). A conversation's menu cannot tell, so the last
+  // answer stands.
+  const isLegacy = (model: ClaudePickerSnapshot['models'][number]): boolean | undefined =>
+    official.get(model.id)?.legacy
+    ?? (snapshot.pageOrdered ? model.more === true : before.get(model.id)?.legacy);
   const known = new Map((previous?.models ?? []).map((model) => [model.id, model.options]));
   const rank = new Map(snapshot.pageOrdered ? [] : (previous?.models ?? []).map((model, index) => [model.id, index]));
   const position = (id: string, pageIndex: number): number => rank.get(id) ?? rank.size + pageIndex;
@@ -172,10 +197,114 @@ export function mergeClaudeCatalog(
           thinking: snapshot.options.thinking ? stripSelection(snapshot.options.thinking) : null,
         }
         : known.get(model.id) ?? null;
-      return { id: model.id, label: model.label, sublabel: model.sublabel, options };
+      const entry: ClaudeModelInfo = { id: model.id, label: model.label, sublabel: model.sublabel, options };
+      const legacy = isLegacy(model);
+      if (legacy !== undefined) entry.legacy = legacy;
+      return entry;
     }),
     updatedAt,
   };
+}
+
+/** "Claude Sonnet 5.5" → "Sonnet 5.5", the way the menu itself names it. */
+export function claudeOfficialLabel(name: string): string {
+  return name.replace(/^Claude\s+/i, '').trim() || name;
+}
+
+/** "sonnet" for every Sonnet version — the line a newer version replaces an older one in. */
+export function claudeModelFamily(id: string): string {
+  return id.split('-').find((part) => part !== 'claude' && /^[a-z]+$/.test(part)) ?? '';
+}
+
+/**
+ * The cached list when the menu showed no models (the page moved its picker) but the account data
+ * could be read: retired models go, names follow the official ones, and a new current version
+ * joins when its line was already on the list as a current one, since the account could pick the
+ * old version it replaces. Anything else waits for a menu that can be read; without account data,
+ * nothing changes.
+ */
+export function catalogFromOfficial(
+  previous: ClaudeModelCatalog | null,
+  official: ClaudeOfficialModel[] | null,
+  updatedAt: string,
+): ClaudeModelCatalog | null {
+  if (!previous || !official || official.length === 0) return previous;
+  const kept = new Map(previous.models.map((model) => [model.id, model]));
+  const lines = new Set(previous.models.filter((model) => !model.legacy).map((model) => claudeModelFamily(model.id)));
+  const listed = official.filter((model) => kept.has(model.id) || (!model.legacy && lines.has(claudeModelFamily(model.id))));
+  if (listed.length === 0) return previous;
+  const ordered = [...listed.filter((model) => !model.legacy), ...listed.filter((model) => model.legacy)];
+  return {
+    models: ordered.map((model) => {
+      const cached = kept.get(model.id);
+      const entry: ClaudeModelInfo = {
+        id: model.id,
+        label: claudeOfficialLabel(model.name),
+        sublabel: cached?.sublabel ?? '',
+        options: cached?.options ?? null,
+        legacy: model.legacy,
+      };
+      return entry;
+    }),
+    updatedAt,
+  };
+}
+
+/** `claude-sonnet-4-6` → [4, 6]; a date suffix (`-20251001`) is not part of the version. */
+export function claudeModelVersion(id: string): number[] {
+  const parts = id.split('-');
+  const line = parts.findIndex((part) => part !== 'claude' && /^[a-z]+$/.test(part));
+  return parts.slice(line + 1).filter((part) => /^\d{1,2}$/.test(part)).map(Number);
+}
+
+function newerVersion(a: number[], b: number[]): boolean {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
+  }
+  return false;
+}
+
+/**
+ * Was this model current in that list? Known when the list recorded it; for a list cached before
+ * it was recorded, the newest version of its line on that list is taken to have been the current
+ * one — the older ones beside it were a choice.
+ */
+function wasCurrent(model: ClaudeModelInfo, catalog: ClaudeModelCatalog): boolean {
+  if (model.legacy !== undefined) return !model.legacy;
+  const line = claudeModelFamily(model.id);
+  const version = claudeModelVersion(model.id);
+  return !catalog.models.some((other) => claudeModelFamily(other.id) === line && newerVersion(claudeModelVersion(other.id), version));
+}
+
+/**
+ * The chosen model after a newer version took its place: it was current when chosen and is now
+ * listed with the older versions, so the setting moves to the current version of the same line.
+ * A model the user picked while it was already an older version is a deliberate choice and stays,
+ * and so does one whose status is not known. Effort and thinking belong to one model, so they go
+ * back to the page's own for the new one.
+ */
+export function upgradeClaudeChoice(
+  choice: ClaudeModelChoice,
+  previous: ClaudeModelCatalog | null,
+  next: ClaudeModelCatalog | null,
+): { choice: ClaudeModelChoice; from: string } | null {
+  const was = previous?.models.find((model) => model.id === choice.modelId);
+  const now = next?.models.find((model) => model.id === choice.modelId);
+  if (!previous || !was || !wasCurrent(was, previous) || now?.legacy !== true) return null;
+  const line = claudeModelFamily(choice.modelId);
+  const current = next?.models.find((model) => model.legacy === false && claudeModelFamily(model.id) === line);
+  if (!line || !current) return null;
+  return { choice: { modelId: current.id, effort: '', thinking: null }, from: choice.modelId };
+}
+
+/**
+ * Current models in the account data that the menu showed neither as selectable nor as locked:
+ * the walk missed part of the menu, which is how a page change shows up before anything fails.
+ */
+export function claudeModelsMissedByMenu(snapshot: ClaudePickerSnapshot): string[] {
+  if (!snapshot.official || snapshot.models.length === 0) return [];
+  const seen = new Set([...snapshot.models.map((model) => model.id), ...(snapshot.locked ?? [])]);
+  return snapshot.official.filter((model) => !model.legacy && !seen.has(model.id)).map((model) => model.id);
 }
 
 /** Same models, labels and options — `updatedAt` aside, which changes on every read. */

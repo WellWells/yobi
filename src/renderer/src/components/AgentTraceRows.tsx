@@ -3,6 +3,7 @@ import { Box, Loader, Stack, Text } from '@mantine/core';
 import { Check, X } from 'lucide-react';
 import { useI18nStore } from '../store/i18nStore';
 import type { AgentTraceTurn } from '../store/useAgentRunStore';
+import { ResearchChecklist } from './ResearchChecklist';
 
 const HIDDEN_CONFIG_KEYS = new Set(['provider']);
 
@@ -19,11 +20,8 @@ const SUBLINE_STYLE = {
 export function subLines(turn: AgentTraceTurn, t: (key: string) => string): string[] {
   const lines: string[] = [];
   if (turn.thought) lines.push(turn.thought);
-  if (turn.stage && turn.stage.label !== 'read') {
+  if (turn.stage) {
     lines.push(t(`agent.stage.${turn.stage.label}`).replace('{{detail}}', turn.stage.detail ?? ''));
-  }
-  if (turn.read && turn.read.length > 0) {
-    lines.push(t('agent.stage.readHosts').replace('{{hosts}}', turn.read.join(', ')));
   }
   if (turn.preview) lines.push(t('agent.trace.result').replace('{{preview}}', turn.preview));
   return lines;
@@ -40,9 +38,9 @@ export function configText(config?: Record<string, string>): string {
 export function AgentTraceRow({ turn }: { turn: AgentTraceTurn }) {
   const t = useI18nStore((state) => state.t);
   const icon = turn.status === 'ok'
-    ? <Check size={11} color="var(--mantine-color-teal-6)" />
+    ? <Check size={11} color="var(--mantine-color-success)" />
     : turn.status === 'error'
-      ? <X size={11} color="var(--mantine-color-red-6)" />
+      ? <X size={11} color="var(--mantine-color-error)" />
       : <Loader size={10} />;
   const config = configText(turn.config);
   const lines = subLines(turn, t);
@@ -70,6 +68,11 @@ export function AgentTraceRow({ turn }: { turn: AgentTraceTurn }) {
       {lines.map((line) => (
         <Text key={line} component="span" pl={SUBLINE_INDENT} style={SUBLINE_STYLE}>{line}</Text>
       ))}
+      {turn.research && (
+        <Box pl={SUBLINE_INDENT} style={{ minWidth: 0 }}>
+          <ResearchChecklist progress={turn.research} ended={turn.status === 'ok' || turn.status === 'error'} t={t} />
+        </Box>
+      )}
     </Stack>
   );
 }

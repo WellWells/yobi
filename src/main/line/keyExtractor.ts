@@ -1,10 +1,5 @@
 /**
- * Extracts the LINE PC wxSQLite3 passphrase from LINE.exe process memory (Windows only).
- *
- * LINE itself keeps the key only in its running process's memory — never on disk — so a
- * normal signed consumer app cannot obtain it on macOS (SIP / hardened runtime block reading
- * another process's memory). On Windows the scan runs in PowerShell via kernel32
- * ReadProcessMemory; this module ranks the candidates and probes them.
+ * Extracts the LINE PC database passphrase from the running LINE.exe (Windows only).
  *
  * SECURITY: nothing here logs the key or puts it in an error message. It is handed back to
  * LineService, which stores it through lineKeyStore (safeStorage-encrypted, in a file the
@@ -22,8 +17,7 @@ const execFileAsync = promisify(execFile);
 const MAX_REGION_BYTES = 128 * 1024 * 1024;
 const SCAN_TIMEOUT_MS = 150_000;
 const SCAN_MAX_BUFFER = 64 * 1024 * 1024;
-// Emit all candidates (frequency-ordered), not a top-N slice: the reference probes the
-// full set serially and the key is not guaranteed to be high-frequency on every build.
+// Every candidate is emitted, frequency-ordered: the key is not always among the most frequent.
 const MAX_CANDIDATES = 100_000;
 
 export function validateKeyFormat(candidate: string): boolean {
@@ -58,9 +52,7 @@ export function parseKeyCandidates(stdout: string): string[] {
   return out;
 }
 
-// PowerShell scanner: find LINE.exe, walk its committed private regions via
-// VirtualQueryEx, ReadProcessMemory each, extract 32-char hex tokens from both ASCII
-// and UTF-16LE (Qt QString) encodings, aggregate by frequency, emit "<count> <hex>".
+// PowerShell scanner: prints "<count> <hex>" for each distinct 32-char hex token in LINE.exe's private memory.
 const SCAN_SCRIPT = `
 $ErrorActionPreference = 'Stop'
 $proc = Get-Process -Name LINE -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -136,7 +128,7 @@ export interface ExtractKeyDeps {
 /**
  * Scan LINE's memory and return the first candidate that decrypts `dbPath`.
  * `probe` is injected by the reader so this module never loads the native SQLite
- * driver (keeping it importable in the offline test environment).
+ * driver itself.
  */
 export async function extractLineKey(
   dbPath: string,

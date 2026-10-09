@@ -6,28 +6,39 @@ import { ChatRecipientPicker } from '../../../components/ChatRecipientPicker';
 import { ToggleSwitch } from '../../../components/ToggleSwitch';
 import { SelectDropdown } from '../../../components/SelectDropdown';
 import type { BotPlatform } from '../../../../../shared/types';
+import { botStepTargets } from '../../../../../shared/botRecipients';
 import type { SkillConfigProps } from './types';
 
+const TEMPLATE_RE = /\{\{[^}]+\}\}/;
+
 export const BotConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
-  const platform = (step.config.platform || 'auto') as BotPlatform | 'auto';
-  const chatIdsRaw = (step.config.chatIds ?? step.config.chatId ?? '').trim();
+  const rawPlatform = (step.config.platform ?? '').trim();
+  // A flow variable picks the bot at run time (the X gallery template's Telegram/LINE setting).
+  const variablePlatform = TEMPLATE_RE.test(rawPlatform) ? rawPlatform : '';
+  const platform = (variablePlatform ? 'auto' : rawPlatform || 'auto') as BotPlatform | 'auto';
+  const chatIdsRaw = botStepTargets(step.config);
 
   return (
     <Stack gap="xs">
       <SelectDropdown
         label={t('flow.skill.bot.platform')}
         options={[
+          ...(variablePlatform
+            ? [{ value: variablePlatform, label: t('flow.skill.bot.platform.variable').replace('{{name}}', variablePlatform) }]
+            : []),
           { value: 'auto', label: t('flow.skill.bot.platform.auto') },
           { value: 'telegram', label: t('flow.skill.bot.platform.telegram') },
           { value: 'line', label: t('flow.skill.bot.platform.line') },
         ]}
-        value={platform}
+        value={variablePlatform || platform}
         onChange={(value) => onChange({ ...step.config, platform: value })}
         size="sm"
       />
-      <Text fz="xs" c="dimmed">{t(`flow.skill.bot.platform.${platform}.hint`)}</Text>
+      <Text fz="xs" c="dimmed">
+        {variablePlatform ? t('flow.skill.bot.platform.variable.hint') : t(`flow.skill.bot.platform.${platform}.hint`)}
+      </Text>
       {platform === 'line' && (step.config.attachment ?? '').trim() !== '' && (
-        <Text fz="xs" c="orange">{t('flow.skill.bot.platform.line.attachmentWarning')}</Text>
+        <Text fz="xs" c="var(--mantine-color-warning)">{t('flow.skill.bot.platform.line.attachmentWarning')}</Text>
       )}
       <ChatRecipientPicker
         value={chatIdsRaw}

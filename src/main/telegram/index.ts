@@ -1,4 +1,5 @@
 export { TelegramRuntime } from './runtime';
+export type { MenuAccountAccess } from './commands';
 export {
   issuePairingCode,
   revokePairingCode,

@@ -1,5 +1,6 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { writeFileAtomic } from '../atomicWrite';
 import { getFlowDataDir } from '../flow/paths';
 import { sendLog } from '../helpers';
 import type { BotPlatform } from '../../shared/types';
@@ -11,6 +12,7 @@ import {
   listContacts,
   listPairedContacts,
   normalizeContactMap,
+  revokeAllPairings,
   revokePairing,
   setReachability,
   upsertContact,
@@ -24,9 +26,8 @@ import {
 export * from './state';
 
 /**
- * Lives outside config.json on purpose. The pairing list inside config was wiped twice by a test run
- * writing to the dev config, and restoring an older backup would do the same — a second file in a
- * different lifecycle is the only thing that makes recovery survive losing the first one.
+ * Lives outside config.json on purpose: a second file with its own lifecycle lets pairings survive a
+ * config reset or the restore of an older backup.
  */
 let cache: BotContactMap | null = null;
 let writeChain: Promise<void> = Promise.resolve();
@@ -52,7 +53,7 @@ function persist(): Promise<void> {
     .then(async () => {
       const file = storePath();
       await fs.mkdir(path.dirname(file), { recursive: true });
-      await fs.writeFile(file, JSON.stringify(snapshot, null, 2), 'utf-8');
+      await writeFileAtomic(file, JSON.stringify(snapshot, null, 2));
     })
     .catch((err: unknown) => {
       sendLog(`⚠️ [Bot] could not save the contact directory: ${err instanceof Error ? err.message : String(err)}`);
@@ -134,6 +135,14 @@ export async function listBotPairedContacts(platform: BotPlatform): Promise<BotC
 export async function revokeBotPairing(platform: BotPlatform, id: string): Promise<void> {
   const current = await load();
   const next = revokePairing(current, platform, id);
+  if (next === current) return;
+  cache = next;
+  await persist();
+}
+
+export async function revokeAllBotPairings(): Promise<void> {
+  const current = await load();
+  const next = revokeAllPairings(current);
   if (next === current) return;
   cache = next;
   await persist();

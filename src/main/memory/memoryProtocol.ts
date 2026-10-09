@@ -26,14 +26,16 @@ export interface ParsedMemoryReply {
 export const MEMORY_LINE_SYNTAX = 'memory_add: [short sentence] / memory_update: [id] = [new sentence] / memory_forget: [id]';
 export const MEMORY_REVIEW_SYNTAX = 'memory_review: [what to tidy]';
 
-const FENCE_RE = /^\s*(```|~~~)/;
+// Exported for recapLine: the recap line rides in the same tail block, so both parsers must agree
+// on what a fence, a rule and a memory line are.
+export const FENCE_RE = /^\s*(```|~~~)/;
 const KEY_RE = /^memory\\?_(add|update|forget|review)\s*[:：]\s*(.*)$/i;
 const ID_RE = /\bm\d+\b/gi;
 const UPDATE_RE = /^\[?(m\d+)\]?\s*(?:=|＝|->|→|:|：)\s*(.+)$/i;
-const RULE_RE = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
+export const RULE_RE = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
 
 /** Bold, code ticks and a list or quote marker are the ways a model decorates a line it was told to write plainly. */
-function normalizeLine(line: string): string {
+export function normalizeLine(line: string): string {
   return line
     .trim()
     .replace(/\*\*|__/g, '')
@@ -68,7 +70,7 @@ function parseLine(line: string): MemoryOp[] | null {
     .map((id) => ({ kind: 'forget' as const, id }));
 }
 
-function isMemoryLine(line: string): boolean {
+export function isMemoryLine(line: string): boolean {
   return parseLine(line) !== null;
 }
 

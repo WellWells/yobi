@@ -10,12 +10,13 @@ import type {
 export const RANGE_DAYS = [3, 7, 14, 30] as const;
 export const DEFAULT_RANGE_DAYS = 7;
 
-export const SCOPES = ['all', 'chat', 'flow'] as const;
+export const SCOPES = ['all', 'chat', 'agent', 'flow'] as const;
 export type StatsScope = (typeof SCOPES)[number];
 
 export const OUTCOME_KEYS = ['success', 'failure', 'timeout'] as const;
 
-const DOMAINS: MetricDomain[] = ['chat', 'flow'];
+/** Display order of the per-domain breakdowns, matching the scope filter. */
+export const DOMAINS: readonly MetricDomain[] = ['chat', 'agent', 'flow'];
 
 function zero(): MetricCounts {
   return { success: 0, failure: 0, timeout: 0 };
@@ -60,7 +61,7 @@ export interface StatsAggregate {
 }
 
 /**
- * `all` reads the day's own token total rather than summing the two domains: it also covers
+ * `all` reads the day's own token total rather than summing the domains: it also covers
  * calls made outside a run and days written before domain attribution existed, which would
  * otherwise read as zero.
  */
@@ -70,7 +71,7 @@ export function aggregateStats(
   scope: StatsScope,
   today: Date = new Date(),
 ): StatsAggregate {
-  const scoped: MetricDomain[] = scope === 'all' ? DOMAINS : [scope];
+  const scoped: readonly MetricDomain[] = scope === 'all' ? DOMAINS : [scope];
   const result: StatsAggregate = {
     labels: [],
     runsByDay: { success: [], failure: [], timeout: [] },
@@ -80,7 +81,11 @@ export function aggregateStats(
     requests: zero(),
     requestTotal: 0,
     tokens: { input: 0, output: 0 },
-    split: { chat: { runs: 0, requests: 0 }, flow: { runs: 0, requests: 0 } },
+    split: {
+      chat: { runs: 0, requests: 0 },
+      agent: { runs: 0, requests: 0 },
+      flow: { runs: 0, requests: 0 },
+    },
     keys: {},
   };
 

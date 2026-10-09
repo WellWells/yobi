@@ -1,9 +1,17 @@
 export class Mutex {
   private tail: Promise<void> = Promise.resolve();
+  private held = 0;
+
+  /** Someone holds the lock or waits for it — background work should come back later. */
+  get busy(): boolean {
+    return this.held > 0;
+  }
 
   runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    this.held++;
     const run = this.tail.then(fn, fn);
     this.tail = run.then(() => undefined, () => undefined);
+    void this.tail.then(() => { this.held--; });
     return run;
   }
 }
@@ -68,19 +76,9 @@ export const llmLane = new Mutex();
 export const clipboardLane = new Mutex();
 export const pageFetchLane = new Mutex();
 /**
- * Serializes YouTube transcript fetches.
- *
- * They all share the `persist:youtube` partition, and a fetch that fails its first attempt
- * calls `clearStorageData()` on it before retrying — which wipes the cookies out from under
- * any other fetch in flight. Two callers can reach this without any flow concurrency at all
- * (a flow's youtube step and a YouTube URL pasted at the hotkey), so the lane belongs here
- * regardless of MAX_CONCURRENT_FLOWS.
- *
- * Timeout arithmetic, since the wait counts against the step: a fetch caps itself at 135 s
- * ((25 s load + 40 s extract) x 2 attempts + 5 s) and the `youtube` step gets 300 s, so one
- * queued fetch still fits (135 waiting + 135 running). THREE-way contention does not — two
- * flow steps plus a hotkey paste can push the third past 300 s and report a timeout when it
- * was only ever waiting. Left as is: the alternative it replaced was both fetches corrupting
- * each other, and the step is fail-soft (`isFailed=1`) rather than fatal.
+ * Serializes YouTube transcript fetches: they share the `persist:youtube` partition, and a retry
+ * calls `clearStorageData()` on it, which would wipe another fetch's cookies mid-flight.
+ * A fetch caps at 135 s and the step at 300 s, so one queued fetch fits; three-way contention can
+ * time out a step that was only waiting (the step is fail-soft).
  */
 export const youtubeLane = new Mutex();

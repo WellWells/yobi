@@ -8,11 +8,7 @@ export interface EmptyStateProps {
   label: React.ReactNode;
   fill?: boolean;
   children?: React.ReactNode;
-  /**
-   * Still fetching. The biggest panes drew "there is nothing here" during the wait, which is a
-   * different and much more alarming statement than "one moment" — on a cold file cache the
-   * conversation list says the user's saved chats are gone for as long as the read takes.
-   */
+  /** Still fetching: shows a loader, so a slow read never claims the user's saved data is gone. */
   busy?: boolean;
 }
 

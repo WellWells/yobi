@@ -4,27 +4,8 @@ import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_STOP_SELECTOR } from './chatgp
  * Waits for ChatGPT's answer and reads it back. Runs in the page via `executeJavaScript`, so
  * it needs `sleep`, `waitFor` and `interceptCopy` already in scope.
  *
- * Completion has two signals and they are not equally trustworthy. The per-turn copy control
- * is definitive — ChatGPT renders it only once the turn is finished. "The text stopped
- * changing" is not: this loop used to accept three unchanged polls (about 750 ms) on its own,
- * so any pause in token delivery — a search or tool step, a think between paragraphs, plain
- * network jitter — ended the read early and returned a partial answer as if it were complete,
- * with no error and no copied Markdown. It now has to see that ChatGPT is not still
- * generating, the way the Gemini reader does.
- *
- * If the stop button ever stops matching, `isGenerating()` simply reads false and the loop
- * behaves as it did before — the gate can only ever make it wait longer, never hang, because
- * a stall still breaks out after `stuckMs`.
- *
- * "A new answer arrived" is NOT a turn count. ChatGPT keeps only a window of turns mounted, so
- * once a conversation runs long enough it unmounts an old turn as it mounts the new one and the
- * count never grows. Measured on a live run: the answer streamed in and finished, copy control
- * and all, while \`document.querySelectorAll('[data-message-author-role="assistant"]').length\`
- * sat at 3 — and the read died on "Timeout waiting for: new ChatGPT response" two minutes later
- * with the finished answer on screen. Keeping the page across turns (page reuse) is what made
- * conversations long enough to reach that window. So the gate takes the LAST turn the submit
- * saw and waits for the newest turn to stop being it; the count is kept only as a second way to
- * say yes, never as the only one.
+ * Done means the turn's own copy control is up, or the text is stable while nothing is
+ * generating. A new answer is detected by the last turn's identity, not by the turn count alone.
  */
 export const CHATGPT_READ_JS = `async function chatgptWaitAndRead(submitted, opts) {
   opts = opts || {};
@@ -97,13 +78,7 @@ export const CHATGPT_READ_JS = `async function chatgptWaitAndRead(submitted, opt
     return latest !== seenTurn;
   }
 
-  /*
-   * The copy control that belongs to THIS turn, never one borrowed from the page. The
-   * recovery below hands back whatever this button copies, so a button found outside the
-   * turn would quietly return the previous answer — worse than the timeout it replaces.
-   * Scope therefore narrows to the turn's own container and, failing that, the turn itself;
-   * finding nothing means no recovery, which is exactly the old behaviour.
-   */
+  // The copy control inside THIS turn only: one found elsewhere would copy the previous answer.
   function ownCopyButton(turn) {
     if (!turn) return null;
     var container = turn.closest('.agent-turn') || turn.closest('.group\\\\/turn-messages') || turn;
@@ -111,20 +86,8 @@ export const CHATGPT_READ_JS = `async function chatgptWaitAndRead(submitted, opt
     return btns.length ? btns[btns.length - 1] : null;
   }
 
-  /*
-   * A finished turn whose text never arrives. Measured 2026-09-18 on Free/Instant: the answer
-   * "7" left \`<p data-start="0" data-end="7"></p>\` EMPTY in the live DOM with the stop
-   * control already gone, and it stayed empty — reloading the conversation showed the text, so
-   * the stream ("Wells，7", 7 chars) was rewritten server-side and the rewrite rendered
-   * nothing. Reproduced with CDP typing and no Yobi script in play, so it is ChatGPT's
-   * renderer. Waiting for text that will never appear burned the entire timeout and failed
-   * with the answer sitting on screen.
-   *
-   * Two conditions gate the escape and both matter: the turn must be FINISHED (its own copy
-   * control is up and nothing is generating) and it must have been empty for
-   * EMPTY_SETTLE_MS. A turn that is merely slow to paint its first token has no copy control
-   * yet, so it still waits the ordinary way — dropping either half would end reads early.
-   */
+  // A finished turn (own copy control up, nothing generating) that stays empty for
+  // EMPTY_SETTLE_MS is read through its copy control instead of waiting out the timeout.
   var emptySince = null;
   function finishedEmpty() {
     var turn = getLatestAssistantTurn();
@@ -185,11 +148,8 @@ const CHATGPT_TITLE_SUFFIX_RE = /\s*[-–—]\s*ChatGPT\s*$/i;
 const CHATGPT_SITE_TITLES = new Set(['chatgpt', 'chatgpt.com', 'new chat']);
 
 /**
- * Trims the site name off a ChatGPT conversation title.
- *
- * Kept on this side of the boundary on purpose: a regex literal written inside a backtick
- * template loses its own escapes before the page runs it, which is exactly how Duck.ai's
- * equivalent ended up matching nothing at all for months.
+ * Trims the site name off a ChatGPT conversation title. Kept outside the injected script: a
+ * regex literal inside a template string loses its escapes.
  */
 export function cleanChatgptTitle(rawTitle: string): string {
   const trimmed = (rawTitle || '').trim();

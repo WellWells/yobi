@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 import { saveOutput } from '../output';
 import type { MarkdownOptions } from '../output';
-import type { TurnMeta } from '../../shared/conversationDoc';
+import type { MapPlaceRef, TurnMeta } from '../../shared/conversationDoc';
 import { updateConversationThread } from './conversationStore';
 import {
   providerKeyFor,
@@ -22,8 +22,12 @@ export async function appendOrCreateConversation(args: {
   onLog: (message: string) => void;
   /** Send time of a message that started a new provider thread. */
   threadAt?: string;
+  /** The Maps place this turn carried reviews of. */
+  map?: MapPlaceRef;
+  /** Name prefix for a new file (a bot chat's conversation). */
+  fileLabel?: string;
 }): Promise<string> {
-  const { plan, conversationPath, threadUrl, targetUrl, onLog } = args;
+  const { plan, conversationPath, threadUrl, targetUrl, onLog, map } = args;
 
   if (plan && conversationPath) {
     try {
@@ -32,7 +36,7 @@ export async function appendOrCreateConversation(args: {
         prompt: args.prompt,
         response: args.response,
         meta: args.turnMeta,
-        thread: plan.thread,
+        thread: map ? { ...plan.thread, map } : plan.thread,
         threadUrl,
         targetUrl,
         previousTurnCount: plan.previousTurnCount,
@@ -46,14 +50,23 @@ export async function appendOrCreateConversation(args: {
     }
   }
 
-  const filePath = await saveOutput({ ...args.markdownOptions, outputDir: args.outputDir });
-  if (threadUrl) {
+  const filePath = await saveOutput({
+    ...args.markdownOptions,
+    outputDir: args.outputDir,
+    ...(args.fileLabel ? { fileLabel: args.fileLabel } : {}),
+  });
+  if (threadUrl || map) {
     await updateConversationThread(filePath, {
       v: 1,
-      provider: providerKeyFor(targetUrl),
-      threadUrl,
-      threadTurns: 1,
-      ...(args.threadAt ? { threadAt: args.threadAt } : {}),
+      ...(threadUrl
+        ? {
+          provider: providerKeyFor(targetUrl),
+          threadUrl,
+          threadTurns: 1,
+          ...(args.threadAt ? { threadAt: args.threadAt } : {}),
+        }
+        : {}),
+      ...(map ? { map } : {}),
     });
   }
   onLog(`💾 Saved: ${path.basename(filePath)}`);

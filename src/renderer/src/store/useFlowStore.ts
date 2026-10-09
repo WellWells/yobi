@@ -12,7 +12,10 @@ import type {
 } from '../../../shared/types';
 import { flowApi } from '../api/electronApi';
 import { useFlowBuildStore } from './useFlowBuildStore';
-import { cloneFlow, createDefaultFlow, createDefaultStep, createId, findMatchingMarker, DEFAULT_OUTPUT_BASE } from './flowHelpers';
+import {
+  cloneFlow, createDefaultFlow, createDefaultStep, createId, findLoopSource, findMatchingMarker, mergeSaveReply,
+  nextFreeOutputKey, stepInsertIndex, DEFAULT_OUTPUT_BASE,
+} from './flowHelpers';
 import { SKILLS_WITHOUT_OUTPUT_KEY } from '../../../shared/flowSkillSchema';
 
 interface ActionState {
@@ -44,6 +47,10 @@ interface ActionState {
     providerUrl?: string,
   ) => Promise<FlowBuildOutcome>;
   adoptFlow: (flow: FlowDefinition) => void;
+  /** A flow main saved over (an agent's confirmed change): both the editor copy and the saved copy take it. */
+  replaceSavedFlow: (flow: FlowDefinition) => void;
+  /** A flow main deleted on its own (a one-time flow after its run). */
+  dropRemovedFlow: (flowId: string) => void;
   restoreFlow: (flowId: string) => void;
   addStep: (flowId: string, type?: SkillType) => void;
   removeStep: (flowId: string, stepId: string) => void;
@@ -59,6 +66,11 @@ interface ActionState {
   markFlowDone: (flowId: string) => void;
   importFlows: (flows: FlowDefinition[]) => Promise<void>;
 }
+
+// Saves can overlap (add-step auto-save, then Ctrl+S). Each request gets a number; a reply older than
+// one already applied to that flow is dropped so it cannot roll the saved copy back.
+let saveRequestSeq = 0;
+const appliedSaveSeq = new Map<string, number>();
 
 export const useFlowStore = create<ActionState>((set, get) => ({
   flows: [],
@@ -86,17 +98,9 @@ export const useFlowStore = create<ActionState>((set, get) => ({
       flows: [...state.flows, flow],
       selectedFlowId: flow.id,
       executionLogs: [],
+      executionResult: null,
     }));
-    const saved = await flowApi.save(flow);
-    if (saved) {
-      set((state) => ({
-        flows: state.flows.map((f) => (f.id === saved.id ? saved : f)),
-        savedFlows: {
-          ...state.savedFlows,
-          [saved.id]: cloneFlow(saved),
-        },
-      }));
-    }
+    await get().saveFlow(flow);
   },
 
   updateFlow: (flow) => {
@@ -106,16 +110,20 @@ export const useFlowStore = create<ActionState>((set, get) => ({
   },
 
   saveFlow: async (flow) => {
+    const seq = ++saveRequestSeq;
+    // The editor stays live while main writes flows.json: edits made meanwhile must survive the reply.
+    const sent = cloneFlow(flow);
     const saved = await flowApi.save(flow);
-    if (saved) {
-      set((state) => ({
-        flows: state.flows.map((f) => (f.id === saved.id ? saved : f)),
-        savedFlows: {
-          ...state.savedFlows,
-          [saved.id]: cloneFlow(saved),
-        },
-      }));
-    }
+    if (!saved) return;
+    if ((appliedSaveSeq.get(saved.id) ?? 0) > seq) return;
+    appliedSaveSeq.set(saved.id, seq);
+    set((state) => ({
+      flows: state.flows.map((f) => (f.id === saved.id ? mergeSaveReply(f, sent, saved) : f)),
+      savedFlows: {
+        ...state.savedFlows,
+        [saved.id]: cloneFlow(saved),
+      },
+    }));
   },
 
   deleteFlow: async (flowId) => {
@@ -177,6 +185,8 @@ export const useFlowStore = create<ActionState>((set, get) => ({
           ...state.savedFlows,
           [duplicated.id]: cloneFlow(duplicated),
         },
+        executionLogs: [],
+        executionResult: null,
       };
     });
     return duplicated;
@@ -219,7 +229,7 @@ export const useFlowStore = create<ActionState>((set, get) => ({
     set((state) => ({ isExecuting: true, executionLogs: [], executionResult: null, runningFlowIds: [...state.runningFlowIds.filter((id) => id !== flowId), flowId] }));
     try {
       const result = await flowApi.execute(flowId);
-      set({ executionResult: result });
+      set((state) => (state.selectedFlowId === flowId ? { executionResult: result } : state));
       return result;
     } finally {
       set((state) => ({ isExecuting: false, runningFlowIds: state.runningFlowIds.filter((id) => id !== flowId) }));
@@ -261,6 +271,32 @@ export const useFlowStore = create<ActionState>((set, get) => ({
         }));
   },
 
+  replaceSavedFlow: (flow) => {
+    set((state) => (state.flows.some((existing) => existing.id === flow.id)
+      ? {
+          flows: state.flows.map((existing) => (existing.id === flow.id ? cloneFlow(flow) : existing)),
+          savedFlows: { ...state.savedFlows, [flow.id]: cloneFlow(flow) },
+        }
+      : state));
+  },
+
+  // Unsaved edits to the open flow outlive it as an unsaved copy: saving brings the flow back.
+  dropRemovedFlow: (flowId) => {
+    set((state) => {
+      const open = state.flows.find((f) => f.id === flowId);
+      const saved = state.savedFlows[flowId];
+      const keepEdits = open !== undefined && state.selectedFlowId === flowId
+        && saved !== undefined && JSON.stringify(open) !== JSON.stringify(saved);
+      const savedFlows = Object.fromEntries(Object.entries(state.savedFlows).filter(([id]) => id !== flowId));
+      if (keepEdits) return { savedFlows };
+      return {
+        flows: state.flows.filter((f) => f.id !== flowId),
+        selectedFlowId: state.selectedFlowId === flowId ? null : state.selectedFlowId,
+        savedFlows,
+      };
+    });
+  },
+
   restoreFlow: (flowId) => {
     const saved = get().savedFlows[flowId];
     if (!saved) return;
@@ -272,18 +308,15 @@ export const useFlowStore = create<ActionState>((set, get) => ({
   addStep: (flowId, type = 'shell') => {
     const t = useI18nStore.getState().t;
     const flow = get().flows.find(f => f.id === flowId);
-    const sameTypeCount = flow?.steps.filter(s => s.type === type).length ?? 0;
+    const existing = flow?.steps ?? [];
+    const sameTypeCount = existing.filter(s => s.type === type).length;
     const base = DEFAULT_OUTPUT_BASE[type] ?? type;
-    const autoKey = SKILLS_WITHOUT_OUTPUT_KEY.includes(type) ? undefined : `${base}_${sameTypeCount + 1}`;
+    // Counting from sameTypeCount + 1 keeps the usual names and never re-binds a deleted step's key.
+    const autoKey = SKILLS_WITHOUT_OUTPUT_KEY.includes(type) ? undefined : nextFreeOutputKey(base, existing, sameTypeCount + 1);
     const step = createDefaultStep(type, autoKey, t);
-    if (type === 'loop' && flow && flow.steps.length > 0) {
-      const lastOutputStep = [...flow.steps].reverse().find(s => {
-        if (s.type === 'clipboard' || s.type === 'bot' || s.type === 'comment' || s.type === 'loop' || s.type === 'delay' || s.type === 'notify' || s.type === 'stop') return false;
-        return true;
-      });
-      if (lastOutputStep) {
-        step.config.input = `{{${lastOutputStep.outputKey}}}`;
-      }
+    if (type === 'loop') {
+      const source = findLoopSource(existing, stepInsertIndex(existing));
+      if (source) step.config.input = `{{${source.outputKey.trim()}}}`;
     }
     const newSteps: SkillInstance[] = [step];
     if (type === 'loop') newSteps.push(createDefaultStep('end_loop', undefined, t));
@@ -292,9 +325,7 @@ export const useFlowStore = create<ActionState>((set, get) => ({
       flows: state.flows.map((f) => {
         if (f.id !== flowId) return f;
         const steps = [...f.steps];
-        const last = steps[steps.length - 1];
-        const insertAt = last && (last.type === 'end_loop' || last.type === 'end_if') ? steps.length - 1 : steps.length;
-        steps.splice(insertAt, 0, ...newSteps);
+        steps.splice(stepInsertIndex(steps), 0, ...newSteps);
         return { ...f, steps };
       }),
     }));
@@ -414,10 +445,12 @@ export const useFlowStore = create<ActionState>((set, get) => ({
     }));
   },
 
+  // Main broadcasts every flow's run, so only the open flow's logs are kept. The check reads the
+  // selection inside set(): a listener closure would compare against a stale selection.
   appendExecutionLog: (log) => {
-    set((state) => ({
-      executionLogs: [...state.executionLogs.slice(-499), log],
-    }));
+    set((state) => (log.flowId === state.selectedFlowId
+      ? { executionLogs: [...state.executionLogs.slice(-499), log] }
+      : state));
   },
 
   markFlowRunning: (flowId) => {
@@ -449,6 +482,9 @@ export const useFlowStore = create<ActionState>((set, get) => ({
         ...raw,
         id,
         name,
+        // Read-state checkpoints are keyed by step id: a copy sharing ids with another flow would
+        // share its seen items and on_change value. New copy, new ids — as duplicate() does.
+        steps: (raw.steps ?? []).map((s) => ({ ...s, id: createId(), config: { ...s.config } })),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       });
@@ -459,22 +495,9 @@ export const useFlowStore = create<ActionState>((set, get) => ({
       flows: [...state.flows, ...preparedFlows],
       selectedFlowId: lastFlow?.id ?? state.selectedFlowId,
       executionLogs: [],
+      executionResult: null,
     }));
 
-    const savedResults = await Promise.all(
-      preparedFlows.map((flow) => flowApi.save(flow)),
-    );
-    const savedMap: Record<string, FlowDefinition> = {};
-    const savedFlowsById: Record<string, FlowDefinition> = {};
-    for (const saved of savedResults) {
-      if (saved) {
-        savedMap[saved.id] = saved;
-        savedFlowsById[saved.id] = cloneFlow(saved);
-      }
-    }
-    set((state) => ({
-      flows: state.flows.map((f) => savedMap[f.id] ?? f),
-      savedFlows: { ...state.savedFlows, ...savedFlowsById },
-    }));
+    await Promise.all(preparedFlows.map((flow) => get().saveFlow(flow)));
   },
 }));

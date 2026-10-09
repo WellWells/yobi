@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import { IPC } from '../../shared/types';
 import { normalizeMemoryNotes } from '../../shared/userMemory';
-import type { MemoryEditFailure, MemoryEditResult, UserMemoryBotSelf, UserMemorySnapshot } from '../../shared/userMemory';
+import type { BotSelfChange, MemoryEditFailure, MemoryEditResult, UserMemoryBotSelf, UserMemorySnapshot } from '../../shared/userMemory';
 import { sendLog, sendToRenderer } from '../helpers';
 import {
   addMemoryEntry,
@@ -34,7 +34,11 @@ function idList(raw: unknown): string[] {
   return [...new Set(raw.map((value) => String(value ?? '').trim()).filter(Boolean))];
 }
 
-export function registerMemoryHandlers(): void {
+/**
+ * `onBotSelfChanged`: which accounts are "me" decides what their Telegram "/" menus list, so the
+ * caller rebuilds them after the mark changes.
+ */
+export function registerMemoryHandlers(onBotSelfChanged?: () => void): void {
   onUserMemoryChanged((state) => sendToRenderer(IPC.MEMORY_CHANGED, memorySnapshot(state)));
 
   ipcMain.handle(IPC.MEMORY_GET, async (): Promise<UserMemorySnapshot> => memorySnapshot(await loadUserMemory()));
@@ -78,9 +82,25 @@ export function registerMemoryHandlers(): void {
     return { ok: result === true, snapshot: memorySnapshot(state) };
   });
 
-  ipcMain.handle(IPC.MEMORY_SET_BOT_SELF, async (_event, raw: Partial<UserMemoryBotSelf>): Promise<UserMemorySnapshot> => {
-    const botSelf: UserMemoryBotSelf = { telegram: idList(raw?.telegram), line: idList(raw?.line) };
-    const { state } = await updateUserMemory((current) => ({ state: { ...current, botSelf }, result: true }));
+  // Read-modify-write of one account's mark inside the store's lock: the other marks are
+  // whatever the file holds now, never what the renderer last saw.
+  ipcMain.handle(IPC.MEMORY_SET_BOT_SELF, async (_event, raw: Partial<BotSelfChange>): Promise<UserMemorySnapshot> => {
+    const platform = raw?.platform === 'telegram' || raw?.platform === 'line' ? raw.platform : null;
+    const userId = String(raw?.userId ?? '').trim();
+    if (!platform || !userId || typeof raw?.self !== 'boolean') return memorySnapshot(await loadUserMemory());
+    const self = raw.self;
+    const { state, result } = await updateUserMemory((current) => {
+      const ids = idList(current.botSelf?.[platform]);
+      if (ids.includes(userId) === self) return null;
+      const nextIds = self ? [...ids, userId] : ids.filter((id) => id !== userId);
+      const botSelf: UserMemoryBotSelf = {
+        telegram: idList(current.botSelf?.telegram),
+        line: idList(current.botSelf?.line),
+        [platform]: nextIds,
+      };
+      return { state: { ...current, botSelf }, result: true };
+    });
+    if (result) onBotSelfChanged?.();
     return memorySnapshot(state);
   });
 }

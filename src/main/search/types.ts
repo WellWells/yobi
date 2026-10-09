@@ -27,4 +27,6 @@ export interface SourceDoc {
 export interface SearchOutcome {
   answer: string;
   sources: SourceDoc[];
+  /** Some of the plan's queries got DuckDuckGo's verification page; the rest answered. */
+  partiallyBlocked?: boolean;
 }

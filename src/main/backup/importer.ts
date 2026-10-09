@@ -14,7 +14,8 @@ import {
   orderCategories,
 } from './manifest';
 import type { CategoryDef } from './manifest';
-import { countCategoryItems, safeResolveWithin, walkDirFiles } from './fsUtils';
+import { countCategoryItems } from './fsUtils';
+import { readIncomingFiles, replaceDirFiles } from './restoreDir';
 
 export interface ApplyBackupDeps {
   reloadFlows: () => Promise<void>;
@@ -110,33 +111,10 @@ async function restoreFlows(zip: AdmZip, deps: ApplyBackupDeps): Promise<boolean
 
 async function restoreDir(zip: AdmZip, def: CategoryDef): Promise<boolean> {
   const targetDir = await def.resolveSource();
-  const prefix = `${def.zipPrefix}/`;
-  const entries = zip.getEntries().filter((entry) => {
-    if (entry.isDirectory) return false;
-    const name = entry.entryName.replace(/\\/g, '/');
-    if (!name.startsWith(prefix)) return false;
-    if (def.fileFilter && !def.fileFilter(path.basename(name))) return false;
-    return true;
-  });
-  if (entries.length === 0) return false;
-
-  if (def.replaceMode === 'whole-dir') {
-    await fs.rm(targetDir, { recursive: true, force: true });
-  } else {
-    for (const file of walkDirFiles(targetDir, def.fileFilter)) {
-      await fs.rm(file.abs, { force: true }).catch(() => {});
-    }
-  }
-  await fs.mkdir(targetDir, { recursive: true });
-
-  for (const entry of entries) {
-    const name = entry.entryName.replace(/\\/g, '/');
-    const rel = name.slice(prefix.length);
-    const dest = safeResolveWithin(targetDir, rel);
-    if (!dest) continue;
-    await fs.mkdir(path.dirname(dest), { recursive: true });
-    await fs.writeFile(dest, entry.getData());
-  }
+  // Decoded before anything is touched: a damaged entry fails the category with the data intact.
+  const incoming = readIncomingFiles(zip, def, targetDir);
+  if (incoming.length === 0) return false;
+  await replaceDirFiles(targetDir, def, incoming);
   return true;
 }
 

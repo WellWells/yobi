@@ -1,4 +1,4 @@
-import { CLEAN_UA } from './userAgent';
+import { userAgentForUrl } from './userAgent';
 
 const BOQ_ENDPOINT = 'https://www.google.com/httpservice/web/PrivateLocalSearchUiDataService/GetLocalBoqProxy';
 
@@ -23,10 +23,9 @@ export interface MapReviewsResult {
   placeUrl: string;
 }
 
-const FETCH_HEADERS = {
-  'User-Agent': CLEAN_UA,
-  'Accept': '*/*',
-} as const;
+function fetchHeaders(url: string): Record<string, string> {
+  return { 'User-Agent': userAgentForUrl(url), Accept: '*/*' };
+}
 
 export function isAllowedMapsHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
@@ -82,7 +81,7 @@ async function resolveMapsUrl(rawUrl: string): Promise<string> {
     if (extractPlaceId(current.href)) return current.href;
     const res = await fetch(current.href, {
       redirect: 'manual',
-      headers: FETCH_HEADERS,
+      headers: fetchHeaders(current.href),
       signal: AbortSignal.timeout(PER_FETCH_TIMEOUT_MS),
     });
     const location = res.headers.get('location');
@@ -94,7 +93,7 @@ async function resolveMapsUrl(rawUrl: string): Promise<string> {
 
 async function fetchMapsPageHtml(url: string): Promise<string> {
   const res = await fetch(url, {
-    headers: FETCH_HEADERS,
+    headers: fetchHeaders(url),
     signal: AbortSignal.timeout(PER_FETCH_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`Google Maps page returned HTTP ${res.status}`);
@@ -235,8 +234,9 @@ export function parseBoqResponse(body: string): ReviewPage {
 }
 
 async function fetchReviewPage(placeId: string, sort: MapReviewSort, hl: string, pageToken: string): Promise<ReviewPage> {
-  const res = await fetch(buildBoqUrl(placeId, sort, hl, pageToken), {
-    headers: FETCH_HEADERS,
+  const boqUrl = buildBoqUrl(placeId, sort, hl, pageToken);
+  const res = await fetch(boqUrl, {
+    headers: fetchHeaders(boqUrl),
     signal: AbortSignal.timeout(PER_FETCH_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`BOQ endpoint returned HTTP ${res.status}`);
@@ -274,11 +274,21 @@ function toMapReview({ author, rating, date, text, reply }: ParsedReview): MapRe
   return { author, rating, date, text, reply };
 }
 
-export async function fetchMapReviews(
-  url: string,
-  opts: { sort: MapReviewSort | 'mixed'; count: number; hl: string; onLog?: (message: string) => void },
-): Promise<MapReviewsResult> {
-  const log = opts.onLog ?? (() => {});
+export interface PlaceRef {
+  placeId: string;
+  place: string;
+  placeUrl: string;
+}
+
+export interface MapReviewOptions {
+  sort: MapReviewSort | 'mixed';
+  count: number;
+  hl: string;
+  onLog?: (message: string) => void;
+}
+
+export async function resolvePlace(url: string, onLog?: (message: string) => void): Promise<PlaceRef> {
+  const log = onLog ?? (() => {});
   const resolved = await resolveMapsUrl(url);
   let placeId = extractPlaceId(resolved);
   let place = extractPlaceName(resolved);
@@ -291,11 +301,21 @@ export async function fetchMapReviews(
   if (!placeId) {
     throw new Error('could not find a place in the link — share a specific place from Google Maps (open the place, tap Share), not a plain search or map view');
   }
+  return { placeId, place, placeUrl: resolved };
+}
+
+export async function fetchMapReviews(url: string, opts: MapReviewOptions): Promise<MapReviewsResult> {
+  return fetchPlaceReviews(await resolvePlace(url, opts.onLog), opts);
+}
+
+export async function fetchPlaceReviews(ref: PlaceRef, opts: MapReviewOptions): Promise<MapReviewsResult> {
+  const log = opts.onLog ?? (() => {});
+  const { placeId, place, placeUrl } = ref;
   log(`place "${place || placeId}" (sort=${opts.sort}, target ${opts.count})`);
 
   if (opts.sort !== 'mixed') {
     const reviews = await fetchSortedReviews(placeId, opts.sort, opts.hl, opts.count);
-    return { place, reviews: reviews.map(toMapReview), placeUrl: resolved };
+    return { place, reviews: reviews.map(toMapReview), placeUrl };
   }
 
   const targets: [MapReviewSort, number][] = [
@@ -316,5 +336,5 @@ export async function fetchMapReviews(
     }
   });
   if (batches.length === 0) throw new Error('all review fetches failed');
-  return { place, reviews: mergeMixedReviews(batches, opts.count).map(toMapReview), placeUrl: resolved };
+  return { place, reviews: mergeMixedReviews(batches, opts.count).map(toMapReview), placeUrl };
 }

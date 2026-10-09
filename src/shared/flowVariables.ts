@@ -1,5 +1,5 @@
-import type { FlowDefinition, FlowVariable, FlowVariableOption, FlowVariableType } from './types';
-import { FLOW_VARIABLE_TYPES } from './types';
+import type { BotPlatform, FlowDefinition, FlowVariable, FlowVariableOption, FlowVariableType } from './types';
+import { FLOW_VARIABLE_TYPES, isBotPlatform } from './types';
 
 export const FLOW_VAR_PREFIX = 'var';
 
@@ -97,8 +97,33 @@ function sanitizeVariable(raw: unknown): FlowVariable | null {
     if (obj.pickTarget === 'list' && writeKeys) variable.pickWriteKeys = writeKeys;
   }
   if (obj.hiddenInSetup === true) variable.hiddenInSetup = true;
+  if (type === 'chat') {
+    const platformKey = coerceString(obj.platformKey).trim();
+    if (FLOW_VAR_KEY_RE.test(platformKey)) variable.platformKey = platformKey;
+  }
 
   return variable;
+}
+
+/** Which bot's chats a recipient variable offers: the one its linked variable names, else "auto". */
+export function recipientPlatform(variable: FlowVariable, all: readonly FlowVariable[]): BotPlatform | 'auto' {
+  if (!variable.platformKey) return 'auto';
+  const value = (all.find((v) => v.key === variable.platformKey)?.value ?? '').trim().toLowerCase();
+  return isBotPlatform(value) ? value : 'auto';
+}
+
+/**
+ * The values to write when one variable changes. Switching the bot also blanks every recipient
+ * linked to it: a Telegram chat id means nothing to LINE, and the other way round.
+ */
+export function variableValuePatch(all: readonly FlowVariable[], key: string, value: string): Record<string, string> {
+  const patch: Record<string, string> = { [key]: value };
+  const current = all.find((v) => v.key === key)?.value ?? '';
+  if (current === value) return patch;
+  for (const v of all) {
+    if (v.platformKey === key && v.value) patch[v.key] = '';
+  }
+  return patch;
 }
 
 export function sanitizeFlowVariables(raw: unknown): FlowVariable[] {

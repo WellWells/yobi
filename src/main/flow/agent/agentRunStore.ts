@@ -23,6 +23,7 @@ export function toSummary(state: AgentRunState): AgentRunSummary {
   return {
     runId: state.runId,
     goal: state.goal,
+    ...(state.conversationPath ? { conversationPath: state.conversationPath } : {}),
     status: state.status,
     turns: state.turns.length,
     updatedAt: state.updatedAt,
@@ -99,6 +100,12 @@ function migrateRunState(state: AgentRunState): AgentRunState {
   return { ...rest, ...(ids.length > 0 ? { mcpServerIds: ids } : {}) };
 }
 
+/**
+ * In-place writeFile that serializes after the await, unlike atomicWrite: a call_tools batch saves
+ * one state object several times in a tick, and late serialization makes those overlapping writes
+ * identical. Temp+rename would need a per-file queue, since concurrent renames fail with EPERM on
+ * Windows.
+ */
 export async function saveRunState(state: AgentRunState): Promise<void> {
   await fs.mkdir(runsDir(), { recursive: true });
   await fs.writeFile(runFile(state.runId), JSON.stringify(state), 'utf-8');
@@ -146,11 +153,7 @@ export async function listResumableRuns(): Promise<AgentRunSummary[]> {
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
-/**
- * Age is the only reason to reclaim a run now. Deleting on `status === 'done'` meant the finished
- * runs — the ones whose answer you go back and check against what actually changed — were the
- * only ones that left no record at all, while failures were kept for a week.
- */
+/** Runs are reclaimed by age only; finished runs are kept too, so their record can be checked. */
 export async function pruneOldRuns(nowMs: number): Promise<void> {
   const states = await readAllStates().catch(() => []);
   for (const state of states) {

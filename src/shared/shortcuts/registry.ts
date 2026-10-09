@@ -93,7 +93,7 @@ export const SHORTCUTS = [
     defaultCombo: 'CommandOrControl+N',
     rebindable: false,
     lockReasonKey: 'settings.shortcut.lock.convention',
-    guards: { requireNoModal: true, blockWhileTyping: true },
+    guards: { requireNoModal: true },
   },
   {
     id: 'chat.focusComposer',
@@ -228,6 +228,26 @@ export const SHORTCUTS = [
     scope: { kind: 'widget', owner: 'composer' },
     defaultCombo: 'Shift+Enter',
     rebindable: false,
+    lockReasonKey: 'settings.shortcut.lock.composer',
+  },
+  {
+    // Literally Control on every platform, as in Claude Code: Cmd+C on macOS stays copy.
+    id: 'chat.clearComposer',
+    group: 'chat',
+    scope: { kind: 'widget', owner: 'composer' },
+    defaultCombo: 'Control+C',
+    rebindable: false,
+    hintKey: 'settings.shortcut.chat.clearComposer.hint',
+    lockReasonKey: 'settings.shortcut.lock.composer',
+  },
+  {
+    // Claude Code's Ctrl+G, literally Control on every platform like its Ctrl+C above.
+    id: 'chat.externalEditor',
+    group: 'chat',
+    scope: { kind: 'widget', owner: 'composer' },
+    defaultCombo: 'Control+G',
+    rebindable: false,
+    hintKey: 'settings.shortcut.chat.externalEditor.hint',
     lockReasonKey: 'settings.shortcut.lock.composer',
   },
   {

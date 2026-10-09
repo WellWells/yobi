@@ -1,11 +1,12 @@
 import React from 'react';
 import { ActionIcon, Box, Button, Group, Menu as MMenu, Stack, Text, Tooltip } from '@mantine/core';
-import { Copy, Download, FileText, FolderOpen, Link2, Minus, MoreVertical, Pencil, Plus, RefreshCw, ZoomIn } from 'lucide-react';
+import { Copy, Download, FileText, FolderOpen, Info, Link2, Minus, MoreVertical, Pencil, Plus, RefreshCw, ZoomIn } from 'lucide-react';
 import type { LayoutMode } from '../../store/appStore';
 import { AppTextInput } from '../AppTextInput';
 import { AppSegmentedControl } from '../AppSegmentedControl';
 import { ChatHeaderRow } from './ChatHeaderRow';
 import { ModelMenuItems } from './ModelMenuItems';
+import { isMac } from '../../utils/keyLabels';
 
 interface FileHeaderBarProps {
   fileName: string;
@@ -34,6 +35,8 @@ interface FileHeaderBarProps {
   captureBusy: boolean;
   onShowInFolder: () => void;
   onStartRewrite: (url: string) => void;
+  /** Absent when the open file is not a conversation. */
+  onOpenInfo?: () => void;
 }
 
 export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
@@ -63,6 +66,7 @@ export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
   captureBusy,
   onShowInFolder,
   onStartRewrite,
+  onOpenInfo,
 }) => {
   const zoomPercentText = `${markdownZoom}%`;
 
@@ -214,8 +218,20 @@ export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
                   onCloseViewMenu();
                 }}
               >
-                {t('header.showInFolder')}
+                {t(isMac ? 'header.showInFolder.mac' : 'header.showInFolder')}
               </MMenu.Item>
+
+              {onOpenInfo && (
+                <MMenu.Item
+                  leftSection={<Info size={14} />}
+                  onClick={() => {
+                    onOpenInfo();
+                    onCloseViewMenu();
+                  }}
+                >
+                  {t('chat.info.menu')}
+                </MMenu.Item>
+              )}
 
               <MMenu.Divider />
 

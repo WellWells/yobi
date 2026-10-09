@@ -1,6 +1,6 @@
 import { lookup } from 'node:dns/promises';
 import { fetchRawText, loadPageHtml } from '../pageLoader';
-import { CLEAN_UA } from '../userAgent';
+import { userAgentForUrl } from '../userAgent';
 import { parseHtml } from '../urlParser';
 import { extractPublishedAt } from './publishedAt';
 import { searchRenderLane } from './renderLane';
@@ -15,8 +15,30 @@ const PER_PAGE_TIMEOUT_MS = 35_000;
 
 const SKIPPED_EXTENSIONS = /\.(pdf|zip|rar|7z|exe|dmg|pkg|iso|jpe?g|png|gif|webp|svg|mp3|mp4|webm|mov|avi)$/i;
 
-export function selectTargets(hits: SerpHit[], limit: number): SerpHit[] {
-  return dedupeHits(hits).slice(0, limit);
+/*
+ * Video pages are a player plus a few hundred characters of chrome, so reading skips them. A link
+ * list keeps them: a video is a fine answer to "find me a video", and the youtube tool reads its
+ * transcript.
+ */
+const VIDEO_HOSTS: readonly string[] = [
+  'youtube.com', 'youtu.be', 'bilibili.com', 'b23.tv', 'tiktok.com', 'douyin.com',
+  'vimeo.com', 'dailymotion.com', 'twitch.tv', 'nicovideo.jp',
+];
+
+export function isVideoPage(url: string): boolean {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return VIDEO_HOSTS.some((video) => host === video || host.endsWith(`.${video}`));
+}
+
+/** `forReading`: the hits become pages to read as sources, not links to hand back. */
+export function selectTargets(hits: SerpHit[], limit: number, forReading = false): SerpHit[] {
+  const candidates = forReading ? hits.filter((hit) => !isVideoPage(hit.url)) : hits;
+  return dedupeHits(candidates).slice(0, limit);
 }
 
 export async function harvest(
@@ -24,6 +46,7 @@ export async function harvest(
   maxSources: number = DEFAULT_MAX_SOURCES,
   onRead?: (url: string) => void,
   onDoc?: (doc: SourceDoc) => void,
+  onFail?: (url: string) => void,
 ): Promise<SourceDoc[]> {
   const docs: SourceDoc[] = [];
   let cursor = 0;
@@ -48,6 +71,7 @@ export async function harvest(
         onDoc?.(doc);
       } catch (err) {
         sendLog(`🔎 [Search] ✗ ${hit.url} — ${err instanceof Error ? err.message : String(err)}`);
+        onFail?.(hit.url);
       }
     }));
   }
@@ -88,7 +112,7 @@ async function fetchClean(hit: SerpHit, signal: AbortSignal): Promise<Omit<Sourc
   let publishedAt = '';
   try {
     const raw = await fetchRawText(hit.url, {
-      headers: { 'User-Agent': CLEAN_UA },
+      headers: { 'User-Agent': userAgentForUrl(hit.url) },
       validateRedirectHost: assertPublicHost,
     });
     const parsed = parseHtml(raw, hit.url, { blockBreaks: true });

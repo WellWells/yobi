@@ -52,14 +52,10 @@ export function setupWindows(): void {
 }
 
 /**
- * The worker holds a whole provider SPA in a second renderer. Booting it in the
- * same breath as the main window put megabytes of someone else's JS, and its
- * network, in front of our own first paint. Warming it once the main window has
- * finished loading keeps the head start the first ask depends on — and every
- * on-demand path already goes through `ensureWorkerWindow`, so a slow or failed
- * main window only costs the head start, never the feature.
+ * The worker holds a whole provider SPA in a second renderer, so it warms only after the main
+ * window has loaded and never delays first paint. On-demand paths go through `ensureWorkerWindow`,
+ * so a slow or failed main window only costs the head start.
  */
-// Exported for the test suite.
 export function warmWorkerWindowAfterMainWindow(mainWin: Electron.BrowserWindow | null): void {
   let started = false;
   const start = (): void => {

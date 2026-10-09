@@ -82,8 +82,7 @@ export function SearchPalette<T>({
           leftSection={<Search size={17} />}
           classNames={{ input: styles.input }}
           styles={{
-            // No fontSize here: `size="md"` above already sets it. This used to name an
-            // undefined --font-size-lg, which silently dropped the whole declaration.
+            // No fontSize here: `size="md"` above already sets it.
             input: { color: 'var(--text-primary)', background: 'transparent', border: 'none' },
             section: { color: 'var(--text-muted)' },
           }}
@@ -114,9 +113,7 @@ export function SearchPalette<T>({
 
       <Group gap={16} justify="center" py={7} style={{ borderTop: '1px solid var(--border)' }}>
         <Group gap={5} wrap="nowrap">
-          {/* Two separate hints, not "↑+↓": `canonicalise` models a combo as modifiers plus ONE
-              key, so every non-modifier part overwrites the previous one and the arrow up was
-              silently dropped — the row rendered a lone "↓". These are alternatives anyway. */}
+          {/* Two hints, not one "Up+Down" combo: `canonicalise` keeps only one non-modifier key. */}
           <Group gap={3} wrap="nowrap">
             <ShortcutHint combo="Up" />
             <ShortcutHint combo="Down" />

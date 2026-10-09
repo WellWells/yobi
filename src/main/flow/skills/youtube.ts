@@ -19,9 +19,8 @@ export function buildYoutubeEnvelope(result: YoutubeVideoResult, image = ''): st
 }
 
 /**
- * The video's own words when YouTube has no captions for it — a brand-new upload, most often
- * (one measured 52 minutes after publishing still had none). Never throws: a video Gemini
- * cannot read either stays a failed step, exactly as it would have without the fallback.
+ * The video's own words when YouTube has no captions for it, most often a brand-new upload.
+ * Never throws: a video Gemini cannot read either stays a failed step.
  */
 async function transcribeWithoutCaptions(
   fallbackUrl: string,

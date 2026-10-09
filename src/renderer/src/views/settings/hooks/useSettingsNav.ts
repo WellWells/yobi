@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, Brain, ChartLine, CircleUserRound, DatabaseBackup, ImageDown, Keyboard, Palette, Plug, SlidersHorizontal, Sparkles } from 'lucide-react';
+import { Bot, Brain, ChartLine, Cpu, DatabaseBackup, ImageDown, Keyboard, Palette, Plug, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useI18nStore } from '../../../store/i18nStore';
 import { useAppStore } from '../../../store/appStore';
@@ -70,9 +70,9 @@ export function useSettingsNav() {
     { id: 'shortcuts' as Category, label: t('settings.group.shortcuts'), icon: React.createElement(Keyboard, { size: 14 }) },
     { id: 'appearance' as Category, label: t('settings.group.appearance'), icon: React.createElement(Palette, { size: 14 }) },
     { id: 'export' as Category, label: t('settings.group.export'), icon: React.createElement(ImageDown, { size: 14 }) },
+    { id: 'accounts' as Category, label: t('settings.group.accounts'), icon: React.createElement(Cpu, { size: 14 }) },
     { id: 'ai' as Category, label: t('settings.group.ai'), icon: React.createElement(Sparkles, { size: 14 }) },
     { id: 'memory' as Category, label: t('settings.group.memory'), icon: React.createElement(Brain, { size: 14 }) },
-    { id: 'accounts' as Category, label: t('settings.group.accounts'), icon: React.createElement(CircleUserRound, { size: 14 }) },
     { id: 'connectors' as Category, label: t('settings.group.connectors'), icon: React.createElement(Plug, { size: 14 }) },
     { id: 'bots' as Category, label: t('settings.group.bots'), icon: React.createElement(Bot, { size: 14 }) },
     { id: 'stats' as Category, label: t('settings.group.stats'), icon: React.createElement(ChartLine, { size: 14 }) },

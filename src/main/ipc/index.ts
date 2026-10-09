@@ -8,7 +8,6 @@ import { getProviderLabel } from '../providers';
 import {
   sendLog,
   sendToRenderer,
-  sendWebNotification,
   isHttpUrl,
   normalizeAiUrl,
   createTaskId,
@@ -17,15 +16,15 @@ import {
 import { loadLanguageData } from '../i18n';
 import { titleFromPrompt } from '../output';
 import { resolveUrlPrompt } from '../urlParser';
-import {
-  revealWorkerWindow,
-  ensureWorkerWindow,
-} from '../windows';
+import { showWorkerWindow } from '../windows';
 import type { IpcContext } from './context';
 import { showOpenDialogForWin } from './context';
 import { registerFileHandlers } from './files';
+import { registerBatchExportHandlers } from './batchExport';
+import { registerComposerEditorHandlers } from './composerEditor';
 import { registerTelegramHandlers } from './telegram';
 import { registerLineHandlers } from './line';
+import { announceBotPermissionsChanged, registerBotPermissionsHandlers } from './botPermissions';
 import { registerBotHandlers } from './bot';
 import { registerLocaleHandlers } from './locale';
 import { registerSettingsHandlers } from './settings';
@@ -76,8 +75,8 @@ export function setupIpcHandlers(deps: IpcContext): void {
     const resolved = await resolveUrlPrompt(text, {
       langData: langData as Record<string, string>,
       youtubePrompt: config.youtubePrompt,
+      targetUrl: resolvedTargetUrl,
       onLog: sendLog,
-      onNotify: (title, body) => sendWebNotification(title, body, 'info'),
     });
     const finalTargetUrl = resolved.forceProviderUrl ?? resolvedTargetUrl;
 
@@ -94,14 +93,14 @@ export function setupIpcHandlers(deps: IpcContext): void {
       placeholderTitle: titleFromPrompt(text),
       sendId: conversation?.sendId,
       ...(resolved.prompt !== text ? { external: true } : {}),
+      ...(resolved.map ? { mapPlace: resolved.map } : {}),
     });
     sendLog(`[${id}] 🎯 UI prompt queued for ${getProviderLabel(finalTargetUrl)}`);
     return id;
   }
 
-  ipcMain.on(IPC.SHOW_WORKER, async () => {
-    await ensureWorkerWindow(config.targetUrl);
-    revealWorkerWindow();
+  ipcMain.on(IPC.SHOW_WORKER, () => {
+    void showWorkerWindow(config.targetUrl);
   });
   ipcMain.handle(IPC.UPDATE_CHECK, () => checkForUpdates());
 
@@ -179,8 +178,8 @@ export function setupIpcHandlers(deps: IpcContext): void {
 
   ipcMain.handle(IPC.FORCE_SKIP_ACTIVE_TASK, () => {
     const skipped = queue.forceSkipActive();
-    // Honest wording: nothing here can abort provider automation, so the task is only
-    // released from the queue — it may still finish and save its answer.
+    // Nothing here can abort provider automation: the task only leaves the queue and may still
+    // save its answer.
     if (skipped) sendLog('⏭️ Stopped waiting for the active task — it may still finish');
     return skipped;
   });
@@ -206,8 +205,11 @@ export function setupIpcHandlers(deps: IpcContext): void {
   });
 
   registerFileHandlers();
+  registerBatchExportHandlers();
+  registerComposerEditorHandlers();
   registerTelegramHandlers(ctx);
   registerLineHandlers(ctx);
+  registerBotPermissionsHandlers(ctx);
   registerBotHandlers(ctx);
   registerLocaleHandlers(ctx);
   registerSettingsHandlers(ctx);
@@ -223,6 +225,6 @@ export function setupIpcHandlers(deps: IpcContext): void {
   registerGeminiModelHandlers();
   registerClaudeModelHandlers();
   registerChatgptModelHandlers();
-  registerMemoryHandlers();
+  registerMemoryHandlers(() => announceBotPermissionsChanged(ctx, 'telegram'));
   registerMemoryCurateHandlers();
 }

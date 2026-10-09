@@ -1336,7 +1336,7 @@
   "urlParser.log.fetching": "🔗 URL détectée — récupération du contenu de la page...",
   "urlParser.notify.body": "Récupération : {{url}}",
   "urlParser.notify.title": "Yobi",
-  "urlParser.prompt": "Résume le contenu de la page web ci-dessous en points clés clairs et structurés. Réponds directement au format Markdown, en français. Si le contenu semble tronqué, résume ce qui est disponible et indique qu'il peut être incomplet.\n\n---\n{{cleaned_text}}\n---",
+  "urlParser.prompt": "Résume le contenu de la page web ci-dessous en points clés clairs et structurés. Réponds directement au format Markdown, en français.\n\n---\n{{cleaned_text}}\n---",
   "urlParser.truncated": "(contenu tronqué — trop long)",
   "welcome.greeting.dusk.1": "Bonsoir[, {{name}}]",
   "welcome.greeting.evening.1": "Bonsoir[, {{name}}]",

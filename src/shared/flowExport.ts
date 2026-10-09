@@ -1,5 +1,6 @@
 import { FLOW_EXPORT_TYPE } from './types';
 import type { FlowDefinition, FlowVariable, TriggerConfig } from './types';
+import { botTriggerAccess, isBotCommandRestricted } from './botCommandAccess';
 
 export const FLOW_EXPORT_VERSION = 1;
 
@@ -10,12 +11,8 @@ export interface FlowExportPayload {
 }
 
 /**
- * Which fields of a variable are its DECLARATION, and which hold what the user typed in.
- *
- * Exhaustive on purpose: adding a field to `FlowVariable` without classifying it here fails
- * typecheck, because either default is a silent wrong answer. An allowlist would quietly drop
- * new declaration fields out of every exported file, and a denylist would quietly ship the next
- * value-bearing field to whoever the flow was shared with.
+ * Which variable fields are declaration and which hold user input. Exhaustive, so a new
+ * `FlowVariable` field fails typecheck until it is classified here.
  */
 const VARIABLE_FIELD_IS_USER_DATA: Record<keyof FlowVariable, boolean> = {
   key: false,
@@ -33,6 +30,7 @@ const VARIABLE_FIELD_IS_USER_DATA: Record<keyof FlowVariable, boolean> = {
   pickUrlKey: false,
   pickWriteKeys: false,
   hiddenInSetup: false,
+  platformKey: false,
   value: true,
 };
 
@@ -41,8 +39,9 @@ const VARIABLE_FIELD_IS_USER_DATA: Record<keyof FlowVariable, boolean> = {
  * person.
  *
  * `botAllowedUserIds` is the only one that names people, and it must not travel. Shipping it
- * hands the recipient a list of someone else's Telegram and LINE ids, and — because their own id
- * is not on it — hands them a command that silently refuses them on first use.
+ * hands the recipient a list of someone else's Telegram and LINE ids. `botAccess` is the mode,
+ * not a person, so it travels: a command limited to some accounts arrives limited to nobody until
+ * the recipient picks their own, instead of arriving open to every account they have paired.
  */
 const TRIGGER_FIELD_IS_USER_DATA: Record<keyof TriggerConfig, boolean> = {
   type: false,
@@ -65,20 +64,30 @@ const TRIGGER_FIELD_IS_USER_DATA: Record<keyof TriggerConfig, boolean> = {
   scheduleDay: false,
   onceDate: false,
   catchUpMissed: false,
+  deleteAfterRun: false,
   botCommand: false,
   botCommandDescription: false,
   botInputVariable: false,
+  botAccess: false,
   botAllowedUserIds: true,
   chatCommand: false,
   chatCommandDescription: false,
   chatInputVariable: false,
+  systemEvent: false,
 };
 
 const USER_DATA_TRIGGER_FIELDS = (Object.keys(TRIGGER_FIELD_IS_USER_DATA) as (keyof TriggerConfig)[])
   .filter((field) => TRIGGER_FIELD_IS_USER_DATA[field]);
 
+/**
+ * A legacy trigger has no mode and reads an empty list as everyone, so stripping its list would
+ * open it up. Its mode is pinned to the one it ran under before the ids go.
+ */
 function stripTrigger(trigger: TriggerConfig): TriggerConfig {
   const out = { ...trigger };
+  if (trigger.type === 'bot' && trigger.botAccess === undefined && isBotCommandRestricted(botTriggerAccess(trigger))) {
+    out.botAccess = 'users';
+  }
   for (const field of USER_DATA_TRIGGER_FIELDS) delete out[field];
   return out;
 }
@@ -93,17 +102,10 @@ export function stripTriggerUserIds(flow: FlowDefinition): FlowDefinition {
 }
 
 /**
- * Strips the values the user filled in, keeping every field that declares the variable.
- *
- * Exporting is how a flow gets shared, and the values are the part that is nobody else's
- * business: a Telegram chat id, a folder path on this machine, an email address. The variable
- * panel exists to lift exactly these out of the step configs, so leaving them in the export
- * undoes the point of it. `value` is kept as an empty string rather than removed, so an
- * imported flow still matches the shape the editor and the setup wizard read.
- *
- * Out of scope, and unchanged: a value typed straight into a step config. That is what
- * variables are the replacement for, and rewriting step configs on the way out would be a
- * guess at which of them are secrets.
+ * Strips the values the user filled in (chat ids, local paths, addresses), keeping every field
+ * that declares the variable. `value` stays '' so an imported flow keeps the shape the editor
+ * reads. Values typed straight into step configs are left alone: which of those are secrets
+ * would be a guess.
  */
 export function stripVariableValues(flow: FlowDefinition): FlowDefinition {
   if (!flow.variables?.length) return flow;

@@ -1,18 +1,20 @@
 import { app, BrowserWindow, nativeImage, nativeTheme, shell } from 'electron';
+import type { WebContents } from 'electron';
 import * as path from 'node:path';
 import { existsSync } from 'node:fs';
 import { sendLog, sendToRenderer, sendWebNotification, getAssetPath, setWorkerAttention } from './helpers';
 import { toggleTempChatMode } from './tempChat';
 import { getLangCache, t } from './i18n';
-import { CLEAN_UA } from './userAgent';
+import { WORKER_USER_AGENTS } from './userAgent';
 import { applyWorkerUserAgent } from './clientHints';
 import { SILENT_WEB_PREFERENCES, muteWindow, parkWindowOffscreen, unparkWindow } from './silentWindow';
-import { IPC, PROVIDER_URLS, isByokTargetUrl } from '../shared/types';
+import { IPC, PROVIDER_URLS, isByokTargetUrl, providerFromUrl } from '../shared/types';
 import { themeBackground } from '../shared/themes';
 import { config } from './config';
 import { activeCombos, fromElectronInput, matchesCombo, shortcutById } from '../shared/shortcuts';
 import { isHotkeyPaused } from './hotkey';
 import { restoredWindowOptions, shouldStartMaximized, trackWindowBounds } from './windowBounds';
+import { llmLane } from './flow/lanes';
 
 const WORKER_PARTITION = 'persist:gemini';
 type WorkerWindowMode = 'automation' | 'interactive';
@@ -54,6 +56,11 @@ export function getWorkerWin(): BrowserWindow | null {
   return workerWin;
 }
 
+/** The worker is on screen for the user (a sign-in or a challenge): background work keeps out. */
+export function isWorkerRevealed(): boolean {
+  return workerRevealed;
+}
+
 export function setAppQuitting(value: boolean): void {
   isAppQuitting = value;
 }
@@ -79,9 +86,7 @@ export function createMainWindow(): void {
       sandbox: false,
     },
   });
-  // Opt-in: a detached DevTools is a second renderer plus its own bundle, and it
-  // lands right on top of the window's first paint. Set YOBI_DEVTOOLS=1 to get it
-  // back automatically — otherwise it is one keystroke away.
+  // Opt-in (YOBI_DEVTOOLS=1): a detached DevTools is a second renderer that lands on the first paint.
   if (isDev && process.env['YOBI_DEVTOOLS']) {
     mainWin.webContents.openDevTools({ mode: 'detach' });
   }
@@ -142,7 +147,6 @@ export function createMainWindow(): void {
   mainWin.on('closed', () => { mainWin = null; });
 }
 
-// Exported for the test suite, which needs a worker with no history between cases.
 export function destroyWorkerWindowForModeSwitch(): void {
   workerRevealed = false;
   if (!workerWin || workerWin.isDestroyed()) return;
@@ -154,8 +158,13 @@ export function destroyWorkerWindowForModeSwitch(): void {
   workerWindowMode = null;
 }
 
+/** The page the worker opens on: a BYOK target has no web page, so Gemini stands in. */
+function workerHomeUrl(targetUrl: string): string {
+  return isByokTargetUrl(targetUrl) ? PROVIDER_URLS.gemini : targetUrl;
+}
+
 export function createWorkerWindow(initialUrl: string, mode: WorkerWindowMode = 'automation'): void {
-  const bootUrl = isByokTargetUrl(initialUrl) ? PROVIDER_URLS.gemini : initialUrl;
+  const bootUrl = workerHomeUrl(initialUrl);
   destroyWorkerWindowForModeSwitch();
   const workerPreload = path.join(__dirname, '../preload/worker.js');
   const webPreferences = mode === 'automation'
@@ -185,13 +194,8 @@ export function createWorkerWindow(initialUrl: string, mode: WorkerWindowMode = 
     autoHideMenuBar: true,
     skipTaskbar: true,
     hiddenInMissionControl: process.platform === 'darwin',
-    // NOT focusable while it is the invisible automation window, which is the whole point:
-    // `webContents.focus()` also focuses the OWNER WINDOW on macOS and Linux (Electron does
-    // it deliberately, to match Windows — see the #if in WebContents::Focus), so a focusable
-    // worker parked offscreen at opacity 0 becomes the key window on every send. The user
-    // sees nothing move, but the main window stops responding to clicks until Cmd+` cycles
-    // back to it. A window that cannot become key still gives its renderer real focus, so
-    // this costs nothing and `revealWorkerWindow` turns it back on.
+    // Not focusable while hidden: on macOS/Linux `webContents.focus()` also focuses the owner window,
+    // so a parked worker would steal the key window. `revealWorkerWindow` turns it back on.
     focusable: false,
     hasShadow: false,
     title: 'Provider Worker',
@@ -210,17 +214,12 @@ export function createWorkerWindow(initialUrl: string, mode: WorkerWindowMode = 
   workerWin.on('move', () => rememberWorkerVisibleBounds());
   workerWin.on('resize', () => rememberWorkerVisibleBounds());
 
-  applyWorkerUserAgent(workerWin.webContents, CLEAN_UA);
+  applyWorkerUserAgent(workerWin.webContents, WORKER_USER_AGENTS[providerFromUrl(bootUrl)]);
   muteWindow(workerWin);
   workerWin.loadURL(bootUrl);
 
-  // Every provider page has to believe it is focused. Several of them slow their streaming
-  // right down while they think they are a background tab — "it only answers fast once I
-  // open the worker window" is that, and only Gemini had a workaround for it
-  // (`applyVisibilityPatch`, which fakes the flags in JS rather than being focused).
-  // Re-asserted per navigation because a new document starts unfocused. Measured on macOS:
-  // with a non-focusable window this leaves `document.hasFocus()` true even after the user
-  // clicks back to the main window, and the key window never moves.
+  // Give the page renderer focus so provider pages do not throttle streaming as a background tab;
+  // re-asserted per navigation because a new document starts unfocused.
   workerWin.webContents.on('did-finish-load', () => {
     if (!workerWin || workerWin.isDestroyed()) return;
     // Revealed: the window is on screen and the user owns focus, so do not grab it.
@@ -261,9 +260,26 @@ export function revealWorkerWindow(): void {
   setWorkerAttention('idle');
 }
 
+/**
+ * The title bar's "Browser Window" button. A worker parked on about:blank is first sent to the
+ * current provider. Runs inside `llmLane`, so it never navigates under a running send.
+ */
+export async function showWorkerWindow(targetUrl: string): Promise<void> {
+  const win = await ensureWorkerWindow(targetUrl);
+  if (!win) return;
+  revealWorkerWindow();
+  await llmLane.runExclusive(async () => {
+    const url = win.isDestroyed() ? 'gone' : win.webContents.getURL();
+    if (url !== '' && url !== 'about:blank') return;
+    await win.webContents.loadURL(workerHomeUrl(targetUrl)).catch(() => {});
+  });
+}
+
 export function hideWorkerWindow(): void {
   workerRevealed = false;
   if (!workerWin || workerWin.isDestroyed()) return;
+  // Dev builds open DevTools beside the revealed worker; it would outlive the window it inspects.
+  if (workerWin.webContents.isDevToolsOpened()) workerWin.webContents.closeDevTools();
   rememberWorkerVisibleBounds();
   muteWindow(workerWin);
   workerWin.setSkipTaskbar(true);
@@ -282,13 +298,9 @@ function rememberWorkerVisibleBounds(): void {
 }
 
 /**
- * Whether a mode change may rebuild the worker.
- *
- * Going back to automation must happen as soon as the user is done with the window they were
- * shown, because the interactive window deliberately carries no worker preload — every
- * `applyWorkerStealth` patch is missing from it. This used to ask `isVisible()`, which a
- * parked background window answers `true` to for its whole life, so the answer after any
- * sign-in was permanently "keep the interactive one".
+ * Whether a mode change may rebuild the worker. Return to automation as soon as the user is done
+ * with the revealed window: the interactive window carries no worker preload. Checks
+ * `workerRevealed`, not `isVisible()`, which a parked background window always answers true to.
  */
 function shouldSwitchWorkerMode(desired: WorkerWindowMode): boolean {
   if (desired === 'interactive') return true;
@@ -323,9 +335,15 @@ export async function showInteractiveWorkerWindow(targetUrl: string): Promise<Br
   return win;
 }
 
-export async function showLoginWindowIfNeeded(providerLabel: string, targetUrl: string): Promise<void> {
+export async function showLoginWindowIfNeeded(
+  providerLabel: string,
+  targetUrl: string,
+  /** Runs on the loaded page when targetUrl is only where the sign-in starts. */
+  startSignIn?: (contents: WebContents) => Promise<void>,
+): Promise<void> {
   const win = await showInteractiveWorkerWindow(targetUrl);
   if (!win) return;
+  if (startSignIn) await startSignIn(win.webContents);
   setWorkerAttention('login');
   sendLog(`🔐 ${providerLabel} requires login — complete sign-in in the opened window`);
   const strings = getLangCache();

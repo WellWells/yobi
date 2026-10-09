@@ -17,7 +17,7 @@ export const CopyIconButton: React.FC<Props> = ({
   <CopyButton value={value}>
     {({ copied, copy }) => (
       <Tooltip label={copied ? copiedLabel : copyLabel} position={position}>
-        <ActionIcon variant="subtle" size={size} color={copied ? 'teal' : 'gray'} onClick={copy} aria-label={copyLabel}>
+        <ActionIcon variant="subtle" size={size} color={copied ? 'var(--mantine-color-success)' : 'gray'} onClick={copy} aria-label={copyLabel}>
           {copied ? <Check size={13} /> : <Copy size={13} />}
         </ActionIcon>
       </Tooltip>

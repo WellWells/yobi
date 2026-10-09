@@ -104,7 +104,7 @@ function describeWeekly(trigger: TriggerConfig, t: TranslateFn, time: string): s
   });
 }
 
-/** One plain sentence for the whole schedule — the thing Google's picker never shows you. */
+/** One plain sentence describing the whole schedule. */
 export function describeSchedule(trigger: TriggerConfig, t: TranslateFn): string {
   if (!hasStructuredSchedule(trigger)) return trigger.cronExpression ?? '';
   const mode = resolveScheduleMode(trigger);

@@ -1,34 +1,20 @@
 /**
  * Promotes single-dollar inline math to `$$…$$` before the markdown is parsed.
  *
- * remark-math runs with `singleDollarTextMath: false`, because a `$` that is a
- * syntax character turns a price answer into nonsense: four dollars in one bullet
- * pair up into two math spans that swallow the prose and the citation links in
- * between, and those links cannot be recovered afterwards — they are consumed
- * during parsing, before they are ever links. The cost of that setting is that
- * `$x + y$`, which every model still emits, renders as raw text.
+ * remark-math runs with `singleDollarTextMath: false`, because with `$` as syntax four prices in
+ * one bullet pair up into two math spans that swallow the prose and links between them. The cost
+ * is that `$x + y$` renders as raw text, so a span is promoted here only if it clears every rule
+ * below; everything else stays literal text.
  *
- * Rewriting the source is the only place both can be true at once. A span is
- * promoted only if it clears every rule below; everything else stays the literal
- * text it already was, so currency is never one bad heuristic away from being
- * eaten.
- *
- * The rules were fitted against 110 saved answers. Relaxing remark-math on that
- * corpus produced 46 inline math spans: 45 currency, 1 real formula.
- *
- *  1. Neither delimiter hugs whitespace — the Pandoc rule. Kills `$500 … $9` and
- *     every other pair of prices separated by prose.
+ *  1. Neither delimiter hugs whitespace (the Pandoc rule). Kills `$500 … $9`.
  *  2. The closing `$` is not followed by a digit. Kills `$123~$456`.
- *  3. The opening `$` is not glued to a letter or digit, which makes `NT$…` a
- *     price and stops a `$` inside a URL from opening a formula that swallows the
- *     autolink after it.
- *  4. The body holds no CJK text, no markdown link, no line break and no code
- *     span. KaTeX sets CJK in an italic math font, and the rest are markdown
- *     structure that math would destroy — including a citation whose URL happens
- *     to contain a `$`.
+ *  3. The opening `$` is not glued to a letter or digit, so `NT$…` stays a price and a `$` in a
+ *     URL never opens a formula.
+ *  4. The body holds no CJK text, no markdown link, no line break and no code span. KaTeX sets
+ *     CJK in an italic math font, and the rest is markdown structure that math would destroy.
  *
- * Code spans and fenced blocks are masked out first, so `$PATH` in a shell
- * snippet is never a delimiter.
+ * Code spans and fenced blocks are masked out first, so `$PATH` in a shell snippet is never a
+ * delimiter.
  */
 
 const MASK = '\u0000';
@@ -200,21 +186,12 @@ const FENCE_ONLY = /^\$\$+$/;
 /**
  * Splits a one-line `$$…$$` into a real math fence, so it renders as display math.
  *
- * micromark's math-flow tokenizer rejects a `$` in the fence's info string, which means
- * `$$x$$` closed on the same line can never open a block: it falls through to paragraph
- * content and becomes inline math, glued to the tail of whatever sentence precedes it.
- * Models write display math that way constantly — a lead-in sentence, then the formula on
- * the next line — and the result is a formula-height line box wedged between two
- * text-height ones, with none of the centering or margins a block would bring.
+ * micromark's math-flow tokenizer rejects a `$` in the fence's info string, so `$$x$$` on one line
+ * falls through to inline math glued to the preceding sentence. A fence interrupts a paragraph on
+ * its own, so no blank line is needed; the indent is carried onto all three lines to keep a
+ * formula inside its list item. Prefixed lines (`>`, `|`) never start with `$$` and stay as is.
  *
- * A fence interrupts a paragraph on its own, so the rewrite only has to break the one line
- * into three; no blank line is invented and no surrounding structure moves. The indent is
- * carried onto all three lines, which is what keeps a formula inside a list item in its
- * item. Anything with a prefix — a blockquote's `>`, a table row's `|` — never starts with
- * `$$` and is left exactly as written.
- *
- * Runs before `promoteInlineMath`, so only what the model wrote as `$$…$$` becomes a block;
- * a single-dollar span stays inline no matter where it sits.
+ * Runs before `promoteInlineMath`, so only what the model wrote as `$$…$$` becomes a block.
  */
 export function promoteDisplayMath(markdown: string): string {
   if (!markdown.includes('$$')) return markdown;

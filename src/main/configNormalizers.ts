@@ -1,5 +1,5 @@
 import { DEFAULT_CAPTURE_WIDTH, DEFAULT_SHARE_INSTANCE, MAX_CAPTURE_WIDTH, MIN_CAPTURE_WIDTH, SHARE_EXPIRE_VALUES, clampCaptureMargin, defaultQuickExportHotkey, normalizeShareExpireList } from '../shared/types';
-import type { BotBuiltinCommand, BotBuiltinCommands, BotByokCommands, BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureSettings, QuickExportFormat, QuickExportSettings, CustomTemplate, HiddenSources, LinePairedUser, LinePairingState, LinePendingCode, McpServerConfig, NotifyEventPrefs, Provider, PromptLength, PromptPreferences, PromptTone, ShareExpire, ShareExpireCache, ShareSettings, TelegramChannel, TelegramChatKind, TelegramKnownUser, TelegramPairedUser, TelegramPairingState, TelegramPendingCode } from '../shared/types';
+import type { BotBuiltinCommand, BotBuiltinCommands, BotByokCommands, BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureSettings, QuickExportFormat, QuickExportSettings, HiddenSources, LinePairedUser, LinePairingState, LinePendingCode, McpServerConfig, NotifyEventPrefs, Provider, PromptLength, PromptPreferences, PromptTone, ShareExpire, ShareExpireCache, ShareSettings, TelegramChannel, TelegramChatKind, TelegramKnownUser, TelegramPairedUser, TelegramPairingState, TelegramPendingCode } from '../shared/types';
 import {
   AGENT_ASK_TTL_MAX_MINUTES,
   AGENT_ASK_TTL_MIN_MINUTES,
@@ -8,6 +8,7 @@ import {
   DEFAULT_AGENT_ASK_TTL_MINUTES,
   PROVIDERS,
   detectByokProviderType,
+  canonicalProviderUrl,
   migrateRemovedTargetUrl,
 } from '../shared/types';
 import { isThemePreference } from '../shared/themes';
@@ -28,7 +29,10 @@ import {
   type CaptureBackgroundStyle,
 } from '../shared/capturePalettes';
 import { defaultStored } from './configTypes';
+// The module itself, not the façade: the façade reads config, which imports this file.
+import { normalizeBotPermissions } from './botPermissions/normalize';
 import { normalizeInstanceUrl } from './share/privatebin';
+import { normalizeEditorChoice } from './editorPresets';
 import type { ByokInstance, Config, LineConfig, SmtpConfig, TelegramConfig, WindowBounds } from './configTypes';
 import { canonicalise, SHORTCUTS } from '../shared/shortcuts';
 import type { ShortcutOverride } from '../shared/shortcuts';
@@ -51,6 +55,7 @@ export function normalizeConfig(raw: unknown): Config {
     byokIds: obj.hiddenByokIds,
     byokGroupIds: obj.hiddenByokGroupIds,
   });
+  const legacyAgentTarget = legacyAgentCommandTarget(obj.builtinCommands);
   // Written by versions that still had Duck.ai; dropped so it does not ride along forever.
   const { hiddenDuckaiModelIds: _legacyDuckaiIds, ...current } = obj as Partial<Config> & { hiddenDuckaiModelIds?: unknown };
 
@@ -60,11 +65,14 @@ export function normalizeConfig(raw: unknown): Config {
     targetUrl: normalizeStoredTarget(obj.targetUrl) || defaultStored.targetUrl,
     flowGenerateUrl: normalizeStoredTarget(obj.flowGenerateUrl),
     memoryCurateUrl: normalizeStoredTarget(obj.memoryCurateUrl),
+    externalEditor: normalizeEditorChoice(obj.externalEditor),
+    externalEditorCommand: typeof obj.externalEditorCommand === 'string' ? obj.externalEditorCommand.trim() : '',
     localeSetByUser: inferredLocaleSetByUser,
     metricsEnabled: obj.metricsEnabled !== false,
     hotkeyEnabled: obj.hotkeyEnabled !== false,
     lineReaderEnabled: obj.lineReaderEnabled === true,
     thunderbirdEnabled: obj.thunderbirdEnabled === true,
+    xConnectorEnabled: obj.xConnectorEnabled === true,
     notifyEvents: normalizeNotifyEvents(obj.notifyEvents),
     youtubePrompt: typeof obj.youtubePrompt === 'string' ? obj.youtubePrompt : defaultStored.youtubePrompt,
     theme: isThemePreference(obj.theme) ? obj.theme : defaultStored.theme,
@@ -81,8 +89,8 @@ export function normalizeConfig(raw: unknown): Config {
     ),
     builtinCommands: normalizeBuiltinCommands(obj.builtinCommands),
     botByokCommands: normalizeBotByokCommands(obj.botByokCommands),
-    telegram: deserializePairingConfig(obj.telegram),
-    line: normalizeLine(obj.line),
+    telegram: deserializePairingConfig(obj.telegram, legacyAgentTarget),
+    line: normalizeLine(obj.line, legacyAgentTarget),
     smtp: normalizeSmtp(obj.smtp),
     byokInstances: normalizeByokInstances(obj.byokInstances),
     byokGroups: normalizeByokGroups(obj.byokGroups),
@@ -173,7 +181,10 @@ export function normalizeClaudeModelCatalog(raw: unknown): ClaudeModelCatalog | 
     const option = normalizePickerOption(entry);
     if (!option || seen.has(option.id)) continue;
     seen.add(option.id);
-    models.push({ ...option, options: normalizeClaudeModelOptions((entry as Partial<ClaudeModelInfo>).options) });
+    const model: ClaudeModelInfo = { ...option, options: normalizeClaudeModelOptions((entry as Partial<ClaudeModelInfo>).options) };
+    const legacy = (entry as Partial<ClaudeModelInfo>).legacy;
+    if (typeof legacy === 'boolean') model.legacy = legacy;
+    models.push(model);
   }
   if (models.length === 0) return null;
   return { models, updatedAt: typeof obj.updatedAt === 'string' ? obj.updatedAt : '' };
@@ -329,31 +340,50 @@ export function normalizeNotifyEvents(raw: unknown): NotifyEventPrefs {
   };
 }
 
-export function normalizeLine(raw: unknown): LineConfig {
+export function normalizeLine(raw: unknown, legacyAgentTarget = ''): LineConfig {
   const obj = (raw && typeof raw === 'object') ? (raw as Partial<LineConfig> & { allowedUserIds?: unknown }) : {};
   const port = Number(obj.port);
+  const pairing = deserializeLinePairingState(obj.pairing, obj.allowedUserIds);
+  const { permissions, permissionsVersion } = normalizeBotPermissions({
+    platform: 'line',
+    raw: obj.permissions,
+    rawVersion: obj.permissionsVersion,
+    pairedIds: pairing.pairedUsers.map((user) => user.userId),
+  });
   return {
     enabled: Boolean(obj.enabled),
     channelAccessToken: typeof obj.channelAccessToken === 'string' ? obj.channelAccessToken.trim() : '',
     channelSecret: typeof obj.channelSecret === 'string' ? obj.channelSecret.trim() : '',
     port: Number.isFinite(port) && port > 0 && port <= 65_535 ? Math.floor(port) : 3007,
-    llmDirect: normalizeLlmDirect(obj.llmDirect),
-    pairing: deserializeLinePairingState(obj.pairing, obj.allowedUserIds),
+    llmDirect: normalizeLlmDirect(obj.llmDirect, legacyAgentTarget),
+    pairing,
+    permissions,
+    permissionsVersion,
   };
 }
 
-export function normalizeLlmDirect(raw: unknown): BotLlmDirectConfig {
-  const obj = (raw && typeof raw === 'object') ? (raw as Partial<BotLlmDirectConfig>) : {};
-  return {
-    enabled: Boolean(obj.enabled),
-    targetUrl: normalizeStoredTarget(obj.targetUrl),
-  };
+/**
+ * The bot's default model. A legacy config with `enabled: false` and no model of its own takes
+ * the model of the legacy bot `/agent` command (`legacyAgentTarget`).
+ */
+export function normalizeLlmDirect(raw: unknown, legacyAgentTarget = ''): BotLlmDirectConfig {
+  const obj = (raw && typeof raw === 'object') ? (raw as Partial<BotLlmDirectConfig> & { enabled?: unknown }) : {};
+  const own = normalizeStoredTarget(obj.targetUrl);
+  if (own || obj.enabled !== false) return { targetUrl: own };
+  return { targetUrl: normalizeStoredTarget(legacyAgentTarget) };
+}
+
+/** The model of the legacy bot `/agent` command, read once to carry it over. */
+function legacyAgentCommandTarget(raw: unknown): string {
+  const obj = (raw && typeof raw === 'object') ? (raw as Record<string, unknown>) : {};
+  const agent = (obj.agent && typeof obj.agent === 'object') ? (obj.agent as Partial<BotBuiltinCommand>) : {};
+  return typeof agent.targetUrl === 'string' ? agent.targetUrl : '';
 }
 
 /** Empty stays empty ("follow the default"); anything else is migrated off removed providers. */
 function normalizeStoredTarget(raw: unknown): string {
   const trimmed = typeof raw === 'string' ? raw.trim() : '';
-  return trimmed ? migrateRemovedTargetUrl(trimmed) : '';
+  return trimmed ? migrateRemovedTargetUrl(canonicalProviderUrl(trimmed)) : '';
 }
 
 function deserializeLinePairingState(raw: unknown, legacyAllowedUserIds: unknown): LinePairingState {
@@ -530,8 +560,17 @@ export function normalizeQuickExport(raw: unknown): QuickExportSettings {
   };
 }
 
-export function deserializePairingConfig(raw: unknown): TelegramConfig {
+export function deserializePairingConfig(raw: unknown, legacyAgentTarget = ''): TelegramConfig {
   const obj = (raw && typeof raw === 'object') ? (raw as Partial<TelegramConfig>) : {};
+  const pairing = deserializePairingState(obj.pairing);
+  const adminUserIds = normalizeAdminUserIds(obj.adminUserIds);
+  const { permissions, permissionsVersion } = normalizeBotPermissions({
+    platform: 'telegram',
+    raw: obj.permissions,
+    rawVersion: obj.permissionsVersion,
+    pairedIds: pairing.pairedUsers.map((user) => String(user.userId)),
+    legacyAdminIds: adminUserIds.map(String),
+  });
   return {
     enabled: Boolean(obj.enabled),
     botToken: typeof obj.botToken === 'string' ? obj.botToken.trim() : '',
@@ -540,11 +579,13 @@ export function deserializePairingConfig(raw: unknown): TelegramConfig {
       ? obj.defaultReplyMode
       : 'markdown',
     compactReply: obj.compactReply === true,
-    adminUserIds: normalizeAdminUserIds(obj.adminUserIds),
-    llmDirect: normalizeLlmDirect(obj.llmDirect),
-    pairing: deserializePairingState(obj.pairing),
+    adminUserIds,
+    llmDirect: normalizeLlmDirect(obj.llmDirect, legacyAgentTarget),
+    pairing,
     channels: normalizeTelegramChannels(obj.channels),
     knownUsers: normalizeTelegramKnownUsers(obj.knownUsers),
+    permissions,
+    permissionsVersion,
   };
 }
 
@@ -715,21 +756,6 @@ export function normalizePromptPreferences(raw: unknown): PromptPreferences {
     tone: validTones.includes(obj.tone as PromptTone) ? (obj.tone as PromptTone) : 'default',
     length: validLengths.includes(obj.length as PromptLength) ? (obj.length as PromptLength) : 'auto',
     customInstructions: typeof obj.customInstructions === 'string' ? obj.customInstructions : '',
-    customTemplates: normalizeCustomTemplates(obj.customTemplates),
     nickname: typeof obj.nickname === 'string' ? obj.nickname : '',
   };
-}
-
-function normalizeCustomTemplates(raw: unknown): CustomTemplate[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((item) => {
-      const entry = item as Partial<CustomTemplate>;
-      const id = typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : '';
-      const name = typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : '';
-      const prompt = typeof entry.prompt === 'string' ? entry.prompt : '';
-      if (!id || !name) return null;
-      return { id, name, prompt };
-    })
-    .filter((item): item is CustomTemplate => Boolean(item));
 }

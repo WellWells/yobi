@@ -4,6 +4,7 @@ import { DATA_KEY_MOENV, getDataKey } from '../../dataKeyStore';
 import { aqiI18nKey, aqiLevel, aqiStatusEn, haversineKm, normalizeMoenvStatus } from '../../../shared/aqiScale';
 import { envelope, fetchJson, geocodePlace } from './dataSources';
 import type { GeocodedPlace } from './dataSources';
+import { parseNumberField } from './numberField';
 
 const OPEN_METEO_AQ = 'https://air-quality-api.open-meteo.com/v1/air-quality';
 const MOENV_AQI = 'https://data.moenv.gov.tw/api/v2/aqx_p_432';
@@ -28,10 +29,8 @@ interface Reading {
   observedAt: string;
 }
 
-function num(raw: unknown): number | null {
-  const n = Number(String(raw ?? '').trim());
-  return Number.isFinite(n) ? n : null;
-}
+// A missing reading (null from Open-Meteo, "" from an offline MOENV station) stays null, never 0.
+const num = parseNumberField;
 
 function str(value: number | null): string {
   return value == null ? '' : String(value);

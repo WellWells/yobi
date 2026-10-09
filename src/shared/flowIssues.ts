@@ -1,21 +1,18 @@
 import { BOT_COMMAND_RE } from './types';
 import type { FlowDefinition, TriggerConfig } from './types';
 import { missingRequiredVariables } from './flowVariables';
+import { botTriggerAccess, isBotCommandClosed } from './botCommandAccess';
 
 /**
- * Flow states that silently break a flow at runtime. Every one of these already
- * had a code path that skipped the flow and wrote a log line nobody reads —
- * this module is the single place that names them so the UI can surface them.
- *
- * Detection deliberately mirrors the two consumers it describes:
- * `FlowManager.getBotCommands()` (main) and `useChatCommands()` (renderer).
- * If either changes its filtering, this has to change with it or the UI starts
- * telling the user something the app does not actually do.
+ * Flow states that silently break a flow at runtime, named in one place so the UI can surface them.
+ * Detection mirrors `FlowManager.getBotCommands()` (main) and `useChatCommands()` (renderer); keep
+ * them in sync or the UI reports something the app does not do.
  */
 export type FlowIssueKind =
   | 'commandMissing'
   | 'commandInvalid'
   | 'commandDuplicate'
+  | 'commandClosed'
   | 'missingRequiredVars';
 
 export type FlowIssueScope = 'bot' | 'chat';
@@ -39,7 +36,8 @@ const KIND_RANK: Record<FlowIssueKind, number> = {
   commandDuplicate: 0,
   commandInvalid: 1,
   commandMissing: 2,
-  missingRequiredVars: 3,
+  commandClosed: 3,
+  missingRequiredVars: 4,
 };
 
 interface Claim {
@@ -92,6 +90,10 @@ export function collectFlowIssues(flows: FlowDefinition[]): Map<string, FlowIssu
         push(issues, flow.id, { kind: 'commandInvalid', scope, command });
         continue;
       }
+      // Limited to listed accounts with nobody listed: registered, but it answers no one.
+      if (trigger.type === 'bot' && isBotCommandClosed(botTriggerAccess(trigger))) {
+        push(issues, flow.id, { kind: 'commandClosed', scope, command });
+      }
       const key = `${scope} ${command}`;
       const claimants = claims.get(key) ?? [];
       // One flow claiming the same command twice answers it either way, so
@@ -137,6 +139,11 @@ export function collectFlowIssues(flows: FlowDefinition[]): Map<string, FlowIssu
 /** True when any flow has an issue — the nav highlight's only input. */
 export function hasAnyFlowIssue(issues: Map<string, FlowIssue[]>): boolean {
   return issues.size > 0;
+}
+
+/** A bot trigger limited to listed accounts with nobody listed, for the inline editor error. */
+export function isTriggerClosed(trigger: TriggerConfig): boolean {
+  return trigger.type === 'bot' && isBotCommandClosed(botTriggerAccess(trigger));
 }
 
 /** The duplicate issue a single trigger is responsible for, for the inline editor warning. */

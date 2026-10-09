@@ -1,10 +1,6 @@
-/* Template gallery. A category is one horizontally scrolling rail rather than a wrapped
-   grid: sixteen templates in a grid pushed the modal to near-full height, and each tile
-   carried a two-line clamped description that ellipsised the longer half of the catalogue.
-   The description moved to a tooltip, so nothing in here truncates.
-
-   These rules override UnstyledButton's background/border/padding reset, which only holds
-   because main.tsx imports Mantine's stylesheet before any app CSS. */
+/* Template gallery: one horizontally scrolling rail per category; descriptions live in a
+   tooltip, so nothing here truncates. These rules override UnstyledButton's reset, which only
+   holds because main.tsx imports Mantine's stylesheet before any app CSS. */
 .rail {
   display: flex;
   /* Stretch is what keeps a title safe: a tile whose name wraps to a second line grows
@@ -13,20 +9,15 @@
   gap: 8px;
   overflow-x: auto;
   overflow-y: hidden;
-  /* globals.css sets `scrollbar-width: thin` on everything, and a set `scrollbar-width`
-     makes Chromium ignore the ::-webkit-scrollbar rules underneath it — so a rail gets
-     Windows' thin scrollbar complete with end arrows, two of which is more furniture than
-     the whole gallery. The half-visible tile at the right edge is the affordance instead;
-     the wheel handler on the rail covers mice with no horizontal axis. */
+  /* globals.css sets `scrollbar-width: thin`, which makes Chromium ignore ::-webkit-scrollbar
+     rules; hide it instead. The half-visible edge tile and the wheel handler stand in for it. */
   scrollbar-width: none;
   /* Dragging the rail with a mouse would otherwise sweep a text selection across the tiles.
      `touch-action` is left at its default: the browser already pans this axis on touch, and
      pinning it to pan-x would take vertical swipes away from the modal behind it. */
   user-select: none;
-  /* A scroll container clips everything outside its padding box, and Mantine's focus ring
-     sits 4px beyond the tile it is on — without this the ring on a tabbed-to tile is shaved
-     off on all four sides. The negative margin pulls the rail back out so the tiles still
-     line up with the search field above. */
+  /* Room for the 4px focus ring the scroll container would otherwise clip; the negative margin
+     keeps tiles aligned with the search field. */
   margin-inline: -4px;
   padding: 4px;
   scroll-snap-type: x proximity;
@@ -36,10 +27,8 @@
 }
 
 .tile {
-  /* One fixed width puts every rail on the same rhythm. 116px of content is 8 columns of
-     `fz="sm"`, which is what it takes to hold the widest CJK title on one line — a Chinese
-     title that wraps breaks mid-run, and "YouTube 新片摘" / "要" reads as a bug. Latin
-     titles wrap at spaces, so those are free to take the second line. */
+  /* One fixed width for every rail: 116px of content holds the widest CJK title (8 columns of
+     `fz="sm"`) on one line, since a wrapped CJK title breaks mid-word. Latin titles may wrap. */
   flex: 0 0 136px;
   scroll-snap-align: start;
   display: flex;

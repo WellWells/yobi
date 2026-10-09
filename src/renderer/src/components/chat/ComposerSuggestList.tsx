@@ -1,27 +1,45 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Box, Text } from '@mantine/core';
 import { Z_POPOVER } from '../../config/zLayers';
+import {
+  SUGGEST_MAX_HEIGHT,
+  suggestListEdge,
+  suggestListMaxHeight,
+  type MenuDirection,
+} from './composerMenuDirection';
 
 const LIST_WIDTH = 340;
-const LIST_MAX_HEIGHT = 320;
 
 interface ComposerSuggestListProps {
   highlightedIndex: number;
   /** Shown instead of the rows when there are none. */
   emptyLabel: string;
   isEmpty: boolean;
+  /** Above the composer when it is docked at the bottom, below it on an empty chat. */
+  direction: MenuDirection;
   /** Rows, each carrying `data-suggest-index` so the highlighted one can be kept in view. */
   children: React.ReactNode;
 }
 
-/** The panel above the composer that the slash-command and `/model` lists both open in. */
+/** The panel beside the composer that the slash-command and `/model` lists both open in. */
 export const ComposerSuggestList: React.FC<ComposerSuggestListProps> = ({
-  highlightedIndex, emptyLabel, isEmpty, children,
+  highlightedIndex, emptyLabel, isEmpty, direction, children,
 }) => {
   const listRef = useRef<HTMLDivElement>(null);
-  // The list is a fixed-height scroll box and arrow keys move the highlight, not the scroll —
-  // so anything past the first few rows was highlighted off-screen. `block: 'nearest'` leaves an
-  // already-visible row where it is, matching how the flow sidebar and the model menu behave.
+  const [maxHeight, setMaxHeight] = useState(SUGGEST_MAX_HEIGHT);
+  // Measured against the composer box it hangs from (the list's positioned parent), before paint,
+  // and again whenever the window is resized while the list is open.
+  useLayoutEffect(() => {
+    const anchor = listRef.current?.parentElement;
+    if (!anchor) return undefined;
+    const fit = (): void => {
+      setMaxHeight(suggestListMaxHeight(direction, anchor.getBoundingClientRect(), window.innerHeight));
+    };
+    fit();
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, [direction]);
+  // Arrow keys move the highlight, not the scroll, so keep the highlighted row in view.
   useEffect(() => {
     listRef.current
       ?.querySelector(`[data-suggest-index="${highlightedIndex}"]`)
@@ -36,15 +54,14 @@ export const ComposerSuggestList: React.FC<ComposerSuggestListProps> = ({
       w={LIST_WIDTH}
       style={{
         left: 0,
-        bottom: '100%',
+        ...suggestListEdge(direction),
         maxWidth: '100%',
-        marginBottom: 6,
         zIndex: Z_POPOVER,
         border: '1px solid var(--mantine-color-default-border)',
         borderRadius: 'var(--mantine-radius-md)',
         boxShadow: 'var(--shadow-md)',
         overflow: 'hidden',
-        maxHeight: LIST_MAX_HEIGHT,
+        maxHeight,
         overflowY: 'auto',
       }}
     >

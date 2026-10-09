@@ -1,22 +1,15 @@
 /**
  * LINE PC database schema knowledge and pure row-parsing helpers.
  *
- * Confirmed against LINE desktop 26.x: tables are `_`-prefixed, messages live in
- * `_message` keyed by `_chatId` and typed by `_contentType`, chat names resolve
- * across `_groupChat` / `_squareChat` / `_room` / `_contact`.
- *
- * Everything here is pure (no database handle), so the parsing/resolution logic is
- * unit-tested offline while the encrypted-DB access stays behind reader.ts.
+ * Everything here is pure (no database handle); the encrypted-DB access stays behind
+ * reader.ts.
  */
 
 // Hard cap on any caller-supplied LIMIT. SQLite treats a negative LIMIT as "unlimited",
 // so an unchecked value would leak the whole table from a tool that returns private chats.
 export const MAX_LIMIT = 5000;
 
-// LINE message `_contentType` codes, confirmed against a real 172k-message DB (2026-09-11).
-// 6 is a CALL log, not a location: all 554 rows carry CAUSE/DURATION/RESULT/SESSION_ID/GC_*
-// and not one coordinate field. 17/18/22 were missing entirely, which left 3,990 messages
-// surfacing as `type_17`/`type_18`/`type_22`. 15 stays unmapped — its metadata is empty.
+// LINE message `_contentType` codes. 6 is a call log, not a location; 15 stays unmapped (empty metadata).
 export const CONTENT_TYPE: Record<number, string> = {
   0: 'text',
   1: 'image',
@@ -172,10 +165,8 @@ export function localOffsetLabel(at: Date): string {
 }
 
 /**
- * LINE PC stores UTC epochs; these render in the HOST's local time. A fixed +08:00 used to be
- * simpler, but the `line_read` date filter made it wrong: a user outside Taipei asking for
- * "today" would get a window that disagrees with their own calendar. Vitest pins TZ, so the
- * suite stays deterministic.
+ * LINE PC stores UTC epochs; render them in the host's local time so a `line_read` date filter
+ * agrees with the user's own calendar.
  */
 export function tsToIso(ts: number | null | undefined): string | null {
   if (ts === null || ts === undefined) return null;
@@ -251,8 +242,7 @@ function parseMessageBody(row: MessageRow, contactMap: Map<string, string>): Par
     return { type: 'sticker', sender, content: '[貼圖]', sent_at: sent };
   }
   if (kind === 'file') {
-    // Only 296 of 1,077 real file messages carry FILE_NAME; 869 carry the name in _text
-    // instead (E2EE chats keep it out of plaintext metadata), so keep both.
+    // E2EE chats keep the filename in _text rather than FILE_NAME metadata, so keep both.
     return {
       type: 'file',
       sender,
@@ -263,8 +253,6 @@ function parseMessageBody(row: MessageRow, contactMap: Map<string, string>): Par
     };
   }
   if (kind === 'link') {
-    // Measured keys, not guessed ones: every real link message has postEndUrl, and the
-    // url/linkUrl/title/desc names the first version looked for exist in no row at all.
     return {
       type: 'link',
       sender,
@@ -275,16 +263,14 @@ function parseMessageBody(row: MessageRow, contactMap: Map<string, string>): Par
     };
   }
   if (kind === 'template' || kind === 'flex') {
-    // Bot rich/flex messages: ALT_TEXT is the human-readable body and the only content for
-    // all 1,877 template messages (none has _text). Prefer it over the raw body.
+    // Bot template/flex messages: ALT_TEXT is the readable body (these usually have no _text).
     const alt = metaString(meta, 'ALT_TEXT');
     return { type: kind, sender, content: alt ?? row._text ?? null, sent_at: sent };
   }
   if (kind === 'contact') {
     return { type: 'contact', sender, content: metaString(meta, 'displayName') ?? row._text ?? null, sent_at: sent };
   }
-  // video/audio/location/contact and any unknown type surface their raw text under
-  // the resolved kind rather than being silently dropped.
+  // Any other or unknown type surfaces its raw text under the resolved kind rather than being dropped.
   return { type: kind, sender, content: row._text ?? null, sent_at: sent };
 }
 

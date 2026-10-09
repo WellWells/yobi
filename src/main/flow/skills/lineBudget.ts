@@ -1,11 +1,8 @@
 /**
- * Laying several chats out inside one provider input budget, for the `line_read` skill.
- *
- * Split out of lineTranscript.ts, which owns the message-level rendering this builds on.
- * The dependency runs one way only — nothing here is imported back — so the two stay
- * separately readable and separately testable.
+ * Lays several chats out inside one provider input budget, for the `line_read` skill.
+ * Builds on lineTranscript.ts, which never imports from here.
  */
-import { budgetedTranscript, renderTranscript, type TranscriptLabels } from './lineTranscript';
+import { budgetedTranscript, keptMessages, renderTranscript, type TranscriptKeep, type TranscriptLabels } from './lineTranscript';
 import type { ParsedMessage } from '../../line/schema';
 
 const SECTION_PREFIX = '## ';
@@ -13,6 +10,8 @@ const SECTION_PREFIX = '## ';
 export interface ChatBatch {
   name: string;
   messages: ParsedMessage[];
+  /** Which end survives a trim; `newest` when omitted. */
+  keep?: TranscriptKeep;
 }
 
 export interface ChatSection {
@@ -61,10 +60,9 @@ export function allocateBudget(needs: number[], total: number): number[] {
 }
 
 /**
- * Joins per-chat transcripts under `## <chat name>` headings, dropping the ones that produced
- * nothing. With `headings: false` — which is what a step reading a single chat passes — the
- * output is byte-identical to what the one-chat step has always produced, so existing flows
- * and templates are untouched.
+ * Joins per-chat transcripts under `## <chat name>` headings, dropping empty ones. With
+ * `headings: false` (a single-chat step) the output must stay byte-identical to the plain
+ * transcript, which existing flows and templates depend on.
  */
 export function renderChatSections(sections: ChatSection[], options: { headings: boolean }): string {
   const filled = sections.filter((section) => section.text.length > 0);
@@ -73,10 +71,10 @@ export function renderChatSections(sections: ChatSection[], options: { headings:
   return filled.map((section) => `${SECTION_PREFIX}${section.name}\n${section.text}`).join('\n');
 }
 
-/** The smallest spend that still shows something: this chat's newest message under its date. */
-function cheapestShowing(messages: ParsedMessage[], labels: TranscriptLabels): number {
-  if (messages.length === 0) return 0;
-  return renderTranscript(messages.slice(-1), labels).length;
+/** The smallest spend that still shows something: the one message a trim keeps first. */
+function cheapestShowing(batch: ChatBatch, labels: TranscriptLabels): number {
+  if (batch.messages.length === 0) return 0;
+  return renderTranscript(keptMessages(batch.messages, 1, batch.keep), labels).length;
 }
 
 /**
@@ -94,7 +92,7 @@ export function planTranscript(
   options: { headings: boolean },
 ): TranscriptPlan {
   const needs = batches.map((batch) => renderTranscript(batch.messages, labels).length);
-  const minimums = batches.map((batch) => cheapestShowing(batch.messages, labels));
+  const minimums = batches.map((batch) => cheapestShowing(batch, labels));
 
   let carried = batches.length;
   let grants = new Array<number>(batches.length).fill(0);
@@ -110,7 +108,7 @@ export function planTranscript(
 
   const sections = batches.map((batch, index) => ({
     name: batch.name,
-    ...budgetedTranscript(batch.messages, grants[index], labels),
+    ...budgetedTranscript(batch.messages, grants[index], labels, batch.keep),
   }));
   const kept = sections.reduce((sum, section) => sum + section.kept, 0);
   const dropped = sections.reduce((sum, section) => sum + section.dropped, 0);

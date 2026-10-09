@@ -2,56 +2,56 @@ import { ipcMain } from 'electron';
 import { IPC } from '../../shared/types';
 import type { McpServerActionResult, McpServerSaveRequest, McpServerView } from '../../shared/types';
 import { getMcpRegistry } from '../mcp';
-import { getLangCache, localizeUserFacingError } from '../i18n';
+import { MCP_UNAVAILABLE } from '../mcp/mcpErrors';
+import { localizeActionResult, localizeServerViews } from '../mcp/mcpServerViews';
 
-function emptyResult(error?: string): McpServerActionResult {
-  return { ok: false, servers: [], error };
+// Every result leaves through localizeActionResult: both the action's own error and each card's.
+function unavailableResult(): McpServerActionResult {
+  return localizeActionResult({ ok: false, servers: [], error: MCP_UNAVAILABLE });
 }
 
 export function registerMcpHandlers(): void {
-  ipcMain.handle(IPC.MCP_LIST_SERVERS, (): McpServerView[] => getMcpRegistry()?.listServers() ?? []);
+  ipcMain.handle(IPC.MCP_LIST_SERVERS, (): McpServerView[] => localizeServerViews(getMcpRegistry()?.listServers() ?? []));
 
   ipcMain.handle(IPC.MCP_SAVE_SERVER, async (_event, req: McpServerSaveRequest): Promise<McpServerActionResult> => {
     const registry = getMcpRegistry();
-    if (!registry) return emptyResult('MCP is unavailable');
+    if (!registry) return unavailableResult();
     try {
-      return await registry.saveServer(req);
+      return localizeActionResult(await registry.saveServer(req));
     } catch (err) {
-      return { ok: false, servers: registry.listServers(), error: localizeUserFacingError(errText(err), getLangCache()) };
+      return localizeActionResult({ ok: false, servers: registry.listServers(), error: errText(err) });
     }
   });
 
   ipcMain.handle(IPC.MCP_DELETE_SERVER, (_event, id: string): McpServerActionResult => {
     const registry = getMcpRegistry();
-    if (!registry) return emptyResult('MCP is unavailable');
-    return registry.removeServer((id ?? '').trim());
+    if (!registry) return unavailableResult();
+    return localizeActionResult(registry.removeServer((id ?? '').trim()));
   });
 
   ipcMain.handle(IPC.MCP_CONNECT_SERVER, async (_event, id: string): Promise<McpServerActionResult> => {
     const registry = getMcpRegistry();
-    if (!registry) return emptyResult('MCP is unavailable');
+    if (!registry) return unavailableResult();
     try {
-      const result = await registry.connectServer((id ?? '').trim());
-      return { ...result, error: result.error ? localizeUserFacingError(result.error, getLangCache()) : undefined };
+      return localizeActionResult(await registry.connectServer((id ?? '').trim()));
     } catch (err) {
-      return { ok: false, servers: registry.listServers(), error: localizeUserFacingError(errText(err), getLangCache()) };
+      return localizeActionResult({ ok: false, servers: registry.listServers(), error: errText(err) });
     }
   });
 
   ipcMain.handle(IPC.MCP_DISCONNECT_SERVER, (_event, id: string): McpServerActionResult => {
     const registry = getMcpRegistry();
-    if (!registry) return emptyResult('MCP is unavailable');
-    return registry.disconnectServer((id ?? '').trim());
+    if (!registry) return unavailableResult();
+    return localizeActionResult(registry.disconnectServer((id ?? '').trim()));
   });
 
   ipcMain.handle(IPC.MCP_SET_BUILTIN_ENABLED, async (_event, id: string, enabled: boolean): Promise<McpServerActionResult> => {
     const registry = getMcpRegistry();
-    if (!registry) return emptyResult('MCP is unavailable');
+    if (!registry) return unavailableResult();
     try {
-      const result = await registry.setBuiltinEnabled((id ?? '').trim(), enabled === true);
-      return { ...result, error: result.error ? localizeUserFacingError(result.error, getLangCache()) : undefined };
+      return localizeActionResult(await registry.setBuiltinEnabled((id ?? '').trim(), enabled === true));
     } catch (err) {
-      return { ok: false, servers: registry.listServers(), error: localizeUserFacingError(errText(err), getLangCache()) };
+      return localizeActionResult({ ok: false, servers: registry.listServers(), error: errText(err) });
     }
   });
 }

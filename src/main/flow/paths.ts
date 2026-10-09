@@ -6,10 +6,8 @@ import * as path from 'node:path';
 let testFlowDataDir: string | null = null;
 
 /**
- * Same trap configPaths already guards: in dev this directory IS the repo root and Vitest runs from
- * there with an isPackaged: false stand-in, so a test that persisted a checkpoint or a conversation
- * pointer overwrote the developer's own flow data. bot-conversations.json matters most — it is the
- * only surviving record of which accounts once held a pairing.
+ * In dev the flow data dir is the repo root, so tests get a temp dir instead and never overwrite
+ * real flow data (bot-conversations.json is the only record of past pairings).
  */
 function getTestFlowDataDir(): string {
   testFlowDataDir ??= mkdtempSync(path.join(os.tmpdir(), 'yobi-test-flow-'));
@@ -27,6 +25,7 @@ export const CHECKPOINT_KINDS = [
   'scraper',
   'youtube_subs',
   'youtube_channels',
+  'x_posts',
   'on_change',
   'line_read',
 ] as const;

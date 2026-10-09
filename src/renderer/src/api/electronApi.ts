@@ -1,7 +1,8 @@
 import type { GeminiModelChoice, GeminiModelState } from '../../../shared/geminiModels';
 import type { ClaudeModelChoice, ClaudeModelState } from '../../../shared/claudeModels';
 import type { ChatgptModelChoice, ChatgptModelState } from '../../../shared/chatgptModels';
-import type { MemoryEditResult, MemoryNote, UserMemoryBotSelf, UserMemorySnapshot } from '../../../shared/userMemory';
+import type { MemoryEditResult, MemoryNote, BotSelfChange, UserMemorySnapshot } from '../../../shared/userMemory';
+import type { BotSetPermissionsRequest, BotSetPermissionsResult } from '../../../shared/botPermissions';
 import type {
   MemoryCurateApplyResult,
   MemoryCuratePick,
@@ -10,6 +11,8 @@ import type {
 } from '../../../shared/memoryCurate';
 import type {
   AccountStatus,
+  SiteAccount,
+  SiteAccountStatus,
   AgentConfirmChoice,
   AgentConfirmPayload,
   AttachmentStashRequest,
@@ -34,6 +37,8 @@ import type {
   CaptureSettings,
   QuickExportSettings,
   ChatCommandResult,
+  ComposerEditorEventPayload,
+  ExternalEditorSettings,
   FeedCandidate,
   ScraperPickRequest,
   ScraperPickResult,
@@ -46,6 +51,11 @@ import type {
   FlowBuildRequestPayload,
   HiddenSources,
   MarkdownCaptureRequest,
+  BatchCaptureFormat,
+  BatchCaptureItem,
+  BatchCaptureProgress,
+  BatchCaptureResult,
+  ZipExportResult,
   ShareLinkRequest,
   ShareLinkResult,
   ShareSettings,
@@ -53,6 +63,7 @@ import type {
   NotifyEventPrefs,
   OutputFile,
   StartedConversation,
+  ConversationImportResult,
   StashedAttachment,
   PromptPreferences,
   ChatTurnEvent,
@@ -99,8 +110,24 @@ export const fileApi = {
   updateH1: (filePath: string, title: string): Promise<boolean> => window.electronAPI.updateFileH1(filePath, title),
   startConversation: (prompt: string): Promise<StartedConversation | null> =>
     window.electronAPI.startConversation(prompt),
+  importConversations: (filePaths: string[]): Promise<ConversationImportResult> =>
+    window.electronAPI.importConversations(filePaths),
+  /** Hands the rows to the OS as a native file drag; call from `dragstart` after preventDefault. */
+  startDrag: (filePaths: string[]): void => window.electronAPI.startFileDrag(filePaths),
   showInFolder: (filePath: string): Promise<void> => window.electronAPI.showInFolder(filePath),
   openPath: (filePath: string): Promise<boolean> => window.electronAPI.openPath(filePath),
+  /** The OS "Open with" chooser (Windows) or the default text editor (macOS). */
+  openWith: (filePath: string): Promise<boolean> => window.electronAPI.openFileWith(filePath),
+  /** Puts the files themselves on the clipboard, ready to paste into a folder or a chat app. */
+  copyFiles: (filePaths: string[]): Promise<boolean> => window.electronAPI.copyFilesToClipboard(filePaths),
+  /** The conversation files as they are on disk, in one archive the user saves. */
+  exportZip: (filePaths: string[]): Promise<ZipExportResult> => window.electronAPI.exportFilesZip(filePaths),
+  /** Renders each conversation as a PDF/PNG card into a folder the user picks. */
+  batchCapture: (format: BatchCaptureFormat, items: BatchCaptureItem[]): Promise<BatchCaptureResult> =>
+    window.electronAPI.batchCaptureStart(format, items),
+  stopBatchCapture: (): Promise<boolean> => window.electronAPI.batchCaptureStop(),
+  onBatchCaptureProgress: (cb: (progress: BatchCaptureProgress) => void): (() => void) =>
+    window.electronAPI.onBatchCaptureProgress(cb),
 };
 
 export const settingsApi = {
@@ -119,8 +146,8 @@ export const settingsApi = {
   updateHiddenSources: (next: HiddenSources): Promise<{ ok: boolean }> =>
     window.electronAPI.updateHiddenSources(next),
   getPromptPreferences: (): Promise<PromptPreferences> => window.electronAPI.getPromptPreferences(),
-  updatePromptPreferences: (prefs: PromptPreferences, builtPrompt: string): Promise<boolean> =>
-    window.electronAPI.updatePromptPreferences(prefs, builtPrompt),
+  updatePromptPreferences: (prefs: PromptPreferences): Promise<boolean> =>
+    window.electronAPI.updatePromptPreferences(prefs),
   getYoutubePrompt: (): Promise<string> => window.electronAPI.getYoutubePrompt(),
   updateYoutubePrompt: (prompt: string): Promise<boolean> => window.electronAPI.updateYoutubePrompt(prompt),
   getSyncSystemLanguageToModel: (): Promise<boolean> => window.electronAPI.getSyncSystemLanguageToModel(),
@@ -183,8 +210,6 @@ export const telegramApi = {
     window.electronAPI.updateTelegramDefaultReplyMode(mode),
   updateCompactReply: (enabled: boolean): Promise<boolean> =>
     window.electronAPI.updateTelegramCompactReply(enabled),
-  updateAdminUsers: (userIds: number[]): Promise<boolean> =>
-    window.electronAPI.updateTelegramAdminUsers(userIds),
   updateLlmDirect: (config: BotLlmDirectConfig): Promise<boolean> =>
     window.electronAPI.updateTelegramLlmDirect(config),
   generatePairingCode: () => window.electronAPI.generateTelegramPairingCode(),
@@ -209,6 +234,9 @@ export const botApi = {
     window.electronAPI.getBotByokCommands(),
   setByokCommandEnabled: (id: string, enabled: boolean): Promise<boolean> =>
     window.electronAPI.updateBotByokCommand(id, enabled),
+  /** Replaces one paired Telegram / LINE account's grants. */
+  setPermissions: (request: BotSetPermissionsRequest): Promise<BotSetPermissionsResult> =>
+    window.electronAPI.setBotPermissions(request),
 };
 
 export const lineApi = {
@@ -279,6 +307,13 @@ export const accountApi = {
   onStatusChanged: (cb: (status: AccountStatus) => void) => window.electronAPI.onAccountStatusChanged(cb),
 };
 
+export const siteAccountApi = {
+  getStatuses: (): Promise<SiteAccountStatus[]> => window.electronAPI.getSiteAccountStatuses(),
+  openLogin: (site: SiteAccount): Promise<boolean> => window.electronAPI.openSiteAccountLogin(site),
+  logout: (site: SiteAccount): Promise<boolean> => window.electronAPI.logoutSiteAccount(site),
+  onStatusChanged: (cb: (status: SiteAccountStatus) => void) => window.electronAPI.onSiteAccountStatusChanged(cb),
+};
+
 export const userMemoryApi = {
   get: (): Promise<UserMemorySnapshot> => window.electronAPI.getUserMemory(),
   setEnabled: (enabled: boolean): Promise<UserMemorySnapshot> => window.electronAPI.setUserMemoryEnabled(enabled),
@@ -287,7 +322,7 @@ export const userMemoryApi = {
   remove: (id: string): Promise<MemoryEditResult> => window.electronAPI.deleteUserMemory(id),
   clear: (): Promise<UserMemorySnapshot> => window.electronAPI.clearUserMemory(),
   undo: (note: MemoryNote): Promise<{ ok: boolean; snapshot: UserMemorySnapshot }> => window.electronAPI.undoUserMemoryNote(note),
-  setBotSelf: (botSelf: UserMemoryBotSelf): Promise<UserMemorySnapshot> => window.electronAPI.setUserMemoryBotSelf(botSelf),
+  setBotSelf: (change: BotSelfChange): Promise<UserMemorySnapshot> => window.electronAPI.setUserMemoryBotSelf(change),
   onChanged: (cb: (snapshot: UserMemorySnapshot) => void) => window.electronAPI.onUserMemoryChanged(cb),
   getCurateModel: (): Promise<string> => window.electronAPI.getMemoryCurateModel(),
   proposeCuration: (request: MemoryCurateProposeRequest): Promise<MemoryCurateProposeResult> =>
@@ -329,6 +364,18 @@ export const promptApi = {
   trigger: (prompt: string): void => window.electronAPI.triggerPrompt(prompt),
   triggerWithOptions: (options: PromptTriggerOptions): Promise<string | null> =>
     window.electronAPI.triggerPromptWithOptions(options),
+};
+
+/** Ctrl+G in the composer: the draft in the user's own editor, saves coming back as they land. */
+export const composerEditorApi = {
+  /** Resolves to the session id, or null when no editor could be started. */
+  open: (text: string): Promise<string | null> => window.electronAPI.openComposerEditor(text),
+  /** Ends the session; resolves to text saved since the last event, or null. */
+  finish: (id: string): Promise<string | null> => window.electronAPI.finishComposerEditor(id),
+  onEvent: (cb: (event: ComposerEditorEventPayload) => void) => window.electronAPI.onComposerEditorEvent(cb),
+  getSettings: (): Promise<ExternalEditorSettings> => window.electronAPI.getExternalEditorSettings(),
+  setSettings: (update: { choice: string; command: string }): Promise<ExternalEditorSettings> =>
+    window.electronAPI.setExternalEditorSettings(update),
 };
 
 export const clipboardApi = {
@@ -398,6 +445,7 @@ export const ipcEvents = {
   onStatus: (cb: (status: string) => void) => window.electronAPI.onStatus(cb),
   onQueueUpdate: (cb: (state: QueueState) => void) => window.electronAPI.onQueueUpdate(cb),
   onFileListUpdate: (cb: (files: OutputFile[]) => void) => window.electronAPI.onFileListUpdate(cb),
+  onOutputFilesChanged: (cb: () => void) => window.electronAPI.onOutputFilesChanged(cb),
   onChatTurn: (cb: (event: ChatTurnEvent) => void) => window.electronAPI.onChatTurn(cb),
   onUiNotification: (cb: (payload: UiNotificationPayload) => void) =>
     window.electronAPI.onUiNotification(cb),
@@ -406,6 +454,8 @@ export const ipcEvents = {
   onAgentConfirm: (cb: (payload: AgentConfirmPayload) => void) => window.electronAPI.onAgentConfirm(cb),
   onAgentConfirmDismiss: (cb: (id: string) => void) => window.electronAPI.onAgentConfirmDismiss(cb),
   onFlowCreated: (cb: (flow: FlowDefinition) => void) => window.electronAPI.onFlowCreated(cb),
+  onFlowUpdated: (cb: (flow: FlowDefinition) => void) => window.electronAPI.onFlowUpdated(cb),
+  onFlowRemoved: (cb: (flowId: string) => void) => window.electronAPI.onFlowRemoved(cb),
   onNotifyOnCompleteChanged: (cb: (enabled: boolean) => void) =>
     window.electronAPI.onNotifyOnCompleteChanged(cb),
   onLaunchAtStartupChanged: (cb: (enabled: boolean) => void) =>
@@ -457,8 +507,8 @@ export const flowApi = {
 export const agentApi = {
   run: (goal: string, targetUrl: string, runId: string, conversationPath?: string, attachments?: string[], mcpServerIds?: string[], web?: boolean): Promise<AgentCommandResult> =>
     window.electronAPI.runAgentCommand(goal, targetUrl, runId, conversationPath, attachments, mcpServerIds, web),
-  setConversationConnectors: (filePath: string, serverIds: string[], web?: boolean): Promise<boolean> =>
-    window.electronAPI.setConversationConnectors(filePath, serverIds, web),
+  setConversationConnectors: (filePath: string, serverIds: string[], web?: boolean, agent?: boolean): Promise<boolean> =>
+    window.electronAPI.setConversationConnectors(filePath, serverIds, web, agent),
   resume: (runId: string, answer?: string): Promise<AgentCommandResult> =>
     window.electronAPI.resumeAgentRun(runId, answer),
   cancel: (runId: string): Promise<boolean> => window.electronAPI.cancelAgentRun(runId),
@@ -484,5 +534,10 @@ export const scraperApi = {
 export const ytSubsApi = {
   hasCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.ytSubsHasCheckpoint(stepId),
   clearCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.ytSubsClearCheckpoint(stepId),
+};
+
+export const xPostsApi = {
+  hasCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.xPostsHasCheckpoint(stepId),
+  clearCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.xPostsClearCheckpoint(stepId),
 };
 

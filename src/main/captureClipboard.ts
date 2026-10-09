@@ -17,21 +17,13 @@ export function zipSingleFile(buffer: Buffer, entryName: string): Buffer {
   return zip.toBuffer();
 }
 
-// Exported for the test suite, which cleans up after the copies it makes.
 export function clipboardStageRoot(): string {
   return path.join(os.tmpdir(), STAGE_DIR);
 }
 
 /**
- * A whole directory per copy, rather than one file per name.
- *
- * The file name is what the user sees after pasting, so it has to stay exactly what they
- * typed — which means it cannot carry a uniquing token. But the path also has to be
- * immutable: a paste hands the receiving app a REFERENCE, read when that app gets round
- * to it, and Yobi's own composer is one of those apps. Exporting the same document twice
- * would otherwise rewrite bytes an already-attached message is still pointing at, and the
- * thumbnail beside it would go on showing the first version. Uniquing the directory keeps
- * both properties.
+ * A unique directory per copy: the file name must stay exactly what the user typed, and a pasted
+ * path must never be rewritten while an app (Yobi's composer included) still points at it.
  */
 async function stageForClipboard(bytes: Buffer, fileName: string): Promise<string> {
   const root = clipboardStageRoot();
@@ -67,36 +59,29 @@ function fileUriList(filePath: string): string {
   return `${pathToFileURL(filePath).href}\r\n`;
 }
 
+/** Puts files that already exist on the clipboard as files, the way Explorer's Copy does. */
+export async function writeFilesToClipboard(filePaths: readonly string[]): Promise<void> {
+  if (filePaths.length === 0) return;
+  await clipboard.write([new ClipboardItem({ 'text/uri-list': filePaths.map(fileUriList).join('') })]);
+}
+
 /**
- * What the clipboard read back after the write.
- *
- * Electron drops an entry it cannot encode without raising anything, so the write is still
- * read back — but that read is no longer allowed to FAIL the copy. Two things changed:
- * the file half is a plain string that always encodes, so an empty read now indicts the
- * READ rather than the write; and on a platform that keeps only one representation, the
- * other one is still there and still does the job the user asked for.
+ * What the clipboard read back after the write. Electron silently drops entries it cannot
+ * encode, so the write is read back, but a short read never fails the copy: the file half
+ * always encodes, and a platform that keeps one representation still has the other.
  */
 export type ClipboardCopyOutcome = 'ok' | 'fileOnly' | 'unverified';
 
 /**
- * Every spelling that means "the picture landed".
- *
- * Measured on macOS 2026-08-30: Electron only synthesises the `image/png` alias while the
- * image is ALONE on the pasteboard. Declare a file in the same entry and the entry is
- * classified as a file item — the alias vanishes and `clipboard.has('image/png')` goes
- * false — while the PNG itself is still sitting there under its native flavour (read back:
- * 163 bytes, magic 89504e47, decodes 1x1; macOS adds a TIFF rendition beside it that
- * `nativeImage` cannot decode, so it is NOT evidence of anything). Matching on the web MIME
- * type alone therefore reported `fileOnly` on a Mac where BOTH halves had gone through,
- * which is what "the copy button does nothing" turned out to be: a false warning.
+ * Every clipboard type that means the PNG landed. On macOS, once a file shares the entry,
+ * Electron drops the `image/png` alias but the native PNG flavour is still there.
  */
 export const PNG_LANDED_TYPES = [
   'image/png',
   'electron application/osclipboard;format="Apple PNG pasteboard type"',
 ] as const;
 
-// Exported for the test suite: this is the whole decision, and it is worth pinning down
-// separately from the OS behaviour that feeds it.
+// The copy-outcome decision, separate from the OS behaviour that feeds it.
 export function resolveCopyOutcome(
   landedTypes: readonly string[],
   wantsImage: boolean,
@@ -122,10 +107,8 @@ export async function writeCaptureToClipboard(
   const bytes = zip ? zipSingleFile(buffer, `${fileStem}.${ext}`) : buffer;
   const tmpPath = await stageForClipboard(bytes, `${fileStem}.${outExt}`);
 
-  // One entry, both representations: the file is what a desktop or a file manager
-  // accepts, and for a plain PNG the image bytes ride along so a chat or a document
-  // still pastes the picture inline. Measured on Windows: the OS ranks the image
-  // formats ahead of the file list, so an app that takes either still takes the image.
+  // One entry, both representations: the file for desktops and file managers, the PNG bytes so
+  // chats and documents paste the picture inline (Windows ranks image formats ahead of files).
   const asImage = captureRidesAsImage(ext, zip);
   const entry: Record<string, Blob | string> = { 'text/uri-list': fileUriList(tmpPath) };
   if (asImage) entry['image/png'] = new Blob([new Uint8Array(bytes)], { type: 'image/png' });

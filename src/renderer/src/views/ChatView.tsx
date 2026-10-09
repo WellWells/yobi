@@ -1,25 +1,28 @@
 import React, { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Flex, Stack } from '@mantine/core';
-import { Library, Quote, SearchCheck } from 'lucide-react';
+import { Library, Paperclip, Quote, SearchCheck } from 'lucide-react';
 import { Sidebar } from '../components/Sidebar';
 import { MarkdownView } from '../components/MarkdownView';
 import { ExportDialog } from '../components/ExportDialog';
 import { FileHeaderBar } from '../components/chat/FileHeaderBar';
-import { PromptInputArea, type PromptInputAreaHandle } from '../components/chat/PromptInputArea';
-import { WelcomeScreen } from '../components/chat/WelcomeScreen';
-import { IncognitoWelcome } from '../components/chat/IncognitoWelcome';
+import { ConversationInfoDialog } from '../components/chat/ConversationInfoDialog';
+import { CENTERED_MAX_WIDTH, PromptInputArea, type PromptInputAreaHandle } from '../components/chat/PromptInputArea';
+import { WelcomeHints, WelcomeScreen } from '../components/chat/WelcomeScreen';
+import { IncognitoHints, IncognitoWelcome } from '../components/chat/IncognitoWelcome';
 import { ChatHeaderRow } from '../components/chat/ChatHeaderRow';
 import { TempChatToggle } from '../components/chat/TempChatToggle';
-import { ChatDropZone } from '../components/chat/ChatDropZone';
+import { FileDragArea, FileDropZone } from '../components/chat/FileDropZone';
 import { LoginRequiredDialog } from '../components/chat/LoginRequiredDialog';
 import { ShareLinkDialog } from '../components/chat/ShareLinkDialog';
 import { buildShareMarkdown } from '../../../shared/conversationDoc';
 import { conversationAliases } from '../utils/parseMarkdownBlocks';
+import { loadAgentDefault, saveAgentDefault } from '../utils/composerDefaults';
 import { useShallow } from 'zustand/react/shallow';
 import { NEW_CONVERSATION_KEY, selectHiddenSources, useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import { useGlobalHotkeys } from '../hooks/useGlobalHotkeys';
 import { usePromptAttachments } from '../hooks/usePromptAttachments';
+import { useGlideOnSwitch } from '../hooks/useGlideOnSwitch';
 import {
   useCaptureExport,
   CAPTURE_PALETTES,
@@ -28,19 +31,23 @@ import {
 } from '../hooks/useCaptureExport';
 import { hideAppNotices, showAppNotice } from '../hooks/useUiNotifications';
 import { useExportSettingsStore } from '../store/exportSettingsStore';
-import type { CaptureFormat, CaptureTurn } from '../../../shared/types';
+import type { AgentRunSummary, CaptureFormat, CaptureTurn } from '../../../shared/types';
 import { useRewriteTask } from '../hooks/useRewriteTask';
 import { useChatCommands, type ChatCommand } from '../hooks/useChatCommands';
 import { useChatCommandRunner } from '../hooks/useChatCommandRunner';
 import { useAgentRunner } from '../hooks/useAgentRunner';
 import { useMcpCommands } from '../hooks/useMcpCommands';
-import { useConversationConnectors } from '../hooks/useConversationConnectors';
+import { useConversationConnectors, webForRun } from '../hooks/useConversationConnectors';
 import { MCP_COMMAND_ID_PREFIX, parseMcpCommandFlowId } from '../../../shared/mcpCommand';
 import { useAgentRunStore } from '../store/useAgentRunStore';
 import { useConversationTurns } from '../hooks/useConversationTurns';
 import { ConversationView } from './chat/ConversationView';
 import { shouldShowConversationView } from './chat/conversationViewRouting';
 import { AgentResumeBanner } from '../components/chat/AgentResumeBanner';
+import { RecapLine } from '../components/chat/RecapLine';
+import { useConversationRecap } from '../hooks/useConversationRecap';
+import { useFormatTime } from '../hooks/useFormatTime';
+import { noteConversationRenamed } from '../store/recapStore';
 import { ConversationSearchOverlay } from '../components/chat/ConversationSearchOverlay';
 import { SelectionToolbar, type SelectionAction } from '../components/chat/SelectionToolbar';
 import { useChatSelection } from '../hooks/useChatSelection';
@@ -60,6 +67,8 @@ import {
   BUILTIN_NEW_ALIAS,
   BUILTIN_NEW_COMMAND,
   BUILTIN_NEW_FLOW_ID,
+  BUILTIN_RECAP_COMMAND,
+  BUILTIN_RECAP_FLOW_ID,
   isByokTargetUrl,
   isModelUrlHidden,
   loginRequiredProviderForUrl,
@@ -102,6 +111,17 @@ export const ChatView: React.FC = React.memo(() => {
   const pendingNewTurns = useAppStore((s) => (s.pendingTurns[NEW_CONVERSATION_KEY] ?? []).length);
   const pendingSelectedTurns = useAppStore((s) => (s.pendingTurns[s.selectedFile?.path ?? ''] ?? []).length);
 
+  // The conversation the recap is about: the open file, or the temporary chat when no file is open.
+  const recapConversation = selectedFile ? conversation : (tempChatMode ? tempChatConversation : null);
+  const conversationRecap = useConversationRecap({
+    path: selectedFile?.path ?? NEW_CONVERSATION_KEY,
+    conversation: recapConversation,
+    pendingCount: selectedFile ? pendingSelectedTurns : pendingNewTurns,
+  });
+  const hasRecapTarget = (recapConversation?.turns.length ?? 0) > 0;
+  const showRecapNow = conversationRecap.showNow;
+  const formatTime = useFormatTime();
+
   const activeModelUrl = useAppStore((s) => s.aiUrl);
   // Reopening a conversation restores its capabilities; the mode follows from them, so nothing
   // has to be told about it separately.
@@ -110,37 +130,44 @@ export const ChatView: React.FC = React.memo(() => {
     connectors,
     activeIds: activeConnectorIds,
     web,
+    webOff,
     toggleWeb,
     setWeb,
+    optOutWeb,
+    agent,
+    setAgent,
     discloseAll: discloseConnectors,
     toggle: toggleConnector,
     remove: removeConnectors,
     clear: clearConnectors,
   } = useConversationConnectors(noop);
-  // Derived, never stored. A send that holds a capability has something to act with and runs as
-  // an agent; one that holds none is an ordinary chat turn — the only shape that can continue
-  // the provider's own thread natively.
+  // Agent is on when switched on by itself or implied by a capability; with none of them a send is
+  // an ordinary chat turn — the only shape that can continue the provider's own thread natively.
   const chatMode = useMemo<ChatMode>(
-    () => chatModeForCapabilities(web, activeConnectorIds),
-    [web, activeConnectorIds],
+    () => chatModeForCapabilities(agent, web, activeConnectorIds),
+    [agent, web, activeConnectorIds],
   );
   const [pendingLoginModel, setPendingLoginModel] = useState<{ provider: LoginRequiredProvider; url: string } | null>(null);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [infoDialogOpen, setInfoDialogOpen] = useState(false);
   const shareMarkdown = useMemo(
-    () => buildShareMarkdown(fileContent ?? '', conversationAliases()),
+    () => buildShareMarkdown(fileContent ?? '', conversationAliases(), {
+      question: (index) => t('share.turnHeading').replace('{{n}}', String(index)),
+      answer: (provider) => (provider
+        ? t('share.answerBy').replace('{{provider}}', provider)
+        : t('share.answer')),
+      intro: (provider, turns) => (provider
+        ? t('share.introWith').replace('{{provider}}', provider)
+        : t('share.intro')).replace('{{count}}', String(turns)),
+    }),
     [fileContent, t],
   );
   const [headerEditing, setHeaderEditing] = useState(false);
   const [headerEditValue, setHeaderEditValue] = useState('');
 
-  /*
-   * Everything this view has to say goes to the app's one notice surface. It used to draw its
-   * own card, pinned bottom-right — directly over the composer's send button, which is exactly
-   * where main.tsx says a notice must never sit — with a hard 4.5s timer that did not pause on
-   * hover and no severity at all, so "copied to clipboard" and "export failed" looked identical.
-   */
+  /* Everything this view has to say goes to the app's one notice surface, never a card of its own. */
   const setExportToast = useCallback((toast: ExportToast): void => {
     if (!toast) {
       hideAppNotices();
@@ -166,6 +193,7 @@ export const ChatView: React.FC = React.memo(() => {
   const builtinNames = useMemo(() => new Set([
     BUILTIN_NEW_COMMAND, BUILTIN_NEW_ALIAS,
     BUILTIN_MODEL_COMMAND,
+    BUILTIN_RECAP_COMMAND,
     BUILTIN_CHAT_COMMAND,
     BUILTIN_AGENT_COMMAND,
   ]), []);
@@ -196,6 +224,13 @@ export const ChatView: React.FC = React.memo(() => {
         command: BUILTIN_MODEL_COMMAND,
         description: t('chat.command.model.description'),
       },
+      // Only where there is a conversation to recap; on a blank chat a typed `/recap` is unknown.
+      ...(hasRecapTarget ? [{
+        flowId: BUILTIN_RECAP_FLOW_ID,
+        command: BUILTIN_RECAP_COMMAND,
+        description: t('chat.command.recap.description'),
+        action: true as const,
+      }] : []),
       {
         flowId: BUILTIN_CHAT_FLOW_ID,
         command: BUILTIN_CHAT_COMMAND,
@@ -209,23 +244,40 @@ export const ChatView: React.FC = React.memo(() => {
       ...mcpCommands,
       ...flowCommands.filter((c) => !builtinNames.has(c.command)),
     ];
-  }, [builtinNames, flowCommands, mcpCommands, t]);
+  }, [builtinNames, flowCommands, mcpCommands, hasRecapTarget, t]);
   const { runCommand } = useChatCommandRunner(setExportToast);
+  // Read through refs: a run reports back after it finishes, long after the callback was created.
+  const webRef = useRef({ web, webOff });
+  webRef.current = { web, webOff };
+  const [autoWebSignal, setAutoWebSignal] = useState(0);
+  // The agent went online with the web only off by default: the switch follows, with the same
+  // undo notice a typed search request gets. Never against an "off" the user chose.
+  const handleAgentUsedWeb = useCallback((): void => {
+    if (webRef.current.web || webRef.current.webOff) return;
+    setWeb(true);
+    setAutoWebSignal((n) => n + 1);
+  }, [setWeb]);
+  // The composer turns the web on for a send that asked for a search, and off only from its notice's
+  // undo — which is the user saying no, so it sticks to the conversation.
+  const handleComposerSetWeb = useCallback((on: boolean): void => {
+    if (on) setWeb(true);
+    else optOutWeb();
+  }, [setWeb, optOutWeb]);
   const {
     run: runAgentCommand,
     resume: resumeAgentRun,
     answer: answerAgentQuestion,
     discard: discardAgentRun,
-  } = useAgentRunner(handleTurnError);
+  } = useAgentRunner(handleTurnError, handleAgentUsedWeb);
   const resumableAgentRuns = useAgentRunStore((s) => s.resumable);
 
   useEffect(() => {
     void agentApi.listResumable().then((list) => useAgentRunStore.getState().setResumable(list));
   }, []);
 
-  const handleAgentResume = useCallback((runId: string): void => {
-    useAgentRunStore.getState().removeResumable(runId);
-    void resumeAgentRun(runId);
+  const handleAgentResume = useCallback((entry: AgentRunSummary): void => {
+    useAgentRunStore.getState().removeResumable(entry.runId);
+    void resumeAgentRun(entry);
   }, [resumeAgentRun]);
   const handleAgentBannerDiscard = useCallback((runId: string): void => {
     useAgentRunStore.getState().removeResumable(runId);
@@ -260,23 +312,37 @@ export const ChatView: React.FC = React.memo(() => {
     selectFile(null);
     setFileContent(null);
     // Disclosure is scoped to one conversation: a new one starts with nothing on the table —
-    // web included, which is off by default and turned on per conversation.
+    // web included, which is off by default and turned on per conversation. Agent is the one
+    // exception: it starts as the user last picked it, so working in Agent is not a click per chat.
     clearConnectors();
     setWeb(false);
+    setAgent(loadAgentDefault());
     focusPromptInput();
-  }, [selectFile, setFileContent, clearConnectors, setWeb, focusPromptInput]);
+  }, [selectFile, setFileContent, clearConnectors, setWeb, setAgent, focusPromptInput]);
 
-  // `/chat` and `/agent` still work; with the mode derived, they set the capabilities that imply
-  // it. `/chat` clears everything — that is what makes an ordinary, natively-threaded turn
-  // reachable at all — and `/agent` switches the web back on.
+  // The blank chat the app opens on is a new conversation too.
+  useEffect(() => {
+    if (!useAppStore.getState().selectedFile) setAgent(loadAgentDefault());
+  }, [setAgent]);
+
+  // `/agent` and the menu's Agent row switch Agent on by itself — the web stays as it was, since an
+  // agent needs no web. `/chat` and switching Agent off clear everything, capabilities included:
+  // that is what makes an ordinary, natively-threaded turn reachable at all.
   const handleChangeMode = useCallback((mode: ChatMode): void => {
     if (mode === 'agent') {
-      setWeb(true);
+      setAgent(true);
       return;
     }
+    setAgent(false);
     setWeb(false);
     clearConnectors();
-  }, [clearConnectors, setWeb]);
+  }, [clearConnectors, setWeb, setAgent]);
+
+  // The user's own pick is also what the next new chat starts in; an automatic switch is not.
+  const handlePickMode = useCallback((mode: ChatMode): void => {
+    handleChangeMode(mode);
+    saveAgentDefault(mode === 'agent');
+  }, [handleChangeMode]);
 
   const handleDiscloseConnectors = useCallback((ids: readonly string[]): readonly string[] =>
     discloseConnectors(ids), [discloseConnectors]);
@@ -395,6 +461,10 @@ export const ChatView: React.FC = React.memo(() => {
       handleNewConversation();
       return true;
     }
+    if (command.flowId === BUILTIN_RECAP_FLOW_ID) {
+      showRecapNow();
+      return true;
+    }
     if (
       command.flowId === BUILTIN_AGENT_FLOW_ID
       || command.flowId.startsWith(MCP_COMMAND_ID_PREFIX)
@@ -416,12 +486,10 @@ export const ChatView: React.FC = React.memo(() => {
       // named in this very keystroke.
       const scope = connectorIds
         ?? (directConnector ? handleDiscloseConnector(directConnector) : activeConnectorIds);
-      // Attachments ride along even with a connector disclosed. They used not to, because a
-      // connector run dropped every built-in tool and had nothing to open a file with; it keeps
-      // them now, so there is nothing left to protect the user from.
+      // Attachments ride along even with a connector disclosed: a connector run keeps the built-in file tools.
       const attachmentPaths = attachments.map((a) => a.path).filter(Boolean);
       // Web too: a send that has just turned it on has not flushed that into `web` either.
-      void runAgentCommand(input, activeModelUrl, attachmentPaths, scope, webOverride ?? web);
+      void runAgentCommand(input, activeModelUrl, attachmentPaths, scope, webOverride ?? webForRun(web, webOff));
       if (attachmentPaths.length > 0) clearAttachments();
       return true;
     }
@@ -429,7 +497,7 @@ export const ChatView: React.FC = React.memo(() => {
     return true;
   }, [
     activeModelUrl, attachments, clearAttachments, activeConnectorIds, handleDiscloseConnector,
-    handleNewConversation, runCommand, runAgentCommand, web, t,
+    handleNewConversation, showRecapNow, runCommand, runAgentCommand, web, webOff, t,
   ]);
 
   const handleAiUrlChange = useCallback((nextUrl: string): void => {
@@ -473,6 +541,7 @@ export const ChatView: React.FC = React.memo(() => {
     if (!title || !selectedFile) return;
     const result = await fileApi.updateTitle(selectedFile.path, title);
     if (!result.ok) return;
+    noteConversationRenamed(selectedFile.path, result.updatedPath);
     const latest = await fileApi.getList();
     setFiles(latest);
     const nextSelected = latest.find((item) => item.path === result.updatedPath) ?? null;
@@ -488,6 +557,18 @@ export const ChatView: React.FC = React.memo(() => {
     pendingTurnCount: pendingSelectedTurns,
     hasContent: Boolean(fileContent) && Boolean(conversation),
   });
+  // True exactly when the content area below falls through to one of the two welcome screens.
+  // The composer then rises to sit under the greeting, as on the providers' own home pages.
+  const blankChat = !(showConversationView && conversation)
+    && !(fileContent && parsedBlocks)
+    && !selectedFile
+    && !(tempChatMode && tempChatConversation && tempChatConversation.turns.length > 0)
+    && pendingNewTurns === 0
+    && !(tempChatMode && tempChatContent && tempChatBlocks);
+  // The first send (or opening a conversation) glides the composer down to the bottom edge
+  // instead of jumping there; a new chat glides it back up under the greeting.
+  const composerRef = useRef<HTMLDivElement>(null);
+  useGlideOnSwitch(composerRef, blankChat);
 
   const handleCaptureTurnAs = useCallback(
     (format: CaptureFormat, turn: CaptureTurn) => captureExport.captureTurnAs(format, turn, quickExportZip),
@@ -521,9 +602,7 @@ export const ChatView: React.FC = React.memo(() => {
     return resolveSelectionCitations(selection.text, selection.blockText, parseCitationSources(response));
   }, [selection, activeConversation]);
 
-  // "Verify this" used to run /search. That command is gone from the chat — checking a claim is
-  // exactly the judgement call the agent makes for itself now, and it still reaches the same
-  // pipeline through its research tool.
+  // "Verify this" hands the claim to the agent, which decides whether to research it.
   const verifyChatCommand = useMemo(
     () => chatCommands.find((command) => command.flowId === BUILTIN_AGENT_FLOW_ID) ?? null,
     [chatCommands],
@@ -565,10 +644,16 @@ export const ChatView: React.FC = React.memo(() => {
   }, []);
 
   return (
-    <Flex flex={1} style={{ overflow: 'hidden' }}>
+    <FileDragArea>
       <Sidebar onNewConversation={handleNewConversation} onOpenSearch={openSearch} />
 
-      <ChatDropZone onFiles={addFiles} overlayLabel={t('attach.drop.hint')}>
+      <FileDropZone
+        grow
+        onFiles={addFiles}
+        icon={Paperclip}
+        title={t('attach.drop.title')}
+        detail={attachUnsupportedReason ?? t('attach.drop.detail')}
+      >
       <Stack gap={0} flex={1} pos="relative" bg="var(--mantine-color-body)" style={{ overflow: 'hidden' }}>
         {!selectedFile && (
           <ChatHeaderRow>
@@ -605,10 +690,15 @@ export const ChatView: React.FC = React.memo(() => {
             captureBusy={captureExport.captureBusy}
             onShowInFolder={() => { void window.electronAPI.showInFolder(selectedFile.path); }}
             onStartRewrite={handleStartRewrite}
+            {...(fileContent && conversation && conversation.turns.length > 0
+              ? { onOpenInfo: () => setInfoDialogOpen(true) }
+              : {})}
           />
         )}
 
-        <Box ref={contentAreaRef} flex={1} style={{ overflowY: 'auto' }}>
+        {/* Always rendered, so the composer below keeps its place in the tree and never remounts. */}
+        <Box flex={blankChat ? 1 : 0} />
+        <Box ref={contentAreaRef} flex={blankChat ? '0 0 auto' : 1} style={{ overflowY: 'auto' }}>
           {showConversationView && conversation ? (
             <ConversationView
               conversation={conversation}
@@ -631,12 +721,28 @@ export const ChatView: React.FC = React.memo(() => {
           ) : tempChatMode ? (
             <IncognitoWelcome />
           ) : (
-            <WelcomeScreen activeModelUrl={activeModelUrl} />
+            <WelcomeScreen />
           )}
         </Box>
 
-        {resumableAgentRuns.length > 0 && (
+        {conversationRecap.display && (
           <Box px="md" pb="xs">
+            <RecapLine
+              title={t('chat.recap.title')}
+              lines={conversationRecap.display === 'recap' ? conversationRecap.recap?.lines ?? [] : []}
+              emptyText={t('chat.recap.empty')}
+              timeLabel={conversationRecap.display === 'recap' && conversationRecap.recap?.at
+                ? formatTime(conversationRecap.recap.at)
+                : ''}
+              dismissLabel={t('chat.recap.dismiss')}
+              onDismiss={conversationRecap.dismiss}
+            />
+          </Box>
+        )}
+
+        {resumableAgentRuns.length > 0 && (
+          // Lined up with the composer's own box: same 12px inset, same width when it is centred.
+          <Box px={12} pb={4} w="100%" maw={blankChat ? CENTERED_MAX_WIDTH : undefined} mx={blankChat ? 'auto' : undefined}>
             <AgentResumeBanner
               runs={resumableAgentRuns}
               onResume={handleAgentResume}
@@ -645,6 +751,7 @@ export const ChatView: React.FC = React.memo(() => {
           </Box>
         )}
 
+        <Box ref={composerRef} style={{ flexShrink: 0 }}>
         <PromptInputArea
           ref={promptAreaRef}
           t={t}
@@ -666,16 +773,23 @@ export const ChatView: React.FC = React.memo(() => {
           chatMode={chatMode}
           web={web}
           onToggleWeb={toggleWeb}
-          onSetWeb={setWeb}
+          onSetWeb={handleComposerSetWeb}
+          autoWebSignal={autoWebSignal}
           onChangeMode={handleChangeMode}
+          onPickMode={handlePickMode}
           connectors={connectors}
           activeConnectorIds={activeConnectorIds}
           onToggleConnector={handleToggleConnector}
           onDiscloseConnectors={handleDiscloseConnectors}
           onRemoveConnectors={removeConnectors}
+          centered={blankChat}
         />
+        </Box>
+        <Box flex={blankChat ? 1.25 : 0}>
+          {blankChat && (tempChatMode ? <IncognitoHints /> : <WelcomeHints />)}
+        </Box>
       </Stack>
-      </ChatDropZone>
+      </FileDropZone>
 
       {selection && selectionActions.length > 0 && (
         <SelectionToolbar
@@ -702,7 +816,16 @@ export const ChatView: React.FC = React.memo(() => {
         open={shareDialogOpen}
         onClose={() => setShareDialogOpen(false)}
         markdown={shareMarkdown}
+        turnCount={conversation?.turns.length ?? 0}
         t={t}
+      />
+
+      <ConversationInfoDialog
+        open={infoDialogOpen && Boolean(selectedFile)}
+        onClose={() => setInfoDialogOpen(false)}
+        conversation={conversation}
+        content={fileContent ?? ''}
+        filePath={selectedFile?.path ?? ''}
       />
 
       <ExportDialog
@@ -751,7 +874,7 @@ export const ChatView: React.FC = React.memo(() => {
       />
 
 
-    </Flex>
+    </FileDragArea>
   );
 });
 

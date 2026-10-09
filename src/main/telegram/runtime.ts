@@ -27,12 +27,15 @@ import {
 import {
   attachTelegramHandlers,
   syncPrivateCommands,
+  type CommandMenuOptions,
+  type MenuAccountAccess,
   type TelegramContext,
   type TelegramTaskRequest,
 } from './commands';
 import type { MediaIntake } from './mediaIntake';
 import type { ResolvedBuiltinCommand, ResolvedProviderCommand } from '../providerCommands';
-import type { BotBuiltinCommandKey } from '../../shared/types';
+import type { BotBuiltinCommandKey, BotRunKind } from '../../shared/types';
+import type { BotCommandAccessMode } from '../../shared/botCommandAccess';
 import type { BotBuiltinRunResult } from '../botBuiltinCommands';
 import { t } from '../i18n';
 import { getErrorMessage } from './errors';
@@ -58,6 +61,10 @@ export interface TelegramRuntimeDeps {
   saveKnownUsers: (next: TelegramKnownUser[]) => void;
   getDirectorySources: () => Promise<Omit<DirectorySources, 'channels' | 'pairedUserIds'>>;
   isAdminUser: (userId: number) => boolean;
+  /** Whether an account may type a built-in command in a chat (its grants). */
+  canUseBuiltin?: (key: BotBuiltinCommandKey, userId: number, chatId: number) => Promise<boolean>;
+  /** Per paired account, what its own private-chat "/" menu should add to the shared one. */
+  getMenuAccess?: () => Promise<MenuAccountAccess[]>;
   onTaskRequest: (request: TelegramTaskRequest) => Promise<{ taskId: string }>;
   onStatusRequest: () => string;
   onRestartApp?: () => void;
@@ -71,13 +78,12 @@ export interface TelegramRuntimeDeps {
   getProviderCommands: () => ResolvedProviderCommand[];
   getBuiltinCommands: () => ResolvedBuiltinCommand[];
   onBuiltinCommand: (
-    key: BotBuiltinCommandKey,
+    key: BotRunKind,
     input: string,
     targetUrl: string,
     chatId: number,
     userId: number,
     onProgressText: (text: string) => void,
-    plain?: boolean,
   ) => Promise<BotBuiltinRunResult>;
   onAgentAnswer: (
     answer: string,
@@ -93,6 +99,7 @@ export interface TelegramRuntimeDeps {
     command: string;
     description: string;
     inputVariable: string;
+    access?: BotCommandAccessMode;
     allowedUserIds: string[];
   }>;
   onFlowCommand?: (
@@ -191,6 +198,7 @@ export class TelegramRuntime {
               this.deps.getProviderCommands(),
               this.deps.getFlowCommands?.(),
               this.deps.getBuiltinCommands(),
+              await this.menuOptions(),
             );
           } catch (err: unknown) {
             this.deps.onLog(`[telegram] failed to refresh localized commands: ${getErrorMessage(err)}`);
@@ -209,6 +217,21 @@ export class TelegramRuntime {
     });
   }
 
+  private async menuOptions(): Promise<CommandMenuOptions> {
+    let accounts: MenuAccountAccess[] = [];
+    try {
+      accounts = (await this.deps.getMenuAccess?.()) ?? [];
+    } catch (err: unknown) {
+      // Fails closed: without the grants every chat gets the shared menu only.
+      this.deps.onLog(`[telegram] could not read per-account command access: ${getErrorMessage(err)}`);
+    }
+    return {
+      pairedUserIds: this.deps.getPairing().pairedUsers.map((user) => user.userId),
+      accounts,
+      onLog: this.deps.onLog,
+    };
+  }
+
   async refreshBotCommands(): Promise<void> {
     await this.lock.runExclusive(async () => {
       const bot = this.bot;
@@ -221,6 +244,7 @@ export class TelegramRuntime {
           this.deps.getProviderCommands(),
           this.deps.getFlowCommands?.(),
           this.deps.getBuiltinCommands(),
+          await this.menuOptions(),
         );
       } catch (err: unknown) {
         this.deps.onLog(`[telegram] failed to refresh command menu: ${getErrorMessage(err)}`);
@@ -265,8 +289,8 @@ export class TelegramRuntime {
   }
 
   private async startOrReplaceBot(token: string): Promise<void> {
-    this.updateStatus('starting');
     this.errorMessage = '';
+    this.updateStatus('starting');
 
     const { bot: candidate, intake } = this.createBot(token);
     let me: Awaited<ReturnType<typeof candidate.api.getMe>>;
@@ -289,6 +313,7 @@ export class TelegramRuntime {
         this.deps.getProviderCommands(),
         this.deps.getFlowCommands?.(),
         this.deps.getBuiltinCommands(),
+        await this.menuOptions(),
       );
     } catch (err: unknown) {
       this.deps.onLog(`[telegram] failed to sync command scope: ${getErrorMessage(err)}`);
@@ -410,6 +435,7 @@ export class TelegramRuntime {
       getEffectiveTargetUrl: () => this.deps.getEffectiveTargetUrl(),
       getByokContextBudgetChars: () => this.deps.getByokContextBudgetChars(),
       isAdminUser: (userId) => this.deps.isAdminUser(userId),
+      ...(this.deps.canUseBuiltin ? { canUseBuiltin: this.deps.canUseBuiltin } : {}),
       onTaskRequest: (request) => this.deps.onTaskRequest(request),
       onStatusRequest: () => this.deps.onStatusRequest(),
       onRestartApp: this.deps.onRestartApp,
@@ -431,7 +457,6 @@ export class TelegramRuntime {
             request.replyTarget.chatId,
             request.replyTarget.userId,
             progress.push,
-            request.plain,
           );
         } finally {
           progress.stop();
@@ -470,12 +495,10 @@ export class TelegramRuntime {
       await handleExportCallback(ctx, this.registry, this.msgCtx);
     });
 
+    // One update's handler failing leaves polling running (grammY moves on to the next update), so it
+    // is logged, not reported as the bot being down.
     bot.catch((err) => {
       if (this.bot !== bot) return;
-      this.errorMessage = t(this.deps.getStrings(), 'telegram.runtime.handlerError', {
-        error: getErrorMessage(err),
-      });
-      this.updateStatus('error');
       this.deps.onLog(`[telegram] middleware error: ${getErrorMessage(err)}`);
     });
     return { bot, intake };

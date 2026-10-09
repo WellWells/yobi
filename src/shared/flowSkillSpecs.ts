@@ -2,6 +2,7 @@ import type { SkillType } from './types';
 
 export type { SkillType };
 import { PROVIDER_URLS, UPLOAD_CAPABLE_PROVIDER_LABELS } from './types';
+import { DEFAULT_CAPTURE_PALETTE } from './capturePalettes';
 
 export const DEFAULT_SKILL_CONFIG: Record<SkillType, Record<string, string>> = {
   shell: { command: '', shell: '' },
@@ -35,7 +36,7 @@ export const DEFAULT_SKILL_CONFIG: Record<SkillType, Record<string, string>> = {
     title: '', filename: '', palette: 'linen', backgroundStyle: 'gradient',
     expire: '1week', burnAfterReading: 'false', emitFailFlag: 'false',
   },
-  bot: { chatId: '', message: '', attachment: '', attachmentType: 'auto', emitFailFlag: 'false' },
+  bot: { platform: 'auto', chatIds: '', message: '', attachment: '', attachmentType: 'auto', emitFailFlag: 'false' },
   rss: { url: '' },
   stop: { value: '' },
   comment: { note: '' },
@@ -55,6 +56,9 @@ export const DEFAULT_SKILL_CONFIG: Record<SkillType, Record<string, string>> = {
   http: { method: 'GET', url: '', headers: '', body: '' },
   youtube: { url: '', fallbackProvider: '' },
   youtube_subs: { channels: '', perChannel: '3', skipShorts: 'true' },
+  x_posts: { accounts: '', perAccount: '5' },
+  x_thread: { url: '', maxReplies: '20', emitFailFlag: 'false' },
+  x_trends: { maxItems: '20', postsPerTrend: '5' },
   power: { action: '' },
   restart_app: {},
   file_write: { folder: '', filename: '', content: '' },
@@ -108,11 +112,7 @@ export interface SkillSpec {
 
 const PROVIDER_URL_LIST = Object.values(PROVIDER_URLS).join(', ');
 
-/**
- * Skills whose output is already a finished answer, so `/agent` may hand it to the user
- * verbatim. Derived from the specs rather than listed again, so a new `deliverable: true`
- * cannot be honored in one place and forgotten in the other.
- */
+/** Whether `/agent` may hand this skill's output to the user verbatim (the spec's `deliverable` flag). */
 export function isDeliverableSkill(type: string): boolean {
   return SKILL_SPECS.some((spec) => spec.type === type && spec.deliverable === true);
 }
@@ -135,7 +135,7 @@ export const SKILL_SPECS: SkillSpec[] = [
       { key: 'exportFileName', desc: 'when exportFormat is set, the output file name (blank auto-generates a unique name)' },
       { key: 'exportShowProvider', desc: '"true"|"false" — when exportFormat is set, show the AI provider name on the exported card (default "true")' },
       { key: 'exportShowTimestamp', desc: '"true"|"false" — when exportFormat is set, show a timestamp on the exported card (default "true")' },
-      { key: 'palette', desc: 'when exportFormat is set, the card colour theme by key — dark: aurora|mint|rose|ocean|sunset|forest|violet|steel|ember; light: dawn|mist|sand|sage|sky|peach|lavender|linen (blank = default dark)' },
+      { key: 'palette', desc: `when exportFormat is set, the card colour theme by key — dark: aurora|mint|rose|ocean|sunset|forest|violet|steel|ember; light: dawn|mist|sand|sage|sky|peach|lavender|linen (blank = ${DEFAULT_CAPTURE_PALETTE})` },
     ],
   },
   {
@@ -238,7 +238,7 @@ export const SKILL_SPECS: SkillSpec[] = [
   {
     type: 'search',
     brief: "Search the web for a ranked list of links. Use when you want the links themselves to open next.",
-    summary: 'Search the web (DuckDuckGo) and return a ranked LIST of results as a JSON array of {title, link, snippet}. Titles/links/snippets only — no page content and no answer: loop over the output and fetch each page with a browser step (or filter with an llm step first). Stateless — results are NOT deduplicated across runs; for "notify me about NEW items" monitoring use rss or scraper instead. Never aborts the flow: a failure (e.g. a temporary engine rate-limit) is logged and returns "[]".',
+    summary: 'Search the web (DuckDuckGo) and return a ranked LIST of results as a JSON array of {title, link, snippet}. Titles/links/snippets only — no page content and no answer: loop over the output and fetch each page with a browser step (or filter with an llm step first). Stateless — results are NOT deduplicated across runs; for "notify me about NEW items" monitoring use rss or scraper instead. An ordinary failure is logged and returns "[]"; if every query is blocked the step fails.',
     fields: [
       { key: 'query', desc: 'the search query; may embed {{variables}}', required: true },
       { key: 'limit', desc: 'max results to return, 1-10 (default "10"; the engine serves at most 10 per query)' },
@@ -287,12 +287,40 @@ export const SKILL_SPECS: SkillSpec[] = [
     ],
   },
   {
+    type: 'x_posts',
+    brief: 'Watch a list of X (Twitter) accounts and return only NEW posts. Use to follow what people post on X.',
+    summary: "Monitor a LIST of X (Twitter) accounts and return only NEW posts since the previous run (see OUTPUT for the per-item shape), de-duplicated across runs; a newly-added account is seeded with only its latest post so adding accounts never floods. Each item already carries the post's full text. Signed out, X shows only each account's newest few posts, so poll often enough for busy accounts. Follow with a loop over the array (loopVar e.g. \"post\"), then an x_thread step on {{post.link}} when the replies are wanted too.",
+    fields: [
+      { key: 'accounts', desc: 'one account per line: an @handle (e.g. @nasa) or an x.com / twitter.com profile URL', required: true },
+      { key: 'perAccount', desc: 'how many latest posts to take per account (default "5")' },
+    ],
+  },
+  {
+    type: 'x_thread',
+    brief: 'Read one X (Twitter) post with the replies under it. Use to analyze a post and how people responded.',
+    summary: 'Read one X (Twitter) post and the replies X shows under it (author, time, text and link for each). Signed out, X shows only about 3 top replies per post. Usually placed inside a loop over x_posts output with url {{post.link}}, followed by an llm step that analyzes {{<outputKey>}}.',
+    fields: [
+      { key: 'url', desc: 'the post URL (https://x.com/<account>/status/<id>); may embed {{variables}}', required: true },
+      { key: 'maxReplies', desc: 'at most this many replies (default "20"; "0" = the post only)' },
+      { key: 'emitFailFlag', desc: '"true"|"false" — when the post cannot be read, set {{<outputKey>}}="" and {{<outputKey>.isFailed}}=1 and continue instead of aborting; essential inside a loop' },
+    ],
+  },
+  {
+    type: 'x_trends',
+    brief: "List what is trending on X (Twitter) right now, with the top posts under each trend. Use for a trends digest. Needs the user's X sign-in.",
+    summary: "What X's Explore › Trending tab lists right now for the signed-in account's region, in X's order: each trend's name, its context (where or what it trends in), and the top posts X shows when the trend is opened — who wrote them, their text and likes (see OUTPUT). A snapshot — no cross-run dedup. Needs the user signed in to X in Yobi; signed out the step fails and says so. Feed the array into one llm step for a digest.",
+    fields: [
+      { key: 'maxItems', desc: 'at most this many trends (default "20")' },
+      { key: 'postsPerTrend', desc: 'top posts read under each trend (default "5", at most "20"; "0" = the trend names only)' },
+    ],
+  },
+  {
     type: 'sysinfo',
-    brief: "Collect this computer's OS, CPU, memory, GPU, disk and network facts. Use for hardware reports and checks.",
+    brief: "Collect this computer's OS, CPU, memory, GPU, disk and network facts, including its public IP. Use for hardware reports and checks.",
     summary: 'Collect local system/hardware/network info (OS, CPU, memory, GPU, motherboard, BIOS, disks, displays, network) — read WMI-free, so it works even when Windows WMI is broken. "json" format returns a grouped/nested document. Great as input for a following llm step to analyze.',
     fields: [
       { key: 'format', desc: '"text" (human-readable) | "json" (grouped/nested: system/cpu/memory/gpu/displays/motherboard/storage/network)' },
-      { key: 'fields', desc: 'OPTIONAL comma-separated subset of field keys to narrow the output — os,platform,hostname,manufacturer,locale,timezone,uptime,time,timeLocal,cpu,cpuSpeed,cpuCores,memoryTotal,memoryFree,memoryType,memoryModules,gpu,graphics,displays,motherboard,bios,disks,volumes,localIp,publicIp,macAddress,gateway,netInterface,networkAdapters,dns,appVersion. OMIT this key entirely to collect the standard local fields. The deep-hardware fields (manufacturer,cpuSpeed,memoryType,memoryModules,graphics,displays,motherboard,bios,disks,volumes,macAddress,gateway,netInterface,networkAdapters,dns) and publicIp are only collected when listed explicitly — they run extra hardware probes or an external network request.' },
+      { key: 'fields', desc: 'OPTIONAL comma-separated subset of field keys to narrow the output — os,platform,hostname,manufacturer,locale,timezone,uptime,time,timeLocal,cpu,cpuSpeed,cpuCores (logical processors/threads, not physical cores),memoryTotal,memoryFree,memoryType,memoryModules,gpu,graphics,displays,motherboard,bios,disks,volumes,printers,localIp,publicIp,macAddress,gateway,netInterface,networkAdapters,dns,appVersion. OMIT this key entirely to collect the standard local fields. The deep-hardware fields (manufacturer,cpuSpeed,memoryType,memoryModules,graphics,displays,motherboard,bios,disks,volumes,printers,macAddress,gateway,netInterface,networkAdapters,dns) and publicIp are only collected when listed explicitly — they run extra hardware probes or an external network request.' },
     ],
   },
   {
@@ -309,10 +337,11 @@ export const SKILL_SPECS: SkillSpec[] = [
   {
     type: 'bot',
     brief: "Send a Telegram or LINE message, optionally with a file or photo. Use to deliver a result to the user's phone.",
-    summary: "Send a Telegram message (requires Telegram to be configured). Set attachment to also send a file/photo — a local path (e.g. {{file}}) or an http(s) URL (e.g. {{browser_1.image}}); the message becomes its caption. A caption longer than Telegram's 1024-char limit is trimmed in place so the photo and its caption always arrive as ONE message.",
+    summary: "Send a message through the user's Telegram or LINE bot. The bots, their tokens and the paired chats are already set up in Yobi — never ask for a token or a chat ID. Set attachment to also send a file/photo — a local path (e.g. {{file}}) or an http(s) URL (e.g. {{browser_1.image}}); the message becomes its caption. A caption longer than Telegram's 1024-char limit is trimmed in place so the photo and its caption always arrive as ONE message.",
     fields: [
       { key: 'message', desc: 'the message text (or the attachment caption when attachment is set); may embed {{variables}}', required: true },
-      { key: 'chatId', desc: 'comma-separated chat IDs, or {{bot.triggerChatId}}, or "" to broadcast to all paired users' },
+      { key: 'platform', desc: '"telegram"|"line"|"auto" — which bot sends it; set it whenever the request names one. "auto" (default) answers on the bot that triggered the flow and uses Telegram otherwise' },
+      { key: 'chatIds', desc: 'who receives it: "me" (the user themself), a recipient\'s name exactly as the request gives it (Yobi looks it up among the paired chats — never invent an ID), "all" (everyone paired), or {{bot.triggerChatId}} (whoever sent the bot command); comma-separate several; "" when the request does not say' },
       { key: 'attachment', desc: 'optional file to send — a local path inside the app output folder (e.g. {{file}}) or an http(s) URL (e.g. {{browser_1.image}}); empty = text only' },
       { key: 'attachmentType', desc: '"auto"|"photo"|"document" — how to send the attachment; "auto" (default) sends image URLs (e.g. an og:image cover) as a photo and falls back to a document if it is not a renderable image, and judges local files by extension/content' },
       { key: 'emitFailFlag', desc: '"true"|"false" — on send failure set {{<outputKey>.isFailed}}=1 and continue instead of aborting the flow' },
@@ -355,7 +384,7 @@ export const SKILL_SPECS: SkillSpec[] = [
       { key: 'width', desc: 'file formats only: render width in px — 720 (phone), 1000 (standard) or 1200 (wide); blank = 1000' },
       { key: 'title', desc: 'file formats only: document heading; blank = the first markdown heading in content' },
       { key: 'filename', desc: 'file formats only: file name stem; supports {date}/{time}/{datetime}/{rand}. Blank = auto-named' },
-      { key: 'palette', desc: 'file formats only: colour scheme key, e.g. "linen" (light document) or "aurora" (dark card); blank = linen' },
+      { key: 'palette', desc: `file formats only: colour scheme key, e.g. "linen" (light document) or "aurora" (dark card); blank = ${DEFAULT_CAPTURE_PALETTE}` },
       { key: 'backgroundStyle', desc: 'file formats only: "solid"|"gradient"|"mesh"; blank = gradient' },
       { key: 'expire', desc: 'format "text" only: how long the link lives — "5min"|"10min"|"1hour"|"1day"|"1week"|"1month"|"1year"|"never"; blank = the user\'s share setting' },
       { key: 'burnAfterReading', desc: 'format "text" only: "true"|"false" — destroy the paste after it is opened once' },
@@ -477,12 +506,12 @@ export const SKILL_SPECS: SkillSpec[] = [
   },
   {
     type: 'email_send',
-    brief: "Send an email over SMTP. Use to deliver a result by mail; credentials live in Settings, not in the flow.",
-    summary: 'Send an email over SMTP. Requires SMTP credentials configured in Settings › Email (the password is stored encrypted on this device, never in the flow). Side-effect only.',
+    brief: "Send an email over SMTP. Use to deliver a result by mail; the SMTP account is filled in on the email step by the user, not in the flow.",
+    summary: 'Send an email over SMTP. The user fills in the SMTP account on the email step itself, and every email step shares it — it is never part of the flow config. Side-effect only.',
     fields: [
       { key: 'to', desc: 'recipient email address(es), comma-separated; may embed {{variables}}', required: true },
       { key: 'subject', desc: 'the email subject; may embed {{variables}}', required: true },
-      { key: 'body', desc: 'the plain-text email body; may embed {{variables}}' },
+      { key: 'body', desc: 'the email body as Markdown, sent formatted with a plain-text copy (raw HTML shows as text); may embed {{variables}}' },
       { key: 'fromName', desc: 'optional sender display name (the address is the configured SMTP user)' },
       { key: 'attachments', desc: 'optional local file paths to attach (comma or newline separated) — typically {{file}} from an earlier share/capture/file_write/file_download step. Only files produced by this run or living in the app output folder are allowed, and URLs are NOT accepted: download one with file_download first, then attach {{file}}. A file that cannot be attached fails the step rather than sending the mail without it' },
     ],
@@ -490,7 +519,7 @@ export const SKILL_SPECS: SkillSpec[] = [
   {
     type: 'stock',
     brief: "Get a stock or index quote. Use for price checks and market alerts.",
-    summary: "Get a stock/equity quote (data source: Yahoo Finance, no API key). Market = symbol suffix: US tickers as-is (AAPL), Taiwan .TW (2330.TW) / .TWO (OTC), indices ^ (^TWII). {{<outputKey>}} = a JSON quote object; a SINGLE symbol also exposes sub-vars {{<outputKey>.symbol/.price/.open/.high/.low/.volume/.change/.changePct/.name/.currency/.marketTime/.previousClose/.isFailed}}. Multiple comma/newline symbols → a JSON array, no sub-vars. Never throws — a bad symbol sets {{<outputKey>.isFailed}}=1.",
+    summary: "Get a stock/equity quote (data source: Yahoo Finance, no API key). Market = symbol suffix: US tickers as-is (AAPL), Taiwan .TW (2330.TW) / .TWO (OTC), indices ^ (^TWII). {{<outputKey>}} = a JSON quote object; a SINGLE symbol also exposes sub-vars {{<outputKey>.symbol/.price/.open/.high/.low/.volume/.change/.changePct/.name/.currency/.marketTime/.session/.previousClose/.isFailed}}. .marketTime is exchange-local with its UTC offset; .session=\"open\" means .price is intraday, not a close. Multiple comma/newline symbols → a JSON array, no sub-vars. Never throws — a bad symbol sets {{<outputKey>.isFailed}}=1.",
     fields: [
       { key: 'symbol', desc: 'one symbol, or several comma/newline-separated (e.g. "AAPL", "2330.TW")', required: true },
     ],
@@ -498,7 +527,7 @@ export const SKILL_SPECS: SkillSpec[] = [
   {
     type: 'forex',
     brief: "Get an exchange rate and an optional converted amount. Use for currency alerts and conversions.",
-    summary: "Get a foreign-exchange rate (and optional converted amount), quoted near-live (data source: Yahoo Finance, falling back to open.er-api.com's once-daily table; no API key). {{<outputKey>}} = a JSON object plus sub-vars {{<outputKey>.rate/.converted/.amount/.base/.target/.asOf/.previousClose/.changePct/.isFailed}}. Never throws — an unknown currency sets {{<outputKey>.isFailed}}=1. For a \"tell me when it hits X\" alert, follow this with a js comparison and an on_change step so a rate parked past the threshold does not re-notify on every run.",
+    summary: "Get a foreign-exchange rate (and optional converted amount), quoted near-live (data source: Yahoo Finance, falling back to open.er-api.com's once-daily table; no API key). {{<outputKey>}} = a JSON object plus sub-vars {{<outputKey>.rate/.converted/.amount/.base/.target/.asOf/.session/.previousClose/.changePct/.isFailed}}. Never throws — an unknown currency sets {{<outputKey>.isFailed}}=1. For a \"tell me when it hits X\" alert, follow this with a js comparison and an on_change step so a rate parked past the threshold does not re-notify on every run.",
     fields: [
       { key: 'base', desc: 'base currency ISO code (e.g. USD)', required: true },
       { key: 'target', desc: 'target currency ISO code (e.g. TWD)', required: true },
@@ -509,7 +538,7 @@ export const SKILL_SPECS: SkillSpec[] = [
   {
     type: 'weather',
     brief: "Get current weather plus today's high, low and rain chance for a place. Use the English place name.",
-    summary: "Get the weather for a place NAME (data source: Open-Meteo + geocoding, no API key). {{<outputKey>}} = ONE full JSON object {location,temp,feelsLike,condition,humidity,windSpeed,unit,isDay,high,low,rainChance} (current conditions + today's high/low/rain). The same fields are also exposed as sub-vars {{<outputKey>.temp/.feelsLike/.condition/.humidity/.windSpeed/.unit/.isDay/.high/.low/.rainChance/.location/.isFailed}} — pick whichever you need. Never throws — an unknown place sets {{<outputKey>.isFailed}}=1.",
+    summary: "Get the weather for a place NAME (data source: Open-Meteo + geocoding, no API key). {{<outputKey>}} = ONE full JSON object {location,temp,feelsLike,condition,humidity,windSpeed,unit,isDay,high,low,rainChance} (current conditions + today's high/low; rainChance = the day's MAX precipitation %, not the chance for a given hour). The same fields are also exposed as sub-vars {{<outputKey>.temp/.feelsLike/.condition/.humidity/.windSpeed/.unit/.isDay/.high/.low/.rainChance/.location/.isFailed}} — pick whichever you need. Never throws — an unknown place sets {{<outputKey>.isFailed}}=1.",
     fields: [
       { key: 'location', desc: 'place name, e.g. "Tokyo" or "Paris, France"', required: true },
       { key: 'units', desc: '"metric" (°C, km/h) | "imperial" (°F, mph)' },
@@ -537,7 +566,7 @@ export const SKILL_SPECS: SkillSpec[] = [
   },
   {
     type: 'random',
-    brief: "Generate random whole numbers in an inclusive range. Use for dice, lottery picks or jitter.",
+    brief: "Generate random whole numbers in an inclusive range, several at once and optionally unique. Use for dice, lottery picks or jitter.",
     summary: "Generate random WHOLE numbers within an exact inclusive range (both min and max can occur) — for dice, lottery numbers, picking an item index, or jitter. The output shape depends on count: a single number is a bare value, several numbers are a JSON array you loop over (see OUTPUT).",
     fields: [
       { key: 'min', desc: 'the lowest value that may be produced (inclusive; may be negative); may embed {{variables}}', required: true },
@@ -549,7 +578,7 @@ export const SKILL_SPECS: SkillSpec[] = [
   {
     type: 'line_read',
     brief: 'Read your own LINE messages — one chat, several at once, or a keyword across all of them. Use to summarize or track what a group is saying.',
-    summary: 'Read messages from the LINE desktop app\'s own local store (Windows only, and the user must have switched the LINE connector on in Settings). Nothing is sent to LINE and nothing is marked as read. {{<outputKey>}} = a plain-text transcript, OLDEST first, one line per message ("HH:MM name: text") under a date header; attachments appear as a short placeholder. Pick SEVERAL chats and each one gets its own "## <chat name>" section and its own "limit" — chats are never interleaved; pick one and the transcript has no heading at all. A chat with nothing to show is left out entirely, so "" means every selected chat was empty. Sub-vars {{<outputKey>.count/.dropped/.chatName/.chatCount/.firstAt/.lastAt/.isFirstRun}}. A chat name that matches nothing, or several chats, ABORTS the run with the candidate names rather than reading the wrong chat — so "" always means "no messages", never "something went wrong". The transcript is trimmed to fit the AI provider\'s input limit by dropping the OLDEST messages, with the budget shared evenly between the chats and any unused share passed on; {{<outputKey>.dropped}} says how many were cut. Typical shape: line_read -> stop -> llm -> bot.',
+    summary: 'Read messages from the LINE desktop app\'s own local store (Windows only, and the user must have switched the LINE connector on in Settings). Nothing is sent to LINE and nothing is marked as read. {{<outputKey>}} = a plain-text transcript, OLDEST first, one line per message ("HH:MM name: text") under a date header; attachments appear as a short placeholder. Pick SEVERAL chats and each one gets its own "## <chat name>" section and its own "limit" — chats are never interleaved; pick one and the transcript has no heading at all. A chat with nothing to show is left out entirely, so "" means every selected chat was empty. Sub-vars {{<outputKey>.count/.dropped/.chatName/.chatCount/.firstAt/.lastAt/.isFirstRun}}. A chat name that matches nothing, or several chats, ABORTS the run with the candidate names rather than reading the wrong chat — so "" always means "no messages", never "something went wrong". The transcript is trimmed to fit the AI provider\'s input limit by dropping the OLDEST messages (with sinceLastRun the NEWEST are held back for the next run instead), with the budget shared evenly between the chats and any unused share passed on; {{<outputKey>.dropped}} says how many were cut. Typical shape: line_read -> stop -> llm -> bot.',
     fields: [
       { key: 'chat', desc: 'the chats to read, SEPARATED BY COMMAS: group / open-chat / person names as they appear in LINE, or chat ids. Each one is read separately, up to "limit" messages each, into its own section. Leave BLANK to search every chat at once as a single combined list — which is what you want together with "query"' },
       { key: 'limit', desc: 'most messages to read PER selected chat (default "200"); with "chat" left blank it is the total for the whole-account search instead' },
@@ -590,9 +619,9 @@ export const SKILL_OUTPUT: Record<SkillType, string> = {
   comment: '',
   scraper: '{{<outputKey>}} = a JSON array of {title, link} ("[]" if none); loop over it and use {{item.title}} / {{item.link}}.',
   research: '{{<outputKey>}} = the written, cited answer (prose with [n] markers — NOT a list, do not loop over it); {{<outputKey>.sources}} = a JSON array of the {title, link} pages that were read (loop over THIS to walk the sources, using {{item.title}} / {{item.link}}); {{<outputKey>.count}} = how many were read. With emitFailFlag="true", a failure sets {{<outputKey>}}="" and {{<outputKey>.isFailed}} = "0"/"1" instead of aborting the flow.',
-  search: '{{<outputKey>}} = a JSON array of {title, link, snippet} ranked by relevance ("[]" when nothing matched OR the search failed — failures are logged and never abort the flow; follow with a stop step to halt on an empty list); loop over it and use {{item.title}} / {{item.link}} / {{item.snippet}} (snippet = the result-page summary, may be "").',
+  search: '{{<outputKey>}} = a JSON array of {title, link, snippet} ranked by relevance ("[]" when nothing matched or on an ordinary, logged failure; a fully blocked search fails the step); loop over it and use {{item.title}} / {{item.link}} / {{item.snippet}} (snippet = the result-page summary, may be "").',
   gmap_reviews: '{{<outputKey>}} = a JSON array of {author, rating, date, text, reply} sorted newest-first ("[]" when the place has no reviews OR the fetch failed — failures are logged and never abort the flow); {{<outputKey>.place}} = the place name; {{<outputKey>.rating}} = the place\'s overall Google star rating (e.g. "4.2"), {{<outputKey>.total}} = its total review count (e.g. "2953"), {{<outputKey>.distribution}} = the star breakdown "5★=… 4★=… … 1★=…", {{<outputKey>.positive}} = the positive share as a whole percent (4-5★ over total, e.g. "91"), {{<outputKey>.verdict}} = a Steam-style overall verdict label computed deterministically from the rating + count (e.g. "Very Positive" / "極度好評", localized), {{<outputKey>.tier}} = its tier number "0"–"9" (9 best, 0 = not enough reviews). These are read from the rendered place page (verdict derived from them) and are "" if it could not be read. Loop over the array with {{item.author}} / {{item.rating}} / {{item.date}} / {{item.text}} / {{item.reply}}, or interpolate the whole thing plus {{<outputKey>.rating}}/.total/.distribution into an llm prompt.',
-  line_read: '{{<outputKey>}} = the transcript text, one "## <chat name>" section per chat when several were picked and no heading at all when one was ("" when nothing matched, or when sinceLastRun found no new messages in ANY of them — follow with a stop step to halt the flow); {{<outputKey>.count}} = how many messages the transcript holds in total, {{<outputKey>.dropped}} = how many were cut to fit the provider input limit (oldest first, "0" when nothing was cut), {{<outputKey>.chatName}} = the resolved chat name, or the names that actually had something to show, comma-separated ("" in a whole-account search), {{<outputKey>.chatCount}} = how many chats contributed, {{<outputKey>.firstAt}} / {{<outputKey>.lastAt}} = the timestamps the transcript spans, {{<outputKey>.isFirstRun}} = "1" when sinceLastRun had no memory yet. There is no failure flag: an unreadable chat or an impossible date range aborts the run instead, so an empty output unambiguously means there were no messages.',
+  line_read: '{{<outputKey>}} = the transcript text, one "## <chat name>" section per chat when several were picked and no heading at all when one was ("" when nothing matched, or when sinceLastRun found no new messages in ANY of them — follow with a stop step to halt the flow); {{<outputKey>.count}} = how many messages the transcript holds in total, {{<outputKey>.dropped}} = how many were cut to fit the provider input limit (oldest first; with sinceLastRun the newest wait for the next run; "0" when nothing was cut), {{<outputKey>.chatName}} = the resolved chat name, or the names that actually had something to show, comma-separated ("" in a whole-account search), {{<outputKey>.chatCount}} = how many chats contributed, {{<outputKey>.firstAt}} / {{<outputKey>.lastAt}} = the timestamps the transcript spans, {{<outputKey>.isFirstRun}} = "1" when sinceLastRun had no memory yet. There is no failure flag: an unreadable chat or an impossible date range aborts the run instead, so an empty output unambiguously means there were no messages.',
   loop: 'Inside the block each iteration sets {{<loopVar>}} (the string item, or the item JSON for an object item) and {{<loopVar>.<field>}} for EVERY field of an object item (e.g. {{item.title}} / {{item.link}}); inside the block the loop step\'s own {{<outputKey>}}/{{<outputKey>.<field>}} are re-bound to the current item as well.',
   end_loop: '',
   if: '',
@@ -603,6 +632,9 @@ export const SKILL_OUTPUT: Record<SkillType, string> = {
   http: '{{<outputKey>}} = the raw response body text (returned for ANY status code; "" for an empty url); NO sub-variables — if the body is JSON, parse it in a following js step before referencing fields.',
   youtube: '{{<outputKey>}} = the transcript ("" if no captions); {{<outputKey>.title}} = video title; {{<outputKey>.transcript}} = the transcript again (alias of the main output); {{<outputKey>.isFailed}} = "0"/"1"; {{<outputKey>.image}} = the thumbnail URL (usable as a bot attachment; still set when only captions fail, "" when the URL is not a valid YouTube link).',
   youtube_subs: '{{<outputKey>}} = a JSON array of {title, link, image} ("[]" if none); loop (e.g. loopVar "video") and use {{video.title}} / {{video.link}} / {{video.image}} (image = the thumbnail URL, usable as a bot attachment).',
+  x_posts: '{{<outputKey>}} = a JSON array of NEW {title, link, author, name, date, text, image, replies, likes} ("[]" if none), newest first; loop (e.g. loopVar "post") and use {{post.link}} / {{post.text}} (the full post text) / {{post.author}} ("@handle") / {{post.name}} (display name) / {{post.date}} / {{post.image}} (first image, "" if none; usable as a bot attachment) / {{post.replies}} and {{post.likes}} (counts). title = the first line of the text.',
+  x_trends: '{{<outputKey>}} = a JSON array of {title, link, context, volume, rank, posts} in X\'s order: title = the trend (phrase, #hashtag or name), link = the X search page for it, context = where or what it trends in ("" if X gives none), volume = X\'s count line such as "12.3K posts" ("" if none), rank = "1", "2", …, posts = the trend\'s top posts as {author, name, date, text, link, likes} ([] when none could be read); interpolate the whole array into one llm prompt.',
+  x_thread: '{{<outputKey>}} = the post and its replies as readable text (each with author, time, text and link), ready to hand to an llm step; {{<outputKey>.text}} / .author / .name / .date / .link / .image = the post itself; {{<outputKey>.replyText}} = the replies only, same layout; {{<outputKey>.replies}} = a JSON array of {author, name, date, text, link, likes} (loop over it to handle replies one by one); {{<outputKey>.shown}} = how many replies were read, {{<outputKey>.replyCount}} = how many the post has in total. With emitFailFlag="true", a failure sets {{<outputKey>}}="" and {{<outputKey>.isFailed}}="1" instead of aborting.',
   power: '',
   restart_app: '',
   file_write: 'No {{<outputKey>}} — the written file PATH is set as the magic {{file}}; reference {{file}} in a later bot/email_send/file_delete step.',
@@ -612,10 +644,10 @@ export const SKILL_OUTPUT: Record<SkillType, string> = {
   file_download: 'No {{<outputKey>}} — the downloaded file PATH (extension derived from Content-Type) is set as the magic {{file}}; reference {{file}} in a later bot/email_send/file_delete step.',
   email_send: '',
   text: '{{<outputKey>}} = the interpolated text string (no sub-variables); delivered as a plain text message when fed to a bot step.',
-  stock: '{{<outputKey>}} = a JSON quote object; a SINGLE symbol also exposes {{<outputKey>.symbol/.name/.currency/.price/.open/.high/.low/.volume/.previousClose/.change/.changePct/.marketTime/.isFailed}} (some may be ""); MULTIPLE symbols give a JSON array (a failed symbol appears as {symbol, isFailed} only; no sub-vars) — loop and use {{item.symbol}} / {{item.price}}.',
-  forex: '{{<outputKey>}} = a JSON object {base,target,rate,amount,converted,asOf,previousClose,changePct} plus sub-vars {{<outputKey>.rate/.converted/.amount/.base/.target/.asOf/.previousClose/.changePct/.isFailed}} (.previousClose/.changePct are the prior session close and the move against it, and are "" when only the daily fallback source was reachable; .isFailed="1" on an unknown currency; never throws).',
+  stock: '{{<outputKey>}} = a JSON quote object; a SINGLE symbol also exposes {{<outputKey>.symbol/.name/.currency/.price/.open/.high/.low/.volume/.previousClose/.change/.changePct/.marketTime/.session/.isFailed}} (some may be ""; .marketTime = exchange-local time with UTC offset; .session = "open" (price is intraday, NOT a close) / "closed" / ""); MULTIPLE symbols give a JSON array (a failed symbol appears as {symbol, isFailed} only; no sub-vars) — loop and use {{item.symbol}} / {{item.price}}.',
+  forex: '{{<outputKey>}} = a JSON object {base,target,rate,amount,converted,asOf,session,previousClose,changePct} plus sub-vars {{<outputKey>.rate/.converted/.amount/.base/.target/.asOf/.session/.previousClose/.changePct/.isFailed}} (.asOf = quote time with UTC offset; .session = "open"/"closed", "" when unknown; .previousClose/.changePct are the prior session close and the move against it, and are "" when only the daily fallback source was reachable; .isFailed="1" on an unknown currency; never throws).',
   on_change: '{{<outputKey>}} = the value you passed in WHEN it differs from the previous run, otherwise "" — so a following stop step halts every run except the one where it changed. No sub-variables.',
-  weather: '{{<outputKey>}} = a JSON object {location,temp,feelsLike,condition,humidity,windSpeed,unit,isDay,high,low,rainChance}; the same fields plus .isFailed are also exposed as sub-vars {{<outputKey>.temp}} etc. (.isFailed="1" on an unknown place; never throws).',
+  weather: '{{<outputKey>}} = a JSON object {location,temp,feelsLike,condition,humidity,windSpeed,unit,isDay,high,low,rainChance}; the same fields plus .isFailed are also exposed as sub-vars {{<outputKey>.temp}} etc. (rainChance = the day\'s MAX precipitation %, not per period;.isFailed="1" on an unknown place; never throws).',
   air_quality: '{{<outputKey>}} = a JSON object {location,station,aqi,level,status,statusLocal,pollutant,pm2_5,pm10,ozone,no2,so2,co,gasUnits,europeanAqi,source,observedAt} plus sub-vars {{<outputKey>.aqi/.level/.status/.statusLocal/.pollutant/.pm2_5/.pm10/.station/.location/.europeanAqi/.source/.observedAt/.isFailed}}. .level is 1-6 (1 Good … 6 Hazardous, 0 = no reading) — compare it numerically rather than matching .status text. .status is always English; .statusLocal is the same band in the app language. .station and .pollutant are filled only by the Taiwan source (blank elsewhere). Gas values are NOT sub-vars because their unit differs by source (see gasUnits). Never throws — .isFailed="1" on an unknown place.',
   random: 'count="1" (or blank): {{<outputKey>}} = a single whole number as a string (e.g. "42") — embed it directly. count>1: {{<outputKey>}} = a JSON array of whole numbers (e.g. [42,7,91]) — loop over it and use {{item}} (a plain value, NOT {{item.field}}). No sub-variables.',
 };

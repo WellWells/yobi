@@ -4,6 +4,7 @@ import { sendLog } from '../helpers';
 import { planQuery } from './router';
 import { planQueryLlm, planQueryWeb } from './planner';
 import { searchDdg, SerpChallengeError } from './serp';
+import { SEARCH_BLOCKED_KEY } from './blocked';
 import { harvest, selectTargets, DEFAULT_MAX_SOURCES, HARVEST_SPARE_TARGETS } from './harvest';
 import { rankHits, rankSourcesScored } from './rank';
 import type { ScoredSource } from './rank';
@@ -16,15 +17,22 @@ import { charsPlusBreaks, utf8Len } from '../../shared/textBudget';
 import { isFetchableWebUrl } from '../../shared/webUrl';
 import { buildCitedPrompt, linkifyCitations, synthesize } from './synthesize';
 import type { QueryPlan, SearchOutcome, SerpHit, SourceDoc, TemporalFilter } from './types';
+import type { ResearchPhaseId } from '../../shared/researchProgress';
 
 export type { SearchOutcome, SerpHit, SourceDoc } from './types';
 export { buildSearchHistory } from './history';
 
 export type SearchProgress =
+  /** The phases this search will go through, sent first so the whole checklist shows at once. */
+  | { stage: 'outline'; phases: ResearchPhaseId[] }
   | { stage: 'planning'; queries: string[] }
+  | { stage: 'searched'; hits: number }
   | { stage: 'fetching'; count: number }
   | { stage: 'read'; host: string }
+  | { stage: 'readFailed'; host: string }
   | { stage: 'analyzing' }
+  | { stage: 'summarizing'; total: number }
+  | { stage: 'summarized'; kept: boolean }
   | { stage: 'synthesizing' };
 
 export class SearchPipelineError extends Error {
@@ -66,14 +74,9 @@ function interleave<T>(lists: T[][]): T[] {
 type PlannerChannel = 'byok' | 'web' | 'none';
 
 /*
- * Who pays for a planner, and what it buys.
- *
- * A key makes it a cheap side call on its own connection, so every standard search gets one and
- * quick mode joins in as soon as there is a thread to read. A browser interface has no side
- * channel: the planner is a second full navigate-fill-wait on the same exclusive lane the answer
- * needs, so it is not overlapped with the search, it is added to it. Follow-ups need subject
- * resolution; long research instructions need concrete queries instead of a verbatim search.
- * Short first questions remain free, as does quick mode without conversation history.
+ * On BYOK the planner is a cheap side call: every standard search gets one, quick mode only with a
+ * thread. On a browser provider it is a full extra round trip on the answer's lane, so it runs only
+ * for follow-ups and long standard requests that need concrete queries.
  */
 function plannerChannel(targetUrl: string, mode: SearchMode, history: string, query: string): PlannerChannel {
   if (isByokTargetUrl(targetUrl)) return mode === 'standard' || history ? 'byok' : 'none';
@@ -94,7 +97,7 @@ async function buildPlan(
 
 function challengeError(): SearchPipelineError {
   return new SearchPipelineError(
-    'search.error.ddgChallenge',
+    SEARCH_BLOCKED_KEY,
     'DuckDuckGo is temporarily asking for human verification — try again in a few minutes',
   );
 }
@@ -119,22 +122,28 @@ async function runQueries(
   return { hits: interleave(perQuery), challenged };
 }
 
-async function collectHits(plan: QueryPlan, locale: string): Promise<SerpHit[]> {
+interface CollectedHits {
+  hits: SerpHit[];
+  /** Some queries got the verification page while others answered: fewer sources than the plan would have found. */
+  partiallyBlocked: boolean;
+}
+
+async function collectHits(plan: QueryPlan, locale: string): Promise<CollectedHits> {
   const first = await runQueries(plan.queries, plan.temporal, locale);
-  if (first.hits.length > 0) return first.hits;
+  if (first.hits.length > 0) return { hits: first.hits, partiallyBlocked: first.challenged };
   if (first.challenged) throw challengeError();
-  if (plan.temporal === 'none') return [];
+  if (plan.temporal === 'none') return { hits: [], partiallyBlocked: false };
 
   sendLog(`🔎 [Search] the "${plan.temporal}" recency filter left no results — retrying without it`);
   const retry = await runQueries(plan.queries, 'none', locale);
   if (retry.hits.length === 0 && retry.challenged) throw challengeError();
-  return retry.hits;
+  return { hits: retry.hits, partiallyBlocked: retry.challenged };
 }
 
 export async function searchSourceList(query: string, locale: string, limit: number): Promise<SerpHit[]> {
   const plan = planQuery(query);
   sendLog(`🔎 [Search] list mode temporal=${plan.temporal} — "${preview(query)}"`);
-  const hits = await collectHits(plan, locale);
+  const { hits } = await collectHits(plan, locale);
   return selectTargets(rankHits(hits, query, plan.temporal !== 'none'), limit);
 }
 
@@ -146,6 +155,7 @@ async function buildSources(
   locale: string,
   mapper: DocumentMapper | null,
   history: string,
+  onProgress: ((progress: SearchProgress) => void) | undefined,
   mapFactor: number = SEARCH_MAP_OVERFLOW_FACTOR,
 ): Promise<SourceDoc[]> {
   const budget = reserveForHistory(synthesisBudget(targetUrl), history);
@@ -154,7 +164,7 @@ async function buildSources(
     // A web provider has no cheap side channel, so mapping costs one serial round trip per
     // page. When the sources already fit, extracting keeps the wording the summaries would lose.
     const mapped = overflowsBudget(relevant, budget, mapFactor)
-      ? await mapOnWebProvider(relevant, query, targetUrl, locale)
+      ? await mapOnWebProvider(relevant, query, targetUrl, locale, summaryReporter(onProgress, relevant.length))
       : relevant;
     const sources = extractRelevant(mapped, plan.queries.join(' '), budget);
     sendLog(`🔎 [Search] Extracted ${sources.length} sources (${describeUsage(sources, budget)}) for single-shot synthesis`);
@@ -168,25 +178,28 @@ async function buildSources(
   sendLog(mapper
     ? `🔎 [Search] Collecting ${mapInputs.length} summaries (started as pages arrived)...`
     : `🔎 [Search] Summarizing ${mapInputs.length} sources (${mapConcurrency(targetUrl)} at a time)...`);
+  const onEach = summaryReporter(onProgress, mapInputs.length);
   return fitToBudget(
-    mapper ? await mapper.collect(mapInputs) : await mapDocuments(mapInputs, query, targetUrl, locale),
+    mapper ? await mapper.collect(mapInputs, onEach) : await mapDocuments(mapInputs, query, targetUrl, locale, onEach),
     budget.bytes,
   );
 }
 
+/** Opens the summarize phase with its count, and returns what reports each page as it finishes. */
+function summaryReporter(
+  onProgress: ((progress: SearchProgress) => void) | undefined,
+  total: number,
+): ((kept: boolean) => void) | undefined {
+  if (!onProgress) return undefined;
+  onProgress({ stage: 'summarizing', total });
+  return (kept) => onProgress({ stage: 'summarized', kept });
+}
+
 /**
- * How far over the prompt budget the sources must run before summarizing them page by page is
- * worth it. On a web provider each page is a serial round trip of ~10 s, so this is spending
- * real time to stop `extractRelevant` throwing text away.
- *
- * Two thresholds, because the two callers are asking different questions:
- *
- * - A SEARCH found these pages itself and the user wants an answer, quickly. Gemini's budget is
- *   ~28,700 chars over 3 sources, so a 1.5x rule would fire at ~14k chars a page — an ordinary
- *   long article — and quietly add 30 s to every search. At 3x two thirds of the text would be
- *   dropped, which is when reading it properly earns the wait.
- * - GIVEN URLS are pages the user named and asked to have read. Dropping any of them to fit one
- *   prompt is the failure being fixed, so anything that does not fit gets summarized.
+ * How far over the prompt budget the sources must run before summarizing them page by page (a
+ * serial ~10 s round trip each on a web provider) is worth it. A search wants a quick answer, so it
+ * waits until two thirds of the text would be dropped; pages the user named must all be read, so
+ * anything that does not fit gets summarized.
  */
 const SEARCH_MAP_OVERFLOW_FACTOR = 3;
 const GIVEN_URLS_MAP_OVERFLOW_FACTOR = 1;
@@ -208,9 +221,10 @@ async function mapOnWebProvider(
   query: string,
   targetUrl: string,
   locale: string,
+  onEach: ((kept: boolean) => void) | undefined,
 ): Promise<SourceDoc[]> {
   sendLog(`🔎 [Search] Sources overflow the prompt — summarizing ${docs.length} page(s) one at a time first...`);
-  const mapped = await mapDocuments(docs, query, targetUrl, locale);
+  const mapped = await mapDocuments(docs, query, targetUrl, locale, onEach);
   // Every page can come back irrelevant; handing synthesis nothing would turn a slow answer
   // into no answer, so fall back to the extractive path over the originals.
   if (mapped.length === 0) {
@@ -270,9 +284,19 @@ export async function runWebSearch(
   // Quick mode skips the planner to stay quick — but a follow-up without it is searched
   // verbatim, and no amount of speed saves an answer to the wrong question.
   const channel = plannerChannel(targetUrl, mode, history, query);
-  // Tens of seconds pass here on a browser provider; without this the UI sits on the previous
-  // stage for all of them and reads as a hang.
-  if (channel === 'web') onProgress?.({ stage: 'planning', queries: [] });
+  // Summarizing page by page is certain only on BYOK standard; a web provider decides once it sees
+  // whether the pages overflow, and the phase joins the list then.
+  onProgress?.({
+    stage: 'outline',
+    phases: [
+      ...(channel === 'none' ? [] : ['plan' as const]),
+      'search', 'read',
+      ...(isByok && mode === 'standard' ? ['summarize' as const] : []),
+      'write',
+    ],
+  });
+  // Tens of seconds can pass here; without this the UI sits on the previous stage and reads as a hang.
+  if (channel !== 'none') onProgress?.({ stage: 'planning', queries: [] });
   const plan = await buildPlan(channel, query, targetUrl, locale, history);
   sendLog(`🔎 [Search] mode=${mode} temporal=${plan.temporal} queries=${plan.queries.length} — "${preview(query)}"`);
   if (channel !== 'none') sendLog(`🔎 [Search] planned queries: ${JSON.stringify(plan.queries)}`);
@@ -284,16 +308,17 @@ export async function runWebSearch(
 
   onProgress?.({ stage: 'planning', queries: plan.queries });
 
-  const hits = await collectHits(plan, locale);
+  const { hits, partiallyBlocked } = await collectHits(plan, locale);
   if (hits.length === 0) {
     throw new SearchPipelineError('search.error.noResults', 'No search results found');
   }
-  sendLog(`🔎 [Search] ${hits.length} results from DuckDuckGo — fetching top pages...`);
+  sendLog(`🔎 [Search] ${hits.length} results from DuckDuckGo${partiallyBlocked ? ' (some queries were challenged)' : ''} — fetching top pages...`);
+  onProgress?.({ stage: 'searched', hits: hits.length });
 
   const orderedHits = rankHits(hits, question, plan.temporal !== 'none');
   const defaultMaxSources = mode === 'quick' ? QUICK_MAX_SOURCES : isByok ? BYOK_MAX_SOURCES : DEFAULT_MAX_SOURCES;
   const maxSources = maxSourcesOverride ?? defaultMaxSources;
-  const targets = selectTargets(orderedHits, maxSources + HARVEST_SPARE_TARGETS);
+  const targets = selectTargets(orderedHits, maxSources + HARVEST_SPARE_TARGETS, true);
   onProgress?.({ stage: 'fetching', count: Math.min(targets.length, maxSources) });
   const mapper = isByok && mode === 'standard' && isByokGroupUrl(targetUrl)
     ? createDocumentMapper(question, targetUrl, locale)
@@ -304,6 +329,7 @@ export async function runWebSearch(
     maxSources,
     (url) => onProgress?.({ stage: 'read', host: hostOf(url) }),
     mapper ? (doc) => mapper.enqueue(doc) : undefined,
+    (url) => onProgress?.({ stage: 'readFailed', host: hostOf(url) }),
   );
   if (docs.length === 0) {
     throw new SearchPipelineError('search.error.noSources', 'No source pages could be read');
@@ -313,7 +339,7 @@ export async function runWebSearch(
   const scored = rankSourcesScored(docs, question);
   const sources = mode === 'quick'
     ? buildQuickSources(scored, plan, targetUrl, history)
-    : await buildSources(scored, question, plan, targetUrl, locale, mapper, history);
+    : await buildSources(scored, question, plan, targetUrl, locale, mapper, history, onProgress);
   if (sources.length === 0) {
     throw new SearchPipelineError('search.error.noRelevant', 'No sources were relevant to the query');
   }
@@ -331,7 +357,7 @@ export async function runWebSearch(
     }),
     targetUrl,
   );
-  return { answer: linkifyCitations(raw, sources), sources };
+  return { answer: linkifyCitations(raw, sources), sources, ...(partiallyBlocked ? { partiallyBlocked } : {}) };
 }
 
 /**
@@ -359,6 +385,7 @@ async function runOverGivenUrls(
   }
   const maxSources = maxSourcesOverride ?? unique.length;
   sendLog(`🔎 [Search] reading ${unique.length} given page(s) — "${preview(query)}"`);
+  onProgress?.({ stage: 'outline', phases: ['read', 'write'] });
   onProgress?.({ stage: 'fetching', count: Math.min(unique.length, maxSources) });
 
   // No `selectTargets`: it caps hits per host, and five pages the user named from one site are
@@ -367,6 +394,8 @@ async function runOverGivenUrls(
     unique.map((url) => ({ title: url, url })),
     maxSources,
     (url) => onProgress?.({ stage: 'read', host: hostOf(url) }),
+    undefined,
+    (url) => onProgress?.({ stage: 'readFailed', host: hostOf(url) }),
   );
   if (docs.length === 0) {
     throw new SearchPipelineError('search.error.noSources', 'No source pages could be read');
@@ -374,7 +403,7 @@ async function runOverGivenUrls(
 
   onProgress?.({ stage: 'analyzing' });
   const sources = await buildSources(
-    rankSourcesScored(docs, query), query, plan, targetUrl, locale, null, history,
+    rankSourcesScored(docs, query), query, plan, targetUrl, locale, null, history, onProgress,
     GIVEN_URLS_MAP_OVERFLOW_FACTOR,
   );
   if (sources.length === 0) {

@@ -7,7 +7,9 @@ import { captureBackgroundCss, DEFAULT_CAPTURE_PALETTE } from '../shared/capture
 import { isSafeCaptureBackground } from '../shared/captureBackgroundGuard';
 import { brandPdfMetadata } from './pdfMetadata';
 import { flattenPdfBackdrop } from './capturePdfBackdrop';
+import { buildMarkdownLabels } from '../shared/markdownLabels';
 import { sendLog } from './helpers';
+import { getLangCache, t } from './i18n';
 import { SILENT_WEB_PREFERENCES, muteWindow, parkWindowOffscreen } from './silentWindow';
 
 const CAPTURE_TIMEOUT_MS = 30_000;
@@ -102,10 +104,8 @@ function attachCaptureConsoleForwarder(win: BrowserWindow): void {
 }
 
 /**
- * Thrown before encoding when the capture cannot fit the target format. Carries the
- * measured numbers so a caller with somewhere to show them — the quick export panel —
- * can say how far over the limit it is and what width would fit, while callers without
- * a UI still get a translatable message.
+ * Thrown before encoding when the capture is too tall for the format; carries the height verdict
+ * so the quick export panel can suggest a width that fits.
  */
 export class CaptureTooTallError extends Error {
   constructor(readonly format: CaptureFormat, readonly verdict: CaptureHeightVerdict) {
@@ -116,10 +116,23 @@ export class CaptureTooTallError extends Error {
   }
 }
 
+/** Rejection when a batch is stopped: the window is torn down mid-render, not finished first. */
+export class CaptureStoppedError extends Error {
+  constructor() {
+    super('Capture stopped');
+    this.name = 'CaptureStoppedError';
+  }
+}
+
 export async function captureMarkdownDocument(
   rawRequest: MarkdownCaptureRequest,
+  signal?: AbortSignal,
 ): Promise<CaptureDocumentResult> {
-  const request = normalizeCaptureRequest(rawRequest);
+  if (signal?.aborted) throw new CaptureStoppedError();
+  const request: MarkdownCaptureRequest = {
+    ...normalizeCaptureRequest(rawRequest),
+    markdownLabels: buildMarkdownLabels((key) => t(getLangCache(), key)),
+  };
   const logicalWidth = request.options.width;
 
   const captureWin = new BrowserWindow({
@@ -145,11 +158,9 @@ export async function captureMarkdownDocument(
   });
   muteWindow(captureWin);
   attachCaptureConsoleForwarder(captureWin);
-  // A window that has never been shown stalls Chromium's rendering lifecycle, so map it
-  // in the same invisible state the worker window uses: transparent and offscreen, shown
-  // inactive so it never steals focus or flashes on screen. `show: true` at an extreme
-  // offscreen origin used to do this, and on macOS that is exactly what surfaced the
-  // window — the window server pulled the frame back onto the display.
+  // A never-shown window stalls Chromium's rendering, so map it invisibly: transparent, shown
+  // inactive, then parked offscreen (macOS pulls a window shown at an offscreen origin back
+  // on screen).
   captureWin.setOpacity(0);
   captureWin.showInactive();
   parkWindowOffscreen(captureWin);
@@ -160,15 +171,22 @@ export async function captureMarkdownDocument(
       reject(new Error(`Capture timed out after ${CAPTURE_TIMEOUT_MS / 1_000}s`));
     }, CAPTURE_TIMEOUT_MS);
   });
+  let onAbort: (() => void) | null = null;
+  const abortPromise = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(new CaptureStoppedError());
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 
   try {
     const result = await Promise.race([
       captureMarkdownDocumentCore(captureWin, request, logicalWidth),
       timeoutPromise,
+      abortPromise,
     ]);
     return result;
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
     if (!captureWin.isDestroyed()) captureWin.destroy();
   }
 }

@@ -260,9 +260,7 @@ export async function runQuickExport(): Promise<void> {
           try {
             copied = await writeCaptureToClipboard(result.buffer, result.ext, fileStem, chosen.zip);
           } catch (err) {
-            // The hotkey fires while the user is in another app, so a notification is the
-            // one channel that may be silenced or unpermitted exactly when it is needed.
-            // The panel is on screen right now — say it there, the way a too-tall capture does.
+            // Report it in the open panel: a notification may be silenced while the user is in another app.
             const detail = err instanceof Error ? err.message : String(err);
             sendLog(`❌ Quick export: the clipboard refused the copy — ${detail}`);
             return { reopen: true, notice: t(strings, 'quickExport.notify.copyFailed', { error: detail }) };
@@ -300,9 +298,7 @@ export async function runQuickExport(): Promise<void> {
       return;
     }
 
-    // Three different true things, and saying "copied" for all of them would be the lie
-    // that hid this whole class of bug: the picture may have been refused while the file
-    // went through, or the clipboard may have declined to say what it took.
+    // Three distinct outcomes: fully copied, only the file copied, or the clipboard did not confirm.
     const format = (choice.zip ? 'zip' : choice.format).toUpperCase();
     if (copied === 'ok') {
       sendWebNotification(title, t(strings, 'quickExport.notify.copied', { format }), 'success');

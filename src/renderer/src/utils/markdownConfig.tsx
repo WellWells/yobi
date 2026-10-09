@@ -1,48 +1,59 @@
-import React, { useMemo } from 'react';
-import ReactMarkdown, { type Components, type Options } from 'react-markdown';
+import React, { createContext, useContext, useId, useMemo } from 'react';
+import ReactMarkdown, { type Components, type ExtraProps, type Options } from 'react-markdown';
+import { Box } from '@mantine/core';
+import { Image } from 'lucide-react';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import remarkBreaks from 'remark-breaks';
-import type { Parent, Root, RootContent } from 'mdast';
 import { ShikiCodeBlock } from '../components/ShikiCodeBlock';
 import { MermaidBlock } from '../components/chat/MermaidBlock';
 import { isMermaidLanguage } from '../../../shared/mermaidFences';
 import { repairSplitTableRows } from '../../../shared/markdownTableRepair';
 import { promoteDisplayMath, promoteInlineMath } from '../../../shared/inlineMathDelimiters';
+import type { MarkdownLabels } from '../../../shared/markdownLabels';
 import { useKatexPlugins } from './katexRuntime';
+import { rehypeTightTableColumns } from './markdownTableColumns';
+import { remarkHtmlTags } from './markdownHtmlTags';
+import { remarkAlerts } from './markdownAlerts';
 
-const BR_TAG = /^<br\s*\/?>$/i;
-
-function replaceBrNodes(node: Parent): void {
-  for (let i = 0; i < node.children.length; i++) {
-    const child = node.children[i] as RootContent;
-    if (child.type === 'html' && BR_TAG.test(child.value.trim())) {
-      node.children[i] = { type: 'break', position: child.position };
-      continue;
-    }
-    if ('children' in child) replaceBrNodes(child);
-  }
-}
+type RemarkRehypeOptions = NonNullable<Options['remarkRehypeOptions']>;
 
 /**
- * Turns a bare `<br>` into a real line break.
- *
- * Raw HTML is deliberately not rendered — provider answers are untrusted, so
- * `rehype-raw` would hand them the whole DOM. Without it every `<br>` came out as
- * the literal text `<br>`, and `<br>` is exactly how every AI web UI serialises a
- * multi-line table cell. Promoting just this one tag to a `break` node restores
- * those cells while the rest of the HTML stays inert text.
+ * The words the renderer adds (footnote label, callout titles) in the app language. Null where
+ * no language is loaded: the footnote label is then hidden and a callout keeps only its colour.
  */
-function remarkHtmlBreaks() {
-  return (tree: Root): void => { replaceBrNodes(tree); };
+export const MarkdownLabelsContext = createContext<MarkdownLabels | null>(null);
+
+/** `remarkAlerts` reads the callout marker before `remark-breaks` splits its line. */
+function buildRemarkPlugins(labels: MarkdownLabels | null): NonNullable<Options['remarkPlugins']> {
+  return [
+    remarkGfm,
+    [remarkAlerts, { labels }],
+    [remarkMath, { singleDollarTextMath: false }],
+    remarkBreaks,
+    remarkHtmlTags,
+  ];
 }
 
-export const remarkPlugins: NonNullable<Options['remarkPlugins']> = [
-  remarkGfm,
-  [remarkMath, { singleDollarTextMath: false }],
-  remarkBreaks,
-  remarkHtmlBreaks,
-];
+export const remarkPlugins = buildRemarkPlugins(null);
+
+/**
+ * Footnote output for one rendered answer. Every answer numbers its notes from 1, so the ids
+ * carry a prefix of their own — otherwise every `[1]` in the conversation jumps to the first
+ * answer's note.
+ */
+function footnoteOptions(labels: MarkdownLabels | null, prefix: string): RemarkRehypeOptions {
+  return {
+    clobberPrefix: prefix,
+    footnoteLabel: labels?.footnotes,
+    footnoteLabelTagName: 'p',
+    footnoteLabelProperties: { className: labels ? ['md-footnotes-label'] : ['md-footnotes-label', 'md-hidden'] },
+    ...(labels && {
+      footnoteBackLabel: (referenceIndex: number, rereferenceIndex: number) =>
+        labels.footnoteBack.replace('{{n}}', `${referenceIndex + 1}${rereferenceIndex > 1 ? `-${rereferenceIndex}` : ''}`),
+    }),
+  };
+}
 
 /**
  * The single entry point for rendering an answer. Every caller shares one plugin
@@ -54,13 +65,23 @@ export const remarkPlugins: NonNullable<Options['remarkPlugins']> = [
  * already carries those delimiters.
  */
 export const BaseMarkdown: React.FC<{ children: string; components: Components }> = ({ children, components }) => {
+  const labels = useContext(MarkdownLabelsContext);
+  const id = useId().replace(/[^a-zA-Z0-9]/g, '');
   const source = useMemo(
     () => promoteInlineMath(promoteDisplayMath(repairSplitTableRows(children))),
     [children],
   );
-  const rehypePlugins = useKatexPlugins(source);
+  const katexPlugins = useKatexPlugins(source);
+  const remark = useMemo(() => buildRemarkPlugins(labels), [labels]);
+  const remarkRehypeOptions = useMemo(() => footnoteOptions(labels, `md${id}-`), [labels, id]);
+  const rehypePlugins = useMemo(() => [rehypeTightTableColumns, ...katexPlugins], [katexPlugins]);
   return (
-    <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={components}>
+    <ReactMarkdown
+      remarkPlugins={remark}
+      remarkRehypeOptions={remarkRehypeOptions}
+      rehypePlugins={rehypePlugins}
+      components={components}
+    >
       {source}
     </ReactMarkdown>
   );
@@ -94,6 +115,17 @@ export const SharedPreBlock: React.FC<{ children?: React.ReactNode }> = ({ child
   return <pre>{children}</pre>;
 };
 
+/**
+ * A table in its own horizontal scroller, so columns kept on one line can never
+ * stretch a chat bubble wider than the pane. The export card has no scrolling
+ * and keeps the bare table; `rehypeTightTableColumns`' budget protects it.
+ */
+export const ScrollableTable: React.FC<React.ComponentPropsWithoutRef<'table'> & ExtraProps> = ({ node: _node, ...props }) => (
+  <Box className="md-table-scroll">
+    <table {...props} />
+  </Box>
+);
+
 function isHttpUrl(href?: string): boolean {
   if (!href) return false;
   try {
@@ -104,7 +136,24 @@ function isHttpUrl(href?: string): boolean {
   }
 }
 
-export const ExternalLink: React.FC<React.ComponentPropsWithoutRef<'a'>> = ({ href, onClick, ...props }) => {
+function prefersReducedMotion(): boolean {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+}
+
+/** A link to a spot in the same answer (a footnote and its way back). It scrolls; it never opens a window. */
+const InPageLink: React.FC<React.ComponentPropsWithoutRef<'a'> & { href: string }> = ({ href, onClick, ...props }) => {
+  const handleClick: React.MouseEventHandler<HTMLAnchorElement> = (event) => {
+    onClick?.(event);
+    if (event.defaultPrevented) return;
+    event.preventDefault();
+    const target = document.getElementById(decodeURIComponent(href.slice(1)));
+    target?.scrollIntoView({ block: 'center', behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+  };
+  return <a {...props} href={href} onClick={handleClick} />;
+};
+
+export const ExternalLink: React.FC<React.ComponentPropsWithoutRef<'a'> & ExtraProps> = ({ node: _node, href, onClick, ...props }) => {
+  if (href?.startsWith('#')) return <InPageLink {...props} href={href} onClick={onClick} />;
   const handleClick: React.MouseEventHandler<HTMLAnchorElement> = (event) => {
     onClick?.(event);
     if (event.defaultPrevented || !href || !isHttpUrl(href)) return;
@@ -120,5 +169,31 @@ export const ExternalLink: React.FC<React.ComponentPropsWithoutRef<'a'>> = ({ hr
       target="_blank"
       rel="noopener noreferrer"
     />
+  );
+};
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * A markdown image. The page only loads images from the app itself (CSP `img-src 'self' data:`),
+ * and loading a remote one would tell its host the reader's address — an answer is untrusted, so
+ * that is a tracking pixel. A remote image is shown as a link to it, anything else as its alt text
+ * (react-markdown has already emptied a `data:` or `javascript:` source).
+ */
+export const MarkdownImage: React.FC<React.ComponentPropsWithoutRef<'img'> & ExtraProps> = ({ node: _node, src, alt, title }) => {
+  const url = typeof src === 'string' ? src : '';
+  const label = alt?.trim() || hostOf(url);
+  if (!isHttpUrl(url)) return <>{label}</>;
+  return (
+    <ExternalLink href={url} title={title || url} className="md-image-link">
+      <Image size="1em" aria-hidden />
+      {label}
+    </ExternalLink>
   );
 };

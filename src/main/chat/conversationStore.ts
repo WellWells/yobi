@@ -1,5 +1,4 @@
 import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
 import {
   appendTurn,
   parseConversationDoc,
@@ -11,6 +10,7 @@ import type {
   ThreadMeta,
   TurnMeta,
 } from '../../shared/conversationDoc';
+import { writeFileAtomic } from '../atomicWrite';
 import { loadMarkdownHeadingAliases } from '../files';
 import { getLangCache, t } from '../i18n';
 
@@ -49,31 +49,17 @@ export async function loadConversation(filePath: string): Promise<LoadedConversa
   }
 }
 
-async function writeAtomic(filePath: string, content: string): Promise<void> {
-  const tmpPath = path.join(
-    path.dirname(filePath),
-    `.${path.basename(filePath)}.tmp-${process.pid}`,
-  );
-  try {
-    await fs.writeFile(tmpPath, content, 'utf-8');
-    await fs.rename(tmpPath, filePath);
-  } catch (err: unknown) {
-    await fs.rm(tmpPath, { force: true }).catch(() => undefined);
-    throw err;
-  }
-}
-
 export async function appendConversationTurn(
   filePath: string,
   turn: { prompt: string; response: string; meta: TurnMeta },
 ): Promise<void> {
   const raw = await fs.readFile(filePath, 'utf-8');
-  await writeAtomic(filePath, appendTurn(raw, turn, currentTurnLabels()));
+  await writeFileAtomic(filePath, appendTurn(raw, turn, currentTurnLabels()));
 }
 
 export async function updateConversationThread(filePath: string, meta: ThreadMeta): Promise<void> {
   const raw = await fs.readFile(filePath, 'utf-8');
-  await writeAtomic(filePath, writeThreadMeta(raw, meta));
+  await writeFileAtomic(filePath, writeThreadMeta(raw, meta));
 }
 
 /**
@@ -90,14 +76,11 @@ export async function mergeConversationThread(
   patch: Partial<Omit<ThreadMeta, 'v'>>,
 ): Promise<void> {
   const raw = await fs.readFile(filePath, 'utf-8');
-  // `writeThreadMeta` puts the marker under the h1, and PREPENDS it as line 1 when there is no
-  // h1 to sit under. The sidebar preview is the file's first 200 characters, so on a file that
-  // never had a title the preview would become a raw HTML comment. Every conversation Yobi
-  // wrote has a title; a markdown file the user dropped into the output folder may not, and
-  // this writer runs against whatever file is open rather than only files Yobi created.
+  // Without an h1, `writeThreadMeta` prepends the marker as line 1 and the sidebar preview (first 200
+  // chars) would show a raw HTML comment; user-dropped files may lack a title.
   if (!H1_LINE.test(raw) && !THREAD_MARKER_LINE.test(raw)) return;
   const current = parseConversationDoc(raw, await conversationAliases()).thread;
-  await writeAtomic(filePath, writeThreadMeta(raw, { ...current, ...patch, v: 1 }));
+  await writeFileAtomic(filePath, writeThreadMeta(raw, { ...current, ...patch, v: 1 }));
 }
 
 export async function commitConversationTurn(args: {
@@ -107,5 +90,5 @@ export async function commitConversationTurn(args: {
 }): Promise<void> {
   const raw = await fs.readFile(args.filePath, 'utf-8');
   const withTurn = appendTurn(raw, args.turn, currentTurnLabels());
-  await writeAtomic(args.filePath, writeThreadMeta(withTurn, args.thread));
+  await writeFileAtomic(args.filePath, writeThreadMeta(withTurn, args.thread));
 }

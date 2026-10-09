@@ -123,7 +123,7 @@ export const ByokKeyForm: React.FC<Props> = ({ byok, t, mt }) => {
           <Text fz="var(--font-size-sm)" c="dimmed" mt={4}>{t('settings.byok.model.loadEmpty')}</Text>
         )}
         {byok.modelsError && byok.modelsError !== 'EMPTY' && (
-          <Text fz="var(--font-size-sm)" c="red" mt={4}>{byok.modelsError}</Text>
+          <Text fz="var(--font-size-sm)" c="var(--mantine-color-error)" mt={4}>{byok.modelsError}</Text>
         )}
         {byok.models.length > 0 && (
           <Text fz="var(--font-size-sm)" c="dimmed" mt={4}>
@@ -160,7 +160,7 @@ export const ByokKeyForm: React.FC<Props> = ({ byok, t, mt }) => {
       </Group>
       {byok.testStatus === 'ok' && (
         <Group gap={6} align="flex-start" wrap="nowrap">
-          <Box c="teal" mt={2} style={{ flexShrink: 0 }}><CheckCircle2 size={14} /></Box>
+          <Box c="var(--mantine-color-success)" mt={2} style={{ flexShrink: 0 }}><CheckCircle2 size={14} /></Box>
           <Text fz="var(--font-size-sm)" c="dimmed">
             {t('settings.byok.test.ok')}
             {byok.testMessage ? ` — ${byok.testMessage}` : ''}
@@ -169,8 +169,8 @@ export const ByokKeyForm: React.FC<Props> = ({ byok, t, mt }) => {
       )}
       {byok.testStatus === 'error' && (
         <Group gap={6} align="flex-start" wrap="nowrap">
-          <Box c="red" mt={2} style={{ flexShrink: 0 }}><XCircle size={14} /></Box>
-          <Text fz="var(--font-size-sm)" c="red">{byok.testMessage}</Text>
+          <Box c="var(--mantine-color-error)" mt={2} style={{ flexShrink: 0 }}><XCircle size={14} /></Box>
+          <Text fz="var(--font-size-sm)" c="var(--mantine-color-error)">{byok.testMessage}</Text>
         </Group>
       )}
     </Stack>

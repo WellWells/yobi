@@ -16,8 +16,8 @@ export const ExportPreviewPanel: React.FC<ExportPreviewPanelProps> = ({ request,
   const turnCount = request?.options.cardLayout === 'bubble'
     ? (request.payload.turns?.length ?? 0)
     : 0;
-  // Same guard the capture itself applies, so the preview cannot promise an export that
-  // will be refused — or worse, one that silently comes back doubled.
+  // Same guard the capture applies, so the preview never promises an export that would be
+  // refused or come back doubled.
   const verdict = request
     ? checkCaptureHeight(request.options.format, logicalHeight, request.options.pixelRatio, request.options.width)
     : null;
@@ -31,7 +31,7 @@ export const ExportPreviewPanel: React.FC<ExportPreviewPanelProps> = ({ request,
         <ScaledCardFrame request={request} onMeasure={setLogicalHeight} />
       </Box>
       {logicalHeight > 0 && (
-        <Text fz="var(--font-size-sm)" c={tooTall ? 'var(--mantine-color-orange-5)' : 'var(--text-muted)'} ta="center">
+        <Text fz="var(--font-size-sm)" c={tooTall ? 'var(--mantine-color-warning)' : 'var(--text-muted)'} ta="center">
           {[
             turnCount > 0 ? t('capture.turnCount').replace('{{count}}', String(turnCount)) : '',
             `${request?.options.width ?? 0} × ${Math.round(pixelHeight)} px`,

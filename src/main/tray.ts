@@ -134,9 +134,7 @@ export function createTray(deps: TrayDeps): void {
   tray.setContextMenu(buildContextMenu(deps));
 
   if (process.platform === 'win32') {
-    // Single click is what a Windows tray icon is expected to answer; double-click alone left
-    // the icon feeling dead, because the first click already looks like it should have worked.
-    // The context menu stays on right-click, which `setContextMenu` handles.
+    // A Windows tray icon is expected to answer a single click; the context menu stays on right-click.
     tray.on('click', () => restoreWindow(deps.getMainWin));
     tray.on('double-click', () => restoreWindow(deps.getMainWin));
   }

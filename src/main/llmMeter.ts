@@ -3,11 +3,11 @@ import type { MetricDomain, MetricOutcome, TokenCounts } from '../shared/types';
 import { classifyFailure } from './metricsNormalize';
 
 /**
- * Which part of the app a model request belongs to. Set once at the top of a chat task or a
- * flow run and read back inside the provider layer, so neither `runAutomation` nor
+ * Which part of the app a model request belongs to. Set once at the top of a chat task, an agent
+ * run or a flow run and read back inside the provider layer, so neither `runAutomation` nor
  * `runByokCompletion` needs a domain argument threaded through every caller in between.
  *
- * Requests made outside either scope — flow authoring, the BYOK connection test — carry no
+ * Requests made outside any scope — flow authoring, the BYOK connection test — carry no
  * domain and are deliberately not counted as usage.
  */
 const domains = new AsyncLocalStorage<MetricDomain>();
@@ -22,6 +22,7 @@ export function currentMetricDomain(): MetricDomain | null {
 
 export interface LlmMeterSinks {
   onRequest: (domain: MetricDomain, outcome: MetricOutcome) => void;
+  onRun: (domain: MetricDomain, outcome: MetricOutcome) => void;
   onKeyResult: (keyId: string, outcome: MetricOutcome, tokens: TokenCounts | null) => void;
   onKeyCooldown: (keyId: string) => void;
 }
@@ -56,6 +57,14 @@ export async function meterLlmRequest<T>(fn: () => Promise<T>, signal?: AbortSig
     }
     throw err;
   }
+}
+
+/**
+ * One finished run, for a caller that cannot import `metrics` itself: that module opens its store
+ * on import.
+ */
+export function noteRunOutcome(domain: MetricDomain, outcome: MetricOutcome): void {
+  sinks?.onRun(domain, outcome);
 }
 
 /** One attempt against one BYOK key. A failover request produces several of these. */

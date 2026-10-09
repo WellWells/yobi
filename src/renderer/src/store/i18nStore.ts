@@ -98,11 +98,8 @@ export const useI18nStore = create<I18nState>((set, get) => ({
       }
     }
 
-    // Only the two packs the first paint actually needs. Pulling every installed
-    // locale here meant ~1 MB of JSON crossing IPC before `isReady` flipped, so
-    // the main window sat on a spinner the whole time; the rest stream in on
-    // idle below, which is early enough for the language picker and for the
-    // heading aliases in parseMarkdownBlocks.
+    // Only the packs the first paint needs; the rest load on idle below, early enough for the
+    // language picker and parseMarkdownBlocks' heading aliases.
     const essentialLocales = [...new Set([FALLBACK_LOCALE, resolvedLocale])];
     const localeEntries = await Promise.all(
       essentialLocales.map(async (locale) => {
@@ -146,9 +143,7 @@ export const useI18nStore = create<I18nState>((set, get) => ({
   },
 
   setLocale: async (locale: string, options?: { persist?: boolean }) => {
-    // The three HTML entry points ship a static `lang`; nothing ever updated it, so an English
-    // user's window claimed to be Traditional Chinese to screen readers, to the spell checker
-    // and to CSS `:lang()` for the rest of the session.
+    // The HTML entry points ship a static `lang`; keep it in sync for screen readers, spell check and CSS `:lang()`.
     document.documentElement.lang = locale;
 
     const cachedTranslations = get().localeTranslations[locale];

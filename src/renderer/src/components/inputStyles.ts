@@ -64,15 +64,8 @@ export function buildInputStyles({
 type InputStyleSlots = Record<string, CSSProperties>;
 
 /**
- * Merges the shared input styling with whatever the caller passed, slot by slot.
- *
- * The wrappers spread `{...props}` after `styles=`, so a caller passing `styles` replaced the
- * whole shared object rather than adding to it: SearchPalette asked for a transparent
- * background and silently lost the font size, the label weight, the section colour and the
- * error size along with it. AppModal and SelectDropdown already merge; these now match.
- *
- * Object form only, like `SelectDropdown` — Mantine also accepts a function, but nothing in
- * the app passes one and merging one would mean wrapping the callback.
+ * Merges the shared input styling with the caller's `styles`, slot by slot, so an override adds to
+ * the shared styles instead of replacing them. Object form only, like `SelectDropdown`.
  */
 export function mergeInputStyles(base: InputStyleSlots, override: unknown): InputStyleSlots {
   const merged: InputStyleSlots = { ...base };

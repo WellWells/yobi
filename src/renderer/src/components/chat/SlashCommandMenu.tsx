@@ -3,9 +3,9 @@ import { Divider, NavLink, Text } from '@mantine/core';
 import { Check } from 'lucide-react';
 import { startsNewGroup, type ChatCommand } from '../../hooks/useChatCommands';
 import { commandIcon } from '../../config/chatModes';
-import { renderConnectorIcon } from '../../config/connectorIcons';
-import { findCatalogEntry } from '../../../../shared/mcpCatalog';
+import { renderServerIcon } from '../../config/connectorIcons';
 import { ComposerSuggestList } from './ComposerSuggestList';
+import type { MenuDirection } from './composerMenuDirection';
 import styles from './ComposerSuggestList.module.css';
 
 interface SlashCommandMenuProps {
@@ -16,16 +16,22 @@ interface SlashCommandMenuProps {
   emptyLabel: string;
   /** Flow ids already disclosed to this conversation. Picking one again is idempotent. */
   activeFlowIds: ReadonlySet<string>;
+  direction: MenuDirection;
 }
 
 export const SlashCommandMenu: React.FC<SlashCommandMenuProps> = ({
-  commands, highlightedIndex, onSelect, onHover, emptyLabel, activeFlowIds,
+  commands, highlightedIndex, onSelect, onHover, emptyLabel, activeFlowIds, direction,
 }) => (
-  <ComposerSuggestList highlightedIndex={highlightedIndex} emptyLabel={emptyLabel} isEmpty={commands.length === 0}>
+  <ComposerSuggestList
+    highlightedIndex={highlightedIndex}
+    emptyLabel={emptyLabel}
+    isEmpty={commands.length === 0}
+    direction={direction}
+  >
     {commands.map((cmd, i) => {
       const Icon = commandIcon(cmd.flowId);
       const leftSection = cmd.connectorUrl
-        ? renderConnectorIcon(findCatalogEntry(cmd.connectorUrl), 15)
+        ? renderServerIcon(cmd.connectorUrl, 15)
         : <Icon size={15} />;
       return (
         <React.Fragment key={`${cmd.flowId}:${cmd.command}`}>

@@ -4,8 +4,7 @@ import type {
 
 /**
  * One non-read call the model proposed, and everything that decided and followed it. Persisted on
- * the run, so the next turn in the conversation reads what really happened instead of the prose the
- * model wrote about it — the prose is how "已成功儲存草稿" became a fact three turns in a row.
+ * the run, so the next turn reads what really happened instead of the model's own prose about it.
  */
 export interface ActionRecord {
   runId: string;
@@ -13,6 +12,8 @@ export interface ActionRecord {
   serverId: string;
   server: string;
   tool: string;
+  /** The server's own name for the tool (MCP `title`), when it gives one. Its words, not ours. */
+  title?: string;
   /** Long strings clipped, so a record stays small enough to persist and to re-check later. */
   args: Record<string, unknown>;
   risk: ToolRisk;
@@ -28,6 +29,11 @@ export interface ActionRecord {
   summary?: string;
   notice?: OutcomeNotice;
   verification?: VerificationResult;
+  /**
+   * A call held back because an earlier change to the same target was never confirmed: that change
+   * and what re-checking it found, so the user's line reports the result, not just "held back".
+   */
+  recheck?: { at: string; outcome?: ActionOutcome; notice?: OutcomeNotice; verification?: VerificationResult };
 }
 
 export interface EvidenceSnapshot {

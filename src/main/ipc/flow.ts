@@ -10,8 +10,9 @@ import { buildSafeFileNameFromTitle, listOutputFiles } from '../files';
 import { deliverCommandResultToTempChat, saveCommandOutput } from '../chat/commandOutput';
 import { isTempChatMode } from '../tempChat';
 import { sendLog, sendToRenderer, sendWebNotification } from '../helpers';
-import { loadLanguageData } from '../i18n';
+import { loadLanguageData, t } from '../i18n';
 import { getCheckpointPath } from '../flow';
+import { buildFailureText } from '../flow/flowBuildBroadcast';
 import { previewSchedule } from '../flow/schedulePreview';
 import { discoverFeeds } from '../urlParser';
 import { pickSelector } from '../selectorPicker';
@@ -19,7 +20,7 @@ import { showSaveDialogForWin } from './context';
 import type { IpcContext } from './context';
 
 function registerCheckpointHandlers(
-  kind: 'rss' | 'scraper' | 'youtube_subs',
+  kind: 'rss' | 'scraper' | 'youtube_subs' | 'x_posts',
   hasChannel: string,
   clearChannel: string,
   logTag: string,
@@ -98,6 +99,7 @@ export function registerFlowHandlers(ctx: IpcContext): void {
     input: string,
     conversationPath?: string,
   ): Promise<ChatCommandResult> => {
+    const startedAt = Date.now();
     const failed = (error: string): ChatCommandResult => ({
       result: { flowId, success: false, outputs: {}, error, completedSteps: 0, totalSteps: 0, completedAt: new Date().toISOString() },
     });
@@ -143,6 +145,7 @@ export function registerFlowHandlers(ctx: IpcContext): void {
           providerLabel: markdownOptions.provider,
           ...(resolvedCommand ? { command: resolvedCommand } : {}),
           ...(flowResult.tokenUsage ? { usage: flowResult.tokenUsage } : {}),
+          startedAt,
         });
         return { result: flowResult };
       }
@@ -153,7 +156,10 @@ export function registerFlowHandlers(ctx: IpcContext): void {
         prompt: markdownOptions.prompt,
         response: markdownOptions.response,
         providerLabel: markdownOptions.provider,
+        // Badged like the temporary-chat path: the recap reads `c` to pass over a flow's turn.
+        ...(resolvedCommand ? { command: resolvedCommand } : {}),
         usage: flowResult.tokenUsage,
+        startedAt,
       });
       sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
       return { result: flowResult, filePath };
@@ -190,15 +196,17 @@ export function registerFlowHandlers(ctx: IpcContext): void {
     });
 
     // A question is the build working as intended and the panel is already showing it, so it
-    // gets no notification — only an outcome the user has stopped watching for does.
+    // gets no notification — only an outcome the user has stopped watching for does. A failure
+    // says where it stopped and why, in the same words as the build panel.
     if (result.status === 'failed') {
-      const compactError = result.error.replace(/\s+/g, ' ').trim();
+      const strings = langData ?? {};
+      const compactError = buildFailureText(result, strings).replace(/\s+/g, ' ').trim();
       const displayError = compactError.length > 140 ? `${compactError.slice(0, 140)}…` : compactError;
-      const title = langData?.['flow.generate.failed.title'] ?? 'AI generation failed';
-      const body = (langData?.['flow.generate.failed.body']
-        ?? 'The AI response could not be parsed into a valid flow. Please try again. ({{error}})')
-        .replace(/\{\{error\}\}/g, () => displayError);
-      sendWebNotification(title, body, 'error');
+      const body = t(strings, 'flow.generate.failed.body', {
+        phase: t(strings, `flow.build.phase.${result.phase}`),
+        error: displayError,
+      });
+      sendWebNotification(t(strings, 'flow.generate.failed.title'), body, 'error');
     } else if (result.status === 'created') {
       const title = langData?.['flow.generate.done.title'] ?? 'Flow generated';
       const body = (langData?.['flow.generate.done.body']
@@ -273,4 +281,5 @@ export function registerFlowHandlers(ctx: IpcContext): void {
   registerCheckpointHandlers('rss', IPC.RSS_HAS_CHECKPOINT, IPC.RSS_CLEAR_CHECKPOINT, 'RSS');
   registerCheckpointHandlers('scraper', IPC.SCRAPER_HAS_CHECKPOINT, IPC.SCRAPER_CLEAR_CHECKPOINT, 'Scraper');
   registerCheckpointHandlers('youtube_subs', IPC.YT_SUBS_HAS_CHECKPOINT, IPC.YT_SUBS_CLEAR_CHECKPOINT, 'YT Subs');
+  registerCheckpointHandlers('x_posts', IPC.X_POSTS_HAS_CHECKPOINT, IPC.X_POSTS_CLEAR_CHECKPOINT, 'X Posts');
 }

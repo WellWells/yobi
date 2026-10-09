@@ -4,7 +4,7 @@ import dayjs from 'dayjs';
 import { getUniquePath } from './files';
 import { cleanTitle } from '../shared/conversationTitle';
 import type { TurnMeta } from '../shared/conversationDoc';
-import { escapeSectionHeadings } from '../shared/conversationDoc';
+import { escapeSectionHeadings, stringifyMarker } from '../shared/conversationDoc';
 import { repairSplitTableRows } from '../shared/markdownTableRepair';
 
 export interface MarkdownOptions {
@@ -21,6 +21,8 @@ export interface MarkdownOptions {
 
 interface SaveOptions extends MarkdownOptions {
   outputDir: string;
+  /** Put ahead of the timestamp in the file name (a bot chat's `tg-Name`); already file-safe. */
+  fileLabel?: string;
 }
 
 export function buildOutputMarkdown({
@@ -43,7 +45,7 @@ export function buildOutputMarkdown({
     '',
     timestamp,
     '',
-    ...(turnMeta ? [`<!-- yobi:turn ${JSON.stringify(turnMeta)} -->`] : []),
+    ...(turnMeta ? [`<!-- yobi:turn ${stringifyMarker(turnMeta)} -->`] : []),
     `## ${promptLabel}`,
     '',
     escapeSectionHeadings(prompt, { prompt: promptLabel, response: responseLabel }),
@@ -55,14 +57,15 @@ export function buildOutputMarkdown({
   ].join('\n');
 }
 
-async function freeOutputPath(outputDir: string): Promise<string> {
+async function freeOutputPath(outputDir: string, fileLabel = ''): Promise<string> {
   await fs.mkdir(outputDir, { recursive: true });
-  const desired = path.join(outputDir, `${dayjs().format('YYYY-MM-DD-HH-mm-ss')}.md`);
+  const stamp = dayjs().format('YYYY-MM-DD-HH-mm-ss');
+  const desired = path.join(outputDir, `${fileLabel ? `${fileLabel}-` : ''}${stamp}.md`);
   return getUniquePath(desired, '');
 }
 
-export async function saveOutput({ outputDir, ...markdownOptions }: SaveOptions): Promise<string> {
-  const filePath = await freeOutputPath(outputDir);
+export async function saveOutput({ outputDir, fileLabel, ...markdownOptions }: SaveOptions): Promise<string> {
+  const filePath = await freeOutputPath(outputDir, fileLabel);
   await fs.writeFile(filePath, buildOutputMarkdown(markdownOptions), 'utf-8');
   return filePath;
 }

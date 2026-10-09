@@ -1336,7 +1336,7 @@
   "urlParser.log.fetching": "🔗 URL detectada — obtendo conteúdo da página...",
   "urlParser.notify.body": "Obtendo: {{url}}",
   "urlParser.notify.title": "Yobi",
-  "urlParser.prompt": "Resuma o conteúdo da página web abaixo em pontos-chave claros e estruturados. Responda diretamente em Markdown, em português. Se o conteúdo parecer truncado, resuma o que estiver disponível e indique que pode estar incompleto.\n\n---\n{{cleaned_text}}\n---",
+  "urlParser.prompt": "Resuma o conteúdo da página web abaixo em pontos-chave claros e estruturados. Responda diretamente em Markdown, em português.\n\n---\n{{cleaned_text}}\n---",
   "urlParser.truncated": "(Conteúdo truncado — muito longo)",
   "welcome.greeting.dusk.1": "Boa noite[, {{name}}]",
   "welcome.greeting.evening.1": "Boa noite[, {{name}}]",

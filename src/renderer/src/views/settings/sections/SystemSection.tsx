@@ -79,7 +79,7 @@ export const SystemSection: React.FC<Props> = ({
         </SectionCard>
       </Box>
 
-      {isSearching && <GroupHeader label={t('settings.group.danger')} />}
+      {isSearching && showSection(TAG_SETS.danger, 'system') && <GroupHeader label={t('settings.group.danger')} />}
 
       <Box display={showSection(TAG_SETS.danger, 'system') ? 'block' : 'none'}>
         <SectionCard danger style={{ marginBottom: 24 }}>
@@ -107,7 +107,7 @@ export const SystemSection: React.FC<Props> = ({
               label={t('settings.reset')}
               hint={t('settings.reset.hint')} control={
                 <MButton
-                  variant="outline"
+                  variant="filled"
                   color="red"
                   leftSection={<RotateCcw size={13} />}
                   style={{ flexShrink: 0 }}

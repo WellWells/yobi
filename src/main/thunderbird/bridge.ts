@@ -4,7 +4,7 @@
  * Thunderbird add-on it talks to are the author's; this file only starts the bridge and decides
  * when starting it is worthwhile.
  *
- * Electron-free, so it is tested against the real bridge and a fake add-on.
+ * Electron-free: the Electron wiring lives in thunderbirdConnection.ts.
  */
 import * as fs from 'node:fs';
 import * as os from 'node:os';

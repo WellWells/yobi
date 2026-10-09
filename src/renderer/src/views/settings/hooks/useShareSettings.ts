@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { shareApi } from '../../../api/electronApi';
 import { DEFAULT_SHARE_INSTANCE } from '../../../../../shared/types';
 
 export function useShareSettings() {
   const [instanceUrl, setInstanceUrl] = useState(DEFAULT_SHARE_INSTANCE);
   const [draft, setDraft] = useState(DEFAULT_SHARE_INSTANCE);
+  const saveSeq = useRef(0);
 
   useEffect(() => {
     void shareApi.getSettings().then((settings) => {
@@ -19,9 +20,13 @@ export function useShareSettings() {
       setDraft(instanceUrl);
       return;
     }
+    const seq = ++saveSeq.current;
+    const sent = draft;
     void shareApi.updateSettings({ instanceUrl: next }).then((saved) => {
+      if (seq !== saveSeq.current) return;
       setInstanceUrl(saved.instanceUrl);
-      setDraft(saved.instanceUrl);
+      // Show the normalised URL only if the field still holds what was sent; a newer edit stays.
+      setDraft((current) => (current === sent ? saved.instanceUrl : current));
     });
   }, [draft, instanceUrl]);
 

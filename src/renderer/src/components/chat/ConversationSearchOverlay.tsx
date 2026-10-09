@@ -1,9 +1,11 @@
 import React, { startTransition, useCallback, useEffect, useRef, useState } from 'react';
-import { Badge, Flex, Stack, Text } from '@mantine/core';
+import { Flex, Stack, Text } from '@mantine/core';
 import type { OutputFile } from '../../../../shared/types';
+import { ProviderTag } from '../ProviderTag';
 import { SearchPalette } from '../SearchPalette';
 import { useAppStore } from '../../store/appStore';
 import { useI18nStore } from '../../store/i18nStore';
+import { noteConversationOpened } from '../../store/recapStore';
 import { useFormatTime } from '../../hooks/useFormatTime';
 import { fileApi } from '../../api/electronApi';
 import sb from '../Sidebar.module.css';
@@ -44,6 +46,7 @@ export const ConversationSearchOverlay: React.FC<ConversationSearchOverlayProps>
 
   const openFile = useCallback(async (file: OutputFile) => {
     onClose();
+    noteConversationOpened(file.path);
     selectFile(file);
     const content = await fileApi.getContent(file.path);
     startTransition(() => setFileContent(content));
@@ -63,19 +66,7 @@ export const ConversationSearchOverlay: React.FC<ConversationSearchOverlayProps>
       renderRow={(file, active) => (
         <Stack gap={3}>
           <Flex align="center" gap={6}>
-            {file.provider && (
-              <Badge
-                variant="outline"
-                size="s"
-                radius="xl"
-                tt="none"
-                fw={500} fz="var(--font-size-sm)" lh={1.6} px={6} py={1}
-                data-selected={String(active)}
-                className={sb.providerBadge}
-              >
-                {file.provider}
-              </Badge>
-            )}
+            {file.provider && <ProviderTag provider={file.provider} selected={active} />}
             <Text component="span" fz="var(--font-size-xs)" data-selected={String(active)} className={sb.timestamp}>
               {formatTime(file.timestamp)}
             </Text>

@@ -1336,7 +1336,7 @@
   "urlParser.log.fetching": "🔗 URL erkannt — Seiteninhalt wird abgerufen...",
   "urlParser.notify.body": "Abrufen: {{url}}",
   "urlParser.notify.title": "Yobi",
-  "urlParser.prompt": "Fasse den folgenden Webseiteninhalt in klare, strukturierte Kernpunkte zusammen. Antworte direkt im Markdown-Format, auf Deutsch. Wenn der Inhalt abgeschnitten wirkt, fasse das Verfügbare zusammen und weise darauf hin, dass er unvollständig sein kann.\n\n---\n{{cleaned_text}}\n---",
+  "urlParser.prompt": "Fasse den folgenden Webseiteninhalt in klare, strukturierte Kernpunkte zusammen. Antworte direkt im Markdown-Format, auf Deutsch.\n\n---\n{{cleaned_text}}\n---",
   "urlParser.truncated": "(Inhalt abgeschnitten — zu lang)",
   "welcome.greeting.dusk.1": "Guten Abend[, {{name}}]",
   "welcome.greeting.evening.1": "Guten Abend[, {{name}}]",

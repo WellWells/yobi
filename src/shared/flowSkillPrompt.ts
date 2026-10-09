@@ -59,6 +59,7 @@ export const TRIGGER_BRIEFS: readonly string[] = [
   '- "hotkey": run when the user presses a global keyboard shortcut, from anywhere on the desktop.',
   '- "bot": run when the user sends a /command to the Telegram or LINE bot; their message text becomes an input variable.',
   '- "chat": run when the user types a /command in the app\'s own chat box; the text after it becomes an input variable.',
+  '- "system": run when the computer does something: "systemEvent" is "startup" (the app starts, as when the user signs in to the computer), "resume" (wakes from sleep), "unlock" or "lock" (the screen).',
   '- "manual": run only when the user presses Run. The default when the request implies no timing.',
 ];
 
@@ -110,7 +111,7 @@ export function buildFlowAssessPrompt(goal: string): string {
     '- Shape:',
     '{',
     '  "skills": [ ...skill names, spelled exactly as below... ],',
-    '  "trigger": "cron" | "hotkey" | "bot" | "chat" | "manual",',
+    '  "trigger": "cron" | "hotkey" | "bot" | "chat" | "system" | "manual",',
     '  "outline": [ ...3-8 short steps describing what the flow will do, in order... ],',
     '  "gaps": [ ...parts of the request no trigger or skill can do; [] when there are none... ],',
     '  "questions": [ ...what you would have to invent a value for; [] when nothing is missing... ],',
@@ -125,12 +126,14 @@ export function buildFlowAssessPrompt(goal: string): string {
     '- "outline" describes the FLOW, not your reasoning: one line per meaningful step. When the',
     '  trigger is "cron", say the schedule in the first line so the user can check it.',
     `- "questions": ask ONLY for a value a skill above cannot run without and the request does not`,
-    '  give — which feed, which recipient, which folder, which report. At most',
+    '  give — which feed, which mail recipient, which folder, which report. At most',
     `  ${MAX_ASSESS_QUESTIONS}, each one short and answerable in a line. Asking is expensive: it stops the build and`,
     '  puts the work back on the user, so ask only where inventing a value would send mail to the',
     '  wrong person or read the wrong source.',
     '- Anything with a safe default is NOT a question. The schedule, the trigger, the AI provider,',
     '  the wording of a summary, how many items to process: choose sensibly and say so in "outline".',
+    '- Who receives a Telegram or LINE message is NOT a question either: Yobi matches it against the',
+    '  chats the user paired. Never ask for a bot token, a chat ID or a password — Yobi has them.',
     '- "questions" is [] whenever the request already names what it acts on. That is the common',
     '  case, and it is the one that must not be slowed down.',
     '- "gaps" and "questions" are different: a gap is something Yobi CANNOT do, a question is',
@@ -162,7 +165,7 @@ export function buildFlowAssessPrompt(goal: string): string {
   ].join('\n');
 }
 
-/** Exported for the test suite: the flow we teach the model must pass our own checks. */
+/** The worked example in the generation prompt; it must pass our own flow validation. */
 export const EXAMPLE_FLOW_JSON = JSON.stringify(
   {
     name: 'RSS Digest to Telegram',
@@ -180,7 +183,7 @@ export const EXAMPLE_FLOW_JSON = JSON.stringify(
       { type: 'if', label: 'Skip if the LLM failed', config: { left: '{{llm_1.isFailed}}', operator: 'equals', right: '1' }, outputKey: '' },
       { type: 'continue', label: 'Next article', config: {}, outputKey: '' },
       { type: 'end_if', label: 'End If', config: {}, outputKey: '' },
-      { type: 'bot', label: 'Send to Telegram', config: { message: '{{llm_1}}', chatId: '', attachment: '{{browser_1.image}}', emitFailFlag: 'true' }, outputKey: 'bot_1' },
+      { type: 'bot', label: 'Send to Telegram', config: { message: '{{llm_1}}', platform: 'telegram', chatIds: 'me', attachment: '{{browser_1.image}}', emitFailFlag: 'true' }, outputKey: 'bot_1' },
       { type: 'end_loop', label: 'End Loop', config: {}, outputKey: '' },
     ],
   },
@@ -188,30 +191,39 @@ export const EXAMPLE_FLOW_JSON = JSON.stringify(
   2,
 );
 
-export function buildFlowGenerationPrompt(
-  description: string,
+/**
+ * The compiler's rules, from the output contract to the last RULES line — everything a generation
+ * and a revision share. `edit` changes only the lines that would contradict a revision: a new flow
+ * carries no ids, a revised one keeps its steps' ids, and "include only what the request needs"
+ * would invite the model to drop the steps a change never mentioned.
+ */
+export function flowCompilerRules(
   skills: readonly string[],
-  triggerHint?: string,
-): string {
+  triggerHint: string | undefined,
+  mode: 'create' | 'edit',
+): string[] {
+  const edit = mode === 'edit';
   const selected = resolveSelectedSkills(skills);
   const selectedSet = new Set<SkillType>(selected);
   const skillLines = SKILL_SPECS.filter((spec) => selectedSet.has(spec.type)).map(renderSkillLine).join('\n');
+  const request = edit ? 'the change request' : 'the user request';
   return [
-    'You are a flow compiler for "Yobi", a desktop automation app.',
-    'Convert the user request below into ONE Yobi flow expressed as strict JSON.',
-    '',
     'OUTPUT RULES (critical):',
     '- Output ONLY the JSON object. No prose, no explanation, no markdown code fences.',
-    '- Do NOT include "id", "createdAt", or "updatedAt" — they are assigned by the app.',
+    edit
+      ? '- Do NOT include the flow\'s own "id", "createdAt" or "updatedAt". DO keep each existing step\'s "id" (see EDIT RULES).'
+      : '- Do NOT include "id", "createdAt", or "updatedAt" — they are assigned by the app.',
     '- Every value inside every step "config" object MUST be a string (use "true"/"false", not booleans).',
     '',
     'JSON SHAPE:',
     '{',
     '  "name": string,                // short flow name',
     '  "description": string,         // one sentence',
-    '  "trigger": { "type": "manual" | "hotkey" | "cron" | "bot" | "chat", ... },',
+    '  "trigger": { "type": "manual" | "hotkey" | "cron" | "bot" | "chat" | "system", ... },',
     '  "extraTriggers": [ { ...same shape as trigger... } ],  // OPTIONAL — omit unless the flow needs several triggers',
-    '  "steps": [ { "type": <skill>, "label": string, "config": { ... }, "outputKey": string }, ... ]',
+    edit
+      ? '  "steps": [ { "id": string (existing steps only), "type": <skill>, "label": string, "config": { ... }, "outputKey": string }, ... ]'
+      : '  "steps": [ { "type": <skill>, "label": string, "config": { ... }, "outputKey": string }, ... ]',
     '}',
     '',
     'TRIGGER:',
@@ -225,9 +237,9 @@ export function buildFlowGenerationPrompt(
       ? [`- The assessment already chose "${triggerHint}" for this request; use it unless the request plainly contradicts it.`]
       : []),
     '- botCommand/chatCommand grammar: start with a lowercase letter, then only a-z 0-9 _, max 32 chars, no leading "/" (e.g. "daily_digest").',
-    '- A bot/chat trigger seeds the user\'s argument text as the variable named by botInputVariable/chatInputVariable (default {{input}}); a bot trigger also exposes {{bot.triggerChatId}} (the sender\'s chat id, e.g. for a bot step\'s chatId) and {{bot.triggerUserId}}.',
+    '- A bot/chat trigger seeds the user\'s argument text as the variable named by botInputVariable/chatInputVariable (default {{input}}); a bot trigger also exposes {{bot.triggerChatId}} (the sender\'s chat id, e.g. for a bot step\'s chatIds) and {{bot.triggerUserId}}.',
     '- A hotkey trigger seeds {{selection}} with the text selected in the foreground app at the moment of the press (empty when nothing was selected) — that is how "select text, press keys, act on it" flows start. It does NOT seed {{input}}.',
-    '- cron/manual triggers seed NO input variable — such a flow must start from a data-producing step (rss, browser, clipboard, …), never from {{input}} or {{selection}}.',
+    '- cron/system/manual triggers seed NO input variable — such a flow must start from a data-producing step (rss, browser, clipboard, …), never from {{input}} or {{selection}}.',
     '- Multiple triggers: keep the primary in "trigger" and put the rest in the OPTIONAL "extraTriggers" array (same shape) — e.g. a cron PLUS a chat command. Omit "extraTriggers" entirely for a single-trigger flow.',
     '',
     'STEPS — these skills were selected for this request; use ONLY these:',
@@ -246,11 +258,26 @@ export function buildFlowGenerationPrompt(
     '- Skills marked [no outputKey] must use "outputKey": "".',
     '- Every "loop" needs a matching "end_loop" later; every "if" needs a matching "end_if" (blocks may nest).',
     '- Every config value is a PLAIN string. Never use markdown: URLs must be bare like "https://example.com/feed", NOT "[https://example.com/feed](https://example.com/feed)".',
-    '- Write "name", "description", every step "label", and user-facing text (llm prompts, notify/bot/email messages) in the SAME language as the user request below.',
-    '- Keep the flow minimal and correct; only include steps the request needs.',
+    `- Write "name", "description", every step "label", and user-facing text (llm prompts, notify/bot/email messages) in the SAME language as ${request} below.`,
+    edit
+      ? '- Keep the flow correct; every step the change does not touch stays as it is.'
+      : '- Keep the flow minimal and correct; only include steps the request needs.',
+  ];
+}
+
+export function buildFlowGenerationPrompt(
+  description: string,
+  skills: readonly string[],
+  triggerHint?: string,
+): string {
+  return [
+    'You are a flow compiler for "Yobi", a desktop automation app.',
+    'Convert the user request below into ONE Yobi flow expressed as strict JSON.',
+    '',
+    ...flowCompilerRules(skills, triggerHint, 'create'),
     '',
     'EXAMPLE — it shows the SHAPE of a flow and may name skills that are not in your list above;',
-    'copy its structure, not its steps (request: "every weekday at 8am summarize my RSS feed and send it to Telegram"):',
+    'copy its structure, not its steps (request: "every weekday at 8am summarize my RSS feed and send it to me on Telegram"):',
     EXAMPLE_FLOW_JSON,
     '',
     'USER REQUEST:',

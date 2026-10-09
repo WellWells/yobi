@@ -28,26 +28,15 @@ const countChars = (text: string): number => text.length;
 /** Costs 3 bytes, not 1, on the three providers whose caps are counted in bytes. */
 const ELLIPSIS = '…';
 
-/** What the observations get when nobody sized them against a provider — BYOK, and unit tests. */
+/** What the observations get when nobody sized them against a provider (BYOK). */
 const UNMEASURED_FIT: PromptFit = { budget: SCRATCH_TOTAL_BUDGET, measure: countChars };
 
 /**
- * Sizes the observations against the room the provider's cap actually has left for them.
+ * Sizes the observations against the room the provider's cap has left for them.
  *
- * Every other block competing for a capped prompt is budgeted against `promptCapFor` — the
- * conversation history and the MCP catalog both are — but the observations kept a
- * provider-blind `SCRATCH_TOTAL_BUDGET` while growing by one entry per turn, and that ceiling
- * was larger than three of the four provider caps of the time. Past the cap `preparePromptForProvider`
- * trims the TAIL, and the tail of a turn prompt is the action instruction plus the closing
- * `</steps>` fence: the model was left reading page text that ran to the end of the prompt
- * with nothing saying what to output. Measured against the real caps with full observations,
- * both were lost from the FIRST tool call on Duck.ai and the fourth on Gemini, the default.
- *
- * `promptWithoutObservations` is measured with its blank lines even though
- * `preparePromptForProvider` strips them before capping, so the budget errs small.
- *
- * Use `scratchFitFor` for a prompt that renders a scratch block; this one is for a prompt
- * whose observation is plain body text, which today means the delta.
+ * Past the cap `preparePromptForProvider` trims the TAIL, which is the action instruction and the
+ * closing `</steps>` fence, so the observations yield instead. The baseline is measured with its
+ * blank lines, so the budget errs small. Use `scratchFitFor` for a prompt that renders a scratch block.
  */
 export function observationFit(
   providerUrl: string,
@@ -87,24 +76,14 @@ export function scratchFitFor(
 const MIN_SCRATCH_BUDGET = 400;
 
 /**
- * The GOAL was the one block competing for a capped prompt that nothing budgeted.
- *
- * Every other block yields — history is recomputed per turn, observations are fitted to what is
- * left, the MCP catalog is sized at run start — but the goal went in whole. Measured on Duck.ai
- * (a 12,000-BYTE cap): a perfectly ordinary 669-character request made EVERY send truncate, and
- * what `preparePromptForProvider` trims is the tail — the closing `</steps>` fence and the
- * "Decide the next single action" instruction. The model was handed page text inside an
- * unterminated untrusted fence and never told what to output.
- *
- * Capped once at run start against a prompt built with an empty goal, so the number reflects the
- * real instruction block for THIS provider rather than the worst-case `INSTRUCTION_EST`.
+ * Caps the GOAL so a capped prompt keeps its tail: past the cap `preparePromptForProvider` trims the
+ * closing `</steps>` fence and the action instruction. Measured once at run start against a prompt
+ * built with an empty goal, so it reflects this provider's real instruction block.
  */
 export function capGoalForProvider(providerUrl: string, goal: string, promptWithoutGoal: string): string {
   if (isByokTargetUrl(providerUrl)) return goal;
   const measure = measureFor(providerUrl);
-  // No floor. A minimum that ignores whether the room exists is not a minimum, it is an overflow:
-  // reserving 600 bytes for the goal on a provider with 534 left is precisely how the closing
-  // fence and the action instruction came off the end again.
+  // No floor: a minimum that ignores whether the room exists would push the tail past the cap.
   const room = Math.max(0, promptCapFor(providerUrl) - measure(promptWithoutGoal) - MIN_SCRATCH_BUDGET);
   if (measure(goal) <= room) return goal;
   return `${truncateByMeasure(goal, room, measure)}${ELLIPSIS}`;
@@ -118,14 +97,9 @@ export interface AgentPlan {
 const MAX_PLAN_STEPS = 4;
 
 /**
- * The hard ceiling on a self-assessed step budget, and the number the prompt quotes. It is a
- * ceiling, not a target: the engine still stops on the wall clock, the token budget or a
- * finish action, whichever comes first, and on a browser provider the wall clock usually wins.
- *
- * The budget is a SEPARATE declared field rather than a longer plan on purpose. Deriving turns
- * from plan length caps out at 22 (a plan longer than 10x100 chars pushes a Duck.ai repair
- * prompt past its 12,000-byte cap and truncates the `</steps>` fence off the end), so a run that
- * needs 30 steps has no way to say so through the plan.
+ * Hard ceiling on a self-assessed step budget, and the number the prompt quotes. A ceiling, not a
+ * target: the engine still stops on the wall clock, the token budget or a finish. It is a separate
+ * declared field because a longer plan would push repair prompts past the tightest provider cap.
  */
 export const MAX_SELF_ASSESSED_STEPS = 40;
 const MAX_PLAN_STEP_CHARS = 100;
@@ -180,12 +154,10 @@ function planStepKey(step: string): string {
 }
 
 /**
- * Append-only. An item already in the plan keeps its index, so every `plan_done` index the model
- * has sent still points at the work it checked off — a plan that could be REWRITTEN could also be
- * shrunk, which is how a four-part goal finishes after covering one part. What a rewrite was the
- * only way to express is legitimate though: an observation reveals work the first plan missed, and
- * before this it had nowhere to go. So a later plan adds, never replaces, and `MAX_PLAN_STEPS`
- * still bounds the whole run — the cap exists because the plan is re-rendered into every prompt.
+ * Append-only: an existing item keeps its index, so every `plan_done` index still points at the work it
+ * checked off, and the plan cannot shrink to make a multi-part goal look finished after one part. A later
+ * plan only adds work an observation revealed; `MAX_PLAN_STEPS` bounds the whole run because the plan
+ * is re-rendered into every prompt.
  */
 export function applyPlanUpdate(plan: AgentPlan, steps?: string[], done?: number[]): void {
   if (steps) {
@@ -218,12 +190,10 @@ export function renderPlan(plan: AgentPlan): string[] {
 }
 
 /**
- * Raised from 7,000 when the `deliver` shape and the "answer it yourself" rule were added. Both
- * had to be in the estimate, not just in the prompt: every char the builder emits past this is a
- * char `preparePromptForProvider` takes off the TAIL, which is the action instruction.
- * `test/agentPromptBudget.test.ts` measures the real widest block and pins both directions.
+ * Must cover the widest instruction block the builder emits: every char past it is one
+ * `preparePromptForProvider` takes off the TAIL, which is the action instruction.
  */
-export const INSTRUCTION_EST = 7_600;
+export const INSTRUCTION_EST = 7_700;
 
 /**
  * What the change rules add on top, charged only by a run that can change something. Folding it into
@@ -246,12 +216,8 @@ const OBSERVATION_NO_ROOM = '(too long for this model\'s prompt — call a narro
 export const SCRATCH_EMPTY = 'STEPS TAKEN SO FAR: (none yet)';
 
 /**
- * The whole block, header and fence included.
- *
- * Budgeting the entry lines alone left the scaffolding unfunded, and on Duck.ai the
- * scaffolding is bigger than the slack: the cap had 2,321 bytes spare and the header plus
- * `<steps>` pair spends ~70 of them, so the block came out over cap by exactly the part that
- * was never counted. Cheap to just build and measure the real thing — the window is 6 entries.
+ * The whole block, header and fence included: budgeting only the entry lines leaves the scaffolding
+ * unfunded, so build and measure the real thing (the window is only a few entries).
  */
 function scratchBlock(lines: string[], total: number): string {
   const header = total > lines.length
@@ -290,15 +256,11 @@ function newestWithinBudget(
     // tags still in range, so this converges in a couple of passes at worst.
     room -= Math.max(1, over);
   }
-  // Even the "no room" marker has to fit. It costs ~200 bytes regardless of how small the
-  // budget is, and returning it unchecked is what pushed the block back over the cap — taking
-  // the closing fence and the action instruction after it with it.
+  // Even the "no room" marker has to fit: unchecked, its ~200 bytes push the closing fence and the
+  // action instruction past the cap.
   if (blockCost(OBSERVATION_NO_ROOM) <= totalBudget) return render(OBSERVATION_NO_ROOM);
-  // An empty observation still costs the step line, the thought and the whole config. When even
-  // that does not fit, there is nothing here the model was going to read — the observation
-  // already rendered as "(empty)" — so the caller drops the block entirely rather than emit one
-  // that overflows. Measured on Duck.ai with a declined shell call and a full 4x100 plan: 12,169
-  // bytes (over cap, action instruction trimmed off) against 11,994 with the block dropped.
+  // An empty observation still costs the step line, the thought and the whole config. When even that
+  // does not fit, return '' so the caller drops the block rather than emit one that overflows.
   return blockCost('') <= totalBudget ? render('') : '';
 }
 
@@ -316,9 +278,8 @@ export function renderScratch(
   for (let index = windowed.length - 1; index >= 0; index--) {
     const line = renderScratchEntry(windowed[index], firstStep + index);
     if (measure(scratchBlock([line, ...lines], scratch.length)) > totalBudget) {
-      // The newest step is never dropped — a turn with no observation at all cannot make
-      // progress — but it is no longer exempt from the budget either. Left whole it carried
-      // the closing fence and the action instruction after it straight past the cap.
+      // The newest step is never dropped (a turn with no observation cannot progress), but it is
+      // still fitted to the budget so the closing fence and action instruction stay inside the cap.
       if (lines.length === 0) {
         const newest = newestWithinBudget(windowed[index], firstStep + index, scratch.length, totalBudget, measure);
         // `newestWithinBudget` returns '' when not even an empty observation fits. Rendering a
@@ -354,17 +315,15 @@ function renderEnvironment(): string[] {
 }
 
 /**
- * `flowTools` is false for a delegated helper: it runs without the flow builders, and pointing it
- * at `assess_flow` spends a rejected action and a repair round trip on a tool it cannot call.
+ * `flowTools` is false for a delegated helper and a bot run, which cannot call the flow builders.
+ * `webTools` is false when the composer's web switch is off: the text must then not name web tools.
  */
-function approachFull(flowTools: boolean): string[] {
+function approachFull(flowTools: boolean, webTools: boolean): string[] {
   return [
-    '- Treat the GOAL as a task to PERFORM with your TOOLS, not a question to answer from memory.',
-    '  If a TOOL can do it, USE it — e.g. a request to summarize a YouTube video → call the "youtube"',
-    '  tool on the URL to get the transcript, then synthesize the summary yourself.',
-    '- "research" plans its own queries, reads the pages and cites them in ONE step — the tool for web',
-    '  evidence; "search" only hands you links. One DISTINCT sub-question is ONE call; comparing several',
-    '  subjects is one call per subject. Prefer a dedicated tool ("weather", "stock", "forex").',
+    '- Treat the GOAL as a task to PERFORM with your TOOLS, not a question to answer from memory: to',
+    '  summarize a YouTube video, call "youtube" on the URL for the transcript, then summarize it yourself.',
+    ...(webTools ? WEB_RESEARCH_FULL : WEB_OFF),
+    '  Prefer a dedicated tool ("weather", "stock", "forex").',
     '- NEVER tell the user to use another app or website to do what your own TOOLS can do — you do it.',
     '- "I cannot do X" is only true AFTER you have looked through TOOLS and found nothing that fits.',
     ...(flowTools
@@ -376,24 +335,52 @@ function approachFull(flowTools: boolean): string[] {
     '- If the GOAL needs an input no TOOL can get (e.g. a video URL), finish by telling the user, in the',
     '  goal\'s language, exactly what to provide and what YOU will then do with it.',
     '- If the GOAL needs nothing from outside — translating, rewriting, coding, chatting, or asking',
-    '  what you can DO (answer that from the tool lists below, grouped by capability, no schemas) —',
+    '  what you can DO (answer in plain words from the tool lists below, grouped, no tool names or schemas) —',
     '  "finish" on step 1 and answer it yourself. Never call a tool to look busy or to list your tools.',
+    ...CAN_YOU_MEANS_DO,
   ];
 }
 
-const APPROACH_LEAN: readonly string[] = [
-  '- You DO tasks with your TOOLS, not generic advice — if a TOOL can do it, USE it.',
-  '- "I cannot do X" is only true after checking TOOLS and finding nothing — never from memory.',
-  '- For web evidence call "research" (it reads and cites real pages in one step) once per DISTINCT',
-  '  sub-question: one subject asked once is ONE call, comparing several is one call per subject.',
-  '- If the GOAL needs nothing from outside, "finish" on step 1 and answer it yourself — no tool',
-  '  call. That includes asking what you can DO: answer from the tool lists below, no schemas.',
-  '- If your observations are insufficient, say so honestly and tell the user, in the goal\'s language,',
-  '  exactly what to provide so YOU can finish it with your own tools.',
+const WEB_RESEARCH_FULL: readonly string[] = [
+  '- "research" searches, reads and cites pages in ONE step; "search" only hands you links.',
+  '  One DISTINCT sub-question is ONE call; comparing several subjects is one call per subject.',
 ];
 
 /**
- * The connector tier. APPROACH_FULL and APPROACH_LEAN both name "research", "youtube" and
+ * Replaces the research rules when the web switch is off: an answer from memory must say it was not
+ * checked online and how to get it checked.
+ */
+const WEB_OFF: readonly string[] = [
+  '- Web search is OFF here: for facts no TOOL gave you (news, rankings, prices you did not look up),',
+  '  answer from what you know, say it was not checked online, and that turning Web on lets you check.',
+];
+
+/** A capability question right after a request is an indirect request to redo it with that ability. */
+const CAN_YOU_MEANS_DO: readonly string[] = [
+  '  EXCEPT asking if you have or can use an ability ("can you search?", "do you have web search?")',
+  '  right after a request it serves, even one you answered from memory: redo that request with it now.',
+];
+
+function approachLean(webTools: boolean): string[] {
+  return [
+    '- You DO tasks with your TOOLS, not generic advice — if a TOOL can do it, USE it.',
+    '- "I cannot do X" is only true after checking TOOLS and finding nothing — never from memory.',
+    ...(webTools
+      ? [
+          '- For web evidence call "research" (it reads and cites real pages in one step) once per DISTINCT',
+          '  sub-question: one subject asked once is ONE call, comparing several is one call per subject.',
+        ]
+      : WEB_OFF),
+    '- If the GOAL needs nothing from outside, "finish" on step 1 and answer it yourself — no tool',
+    '  call. That includes asking what you can DO: answer in plain words from the tools below, no tool names or schemas.',
+    ...CAN_YOU_MEANS_DO,
+    '- If your observations are insufficient, say so honestly and tell the user, in the goal\'s language,',
+    '  exactly what to provide so YOU can finish it with your own tools.',
+  ];
+}
+
+/**
+ * The connector tier. approachFull and approachLean both name "research", "youtube" and
  * "assess_flow" — tools a connector-scoped run does not have — and an instruction to call a
  * tool that is not in the catalog costs a rejected action and a repair round-trip.
  */
@@ -419,22 +406,9 @@ const APPROACH_CONNECTOR: readonly string[] = [
 export const USER_DATA_MARKER = '(your data)';
 
 /**
- * The grounding rule for proper nouns, and the one class of failure no tier covered.
- *
- * Asked what a person only the user's own contacts know wants, a run searched the web, found a
- * public figure whose name merely resembles the one in the goal, silently substituted him, and
- * then invented a bridge for the substitution ("the <name> everyone means"). Every existing rule
- * was satisfied: it acted with a tool, it cited its sources, it answered in the goal's language.
- *
- * `renderEnvironment` already forbids guessing a DATE or a COUNTRY from memory; nothing said the
- * same about a NAME, so proper nouns fell through to the model's default of normalising toward the
- * best-known match. Unconditional in every tier: reaching for the wrong source is a browser-
- * provider failure, but substituting an identity is a chat-model habit BYOK shares, and a turn
- * prompt can emit "finish" directly without `buildFinishPrompt` ever seeing the answer.
- */
-/**
- * Shared by all three approach tiers, and printed BEFORE them: which name the goal is about and
- * where that kind of thing lives are decisions that come before how deeply to research it.
+ * Printed before all three approach tiers, followed by `IDENTITY_RULES`: which name the goal is about
+ * and where that kind of thing lives come before how deeply to research it. The identity rule is in
+ * every tier because a turn prompt can emit "finish" without `buildFinishPrompt` seeing the answer.
  */
 const APPROACH_HEADER = 'HOW TO APPROACH THE GOAL:';
 
@@ -456,9 +430,8 @@ const OWN_DATA_FIRST: readonly string[] = [
 ];
 
 /**
- * `research` already returns a written, cited answer, so rewriting it costs a whole round trip
- * (9-11 s on a browser provider) and loses the `[n]` markers the pipeline linked to sources.
- * The rule has to be explicit: left to itself the model treats every observation as raw material.
+ * `research` already returns a written, cited answer; rewriting it costs a round trip and loses the
+ * `[n]` source markers, and left alone the model treats every observation as raw material.
  */
 const DELIVER_RULES: readonly string[] = [
   '- "deliver" hands the user that step\'s result UNCHANGED — use it when that step already answers',
@@ -489,17 +462,29 @@ const BATCH_RULES: readonly string[] = [
 ];
 
 /**
- * Lean tier only. Measured 2026-09-20 on BYOK Gemini 3.5 Flash-Lite: told to look up two brands
- * "分別", it still folded both into one research call and came back with one model per brand, while
- * browser Gemini split the same goal unprompted. The rule alone did not carry it; a worked example
- * does. The coaching tier is the wider block, so this rides inside `INSTRUCTION_EST` for free.
+ * Lean tier only: smaller models fold a two-subject comparison into one call unless shown a worked
+ * example. The coaching tier is the wider block, so this fits inside `INSTRUCTION_EST`.
  */
-const BATCH_EXAMPLE: readonly string[] = [
-  '- Comparing two subjects is two independent lookups, sent together:',
-  '<example>',
-  '{"thought":"Two brands, two separate lookups","action":"call_tools","calls":[{"tool":"research","config":{"query":"Anker 100W charger models and prices"}},{"tool":"research","config":{"query":"UGREEN 100W charger models and prices"}}]}',
-  '</example>',
-];
+function batchExample(webTools: boolean): string[] {
+  return [
+    '- Comparing two subjects is two independent lookups, sent together:',
+    '<example>',
+    webTools
+      ? '{"thought":"Two brands, two separate lookups","action":"call_tools","calls":[{"tool":"research","config":{"query":"Anker 100W charger models and prices"}},{"tool":"research","config":{"query":"UGREEN 100W charger models and prices"}}]}'
+      : '{"thought":"Two cities, two separate lookups","action":"call_tools","calls":[{"tool":"weather","config":{"location":"Tokyo"}},{"tool":"weather","config":{"location":"Taipei"}}]}',
+    '</example>',
+  ];
+}
+
+/**
+ * The worked call. It names a tool the run really has: with the web off, an example naming "research"
+ * is what the model copies — and the repair prompt re-sends the very same example with the rejection.
+ */
+function callExample(webTools: boolean): string {
+  return webTools
+    ? '{"thought":"I need current prices before I can compare them","action":"call_tool","tool":"research","config":{"query":"RTX 5080 current retail price"}}'
+    : '{"thought":"I need the current conditions before I can advise","action":"call_tool","tool":"weather","config":{"location":"Taipei"}}';
+}
 
 const PRECEDENCE: readonly string[] = [
   'WHEN TWO RULES COLLIDE:',
@@ -524,12 +509,8 @@ const ASK_RULES: readonly string[] = [
 ];
 
 /**
- * The widening of the last-resort rule, and it covers changes only.
- *
- * Asking is a last resort for looking things up — widening it for research runs is what made the
- * rule necessary. A change is the opposite case: the Thunderbird reply loop saved three drafts to
- * the wrong account and opened three reply windows because every one of those facts had a
- * plausible guess and nothing said a guess was not enough. Reads stay ungated.
+ * Widens the last-resort rule for changes only: a plausible guess about the item, account or content
+ * is not enough before a change. Reads stay ungated.
  */
 const ASK_BEFORE_CHANGE: readonly string[] = [
   '- The exception that outranks "last resort": before a change (a tool not marked (read)), ASK when,',
@@ -582,10 +563,8 @@ function evidenceSections(runtimeContext: string, earlierActions: string): strin
 }
 
 /**
- * Shown once writes have been attempted and none landed. It sits in every prompt from then on,
- * not just the step-limit one: the run that reported "已成功將…移至廢止" over two failed writes
- * chose to finish voluntarily at turn 5, so a notice that only fired at `mustFinish` would have
- * missed it entirely.
+ * Shown in every prompt once writes were attempted and none landed, not only at `mustFinish`:
+ * a run may choose to finish early and must not report a failed write as done.
  */
 const NO_WRITE_LANDED: readonly string[] = [
   'NOTHING HAS BEEN WRITTEN YET — every write you attempted in this run failed.',
@@ -594,15 +573,10 @@ const NO_WRITE_LANDED: readonly string[] = [
   'Otherwise: fix the arguments from the error and the schema above, and try the write again.',
 ];
 
-/**
- * 1-4, not 2-4: a floor of two made every greeting and one-line lookup invent a second item —
- * logged verbatim as "1. 確認請求內容 2. 直接回覆" — and a four-item plan for a question that needed
- * no tool at all raised its own step ceiling. One thing is one item.
- */
+/** 1-4, not 2-4: a floor of two makes one-thing goals invent a filler item. One thing is one item. */
 const PLAN_REQUEST: readonly string[] = [
   '- On this FIRST action, ALSO include "plan": [1-4 short sub-goals that together cover the GOAL;',
-  '  ONE for a one-thing GOAL, never "read the request" or "reply"] — your checklist for the run,',
-  '  so you never answer half the question.',
+  '  ONE for a one-thing GOAL, never "read the request" or "reply"] — your checklist for the run.',
   `- ALSO include "steps_needed": how many tool calls the whole GOAL will take (1-${MAX_SELF_ASSESSED_STEPS}).`,
   '  You get ONE estimate and it cannot be revised, so judge the real work: a lookup is 2-3, a',
   '  researched comparison 8-12, a long back-and-forth with files or commands 20+. Over-asking',
@@ -613,6 +587,27 @@ const PLAN_PROGRESS: readonly string[] = [
   '- ALSO include "plan_done": [the 1-based indices of the plan items you have now finished].',
   '  Existing items are fixed; to add work they missed, send "plan" with ONLY the new item.',
 ];
+
+/**
+ * The completion claim on `finish`, asked of the model rather than read off the plan: plans often
+ * leave the final "present the result" item unchecked, which is work the finish itself does.
+ */
+const DONE_RULE = '- "done": false if part of the GOAL is undone — saying you cannot is not doing it; add "missing": what is left, in the goal\'s language.';
+
+/**
+ * Shown on the one turn after a `finish` that said the goal is not done and was held back. Said
+ * once per run: a model that finishes "not done" twice has said so on purpose, and the answer is
+ * delivered as partial rather than bounced again.
+ */
+function heldNotice(held: HeldFinish, allowAsk: boolean): string[] {
+  return [
+    `NOT FINISHED YET: your "finish" said the GOAL is not done${held.missing ? ` (missing: "${held.missing}")` : ''}, and you have ${held.stepsLeft} step(s) left.`,
+    `Take the step that gets what is missing${allowAsk ? ', or "ask_user" if only the user can give it' : ''}.`,
+    // A summarised connector shows only a few tool names, so the missing tool may be behind "tool_help".
+    ...(held.connectorHelp ? ['A connector summarised under MCP TOOLS may hold it: open it with "tool_help" before you give up.'] : []),
+    'If nothing can get it, "finish" again with "done": false and say so in "content".',
+  ];
+}
 
 const PLAN_DONE_NUDGE = [
   'Every item in your plan is checked off. Output the "finish" action now, unless an observation',
@@ -633,8 +628,8 @@ const OFFLOAD_HINT: readonly string[] = [
 ];
 
 const STALL_WARNING: readonly string[] = [
-  'WARNING: your last steps failed or were refused. Do NOT retry the same call or the same approach —',
-  'switch tool, change the arguments substantially, or finish now with what you already have.',
+  'WARNING: your last steps failed or were refused. Do NOT repeat that call or approach —',
+  'switch tool, change the arguments substantially, or finish now with what you have.',
 ];
 
 function historySection(history: string): string[] {
@@ -661,7 +656,7 @@ export interface TurnPromptOptions {
   /** Server handle to use in the connector worked example, so the example names a real server. */
   mcpExampleServer?: string;
   scratchSlots?: number;
-  /** Provider-derived room for the observations (`observationFit`); omit only in a unit test. */
+  /** Provider-derived room for the observations (`observationFit`); unmeasured when omitted. */
   scratchFit?: PromptFit;
   history?: string;
   stalled?: boolean;
@@ -687,11 +682,22 @@ export interface TurnPromptOptions {
   batchGrammar?: boolean;
   /** The run can call the flow builders. False for a helper, which must not be pointed at `assess_flow`. */
   flowTools?: boolean;
+  /** The web tools are in scope. False when the composer's web switch is off: the text must not name them. */
+  webTools?: boolean;
+  /** The previous turn's `finish` said the goal is not done and was held back for one more try. */
+  held?: HeldFinish;
+}
+
+export interface HeldFinish {
+  missing: string;
+  stepsLeft: number;
+  /** Connectors are shown as one-line summaries behind `tool_help`, so "no tool for it" is not yet known. */
+  connectorHelp?: boolean;
 }
 
 /**
  * The example must name a handle the validator will accept. A scoped run always has exactly one
- * server, so the engine passes its real handle; the fallback only ever renders in a unit test.
+ * server, so the engine passes its real handle; the fallback covers a caller that passes none.
  */
 const EXAMPLE_SERVER_FALLBACK = 'notes';
 const EXAMPLE_SERVER_MAX = 32;
@@ -714,10 +720,12 @@ export function buildTurnPrompt(opts: TurnPromptOptions): string {
     scratchSlots = SCRATCH_IN_PROMPT, scratchFit = UNMEASURED_FIT, history = '',
     stalled = false, offload = false, allowAsk = false, changeRules = false, writesAllFailed = false,
     userDataSources = false, plan = emptyPlan(), deliverable = [], runtimeContext = '', earlierActions = '',
-    userMemory = '', batchGrammar = false, flowTools = true,
+    userMemory = '', batchGrammar = false, flowTools = true, webTools = true, held,
   } = opts;
   const planned = plan.steps.length > 0;
-  const finished = planComplete(plan);
+  // A held finish outranks a fully checked plan: the model checked the items AND said the goal is
+  // not done, and the nudge to "finish now" would send it straight back to the answer just held.
+  const finished = planComplete(plan) && !held;
   const canDeliver = deliverable.length > 0;
   const batch = batchGrammar && (toolGrammar || mcpGrammar);
   return [
@@ -731,11 +739,11 @@ export function buildTurnPrompt(opts: TurnPromptOptions): string {
     APPROACH_HEADER,
     ...IDENTITY_RULES,
     ...(userDataSources ? OWN_DATA_FIRST : []),
-    ...(toolGrammar ? (lean ? APPROACH_LEAN : approachFull(flowTools)) : APPROACH_CONNECTOR),
+    ...(toolGrammar ? (lean ? approachLean(webTools) : approachFull(flowTools, webTools)) : APPROACH_CONNECTOR),
     ...(changeRules ? ['', ...CHANGE_RULES] : []),
     '',
     'OUTPUT RULES (critical):',
-    '- Output ONLY one JSON object. No prose, no explanation, no markdown code fences.',
+    '- Output ONLY one JSON object — no prose, no markdown code fences.',
     `- Use exactly one of ${shapeCount(toolGrammar, mcpGrammar, allowAsk, canDeliver, batch)}:`,
     ...(toolGrammar
       ? ['  {"thought": string, "action": "call_tool", "tool": <a tool name>, "config": { ...string values... }}']
@@ -750,26 +758,30 @@ export function buildTurnPrompt(opts: TurnPromptOptions): string {
     ...(canDeliver
       ? [`  {"thought": string, "action": "deliver", "title": string, "from": <one of step ${deliverable.join(' or ')}>}`]
       : []),
-    '  {"thought": string, "action": "finish", "title": string, "content": string}',
+    '  {"thought": string, "action": "finish", "title": string, "content": string, "done": boolean}',
+    ...(hasRecapSection(userMemory) ? [`  ${RECAP_HOOK}`] : []),
     ...(toolGrammar
       ? [
-          '- A real "call_tool" action looks exactly like this — literal values, no placeholders:',
+          '- A real "call_tool" action looks exactly like this:',
           '<example>',
-          '{"thought":"I need current prices before I can compare them","action":"call_tool","tool":"research","config":{"query":"RTX 5080 current retail price"}}',
+          callExample(webTools),
           '</example>',
-          ...(lean && batch ? BATCH_EXAMPLE : []),
+          ...(lean && batch ? batchExample(webTools) : []),
         ]
       : [
-          '- A real "call_mcp" action looks exactly like this — literal values, no placeholders:',
+          '- A real "call_mcp" action looks exactly like this:',
           '<example>',
           `{"thought":"I have to locate the page before I can change it","action":"call_mcp","server":"${exampleServer(mcpExampleServer)}","name":"search","arguments":{"query":"Q3 roadmap"}}`,
           '</example>',
         ]),
     ...(canDeliver ? DELIVER_RULES : []),
-    '- To finish, "title" is a short headline and "content" is the written answer, synthesized from',
+    // "In the GOAL's language" is repeated at the answer: a non-English locale or tool output can
+    // outweigh the opening rule.
+    '- To finish, "title" is a short headline and "content" is the answer, in the GOAL\'s language, synthesized from',
     '  the observations — its LENGTH matched to the question (a simple factual one gets 1-2',
     '  sentences), and every web fact naming its source (page title or URL). Prose by default,',
     '  Markdown (list, table) when the answer has that shape; never raw data, bare links, or JSON.',
+    DONE_RULE,
     ...(toolGrammar
       ? ['- Every value inside "config" MUST be a plain string. Provide every field marked REQUIRED.']
       : []),
@@ -786,7 +798,7 @@ export function buildTurnPrompt(opts: TurnPromptOptions): string {
     ...(allowAsk && changeRules ? ASK_BEFORE_CHANGE : []),
     '- Use concrete literal values — NEVER {{placeholder}} notation.',
     '- Only call a tool listed under TOOLS or MCP TOOLS, using only its documented keys.',
-    '- Never repeat an identical tool call, and do not add a step that cannot change your answer.',
+    '- Never repeat an identical tool call.',
     ...(mustFinish ? [] : planned ? PLAN_PROGRESS : [...PLAN_REQUEST, ...(changeRules ? INTENT_REQUEST : [])]),
     '',
     ...PRECEDENCE,
@@ -805,6 +817,7 @@ export function buildTurnPrompt(opts: TurnPromptOptions): string {
     ...(stalled && !mustFinish && !finished ? [...STALL_WARNING, ''] : []),
     ...(offload && !mustFinish && !finished ? [...OFFLOAD_HINT, ''] : []),
     ...(writesAllFailed ? [...NO_WRITE_LANDED, ''] : []),
+    ...(held && !mustFinish ? [...heldNotice(held, allowAsk), ''] : []),
     mustFinish
       ? 'You have reached the step limit. You MUST now output a "finish" action whose "content" is your best written answer, synthesized from the observations above.'
       : finished
@@ -813,22 +826,26 @@ export function buildTurnPrompt(opts: TurnPromptOptions): string {
   ].join('\n');
 }
 
-/**
- * `providerUrl` fits the observation to the cap. It is optional only because a unit test may
- * assert on the body alone; the engine always passes it. Without it a delta carrying a browser
- * observation (24,000 chars) is over Duck.ai's whole 12,000-byte cap on its own, and the
- * instruction this prompt exists to deliver is the part that gets trimmed off the end.
- */
 /** How much of a batched call's config labels its observation in a delta. */
 const BATCH_LABEL_MAX = 160;
 
 /**
- * A delta is all a live thread sees of the rules, and what it carries is often a finished Markdown
- * answer (`research`, a helper's findings). Measured on Gemini 2026-09-20: handed two of them, it
- * wrote its final answer as plain Markdown in their style — a good answer, rejected for its shape,
- * and a whole repair round trip to get the same text back inside "finish".
+ * A delta is all a live thread sees of the rules, and it often carries a finished Markdown answer the
+ * model would imitate outside "finish". The "done" half rides here too: the full rules are read only
+ * on turn 1.
  */
-const ANSWER_IN_FINISH = 'When you answer, the whole answer goes in the "finish" JSON\'s "content" — never as plain text.';
+const ANSWER_IN_FINISH = 'When you answer, the whole answer goes in the "finish" JSON\'s "content" — never as plain text — with "done": false if any part of the GOAL is not done.';
+
+/**
+ * The recap rule sits near the top, but a finish's shape is settled by the output rules and later
+ * deltas never repeat the top, so wherever a finish is described, a run with the rule gets this reminder.
+ */
+export const RECAP_HOOK = 'End "content" with the recap_line described under RECAP.';
+
+/** Whether the pre-rendered memory slot carries the recap rule: its section heading opens a line. */
+export function hasRecapSection(userMemory: string): boolean {
+  return /(?:^|\n)RECAP: /.test(userMemory);
+}
 
 /**
  * Splits `budget` so no observation is cut while another leaves room unused: the shortest are
@@ -848,10 +865,10 @@ export function shareBudget(lengths: readonly number[], budget: number): number[
 }
 
 /**
- * `entries` is everything the previous turn produced — one entry for a single call, up to three
- * for a `call_tools` batch — and `lastIndex` is the step number of the newest. One entry renders
- * exactly as it always has; a batch labels each observation with its call, since two "research"
- * steps are otherwise indistinguishable.
+ * `entries` is everything the previous turn produced (one entry for a single call, up to three for a
+ * `call_tools` batch) and `lastIndex` is the newest step number. A batch labels each observation with
+ * its call, since two "research" steps are otherwise indistinguishable. `providerUrl` fits the
+ * observations to the provider's cap; without it they get the unmeasured character budget.
  */
 export function buildDeltaPrompt(
   entries: readonly ScratchEntry[],
@@ -861,8 +878,10 @@ export function buildDeltaPrompt(
   plan: AgentPlan = emptyPlan(),
   writesAllFailed = false,
   providerUrl?: string,
+  recapHook = false,
 ): string {
   const finished = planComplete(plan);
+  const answerInFinish = recapHook ? `${ANSWER_IN_FINISH} ${RECAP_HOOK}` : ANSWER_IN_FINISH;
   const firstIndex = lastIndex - entries.length + 1;
   const heading = (entry: ScratchEntry, offset: number): string => (entries.length === 1
     ? `Observation from step ${lastIndex} — ${entry.tool}:`
@@ -873,10 +892,10 @@ export function buildDeltaPrompt(
     ...(stalled && !mustFinish && !finished ? [...STALL_WARNING, ''] : []),
     ...(writesAllFailed ? [...NO_WRITE_LANDED, ''] : []),
     mustFinish
-      ? 'You have reached the step limit. Output ONLY the "finish" JSON object now, whose "content" is your best written answer synthesized from every observation above.'
+      ? `You have reached the step limit. Output ONLY the "finish" JSON object now, whose "content" is your best written answer synthesized from every observation above.${recapHook ? ` ${RECAP_HOOK}` : ''}`
       : finished
-        ? `${PLAN_DONE_NUDGE}\n${ANSWER_IN_FINISH}`
-        : `Decide the next single action. Output ONLY one JSON object, in one of the shapes defined earlier — no prose, no markdown code fences. ${ANSWER_IN_FINISH}`,
+        ? `${PLAN_DONE_NUDGE}\n${answerInFinish}`
+        : `Decide the next single action. Output ONLY one JSON object, in one of the shapes defined earlier — no prose, no markdown code fences. ${answerInFinish}`,
   ].join('\n');
 
   const observed = entries.map((entry) => entry.deltaObservation || entry.observation || '(empty)');
@@ -891,6 +910,26 @@ export function buildDeltaPrompt(
     : `${truncateByMeasure(text, Math.max(0, shares[index]), fit.measure)}${ELLIPSIS}`)));
 }
 
+/**
+ * What a live thread is sent after a held `finish`. There is no new observation — the model's last
+ * message WAS the finish — so this is the notice and the instruction, and nothing to fit to a cap.
+ */
+export function buildHeldDelta(
+  held: HeldFinish,
+  allowAsk: boolean,
+  plan: AgentPlan = emptyPlan(),
+  writesAllFailed = false,
+  recapHook = false,
+): string {
+  return [
+    ...heldNotice(held, allowAsk),
+    '',
+    ...(plan.steps.length > 0 ? [...renderPlan(plan), ''] : []),
+    ...(writesAllFailed ? [...NO_WRITE_LANDED, ''] : []),
+    `Decide the next single action. Output ONLY one JSON object, in one of the shapes defined earlier — no prose, no markdown code fences. ${ANSWER_IN_FINISH}${recapHook ? ` ${RECAP_HOOK}` : ''}`,
+  ].join('\n');
+}
+
 export const SYNTH_SCRATCH_SLOTS_LEAN = 16;
 export const SYNTH_SCRATCH_BUDGET_LEAN = 64_000;
 
@@ -901,7 +940,7 @@ export interface FinishPromptOptions {
   scratchSlots?: number;
   /** Ceiling on the observations before the provider's own cap is applied on top. */
   totalBudget?: number;
-  /** Provider-derived room for the observations (`observationFit`); omit only in a unit test. */
+  /** Provider-derived room for the observations (`observationFit`); unmeasured when omitted. */
   scratchFit?: PromptFit;
   history?: string;
   plan?: AgentPlan;
@@ -942,16 +981,20 @@ export function buildFinishPrompt(opts: FinishPromptOptions): string {
     ...(userMemory.trim() ? [userMemory.trim(), ''] : []),
     'OUTPUT RULES (critical):',
     '- Output ONLY one JSON object, nothing else, no markdown code fences:',
-    '  {"title": string, "content": string}',
+    '  {"title": string, "content": string, "done": boolean}',
     '- "title": a short headline for the answer, in the goal\'s language.',
+    // The run is here because it stopped before the model said it was done, so the claim decides
+    // whether the answer is delivered as complete; leaving it out reads as "not done".
+    '- "done": true only if the observations achieve the whole GOAL; if false, add "missing": what is left, in the goal\'s language.',
     '- "content": the written answer — analysis / recommendation / summary — SYNTHESIZED from the',
     '  observations. Prose by default, Markdown (list, table) when the answer genuinely has that',
     '  shape. It must NOT be raw data, a JSON array/object, or a bare list of links.',
+    ...(hasRecapSection(userMemory) ? [`- ${RECAP_HOOK}`] : []),
     '- Match the answer\'s LENGTH to the question asked: a simple factual one gets 1-2 sentences,',
     '  a research question gets the full write-up. Padding a short answer out is not thoroughness.',
     '- Name the source (page title or URL) next to any fact that came from the web, so the user can check it.',
-    // The two rules the web-research answer about the wrong person broke. Mirrored from the turn
-    // prompt because a synthesis reached through `mustFinish` or `synthesizeFinal` never sees it.
+    // Mirrors the turn prompt's identity rules: a synthesis reached through `mustFinish` or
+    // `synthesizeFinal` never sees the turn prompt.
     '- NEVER answer about a different person, place or thing than the GOAL named, however similar the',
     '  name: if the observations turned out to be about someone else, say the subject was not found',
     '  and name who you did find instead.',

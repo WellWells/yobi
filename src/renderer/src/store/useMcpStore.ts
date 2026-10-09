@@ -2,11 +2,8 @@ import { create } from 'zustand';
 import type { McpServerView } from '../../../shared/types';
 
 /**
- * Connected MCP servers, shared by Settings and the chat composer.
- *
- * It lives in a store rather than in the Settings hook because the composer derives one slash
- * command per connected server: with the list held in Settings' local state the two surfaces
- * would disagree the moment a server connected while Settings was closed.
+ * Connected MCP servers, shared by Settings and the chat composer (a store so the composer's
+ * per-server slash commands see servers that connect while Settings is closed).
  */
 interface McpState {
   servers: McpServerView[];

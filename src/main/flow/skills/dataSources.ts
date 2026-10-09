@@ -1,4 +1,12 @@
 import { sendLog } from '../../helpers';
+import { clampIntField } from './numberField';
+import { formatUtcStamp, marketSession, quoteTimeOf } from './quoteTime';
+import type { MarketSession } from './quoteTime';
+
+export {
+  exchangeOffsetSec, formatExchangeTime, marketSession, quoteTimeOf, utcOffsetLabel,
+} from './quoteTime';
+export type { MarketSession } from './quoteTime';
 
 const BROWSER_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -24,15 +32,9 @@ export async function fetchJson(url: string, timeoutMs: number, headers?: Record
   }
 }
 
-function clampInt(raw: string | undefined, fallback: number, min: number, max: number): number {
-  const n = Number((raw ?? '').trim());
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(max, Math.max(min, Math.floor(n)));
-}
-
 interface ForexResult {
   base: string; target: string; rate: number; amount: number; converted: number; asOf: string;
-  previousClose: number | null;
+  previousClose: number | null; session: MarketSession;
 }
 
 function buildForexEnvelope(r: ForexResult, precision: number): string {
@@ -44,7 +46,8 @@ function buildForexEnvelope(r: ForexResult, precision: number): string {
     ? String(Number((((r.rate - r.previousClose!) / r.previousClose!) * 100).toFixed(4)))
     : '';
   const json = JSON.stringify({
-    base: r.base, target: r.target, rate, amount: r.amount, converted, asOf: r.asOf, previousClose, changePct,
+    base: r.base, target: r.target, rate, amount: r.amount, converted, asOf: r.asOf, session: r.session,
+    previousClose, changePct,
   });
   return envelope(json, {
     rate: String(rate),
@@ -53,13 +56,14 @@ function buildForexEnvelope(r: ForexResult, precision: number): string {
     base: r.base,
     target: r.target,
     asOf: r.asOf,
+    session: r.session,
     previousClose,
     changePct,
     isFailed: '0',
   });
 }
 
-interface ForexQuote { rate: number; asOf: string; previousClose: number | null }
+interface ForexQuote { rate: number; asOf: string; previousClose: number | null; session: MarketSession }
 
 async function fetchYahooRate(base: string, target: string, timeoutMs: number): Promise<ForexQuote | null> {
   for (const host of ['query1', 'query2']) {
@@ -74,11 +78,11 @@ async function fetchYahooRate(base: string, target: string, timeoutMs: number): 
       const rate = Number(meta.regularMarketPrice);
       if (!Number.isFinite(rate) || rate <= 0) continue;
       const prev = Number(meta.chartPreviousClose ?? meta.previousClose ?? NaN);
-      const marketTime = Number(meta.regularMarketTime);
       return {
         rate,
-        asOf: Number.isFinite(marketTime) ? new Date(marketTime * 1_000).toUTCString() : '',
+        asOf: quoteTimeOf(meta),
         previousClose: Number.isFinite(prev) && prev > 0 ? prev : null,
+        session: marketSession(meta),
       };
     } catch {
     }
@@ -90,13 +94,13 @@ export async function execForex(config: Record<string, string>, timeoutMs: numbe
   const base = (config.base ?? 'USD').trim().toUpperCase();
   const target = (config.target ?? '').trim().toUpperCase();
   const amountRaw = (config.amount ?? '').trim();
-  const precision = clampInt(config.precision, 4, 0, 12);
+  const precision = clampIntField(config.precision, 4, 0, 12);
 
   const fail = (message: string): string => {
     sendLog(`💱 [Flow] Forex: ${message}`);
     return envelope(message, {
       rate: '0', converted: '0', amount: amountRaw || '1', base, target,
-      asOf: '', previousClose: '', changePct: '', isFailed: '1',
+      asOf: '', session: '', previousClose: '', changePct: '', isFailed: '1',
     });
   };
 
@@ -105,7 +109,7 @@ export async function execForex(config: Record<string, string>, timeoutMs: numbe
   if (!Number.isFinite(amount)) return fail(`forex: invalid amount "${amountRaw}"`);
   if (base === target) {
     return buildForexEnvelope(
-      { base, target, rate: 1, amount, converted: amount, asOf: '', previousClose: null },
+      { base, target, rate: 1, amount, converted: amount, asOf: '', previousClose: null, session: '' },
       precision,
     );
   }
@@ -114,7 +118,7 @@ export async function execForex(config: Record<string, string>, timeoutMs: numbe
   if (live) {
     sendLog(`💱 [Flow] Forex: 1 ${base} = ${live.rate} ${target} (live)`);
     return buildForexEnvelope(
-      { base, target, rate: live.rate, amount, converted: amount * live.rate, asOf: live.asOf, previousClose: live.previousClose },
+      { base, target, rate: live.rate, amount, converted: amount * live.rate, asOf: live.asOf, previousClose: live.previousClose, session: live.session },
       precision,
     );
   }
@@ -129,7 +133,10 @@ export async function execForex(config: Record<string, string>, timeoutMs: numbe
     if (typeof rate !== 'number') return fail(`forex: unknown currency ${target}`);
     sendLog(`💱 [Flow] Forex: 1 ${base} = ${rate} ${target} (daily)`);
     return buildForexEnvelope(
-      { base, target, rate, amount, converted: amount * rate, asOf: data.time_last_update_utc ?? '', previousClose: null },
+      {
+        base, target, rate, amount, converted: amount * rate,
+        asOf: formatUtcStamp(data.time_last_update_utc ?? ''), previousClose: null, session: '',
+      },
       precision,
     );
   } catch (err) {
@@ -142,6 +149,7 @@ interface Quote {
   price: number; previousClose: number;
   open: number | null; high: number | null; low: number | null; volume: number | null;
   marketTime: string;
+  session: MarketSession;
 }
 
 export function computeChange(price: number, previousClose: number): { change: number; changePct: string } {
@@ -174,7 +182,6 @@ async function fetchQuote(symbol: string, timeoutMs: number): Promise<Quote | nu
       const price = Number(meta.regularMarketPrice);
       if (!Number.isFinite(price)) return null;
       const prevClose = Number(meta.chartPreviousClose ?? meta.previousClose ?? NaN);
-      const t = Number(meta.regularMarketTime);
       return {
         symbol: String(meta.symbol ?? symbol),
         name: String(meta.longName ?? meta.shortName ?? symbol),
@@ -185,7 +192,8 @@ async function fetchQuote(symbol: string, timeoutMs: number): Promise<Quote | nu
         high: Number(meta.regularMarketDayHigh) || lastNum(q.high),
         low: Number(meta.regularMarketDayLow) || lastNum(q.low),
         volume: Number(meta.regularMarketVolume) || lastNum(q.volume),
-        marketTime: Number.isFinite(t) ? new Date(t * 1_000).toISOString() : '',
+        marketTime: quoteTimeOf(meta),
+        session: marketSession(meta),
       };
     } catch {
     }
@@ -198,7 +206,7 @@ function stockJson(q: Quote): Record<string, unknown> {
   return {
     symbol: q.symbol, name: q.name, currency: q.currency,
     price: q.price, open: q.open, high: q.high, low: q.low, volume: q.volume,
-    previousClose: q.previousClose, change, changePct, marketTime: q.marketTime,
+    previousClose: q.previousClose, change, changePct, marketTime: q.marketTime, session: q.session,
   };
 }
 
@@ -215,6 +223,7 @@ function buildStockEnvelope(q: Quote): string {
     change: String(change),
     changePct,
     marketTime: q.marketTime,
+    session: q.session,
     isFailed: '0',
   });
 }

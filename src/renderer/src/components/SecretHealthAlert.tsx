@@ -38,7 +38,7 @@ export const SecretHealthAlert: React.FC<Props> = ({ scopes, resolveLabel }) => 
     : (keyState === 'rotated' ? 'secret.alert.bodyRotated' : 'secret.alert.body');
 
   return (
-    <Alert color="red" icon={<TriangleAlert size={16} />} title={t('secret.alert.title')} mb={12}>
+    <Alert color="var(--mantine-color-error)" icon={<TriangleAlert size={16} />} title={t('secret.alert.title')} mb={12}>
       <Stack gap={8}>
         <Text fz="var(--font-size-sm)" lh={1.6}>{t(body)}</Text>
 

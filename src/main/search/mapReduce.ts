@@ -34,7 +34,8 @@ const MAX_CHUNKS_PER_DOC = 3;
 
 export interface DocumentMapper {
   enqueue(doc: SourceDoc): void;
-  collect(docs: SourceDoc[]): Promise<SourceDoc[]>;
+  /** `onEach` hears every page of `docs` finish, kept or dropped — including those already done. */
+  collect(docs: SourceDoc[], onEach?: (kept: boolean) => void): Promise<SourceDoc[]>;
 }
 
 /**
@@ -132,8 +133,11 @@ export function createDocumentMapper(query: string, targetUrl: string, locale: s
     enqueue(doc) {
       start(doc);
     },
-    async collect(docs) {
-      const settled = await Promise.all(docs.map(start));
+    async collect(docs, onEach) {
+      const settled = await Promise.all(docs.map((doc) => start(doc).then((result) => {
+        onEach?.(result !== null);
+        return result;
+      })));
       return settled
         .filter((doc): doc is SourceDoc => doc !== null)
         .map((doc, index) => ({ ...doc, id: index + 1 }));
@@ -146,10 +150,11 @@ export async function mapDocuments(
   query: string,
   targetUrl: string,
   locale: string,
+  onEach?: (kept: boolean) => void,
 ): Promise<SourceDoc[]> {
   const mapper = createDocumentMapper(query, targetUrl, locale);
   for (const doc of docs) mapper.enqueue(doc);
-  return mapper.collect(docs);
+  return mapper.collect(docs, onEach);
 }
 
 function isIrrelevant(summary: string): boolean {

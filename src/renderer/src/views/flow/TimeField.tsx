@@ -15,13 +15,8 @@ export interface TimeFieldProps {
 }
 
 /**
- * Typed, not picked from a 96-item list. A local run has no reason to snap to quarter hours, so the
- * field takes any minute; the arrow keys step in quarters (Shift for single minutes) to keep the
- * common cases as fast as a dropdown would be.
- *
- * The separator is optional (`parseTimeOfDay` takes "0900" and "9" too) and input that still cannot
- * be read is marked and kept rather than silently reverted — a field that quietly snaps back to its
- * old value is the one failure a person cannot see.
+ * Free-typed time (`parseTimeOfDay` also takes "0900" and "9"); arrow keys step 15 minutes (Shift
+ * for 1). Unreadable input is marked and kept rather than silently reverted.
  */
 export const TimeField: React.FC<TimeFieldProps> = ({ hour, minute, onChange, label, disabled }) => {
   const committed = formatTimeOfDay(hour, minute);

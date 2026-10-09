@@ -4,26 +4,14 @@ interface SecretPattern {
 }
 
 /**
- * The last layer, and with a shell tool in the allowlist it is the one that actually has to hold.
+ * Last-line redaction of tool output. It inspects the output, so it does not care how a path was
+ * spelled or whether a script wrote the file; it cannot beat encoded output (base64, chunking).
  *
- * Everything above it inspects a path or a command STRING, and a shell command has neither until
- * cmd.exe expands it. This inspects the OUTPUT, so it does not care how the path was spelled, whether
- * the file was renamed first, or whether a script wrote it. What it cannot beat is encoding: a
- * command that base64s or chunks its output defeats every rule here, and nothing in this file
- * pretends otherwise.
- *
- * It failed once in production and the failure shaped the design. A Notion OAuth token
- * (`<uuid>:<16 chars>:<32 chars>`) was printed verbatim: the only entropy rule ran on runs of
- * `[A-Za-z0-9+/=_-]` of length >= 40, the colons split it into 36/16/32, and nothing matched.
- * The Anthropic token in the same file WAS caught, purely because `sk-` is a known prefix — so the
- * generic half of the masker was doing no work at all.
- *
- * Three passes now, in increasing order of how much they assume:
- *   1. STRUCTURED — a known vendor prefix. Zero false positives, only catches what it knows.
- *   2. KEY-SHAPE  — the field NAME says it is a credential (`"access_token": "…"`, `API_KEY=…`,
- *      `Authorization: Bearer …`). This is what catches a token of a shape nobody has seen, and
- *      it is the pass that would have caught the Notion one, because the file is JSON.
- *   3. ENTROPY    — a long high-entropy run, for a bare secret with no name and no prefix.
+ * Three passes, in increasing order of what they assume:
+ *   1. STRUCTURED: a known vendor prefix.
+ *   2. KEY-SHAPE: the field name marks a credential (`"access_token": "…"`, `API_KEY=…`,
+ *      `Authorization: Bearer …`), whatever the value looks like.
+ *   3. ENTROPY: a long high-entropy run with no name and no prefix.
  */
 
 const STRUCTURED: SecretPattern[] = [
@@ -35,8 +23,7 @@ const STRUCTURED: SecretPattern[] = [
   { re: /\bAIza[0-9A-Za-z_-]{35}\b/g, label: 'TOKEN' },
   { re: /\bxox[baprs]-[0-9A-Za-z-]{10,}\b/g, label: 'TOKEN' },
   { re: /\bsk-[A-Za-z0-9_-]{20,}\b/g, label: 'TOKEN' },
-  // Added with the shell tool: the vendors whose credentials sit in the files an agent is most
-  // likely to be pointed at.
+  // Vendors whose credentials commonly sit in files an agent is pointed at.
   { re: /\b(?:ntn|secret)_[A-Za-z0-9]{40,}\b/g, label: 'TOKEN' },
   { re: /\bglpat-[A-Za-z0-9_-]{20,}\b/g, label: 'TOKEN' },
   { re: /\bdop_v1_[a-f0-9]{64}\b/g, label: 'TOKEN' },
@@ -44,12 +31,8 @@ const STRUCTURED: SecretPattern[] = [
 ];
 
 /**
- * Field names that make the value beside them a credential regardless of what it looks like.
- *
- * This is the pass that does not need to recognise the token, only the question it answers — which
- * is why it survives a vendor inventing a new format. Kept deliberately narrow on the NAME side
- * (an exact-ish word list, not a substring match on "key") so that ordinary JSON data is not
- * shredded: `{"monkey": "banana"}` must come through untouched.
+ * Field names that make the value beside them a credential, whatever it looks like. Exact-ish words,
+ * not a substring match on "key", so ordinary JSON like `{"monkey": "banana"}` passes untouched.
  */
 const CREDENTIAL_WORD = '(?:access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|'
   + 'api[_-]?key|apikey|auth[_-]?token|session[_-]?token|secret[_-]?key|private[_-]?key|'
@@ -87,8 +70,9 @@ function redactStructured(text: string): string {
 function redactKeyShapes(text: string): string {
   let out = text;
   for (const { re, label } of KEY_SHAPE) {
-    out = out.replace(re, (_match, lead: string, _value: string, tail?: string) =>
-      `${lead}[REDACTED ${label}]${tail ?? ''}`);
+    // A two-group rule hands the match OFFSET to the third parameter; only a string is a tail.
+    out = out.replace(re, (_match, lead: string, _value: string, tail: unknown) =>
+      `${lead}[REDACTED ${label}]${typeof tail === 'string' ? tail : ''}`);
   }
   return out;
 }
@@ -105,28 +89,18 @@ function entropyPerChar(s: string): number {
 }
 
 /**
- * Two token shapes, because one class cannot cover both without eating ordinary text.
- *
- * `BASE64ISH` is the original: a plain run, which covers base64 and hex secrets.
- * `COMPOSITE` adds `:` and `.` so a token assembled from parts — the shape that leaked — is seen
- * as ONE run instead of three short ones. It deliberately excludes `/` and `\`, because with them
- * a long URL and a Windows path both qualify, and redacting those makes observations useless.
- * Verified against `C:\Users\…\agentEngine.ts`, a 59-char article URL, `v20.11.1` and an ISO
- * timestamp: none of them matches.
+ * Two token shapes, because one class cannot cover both without eating ordinary text. `BASE64ISH`
+ * covers plain base64/hex runs; `COMPOSITE` adds `:` and `.` so a token built from parts is one run,
+ * and excludes `/` and `\` so long URLs and Windows paths do not qualify.
  */
 const BASE64ISH = /[A-Za-z0-9+/=_-]{40,}/g;
 const COMPOSITE = /[A-Za-z0-9+=_.:-]{40,}/g;
 const ENTROPY_THRESHOLD = 3.5;
 
 /**
- * URLs are held out of the entropy pass, and this is a fix to a PRE-EXISTING false positive that
- * adding `shell` to the local-source set made routine. `BASE64ISH` contains `/`, so the tail of
- * any reasonably long link — `com/some/fairly/long/article-path-2026` — is a 40-character
- * high-entropy run, and `git remote -v`, `npm ls` or a pasted link came back as
- * `https://example.[REDACTED SECRET]`. An observation full of destroyed URLs is a failed run.
- *
- * Holding them out is only safe because the credential-bearing part of a URL is caught by NAME
- * instead: the query-parameter rule in KEY_SHAPE above.
+ * URLs are held out of the entropy pass: `BASE64ISH` includes `/`, so a long link's path reads as a
+ * high-entropy run and would be destroyed. Safe only because credentials in a URL are caught by
+ * name instead (the query-parameter rule in KEY_SHAPE).
  */
 const URL_RUN = /\bhttps?:\/\/[^\s"'<>)\]]+/gi;
 

@@ -2,10 +2,11 @@ import { ipcMain } from 'electron';
 import { IPC, PROVIDER_URLS } from '../../shared/types';
 import { claudeOptionsUnknown } from '../../shared/claudeModels';
 import type { ClaudeModelChoice, ClaudeModelState } from '../../shared/claudeModels';
+import { isModelCatalogStale } from '../../shared/modelCatalogFreshness';
 import { config } from '../config';
 import { sendLog } from '../helpers';
 import { llmLane } from '../flow/lanes';
-import { ensureWorkerWindow, getWorkerWin } from '../windows';
+import { ensureWorkerWindow, getWorkerWin, isWorkerRevealed } from '../windows';
 import { getAccountStatus } from '../providers/authStatus';
 import {
   getClaudeModelState,
@@ -20,10 +21,11 @@ import {
  */
 export async function refreshClaudeModelList(force = false): Promise<void> {
   if (config.hiddenProviders.includes('claude')) return;
-  if (!force && config.claudeModelCatalog) return;
+  if (!force && !isModelCatalogStale(config.claudeModelCatalog)) return;
   if (!(await getAccountStatus('claude'))) return;
   await llmLane.runExclusive(async () => {
-    if (!force && config.claudeModelCatalog) return;
+    if (!force && !isModelCatalogStale(config.claudeModelCatalog)) return;
+    if (!force && isWorkerRevealed()) return; // see refreshGeminiModelList
     try {
       const worker = await ensureWorkerWindow(PROVIDER_URLS.claude);
       if (worker) await refreshClaudeModels(worker);
@@ -50,8 +52,9 @@ export function registerClaudeModelHandlers(): void {
     return state;
   });
 
-  // Only a first run with nothing cached pays for this; afterwards every Claude send refreshes the
-  // list on its way through, and signing in refreshes it again (see accounts.ts).
+  // Reads only a list that is missing or older than MODEL_CATALOG_MAX_AGE_MS: every Claude send
+  // refreshes it on the way through, signing in refreshes it (accounts.ts), and the hourly check
+  // (modelCatalogRefresh.ts) catches someone who has not sent to Claude in a while.
   ipcMain.handle(IPC.CLAUDE_MODEL_REFRESH, async (): Promise<ClaudeModelState> => {
     await refreshClaudeModelList();
     return getClaudeModelState();

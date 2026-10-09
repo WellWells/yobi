@@ -1336,7 +1336,7 @@
   "urlParser.log.fetching": "🔗 URL 감지됨 — 페이지 콘텐츠 가져오는 중...",
   "urlParser.notify.body": "가져오는 중: {{url}}",
   "urlParser.notify.title": "Yobi",
-  "urlParser.prompt": "다음 웹 페이지 내용을 명확한 핵심 요점으로 정리해 주세요. 군더더기 없이 Markdown 형식, 한국어로 바로 답해 주세요. 내용이 잘린 것으로 보이면 있는 내용만으로 요약하고 불완전할 수 있음을 표시해 주세요.\n\n---\n{{cleaned_text}}\n---",
+  "urlParser.prompt": "다음 웹 페이지 내용을 명확한 핵심 요점으로 정리해 주세요. 군더더기 없이 Markdown 형식, 한국어로 바로 답해 주세요.\n\n---\n{{cleaned_text}}\n---",
   "urlParser.truncated": "(콘텐츠가 잘렸습니다 — 너무 길어요)",
   "welcome.greeting.dusk.1": "좋은 저녁이에요[, {{name}}님]",
   "welcome.greeting.evening.1": "좋은 저녁이에요[, {{name}}님]",

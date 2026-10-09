@@ -5,12 +5,7 @@ interface ChatHeaderRowProps {
   children: React.ReactNode;
 }
 
-/**
- * 47px is what `PanelToolbar` measures next door (py 8 + a 30px control + the 1px border), so
- * the rule under the title bar runs straight across the window instead of stepping 6px at the
- * sidebar divider. A min-height rather than vertical padding also keeps the band from twitching
- * when the 30px rename input swaps in.
- */
+/** 47px matches `PanelToolbar` so the header rule lines up; min-height keeps it steady when the rename input swaps in. */
 export const ChatHeaderRow: React.FC<ChatHeaderRowProps> = ({ children }) => (
   <Group
     gap={6}

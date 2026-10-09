@@ -1,4 +1,6 @@
 import type { WebContents } from 'electron';
+import type { AuthProvider } from '../../shared/types';
+import { claimsFirefox } from '../../shared/userAgentPersona';
 import { sleep } from './common';
 
 const CHOOSER_SELECTOR = '[jsname="oYxtQd"][role="combobox"]';
@@ -19,6 +21,10 @@ export interface LanguageResetResult {
 interface LanguageState {
   current: string;
   values: string[];
+}
+
+export function needsLanguageRoundTrip(provider: AuthProvider, userAgent: string): boolean {
+  return provider === 'gemini' && claimsFirefox(userAgent);
 }
 
 export function pickAlternateLanguage(current: string, values: string[]): string | null {

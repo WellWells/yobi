@@ -11,13 +11,17 @@ import { resetFlowMetrics } from './flowMetrics';
 import { getOutputDir } from './files';
 import { getFlowDataDir } from './flow';
 import { deleteUserMemoryFiles } from './memory/memoryStore';
+import { SITE_PARTITIONS } from './siteAccounts';
+import { revokeAllBotPairings } from './botDirectory';
 
 const FACTORY_RESET_PARTITIONS = [
   'persist:gemini',
   'persist:url-parser',
   'persist:browser-flow',
   'persist:youtube',
-] as const;
+  'persist:gmaps',
+  ...SITE_PARTITIONS,
+];
 
 function getMarkerPath(): string {
   return path.join(app.getPath('userData'), 'factory-reset.pending');
@@ -55,6 +59,12 @@ export async function applyPendingFactoryReset(): Promise<void> {
     await fs.rm(await getOutputDir(), { recursive: true, force: true }).catch(() => {});
     await fs.rm(path.join(getFlowDataDir(), 'flow-checkpoints'), { recursive: true, force: true }).catch(() => {});
     await fs.rm(path.join(app.getPath('userData'), 'flow-memory'), { recursive: true, force: true }).catch(() => {});
+    await fs.rm(path.join(app.getPath('userData'), 'agent-runs'), { recursive: true, force: true }).catch(() => {});
+    // Pairing proof lives outside config (the directory's pairedAt, and conversation keys for
+    // older installs); left alone, the start-up restore re-pairs every old account as soon as
+    // the same token is entered. Names stay so the kept flows' recipients remain readable.
+    await revokeAllBotPairings();
+    await fs.rm(path.join(getFlowDataDir(), 'bot-conversations.json'), { force: true }).catch(() => {});
     await deleteUserMemoryFiles();
 
     sendLog('♻️ Factory reset applied — clean first-run state');

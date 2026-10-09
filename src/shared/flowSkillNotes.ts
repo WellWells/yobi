@@ -13,7 +13,7 @@ export const SKILL_NOTES: Partial<Record<SkillType, string>> = {
 
   scraper: 'itemSelector, titleSelector and linkSelector must describe ONE repeating row: the title and link selectors are resolved INSIDE each itemSelector match. Picking them from two unrelated parts of the page makes them hit different element sets and pairs the wrong title with the wrong link. Leave linkSelector blank when the row itself is the anchor — that is the normal case for card lists.',
 
-  search: 'Stateless: the same query returns the same results every run, with no cross-run de-duplication. For "tell me when something NEW appears" use rss or scraper instead — search will re-report the same hits forever. It never aborts the flow; a failure logs and returns "[]", so follow it with a stop step if an empty result should end the run.',
+  search: 'Stateless: the same query returns the same results every run, with no cross-run de-duplication. For "tell me when something NEW appears" use rss or scraper instead — search will re-report the same hits forever. Nothing found or an ordinary error returns "[]" (add a stop step if that should end the run); a fully blocked search fails the run instead, so a block never reads as nothing new.',
 
   research: 'The main output is prose, not a list — never loop over it. To walk the pages it read, loop over {{<outputKey>.sources}} instead. One call per distinct sub-question beats one broad call: it plans and reads on its own, so two focused questions cover a topic better than one vague one.',
 
@@ -45,11 +45,17 @@ export const SKILL_NOTES: Partial<Record<SkillType, string>> = {
 
   youtube_subs: 'Returns {title, link, image} per video, so the loop body uses {{<loopVar>.link}} for a youtube step and {{<loopVar>.image}} as a bot attachment. A newly added channel is seeded with only its latest video, so adding one never floods the first run.',
 
+  x_posts: 'The items already hold the full post text in {{<loopVar>.text}} — use a browser step on {{<loopVar>.link}} and you get an X sign-in wall instead. Only add an x_thread step when the replies matter. Signed out, each account shows only its newest few posts, so a busy account polled hourly loses posts.',
+
+  x_trends: 'Signed out it fails rather than returning "[]": X shows trends only to a signed-in account. The trends follow the region set in that X account, not the app language. One llm step over the whole array makes the digest — the posts are already in it, so do not loop over the trends or open their links in a browser step (X shows a sign-in wall there). Tell the llm to say so when a trend has no posts, rather than guess what it is about.',
+
+  x_thread: 'Inside a loop it needs emitFailFlag="true" (a deleted or protected post fails), followed by an if on {{<outputKey>.isFailed}} + continue. Signed out, X lists only about 3 top replies, so {{<outputKey>.shown}} is usually far below {{<outputKey>.replyCount}} — never tell the user a post has no other replies.',
+
   weather: 'The geocoder matches Latin-script place names only — "Kaohsiung" works, "高雄市" / "東京" / "서울" return nothing. Never throws: an unknown place sets {{<outputKey>.isFailed}}="1", so branch on that rather than expecting an error.',
 
   air_quality: 'The geocoder matches Latin-script place names only, same as weather. Compare {{<outputKey>.level}} numerically (1 Good … 6 Hazardous, 0 = no reading) rather than matching the .status text, which is always English.',
 
-  email_send: 'A pure sink with no outputKey. SMTP credentials come from the app settings and are never written into the flow, so a flow using this is safe to export or share — but it does nothing on a machine where email has not been configured. attachments takes LOCAL PATHS ONLY, normally {{file}} from an earlier step; a URL there is rejected, so fetch it with file_download first and attach {{file}}.',
+  email_send: 'A pure sink with no outputKey. The SMTP account lives on the email step itself (shared by every email step), never in the flow config, so a flow using this is safe to export or share — but it does nothing until that account is filled in. attachments takes LOCAL PATHS ONLY, normally {{file}} from an earlier step; a URL there is rejected, so fetch it with file_download first and attach {{file}}.',
 
   shell: 'Runs with the user\'s full privileges and its output is whatever the command printed. Prefer a purpose-built skill when one exists (http for APIs, file_read for files) and keep shell for work that genuinely needs the system.',
 

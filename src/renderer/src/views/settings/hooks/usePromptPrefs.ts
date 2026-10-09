@@ -24,11 +24,16 @@ export function buildCombinedPrompt(
   return parts.filter(Boolean).join('\n');
 }
 
+/** What the YouTube prompt field stores: '' keeps the built-in default, which follows the app language. */
+export function youtubePromptToStore(text: string, builtIn: string): string {
+  const trimmed = text.trim();
+  return !trimmed || trimmed === builtIn.trim() ? '' : text;
+}
+
 const DEFAULT_PREFS: PromptPreferences = {
   tone: 'default',
   length: 'auto',
   customInstructions: '',
-  customTemplates: [],
 };
 
 export function usePromptPrefs() {
@@ -36,6 +41,11 @@ export function usePromptPrefs() {
   const [promptPrefs, setPromptPrefs] = useState<PromptPreferences>(DEFAULT_PREFS);
   const [syncSystemLanguageToModel, setSyncSystemLanguageToModel] = useState(false);
   const [youtubePrompt, setYoutubePrompt] = useState('');
+  // null while the field is not being edited, so the built-in text tracks a language switch.
+  const [youtubeDraft, setYoutubeDraft] = useState<string | null>(null);
+  const youtubeDefault = t('youtube.prompt.default');
+  const youtubePromptText = youtubeDraft ?? (youtubePrompt || youtubeDefault);
+  const youtubeCustomized = youtubePromptToStore(youtubePromptText, youtubeDefault) !== '';
 
   useEffect(() => {
     void settingsApi.getPromptPreferences().then(setPromptPrefs);
@@ -44,14 +54,16 @@ export function usePromptPrefs() {
   }, []);
 
   const savePromptPrefs = useCallback(async (prefs: PromptPreferences) => {
-    const systemInstruction = buildCombinedPrompt(prefs, t);
     useAppStore.getState().setUserNickname(prefs.nickname ?? '');
-    await settingsApi.updatePromptPreferences(prefs, systemInstruction);
-  }, [t]);
-
-  const saveYoutubePrompt = useCallback(async (prompt: string) => {
-    await settingsApi.updateYoutubePrompt(prompt);
+    await settingsApi.updatePromptPreferences(prefs);
   }, []);
+
+  const commitYoutubePrompt = useCallback(async (text: string) => {
+    const stored = youtubePromptToStore(text, youtubeDefault);
+    setYoutubePrompt(stored);
+    setYoutubeDraft(null);
+    await settingsApi.updateYoutubePrompt(stored);
+  }, [youtubeDefault]);
 
   const handleToggleSyncSystemLanguageToModel = useCallback(async () => {
     const next = !syncSystemLanguageToModel;
@@ -85,6 +97,7 @@ export function usePromptPrefs() {
     setPromptPrefs(prefs);
     setSyncSystemLanguageToModel(syncLang);
     setYoutubePrompt(ytPrompt);
+    setYoutubeDraft(null);
     useAppStore.getState().setUserNickname(prefs.nickname ?? '');
   }, []);
 
@@ -92,9 +105,10 @@ export function usePromptPrefs() {
     promptPrefs,
     setPromptPrefs,
     syncSystemLanguageToModel,
-    youtubePrompt,
-    setYoutubePrompt,
-    saveYoutubePrompt,
+    youtubePromptText,
+    youtubeCustomized,
+    setYoutubeDraft,
+    commitYoutubePrompt,
     combinedPromptPreview,
     savePromptPrefs,
     handleToggleSyncSystemLanguageToModel,

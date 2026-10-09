@@ -9,7 +9,7 @@ import { PROVIDER_LABELS, PROVIDER_URLS } from '../../shared/types';
 import { WORKER_USER_AGENTS } from '../userAgent';
 import { applyWorkerUserAgent } from '../clientHints';
 import { CLAUDE_INPUT_SELECTOR, CLAUDE_SUBMIT_JS } from './claudeSendScript';
-import { CLAUDE_READ_JS, cleanClaudeTitle } from './claudeReadScript';
+import { CLAUDE_BUSY, CLAUDE_LEFT_CONVERSATION, CLAUDE_READ_JS, cleanClaudeTitle } from './claudeReadScript';
 import { CLAUDE_FETCH_LEAF_JS, composeClaudeAnswer } from './claudeArtifacts';
 import type { ClaudeLeafFetch } from './claudeArtifacts';
 import { uploadFilesToClaude } from './claudeUpload';
@@ -155,6 +155,9 @@ export async function runClaudeAutomation(
       'Claude',
     );
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes(CLAUDE_BUSY)) sendLog('⚠️ Claude is over capacity — its answer ended with an error');
+    if (message.includes(CLAUDE_LEFT_CONVERSATION)) sendLog('⚠️ Claude page moved to another conversation before the answer was read');
     if (!isClaudeUsageLimitError(err)) throw err;
     throw usageLimitReached(await readUsageLimit(wc) ?? { resetsAt: null, noticeText: '' });
   }

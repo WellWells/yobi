@@ -1,4 +1,5 @@
 import type { WebContents } from 'electron';
+import { loadURLFollowingIdentity } from '../navigationIdentity';
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -18,7 +19,7 @@ export async function navigateAndWait(
       clearTimeout(timer);
       resolve();
     });
-    wc.loadURL(url).catch((err: Error) => {
+    loadURLFollowingIdentity(wc, url).catch((err: Error) => {
       clearTimeout(timer);
       reject(err);
     });

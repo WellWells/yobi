@@ -15,7 +15,7 @@ interface PendingTurnBubbleProps {
 }
 
 export function visibleTraceSteps(trace: AgentTraceTurn[] | undefined): AgentTraceTurn[] {
-  return (trace ?? []).filter((turn) => turn.tool || turn.provider || turn.thought || turn.stage);
+  return (trace ?? []).filter((turn) => turn.tool || turn.provider || turn.thought || turn.stage || turn.research);
 }
 
 function PendingTurnBubbleInner({ turn, t }: PendingTurnBubbleProps) {

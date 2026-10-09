@@ -4,7 +4,7 @@ import { Copy, Check } from 'lucide-react';
 import { getHighlighterSync, loadShiki, shikiThemeFor, ensureShikiTheme } from '../utils/shikiPlugins';
 import { useThemeStore } from '../store/themeStore';
 import { useI18nStore } from '../store/i18nStore';
-import { ForcedCodeThemeContext } from '../utils/forcedCodeTheme';
+import { CaptureContentThemeContext } from '../utils/forcedCodeTheme';
 
 interface ShikiCodeBlockProps {
   lang: string;
@@ -15,7 +15,7 @@ export const ShikiCodeBlock = React.memo<ShikiCodeBlockProps>(({ lang, code }) =
   const [html, setHtml] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const storeTheme = useThemeStore((state) => state.theme);
-  const forcedTheme = useContext(ForcedCodeThemeContext);
+  const forcedTheme = useContext(CaptureContentThemeContext);
   const theme = forcedTheme ?? storeTheme;
   const staticRender = forcedTheme !== null;
   const { t } = useI18nStore();
@@ -83,6 +83,7 @@ export const ShikiCodeBlock = React.memo<ShikiCodeBlockProps>(({ lang, code }) =
     zIndex: 3,
     textTransform: 'lowercase',
     letterSpacing: '0.06em',
+    fontWeight: 700,
     background: 'var(--bg-tertiary)',
     color: 'var(--text-muted)',
     userSelect: 'none',
@@ -97,7 +98,6 @@ export const ShikiCodeBlock = React.memo<ShikiCodeBlockProps>(({ lang, code }) =
         padding: '2px 7px',
         borderRadius: 4,
         fontSize: 10,
-        fontWeight: 700,
         lineHeight: 1.4,
       }}
     >
@@ -107,7 +107,6 @@ export const ShikiCodeBlock = React.memo<ShikiCodeBlockProps>(({ lang, code }) =
     <Badge
       variant="filled"
       size="xs"
-      radius="sm"
       aria-label={`Language: ${displayLang}`}
       style={badgeStyle}
     >

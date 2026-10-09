@@ -1,9 +1,4 @@
-/**
- * Cross-platform location and inspection of the local LINE PC data directory.
- *
- * Pure helpers (dataDirCandidates / pickMainEdb) are unit-tested; the fs-backed
- * detectors are exercised by the manual self-test against a real install.
- */
+/** Cross-platform location and inspection of the local LINE PC data directory. */
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -12,8 +7,7 @@ import * as path from 'node:path';
 // must not be mistaken for the message DB.
 const EXCLUDE_PREFIXES = ['album_', 'keep_', 'chatStats_'] as const;
 const DB_EXTENSIONS = ['.db', '.edb'] as const;
-// LINE keeps the message DBs one level down, in Data\db. Scan both so a future layout
-// change that moves them back to Data still resolves.
+// Message DBs live one level down, in Data\db; Data itself is scanned too in case the layout changes.
 const DB_SUBDIR = 'db';
 
 export interface DbFileInfo {

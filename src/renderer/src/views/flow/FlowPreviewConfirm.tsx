@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Anchor, Badge, Box, Button, Divider, Group, ScrollArea, Stack, Text,
+  Alert, Anchor, Badge, Box, Button, Divider, Group, ScrollArea, Stack, Text,
 } from '@mantine/core';
 import { CornerDownRight, ShieldAlert, TriangleAlert } from 'lucide-react';
 import { AppModal } from '../../components/AppModal';
 import { SKILL_ICON, skillHue } from './skills';
-import { analyzeFlow, llmProviderLabel, summarizeStep } from './flowCapabilities';
+import { analyzeFlow, isCodeSummary, llmProviderLabel, summarizeStep } from './flowCapabilities';
 import type { FlowDefinition } from '../../../../shared/types';
 import { Z_MODAL_CONFIRM } from '../../config/zLayers';
 
@@ -18,7 +18,7 @@ export interface FlowPreviewConfirmProps {
   onConfirm: (flows: FlowDefinition[]) => void;
 }
 
-const StepRow: React.FC<{
+export const StepRow: React.FC<{
   index: number;
   flow: FlowDefinition;
   riskySteps: Set<number>;
@@ -29,6 +29,7 @@ const StepRow: React.FC<{
   const position = index + 1;
   const risky = riskySteps.has(position);
   const summary = summarizeStep(step.type, step.config);
+  const isCode = isCodeSummary(step.type);
   const provider = step.type === 'llm' ? llmProviderLabel(step.config.provider) : '';
   const canExpand = summary.length > EXPANDABLE_OVER;
 
@@ -41,7 +42,7 @@ const StepRow: React.FC<{
       py={4}
       style={{
         borderRadius: 'var(--mantine-radius-sm)',
-        background: risky ? 'var(--mantine-color-red-light)' : undefined,
+        background: risky ? 'color-mix(in srgb, var(--mantine-color-error) 10%, transparent)' : undefined,
       }}
     >
       <Text fz="xs" c="dimmed" w={20} ta="right" style={{ flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
@@ -51,9 +52,8 @@ const StepRow: React.FC<{
         <Group gap={6} wrap="nowrap" align="center">
           <Badge
             variant="light"
-            color={risky ? 'red' : skillHue(step.type)}
+            color={risky ? 'var(--mantine-color-error)' : skillHue(step.type)}
             size="sm"
-            radius="sm"
             leftSection={SKILL_ICON[step.type]}
             style={{ flexShrink: 0 }}
           >
@@ -71,10 +71,10 @@ const StepRow: React.FC<{
         {summary && (
           <Text
             fz="xs"
-            ff="monospace"
+            ff={isCode ? 'monospace' : undefined}
             c="dimmed"
             lineClamp={expanded ? undefined : 2}
-            style={{ minWidth: 0, wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}
+            style={{ minWidth: 0, wordBreak: isCode ? 'break-all' : 'break-word', whiteSpace: 'pre-wrap' }}
           >
             {summary}
           </Text>
@@ -148,39 +148,33 @@ export const FlowPreviewConfirm: React.FC<FlowPreviewConfirmProps> = ({
               {flows.length > 1 && <Text fz="sm" fw={600}>{flow.name}</Text>}
 
               {caps.hasRisk && (
-                <Box
+                <Alert
+                  color="var(--mantine-color-error)"
+                  icon={<TriangleAlert size={14} />}
+                  title={t('flow.import.confirm.risk')}
                   p="xs"
-                  style={{
-                    background: 'var(--mantine-color-red-light)',
-                    borderRadius: 'var(--mantine-radius-md)',
-                    border: '1px solid var(--mantine-color-red-filled)',
-                  }}
                 >
                   <Stack gap={4}>
-                    <Group gap={6} align="center">
-                      <TriangleAlert size={14} color="var(--mantine-color-red-filled)" />
-                      <Text fz="sm" fw={600} c="red">{t('flow.import.confirm.risk')}</Text>
-                    </Group>
                     {caps.risks.map((risk) => (
-                      <Text key={risk.kind} fz="xs" c="red">
+                      <Text key={risk.kind} fz="xs">
                         {`• ${t(`flow.import.confirm.risk.${risk.kind}`)} — ${
                           t('flow.import.confirm.risk.steps').replace('{{steps}}', risk.steps.join(', '))
                         }`}
                       </Text>
                     ))}
                   </Stack>
-                </Box>
+                </Alert>
               )}
 
               {(caps.access.length > 0 || caps.setup.length > 0) && (
                 <Group gap="xs" wrap="wrap">
                   {caps.setup.map((kind) => (
-                    <Badge key={kind} variant="light" size="sm" radius="sm">
+                    <Badge key={kind} variant="light" size="sm">
                       {t(`flow.import.confirm.setup.${kind}`)}
                     </Badge>
                   ))}
                   {caps.access.map((kind) => (
-                    <Badge key={kind} variant="default" size="sm" radius="sm">
+                    <Badge key={kind} variant="default" size="sm">
                       {t(`flow.import.confirm.access.${kind}`)}
                     </Badge>
                   ))}
@@ -215,7 +209,7 @@ export const FlowPreviewConfirm: React.FC<FlowPreviewConfirmProps> = ({
         </ScrollArea.Autosize>
 
         {hasRisk && !scrolledToEnd && (
-          <Text fz="xs" c="orange">{t('flow.import.confirm.scrollHint')}</Text>
+          <Text fz="xs" c="var(--mantine-color-warning)">{t('flow.import.confirm.scrollHint')}</Text>
         )}
 
         <Group justify="flex-end">

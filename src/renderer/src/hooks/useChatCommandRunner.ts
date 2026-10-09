@@ -29,7 +29,7 @@ export function useChatCommandRunner(setToast: (toast: ExportToast) => void) {
       const { result, filePath } = await flowApi.runChatCommand(cmd.flowId, cmd.command, input, conversationPath);
       if (!result.success) {
         fail(sendId);
-        failToast(cmd.command, result.error ?? '');
+        failToast(cmd.command, result.displayError ?? result.error ?? '');
         return;
       }
       await finish(sendId, filePath);

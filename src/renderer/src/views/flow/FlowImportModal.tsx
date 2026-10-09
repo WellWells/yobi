@@ -108,7 +108,7 @@ export const FlowImportModal: React.FC<FlowImportModalProps> = ({
           >
             {t('flow.import.file.button')}
           </Button>
-          {fileError && <Text fz="xs" c="red">{fileError}</Text>}
+          {fileError && <Text fz="xs" c="var(--mantine-color-error)">{fileError}</Text>}
         </Stack>
 
         <Stack gap="xs">

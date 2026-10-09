@@ -21,9 +21,7 @@ export const ConnectorFormModal: React.FC<Props> = ({ mcp, t }) => {
   const editing = form?.id ? servers.find((s) => s.id === form.id) : undefined;
   const title = form?.id ? t('settings.mcp.edit') : t('settings.mcp.addCustom');
 
-  // Slugified on save, never on keystroke. Rewriting the field on every change stripped the
-  // separator the user had just typed — it is always trailing at that moment — so `my_server`
-  // was literally untypeable. Showing the resolved name is honest without fighting the caret.
+  // Slugified on save, not per keystroke: rewriting on change would strip a just-typed trailing separator.
   const typed = form?.commandName.trim() ?? '';
   const resolved = typed ? slugifyCommandName(typed) : '';
   const commandHint = resolved && resolved !== typed
@@ -103,7 +101,7 @@ export const ConnectorFormModal: React.FC<Props> = ({ mcp, t }) => {
               />
             }
           />
-          {mcp.error && <Text fz="var(--font-size-sm)" c="red">{mcp.error}</Text>}
+          {mcp.error && <Text fz="var(--font-size-sm)" c="var(--mantine-color-error)">{mcp.error}</Text>}
           <Group justify="flex-end" gap={8} mt={4} wrap="nowrap">
             <AppButton variant="default" size="xs" onClick={mcp.closeForm} disabled={mcp.saving}>
               {t('dialog.cancel')}

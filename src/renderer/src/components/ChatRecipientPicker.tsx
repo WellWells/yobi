@@ -5,6 +5,7 @@ import { AppTextInput } from './AppTextInput';
 import { lineApi, telegramApi } from '../api/electronApi';
 import { useI18nStore } from '../store/i18nStore';
 import { useAppStore } from '../store/appStore';
+import { lineAccountLabel, telegramAccountChoiceLabel, telegramAccountHasName } from '../utils/botAccountLabel';
 import type { BotPlatform, LinePairedUser, TelegramChannel, TelegramKnownUser, TelegramPairedUser } from '../../../shared/types';
 
 interface RecipientChoice {
@@ -12,16 +13,12 @@ interface RecipientChoice {
   label: string;
 }
 
-function telegramChoice(user: TelegramPairedUser): RecipientChoice {
-  const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ');
-  if (fullName) {
-    return { id: String(user.userId), label: user.username ? `${fullName} (@${user.username})` : fullName };
-  }
-  return { id: String(user.userId), label: user.username ? `@${user.username}` : String(user.userId) };
+function telegramChoice(user: TelegramPairedUser, t: (key: string) => string): RecipientChoice {
+  return { id: String(user.userId), label: telegramAccountChoiceLabel(user, t) };
 }
 
-function lineChoice(user: LinePairedUser): RecipientChoice {
-  return { id: user.userId, label: user.displayName || user.userId };
+function lineChoice(user: LinePairedUser, t: (key: string) => string): RecipientChoice {
+  return { id: user.userId, label: lineAccountLabel(user, t) };
 }
 
 function channelChoice(channel: TelegramChannel): RecipientChoice {
@@ -48,7 +45,7 @@ export const ChatRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
   multiple = true, onBeforeNavigate,
 }) => {
   const t = useI18nStore((s) => s.t);
-  const setView = useAppStore((s) => s.setView);
+  const openSettingsCategory = useAppStore((s) => s.openSettingsCategory);
   const currentView = useAppStore((s) => s.currentView);
   const [telegramUsers, setTelegramUsers] = useState<TelegramPairedUser[]>([]);
   const [telegramChannels, setTelegramChannels] = useState<TelegramChannel[]>([]);
@@ -67,13 +64,13 @@ export const ChatRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
 
   const goToSettings = (): void => {
     onBeforeNavigate?.();
-    setView('settings');
+    openSettingsCategory('bots');
   };
 
   const isLine = platform === 'line';
   const pairedUsers: RecipientChoice[] = useMemo(() => (
-    isLine ? lineUsers.map(lineChoice) : telegramUsers.map(telegramChoice)
-  ), [isLine, lineUsers, telegramUsers]);
+    isLine ? lineUsers.map((user) => lineChoice(user, t)) : telegramUsers.map((user) => telegramChoice(user, t))
+  ), [isLine, lineUsers, telegramUsers, t]);
   const channels = useMemo(() => (isLine ? [] : telegramChannels), [isLine, telegramChannels]);
 
   const raw = value.trim();
@@ -87,23 +84,16 @@ export const ChatRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
   );
   const selectedIds = useMemo(() => parsedIds.filter((id) => knownIdSet.has(id)), [parsedIds, knownIdSet]);
   const unknownIds = useMemo(() => parsedIds.filter((id) => !knownIdSet.has(id)), [parsedIds, knownIdSet]);
-  /**
-   * A recipient the picker cannot offer as a chip still has a name once the startup backfill has
-   * asked Telegram about it — showing it beats leaving the operator staring at a raw id.
-   */
+  /** Recipients the picker cannot offer as chips, named once the startup backfill has asked Telegram. */
   const namedUnknowns = useMemo(() => {
     if (isLine) return [];
     return unknownIds.flatMap((id) => {
       const numeric = Number(id);
       const user = telegramKnownUsers.find((item) => item.userId === numeric);
-      if (user) {
-        const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ');
-        const label = fullName || (user.username ? `@${user.username}` : '');
-        return label ? [{ id, label: user.username && fullName ? `${label} (@${user.username})` : label }] : [];
-      }
+      if (user && telegramAccountHasName(user)) return [{ id, label: telegramAccountChoiceLabel(user, t) }];
       return [];
     });
-  }, [isLine, unknownIds, telegramKnownUsers]);
+  }, [isLine, unknownIds, telegramKnownUsers, t]);
   const hasChoices = pairedUsers.length > 0 || channels.length > 0;
 
   const handleMultiple = (next: string[]) => {

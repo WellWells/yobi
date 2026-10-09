@@ -9,6 +9,7 @@ import { namedChats } from '../line/reader';
 import { MAX_LIMIT } from '../line/schema';
 import { issueLinePairingCode, revokeLinePairingCode, unpairLineUser } from '../line';
 import { buildLineSettingsSnapshot } from '../lineBridge';
+import { dropBotPermissions } from '../botPermissions';
 import type { IpcContext } from './context';
 
 export function registerLineHandlers(ctx: IpcContext): void {
@@ -87,7 +88,9 @@ export function registerLineHandlers(ctx: IpcContext): void {
   });
 
   ipcMain.handle(IPC.UNPAIR_LINE_USER, (_event, userId: unknown) => {
-    config.line.pairing = unpairLineUser(config.line.pairing, String(userId ?? '').trim());
+    const id = String(userId ?? '').trim();
+    config.line.pairing = unpairLineUser(config.line.pairing, id);
+    dropBotPermissions('line', id);
     saveConfig({ line: config.line });
     return { ok: true as const, snapshot: buildLineSettingsSnapshot() };
   });

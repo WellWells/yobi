@@ -39,9 +39,7 @@ export const ComposerPill = React.forwardRef<HTMLButtonElement, ComposerPillProp
 
   return (
     <UnstyledButton
-      // Mantine's Menu.Target clones aria-haspopup / aria-expanded / id and the `data-expanded`
-      // attribute onto its child. Dropping them left the pill unlabelled to a screen reader and
-      // made every `[data-expanded]` rule in the CSS module dead.
+      // Menu.Target clones aria-* attributes, id and `data-expanded` onto its child; screen readers and the CSS need them.
       {...rest}
       ref={ref}
       onClick={onClick}

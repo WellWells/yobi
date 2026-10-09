@@ -27,8 +27,7 @@ function copyLanguageFilesPlugin(): Plugin {
  * be served from that cache (see src/main/entry.cjs). Copied verbatim, never transformed.
  */
 function copyEntryStubPlugin(): Plugin {
-  // Resolved from the build, not hardcoded: the release smoke test builds into a temp
-  // --outDir, and an entry left behind in ./out would make it test the wrong bundle.
+  // Resolved from the build config so a build into a custom --outDir gets the stub next to its own bundle.
   let outDir = resolve(import.meta.dirname, 'out/main');
   return {
     name: 'copy-main-entry-stub',

@@ -4,17 +4,12 @@ import { MultiSelectDropdown } from './MultiSelectDropdown';
 import { lineApi, telegramApi } from '../api/electronApi';
 import { useI18nStore } from '../store/i18nStore';
 import { useAppStore } from '../store/appStore';
+import { lineAccountLabel, telegramAccountChoiceLabel } from '../utils/botAccountLabel';
 import type { LinePairedUser, TelegramPairedUser } from '../../../shared/types';
 
 interface Choice {
   value: string;
   label: string;
-}
-
-function telegramLabel(user: TelegramPairedUser): string {
-  const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ');
-  if (fullName) return user.username ? `${fullName} (@${user.username})` : fullName;
-  return user.username ? `@${user.username}` : String(user.userId);
 }
 
 export interface BotUserAllowlistProps {
@@ -23,8 +18,8 @@ export interface BotUserAllowlistProps {
 }
 
 /**
- * Which paired users may run one flow's bot command. Empty means all of them, which is the rule
- * every flow written before this field was added still runs under.
+ * Which paired users may run one flow's bot command, shown only when the command is limited to
+ * selected people (`botAccess: 'users'`), where an empty list is nobody.
  *
  * Both platforms are listed together because a command is registered on whichever bots are
  * running, not on one of them. An id already on the list that no longer belongs to a paired user
@@ -48,11 +43,11 @@ export const BotUserAllowlist: React.FC<BotUserAllowlistProps> = ({ value, onCha
   const options = useMemo(() => {
     const telegram: Choice[] = telegramUsers.map((user) => ({
       value: String(user.userId),
-      label: telegramLabel(user),
+      label: telegramAccountChoiceLabel(user, t),
     }));
     const line: Choice[] = lineUsers.map((user) => ({
       value: user.userId,
-      label: user.displayName || user.userId,
+      label: lineAccountLabel(user, t),
     }));
     const known = new Set([...telegram, ...line].map((choice) => choice.value));
     const orphans: Choice[] = selected

@@ -3,7 +3,7 @@ import { Group, Stack, Text } from '@mantine/core';
 import { SectionCard } from '../../components';
 import { TrendBarChart } from '../../../../components/TrendBarChart';
 import { Figure, InlineStat, LegendItem } from './parts';
-import { OUTCOME_KEYS, formatShare } from './aggregate';
+import { DOMAINS, OUTCOME_KEYS, formatShare } from './aggregate';
 import type { StatsAggregate, StatsScope } from './aggregate';
 import { OUTCOME_COLORS } from './colors';
 
@@ -27,18 +27,13 @@ export const ActivityCard: React.FC<Props> = ({ stats, scope, t, onInspectFailur
                 <Text component="span" fz="var(--font-size-sm)" c="dimmed">
                   {t('settings.stats.runs.caption')}
                 </Text>
-                {scope === 'all' && (
-                  <>
-                    <InlineStat
-                      label={t('settings.stats.scope.chat')}
-                      value={stats.split.chat.runs.toLocaleString()}
-                    />
-                    <InlineStat
-                      label={t('settings.stats.scope.flow')}
-                      value={stats.split.flow.runs.toLocaleString()}
-                    />
-                  </>
-                )}
+                {scope === 'all' && DOMAINS.map((domain) => (
+                  <InlineStat
+                    key={domain}
+                    label={t(`settings.stats.scope.${domain}`)}
+                    value={stats.split[domain].runs.toLocaleString()}
+                  />
+                ))}
               </Group>
             }
           />

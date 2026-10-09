@@ -39,7 +39,7 @@ export const FlowView: React.FC = () => {
     flows, selectedFlowId, runningFlowIds,
     selectFlow, createFlow, deleteFlow, deleteFlows, setFlowsEnabled, duplicateFlow,
     saveFlow, updateFlow, moveFlow, reorderFlows, executeFlow, importFlows, buildFlow,
-    adoptFlow, appendExecutionLog, markFlowRunning, markFlowDone,
+    adoptFlow, replaceSavedFlow, dropRemovedFlow, appendExecutionLog, markFlowRunning, markFlowDone,
   } = useFlowStore(
     useShallow((s) => ({
       flows: s.flows,
@@ -59,6 +59,8 @@ export const FlowView: React.FC = () => {
       importFlows: s.importFlows,
       buildFlow: s.buildFlow,
       adoptFlow: s.adoptFlow,
+      replaceSavedFlow: s.replaceSavedFlow,
+      dropRemovedFlow: s.dropRemovedFlow,
       appendExecutionLog: s.appendExecutionLog,
       markFlowRunning: s.markFlowRunning,
       markFlowDone: s.markFlowDone,
@@ -101,6 +103,8 @@ export const FlowView: React.FC = () => {
   }, [markFlowRunning, markFlowDone]);
 
   useEffect(() => ipcEvents.onFlowCreated((flow) => adoptFlow(flow)), [adoptFlow]);
+  useEffect(() => ipcEvents.onFlowUpdated((flow) => replaceSavedFlow(flow)), [replaceSavedFlow]);
+  useEffect(() => ipcEvents.onFlowRemoved((flowId) => dropRemovedFlow(flowId)), [dropRemovedFlow]);
 
   const renameCombo = useResolvedCombo('flow.rename');
   const duplicateCombo = useResolvedCombo('flow.duplicate');

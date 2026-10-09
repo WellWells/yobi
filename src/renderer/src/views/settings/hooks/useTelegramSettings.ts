@@ -100,17 +100,6 @@ export function useTelegramSettings() {
     });
   }, [runBusy, telegramTokenInput, loadTelegramSettings]);
 
-  const handleToggleTelegramAdmin = useCallback(async (userId: number) => {
-    const snapshot = telegramSettingsRef.current;
-    if (!snapshot) return;
-    const next = new Set(snapshot.adminUserIds ?? []);
-    if (next.has(userId)) next.delete(userId); else next.add(userId);
-    await runBusy(async () => {
-      await telegramApi.updateAdminUsers(Array.from(next));
-      await loadTelegramSettings();
-    });
-  }, [runBusy, loadTelegramSettings]);
-
   const handleGeneratePairingCode = useCallback(async () => {
     await runBusy(async () => {
       await telegramApi.generatePairingCode();
@@ -174,7 +163,6 @@ export function useTelegramSettings() {
     handleTelegramDefaultReplyMode,
     handleToggleTelegramCompactReply,
     handleSaveTelegramToken,
-    handleToggleTelegramAdmin,
     handleGeneratePairingCode,
     handleRevokePairingCode,
     handleCopyPairingCode,

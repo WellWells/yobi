@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { AgentCommandResult, AgentRunSummary, AgentStageLabel, AgentTracePayload } from '../../../shared/types';
+import type { ResearchProgress } from '../../../shared/researchProgress';
 
 export interface AgentTraceTurn {
   turn: number;
@@ -10,7 +11,7 @@ export interface AgentTraceTurn {
   thought?: string;
   provider?: string;
   stage?: { label: AgentStageLabel; detail?: string };
-  read?: string[];
+  research?: ResearchProgress;
 }
 
 export interface AgentPendingQuestion {
@@ -34,13 +35,8 @@ export function sameConnectorScope(
 }
 
 /**
- * The disclosed set has to match as well as the conversation. Keying on the path alone let a
- * plain `/agent <new goal>` resume a paused `/notion` run — inheriting a scope the user never
- * asked for — while `/notion <answer>` could not answer the question `/notion` itself asked.
- *
- * Equality, not subset: toggling a connector between the question and the answer is the user
- * changing their mind about what is on the table, so the text they type next starts a new run
- * rather than silently answering an older one under a scope that no longer matches the pill.
+ * The pending question a send answers: same conversation and the same disclosed connector set.
+ * Equality, not subset: toggling a connector before answering starts a new run.
  */
 export function answeringRun(
   pending: AgentPendingQuestion | null,
@@ -54,9 +50,7 @@ export function answeringRun(
 
 /**
  * The question a call leaves waiting, or null. The composer's scope wins when the call had one;
- * otherwise the run's own connectors, as main reports them. A run resumed from the banner carries
- * no composer scope, and recording that empty set made the reply typed under its connector start a
- * new run instead of answering the question (2026-09-15).
+ * otherwise the run's own connectors as main reports them (a run resumed from the banner has none).
  */
 export function pendingQuestionFrom(
   res: AgentCommandResult,
@@ -99,20 +93,6 @@ interface AgentRunStore {
   applyTrace: (payload: AgentTracePayload) => void;
 }
 
-function stagePatch(
-  previous: AgentTraceTurn | undefined,
-  label: AgentStageLabel,
-  detail?: string,
-): Partial<AgentTraceTurn> {
-  if (label !== 'read') return { stage: { label, ...(detail ? { detail } : {}) } };
-  const host = (detail ?? '').trim();
-  const read = previous?.read ?? [];
-  return {
-    stage: { label: 'read' },
-    read: !host || read.includes(host) ? read : [...read, host],
-  };
-}
-
 export const useAgentRunStore = create<AgentRunStore>((set) => ({
   resumable: [],
   traces: {},
@@ -143,12 +123,13 @@ export const useAgentRunStore = create<AgentRunStore>((set) => ({
     }
     const turns = (state.traces[runId] ?? []).slice();
     const idx = turns.findIndex((t) => t.turn === event.turn);
-    const previous = idx >= 0 ? turns[idx] : undefined;
+    // The research checklist outlives the observation: once the step ends it is the summary line.
     const patch: Partial<AgentTraceTurn> =
       event.kind === 'thinking' ? { status: 'thinking', ...(event.provider ? { provider: event.provider } : {}) }
       : event.kind === 'tool'
         ? { tool: event.tool, config: event.config, status: 'running', ...(event.thought ? { thought: event.thought } : {}) }
-      : event.kind === 'stage' ? stagePatch(previous, event.label, event.detail)
+      : event.kind === 'stage' ? { stage: { label: event.label, ...(event.detail ? { detail: event.detail } : {}) } }
+      : event.kind === 'research' ? { research: event.progress }
       : { tool: event.tool, status: event.status, preview: event.preview, stage: undefined };
     if (idx >= 0) turns[idx] = { ...turns[idx], ...patch };
     else turns.push({ turn: event.turn, status: 'thinking', ...patch });

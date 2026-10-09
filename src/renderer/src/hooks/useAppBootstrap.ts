@@ -72,9 +72,7 @@ export function useAppBootstrap() {
     void geminiModelApi.get().then((state) => {
       setGeminiModels(state);
       if (state.catalog) return;
-      // Only with nothing cached yet (a first run). Unlike its neighbours this is not a config
-      // read: it may load Gemini in the shared worker window and open its model picker, so it
-      // stays off the boot window instead of racing the worker warm-up.
+      // First run only (main refreshes aged lists); idle-deferred because it may drive the shared worker window.
       onIdle(() => {
         void geminiModelApi.refresh().then(setGeminiModels);
       });

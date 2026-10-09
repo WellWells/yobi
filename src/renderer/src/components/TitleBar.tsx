@@ -43,11 +43,11 @@ function navHighlight(
   secretsBroken: boolean,
   flowBroken: boolean,
 ): string | undefined {
-  if (id === 'settings' && secretsBroken && currentView !== 'settings') return '0 0 0 1px var(--mantine-color-red-6)';
+  if (id === 'settings' && secretsBroken && currentView !== 'settings') return '0 0 0 1px var(--mantine-color-error)';
   // A clashing bot command or an unfilled required setting means a flow the user
-  // believes is armed answers nothing — same urgency band as an update, orange.
-  if (id === 'flow' && flowBroken && currentView !== 'flow') return '0 0 0 1px var(--mantine-color-orange-6)';
-  if (id === 'about' && hasUpdate && currentView !== 'about') return '0 0 0 1px var(--mantine-color-orange-6)';
+  // believes is armed answers nothing — same urgency band as an update, warning.
+  if (id === 'flow' && flowBroken && currentView !== 'flow') return '0 0 0 1px var(--mantine-color-warning)';
+  if (id === 'about' && hasUpdate && currentView !== 'about') return '0 0 0 1px var(--mantine-color-warning)';
   return undefined;
 }
 
@@ -118,6 +118,8 @@ export const TitleBar: React.FC = () => {
     evaluate();
     const observer = new ResizeObserver(evaluate);
     observer.observe(bar);
+    // The queue pill comes and goes without the bar changing width; the nav shrinking is the signal.
+    observer.observe(nav);
     return () => observer.disconnect();
   }, [isTight, locale]);
 
@@ -181,23 +183,11 @@ export const TitleBar: React.FC = () => {
     }
   }, []);
 
-  const statusLabel = hasQueueItems
-    ? isProcessing
-      ? t('status.processing').replace('{{count}}', String(queue.total))
-      : t('status.queuePending').replace('{{count}}', String(queuePending))
-    : t('status.ready');
-
-  const statusColor = hasQueueItems
-    ? isProcessing ? 'var(--mantine-color-warning)' : 'var(--mantine-color-accent)'
-    : 'var(--mantine-color-success)';
-
-  const statusBackground = hasQueueItems
-    ? isProcessing ? 'rgba(210,153,34,0.14)' : 'var(--mantine-color-accent-dim)'
-    : 'rgba(63,185,80,0.14)';
-
-  const statusBorder = hasQueueItems
-    ? isProcessing ? 'rgba(210,153,34,0.32)' : 'rgba(56,139,253,0.35)'
-    : 'rgba(63,185,80,0.32)';
+  // The pill exists only while something is queued or running; an idle state tells the user nothing.
+  const statusLabel = isProcessing
+    ? t('status.processing').replace('{{count}}', String(queue.total))
+    : t('status.queuePending').replace('{{count}}', String(queuePending));
+  const statusColor = isProcessing ? 'var(--mantine-color-warning)' : 'var(--mantine-color-accent)';
 
   const workerIcon = <AppWindow size={15} />;
   const workerTitle = t('titlebar.worker.open');
@@ -250,6 +240,57 @@ export const TitleBar: React.FC = () => {
 
       <Box className={styles.spacer} />
 
+      {/* Left of the browser-window button, so appearing and disappearing pushes nothing else. */}
+      {hasQueueItems && (
+        <Box
+          pos="relative"
+          mr={6}
+          style={statusWrapperStyle}
+          onMouseEnter={openQueuePopover}
+          onMouseLeave={closeQueuePopoverSoon}
+        >
+          <Group
+            ref={statusBadgeRef}
+            gap={6}
+            px={12}
+            h={32}
+            className={styles.statusBadge}
+            style={{
+              background: `color-mix(in srgb, ${statusColor} 14%, transparent)`,
+              color: statusColor,
+              border: `1px solid color-mix(in srgb, ${statusColor} 34%, transparent)`,
+              cursor: 'pointer',
+            }}
+          >
+            <Box
+              component="span"
+              w={7}
+              h={7}
+              display="inline-block"
+              style={{ borderRadius: '50%', flexShrink: 0, background: statusColor }}
+            />
+            <ListOrdered size={12} />
+            {!isTight && statusLabel}
+          </Group>
+
+          {queuePopoverOpen && (
+            <QueuePopover
+              pos={popoverPos}
+              items={queue.items}
+              cancelingTaskIds={cancelingTaskIds}
+              isForceSkipping={isForceSkipping}
+              onCancelTask={handleCancelQueueTask}
+              onForceSkip={handleForceSkipActiveTask}
+              agentTraces={agentTraces}
+              onCancelAgent={handleCancelAgent}
+              onMouseEnter={openQueuePopover}
+              onMouseLeave={closeQueuePopoverSoon}
+              t={t}
+            />
+          )}
+        </Box>
+      )}
+
       <Box mr={6} style={statusWrapperStyle}>
         <Tooltip label={workerTitle} position="bottom" disabled={!isTight}>
           <MButton
@@ -271,59 +312,6 @@ export const TitleBar: React.FC = () => {
             {isTight ? workerIcon : workerTitle}
           </MButton>
         </Tooltip>
-      </Box>
-
-      <Box
-        pos="relative"
-        mr={6}
-        style={statusWrapperStyle}
-        onMouseEnter={openQueuePopover}
-        onMouseLeave={closeQueuePopoverSoon}
-      >
-        <Group
-          ref={statusBadgeRef}
-          gap={6}
-          px={12}
-          h={32}
-          className={styles.statusBadge}
-          style={{
-            background: statusBackground,
-            color: statusColor,
-            border: `1px solid ${statusBorder}`,
-            cursor: hasQueueItems ? 'pointer' : 'default',
-          }}
-        >
-          <Box
-            component="span"
-            w={7}
-            h={7}
-            display="inline-block"
-            style={{
-              borderRadius: '50%',
-              flexShrink: 0,
-              background: statusColor,
-              boxShadow: `0 0 6px ${statusColor}`,
-            }}
-          />
-          {hasQueueItems && <ListOrdered size={12} />}
-          {!isTight && statusLabel}
-        </Group>
-
-        {queuePopoverOpen && hasQueueItems && (
-          <QueuePopover
-            pos={popoverPos}
-            items={queue.items}
-            cancelingTaskIds={cancelingTaskIds}
-            isForceSkipping={isForceSkipping}
-            onCancelTask={handleCancelQueueTask}
-            onForceSkip={handleForceSkipActiveTask}
-            agentTraces={agentTraces}
-            onCancelAgent={handleCancelAgent}
-            onMouseEnter={openQueuePopover}
-            onMouseLeave={closeQueuePopoverSoon}
-            t={t}
-          />
-        )}
       </Box>
 
       {!isMac && <WindowsControls t={t} focused={windowFocused} />}

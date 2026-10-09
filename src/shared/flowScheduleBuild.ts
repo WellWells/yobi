@@ -30,9 +30,8 @@ function buildIntervalExpression(trigger: TriggerConfig): string {
 }
 
 /**
- * The repeat window used to be scheduled as a once-a-minute expression and filtered in a guard,
- * which woke the process 1440 times a day to run a handful of times. Both shapes below fire only
- * on real hits.
+ * Cron for the weekly repeat window on its own grid rather than every minute. Minute steps span
+ * whole hours; `shouldExecuteCronTriggerNow` trims the overshoot at either end.
  */
 function buildWindowExpression(trigger: TriggerConfig, dayField: string): string {
   const startHour = clampInteger(trigger.scheduleHour, 0, 23, SCHEDULE_DEFAULTS.hour);
@@ -171,12 +170,26 @@ export function normalizeCronTrigger(trigger: TriggerConfig): TriggerConfig {
 }
 
 /**
+ * Cron has no year field, so a one-time date's expression also matches that day in every other
+ * year; only the configured year counts. Hour and minute are left to cron, which already matched
+ * them, so a callback that lands a few milliseconds late still counts.
+ */
+function isOnceDateToday(trigger: TriggerConfig, now: Date): boolean {
+  const once = parseOnceDate(trigger.onceDate);
+  if (!once) return false;
+  return now.getFullYear() === once.year && now.getMonth() + 1 === once.month && now.getDate() === once.day;
+}
+
+/**
  * Cron cannot express "from 09:30 to 18:00" when the repeat grid is finer than an hour, so the
- * expression covers whole hours and this trims the first and last hour's overshoot.
+ * expression covers whole hours and this trims the first and last hour's overshoot. It also trims a
+ * one-time date's matches in other years.
  */
 export function shouldExecuteCronTriggerNow(trigger: TriggerConfig, now: Date = new Date()): boolean {
   if (trigger.type !== 'cron') return false;
-  if (resolveScheduleMode(trigger) !== 'weekly') return true;
+  const mode = resolveScheduleMode(trigger);
+  if (mode === 'once') return isOnceDateToday(trigger, now);
+  if (mode !== 'weekly') return true;
   if (!trigger.repeatWithinDay) return true;
 
   if (!normalizeWeekdays(trigger.weekdays).includes(now.getDay())) return false;

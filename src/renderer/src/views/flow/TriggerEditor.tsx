@@ -14,6 +14,7 @@ import { useFlowIssues } from '../../hooks/useFlowIssues';
 import { HotkeyRecorder } from './HotkeyRecorder';
 import { CommandTriggerFields } from './CommandTriggerFields';
 import { ScheduleFields } from './ScheduleFields';
+import { SystemTriggerFields } from './SystemTriggerFields';
 
 const INLINE_CARD = {
   background: 'var(--mantine-color-default)',
@@ -28,10 +29,11 @@ interface TriggerConfigFormProps {
   conflict?: FlowIssue;
   allowManual?: boolean;
   showBotCompoundHint?: boolean;
+  soleTrigger?: boolean;
 }
 
 const TriggerConfigForm: React.FC<TriggerConfigFormProps> = ({
-  value, onChange, t, conflict, allowManual = true, showBotCompoundHint = false,
+  value, onChange, t, conflict, allowManual = true, showBotCompoundHint = false, soleTrigger = false,
 }) => {
   const patch = useCallback((p: Partial<TriggerConfig>) => {
     const next = { ...value, ...p };
@@ -42,6 +44,7 @@ const TriggerConfigForm: React.FC<TriggerConfigFormProps> = ({
     const opts = [
       { value: 'hotkey', label: t('flow.trigger.hotkey') },
       { value: 'cron', label: t('flow.trigger.cron') },
+      { value: 'system', label: t('flow.trigger.system') },
       { value: 'bot', label: t('flow.trigger.bot') },
       { value: 'chat', label: t('flow.trigger.chat') },
     ];
@@ -70,8 +73,12 @@ const TriggerConfigForm: React.FC<TriggerConfigFormProps> = ({
 
       {value.type === 'cron' && (
         <Box p="sm" style={INLINE_CARD}>
-          <ScheduleFields value={value} patch={patch} t={t} />
+          <ScheduleFields value={value} patch={patch} t={t} soleTrigger={soleTrigger} />
         </Box>
+      )}
+
+      {value.type === 'system' && (
+        <SystemTriggerFields value={value} patch={patch} t={t} cardStyle={INLINE_CARD} />
       )}
 
       {value.type === 'bot' && (
@@ -127,6 +134,7 @@ export const TriggerEditor: React.FC<TriggerEditorProps> = ({ flow, t }) => {
         t={t}
         conflict={findTriggerConflict(issues, flow.trigger)}
         showBotCompoundHint={hasNonBotTrigger}
+        soleTrigger={extraTriggers.length === 0}
       />
 
       <Box>

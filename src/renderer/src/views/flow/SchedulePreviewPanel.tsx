@@ -11,10 +11,7 @@ export interface SchedulePreviewPanelProps {
   t: (key: string) => string;
 }
 
-/**
- * The resolved schedule, in words plus real dates. Every field above this is a guess until you can
- * read back what it actually means; the run times come from the scheduler that will run them.
- */
+/** The resolved schedule in words plus the next run times, computed by the scheduler that runs them. */
 export const SchedulePreviewPanel: React.FC<SchedulePreviewPanelProps> = ({ trigger, t }) => {
   const [preview, setPreview] = useState<SchedulePreview | null>(null);
   const signature = JSON.stringify(trigger);
@@ -47,8 +44,8 @@ export const SchedulePreviewPanel: React.FC<SchedulePreviewPanelProps> = ({ trig
 
       {warningKey && (
         <Group gap={6} align="center" wrap="nowrap">
-          <TriangleAlert size={13} color="var(--mantine-color-orange-6)" />
-          <Text fz="xs" c="orange">{t(warningKey)}</Text>
+          <TriangleAlert size={13} color="var(--mantine-color-warning)" />
+          <Text fz="xs" c="var(--mantine-color-warning)">{t(warningKey)}</Text>
         </Group>
       )}
 

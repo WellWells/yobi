@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Badge, Code, Collapse, Group, ScrollArea, Stack, Text } from '@mantine/core';
-import { ChevronDown, ChevronRight, TriangleAlert, ShieldCheck, Terminal, Workflow } from 'lucide-react';
-import type { AgentConfirmChoice, AgentConfirmPayload, AgentConfirmRow } from '../../../shared/types';
+import { ChevronDown, ChevronRight, Minus, Pencil, Plus, TriangleAlert, ShieldCheck, Terminal, Workflow } from 'lucide-react';
+import type { AgentConfirmChoice, AgentConfirmPayload, AgentConfirmRow, AgentFlowEditSummary } from '../../../shared/types';
 import { ipcEvents, windowApi } from '../api/electronApi';
 import { useI18nStore } from '../store/i18nStore';
 import { AppModal } from './AppModal';
@@ -13,6 +13,37 @@ function rowValue(row: AgentConfirmRow, t: (key: string) => string): string {
   return Object.entries(row.vars ?? {}).reduce(
     (text, [name, value]) => text.split(`{{${name}}}`).join(value),
     t(row.valueKey),
+  );
+}
+
+const EDIT_ICON = { added: Plus, removed: Minus, changed: Pencil } as const;
+
+/** One line per step the change touches, then the flow-level changes — what is about to be saved over. */
+function FlowEditRows({ edit, t }: { edit: AgentFlowEditSummary; t: (key: string) => string }) {
+  const rows = (['added', 'removed', 'changed'] as const).flatMap((kind) => edit[kind].map((step, index) => ({ kind, step, index })));
+  return (
+    <ScrollArea.Autosize mah={200}>
+      <Stack gap={6}>
+        {rows.map(({ kind, step, index }) => {
+          const Icon = EDIT_ICON[kind];
+          return (
+            <Group key={`${kind}-${index}-${step.label}`} gap={8} wrap="nowrap" align="flex-start">
+              <Icon size={14} style={{ flexShrink: 0, marginTop: 3 }} color="var(--text-muted)" />
+              <Text fz="var(--font-size-sm)" c="var(--text-primary)" style={{ lineHeight: 1.6, wordBreak: 'break-word' }}>
+                {t(`agent.flow.edit.${kind}`).replace('{{label}}', step.label)}
+                <Text span fz="var(--font-size-xs)" c="var(--text-muted)">{` · ${t(`flow.skill.${step.type}`)}`}</Text>
+              </Text>
+            </Group>
+          );
+        })}
+        {edit.renamedFrom && (
+          <Text fz="var(--font-size-sm)" c="var(--text-primary)">
+            {t('agent.flow.edit.renamed').replace('{{from}}', edit.renamedFrom)}
+          </Text>
+        )}
+        {edit.trigger && <Text fz="var(--font-size-sm)" c="var(--text-primary)">{t('agent.flow.edit.trigger')}</Text>}
+      </Stack>
+    </ScrollArea.Autosize>
   );
 }
 
@@ -63,6 +94,7 @@ export const AgentConfirmDialog: React.FC = () => {
   if (!current) return null;
 
   const isFlow = current.kind === 'flow';
+  const flowEdit = current.kind === 'flow' ? current.edit : undefined;
   const isShell = current.kind === 'shell';
   // Shell is dangerous by construction — there is no "safe" arbitrary command — where a flow is
   // only dangerous when one of its steps is.
@@ -71,10 +103,15 @@ export const AgentConfirmDialog: React.FC = () => {
   const dangerous = isShell || (isFlow && current.sensitiveTypes.length > 0) || (isMcp && current.danger === true);
   // Older payloads carry no flag; only an explicit false hides the button.
   const allowAlways = isMcp && current.allowAlways !== false;
-  const titleKey = isFlow ? 'agent.flow.confirm.title' : isShell ? 'agent.shell.confirm.title' : 'agent.mcp.confirm.title';
-  const detailKey = isFlow ? 'agent.flow.confirm.detail' : isShell ? 'agent.shell.confirm.detail' : 'agent.mcp.confirm.detail';
+  const flowTitleKey = flowEdit ? 'agent.flow.edit.title' : 'agent.flow.confirm.title';
+  const flowMessageKey = flowEdit ? 'agent.flow.edit.message' : 'agent.flow.confirm.message';
+  const flowSaveKey = flowEdit ? 'agent.flow.edit.save' : 'agent.flow.confirm.save';
+  const titleKey = isFlow ? flowTitleKey : isShell ? 'agent.shell.confirm.title' : 'agent.mcp.confirm.title';
+  const detailKey = flowEdit
+    ? (flowEdit.paused ? 'agent.flow.edit.detailPaused' : flowEdit.enabled ? 'agent.flow.edit.detailEnabled' : 'agent.flow.edit.detail')
+    : isFlow ? 'agent.flow.confirm.detail' : isShell ? 'agent.shell.confirm.detail' : 'agent.mcp.confirm.detail';
   const denyKey = isFlow ? 'agent.flow.confirm.discard' : isShell ? 'agent.shell.confirm.deny' : 'agent.mcp.confirm.deny';
-  const allowKey = isFlow ? 'agent.flow.confirm.save' : isShell ? 'agent.shell.confirm.allow' : 'agent.mcp.confirm.allow';
+  const allowKey = isFlow ? flowSaveKey : isShell ? 'agent.shell.confirm.allow' : 'agent.mcp.confirm.allow';
 
   return (
     <AppModal
@@ -91,7 +128,7 @@ export const AgentConfirmDialog: React.FC = () => {
       <Stack gap={14}>
         <Text fz="var(--font-size-sm)" c="var(--text-primary)" style={{ lineHeight: 1.6 }}>
           {isFlow
-            ? t('agent.flow.confirm.message')
+            ? t(flowMessageKey)
               .replace('{{name}}', current.flowName)
               .replace('{{count}}', String(current.stepTypes.length))
             : isShell
@@ -101,7 +138,19 @@ export const AgentConfirmDialog: React.FC = () => {
                 .replace('{{server}}', current.serverName)}
         </Text>
 
-        {isFlow ? (
+        {current.kind === 'flow' && current.recipients?.length ? (
+          <Text fz="var(--font-size-sm)" c="var(--text-primary)" style={{ lineHeight: 1.6, wordBreak: 'break-word' }}>
+            {t('agent.flow.confirm.recipients').replace('{{names}}', current.recipients.map((recipient) => {
+              if (recipient.kind === 'everyone') return t('agent.flow.confirm.recipient.everyone');
+              if (recipient.kind === 'sender') return t('agent.flow.confirm.recipient.sender');
+              return recipient.name ?? '';
+            }).join(t('flow.build.recipient.separator')))}
+          </Text>
+        ) : null}
+
+        {flowEdit ? (
+          <FlowEditRows edit={flowEdit} t={t} />
+        ) : isFlow ? (
           <Stack gap={6}>
             <Text fz="var(--font-size-xs)" c="dimmed" fw={600}>
               {t('agent.flow.confirm.steps')}
@@ -112,10 +161,7 @@ export const AgentConfirmDialog: React.FC = () => {
                   <Badge
                     key={`${type}-${index}`}
                     variant="light"
-                    color={current.sensitiveTypes.includes(type) ? 'red' : undefined}
-                    radius="sm"
-                    tt="none"
-                    fw={500}
+                    color={current.sensitiveTypes.includes(type) ? 'var(--mantine-color-error)' : undefined}
                   >
                     {t(`flow.skill.${type}`)}
                   </Badge>
@@ -149,8 +195,7 @@ export const AgentConfirmDialog: React.FC = () => {
               <Code
                 block
                 fz="var(--font-size-xs)"
-                // The command is no longer clipped, so it must WRAP: a long one that scrolled
-                // off to the right would hide its tail exactly as the old 2,000-char clip did.
+                // Wrap rather than scroll, so the tail of a long command is never hidden.
                 style={{ background: 'var(--bg-tertiary)', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
               >
                 {isShell ? current.command : current.argsPreview}

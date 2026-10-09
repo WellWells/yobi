@@ -37,7 +37,7 @@ export const SearchConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) 
       />
 
       <Text fz="xs" c="dimmed">
-        {t('flow.skill.search.outputHint').replace('{{outputKey}}', `{{${step.outputKey}}}`)}
+        {t('flow.skill.search.outputHint').replaceAll('{{outputKey}}', `{{${step.outputKey}}}`)}
       </Text>
     </Stack>
   );

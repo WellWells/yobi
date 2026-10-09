@@ -1,5 +1,3 @@
-export const isMac = (
-  (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform
-  ?? navigator.platform
-  ?? ''
-).toLowerCase().includes('mac');
+import { hostPlatform } from './hostPlatform';
+
+export const isMac = hostPlatform === 'darwin';

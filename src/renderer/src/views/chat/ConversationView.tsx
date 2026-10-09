@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Box, Flex, Group, Stack, Text } from '@mantine/core';
 import { useShallow } from 'zustand/react/shallow';
 import type { ConversationDoc } from '../../../../shared/conversationDoc';
@@ -8,7 +8,7 @@ import { useAppStore, type PendingTurn } from '../../store/appStore';
 import type { AgentChoicePick } from '../../store/useAgentRunStore';
 import { useI18nStore } from '../../store/i18nStore';
 import { useFormatTime } from '../../hooks/useFormatTime';
-import { useStickToBottom } from '../../hooks/useStickToBottom';
+import { scrollMoveFor, useStickToBottom, type ScrollSnapshot } from '../../hooks/useStickToBottom';
 import { UserBubble } from '../../components/chat/UserBubble';
 import { PromptBody } from '../../components/chat/PromptBody';
 import { AssistantTurn } from '../../components/chat/AssistantTurn';
@@ -58,27 +58,22 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
   );
 
   const contentRef = useRef<HTMLDivElement>(null);
-  const { follow, release } = useStickToBottom(contentRef, sideBySide ? 'side' : 'stacked');
-  const seenRef = useRef({ path: conversationPath, turns: turnCount, pending: pendingCount });
-  useEffect(() => {
-    const seen = seenRef.current;
-    const switched = seen.path !== conversationPath;
-    const appended = !switched && (turnCount > seen.turns || pendingCount > seen.pending);
-    seenRef.current = { path: conversationPath, turns: turnCount, pending: pendingCount };
-    if (switched) release();
-    else if (appended) follow();
-  }, [conversationPath, turnCount, pendingCount, follow, release]);
+  const { follow, jump } = useStickToBottom(contentRef, sideBySide ? 'side' : 'stacked');
+  const seenRef = useRef<ScrollSnapshot | null>(null);
+  // A layout effect, so an opened conversation is never painted at the top first.
+  useLayoutEffect(() => {
+    const next = { path: conversationPath, turns: turnCount, pending: pendingCount };
+    const move = scrollMoveFor(seenRef.current, next);
+    seenRef.current = next;
+    if (move === 'jump') jump();
+    else if (move === 'follow') follow();
+  }, [conversationPath, turnCount, pendingCount, follow, jump]);
 
   /*
-   * Which turn just arrived, decided during render rather than in an effect: an effect would
-   * commit the row once without the class and only then add it, so the animation would restart
-   * after a frame at full opacity — a visible flash. This is React's "adjust state when props
-   * change" pattern; the re-render happens before anything is painted.
-   *
-   * It has to be latched to a single index. This view lives under `display: none`, which cancels
-   * and replays CSS animations, so an unlatched class would re-run on every return to chat — and
-   * the keys are positional (`turn-${index}`), so a conversation switch would animate old rows as
-   * if they were new. The class is dropped again on animationend (see `handleTurnAnimationEnd`).
+   * Which turn just arrived, decided during render: an effect would paint the row once at full
+   * opacity first. Latched to one index because `display: none` replays CSS animations and keys are
+   * positional, so an unlatched class would re-animate old rows on every return to chat or
+   * conversation switch. Cleared on animationend (see `handleTurnAnimationEnd`).
    */
   const [seenTurns, setSeenTurns] = useState({ path: conversationPath, count: turnCount });
   const [arrivedIndex, setArrivedIndex] = useState(-1);

@@ -72,7 +72,7 @@ export const QueuePopover: React.FC<QueuePopoverProps> = ({
                     disabled={isForceSkipping}
                     variant="light"
                     size="xs"
-                    color="orange"
+                    color="var(--mantine-color-warning)"
                     leftSection={isForceSkipping ? <LoaderCircle size={12} /> : <SkipForward size={12} />}
                     styles={{ root: { height: 22, fontSize: 'var(--font-size-xs)', fontWeight: 600, padding: '0 8px' } }}
                   >

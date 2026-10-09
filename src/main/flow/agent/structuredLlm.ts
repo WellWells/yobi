@@ -6,6 +6,8 @@ import { llmLane } from '../lanes';
 import { FlowAbortError } from '../runtime';
 import type { FlowExecutorDeps } from '../types';
 import { sendLog } from '../../helpers';
+import { maskSecrets } from './secretMask';
+import { workerWindowUnavailable } from '../../workerWindowError';
 
 export interface ProviderSession {
   threadUrl: string | null;
@@ -46,7 +48,7 @@ export async function runProviderText(
   const result = await llmLane.runExclusive(async () => {
     if (signal?.aborted) throw new FlowAbortError();
     const win = deps.ensureWorkerWin ? await deps.ensureWorkerWin() : deps.getWorkerWin();
-    if (!win || win.isDestroyed()) throw new Error('Worker window not available');
+    if (!win || win.isDestroyed()) throw workerWindowUnavailable();
     return runAutomation(win, prepared.prompt, timeoutMs, providerUrl, uploads, resumeThread);
   });
   if (session) {
@@ -146,6 +148,19 @@ export async function runSessionText(
 
 export type Validation<T> = { ok: true; value: T } | { ok: false; error: string };
 
+const REJECTED_PREVIEW_CHARS = 500;
+
+/**
+ * A rejected reply as one log-safe line. The reason alone ("No JSON object was found") cannot tell
+ * a prose answer from a sign-in page from an empty read, and each repair costs a full round-trip.
+ * Masked before it is flattened and cut: the `.env`-style rules are anchored to line starts, and a
+ * token straddling the cut is still seen whole. yobi.log is plaintext.
+ */
+export function rejectedReplyPreview(raw: string): string {
+  const masked = maskSecrets(raw, true).replace(/\s+/g, ' ').trim();
+  return masked.length > REJECTED_PREVIEW_CHARS ? `${masked.slice(0, REJECTED_PREVIEW_CHARS)}…` : masked;
+}
+
 export interface AskJsonOptions<T> {
   basePrompt: string;
   providerUrl: string;
@@ -154,7 +169,8 @@ export interface AskJsonOptions<T> {
   validate: (json: unknown) => Validation<T>;
   buildRepair: (prevRaw: string, error: string) => string;
   maxRepairs?: number;
-  onReject?: (error: string, attempt: number) => void;
+  /** `preview` is `rejectedReplyPreview(raw)`: for a log line, never for a prompt. */
+  onReject?: (error: string, attempt: number, preview: string) => void;
   signal?: AbortSignal;
   session?: ProviderSession;
   sessionPrompt?: string;
@@ -163,7 +179,13 @@ export interface AskJsonOptions<T> {
 export interface AskJsonResult<T> {
   ok: boolean;
   value?: T;
+  /** The last rejection, written for the model (it is what the repair prompt quoted back). */
   error?: string;
+  /**
+   * Why there is no value, for the code that has to tell a person. A request that never came back
+   * throws instead, so a failed result always means every reply was rejected.
+   */
+  reason?: 'invalid_output';
   raw: string;
 }
 
@@ -197,10 +219,10 @@ export async function askJson<T>(opts: AskJsonOptions<T>): Promise<AskJsonResult
     }
 
     if (attempt < maxRepairs) {
-      opts.onReject?.(lastError, attempt + 1);
+      opts.onReject?.(lastError, attempt + 1, rejectedReplyPreview(raw));
       prompt = opts.buildRepair(raw, lastError);
     }
   }
 
-  return { ok: false, error: lastError, raw: lastRaw };
+  return { ok: false, error: lastError, reason: 'invalid_output', raw: lastRaw };
 }

@@ -12,6 +12,9 @@ import type { ConversationSendPlan } from './chat/conversationTurnRunner';
 import { resolveTaskChatContext } from './chat/taskChatContext';
 import { appendOrCreateConversation } from './chat/conversationPersist';
 import { resolveTaskMemory, settleTaskMemory, taskMemoryInstruction, taskNativeReminder } from './chat/taskMemory';
+import { RECAP_RULE, recapRules, wantsRecap } from './chat/recapPrompt';
+import { extractRecapLine } from './chat/recapLine';
+import { buildPlaceContext } from './mapUrlPrompt';
 import { withMemoryNotes } from './memory';
 import {
   claimChatTurnReport,
@@ -22,7 +25,6 @@ import {
   replyRemoteError,
 } from './taskReporting';
 import type { TaskReportDeps } from './taskReporting';
-import { PERPLEXITY_CLOUDFLARE_ERROR_NAME } from './providers/perplexity';
 import { parseUploadFailure } from './providers/fileDrop';
 import { VERIFICATION_CHALLENGE_ERROR_NAME } from './providers/verificationChallenge';
 import {
@@ -45,12 +47,11 @@ import {
   sendToRenderer,
   sendWebNotification,
   isMainWindowFocused,
-  clearPerplexitySiteDataIfNeeded,
   sanitizeRequesterName,
 } from './helpers';
 import { setBotConversation } from './botConversations';
 import { deleteTempAttachments } from './telegram/fileDownload';
-import { backupClipboard, restoreClipboardAfterTask } from './clipboard';
+import { backupClipboard, handAnswerToClipboard, restoreClipboardAfterTask } from './clipboard';
 import { classifyFailure, recordTaskOutcome } from './metrics';
 import { runInMetricDomain } from './llmMeter';
 import { llmLane } from './flow/lanes';
@@ -65,6 +66,7 @@ import {
   t,
 } from './i18n';
 import { ensureWorkerWindow } from './windows';
+import { workerWindowUnavailable } from './workerWindowError';
 
 export type TaskProcessorDeps = TaskReportDeps;
 
@@ -86,6 +88,10 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
   const { telegramRuntime, lineRuntime } = deps;
   const { id, prompt } = task;
   const promptForOutput = task.displayPrompt?.trim() ? task.displayPrompt.trim() : stripSystemInstruction(prompt);
+  // When the record shows a stand-in, the turn keeps what the model was given so a replayed
+  // follow-up still has it. A Maps turn keeps no copy: its reviews are re-attached on replay.
+  const modelPrompt = stripSystemInstruction(prompt);
+  const sentPrompt = promptForOutput !== modelPrompt && !task.mapPlace ? modelPrompt : '';
   const targetUrl = task.targetUrl ?? config.targetUrl;
   const preview = promptForOutput.length > 100 ? `${promptForOutput.slice(0, 100)}…` : promptForOutput;
   const providerLabel = getProviderLabel(targetUrl);
@@ -97,17 +103,25 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
   sendLog(`[${id}] 📤 ${task.source ?? 'ui'} → ${providerLabel}${chatContext.conversationPath ? ' (follow-up)' : ''}: "${preview}"`);
 
   const clipboardSnapshot = await backupClipboard();
-  let preservePerplexitySiteData = false;
   let lastError: unknown;
   // Kept for the finally: the clipboard is only put back if it is still holding this.
   let providerAnswer = '';
+  // A hotkey answer handed back on the clipboard must not be "restored" away in the finally.
+  let answerOnClipboard = false;
 
   try {
     const t0 = Date.now();
     sendLog(`[${id}] ⏳ Sending to ${providerLabel}...`);
 
     const planTurnFor = async (allowNative: boolean): Promise<ConversationSendPlan | null> => {
-      const shared = { targetUrl, userPrompt: prompt, timeoutMs: config.responseTimeout, allowNative };
+      const shared = {
+        targetUrl,
+        userPrompt: prompt,
+        timeoutMs: config.responseTimeout,
+        allowNative,
+        // A prompt that already carries fetched content (another place, a page) brings its own data.
+        ...(task.external || task.mapPlace ? {} : { placeContext: buildPlaceContext }),
+      };
       if (chatContext.conversationPath) {
         return planConversationSend({ conversationPath: chatContext.conversationPath, ...shared });
       }
@@ -140,11 +154,15 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
       buildCombinedPromptFromPrefs(resolvePromptPrefs(task), getLangCache()),
       taskMemoryInstruction(memory),
     ].filter(Boolean).join('\n');
+    const recapWanted = wantsRecap(task);
     const instruction = buildTaskInstruction(
       dynamicInstruction,
       config.syncSystemLanguageToModel,
       config.locale,
-      wantsTitleMarker ? [t(getLangCache(), 'chat.title.markerRule')] : [],
+      [
+        ...(wantsTitleMarker ? [t(getLangCache(), 'chat.title.markerRule')] : []),
+        ...(recapWanted ? recapRules(plan?.recap) : []),
+      ],
     );
     const withInstruction = (text: string): string => (instruction ? `${instruction}\n\n${text}` : text);
 
@@ -162,9 +180,7 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
 
       return llmLane.runExclusive(async () => {
         const activeWorker = await ensureWorkerWindow(config.targetUrl, 'automation');
-        if (!activeWorker || activeWorker.isDestroyed()) {
-          throw new Error('Worker window unavailable after relaunch attempt');
-        }
+        if (!activeWorker || activeWorker.isDestroyed()) throw workerWindowUnavailable();
         const automated = await runAutomation(
           activeWorker,
           preparedPrompt.prompt,
@@ -180,7 +196,8 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
 
     // Taken before the send: an entry this very answer adds must count as newer than the thread.
     const sentAt = new Date().toISOString();
-    const withNativeReminder = taskNativeReminder(memory, plan?.thread.threadAt);
+    // A native thread sees its own earlier recap lines, so the bare rule is enough there.
+    const withNativeReminder = taskNativeReminder(memory, plan?.thread.threadAt, recapWanted ? [RECAP_RULE] : []);
     const sent = await executeConversationalSend({
       plan,
       targetUrl,
@@ -196,10 +213,14 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
     const { title: markerTitle, body: markedResponse } = stripMarker
       ? extractTitleMarker(sent.response)
       : { title: '', body: sent.response };
+    // Whatever the source: a bot continuing a thread that once carried the rule may still write it.
+    const { recap, body: recapStripped } = extractRecapLine(markedResponse);
+    if (recap) sendLog(`[${id}] 📝 Recap updated`);
+    else if (recapWanted) sendLog(`[${id}] 📝 Recap missing: no line in the reply, the previous one stays`);
     const { text: response, notes: memoryNotes } = await settleTaskMemory(
-      task,
+      sent.plan?.external ? { ...task, external: true } : task,
       memory,
-      markedResponse,
+      recapStripped,
       promptForOutput,
       chatContext.conversationPath,
     );
@@ -220,11 +241,16 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
       ...(sent.plan?.turnMeta ?? {}),
       p: providerLabel,
       t: new Date().toISOString(),
+      d: Date.now() - t0,
       ...(attachedNames.length > 0 ? { a: attachedNames } : {}),
       ti: usage.input,
       to: usage.output,
       ...(usage.exact ? { tx: 1 as const } : {}),
       ...(memoryNotes.length > 0 ? { mem: memoryNotes } : {}),
+      ...(sentPrompt ? { sent: sentPrompt } : {}),
+      // A send that carried the rule but got no line keeps the previous recap; a send without the rule
+      // (a bot) leaves a stop, since it may have moved the conversation silently.
+      ...(recap ? { rc: recap } : recapWanted ? {} : { rc: '' }),
     };
 
     const outputDir = await getOutputDir();
@@ -261,6 +287,7 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
       deliverTempChatResult({
         content: buildOutputMarkdown(markdownOptions),
         turn: { prompt: promptForOutput, response, meta: turnMeta },
+        ...(task.mapPlace ? { map: task.mapPlace } : {}),
       });
       sendLog(`[${id}] 👻 Temporary chat — reply not saved`);
     } else {
@@ -276,6 +303,8 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
         targetUrl,
         onLog: (message) => sendLog(`[${id}] ${message}`),
         ...(sent.plan?.mode === 'native' ? {} : { threadAt: sentAt }),
+        ...(task.mapPlace ? { map: task.mapPlace } : {}),
+        ...(task.fileLabel ? { fileLabel: task.fileLabel } : {}),
       });
       savedFileName = path.basename(conversationPath);
 
@@ -308,24 +337,29 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
       } satisfies ChatTurnEvent);
     }
 
-    // Claim-gated like the failure path: a task the queue gave up on keeps running to
-    // completion, and without this the user got "saved as …" minutes after being told it
-    // had failed, for the same question.
-    // A message sent from Yobi's own chat window ends with the answer on screen, so a banner
-    // saying it was saved is pure noise — and a user trained to dismiss these dismisses the one
-    // that matters (a background flow failed) too. Only `ui` is skipped: a hotkey send captures
-    // from another app, and bot tasks are remote, so both keep their banner even if Yobi happens
-    // to be focused. The unlabelled case keeps notifying — failing loud beats failing silent.
+    // Only the hotkey hands its answer back: a chat-window send ends with the answer on screen,
+    // and bot tasks fire at arbitrary times — writing theirs would clobber whatever the user copied.
+    if (task.source === 'hotkey' && task.clipboardFingerprint !== undefined) {
+      answerOnClipboard = await handAnswerToClipboard(task.clipboardFingerprint, response, providerAnswer);
+      sendLog(`[${id}] 📋 ${answerOnClipboard ? 'Reply copied to the clipboard' : 'Clipboard changed since the hotkey press — reply not copied'}`);
+    }
+
+    // Claim-gated like the failure path: a task the queue gave up on still runs to completion.
+    // Only a focused chat-window (`ui`) send skips the banner, since its answer is already on screen;
+    // hotkey, bot and unlabelled sends keep it.
     const answerAlreadyOnScreen = task.source === 'ui' && isMainWindowFocused();
     if (config.notifyEvents.chatComplete && !answerAlreadyOnScreen && claimLocalNotification(task)) {
-      const notifyTitle = langData?.['notify.completed.title'] ?? 'Yobi';
-      const notifyBodyTemplate = temporaryReply
-        ? (langData?.['notify.completed.temp.body'] ?? '"{{prompt}}" — temporary chat, not saved')
-        : (langData?.['notify.completed.body'] ?? '"{{prompt}}" saved as {{file}}');
-      const displayPrompt = compactPreview(promptForOutput, 36);
+      // Named by the conversation title, as the chat history lists it: the prompt can be a
+      // machine-built template, and the file name is a timestamp nobody recognises.
+      const strings = getLangCache();
+      const bodyKey = answerOnClipboard
+        ? 'notify.completed.copied.body'
+        : temporaryReply
+          ? 'notify.completed.unsaved.body'
+          : 'notify.completed.saved.body';
       sendWebNotification(
-        notifyTitle,
-        notifyBodyTemplate.replace('{{prompt}}', displayPrompt).replace('{{file}}', savedFileName),
+        t(strings, 'notify.completed.title'),
+        t(strings, bodyKey, { title: compactPreview(finalTitle, 36) }),
       );
     }
 
@@ -351,7 +385,6 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
     recordTaskOutcome('chat', classifyFailure(err instanceof Error ? err.message : String(err)), task);
     const strings = getLangCache();
     if (isLoginRequiredError(targetUrl, err)) {
-      preservePerplexitySiteData = true;
       sendLog(`[${id}] ⚠️ Login required before sending prompt`);
       await replyRemoteError(task, deps, {
         providerLabel,
@@ -371,13 +404,10 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
             ? 'attach.upload.rejected'
             : 'attach.upload.failed';
       const message = t(strings, key, { provider: providerLabel });
-      sendWebNotification(t(strings, 'app.name'), message, 'error');
+      sendWebNotification(t(strings, 'notify.chat.failure.title'), message, 'error');
       sendLog(`[${id}] ⚠️ attachment upload failed: ${phase}`);
       await replyRemoteError(task, deps, { providerLabel, message });
       return;
-    }
-    if (error.name === PERPLEXITY_CLOUDFLARE_ERROR_NAME) {
-      preservePerplexitySiteData = true;
     }
     const rawMessage = error.message;
     sendLog(`[${id}] ❌ ${rawMessage}`);
@@ -405,10 +435,7 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
     if (task.ephemeralAttachments && task.attachments?.length) {
       await deleteTempAttachments(task.attachments);
     }
-    await restoreClipboardAfterTask(clipboardSnapshot, providerAnswer);
-    if (!preservePerplexitySiteData) {
-      await clearPerplexitySiteDataIfNeeded(targetUrl);
-    }
+    if (!answerOnClipboard) await restoreClipboardAfterTask(clipboardSnapshot, providerAnswer);
   }
 }
 

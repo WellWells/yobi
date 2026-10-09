@@ -1,21 +1,26 @@
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_AGENT_ASK_TTL_MINUTES } from '../shared/types';
-import type { AgentRunState, AgentTurnRecord, BotBuiltinCommandKey, BotPlatform } from '../shared/types';
+import type { AgentRunState, BotPlatform, BotRunKind } from '../shared/types';
 import { config } from './config';
 import { executeAgentRun } from './chat/agentCommand';
-import { BOT_CHAT_TOOL_SCOPE } from './flow/agent/agentTools';
+import {
+  BOT_CHAT_TOOL_SCOPE, BOT_TOOL_SCOPE, withLocalCapability, withShellCapability, withWebCapability,
+} from './flow/agent/agentTools';
 import { runSearchCommand } from './chat/searchCommand';
-import type { AgentRunOutcome } from './chat/agentCommand';
+import type { AgentRunOutcome, AgentRunRequest } from './chat/agentCommand';
 import type { SearchRunOutcome } from './chat/searchCommand';
 import { getBotConversation, setBotConversation } from './botConversations';
+import { botConversationFileLabel } from './botConversationLabel';
 import { applyAnswer, loadRunState } from './flow/agent/agentRunStore';
-import { agentSourcesUsed, hasAnySource } from './flow/agent/agentSources';
 import { sendLog } from './helpers';
 import { t } from './i18n';
 import { getProviderLabel } from './providers';
 import type { FlowManager } from './flow';
-import { botChatMemoryContext, withMemoryNotes } from './memory';
+import { botChatMemoryResolver } from './chat/agentMemory';
+import { withMemoryNotes } from './memory';
+import { applyBotRunGrants, botAccessDeniedText, botChatPaired, botChatRights } from './botPermissions';
+import { builtinCommandGrant, rightsAllowBuiltin } from '../shared/botPermissions';
 
 type Strings = Record<string, string>;
 
@@ -75,25 +80,9 @@ function rememberPendingAsk(chatKey: string, runId: string): void {
 
 export const __rememberPendingAskForTest = rememberPendingAsk;
 
-/**
- * "Where did this come from", in one line, for a surface that has no step trail.
- *
- * In the app the queue popover shows the live trail, so the user can see which tool answered. A bot
- * reply is one message with none of that: a run that answered from the web when the user meant
- * their own chats reads exactly like one that read them. Derived from the run's own turns rather
- * than from anything the model says, and silent when no tool ran at all (a URL shortcut, an answer
- * from the model's own knowledge) — a footer with nothing in it would be filler.
- */
-function sourceLine(turns: readonly AgentTurnRecord[], strings: Strings): string {
-  const sources = agentSourcesUsed(turns);
-  if (!hasAnySource(sources)) return '';
-  const parts = [
-    ...sources.connectors,
-    ...(sources.web ? [t(strings, 'agent.source.web')] : []),
-    ...(sources.files ? [t(strings, 'agent.source.files')] : []),
-    ...sources.tools,
-  ];
-  return t(strings, 'agent.source.line', { sources: parts.join('、') });
+/** The name a new conversation file gets for this chat; a lookup that fails only costs the name. */
+export function newConversationLabel(chatKey: string): Promise<string> {
+  return botConversationFileLabel(chatKey).catch(() => '');
 }
 
 function toResult(
@@ -103,7 +92,6 @@ function toResult(
   startedAt: number,
   askChatKey: string | undefined,
   sessionKey: string,
-  turns: readonly AgentTurnRecord[] = [],
 ): BotBuiltinRunResult {
   const elapsedSeconds = ((Date.now() - startedAt) / 1_000).toFixed(1);
   const providerLabel = getProviderLabel(targetUrl);
@@ -128,17 +116,13 @@ function toResult(
 
   if (outcome.filePath) void setBotConversation(sessionKey, outcome.filePath);
 
-  // Withheld while a question is pending: that reply ends in a call to action the user has to act
-  // on, and the run has not finished consulting anything yet.
-  const footer = awaitingAnswer ? '' : sourceLine(turns, strings);
   const memoryNotes = 'memoryNotes' in outcome ? outcome.memoryNotes ?? [] : [];
-  const body = withMemoryNotes(answer, memoryNotes, (key, vars) => t(strings, key, vars));
 
   return {
     ok: true,
     text: awaitingAnswer
       ? `${answer}\n\n${t(strings, 'bot.builtin.answerHint')}`
-      : footer ? `${body}\n\n${footer}` : body,
+      : withMemoryNotes(answer, memoryNotes, (key, vars) => t(strings, key, vars)),
     title: outcome.title ?? '',
     savedFileName: outcome.filePath ? path.basename(outcome.filePath) : '',
     providerLabel,
@@ -147,14 +131,53 @@ function toResult(
   };
 }
 
+type BotRunScope = Pick<AgentRunRequest, 'toolScope' | 'linkQuestions' | 'allowedMcpServerIds' | 'shellInChat'>;
+
+/**
+ * The tools a bot run may use, read off its saved state, so a resume can never widen the run. Fails
+ * closed: only a run recorded as `agent` gets the wider kit; the account's grants then remove local,
+ * web and ungranted connector tools, and the shell grant adds `shell` (each command is confirmed in
+ * the chat).
+ *
+ * A Maps link with a question is answered from reviews on either kit: a bot run cannot write files,
+ * flows or connector data, so the words around the link are a question about the place.
+ */
+function botRunScope(state: AgentRunState): BotRunScope {
+  const full = state.botScope === 'agent';
+  const grants = state.botGrants;
+  const shell = full && grants?.shell === true;
+  const toolScope = withWebCapability(
+    withShellCapability(withLocalCapability(full ? BOT_TOOL_SCOPE : BOT_CHAT_TOOL_SCOPE, grants?.local === true), shell),
+    grants?.web !== false && state.web !== false,
+  );
+  const connectors = grants?.connectors;
+  return {
+    toolScope,
+    linkQuestions: true,
+    ...(Array.isArray(connectors) ? { allowedMcpServerIds: connectors } : {}),
+    ...(shell ? { shellInChat: true } : {}),
+  };
+}
+
+function deniedResult(targetUrl: string, text: string): BotBuiltinRunResult {
+  return {
+    ok: false,
+    text,
+    title: '',
+    savedFileName: '',
+    providerLabel: getProviderLabel(targetUrl),
+    elapsedSeconds: '0.0',
+    awaitingAnswer: false,
+  };
+}
+
 export interface BotBuiltinRunRequest {
-  key: BotBuiltinCommandKey;
+  /** `agent` answers a message or a model command (`/gemini …`); `search` is the typed `/search`. */
+  key: BotRunKind;
   input: string;
   targetUrl: string;
   chatKey: string;
   onProgressText?: (text: string) => void;
-  /** Plain message rather than a typed command — runs on the narrow chat scope. */
-  plain?: boolean;
 }
 
 export async function runBotBuiltinCommand(
@@ -166,9 +189,22 @@ export async function runBotBuiltinCommand(
   const targetUrl = request.targetUrl.trim() || config.targetUrl;
   const startedAt = Date.now();
 
+  // Decided here as well as in the chat handlers, which refuse before anything is queued: whoever
+  // calls this, an unpaired account gets no run and a typed command it was not granted never runs.
+  if (!botChatPaired(request.chatKey)) {
+    sendLog(`[bot] ${request.key} refused for ${request.chatKey}: not paired`);
+    return deniedResult(targetUrl, t(strings, 'bot.builtin.failed'));
+  }
+  const rights = await botChatRights(request.chatKey);
+  if (request.key !== 'agent' && !rightsAllowBuiltin(rights, request.key)) {
+    sendLog(`[bot] /${request.key} refused for ${request.chatKey}: not granted`);
+    return deniedResult(targetUrl, botAccessDeniedText(strings, builtinCommandGrant(request.key)));
+  }
+
   clearPendingAgentAsk(request.chatKey);
 
   const conversationPath = await getBotConversation(request.chatKey);
+  const fileLabel = conversationPath ? '' : await newConversationLabel(request.chatKey);
 
   if (request.key === 'search') {
     const outcome = await runSearchCommand(flowManager, {
@@ -176,7 +212,7 @@ export async function runBotBuiltinCommand(
       strings,
       targetUrl,
       origin: 'bot',
-      ...(conversationPath ? { conversationPath } : {}),
+      ...(conversationPath ? { conversationPath } : { fileLabel }),
       ...(request.onProgressText ? { onProgressText: request.onProgressText } : {}),
     });
     return toResult(outcome, targetUrl, strings, startedAt, undefined, request.chatKey);
@@ -188,25 +224,27 @@ export async function runBotBuiltinCommand(
     goal: request.input,
     providerUrl: targetUrl,
     ...(conversationPath ? { conversationPath } : {}),
+    // Every paired account is answered; the agent grant decides how much the answer may use.
+    botScope: rights.agent ? 'agent' : 'chat',
     status: 'running',
     turns: [],
     createdAt: now,
     updatedAt: now,
   };
+  applyBotRunGrants(state, rights, false);
   const outcome = await executeAgentRun(
     { flowManager, getMainWin: () => null },
     {
       state,
       strings,
       origin: 'bot',
-      memory: await botChatMemoryContext(request.chatKey),
-      // Typing /agent is the user asking for the full kit. Just talking to the bot is not, so a
-      // plain message gets the web and the harmless lookups and nothing that reads the machine.
-      ...(request.plain ? { toolScope: BOT_CHAT_TOOL_SCOPE } : {}),
+      memory: botChatMemoryResolver(request.chatKey),
+      ...botRunScope(state),
+      ...(fileLabel ? { fileLabel } : {}),
       ...(request.onProgressText ? { onProgressText: request.onProgressText } : {}),
     },
   );
-  return toResult(outcome, targetUrl, strings, startedAt, request.chatKey, request.chatKey, state.turns);
+  return toResult(outcome, targetUrl, strings, startedAt, request.chatKey, request.chatKey);
 }
 
 export async function resumeBotAgentAsk(
@@ -225,12 +263,26 @@ export async function resumeBotAgentAsk(
     return null;
   }
 
+  // Re-read now: a grant taken away while the question was pending applies to the answer too. An
+  // account unpaired meanwhile gets nothing; one still paired is answered, on the chat kit if the
+  // agent grant is gone.
+  if (!botChatPaired(params.chatKey)) {
+    sendLog(`[bot] agent run ${params.runId} not resumed: ${params.chatKey} is no longer paired`);
+    return deniedResult(state.providerUrl, t(strings, 'bot.builtin.failed'));
+  }
+  const rights = await botChatRights(params.chatKey);
+  if (state.botScope === 'agent' && !rights.agent) {
+    sendLog(`[bot] agent run ${params.runId} resumes on the chat scope: the agent grant is gone`);
+    state.botScope = 'chat';
+  }
+
   const answer = params.answer.trim();
   const resumeFrom = applyAnswer(state.turns, answer);
   state.turns = resumeFrom;
   state.status = 'running';
   state.error = undefined;
   state.updatedAt = new Date().toISOString();
+  applyBotRunGrants(state, rights, true);
 
   const startedAt = Date.now();
   const outcome = await executeAgentRun(
@@ -241,9 +293,10 @@ export async function resumeBotAgentAsk(
       strings,
       deliveredPrompt: answer || state.goal,
       origin: 'bot',
-      memory: await botChatMemoryContext(params.chatKey),
+      memory: botChatMemoryResolver(params.chatKey),
+      ...botRunScope(state),
       ...(params.onProgressText ? { onProgressText: params.onProgressText } : {}),
     },
   );
-  return toResult(outcome, state.providerUrl, strings, startedAt, params.chatKey, params.chatKey, state.turns);
+  return toResult(outcome, state.providerUrl, strings, startedAt, params.chatKey, params.chatKey);
 }

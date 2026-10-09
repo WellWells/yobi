@@ -2,23 +2,17 @@ import React, { useEffect, useState } from 'react';
 import { Anchor, Box, Button, Container, Divider, Flex, Group, Stack, Text } from '@mantine/core';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
-import { useUpdateStore } from '../store/useUpdateStore';
+import { updateStatus, useUpdateStore } from '../store/useUpdateStore';
 import { Bug, Download, Info, Newspaper, RefreshCw, Scale, Store } from 'lucide-react';
 import { GithubIcon } from '../config/brandIcons';
 import { SectionCard } from '../components/SectionCard';
 import { GroupHeader } from '../components/GroupHeader';
+import { GITHUB_ISSUES_URL, GITHUB_REPO_URL, howItWorksUrl } from '../config/projectLinks';
 import styles from './AboutView.module.css';
 
 const MICROSOFT_STORE_URL = 'https://apps.microsoft.com/detail/9nnx8prfstc9';
 
 const ENTRANCE_ANIMATION_MS = 900;
-
-const HOW_IT_WORKS_URLS: Record<string, string> = {
-  'zh-TW': 'https://github.com/WellWells/yobi/blob/main/README.zh-TW.md#-yobi-如何運作',
-  'zh-CN': 'https://github.com/WellWells/yobi/blob/main/README.zh-CN.md#-yobi-如何运作',
-  ja: 'https://github.com/WellWells/yobi/blob/main/README.ja.md#-yobi-の仕組み',
-};
-const HOW_IT_WORKS_FALLBACK = 'https://github.com/WellWells/yobi#-how-yobi-works';
 
 const TECH_STACK: Array<{ id: string; name: string; url: string }> = [
   { id: 'electron', name: 'Electron', url: 'https://www.electronjs.org/' },
@@ -41,9 +35,7 @@ export const AboutView: React.FC = () => {
   const isVisible = useAppStore((s) => s.currentView === 'about');
   const [hasEntered, setHasEntered] = useState(false);
 
-  const isChecking = useUpdateStore((s) => s.isChecking);
-  const hasUpdate = useUpdateStore((s) => s.hasUpdate);
-  const checkFailed = useUpdateStore((s) => s.checkFailed);
+  const status = useUpdateStore(updateStatus);
   const isStoreBuild = useUpdateStore((s) => s.isStoreBuild);
   const newVersion = useUpdateStore((s) => s.newVersion);
   const releaseUrl = useUpdateStore((s) => s.releaseUrl);
@@ -63,9 +55,20 @@ export const AboutView: React.FC = () => {
 
   const isChinese = locale.toLowerCase().includes('zh');
   const blogUrl = isChinese ? 'https://wellstsai.com/' : 'https://wellstsai.com/en/';
-  const issueUrl = 'https://github.com/WellWells/yobi/issues';
-  const github_repo = 'https://github.com/WellWells/yobi/';
-  const howItWorksUrl = encodeURI(HOW_IT_WORKS_URLS[locale] ?? HOW_IT_WORKS_FALLBACK);
+
+  const statusColor = status === 'failed'
+    ? 'var(--mantine-color-error)'
+    : status === 'available' ? 'var(--mantine-color-blue-5)' : undefined;
+  const statusTitle = {
+    available: t('settings.update.available').replace('{{version}}', newVersion ?? ''),
+    checking: t('settings.update.checking'),
+    failed: t('settings.update.checkFailed'),
+    latest: t('settings.update.latest'),
+    unchecked: t('settings.update.notChecked'),
+  }[status];
+  const statusHint = status === 'available'
+    ? t('settings.update.hint.available')
+    : status === 'failed' ? t('settings.update.hint.failed') : null;
 
   return (
     <Flex
@@ -108,7 +111,7 @@ export const AboutView: React.FC = () => {
               {t('about.blog')}
             </Button>
             <Button
-              onClick={() => void window.electronAPI.openExternalUrl(github_repo)}
+              onClick={() => void window.electronAPI.openExternalUrl(GITHUB_REPO_URL)}
               variant="outline"
               size="xs"
               radius="md"
@@ -117,7 +120,7 @@ export const AboutView: React.FC = () => {
               {t('about.github')}
             </Button>
             <Button
-              onClick={() => void window.electronAPI.openExternalUrl(issueUrl)}
+              onClick={() => void window.electronAPI.openExternalUrl(GITHUB_ISSUES_URL)}
               variant="outline"
               size="xs"
               radius="md"
@@ -126,7 +129,7 @@ export const AboutView: React.FC = () => {
               {t('about.reportIssue')}
             </Button>
             <Button
-              onClick={() => void window.electronAPI.openExternalUrl(howItWorksUrl)}
+              onClick={() => void window.electronAPI.openExternalUrl(howItWorksUrl(locale))}
               variant="outline"
               size="xs"
               radius="md"
@@ -188,32 +191,24 @@ export const AboutView: React.FC = () => {
                 <Group justify="space-between" align="center" wrap="nowrap">
                   <Stack gap={2} style={{ minWidth: 0 }}>
                     <Group gap="xs" wrap="nowrap">
-                      <Box c={checkFailed ? 'var(--mantine-color-error)' : hasUpdate ? 'var(--mantine-color-blue-5)' : 'dimmed'}>
+                      <Box c={statusColor ?? 'dimmed'}>
                         <RefreshCw
                           size={13}
-                          className={isChecking ? styles.spinning : undefined}
+                          className={status === 'checking' ? styles.spinning : undefined}
                         />
                       </Box>
-                      <Text fz="var(--font-size-sm)" fw={600}
-                        c={checkFailed ? 'var(--mantine-color-error)' : hasUpdate ? 'var(--mantine-color-blue-5)' : undefined}
-                      >
-                        {hasUpdate && newVersion
-                          ? t('settings.update.available').replace('{{version}}', newVersion)
-                          : checkFailed
-                            ? t('settings.update.checkFailed')
-                            : t('settings.update.latest')}
+                      <Text fz="var(--font-size-sm)" fw={600} c={statusColor}>
+                        {statusTitle}
                       </Text>
                     </Group>
-                    <Text fz="var(--font-size-xs)" c="dimmed">
-                      {hasUpdate
-                        ? t('settings.update.hint.available')
-                        : checkFailed
-                          ? t('settings.update.hint.failed')
-                          : t('settings.update.hint.latest')}
-                    </Text>
+                    {statusHint && (
+                      <Text fz="var(--font-size-xs)" c="dimmed">
+                        {statusHint}
+                      </Text>
+                    )}
                   </Stack>
 
-                  {hasUpdate ? (
+                  {status === 'available' ? (
                     <Button
                       size="xs"
                       variant="filled"
@@ -231,10 +226,10 @@ export const AboutView: React.FC = () => {
                       variant="light"
                       leftSection={<RefreshCw size={13} />}
                       onClick={() => { void checkForUpdates(); }}
-                      disabled={isChecking}
+                      disabled={status === 'checking'}
                       style={{ flexShrink: 0 }}
                     >
-                      {isChecking ? t('settings.update.checking') : t('settings.update.check')}
+                      {t('settings.update.check')}
                     </Button>
                   )}
                 </Group>

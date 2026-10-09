@@ -6,12 +6,14 @@ import { BotProviderCommands } from './BotProviderCommands';
 import { BotBuiltinCommands } from './BotBuiltinCommands';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import type { useBotCommands } from '../hooks/useBotCommands';
+import type { BotRoster } from './botPermissionsView';
 
 type BotCommands = ReturnType<typeof useBotCommands>;
 
 interface Props {
   botCommands: BotCommands;
   anyBotEnabled: boolean;
+  roster: BotRoster;
   t: (key: string) => string;
   showSection: (tags: readonly string[], category: 'bots') => boolean;
   isSearching: boolean;
@@ -19,7 +21,7 @@ interface Props {
 }
 
 export const BotCommandsSection: React.FC<Props> = ({
-  botCommands, anyBotEnabled, t, showSection, isSearching, sectionGap,
+  botCommands, anyBotEnabled, roster, t, showSection, isSearching, sectionGap,
 }) => (
   <Box display={showSection(TAG_SETS.bots, 'bots') && (anyBotEnabled || isSearching) ? 'block' : 'none'}>
     <SectionCard style={{ marginBottom: sectionGap }}>
@@ -56,6 +58,7 @@ export const BotCommandsSection: React.FC<Props> = ({
           busy={botCommands.botCommandsBusy}
           onUpdate={(key, patch) => { void botCommands.handleUpdateBuiltinCommand(key, patch); }}
           onUpdateAskTtl={(minutes) => { void botCommands.handleUpdateAskTtl(minutes); }}
+          roster={roster}
           t={t}
         />
       )}

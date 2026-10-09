@@ -106,9 +106,9 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
     if (!isRegisterableAccelerator(newHotkey)) return 'taken';
     if (wouldCollide(newHotkey, config.hotkey, config.quickExport.hotkey)) return 'conflict';
 
-    // Bind BEFORE persisting. registerHotkey releases the current accelerator to try the new
-    // one, so a combo the OS refuses leaves the app with no hotkey at all — and writing it
-    // first meant that dead combo survived every restart.
+    // Bind BEFORE persisting: registerHotkey releases the current accelerator to try the new
+    // one, so a combo the OS refuses leaves no hotkey at all, and persisting it first would
+    // keep that dead combo across every restart.
     const previous = config.hotkey;
     config.hotkey = newHotkey;
     if (!ctx.bindHotkey()) {
@@ -315,7 +315,7 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
   ipcMain.handle(IPC.METRICS_GET, () => getMetricsSnapshot());
   ipcMain.handle(IPC.FLOW_METRICS_GET, () => getFlowMetricsSnapshot());
   ipcMain.handle(IPC.METRICS_CONVERSATION_TOKENS, () => getConversationTokenStats());
-  // One button, one mental model: "clear statistics" leaves nothing behind in either store.
+  // "Clear statistics" empties both stores.
   ipcMain.handle(IPC.METRICS_RESET, () => {
     sendLog('📊 Usage statistics cleared');
     resetFlowMetrics();

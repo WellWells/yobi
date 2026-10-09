@@ -1,16 +1,17 @@
 import { load } from 'cheerio';
 import { PROVIDER_URLS } from '../shared/types';
 import type { FeedCandidate } from '../shared/types';
-import { loadPageHtml, fetchRawText, ensureHttpScheme } from './pageLoader';
+import { loadPageHtml, loadPageResult, fetchRawText, fetchRawResponse, ensureHttpScheme } from './pageLoader';
+import type { PageLoadResult } from './pageLoader';
 import { runParserBlocks, runCssSelector, parseRssFeed, extractFeedLinks } from './parserBlocks';
 import type { ParserBlock, ParserBlockType, RssFeedItem } from './parserBlocks';
 import { isYoutubeUrl, fetchYoutubeVideo } from './youtubeTranscript';
-import { isMapsUrl, fetchMapReviews } from './mapReviews';
-import { fetchPlaceStats, localizedVerdict } from './mapPlaceStats';
-import { mapReviewsPrompt } from '../shared/mapReviewsPrompt';
-import { config } from './config';
+import { isMapsUrl } from './mapReviews';
+import { splitMapsQuestion } from './mapQuestion';
+import { resolveMapsPrompt } from './mapUrlPrompt';
+import type { MapPlaceRef } from '../shared/conversationDoc';
 
-export { fetchRawText, ensureHttpScheme, runParserBlocks, runCssSelector, parseRssFeed, extractFeedLinks };
+export { fetchRawText, fetchRawResponse, ensureHttpScheme, runParserBlocks, runCssSelector, parseRssFeed, extractFeedLinks };
 export type { ParserBlock, ParserBlockType, RssFeedItem };
 
 const MAX_CONTENT_CHARS = 80_000;
@@ -98,6 +99,10 @@ async function probeCommonFeedPaths(siteUrl: string): Promise<FeedCandidate[]> {
 }
 
 export async function fetchAndParse(url: string, options?: FetchAndParseOptions): Promise<UrlParseResult> {
+  if (options?.rawHtml && !options.parserBlocks?.length && !options.xmlMode && !options.bodyText) {
+    return rawHtmlOf(await loadPageResult(url), url, options.maxChars);
+  }
+
   const html = await loadPageHtml(url);
 
   if (options?.parserBlocks && options.parserBlocks.length > 0) {
@@ -112,14 +117,22 @@ export async function fetchAndParse(url: string, options?: FetchAndParseOptions)
 
   if (options?.bodyText) return bodyTextOf(html, url);
 
-  if (options?.rawHtml) {
-    const image = extractCoverImage(html, url);
-    const limit = options.maxChars ?? MAX_CONTENT_CHARS;
-    const raw = html.length > limit ? html.slice(0, limit) : html;
-    return { title: url, url, cleanedText: raw, truncated: html.length > limit, image };
-  }
-
   return parseHtml(html, url);
+}
+
+// `url` is the address the page was served from (after redirects), so callers can
+// resolve the page's relative links against the right document.
+function rawHtmlOf({ html, finalUrl }: PageLoadResult, requestedUrl: string, maxChars?: number): UrlParseResult {
+  const served = finalUrl || requestedUrl;
+  const limit = maxChars ?? MAX_CONTENT_CHARS;
+  const raw = html.length > limit ? html.slice(0, limit) : html;
+  return {
+    title: requestedUrl,
+    url: served,
+    cleanedText: raw,
+    truncated: html.length > limit,
+    image: extractCoverImage(html, served),
+  };
 }
 
 export function buildUrlAnalysisPrompt(
@@ -145,6 +158,18 @@ export function buildYoutubePrompt(
     .replace(/\{\{title\}\}/g, () => vars.title)
     .replace(/\{\{url\}\}/g, () => vars.url)
     .replace(/\{\{transcript\}\}/g, () => vars.transcript);
+}
+
+/**
+ * A custom template without `{{url}}` or `{{transcript}}` would ask for a summary of nothing, so the
+ * missing slots go after the user's text. The built-in templates carry both and pass through as is.
+ */
+export function withVideoSlots(template: string): string {
+  const missing = [
+    template.includes('{{url}}') ? '' : '{{url}}',
+    template.includes('{{transcript}}') ? '' : '---\n{{transcript}}\n---',
+  ].filter(Boolean);
+  return missing.length ? [template.trimEnd(), ...missing].filter(Boolean).join('\n\n') : template;
 }
 
 function absoluteHttpUrl(raw: string | undefined, base: string): string {
@@ -254,8 +279,9 @@ export function parseHtml(html: string, sourceUrl: string, options?: ParseHtmlOp
 interface UrlPromptContext {
   langData: Record<string, string>;
   youtubePrompt: string;
+  /** Where the prompt will be sent; fetched content is fitted to this model's input limit. */
+  targetUrl: string;
   onLog: (msg: string) => void;
-  onNotify: (title: string, body: string) => void;
 }
 
 export interface ResolvedPrompt {
@@ -263,33 +289,40 @@ export interface ResolvedPrompt {
   forceProviderUrl?: string;
   title?: string;
   displayPrompt?: string;
+  /** The Maps place the prompt carries reviews of. */
+  map?: MapPlaceRef;
 }
 
 export async function resolveUrlPrompt(text: string, ctx: UrlPromptContext): Promise<ResolvedPrompt> {
-  if (!isSingleUrl(text)) return { prompt: text };
+  if (!isSingleUrl(text)) {
+    const asked = splitMapsQuestion(text);
+    if (!asked) return { prompt: text };
+    return await resolveMapsPrompt(asked.url, asked.question, ctx) ?? { prompt: text };
+  }
 
   if (isYoutubeUrl(text)) return resolveYoutubePrompt(text, ctx);
 
   if (isMapsUrl(text)) {
-    const maps = await resolveMapsPrompt(text, ctx);
+    const maps = await resolveMapsPrompt(text.trim(), '', ctx);
     if (maps) return maps;
   }
 
   const logFetching = ctx.langData['urlParser.log.fetching'] ?? '🔗 URL detected — fetching page content...';
-  const notifyTitle = ctx.langData['urlParser.notify.title'] ?? 'Yobi';
-  const notifyBody = (ctx.langData['urlParser.notify.body'] ?? 'Fetching: {{url}}').replace('{{url}}', () => text);
   ctx.onLog(logFetching);
-  ctx.onNotify(notifyTitle, notifyBody);
 
   try {
     const parsed = await fetchAndParse(text);
     const promptTemplate = ctx.langData['urlParser.prompt'] ?? '';
-    const truncatedLabel = ctx.langData['urlParser.truncated'] ?? '(Content truncated — too long)';
+    // Only a truncated page carries the "say it is incomplete" request. Asking the model to judge
+    // truncation on every page made it add "no truncation found" notes to complete summaries.
+    const truncatedLabel = ctx.langData['urlParser.truncated']
+      ?? '(The page was too long and the rest was not sent. End the summary with a note that it is incomplete.)';
     const prompt = buildUrlAnalysisPrompt(parsed, promptTemplate, truncatedLabel);
     const logDone = (ctx.langData['urlParser.log.done'] ?? '🔗 Fetched {{chars}} chars — wrapping analysis prompt...')
       .replace('{{chars}}', String(parsed.cleanedText.length));
     ctx.onLog(logDone);
-    return { prompt };
+    // The record shows the link as typed; the summary template and page text go to the model only.
+    return { prompt, displayPrompt: text.trim() };
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     const logError = (ctx.langData['urlParser.log.error'] ?? '❌ URL fetch failed: {{error}} (sending raw URL instead)')
@@ -300,12 +333,9 @@ export async function resolveUrlPrompt(text: string, ctx: UrlPromptContext): Pro
 }
 
 async function resolveYoutubePrompt(text: string, ctx: UrlPromptContext): Promise<ResolvedPrompt> {
-  const notifyTitle = ctx.langData['urlParser.notify.title'] ?? 'Yobi';
-  const notifyBody = (ctx.langData['youtube.notify.body'] ?? 'Fetching transcript: {{url}}').replace('{{url}}', text);
   ctx.onLog(ctx.langData['youtube.log.fetching'] ?? '▶️ YouTube URL detected — fetching transcript...');
-  ctx.onNotify(notifyTitle, notifyBody);
 
-  const template = ctx.youtubePrompt.trim() || ctx.langData['youtube.prompt.default'] || '';
+  const template = withVideoSlots(ctx.youtubePrompt.trim() || ctx.langData['youtube.prompt.default'] || '');
   const result = await fetchYoutubeVideo(text).catch(() => ({ title: '', transcript: '', ok: false }));
 
   if (result.ok) {
@@ -318,6 +348,7 @@ async function resolveYoutubePrompt(text: string, ctx: UrlPromptContext): Promis
         url: text,
         transcript: result.transcript,
       }),
+      displayPrompt: text.trim(),
       title: result.title || undefined,
     };
   }
@@ -327,47 +358,8 @@ async function resolveYoutubePrompt(text: string, ctx: UrlPromptContext): Promis
     ?? '(No transcript/captions are available for this video. Please watch the video at the URL above and summarize it.)';
   return {
     prompt: buildYoutubePrompt(template, { title: result.title || text, url: text, transcript: note }),
+    displayPrompt: text.trim(),
     forceProviderUrl: PROVIDER_URLS.gemini,
     title: result.title || undefined,
   };
-}
-
-async function resolveMapsPrompt(text: string, ctx: UrlPromptContext): Promise<ResolvedPrompt | null> {
-  const notifyTitle = ctx.langData['urlParser.notify.title'] ?? 'Yobi';
-  ctx.onLog(ctx.langData['mapReviews.log.fetching'] ?? '🗺️ Google Maps place detected — fetching reviews...');
-  ctx.onNotify(notifyTitle, (ctx.langData['mapReviews.notify.body'] ?? 'Analyzing Maps reviews: {{url}}').replace('{{url}}', text));
-
-  try {
-    const result = await fetchMapReviews(text, {
-      sort: 'mixed',
-      count: 100,
-      hl: config.locale,
-      onLog: (msg) => ctx.onLog(`🗺️ ${msg}`),
-    });
-    if (result.reviews.length === 0) return null;
-
-    const stats = await fetchPlaceStats(result.placeUrl, { onLog: (msg) => ctx.onLog(`🗺️ ${msg}`) }).catch(() => null);
-    const { verdict } = localizedVerdict(stats?.rating ?? '', stats?.total ?? '', ctx.langData);
-    const prompt = mapReviewsPrompt({
-      place: result.place || text,
-      reviews: JSON.stringify(result.reviews),
-      rating: stats?.rating ?? '',
-      total: stats?.total ?? '',
-      positive: stats?.positive ?? '',
-      distribution: stats?.distribution ?? '',
-      verdict,
-    }, config.locale);
-    ctx.onLog((ctx.langData['mapReviews.log.done'] ?? '🗺️ {{count}} reviews fetched — wrapping analysis prompt...')
-      .replace('{{count}}', String(result.reviews.length)));
-    const displayPrompt = (ctx.langData['mapReviews.displayPrompt'] ?? '🗺️ Google Maps review analysis: {{place}}')
-      .replace('{{place}}', () => result.place || text);
-    const title = result.place
-      ? (ctx.langData['mapReviews.title'] ?? 'Reviews: {{place}}').replace('{{place}}', () => result.place)
-      : undefined;
-    return { prompt, displayPrompt, title };
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    ctx.onLog(`🗺️ Maps reviews fetch failed: ${errMsg} — falling back to page fetch`);
-    return null;
-  }
 }

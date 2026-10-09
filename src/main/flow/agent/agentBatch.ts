@@ -35,7 +35,7 @@ export interface BatchAction {
  * Builders that write, or whose second call depends on the first (`build_flow` reads the assessment
  * `assess_flow` left behind). Neither belongs in a set of calls that run side by side.
  */
-const SEQUENTIAL_BUILTINS = new Set<string>(['assess_flow', 'build_flow']);
+const SEQUENTIAL_BUILTINS = new Set<string>(['assess_flow', 'build_flow', 'edit_flow']);
 
 export interface BatchValidationContext {
   scope: AgentToolScope;

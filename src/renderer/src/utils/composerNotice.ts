@@ -1,10 +1,8 @@
 /**
- * The composer shows at most one notice at a time. Stacking them was the old shape: three
- * centred grey lines under the box, each one growing the footer and shoving the transcript up.
- * Priority runs most-consequential first — a connector riding on the next send costs a real
- * agent run, so it must never be the line that loses its slot to "attachments are ignored".
+ * The composer shows at most one notice at a time, most consequential first: a connector riding
+ * on the next send costs a real agent run, so it never loses its slot to "attachments are ignored".
  */
-export type ComposerNoticeKind = 'connectors' | 'flow' | 'web' | 'plain';
+export type ComposerNoticeKind = 'editor' | 'connectors' | 'flow' | 'web' | 'plain';
 
 export interface ComposerNoticeSpec {
   kind: ComposerNoticeKind;
@@ -29,9 +27,23 @@ export interface ComposerNoticeInput {
   webLabel?: string;
   /** Resolved text from the caller, e.g. "attachments are ignored in this mode". */
   plain: string | null;
+  /**
+   * The draft is open in an external editor (Ctrl+G). First, because it says where the text is
+   * being written right now; the others are about the last send and wait their turn.
+   */
+  editorOpen?: boolean;
 }
 
 export function pickComposerNotice(input: ComposerNoticeInput): ComposerNoticeSpec | null {
+  if (input.editorOpen) {
+    return {
+      kind: 'editor',
+      messageKey: 'chat.editor.editing',
+      message: null,
+      names: [],
+      actionKey: 'chat.editor.done',
+    };
+  }
   const autoWeb = input.autoWebActive === true;
   if (input.autoAttachedNames.length > 0) {
     return {

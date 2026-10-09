@@ -34,6 +34,8 @@ export interface SearchRunRequest {
   clientToken?: string;
   origin?: CommandOrigin;
   onProgressText?: (text: string) => void;
+  /** Name prefix for the file the answer starts when there is no conversation yet (a bot chat's). */
+  fileLabel?: string;
 }
 
 function mdLabel(title: string): string {
@@ -51,7 +53,8 @@ function summarizeQuery(query: string): string {
   return compactPreview(query, 96);
 }
 
-function progressText(progress: SearchProgress, strings: Strings): string {
+/** One line of status, or null for the bookkeeping events a status line has nothing to say about. */
+function progressText(progress: SearchProgress, strings: Strings): string | null {
   switch (progress.stage) {
     case 'planning':
       return t(strings, 'search.progress.planning');
@@ -61,8 +64,14 @@ function progressText(progress: SearchProgress, strings: Strings): string {
       return t(strings, 'search.progress.read', { host: progress.host });
     case 'synthesizing':
       return t(strings, 'search.progress.synthesizing');
-    default:
+    case 'analyzing':
+    case 'summarizing':
       return t(strings, 'search.progress.analyzing');
+    case 'outline':
+    case 'searched':
+    case 'readFailed':
+    case 'summarized':
+      return null;
   }
 }
 
@@ -75,6 +84,8 @@ export function runSearchCommand(
   const searchMode: SearchMode = request.mode === 'quick' ? 'quick' : 'standard';
   const commandName = searchMode === 'quick' ? BUILTIN_QUICKSEARCH_COMMAND : BUILTIN_SEARCH_COMMAND;
   const resolvedTarget = (request.targetUrl ?? '').trim() || config.targetUrl;
+  // Reset when the run leaves the queue, so the turn's duration is the search, not the wait.
+  let startedAt = Date.now();
 
   const deliver = async (
     answer: string,
@@ -104,6 +115,7 @@ export function runSearchCommand(
         providerLabel: markdownOptions.provider,
         command: commandName,
         usage,
+        startedAt,
       });
       return { success: true, answer: response, title };
     }
@@ -116,15 +128,19 @@ export function runSearchCommand(
       providerLabel: markdownOptions.provider,
       command: commandName,
       usage,
+      startedAt,
+      ...(request.fileLabel ? { fileLabel: request.fileLabel } : {}),
     });
     sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
     return { success: true, filePath, answer: response, title };
   };
 
   const run = async (taskId?: string): Promise<SearchRunOutcome> => {
+    startedAt = Date.now();
     try {
       const report = (progress: SearchProgress): void => {
         const text = progressText(progress, strings);
+        if (text === null) return;
         if (taskId) flowManager?.setQueueTaskProgress(taskId, text);
         request.onProgressText?.(text);
       };

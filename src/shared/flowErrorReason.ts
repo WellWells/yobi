@@ -49,11 +49,8 @@ const REASON_PATTERNS: ReadonlyArray<readonly [FlowErrorReason, RegExp]> = [
 
 /**
  * Trims what a step threw down to something that can ride back to whoever sent the bot command.
- *
- * A failed command used to answer with nothing but "the flow failed", which is unactionable when
- * the cause is a mistyped group name. The message is a diagnostic string, not prose, so this
- * only flattens the whitespace and caps the length — reshaping it would be guessing at a format
- * that every skill writes differently.
+ * The message is a diagnostic string, not prose, so this only flattens whitespace and caps the
+ * length; every skill formats it differently.
  */
 export function summarizeFlowError(message: string | undefined, maxChars = 300): string {
   const text = (message ?? '').replace(/\s+/g, ' ').trim();

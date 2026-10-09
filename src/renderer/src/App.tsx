@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppWindow, LogOut } from 'lucide-react';
-import { Modal, Button, Group, Text, Checkbox, Box, Flex, Stack, Loader } from '@mantine/core';
+import { Modal, Button, Group, Text, Checkbox, Box, Flex, Loader } from '@mantine/core';
 import { TitleBar } from './components/TitleBar';
 import { AgentConfirmDialog } from './components/AgentConfirmDialog';
 import { ViewBoundary } from './components/ViewBoundary';
@@ -12,13 +12,11 @@ import { useAppBootstrap } from './hooks/useAppBootstrap';
 import { useUiNotifications } from './hooks/useUiNotifications';
 import { useShortcutDispatcher } from './shortcuts/useShortcutDispatcher';
 import { ipcEvents, windowApi } from './api/electronApi';
+import { MarkdownLabelsContext } from './utils/markdownConfig';
+import { buildMarkdownLabels } from '../../shared/markdownLabels';
 
-// The app always opens on the chat view, so it is the only one worth putting on
-// the first-paint path. The other four — settings with its dozen sections, the
-// flow editor, dnd-kit, react-virtual — used to sit in the entry chunk purely to
-// be hidden by `display: none`. They are pulled in on idle once i18n is ready,
-// early enough that switching views finds them in memory, and once resolved they
-// stay mounted for good, which is what the display-toggle lifecycle below needs.
+// Only the chat view is on the first-paint path. The other views are lazy chunks prefetched on idle
+// once i18n is ready, and stay mounted once resolved, as the display-toggle lifecycle below needs.
 const importSettingsView = () => import('./views/SettingsView');
 const importAboutView = () => import('./views/AboutView');
 const importLogView = () => import('./views/LogView');
@@ -62,18 +60,19 @@ export const App: React.FC = () => {
     return unsub;
   }, []);
 
+  const markdownLabels = useMemo(() => buildMarkdownLabels(t), [t]);
+
+  // No words here: the language packs are what this gate is waiting for.
   if (!isReady) {
     return (
       <Flex direction="column" h="100vh" bg="var(--mantine-color-body)" align="center" justify="center" style={{ overflow: 'hidden' }}>
-        <Stack align="center" gap={16}>
-          <Loader size="md" color="var(--mantine-color-accent)" />
-          <Text fz="var(--font-size-md)" c="dimmed">Loading...</Text>
-        </Stack>
+        <Loader size="md" color="var(--mantine-color-accent)" />
       </Flex>
     );
   }
 
   return (
+    <MarkdownLabelsContext.Provider value={markdownLabels}>
     <Flex direction="column" h="100vh" bg="var(--mantine-color-body)" pos="relative" style={{ overflow: 'hidden' }}>
       <TitleBar />
       <Flex flex={1} style={{ overflow: 'hidden' }}>
@@ -174,6 +173,7 @@ export const App: React.FC = () => {
         />
       </Modal>
     </Flex>
+    </MarkdownLabelsContext.Provider>
   );
 };
 

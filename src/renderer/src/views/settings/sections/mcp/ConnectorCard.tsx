@@ -5,6 +5,8 @@ import { connectorTint, renderConnectorIcon } from '../../../../config/connector
 import { Z_POPOVER } from '../../../../config/zLayers';
 import { useThemeStore } from '../../../../store/themeStore';
 import classes from './ConnectorCard.module.css';
+import { connectorCardDetail } from './connectorTiles';
+import { BotAccessCaption } from '../BotAccessCaption';
 import type { McpCatalogEntry } from '../../../../../../shared/mcpCatalog';
 import type { McpServerView } from '../../../../../../shared/types';
 
@@ -13,6 +15,8 @@ export interface ConnectorCardProps {
   server?: McpServerView;
   name: string;
   description: string;
+  /** Who may use this connector through the bots (read-only); omitted while no bot is on. */
+  botAccess?: string;
   busy: boolean;
   t: (key: string) => string;
   onAdd: () => void;
@@ -24,7 +28,7 @@ export interface ConnectorCardProps {
 }
 
 export const ConnectorCard: React.FC<ConnectorCardProps> = ({
-  entry, server, name, description, busy, t,
+  entry, server, name, description, botAccess, busy, t,
   onAdd, onConnect, onDisconnect, onEdit, onRemove, onOpenTools,
 }) => {
   const status = server?.status;
@@ -65,26 +69,24 @@ export const ConnectorCard: React.FC<ConnectorCardProps> = ({
             <Group gap={6} wrap="nowrap" miw={0}>
               <Text fz="var(--font-size-base)" fw={600} c="var(--text-primary)" truncate>{name}</Text>
               {connected && (
-                <Badge variant="light" color="teal" radius="sm" size="sm" tt="none" fw={500}>
+                <Badge variant="light" color="var(--mantine-color-success)" size="sm">
                   {t('settings.mcp.toolCount').replace('{{count}}', String(toolCount))}
                 </Badge>
               )}
               {needsAuth && (
                 <Badge
                   variant="light"
-                  color={status === 'error' ? 'red' : 'yellow'}
-                  radius="sm"
+                  color={status === 'error' ? 'var(--mantine-color-error)' : 'var(--mantine-color-warning)'}
                   size="sm"
-                  tt="none"
-                  fw={500}
                 >
                   {t(status === 'error' ? 'settings.mcp.status.error' : 'settings.mcp.status.needsAuth')}
                 </Badge>
               )}
             </Group>
             <Text fz="var(--font-size-sm)" c="dimmed" lh={1.5} lineClamp={2}>
-              {server?.error && !connected ? server.error : description}
+              {connectorCardDetail(server, description)}
             </Text>
+            {botAccess && <BotAccessCaption text={botAccess} />}
           </Stack>
         </Group>
 

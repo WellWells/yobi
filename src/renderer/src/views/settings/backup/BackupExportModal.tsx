@@ -7,17 +7,12 @@ import { backupApi } from '../../../api/electronApi';
 import { BACKUP_CATEGORY_IDS } from '../../../../../shared/types';
 import type { BackupCategoryId, BackupCategoryInfo } from '../../../../../shared/types';
 import { Z_MODAL } from '../../../config/zLayers';
+import { backupCountLabel } from './backupLabels';
 
 interface Props {
   open: boolean;
   t: (key: string) => string;
   onClose: () => void;
-}
-
-function countLabel(t: (key: string) => string, id: BackupCategoryId, info?: BackupCategoryInfo): string {
-  if (!info?.available) return t('settings.backup.unavailable');
-  if (id === 'config') return '';
-  return t(`settings.backup.count.${id}`).replace('{{count}}', String(info.count));
 }
 
 export const BackupExportModal: React.FC<Props> = ({ open, t, onClose }) => {
@@ -95,7 +90,7 @@ export const BackupExportModal: React.FC<Props> = ({ open, t, onClose }) => {
                       <Group justify="space-between" wrap="nowrap" gap="sm" align="baseline">
                         <Text fz="sm" fw={600}>{t(`settings.backup.category.${id}`)}</Text>
                         <Text fz="xs" c="dimmed" style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
-                          {countLabel(t, id, info)}
+                          {backupCountLabel(t, id, info)}
                         </Text>
                       </Group>
                       <Text fz="xs" c="dimmed" lh={1.45}>{t(`settings.backup.desc.${id}`)}</Text>
@@ -109,7 +104,7 @@ export const BackupExportModal: React.FC<Props> = ({ open, t, onClose }) => {
 
         <Text fz="xs" c="dimmed">{t('settings.backup.secretsNote')}</Text>
 
-        {error && <Text fz="xs" c="red">{error}</Text>}
+        {error && <Text fz="xs" c="var(--mantine-color-error)">{error}</Text>}
 
         <Group justify="flex-end">
           <AppButton

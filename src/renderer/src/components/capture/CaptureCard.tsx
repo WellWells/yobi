@@ -1,15 +1,22 @@
-import React from 'react';
+import React, { useContext } from 'react';
+import type { ExtraProps } from 'react-markdown';
 import type { MarkdownCaptureRequest } from '../../../../shared/types';
-import { BaseMarkdown, SharedCodeBlock, SharedPreBlock } from '../../utils/markdownConfig';
-import { captureCardCssVars } from '../../hooks/captureTheme';
 import {
-  CAPTURE_CODE_THEME,
-  CaptureDiagramThemeContext,
-  ForcedCodeThemeContext,
-  captureDiagramTheme,
-} from '../../utils/forcedCodeTheme';
+  BaseMarkdown,
+  MarkdownImage,
+  MarkdownLabelsContext,
+  SharedCodeBlock,
+  SharedPreBlock,
+} from '../../utils/markdownConfig';
+import { captureCardCssVars } from '../../hooks/captureTheme';
+import { CaptureContentThemeContext, captureContentTheme } from '../../utils/forcedCodeTheme';
 
-const mdComponents = { pre: SharedPreBlock, code: SharedCodeBlock };
+/** An image or PDF cannot be clicked open, so a collapsible section is exported expanded. */
+const ExpandedDetails: React.FC<React.ComponentPropsWithoutRef<'details'> & ExtraProps> = ({ node: _node, ...props }) => (
+  <details {...props} open />
+);
+
+const mdComponents = { pre: SharedPreBlock, code: SharedCodeBlock, img: MarkdownImage, details: ExpandedDetails };
 
 const MarkdownBlock: React.FC<{ children: string }> = ({ children }) => (
   // In the capture window `capture-main` has already awaited loadKatex(), so the
@@ -116,10 +123,12 @@ interface CaptureCardProps {
 export const CaptureCard: React.FC<CaptureCardProps> = ({ request, rootId }) => {
   const { payload, options } = request;
   const bubble = options.cardLayout === 'bubble';
+  // The export preview sits inside the app and inherits its labels; the capture window gets them from main.
+  const inheritedLabels = useContext(MarkdownLabelsContext);
 
   return (
-    <ForcedCodeThemeContext.Provider value={CAPTURE_CODE_THEME}>
-      <CaptureDiagramThemeContext.Provider value={captureDiagramTheme(options.cardTheme)}>
+    <MarkdownLabelsContext.Provider value={request.markdownLabels ?? inheritedLabels}>
+    <CaptureContentThemeContext.Provider value={captureContentTheme(options.cardTheme)}>
         <div
           {...(rootId ? { id: rootId } : {})}
           className="capture-card-root"
@@ -142,7 +151,7 @@ export const CaptureCard: React.FC<CaptureCardProps> = ({ request, rootId }) => 
             </article>
           </div>
         </div>
-      </CaptureDiagramThemeContext.Provider>
-    </ForcedCodeThemeContext.Provider>
+    </CaptureContentThemeContext.Provider>
+    </MarkdownLabelsContext.Provider>
   );
 };

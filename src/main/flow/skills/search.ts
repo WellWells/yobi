@@ -1,4 +1,5 @@
 import { searchSourceList, SearchPipelineError } from '../../search';
+import { SEARCH_BLOCKED_KEY, SearchBlockedError } from '../../search/blocked';
 import { config } from '../../config';
 import { getLangCache, t } from '../../i18n';
 import { sendLog } from '../../helpers';
@@ -26,6 +27,9 @@ export async function execSearch(skillConfig: Record<string, string>): Promise<s
       ? t(getLangCache(), err.i18nKey)
       : err instanceof Error ? err.message : String(err);
     sendLog(`⚠️ [Flow] Search failed: ${message}`);
+    // Blocked is not "no results": [] would make /agent retry into the block and a stop step see
+    // nothing new. Same error `research` raises.
+    if (err instanceof SearchPipelineError && err.i18nKey === SEARCH_BLOCKED_KEY) throw new SearchBlockedError(message);
     return '[]';
   }
 }

@@ -7,6 +7,7 @@ import { languageForLocale } from '../../shared/localeLanguage';
 import { ensureWorkerWindow } from '../windows';
 import { llmLane } from '../flow/lanes';
 import { sendLog } from '../helpers';
+import { workerWindowUnavailable } from '../workerWindowError';
 import type { SourceDoc } from './types';
 
 const BYOK_IDLE_TIMEOUT_MS = 120_000;
@@ -196,14 +197,9 @@ function seconds(ms: number): string {
 }
 
 /**
- * One round trip through the worker window, timed.
- *
- * A browser provider is not paid for in tokens but in a fixed navigate-fill-wait, and `llmLane`
- * admits one caller at a time — so a second call does not overlap the first, it is added to it.
- * Nothing else in the pipeline reports that price, which is why this line exists.
- *
- * No `expectThreadUrl` is ever passed: a search borrows the provider for one question and must
- * not land in the conversation the user keeps there.
+ * One timed round trip through the worker window. `llmLane` admits one caller at a time, so the
+ * logged duration is the real cost of each extra call. No `expectThreadUrl` is passed: a search
+ * must not land in the conversation the user keeps on that provider.
  */
 export async function runWorkerCompletion(
   prompt: string,
@@ -220,7 +216,7 @@ export async function runWorkerCompletion(
     const startedAt = Date.now();
     const queued = startedAt - queuedAt;
     const workerWin = await ensureWorkerWindow(targetUrl);
-    if (!workerWin || workerWin.isDestroyed()) throw new Error('Worker window not available');
+    if (!workerWin || workerWin.isDestroyed()) throw workerWindowUnavailable();
     try {
       const { response } = await runAutomation(workerWin, prepared.prompt, timeoutMs, targetUrl);
       return response;

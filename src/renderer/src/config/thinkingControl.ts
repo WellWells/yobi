@@ -6,26 +6,15 @@ import { selectedChatgptEffort, selectedChatgptModel } from '../../../shared/cha
 import type { ChatgptModelState } from '../../../shared/chatgptModels';
 
 /*
- * The composer's thinking control, derived from what each provider's page offers (measured
- * 2026-09-19 on the worker's own accounts):
- *
- * - Gemini: one "extended thinking" switch, and every model takes it (3.5 Flash-Lite, 3.8 Flash
- *   and 3.1 Pro all showed it enabled), so it is one setting, not one per model.
- * - Claude: per model. Sonnet 5 has a switch plus five effort levels, Sonnet 4.6 a switch plus
- *   four, Haiku 4.5 a switch only. A model never selected on the page has unknown options.
- * - ChatGPT: Free has one switch; Plus has no switch but an effort slider per version whose first
- *   step, Instant, is the "not thinking" one.
- * - Perplexity and BYOK: nothing to set.
- *
- * Nothing is offered that the page has not shown: an unread catalog or unknown options mean no
- * control, never a guess.
+ * The composer's thinking control, derived from what each provider's page offers. Nothing is
+ * offered that the page has not shown: an unread catalog or unknown options mean no control.
  */
 
 export type ThinkingProvider = 'gemini' | 'claude' | 'chatgpt';
 export type ThinkingLevelProvider = 'claude' | 'chatgpt';
 
 export interface ThinkingLevel {
-  /** The page's language-independent id (`data-effort-id`, or a ChatGPT preset key). */
+  /** The page's language-independent id for the level. */
   id: string;
   /** The page's own label — only shown for an id this app has no translation for. */
   pageLabel: string;
@@ -115,9 +104,8 @@ export function isInstantEffort(id: string): boolean {
 }
 
 /*
- * Levels are drawn in the app's language, not the page's: claude.ai follows the account's
- * language (English on a zh-TW machine, measured), the others the system's. Keyed by the page's
- * language-independent ids; a level first seen after this was written keeps the page's label.
+ * Levels are labelled in the app's language, keyed by the page's language-independent ids; an id
+ * with no translation here keeps the page's label.
  */
 const LEVEL_KEYS: Record<ThinkingLevelProvider, Record<string, string>> = {
   claude: {
@@ -129,7 +117,7 @@ const LEVEL_KEYS: Record<ThinkingLevelProvider, Record<string, string>> = {
   },
   chatgpt: {
     instant: 'chat.thinkingMode.level.instant',
-    // The zh-TW page names these 中 and 高 on the same slider.
+    // Medium and high, matching the page's own slider.
     'thinking:standard': 'chat.thinkingMode.level.medium',
     'thinking:extended': 'chat.thinkingMode.level.high',
   },

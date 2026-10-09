@@ -1,10 +1,8 @@
 /**
  * In-process MCP server exposing the LINE reader as tools.
  *
- * Deliberately native-free: it imports only the LineServiceLike TYPE and takes an
- * injected service, so the full tool surface (list + dispatch over InMemoryTransport)
- * is tested offline with a fixture-backed fake service. The native wiring that builds a
- * real LineService lives in lineConnection.ts.
+ * Native-free: it imports only the LineServiceLike type and takes an injected service. The native
+ * wiring that builds a real LineService lives in lineConnection.ts.
  */
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult, type Tool } from '@modelcontextprotocol/sdk/types.js';
@@ -108,11 +106,8 @@ export const LINE_TOOLS: Tool[] = [
 
 const BARE_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?)?$/;
 
-// Lenient on purpose: accept a date ("2026-06-15") or datetime, with or without a timezone.
-// A bare date/datetime is read in the HOST's local zone to match how tsToIso() renders
-// timestamps, so the model is not forced into exact ISO 8601 with an offset every time.
-// It is built from calendar parts rather than by appending the CURRENT offset, because in a
-// DST zone "now"'s offset is the wrong one for a date six months away.
+// Accepts a date or datetime with or without an offset. Offset-less input is read in the host's local
+// zone (like tsToIso) and built from calendar parts, since today's DST offset may not apply to that date.
 export function parseTimeToSeconds(value: string): number {
   const trimmed = typeof value === 'string' ? value.trim() : '';
   if (!trimmed) throw new Error('Empty date value');

@@ -1,5 +1,6 @@
 import { BrowserWindow } from 'electron';
-import { CLEAN_UA } from './userAgent';
+import { userAgentForUrl } from './userAgent';
+import { loadURLFollowingIdentity } from './navigationIdentity';
 import { SILENT_WEB_PREFERENCES, muteWindow } from './silentWindow';
 import { getWindowIcon } from './windows';
 import { URL_PARSER_PARTITION, ensureHttpScheme } from './pageLoader';
@@ -110,7 +111,7 @@ export async function pickSelector(args: ScraperPickRequest): Promise<ScraperPic
     },
   });
   activePicker = win;
-  win.webContents.setUserAgent(CLEAN_UA);
+  win.webContents.setUserAgent(userAgentForUrl(url));
   muteWindow(win);
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());
@@ -130,7 +131,7 @@ export async function pickSelector(args: ScraperPickRequest): Promise<ScraperPic
         if (isMainFrame && code !== -3) finish();
       });
       win.once('closed', finish);
-      win.loadURL(url).catch(finish);
+      loadURLFollowingIdentity(win.webContents, url).catch(finish);
       setTimeout(finish, LOAD_TIMEOUT_MS);
     });
 

@@ -109,12 +109,9 @@ const groupRotation = new Map<string, number>();
 const keyCooldown = new Map<string, number>();
 
 /**
- * One request in flight per key, across the whole app.
- *
- * Callers nest: an `/agent` batch runs several `research` calls at once and each one's map phase
- * runs at `byokConcurrencyCeiling`, so a three-key group of free-tier keys saw nine requests at
- * once and the cooldown below only learnt about it from the 429s. Keyed by instance, not by the
- * group URL, because a key that belongs to two groups is still one key to the provider's limiter.
+ * One request in flight per key, across the whole app: callers nest (concurrent `research` calls
+ * each fan out). Keyed by instance, not group URL: a key in two groups is still one key to the
+ * provider's rate limiter.
  */
 const keySlots = new Map<string, Semaphore>();
 
@@ -132,8 +129,8 @@ function isKeyBusy(id: string | undefined): boolean {
 }
 
 /**
- * Runs `call` holding the key's slot. A cancel lands immediately even while queued behind another
- * caller's request, and is reported the way an in-flight cancel always has been.
+ * Runs `call` holding the key's slot. A cancel lands immediately even while queued, and is
+ * reported the same way as an in-flight cancel.
  */
 async function callInKeySlot<T>(id: string, call: () => Promise<T>, signal?: AbortSignal): Promise<T> {
   const slot = byokKeySlot(id);

@@ -26,40 +26,50 @@ const DDG_REGION: Record<string, string> = {
 };
 
 /**
- * DuckDuckGo answers a burst with a verification page, and after that every search fails for
- * minutes. One research sends its whole plan at once, so the app-wide cap is exactly one plan's
- * worth: a single research is as fast as before, while an `/agent` batch waits its turn.
- *
- * Capping concurrency alone did not hold. Measured 2026-09-20: two research calls in one batch
- * sent six queries inside a second — a SERP comes back in a few hundred milliseconds, so the second
- * three went out the moment the first three returned — two of the six got the verification page,
- * and the next run's searches all did. So starts are paced too: at most one plan's worth per
- * `DDG_WINDOW_MS`, which is the rhythm a single research always had.
+ * App-wide DuckDuckGo pacing: at most one plan's worth of queries in flight, and each start draws
+ * from a bucket that holds one plan and refills one start per `DDG_WINDOW_MS`.
  */
 const ddgGate = new Semaphore(MAX_PLAN_QUERIES);
 export const DDG_WINDOW_MS = 4_000;
-const recentStarts: number[] = [];
+let startTokens = MAX_PLAN_QUERIES;
+let tokensAt = 0;
 
-async function awaitDdgWindow(): Promise<void> {
+/**
+ * After a verification page nothing is sent for this long; callers get the same
+ * `SerpChallengeError` without touching the network.
+ */
+export const DDG_COOLDOWN_MS = 180_000;
+let challengedUntil = 0;
+
+function throwIfCoolingDown(now: number): void {
+  if (now >= challengedUntil) return;
+  throw new SerpChallengeError(`cooling down, ${Math.ceil((challengedUntil - now) / 1_000)} s left`);
+}
+
+async function awaitDdgStart(): Promise<void> {
   for (;;) {
     const now = Date.now();
-    while (recentStarts.length > 0 && now - recentStarts[0] >= DDG_WINDOW_MS) recentStarts.shift();
-    if (recentStarts.length < MAX_PLAN_QUERIES) {
-      recentStarts.push(now);
+    // Checked on every pass: a query queued here must not go out after its neighbour was challenged.
+    throwIfCoolingDown(now);
+    startTokens = Math.min(MAX_PLAN_QUERIES, startTokens + Math.max(0, now - tokensAt) / DDG_WINDOW_MS);
+    tokensAt = now;
+    if (startTokens >= 1) {
+      startTokens -= 1;
       return;
     }
-    await new Promise((resolve) => setTimeout(resolve, DDG_WINDOW_MS - (now - recentStarts[0])));
+    await new Promise((resolve) => setTimeout(resolve, Math.ceil((1 - startTokens) * DDG_WINDOW_MS)));
   }
 }
 
 export async function searchDdg(query: string, temporal: TemporalFilter, locale: string): Promise<SerpHit[]> {
+  throwIfCoolingDown(Date.now());
   const params = new URLSearchParams({ q: query });
   const region = DDG_REGION[locale];
   if (region) params.set('kl', region);
   if (DDG_DF[temporal]) params.set('df', DDG_DF[temporal]);
 
   const html = await ddgGate.runExclusive(async () => {
-    await awaitDdgWindow();
+    await awaitDdgStart();
     return fetchRawText(`https://html.duckduckgo.com/html/?${params.toString()}`, {
       headers: { 'User-Agent': CLEAN_UA, 'Accept-Language': locale },
     });
@@ -76,6 +86,7 @@ export async function searchDdg(query: string, temporal: TemporalFilter, locale:
     hits.push(snippet ? { title, url, snippet } : { title, url });
   });
   if (hits.length === 0 && html.includes('anomaly-modal')) {
+    challengedUntil = Math.max(challengedUntil, Date.now() + DDG_COOLDOWN_MS);
     throw new SerpChallengeError('anomaly page');
   }
   return hits;

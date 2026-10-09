@@ -2,6 +2,7 @@ import type {
   FlowBuildBlocker, FlowBuildIssue, FlowDefinition, SkillInstance, SkillType,
 } from '../../shared/types';
 import { SKILL_SPECS } from '../../shared/flowSkillSpecs';
+import type { RecipientIssue } from '../../shared/botRecipients';
 
 /**
  * What the verify phase adds on top of `validateFlowCandidate`. That one already rejects unknown
@@ -15,11 +16,8 @@ const REQUIRED_FIELDS = new Map<SkillType, string[]>(
 );
 
 /**
- * A value the generator wrote to fill a blank rather than because the request asked for it.
- *
- * Deliberately narrow. A false positive here tells the user to check a field that is already
- * right, and a build report that cries wolf is one the user stops reading — which costs more
- * than the placeholder it was meant to catch.
+ * A value the generator wrote to fill a blank. Deliberately narrow: false positives teach users to
+ * ignore the build report.
  */
 const PLACEHOLDER_RE = /example\.(?:com|org|net)|\byour[_-]?(?:feed|url|email|token|key|channel)\b|^<[^>]+>$|^(?:xxx+|todo|tbd|\.\.\.)$/i;
 
@@ -43,12 +41,11 @@ function blankIssues(steps: readonly SkillInstance[]): FlowBuildIssue[] {
 }
 
 /**
- * Steps that talk to something outside the app, so one dead link or one refused request ends the
- * whole batch unless they are told to fail soft. Documented in `src/main/flow/CLAUDE.md` as loop
- * convention 5, and until now enforced by nothing: the seen-cache has already marked the batch
- * read by the time the loop dies, so those items are never retried.
+ * Steps that talk to something outside the app. Inside a loop they must fail soft: one dead link
+ * or refused request would end the whole batch after the seen-cache already marked it read, so
+ * those items would never be retried.
  */
-const FAIL_SOFT_SKILLS = new Set<SkillType>(['browser', 'llm', 'bot']);
+const FAIL_SOFT_SKILLS = new Set<SkillType>(['browser', 'llm', 'bot', 'x_thread']);
 
 function failSoftIssues(steps: readonly SkillInstance[]): FlowBuildIssue[] {
   const issues: FlowBuildIssue[] = [];
@@ -93,4 +90,14 @@ export function lintGeneratedFlow(
     ...failSoftIssues(flow.steps),
     ...setupIssues(flow.steps, blocked),
   ];
+}
+
+/**
+ * What the recipient lookup could not settle, worded as build issues. Kept apart from the lint:
+ * it reads the paired chats, so it is the one check that is not a pure function of the flow.
+ */
+export function recipientBuildIssues(issues: readonly RecipientIssue[]): FlowBuildIssue[] {
+  return issues.map((issue): FlowBuildIssue => (issue.kind === 'broadcast'
+    ? { kind: 'broadcast', step: issue.index + 1, skill: 'bot', detail: String(issue.count) }
+    : { kind: 'recipient', step: issue.index + 1, skill: 'bot', detail: issue.token }));
 }

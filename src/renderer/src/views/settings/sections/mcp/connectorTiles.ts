@@ -13,6 +13,15 @@ export interface ConnectorTile {
   haystack: string;
 }
 
+/**
+ * The line under a connector's name. A failure reason replaces the description, except for a
+ * server that only needs signing in again: its badge already says so.
+ */
+export function connectorCardDetail(server: McpServerView | undefined, description: string): string {
+  if (!server?.error || server.status === 'connected' || server.status === 'needs_auth') return description;
+  return server.error;
+}
+
 export function buildTiles(servers: readonly McpServerView[], t: (key: string) => string): ConnectorTile[] {
   const byUrl = new Map(servers.map((server) => [normalizeMcpUrl(server.url), server]));
   const tiles: ConnectorTile[] = [];
@@ -45,6 +54,26 @@ export function buildTiles(servers: readonly McpServerView[], t: (key: string) =
   }
 
   return tiles;
+}
+
+/**
+ * A built-in card goes through the same search and chips as the catalog: it has no catalog
+ * category and no open-access entry, so only "All" and "Connected" can keep it.
+ */
+export function builtinTile(
+  id: string,
+  servers: readonly McpServerView[],
+  name: string,
+  description: string,
+): ConnectorTile {
+  const server = servers.find((s) => s.id === id);
+  return {
+    key: id,
+    ...(server ? { server } : {}),
+    name,
+    description,
+    haystack: `${name} ${description}`.toLowerCase(),
+  };
 }
 
 export function matchesFilter(tile: ConnectorTile, filter: string): boolean {

@@ -6,6 +6,8 @@ import * as os from 'node:os';
 import { getOutputDir } from '../../files';
 import { sendLog } from '../../helpers';
 import { ensureHttpScheme } from '../../urlParser';
+import { FlowUserError } from '../userError';
+import { parseNumberField } from './numberField';
 
 function pad(value: number): string {
   return String(value).padStart(2, '0');
@@ -180,6 +182,22 @@ export function sanitizeDownloadName(name: string): string {
   return path.basename(name).replace(/[<>:"/\\|?*]/g, '_').replace(/^\.+/, '').trim();
 }
 
+const DEFAULT_MAX_DOWNLOAD_MB = 100;
+
+/**
+ * Blank keeps the 100 MB cap; only an explicit "0" lifts it. Fractions are kept: flooring
+ * "0.5" would land on the "no limit" 0.
+ */
+export function resolveMaxSizeMb(raw: string | undefined): number {
+  const n = parseNumberField(raw);
+  return n !== null && n >= 0 ? n : DEFAULT_MAX_DOWNLOAD_MB;
+}
+
+/** Byte cap for a positive MB limit; never rounds down to 0, which would read as unlimited. */
+function maxDownloadBytes(maxSizeMb: number): number {
+  return Math.max(1, Math.floor(maxSizeMb * 1024 * 1024));
+}
+
 function autoDownloadName(ext: string): string {
   const d = new Date();
   return `file-${dateToken(d)}-${timeToken(d)}-${randToken()}${ext}`;
@@ -188,11 +206,17 @@ function autoDownloadName(ext: string): string {
 export async function execFileDownload(config: Record<string, string>, timeoutMs: number): Promise<string> {
   const url = ensureHttpScheme(config.url ?? '');
   if (!url) return '';
-  if (!/^https:\/\//i.test(url)) throw new Error(`file_download: only https:// URLs are allowed (got "${url}")`);
+  if (!/^https:\/\//i.test(url)) {
+    throw new FlowUserError(
+      'flow.error.httpsUrlOnly',
+      { url },
+      `file_download: only https:// URLs are allowed (got "${url}")`,
+    );
+  }
 
-  const parsedMax = Number((config.maxSizeMb ?? '').trim());
-  const maxSizeMb = Number.isFinite(parsedMax) && parsedMax >= 0 ? Math.floor(parsedMax) : 100;
-  const maxBytes = maxSizeMb > 0 ? maxSizeMb * 1024 * 1024 : 0;
+  const maxSizeMb = resolveMaxSizeMb(config.maxSizeMb);
+  const unlimited = maxSizeMb === 0;
+  const maxBytes = unlimited ? 0 : maxDownloadBytes(maxSizeMb);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1_000, timeoutMs));
@@ -203,7 +227,7 @@ export async function execFileDownload(config: Record<string, string>, timeoutMs
     if (!res.body) throw new Error('empty response body');
     const contentType = res.headers.get('content-type') ?? '';
     const declaredLen = Number(res.headers.get('content-length') ?? '');
-    if (maxBytes > 0 && Number.isFinite(declaredLen) && declaredLen > maxBytes) {
+    if (!unlimited && Number.isFinite(declaredLen) && declaredLen > maxBytes) {
       throw new Error(`file exceeds max size ${maxSizeMb} MB`);
     }
     const finalUrl = res.url || url;
@@ -224,7 +248,7 @@ export async function execFileDownload(config: Record<string, string>, timeoutMs
     try {
       for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
         bytes += chunk.length;
-        if (maxBytes > 0 && bytes > maxBytes) throw new Error(`file exceeds max size ${maxSizeMb} MB`);
+        if (!unlimited && bytes > maxBytes) throw new Error(`file exceeds max size ${maxSizeMb} MB`);
         if (!out.write(chunk)) await once(out, 'drain');
       }
       await new Promise<void>((resolve, reject) => out.end((err?: Error | null) => (err ? reject(err) : resolve())));

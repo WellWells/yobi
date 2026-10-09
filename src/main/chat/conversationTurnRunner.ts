@@ -2,7 +2,9 @@ import { config } from '../config';
 import { detectProvider } from '../providers';
 import type { ByokUsage } from '../providers/byokClient';
 import { isByokTargetUrl } from '../../shared/types';
-import type { ConversationDoc, ThreadMeta, TurnMeta } from '../../shared/conversationDoc';
+import { readMapPlaceRef } from '../../shared/conversationDoc';
+import { currentRecap } from '../../shared/recap';
+import type { ConversationDoc, MapPlaceRef, ThreadMeta, TurnMeta } from '../../shared/conversationDoc';
 import {
   contextBudgetFor,
   packReplayPrompt,
@@ -20,7 +22,21 @@ export interface ConversationSendPlan {
   turnMeta: TurnMeta;
   thread: ThreadMeta;
   previousTurnCount: number;
+  /** The prompt re-attaches fetched place data, which the memory gate treats as outside content. */
+  external?: true;
+  /** Where the conversation stood before this send, for the recap rule; absent when nothing was recorded. */
+  recap?: string;
 }
+
+/** Builds the place data re-attached to a replay, fitted to `limit` under `measure`; '' when unavailable. */
+export type PlaceContextBuilder = (
+  ref: MapPlaceRef,
+  limit: number,
+  measure: (text: string) => number,
+) => Promise<string>;
+
+/** Share of the replay budget the place data may take; the history and the question get the rest. */
+const PLACE_CONTEXT_SHARE = 0.6;
 
 export function providerKeyFor(targetUrl: string): string {
   return isByokTargetUrl(targetUrl) ? 'byok' : detectProvider(targetUrl);
@@ -32,6 +48,7 @@ export async function planConversationSend(args: {
   userPrompt: string;
   timeoutMs: number;
   allowNative?: boolean;
+  placeContext?: PlaceContextBuilder;
 }): Promise<ConversationSendPlan | null> {
   const loaded = await loadConversation(args.conversationPath);
   if (!loaded) return null;
@@ -44,11 +61,14 @@ export async function planTurn(args: {
   userPrompt: string;
   timeoutMs: number;
   allowNative?: boolean;
+  placeContext?: PlaceContextBuilder;
 }): Promise<ConversationSendPlan> {
   const { doc, targetUrl, userPrompt, timeoutMs, allowNative = true } = args;
   const mode = allowNative
     ? resolveContextMode(doc.thread, targetUrl, doc.turns.length)
     : 'replay';
+  // Both modes: a native plan whose thread turns out to be gone replays with the same recap.
+  const recap = currentRecap(doc)?.text;
 
   if (mode === 'native') {
     return {
@@ -58,12 +78,18 @@ export async function planTurn(args: {
       turnMeta: { m: 'native' },
       thread: doc.thread,
       previousTurnCount: doc.turns.length,
+      ...(recap ? { recap } : {}),
     };
   }
 
   const { budget, measure } = contextBudgetFor(targetUrl, config.byokContextBudgetChars);
   let summary = doc.thread.summary ?? '';
   let summarizedTurns = doc.thread.summarizedTurns ?? 0;
+
+  const place = readMapPlaceRef(doc.thread);
+  const preamble = place && args.placeContext
+    ? await args.placeContext(place, Math.floor(budget * PLACE_CONTEXT_SHARE), measure)
+    : '';
 
   const pending = doc.turns.slice(summarizedTurns);
   let packed = packReplayPrompt({
@@ -72,6 +98,7 @@ export async function planTurn(args: {
     newPrompt: userPrompt,
     budget,
     measure,
+    preamble,
   });
 
   if (packed.overflow.length > 0) {
@@ -93,6 +120,7 @@ export async function planTurn(args: {
         newPrompt: userPrompt,
         budget,
         measure,
+        preamble,
       });
     }
   }
@@ -100,6 +128,7 @@ export async function planTurn(args: {
   return {
     mode,
     promptToSend: packed.prompt,
+    ...(preamble ? { external: true as const } : {}),
     turnMeta: {
       m: 'replay',
       ...(packed.droppedTurns > 0 ? { dropped: packed.droppedTurns } : {}),
@@ -111,6 +140,7 @@ export async function planTurn(args: {
       ...(summary ? { summary, summarizedTurns } : {}),
     },
     previousTurnCount: doc.turns.length,
+    ...(recap ? { recap } : {}),
   };
 }
 

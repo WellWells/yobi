@@ -1,24 +1,11 @@
 import { PPLX_INPUT_SELECTORS, PPLX_RESPONSE_SELECTOR, PPLX_STOP_ICON_ID } from './perplexityReadScript';
 
-/**
- * Icon ids of Perplexity's send control: pointing right on a new thread, up in a follow-up
- * composer. Matched WHOLE, never as a substring — the autocomplete rows under the landing
- * page composer carry `pplx-icon-arrow-up-right`, and six of them sit in this same
- * container, so a substring match hands back a suggestion instead of the send button.
- */
+/** Icon ids of the send control. Matched whole: a substring match also hits autocomplete rows. */
 export const PPLX_SUBMIT_ICON_IDS = ['#pplx-icon-arrow-up', '#pplx-icon-arrow-right'];
 
 /**
- * Putting a prompt into Perplexity's composer and getting it sent.
- *
- * The send control cannot be recognised by styling or position. Measured on the live page
- * (2026-09-17): `button.bg-button-bg` is the SEND button once the editor holds text, and the
- * VOICE MODE button — enabled, and happy to be clicked — when it does not. On a thread page
- * the send button is always present and merely disabled while the composer is empty. So the
- * only honest reading of "ready to send" is a whole-id icon match on an enabled control, and
- * the only honest reading of "it went" is the page acting on the click. Everything here is
- * built to never confuse "not ready yet" with "ready", and to fail out loud rather than hand
- * back a run that quietly waits for an answer nobody asked for.
+ * Fills Perplexity's composer and sends. The send control is recognised only by its icon id on an
+ * enabled button, and the send must be confirmed by the page or this throws.
  */
 export const PPLX_SUBMIT_JS = `async function perplexitySubmit(promptText, opts) {
   opts = opts || {};
@@ -99,12 +86,7 @@ export const PPLX_SUBMIT_JS = `async function perplexitySubmit(promptText, opts)
     return null;
   }
 
-  /**
-   * Lexical applies edits from \`beforeinput\` and owns the DOM it renders, so assigning
-   * \`textContent\` is put straight back and the next paste appends to the leftover draft —
-   * which Perplexity restores across reloads. Deleting over a selection that spans the
-   * editor is what it actually honours.
-   */
+  /** Lexical reverts direct \`textContent\` writes; delete over a full selection via \`beforeinput\`. */
   function clearComposer(el) {
     el.focus();
     var range = document.createRange();
@@ -164,11 +146,7 @@ export const PPLX_SUBMIT_JS = `async function perplexitySubmit(promptText, opts)
     return false;
   }
 
-  /**
-   * Three independent ways of seeing that the prompt went. Emptying the composer is the
-   * quickest — measured at ~200ms — but it is not the only one, and treating it as the only
-   * one turns a send that landed into a reported failure, or worse, into a second send.
-   */
+  /** Any of three signals means the prompt went; relying on the composer emptying alone risks a second send. */
   function sendLanded() {
     if (answersAtClick >= 0 && answerCount() > answersAtClick) return true;
     if (isGenerating()) return true;

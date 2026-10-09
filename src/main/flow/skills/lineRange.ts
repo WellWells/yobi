@@ -7,6 +7,7 @@
  */
 
 import { isLineRangePreset, LINE_RANGE_PRESETS } from '../../../shared/lineRange';
+import { FlowUserError } from '../userError';
 
 // Façade: the vocabulary lives in shared/ so the step editor offers exactly what this resolves.
 export { isLineRangePreset, LINE_RANGE_PRESETS };
@@ -44,12 +45,22 @@ function endOfDay(at: Date, dayOffset = 0): number {
  */
 function parseDay(value: string, field: string): Date {
   const parts = DATE_ONLY.exec(value);
-  if (!parts) throw new Error(`the LINE date-range ${field} must look like 2026-09-01, got "${value}"`);
+  if (!parts) {
+    throw new FlowUserError(
+      'flow.error.lineDateInvalid',
+      { value },
+      `the LINE date-range ${field} must look like 2026-09-01, got "${value}"`,
+    );
+  }
   const [year, month, day] = [Number(parts[1]), Number(parts[2]) - 1, Number(parts[3])];
   const at = new Date(year, month, day);
   // new Date(2026, 1, 31) rolls into March instead of failing, so round-trip the parts.
   if (at.getFullYear() !== year || at.getMonth() !== month || at.getDate() !== day) {
-    throw new Error(`the LINE date-range ${field} is not a real date: "${value}"`);
+    throw new FlowUserError(
+      'flow.error.lineDateInvalid',
+      { value },
+      `the LINE date-range ${field} is not a real date: "${value}"`,
+    );
   }
   return at;
 }
@@ -70,12 +81,20 @@ export function resolveLineRange(config: LineRangeConfig, now: Date): ResolvedRa
   const until = (config.until ?? '').trim();
   // A custom range with both ends blank is a half-filled form, not a request for everything.
   if (!since && !until) {
-    throw new Error('the LINE date range is set to "custom" but neither a start nor an end date was given');
+    throw new FlowUserError(
+      'flow.error.lineRangeEmpty',
+      {},
+      'the LINE date range is set to "custom" but neither a start nor an end date was given',
+    );
   }
   const sinceMs = since ? startOfDay(parseDay(since, 'start')) : null;
   const untilMs = until ? endOfDay(parseDay(until, 'end')) : null;
   if (sinceMs !== null && untilMs !== null && sinceMs > untilMs) {
-    throw new Error(`the LINE date range ends before it starts (${since} → ${until})`);
+    throw new FlowUserError(
+      'flow.error.lineRangeReversed',
+      { since, until },
+      `the LINE date range ends before it starts (${since} → ${until})`,
+    );
   }
   return { sinceMs, untilMs };
 }

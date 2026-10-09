@@ -13,6 +13,10 @@ export interface LoopVarHint {
 function loopSubfields(sourceType?: SkillType): string[] {
   switch (sourceType) {
     case 'youtube_subs': return ['title', 'link', 'image'];
+    case 'x_posts': return ['title', 'link', 'author', 'name', 'date', 'text', 'image', 'replies', 'likes'];
+    case 'x_trends': return ['title', 'link', 'context', 'volume', 'rank', 'posts'];
+    // Only {{thread.replies}} is a list; the step's own output is text.
+    case 'x_thread': return ['author', 'name', 'date', 'text', 'link', 'likes'];
     case 'search': return ['title', 'link', 'snippet'];
     case 'gmap_reviews': return ['author', 'rating', 'date', 'text', 'reply'];
     case 'rss':
@@ -153,6 +157,12 @@ export const AvailableVarsHint: React.FC<{
               <VarChip token={`${s.outputKey}.isFailed`} color="grape" insertHint={insertHint} onInsert={onInsert} />
               <VarChip token={`${s.outputKey}.image`} color="grape" insertHint={insertHint} onInsert={onInsert} />
             </>
+          )}
+          {s.type === 'x_thread' && ['text', 'author', 'date', 'link', 'replyText', 'replies', 'shown', 'replyCount', 'image'].map((sub) => (
+            <VarChip key={sub} token={`${s.outputKey}.${sub}`} color="grape" insertHint={insertHint} onInsert={onInsert} />
+          ))}
+          {s.type === 'x_thread' && s.config.emitFailFlag === 'true' && (
+            <VarChip token={`${s.outputKey}.isFailed`} color="grape" insertHint={insertHint} onInsert={onInsert} />
           )}
           {s.type === 'browser' && s.config.includeImage === 'true' && (
             <VarChip token={`${s.outputKey}.image`} color="grape" insertHint={insertHint} onInsert={onInsert} />

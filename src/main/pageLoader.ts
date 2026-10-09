@@ -1,6 +1,7 @@
 import { BrowserWindow, net } from 'electron';
 import { TextDecoder } from 'node:util';
-import { CLEAN_UA } from './userAgent';
+import { userAgentForUrl } from './userAgent';
+import { loadURLFollowingIdentity } from './navigationIdentity';
 import { SILENT_WEB_PREFERENCES, muteWindow } from './silentWindow';
 import { markHeadless, unmarkHeadless } from './requestFilter';
 import { appendLogLine, fileStamp } from './logFile';
@@ -26,12 +27,19 @@ export interface RawFetchOptions {
   validateRedirectHost?: (host: string) => void;
 }
 
-export function fetchRawText(url: string, options?: RawFetchOptions): Promise<string> {
+export interface RawFetchResponse {
+  status: number;
+  text: string;
+}
+
+export async function fetchRawText(url: string, options?: RawFetchOptions): Promise<string> {
+  return (await fetchRawResponse(url, options)).text;
+}
+
+/** Resolves for every HTTP status; the caller decides what an error status means. */
+export function fetchRawResponse(url: string, options?: RawFetchOptions): Promise<RawFetchResponse> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error(`Raw fetch timed out after ${RAW_FETCH_TIMEOUT_MS / 1_000}s`)),
-      RAW_FETCH_TIMEOUT_MS,
-    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
     const guard = options?.validateRedirectHost;
     const request = net.request({
@@ -62,7 +70,10 @@ export function fetchRawText(url: string, options?: RawFetchOptions): Promise<st
       response.on('data', (chunk: Buffer) => chunks.push(chunk));
       response.on('end', () => {
         clearTimeout(timer);
-        resolve(decodeBody(Buffer.concat(chunks), headerValue(response.headers['content-type'])));
+        resolve({
+          status: response.statusCode,
+          text: decodeBody(Buffer.concat(chunks), headerValue(response.headers['content-type'])),
+        });
       });
       response.on('error', (err: Error) => {
         clearTimeout(timer);
@@ -74,6 +85,12 @@ export function fetchRawText(url: string, options?: RawFetchOptions): Promise<st
       clearTimeout(timer);
       reject(err);
     });
+
+    // Armed only once `request` exists: a throwing net.request must leave no timer behind.
+    timer = setTimeout(() => {
+      request.abort();
+      reject(new Error(`Raw fetch timed out after ${RAW_FETCH_TIMEOUT_MS / 1_000}s`));
+    }, RAW_FETCH_TIMEOUT_MS);
 
     request.end();
   });
@@ -155,7 +172,7 @@ export function loadPageResult(url: string, validateRedirectHost?: (host: string
       },
     });
 
-    win.webContents.setUserAgent(CLEAN_UA);
+    win.webContents.setUserAgent(userAgentForUrl(url));
     muteWindow(win);
 
     // Nobody looks at this window, so the request filter may drop frames, images and fonts.
@@ -198,8 +215,8 @@ export function loadPageResult(url: string, validateRedirectHost?: (host: string
       win.webContents.on('will-navigate', guardNavigation);
     }
 
-    // The ceiling is not the end of the road: on ad-heavy pages the article DOM is ready in
-    // seconds while third-party frames keep `load` from ever firing. Salvage what rendered.
+    // On timeout, salvage the DOM if it is ready: on ad-heavy pages third-party frames can keep
+    // `load` from ever firing.
     const timeout = setTimeout(() => {
       if (settled) return;
       settled = true;
@@ -238,7 +255,7 @@ export function loadPageResult(url: string, validateRedirectHost?: (host: string
       reject(new Error(`Failed to load page: ${errorDescription} (${errorCode})`));
     });
 
-    win.loadURL(url).catch((err) => {
+    loadURLFollowingIdentity(win.webContents, url).catch((err) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);

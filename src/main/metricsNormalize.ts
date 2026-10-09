@@ -25,12 +25,13 @@ export function zeroKey(): KeyMetrics {
 }
 
 export function emptyDailyEntry(): DailyMetricCounts {
-  return { chat: zeroDomain(), flow: zeroDomain(), tokens: zeroTokens(), keys: {} };
+  return { chat: zeroDomain(), agent: zeroDomain(), flow: zeroDomain(), tokens: zeroTokens(), keys: {} };
 }
 
 export function emptyMetrics(): MetricsSnapshot {
   return {
     chat: zeroDomain(),
+    agent: zeroDomain(),
     flow: zeroDomain(),
     tokens: zeroTokens(),
     keys: {},
@@ -104,6 +105,7 @@ function normalizeSince(raw: unknown, daily: Record<string, DailyMetricCounts>):
   return dates[0] ?? '';
 }
 
+/** A legacy store without an `agent` key reads as zero agent runs rather than failing to load. */
 export function normalizeSnapshot(raw: unknown): MetricsSnapshot {
   const obj = asObject(raw);
   const daily: Record<string, DailyMetricCounts> = {};
@@ -112,6 +114,7 @@ export function normalizeSnapshot(raw: unknown): MetricsSnapshot {
     const day = asObject(entry);
     daily[date] = {
       chat: normalizeDomain(day.chat),
+      agent: normalizeDomain(day.agent),
       flow: normalizeDomain(day.flow),
       tokens: normalizeTokens(day.tokens),
       keys: normalizeKeys(day.keys),
@@ -119,6 +122,7 @@ export function normalizeSnapshot(raw: unknown): MetricsSnapshot {
   }
   return {
     chat: normalizeDomain(obj.chat),
+    agent: normalizeDomain(obj.agent),
     flow: normalizeDomain(obj.flow),
     tokens: normalizeTokens(obj.tokens),
     keys: normalizeKeys(obj.keys),

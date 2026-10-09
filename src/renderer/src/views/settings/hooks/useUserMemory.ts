@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { userMemoryApi } from '../../../api/electronApi';
 import { useUserMemoryStore } from '../../../store/userMemoryStore';
-import type { MemoryEditFailure, MemoryEditResult, UserMemoryBotSelf } from '../../../../../shared/userMemory';
+import type { MemoryEditFailure, MemoryEditResult, BotSelfChange } from '../../../../../shared/userMemory';
 
 /** Which entry an edit form is open for: an id, `'new'` for the add form, or nothing. */
 export type MemoryFormTarget = string | 'new' | null;
@@ -55,8 +55,8 @@ export function useUserMemory() {
     apply(await userMemoryApi.setEnabled(enabled));
   }, [apply]);
 
-  const setBotSelf = useCallback(async (botSelf: UserMemoryBotSelf): Promise<void> => {
-    apply(await userMemoryApi.setBotSelf(botSelf));
+  const setBotSelf = useCallback(async (change: BotSelfChange): Promise<void> => {
+    apply(await userMemoryApi.setBotSelf(change));
   }, [apply]);
 
   return { snapshot, formTarget, error, busy, openForm, save, remove, clearAll, setEnabled, setBotSelf };

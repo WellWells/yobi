@@ -3,12 +3,9 @@ import { config, saveConfig } from './config';
 import type { WindowBounds } from './configTypes';
 
 /**
- * Remembers where the main window was left.
- *
- * Every launch used to open 1100x700, centred, whatever the user had done last time — on a
- * desktop app that is the kind of thing you notice every single day. The stored rect is the
- * *restored* one (`getNormalBounds()`), so a maximized window comes back maximized AND
- * un-maximizes to the size it had before.
+ * Remembers where the main window was left. The stored rect is the *restored* one
+ * (`getNormalBounds()`), so a maximized window comes back maximized and un-maximizes to its
+ * previous size.
  */
 
 /** Writes are debounced: `resize` and `move` fire continuously while dragging. */
@@ -51,8 +48,8 @@ export function shouldStartMaximized(): boolean {
 }
 
 /**
- * Starts persisting `win`'s geometry. Returns a teardown for tests; the app itself keeps it
- * for the window's lifetime.
+ * Starts persisting `win`'s geometry. Returns a teardown; the app itself keeps tracking for
+ * the window's lifetime.
  */
 export function trackWindowBounds(win: BrowserWindow): () => void {
   let timer: NodeJS.Timeout | null = null;

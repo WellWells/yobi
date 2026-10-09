@@ -4,7 +4,8 @@ import { Box, Group, Stack, Text } from '@mantine/core';
 export interface SettingRowProps {
   icon: React.ReactNode;
   label: string;
-  hint?: string;
+  /** Plain text, or text with an inline link. */
+  hint?: React.ReactNode;
   control: React.ReactNode;
   alignStart?: boolean;
 }

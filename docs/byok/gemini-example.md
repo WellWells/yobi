@@ -9,23 +9,23 @@ Google offers the Gemini API free of charge at a limited usage tier, and exposes
 1. Open [Google AI Studio](https://aistudio.google.com/).
 2. Click **Get API key** and create one for your project.
 
-## 2. Add the instance in Yobi
+## 2. Add the key in Yobi
 
-**Settings → Model Sources → Bring Your Own Key (BYOK) → Add instance**, then:
+**Settings → AI Models → Your Own API Keys (BYOK) → Add key**, then:
 
 | Field | Value |
 | ----- | ----- |
 | Name | `Gemini API` (anything you like) |
-| Provider | `Gemini API` |
+| Provider | `Gemini (Google)` |
 | Base URL | `https://generativelanguage.googleapis.com/v1beta/openai` (pre-filled) |
 | Model | `models/gemini-3.1-flash-lite` |
 | API key | your Gemini API key |
 
-Yobi appends `/chat/completions` to the Base URL automatically. Any current model id from the [Gemini model list](https://ai.google.dev/gemini-api/docs/models) works — a `flash-lite` model is the cheapest and fastest, and a `pro` model is the one to reach for on harder tasks. Model ids come and go, so take the exact id from that list rather than copying an old one.
+Yobi appends `/chat/completions` to the Base URL automatically. Any current model id from the [Gemini model list](https://ai.google.dev/gemini-api/docs/models) works — a `flash-lite` model is the cheapest and fastest, and a `pro` model is the one to reach for on harder tasks. Model ids come and go, so click **Load models** after pasting the key and pick from what your key can use, rather than copying an old id.
 
 ## 3. Use it
 
-Pick the instance in the chat model menu or in a flow LLM step — see [Switching providers](switch-provider.md).
+Pick the key in the chat model menu or in a flow LLM step — see [Switching providers](switch-provider.md). A Gemini key can also let a flow's YouTube step handle videos without captions: pick it under **When there are no captions** on that step.
 
 ## Troubleshooting
 
@@ -33,4 +33,4 @@ Pick the instance in the chat model menu or in a flow LLM step — see [Switchin
 | ----- | ------------ |
 | `HTTP 400` | Model id misspelled or not available on the OpenAI-compat endpoint |
 | `HTTP 401` / `403` | Key invalid, or the API isn't enabled for your project |
-| `HTTP 429` | Free-tier rate limit hit — wait a minute or upgrade the quota |
+| `HTTP 429` | Free-tier rate limit hit — wait for it to reset, or raise the quota. In a key group, the next key takes the request, and Yobi tries this key last until the time the API gives (60 seconds if none) |

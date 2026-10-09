@@ -4,13 +4,12 @@ import { t } from '../i18n';
 import { createLineClient } from './client';
 import type { LineClient } from './client';
 import { LineWebhookServer, LINE_WEBHOOK_PATH } from './server';
-import { formatLineReply, truncateLineText } from './format';
+import { formatLineReply, formatLineText } from './format';
 import { buildLineAddFriendLink } from './deepLink';
 import { LineDispatcher } from './dispatcher';
 import type { LineDispatcherDeps } from './dispatcher';
 import { safePush } from './messaging';
 
-export type { LineTaskRequest } from './dispatcher';
 
 export interface LineRuntimeDeps extends Omit<LineDispatcherDeps, 'getClient'> {
   getEnabled: () => boolean;
@@ -122,7 +121,7 @@ export class LineRuntime {
 
   async sendProactive(userId: string, text: string): Promise<void> {
     const client = this.requireClient();
-    await client.pushText(userId, truncateLineText(text));
+    await client.pushText(userId, formatLineText(text));
   }
 
   async sendProactiveImage(userId: string, imageUrl: string): Promise<void> {

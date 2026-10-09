@@ -1,5 +1,5 @@
 import { BrowserWindow, session } from 'electron';
-import { CLEAN_UA } from './userAgent';
+import { userAgentForUrl } from './userAgent';
 import { SILENT_WEB_PREFERENCES, muteWindow } from './silentWindow';
 import { computeVerdictTier, VERDICT_I18N_KEYS, VERDICT_LABEL_EN } from '../shared/steamVerdict';
 
@@ -112,7 +112,7 @@ export async function fetchPlaceStats(
         ...SILENT_WEB_PREFERENCES,
       },
     });
-    win.webContents.setUserAgent(CLEAN_UA);
+    win.webContents.setUserAgent(userAgentForUrl(placeUrl));
     muteWindow(win);
 
     const finish = (stats: PlaceStats | null): void => {

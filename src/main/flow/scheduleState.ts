@@ -1,5 +1,7 @@
 import * as fs from 'node:fs/promises';
+import * as fsSync from 'node:fs';
 import * as path from 'node:path';
+import { writeFileAtomicSync } from '../atomicWrite';
 import { getFlowDataDir } from './paths';
 
 export interface TriggerRunState {
@@ -40,11 +42,15 @@ export function getTriggerState(key: string): TriggerRunState | undefined {
   return state[key];
 }
 
-async function writeScheduleState(): Promise<void> {
-  const target = getStatePath();
+/**
+ * The one writer, and synchronous so the flush on quit has finished before the app exits. Silent
+ * on failure: a schedule that could not be saved still runs from memory this session.
+ */
+function persistNow(): void {
   try {
-    await fs.mkdir(path.dirname(target), { recursive: true });
-    await fs.writeFile(target, JSON.stringify(state, null, 2), 'utf-8');
+    const target = getStatePath();
+    fsSync.mkdirSync(path.dirname(target), { recursive: true });
+    writeFileAtomicSync(target, JSON.stringify(state, null, 2));
   } catch {
   }
 }
@@ -53,9 +59,21 @@ function scheduleWrite(): void {
   if (writeTimer) clearTimeout(writeTimer);
   writeTimer = setTimeout(() => {
     writeTimer = null;
-    void writeScheduleState();
+    persistNow();
   }, WRITE_DEBOUNCE_MS);
   writeTimer.unref?.();
+}
+
+/**
+ * Writes a pending patch now, for the quit path: the debounce timer is unref'd, so a fire recorded just
+ * before quitting would otherwise be lost and caught up again. No-op when nothing is pending, so an
+ * early quit cannot empty the file.
+ */
+export function flushScheduleState(): void {
+  if (!writeTimer) return;
+  clearTimeout(writeTimer);
+  writeTimer = null;
+  persistNow();
 }
 
 export function patchTriggerState(key: string, patch: TriggerRunState): void {
@@ -77,7 +95,6 @@ export function pruneScheduleState(liveFlowIds: Iterable<string>): void {
   if (changed) scheduleWrite();
 }
 
-/** Test seam: Vitest imports this module directly and needs a clean slate per case. */
 export function resetScheduleStateForTests(next: ScheduleState = {}): void {
   state = next;
 }

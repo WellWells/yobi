@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { mcpApi } from '../../../api/electronApi';
 import { useMcpStore } from '../../../store/useMcpStore';
+import { useI18nStore } from '../../../store/i18nStore';
 import { normalizeMcpUrl } from '../../../../../shared/mcpCatalog';
 import { slugifyCommandName } from '../../../../../shared/mcpCommand';
 import type { McpCatalogEntry } from '../../../../../shared/mcpCatalog';
@@ -15,6 +16,11 @@ export interface McpFormState {
   agentEnabled: boolean;
   autoApproveWrites: boolean;
   commandName: string;
+}
+
+/** Read at call time: the callbacks below are memoized once and would keep a stale language. */
+function saveFailedText(): string {
+  return useI18nStore.getState().t('settings.mcp.saveFailed');
 }
 
 export function useMcpServers() {
@@ -67,7 +73,7 @@ export function useMcpServers() {
     const created = saved.servers.find((s) => normalizeMcpUrl(s.url) === normalizeMcpUrl(entry.url));
     if (!saved.ok || !created) {
       setBusyId(null);
-      setError(saved.error ?? 'Save failed');
+      setError(saved.error ?? saveFailedText());
       return;
     }
     setBusyId(created.id);
@@ -104,7 +110,7 @@ export function useMcpServers() {
     setSaving(false);
     setServers(result.servers);
     if (!result.ok) {
-      setError(result.error ?? 'Save failed');
+      setError(result.error ?? saveFailedText());
       return;
     }
     setForm(null);

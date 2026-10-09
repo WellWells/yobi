@@ -24,3 +24,9 @@ export function relativeLuminance(hex: string): number {
   });
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
+
+/** WCAG contrast ratio between two opaque hex colours (1 = identical, 21 = black on white). */
+export function contrastRatio(hex1: string, hex2: string): number {
+  const [lighter, darker] = [relativeLuminance(hex1), relativeLuminance(hex2)].sort((a, b) => b - a);
+  return (lighter + 0.05) / (darker + 0.05);
+}

@@ -1,15 +1,6 @@
 /**
- * Deciding whether the worker can keep the page it is already on.
- *
- * Every browser send used to begin with a full `loadURL`, even when the worker was already
- * sitting on exactly the page the prompt was going to. Resuming a stored thread paid for that
- * twice — once to validate the thread, once inside the provider runner — which measured 2.0-2.2s
- * per load on Gemini, 1.9s on ChatGPT and 3.3s on Perplexity, before a single character was
- * typed. All three drive their next turn straight into the live SPA with no navigation at all
- * (verified against the live pages on 2026-09-16), so the reload buys nothing but latency.
- *
- * What it did buy was a total state reset, and that is the part this module has to replace: a
- * page is only reusable when it is the same page, idle, and holding nothing from the last run.
+ * Decides whether the worker can keep the page it is already on instead of reloading it: a page
+ * is reusable only when it is the same page, idle, and holding nothing from the last run.
  */
 import type { WebContents } from 'electron';
 import { navigateAndWait, sleep } from './common';
@@ -98,9 +89,7 @@ const CHATGPT_READY = `(function () {
   return true;
 })()`;
 
-// The stop control is the reading of "it has finished": it is present for exactly as long as
-// Perplexity is answering. The final-text wrapper is mounted with the first token, so it only
-// rules out a page whose last answer sits outside one.
+// The stop control marks an answer in progress; the final-text wrapper is not a completion signal.
 const PERPLEXITY_READY = `(function () {
   var composer = document.querySelector(${JSON.stringify(PPLX_INPUT_SELECTORS.join(', '))});
   if (!composer) return false;
@@ -117,9 +106,7 @@ const PERPLEXITY_READY = `(function () {
   return !!(wrapper && wrapper.querySelectorAll(${JSON.stringify(PPLX_RESPONSE_SELECTOR)}).length <= 1);
 })()`;
 
-// Claude swaps its send button for a stop button while it answers, and a finished answer is the only
-// one whose node reads `data-is-streaming="false"` — a turn still waiting for its first token has
-// no attribute at all yet.
+// No send button means still answering; a missing data-is-streaming also does, so compare to 'false'.
 const CLAUDE_READY = `(function () {
   var composer = document.querySelector(${JSON.stringify(CLAUDE_INPUT_SELECTOR)});
   if (!composer) return false;
@@ -149,8 +136,6 @@ export const PAGE_REUSE: Record<Provider, PageReusePolicy> = {
   claude: {
     readyExpression: CLAUDE_READY,
     emptyExpression: emptyOf(`${CLAUDE_USER_TURN_SELECTOR}, ${CLAUDE_ASSISTANT_TURN_SELECTOR}`),
-    // Measured 2026-09-18: a deleted or foreign /chat/<id> renders the chat shell — composer
-    // included — at that URL, then moves to /new ~1.2 s after `load`.
     threadSettledExpression: `!(${emptyOf(`${CLAUDE_USER_TURN_SELECTOR}, ${CLAUDE_ASSISTANT_TURN_SELECTOR}`)})`,
   },
   perplexity: {

@@ -1,18 +1,13 @@
 import type { GeminiPickerSnapshot, GeminiPickerTarget } from '../../shared/geminiModels';
 
 /*
- * Gemini's model picker, measured 2026-09-18 (zh-TW account, three models + one switch):
- *
- * - The trigger is `[data-test-id="bard-mode-menu-button"]`; its visible text ("Flash-Lite 延伸")
- *   is localized, so nothing here reads it.
- * - The open menu is `[data-test-id="gem-mode-menu"]`. Each model is a `gem-menu-item` carrying
- *   `data-mode-id`; the extended-thinking switch is the one `gem-menu-item` WITHOUT one. Chosen rows
- *   carry the `selected` class. `data-active` is keyboard focus, not selection.
- * - Clicking a row closes the menu and applies at once; the switch survives a model change.
- * - Escape on the document does not close it. Clicking the trigger again does.
+ * Gemini's model picker, matched by attributes only (visible text is localized). The thinking
+ * switch is the one row without `data-mode-id`; the signed-out sign-in row also lacks it and is
+ * never clicked, since clicking it leaves the page.
  */
 export const GEMINI_MODE_BUTTON_SELECTOR = '[data-test-id="bard-mode-menu-button"]';
 export const GEMINI_MODE_MENU_SELECTOR = '[data-test-id="gem-mode-menu"]';
+export const GEMINI_SIGN_IN_ROW_SELECTOR = '[data-test-id="mode-picker-sign-in-button"]';
 
 export type GeminiPickerResult =
   | { ok: true; changed: boolean; snapshot: GeminiPickerSnapshot }
@@ -27,6 +22,7 @@ export function buildGeminiModelPickerScript(target: GeminiPickerTarget | null):
 (async function geminiModelPicker() {
   var BUTTON_SEL = ${JSON.stringify(GEMINI_MODE_BUTTON_SELECTOR)};
   var MENU_SEL = ${JSON.stringify(GEMINI_MODE_MENU_SELECTOR)};
+  var SIGN_IN_SEL = ${JSON.stringify(GEMINI_SIGN_IN_ROW_SELECTOR)};
   var TARGET = ${JSON.stringify(target)};
 
   function sleep(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
@@ -64,8 +60,9 @@ export function buildGeminiModelPickerScript(target: GeminiPickerTarget | null):
   function modelRows() {
     return rows().filter(function(row) { return row.hasAttribute('data-mode-id'); });
   }
+  function locked(row) { return row.getAttribute('aria-disabled') === 'true'; }
   function thinkingRow() {
-    var others = rows().filter(function(row) { return !row.hasAttribute('data-mode-id'); });
+    var others = rows().filter(function(row) { return !row.hasAttribute('data-mode-id') && !row.matches(SIGN_IN_SEL); });
     return others.length === 1 ? others[0] : null;
   }
   function read() {
@@ -105,7 +102,8 @@ export function buildGeminiModelPickerScript(target: GeminiPickerTarget | null):
   var changed = false;
   if (TARGET && TARGET.modelId) {
     var wanted = modelRows().filter(function(row) { return row.getAttribute('data-mode-id') === TARGET.modelId; })[0];
-    if (wanted && !wanted.classList.contains('selected')) {
+    // A locked model (signed out) cannot be chosen; clicking it only spends the menu.
+    if (wanted && !locked(wanted) && !wanted.classList.contains('selected')) {
       changed = true;
       if (!(await clickAndReopen(wanted))) return { ok: false, reason: 'menu-did-not-open' };
     }

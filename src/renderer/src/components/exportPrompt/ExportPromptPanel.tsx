@@ -113,7 +113,7 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
       />
 
       {payload.notice && (
-        <Alert color="red" variant="light" icon={<TriangleAlert size={16} />}>
+        <Alert color="var(--mantine-color-error)" variant="light" icon={<TriangleAlert size={16} />}>
           <Text fz="var(--font-size-sm)" style={{ wordBreak: 'break-word' }}>{payload.notice}</Text>
         </Alert>
       )}

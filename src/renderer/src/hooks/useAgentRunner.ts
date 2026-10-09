@@ -1,21 +1,33 @@
-import { useCallback } from 'react';
-import type { AgentCommandResult } from '../../../shared/types';
+import { startTransition, useCallback } from 'react';
+import type { AgentCommandResult, AgentRunSummary } from '../../../shared/types';
 import { attachmentMetaNames } from '../../../shared/conversationDoc';
 import { useAppStore } from '../store/appStore';
-import { agentApi } from '../api/electronApi';
+import { agentApi, fileApi } from '../api/electronApi';
 import { answeringRun, choiceAnswer, pendingQuestionFrom, useAgentRunStore } from '../store/useAgentRunStore';
 import type { AgentChoicePick } from '../store/useAgentRunStore';
 import { useCommandTurn } from './useCommandTurn';
 
-/**
- * `onError` is what makes an agent failure visible. Without it the pending bubble just vanishes:
- * `AgentCommandResult.error` was dropped on the floor, so a connector command that cannot run
- * (server disconnected, model cannot carry the tool list) looked like nothing happened at all.
- */
-export function useAgentRunner(onError?: (message: string) => void) {
+/** Selects a resumed run's conversation; one that has since been deleted leaves the view as it is. */
+async function openRunConversation(conversationPath: string | undefined): Promise<void> {
+  if (!conversationPath) return;
+  const store = useAppStore.getState();
+  if (store.selectedFile?.path === conversationPath) return;
+  const file = store.files.find((candidate) => candidate.path === conversationPath);
+  if (!file) return;
+  store.selectFile(file);
+  const content = await fileApi.getContent(file.path);
+  if (useAppStore.getState().selectedFile?.path !== file.path) return;
+  startTransition(() => useAppStore.getState().setFileContent(content));
+}
+
+/** `onError` is what makes an agent failure visible; without it the pending bubble just vanishes. */
+export function useAgentRunner(
+  onError?: (message: string) => void,
+  /** The run went online; the composer turns its web switch on to say so (see `usedWeb`). */
+  onUsedWeb?: () => void,
+) {
   const setResumable = useAgentRunStore((s) => s.setResumable);
-  // `finish` opens the result file as well as clearing the bubble, which is why resuming no
-  // longer needs its own copy of that.
+  // `finish` clears the bubble and opens the result file.
   const { begin, finish, fail } = useCommandTurn();
 
   const refreshResumable = useCallback(async (): Promise<void> => {
@@ -32,9 +44,7 @@ export function useAgentRunner(onError?: (message: string) => void) {
 
   /**
    * Every way of starting agent work goes through here, so none of them can start one without
-   * a bubble to watch. Resuming from the banner used to skip it: the banner disappeared, the
-   * trace events arrived and were applied to the store, and nothing on screen rendered them —
-   * an empty conversation for however many minutes the run took.
+   * a bubble to watch.
    */
   const track = useCallback(async (
     goal: string,
@@ -46,6 +56,7 @@ export function useAgentRunner(onError?: (message: string) => void) {
     const sendId = begin(goal, runId, attachmentMetaNames(attachments));
     try {
       const res = await call();
+      if (res.usedWeb) onUsedWeb?.();
       trackQuestion(res, runId, mcpServerIds);
       if (res.success) await finish(sendId, res.filePath);
       else {
@@ -58,14 +69,15 @@ export function useAgentRunner(onError?: (message: string) => void) {
     } finally {
       await refreshResumable();
     }
-  }, [begin, finish, fail, onError, refreshResumable, trackQuestion]);
+  }, [begin, finish, fail, onError, onUsedWeb, refreshResumable, trackQuestion]);
 
   const run = useCallback(async (
     goal: string,
     targetUrl: string,
     attachments: string[] = [],
     mcpServerIds: readonly string[] = [],
-    web = true,
+    // true on, false switched off by the user, undefined the default — where the agent may go online.
+    web?: boolean,
   ): Promise<void> => {
     const conversationPath = useAppStore.getState().selectedFile?.path;
     // The pending question is matched on its disclosed set too, so an answer typed while Notion
@@ -86,16 +98,16 @@ export function useAgentRunner(onError?: (message: string) => void) {
       : agentApi.run(goal, targetUrl, runId, conversationPath, sending, scope, web)), mcpServerIds);
   }, [track]);
 
-  const resume = useCallback(async (runId: string): Promise<void> => {
-    const goal = useAgentRunStore.getState().resumable.find((entry) => entry.runId === runId)?.goal ?? '';
-    return track(goal, runId, [], () => agentApi.resume(runId));
+  /**
+   * Takes the banner's entry itself, since the banner has already emptied the resumable list. The
+   * run goes back to its own conversation first, so the bubble sits under its earlier turns.
+   */
+  const resume = useCallback(async (entry: AgentRunSummary): Promise<void> => {
+    await openRunConversation(entry.conversationPath);
+    return track(entry.goal, entry.runId, [], () => agentApi.resume(entry.runId));
   }, [track]);
 
-  /**
-   * A picked choice answers the run that asked, by id. It used to go out like a typed message, so a
-   * plain chat model received it — and confirmed an action nothing had done — while the run stayed
-   * parked on its question.
-   */
+  /** A picked choice resumes the run that asked, by id, instead of going out as a typed chat message. */
   const answer = useCallback(async (pick: AgentChoicePick): Promise<void> => {
     const pending = choiceAnswer(useAgentRunStore.getState().pendingQuestion, pick);
     if (!pending) return;

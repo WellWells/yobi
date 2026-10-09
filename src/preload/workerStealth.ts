@@ -1,4 +1,5 @@
 import { withChromeBrand, type UserAgentBrand } from '../shared/clientHintBrands';
+import { claimsFirefox, claimsGeminiApp } from '../shared/userAgentPersona';
 
 export type { UserAgentBrand };
 
@@ -14,10 +15,6 @@ export type NavigatorWithUAData = Navigator & { userAgentData?: NavigatorUAData 
 type AnyFunction = (...args: never[]) => unknown;
 
 const installed = new WeakSet<object>();
-
-function claimsFirefox(userAgent: string): boolean {
-  return /Firefox\//.test(userAgent);
-}
 
 function nativeStub(name: string, impl: (...args: unknown[]) => unknown): AnyFunction {
   const stub = new Proxy(Object.prototype.hasOwnProperty as unknown as AnyFunction, {
@@ -160,6 +157,7 @@ export function installChromeBrands(nav: Navigator): void {
 
 export function applyWorkerStealth(win: Window, userAgent: string = win.navigator.userAgent): void {
   installVisibilityPatches(win.document);
+  if (claimsGeminiApp(userAgent)) return;
   installChromeSurface(win, userAgent);
   if (!claimsFirefox(userAgent)) installChromeBrands(win.navigator);
 }

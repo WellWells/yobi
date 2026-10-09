@@ -31,6 +31,7 @@ import { useByokSettings } from './settings/hooks/useByokSettings';
 import { useByokGroups } from './settings/hooks/useByokGroups';
 import { useMcpServers } from './settings/hooks/useMcpServers';
 import { useUserMemory } from './settings/hooks/useUserMemory';
+import { useBotAccess } from './settings/hooks/useBotAccess';
 import { MemorySection } from './settings/sections/MemorySection';
 import { useSettingsNav } from './settings/hooks/useSettingsNav';
 import type { Category } from './settings/hooks/useSettingsNav';
@@ -78,13 +79,11 @@ export const SettingsView: React.FC = () => {
   const byokGroups = useByokGroups(byok.snapshot, byok.applySnapshot);
   const mcp = useMcpServers();
   const userMemory = useUserMemory();
+  const botAccess = useBotAccess({ telegram, line, memory: userMemory, mcp, t });
   const nav = useSettingsNav();
 
-  // Back to the top when the category changes. Nine of the eleven categories are taller than
-  // the viewport and the view never unmounts, so without this every entry point — the nav
-  // click, the secret-health deep link, the openShortcuts shortcut — lands at whatever offset
-  // the previous category was left at. Keyed on `isSearching`, not the query text, or the
-  // scroller yanks on every keystroke.
+  // Back to the top when the category changes: the view never unmounts, so any entry point would
+  // land at the previous offset. Keyed on `isSearching`, not the query, or it scrolls per keystroke.
   const contentRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     contentRef.current?.scrollTo({ top: 0 });
@@ -231,7 +230,6 @@ export const SettingsView: React.FC = () => {
                 onSetLocale={setLocale}
                 getLocaleLabel={getLocaleLabel}
                 onOpenLanguagesFolder={handleOpenLanguagesFolder}
-                onOpenShortcuts={() => nav.setActiveCategory('shortcuts')}
                 showSection={(tags) => nav.showSection(tags, 'general')}
                 sectionGap={SECTION_GAP}
               />
@@ -274,38 +272,6 @@ export const SettingsView: React.FC = () => {
             />
           ))}
 
-          {categoryBlock('ai', (
-            <AiSection
-              system={system}
-              prefs={prefs}
-              t={t}
-              locale={locale}
-              showSection={(tags) => nav.showSection(tags, 'ai')}
-              sectionGap={SECTION_GAP}
-            />
-          ))}
-
-          {categoryBlock('memory', (
-            <MemorySection
-              memory={userMemory}
-              telegramUsers={telegram.telegramSettings?.pairing.pairedUsers ?? []}
-              lineUsers={line.lineSettings?.pairing.pairedUsers ?? []}
-              t={t}
-              locale={locale}
-              showSection={(tags) => nav.showSection(tags, 'memory')}
-              sectionGap={SECTION_GAP}
-            />
-          ))}
-
-          {categoryBlock('connectors', (
-            <McpSection
-              mcp={mcp}
-              t={t}
-              showSection={(tags) => nav.showSection(tags, 'connectors')}
-              sectionGap={SECTION_GAP}
-            />
-          ))}
-
           {categoryBlock('accounts', (
             <>
               <ModelSourcesSection
@@ -324,18 +290,43 @@ export const SettingsView: React.FC = () => {
             </>
           ))}
 
+          {categoryBlock('ai', (
+            <AiSection
+              system={system}
+              prefs={prefs}
+              t={t}
+              localeLabel={getLocaleLabel(locale)}
+              showSection={(tags) => nav.showSection(tags, 'ai')}
+              sectionGap={SECTION_GAP}
+            />
+          ))}
+
+          {categoryBlock('memory', (
+            <MemorySection
+              memory={userMemory}
+              roster={botAccess.roster}
+              t={t}
+              locale={locale}
+              showSection={(tags) => nav.showSection(tags, 'memory')}
+              sectionGap={SECTION_GAP}
+            />
+          ))}
+
+          {categoryBlock('connectors', (
+            <McpSection
+              mcp={mcp}
+              roster={botAccess.roster}
+              t={t}
+              showSection={(tags) => nav.showSection(tags, 'connectors')}
+              sectionGap={SECTION_GAP}
+            />
+          ))}
+
           {categoryBlock('bots', (
             <>
-              <BotCommandsSection
-                botCommands={botCommands}
-                anyBotEnabled={anyBotEnabled}
-                t={t}
-                showSection={(tags) => nav.showSection(tags, 'bots')}
-                isSearching={nav.isSearching}
-                sectionGap={SECTION_GAP}
-              />
               <TelegramSection
                 telegram={telegram}
+                access={botAccess.telegram}
                 t={t}
                 showSection={(tags) => nav.showSection(tags, 'bots')}
                 isSearching={nav.isSearching}
@@ -343,6 +334,16 @@ export const SettingsView: React.FC = () => {
               />
               <LineSection
                 line={line}
+                access={botAccess.line}
+                t={t}
+                showSection={(tags) => nav.showSection(tags, 'bots')}
+                isSearching={nav.isSearching}
+                sectionGap={SECTION_GAP}
+              />
+              <BotCommandsSection
+                botCommands={botCommands}
+                anyBotEnabled={anyBotEnabled}
+                roster={botAccess.roster}
                 t={t}
                 showSection={(tags) => nav.showSection(tags, 'bots')}
                 isSearching={nav.isSearching}

@@ -1,16 +1,16 @@
 # BYOK Example: OpenAI-compatible Endpoints
 
-The **OpenAI-compatible** provider type works with any service that speaks the OpenAI chat-completions API — `POST <base URL>/chat/completions` with an `Authorization: Bearer <key>` header, returning `choices[0].message.content`. That's the vast majority of API providers today, plus your own local server. Only the **Base URL** and **Model** differ between them; Yobi's call logic is identical.
+The **OpenAI-compatible** provider type works with any service that speaks the OpenAI chat-completions API — `POST <base URL>/chat/completions` with an `Authorization: Bearer <key>` header. Yobi asks for a streamed reply (`"stream": true`) and also accepts a plain `choices[0].message.content` reply. That's the vast majority of API providers today, plus your own local server. Only the **Base URL** and **Model** differ between them; Yobi's call logic is identical.
 
 ## Steps
 
-**Settings → Model Sources → Bring Your Own Key (BYOK) → Add instance**, choose provider **OpenAI-compatible**, then set the Base URL and Model for your service and paste your key.
+**Settings → AI Models → Your Own API Keys (BYOK) → Add key**. If your service is in the **Provider** list, pick it and the Base URL is filled in for you; otherwise pick **OpenAI-compatible** and enter the Base URL yourself. Then set the Model and paste your key.
 
 | Field | Value |
 | ----- | ----- |
 | Name | anything you like (e.g. `OpenAI · GPT-4o mini`) |
-| Provider | `OpenAI-compatible` |
-| Base URL | your service's endpoint root (default `https://api.openai.com/v1`) |
+| Provider | the matching preset, or `OpenAI-compatible` |
+| Base URL | filled in by a preset (e.g. `https://api.openai.com/v1` for ChatGPT (OpenAI)); empty for OpenAI-compatible, so paste your service's endpoint root |
 | Model | the model id your service expects |
 | API key | your key |
 
@@ -18,20 +18,20 @@ Yobi appends `/chat/completions` to the Base URL automatically.
 
 ## Common providers
 
-All of these are OpenAI-compatible — pick **OpenAI-compatible** and set the Base URL accordingly:
+Providers in the **Provider** list get their Base URL filled in; for the rest, pick **OpenAI-compatible** and paste the Base URL. Besides the ones below, the list also has Claude (Anthropic), Grok (xAI), Mistral, Perplexity, Qwen (DashScope), Kimi (Moonshot), Cerebras, MiniMax and GLM (Z.ai).
 
-| Provider | Base URL | Example model |
-| -------- | -------- | ------------- |
-| OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` |
-| OpenRouter | `https://openrouter.ai/api/v1` | `openai/gpt-4o-mini`, `google/gemini-2.5-flash` |
-| Together AI | `https://api.together.xyz/v1` | e.g. a Llama or Qwen id from their catalog |
-| Groq | `https://api.groq.com/openai/v1` | `llama-3.3-70b-versatile` |
-| DeepSeek | `https://api.deepseek.com` | `deepseek-chat` |
-| Local (Ollama) | `http://localhost:11434/v1` | whatever you've pulled, e.g. `llama3.1` |
-| Local (LM Studio / vLLM) | `http://localhost:1234/v1` · `http://localhost:8000/v1` | your loaded model id |
-| Any other | the endpoint root from your provider's docs (usually ends in `/v1`) | the model id it lists |
+| Provider | Pick in the list | Base URL | Example model |
+| -------- | ---------------- | -------- | ------------- |
+| OpenAI | ChatGPT (OpenAI) | `https://api.openai.com/v1` | `gpt-4o-mini` |
+| OpenRouter | OpenRouter | `https://openrouter.ai/api/v1` | `openai/gpt-4o-mini`, `google/gemini-2.5-flash` |
+| Together AI | OpenAI-compatible | `https://api.together.xyz/v1` | e.g. a Llama or Qwen id from their catalog |
+| Groq | Groq | `https://api.groq.com/openai/v1` | `llama-3.3-70b-versatile` |
+| DeepSeek | DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| Local (Ollama) | OpenAI-compatible | `http://localhost:11434/v1` | whatever you've pulled, e.g. `llama3.1` |
+| Local (LM Studio / vLLM) | OpenAI-compatible | `http://localhost:1234/v1` · `http://localhost:8000/v1` | your loaded model id |
+| Any other | OpenAI-compatible | the endpoint root from your provider's docs (usually ends in `/v1`) | the model id it lists |
 
-Use the exact model id from your provider's model list — a typo yields an HTTP 400/404.
+Use the exact model id from your provider's model list — a typo yields an HTTP 400/404. **Load models** fetches that list from `<Base URL>/models` so you can pick instead of typing; **Test** sends a short request and shows the reply before you save.
 
 ## Getting a key
 

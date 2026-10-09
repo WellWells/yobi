@@ -1,4 +1,5 @@
 import type { Provider } from '../shared/types';
+import { buildGeminiAppUserAgent, isGoogleUrl } from '../shared/userAgentPersona';
 
 function getPlatformToken(): string {
   if (process.platform === 'darwin') {
@@ -28,9 +29,45 @@ export const CLEAN_UA = buildCleanChromiumUserAgent();
 
 export const FIREFOX_UA = buildFirefoxUserAgent();
 
+export const GEMINI_APP_UA = buildGeminiAppUserAgent(process.versions.chrome ?? '140.0.0.0');
+
+export const GOOGLE_UA: string | null = process.platform === 'win32' ? GEMINI_APP_UA : null;
+
 export const WORKER_USER_AGENTS: Record<Provider, string> = {
-  gemini: FIREFOX_UA,
+  gemini: GOOGLE_UA ?? FIREFOX_UA,
   chatgpt: CLEAN_UA,
   claude: CLEAN_UA,
   perplexity: CLEAN_UA,
 };
+
+export function userAgentForUrl(url: string): string {
+  return GOOGLE_UA && isGoogleUrl(url) ? GOOGLE_UA : CLEAN_UA;
+}
+
+export function documentUserAgent(
+  current: string,
+  url: string,
+  googleUserAgent: string | null = GOOGLE_UA,
+): string {
+  if (!googleUserAgent) return current;
+  if (isGoogleUrl(url)) return googleUserAgent;
+  return current === googleUserAgent ? CLEAN_UA : current;
+}
+
+export interface RequestSource {
+  resourceType: string;
+  frameOrigin: string | null;
+  windowUserAgent: string | null;
+}
+
+export function requestUserAgent(
+  current: string,
+  url: string,
+  source: RequestSource,
+  googleUserAgent: string | null = GOOGLE_UA,
+): string {
+  if (!googleUserAgent || source.resourceType === 'subFrame') return current;
+  if (source.resourceType === 'mainFrame') return source.windowUserAgent || current;
+  if (source.frameOrigin && isGoogleUrl(source.frameOrigin) && isGoogleUrl(url)) return current;
+  return documentUserAgent(current, url, googleUserAgent);
+}

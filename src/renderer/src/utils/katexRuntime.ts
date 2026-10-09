@@ -7,8 +7,12 @@ export type RehypePluginList = any[];
  * a lone `$` is never math and `$$` is the only delimiter that can produce a
  * math node for rehype-katex to pick up. Documents without it get no math nodes
  * at all, which is why they can skip the whole bundle rather than just defer it.
+ *
+ * The other route in is a ```math / ```latex / ```tex fence. The prefix allows any
+ * indent and blockquote marker, so a fence nested in a list is never missed; a latex
+ * fence that KaTeX then rejects only costs the chunk load.
  */
-const MATH_DELIMITER = /\$\$/;
+const MATH_DELIMITER = /\$\$|^[ \t>]*(?:`{3,}|~{3,})[ \t]*(?:math|latex|tex)(?![\w-])/im;
 
 export const NO_KATEX: RehypePluginList = [];
 

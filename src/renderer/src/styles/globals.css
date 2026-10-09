@@ -1,4 +1,3 @@
-/* src/renderer/src/styles/globals.css */
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -56,6 +55,8 @@
   --font-size-md:   14px;
   --font-size-xl:   15px;
   --font-size-3xl:  17px;
+  /* Empty-chat greetings only: they sit alone above the composer, like the providers' own home pages. */
+  --font-size-display: 26px;
 }
 
 html, body, #root {
@@ -67,11 +68,8 @@ body {
   font-family: var(--font-sans);
   background: var(--bg-primary);
   color: var(--text-primary);
-  /* No base font-size/line-height here: the Mantine theme owns them (md / 1.55) and
-     the app has always rendered against those. This rule used to declare 14px/1.5,
-     but it was dead — Mantine's stylesheet loaded last and won the tie. Now that
-     Mantine loads first, re-declaring them here would shrink every inherited text
-     in the app by 12.5%. */
+  /* No base font-size/line-height: the Mantine theme owns them (md / 1.55), and this sheet
+     loads after Mantine's, so a value here would resize every inherited text. */
   -webkit-font-smoothing: antialiased;
   /* App chrome is unselectable by default, like a native desktop app.
      Content the user is expected to copy opts back in via the rules below. */
@@ -119,14 +117,9 @@ textarea {
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 
-/* Press feedback. Mantine gives this to Button/ActionIcon/CloseButton only (`.mantine-active`),
-   and every row, tile, pill and date cell in the app is an UnstyledButton — which renders a real
-   <button> but gets no sink — so a click on the send icon answered and a click on the mode pill
-   beside it did not. Same 1px as Mantine's own rule; `.mantine-active` is excluded so those keep
-   their scale-aware value. Deliberately outside the transition above: a press must land on the
-   frame it happens, not ease in over 150ms.
-   `data-no-press` opts out the window caption buttons — neither Windows 11 controls nor macOS
-   traffic lights move when pressed. */
+/* Press feedback for every <button>, the same 1px sink Mantine gives `.mantine-active` (excluded
+   so it keeps its scale-aware value). Outside the transition above so the press lands on the same
+   frame. `data-no-press` opts out the window caption buttons, which do not move when pressed. */
 button:active:not(:disabled):not([data-disabled]):not([data-no-press]):not(.mantine-active) {
   transform: translateY(1px);
 }
@@ -143,7 +136,6 @@ textarea:focus-visible {
   box-shadow: 0 0 0 3px var(--accent-dim);
 }
 
-/* Disabled state styling for better contrast */
 button:disabled,
 input:disabled,
 select:disabled,
@@ -151,6 +143,13 @@ textarea:disabled {
   color: var(--text-disabled);
   cursor: not-allowed;
   opacity: 0.6;
+}
+
+/* Mantine fills every disabled ActionIcon with --mantine-color-disabled whatever its variant.
+   A subtle/transparent icon has no fill when enabled, so it gets none when disabled either:
+   the dimmed glyph from the rule above is the whole signal. Loading keeps Mantine's look. */
+.mantine-ActionIcon-root:is([data-variant='subtle'], [data-variant='transparent']):is(:disabled, [data-disabled]):not([data-loading]) {
+  background: transparent;
 }
 
 /* Use :focus-visible (not :focus) to preserve the focus ring for keyboard users
@@ -329,6 +328,23 @@ textarea:focus-visible {
   background: var(--bg-secondary);
 }
 
+/* ScrollableTable: a wide table scrolls on its own instead of stretching the
+   bubble. The 4px padding keeps a focused link's ring from being clipped. */
+.md-content .md-table-scroll {
+  overflow-x: auto;
+  margin: calc(0.75em - 4px) -4px;
+  padding: 4px;
+}
+
+.md-content .md-table-scroll > table {
+  margin: 0;
+}
+
+/* Short columns (rehypeTightTableColumns) stay on one line */
+.md-content .md-col-tight {
+  white-space: nowrap;
+}
+
 .md-content a {
   color: var(--accent);
   text-decoration: none;
@@ -349,15 +365,112 @@ textarea:focus-visible {
   margin: 1.25em 0;
 }
 
+/* Footnotes: a rule above, smaller text, a label in the app language (BaseMarkdown) */
+.md-content .footnotes {
+  margin-top: 1.25em;
+  padding-top: 0.5em;
+  border-top: 1px solid var(--border);
+  font-size: 0.88em;
+  color: var(--text-muted);
+}
+
+.md-content .md-footnotes-label {
+  margin: 0 0 0.25em;
+  font-weight: 600;
+}
+
+.md-content .md-hidden {
+  display: none;
+}
+
+.md-content .footnotes ol {
+  padding-left: 1.5em;
+}
+
+.md-content sup,
+.md-content sub {
+  font-size: 0.75em;
+  line-height: 0;
+}
+
+/* The bare tags an answer may use (markdownHtmlTags) */
+.md-content kbd {
+  display: inline-block;
+  padding: 0.05em 0.4em;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  line-height: 1.4;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.md-content mark {
+  background: var(--accent-dim);
+  color: inherit;
+  border-radius: 2px;
+}
+
+.md-content details {
+  margin: 0.75em 0;
+  padding: 0.4em 0.9em;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.md-content summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.md-content details[open] > summary {
+  margin-bottom: 0.4em;
+}
+
+/* GitHub callouts (markdownAlerts): the quote takes the kind's colour */
+.md-content .md-alert-note,
+.md-content .md-alert-important {
+  --md-alert-color: var(--accent);
+}
+
+.md-content .md-alert-tip {
+  --md-alert-color: var(--mantine-color-success);
+}
+
+.md-content .md-alert-warning {
+  --md-alert-color: var(--mantine-color-warning);
+}
+
+.md-content .md-alert-caution {
+  --md-alert-color: var(--mantine-color-error);
+}
+
+.md-content blockquote.md-alert {
+  color: var(--text-primary);
+  border-left-color: var(--md-alert-color);
+  background: color-mix(in srgb, var(--md-alert-color) 8%, transparent);
+}
+
+.md-content .md-alert-title {
+  margin-bottom: 0.25em;
+  font-weight: 600;
+  color: var(--md-alert-color);
+}
+
+/* A remote image is a link to it (MarkdownImage) */
+.md-content .md-image-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+}
+
 /* ── Animations ──────────────────────────────────────────────────────────── */
 
-/* The arrival of a finished answer. There is no streaming, so the pending spinner and the
-   whole answer swap in a single React commit — the app's most-repeated moment was a one-frame
-   cut. Transform and opacity only: animating height re-triggers the ResizeObserver behind
-   useStickToBottom and the scroll double-jumps.
-   ConversationView removes this class on animationend, which matters beyond tidiness — the
-   `both` fill-mode would otherwise leave a transform on the row forever, and a transformed
-   ancestor is a containing block that breaks the sticky question column in side-by-side. */
+/* Entry of a finished answer. Transform and opacity only: animating height re-triggers the
+   ResizeObserver behind useStickToBottom. ConversationView removes the class on animationend,
+   since a lingering transform would break the sticky question column in side-by-side. */
 @keyframes turnEnter {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: none; }
@@ -390,32 +503,16 @@ textarea:focus-visible {
   }
 }
 
-/* (Button system removed — now handled by Mantine) */
-
-/* ── Dropdown option items ── */
-/* (Removed — now handled by Mantine Select/Menu) */
-
-/* ── Template chip buttons (prompt section) ─────────────────────────────── */
-/* (Removed — now handled by Mantine Button/ActionIcon) */
-
 /* ── The window's one notice surface ─────────────────────────────────────── */
-/* Mantine mounts a container for EVERY position — all six, always, whether or not a notice is
-   in it — and each one gets whatever the provider passes through `styles.root`. So an offset
-   handed to the provider also lands on the three `bottom-*` containers, which already carry
-   `bottom`, and a `position: fixed` box with both `top` and `bottom` set does not stay its
-   content's height: it stretches to fill the gap. That turned the bottom three into invisible
-   440px columns spanning the window from the title bar to the composer — together the full
-   width — and every click below the title bar landed on one of them. Hence the offset lives
-   here, keyed on the containers it is actually about.
-   The number clears the 48px title bar (TitleBar.module.css) and the caption buttons. */
+/* Mantine mounts all six position containers and applies the provider's `styles.root` to each;
+   a top offset there would stretch the `bottom-*` ones (which already set `bottom`) into
+   full-height columns. So the offset lives here, on the top containers only: 56px clears the
+   48px title bar and the caption buttons. */
 .mantine-Notifications-root[data-position^='top-'] {
   top: 56px;
 }
 
-/* An empty container must not take a click, whatever its box ends up being — the failure above
-   was invisible precisely because a notice surface has nothing to show. Mantine puts the
-   hover-to-pause and dismiss handlers on each notification, not on the container, so nothing
-   is lost by making the container itself transparent to the pointer. */
+/* Containers never take clicks; Mantine puts hover and dismiss handlers on each notification. */
 .mantine-Notifications-root {
   pointer-events: none;
 }
@@ -450,11 +547,10 @@ textarea:focus-visible {
   color: var(--text-primary) !important;
 }
 
+/* Same type as GroupHeader: sentence case, no tracking (caps and tracking pulled CJK apart). */
 .mantine-Menu-label {
   color: var(--text-muted) !important;
   font-weight: 600 !important;
-  font-size: var(--font-size-xs) !important;
-  text-transform: uppercase !important;
-  letter-spacing: 0.5px !important;
+  font-size: var(--font-size-sm) !important;
 }
 

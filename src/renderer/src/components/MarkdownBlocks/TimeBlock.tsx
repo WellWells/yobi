@@ -1,7 +1,8 @@
 import React from 'react';
-import { Box, Group, Text } from '@mantine/core';
+import { Group, Text } from '@mantine/core';
 import { Clock } from 'lucide-react';
 import dayjs from 'dayjs';
+import { ProviderTag } from '../ProviderTag';
 
 interface TimeBlockProps {
   time: string;
@@ -12,9 +13,9 @@ function formatDisplayTime(raw: string): string {
   const normalized = raw.trim();
   if (!normalized) return '';
   const parsed = dayjs(normalized);
-  if (parsed.isValid()) return parsed.format('YYYY-MM-DD HH:mm:ss');
+  if (parsed.isValid()) return parsed.format('YYYY-MM-DD HH:mm');
   const fallbackParsed = dayjs(normalized.replace(' ', 'T'));
-  return fallbackParsed.isValid() ? fallbackParsed.format('YYYY-MM-DD HH:mm:ss') : normalized;
+  return fallbackParsed.isValid() ? fallbackParsed.format('YYYY-MM-DD HH:mm') : normalized;
 }
 
 export const TimeBlock = React.memo<TimeBlockProps>(({ time, provider }) => {
@@ -30,27 +31,12 @@ export const TimeBlock = React.memo<TimeBlockProps>(({ time, provider }) => {
         fontSize: 'var(--font-size-sm)',
       }}
     >
-      {provider && (
-        <Box style={{
-          width: 'fit-content',
-          fontSize: 'var(--font-size-xs)',
-          fontWeight: 700,
-          color: 'var(--text-secondary)',
-          border: '1px solid var(--border)',
-          background: 'var(--bg-tertiary)',
-          borderRadius: 999,
-          padding: '1px 7px',
-          letterSpacing: 0.2,
-        }}>
-          {provider}
-        </Box>
-      )}
+      {provider && <ProviderTag provider={provider} />}
       {displayTime && (
         <>
           <Clock size={13} style={{ opacity: 0.75, marginTop: 1 }} />
           <Text span style={{
-            fontFamily: 'var(--font-mono)',
-            letterSpacing: '0.4px',
+            fontVariantNumeric: 'tabular-nums',
             whiteSpace: 'normal',
             wordBreak: 'break-word',
             overflowWrap: 'anywhere',

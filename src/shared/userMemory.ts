@@ -41,6 +41,17 @@ export interface UserMemoryBotSelf {
   line: string[];
 }
 
+/**
+ * One account's "me" mark turned on or off. Main applies it to the file as it is at write time:
+ * a whole-list replacement built from the renderer's snapshot would erase the other marks
+ * whenever that snapshot was missing or stale.
+ */
+export interface BotSelfChange {
+  platform: keyof UserMemoryBotSelf;
+  userId: string;
+  self: boolean;
+}
+
 export interface UserMemorySnapshot {
   enabled: boolean;
   entries: UserMemoryEntry[];

@@ -3,8 +3,8 @@ import type { FlowStepOutcome } from '../shared/flowMetrics';
 
 /**
  * The seam between the executor and the counters, in the shape `tokenMeter` and `llmMeter`
- * already use. The executor stays free of any store, so a test can watch the exact event
- * stream a flow produces without touching disk.
+ * already use. The executor stays free of any store: it only emits the event stream a flow
+ * produces, and the sink decides what reaches disk.
  */
 export interface FlowStepEvent {
   flowId: string;

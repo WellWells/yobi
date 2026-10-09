@@ -49,6 +49,9 @@ export function createDefaultStep(type: SkillType = 'shell', outputKey?: string,
     http: t('flow.skill.http'),
     youtube: t('flow.skill.youtube'),
     youtube_subs: t('flow.skill.youtube_subs'),
+    x_posts: t('flow.skill.x_posts'),
+    x_thread: t('flow.skill.x_thread'),
+    x_trends: t('flow.skill.x_trends'),
     power: t('flow.skill.power'),
     restart_app: t('flow.skill.restart_app'),
     file_write: t('flow.skill.file_write'),
@@ -110,4 +113,61 @@ export function findMatchingMarker(steps: SkillInstance[], index: number): numbe
     }
   }
   return -1;
+}
+
+/** The first `${base}_${n}` (n counting up from `start`) that no step's outputKey already uses. */
+export function nextFreeOutputKey(base: string, steps: SkillInstance[], start: number): string {
+  const taken = new Set(steps.map((s) => s.outputKey?.trim()).filter(Boolean));
+  let n = Math.max(1, start);
+  while (taken.has(`${base}_${n}`)) n++;
+  return `${base}_${n}`;
+}
+
+/** Where a new step goes: before a trailing end_loop/end_if (inside that block), else at the end. */
+export function stepInsertIndex(steps: SkillInstance[]): number {
+  const last = steps[steps.length - 1];
+  return last && (last.type === 'end_loop' || last.type === 'end_if') ? steps.length - 1 : steps.length;
+}
+
+// Steps that have a key but never produce a list worth looping over, plus every step with no output.
+const NON_LOOP_SOURCES: ReadonlySet<SkillType> = new Set<SkillType>(['clipboard', 'bot', 'loop', ...SKILLS_WITHOUT_OUTPUT_KEY]);
+
+/**
+ * The step a new loop should read: the nearest step before `before` that has a real outputKey.
+ * A closed loop's body is jumped over — its keys no longer exist after its end_loop.
+ */
+export function findLoopSource(steps: SkillInstance[], before: number): SkillInstance | undefined {
+  for (let i = Math.min(before, steps.length) - 1; i >= 0; i--) {
+    const step = steps[i];
+    if (step.type === 'end_loop') {
+      const open = findMatchingMarker(steps, i);
+      if (open >= 0) i = open;
+      continue;
+    }
+    if (NON_LOOP_SOURCES.has(step.type) || !step.outputKey?.trim()) continue;
+    return step;
+  }
+  return undefined;
+}
+
+// Fields only main writes; the editor never edits them, so main's value always wins.
+const MAIN_OWNED_FIELDS: ReadonlySet<string> = new Set(['updatedAt']);
+
+/**
+ * Lays main's reply to a save over the editor copy. A top-level field the user changed after the
+ * request was sent keeps the user's edit (the flow then stays unsaved); every other field takes
+ * main's copy, so normalization and a forced `enabled: false` still land.
+ */
+export function mergeSaveReply(current: FlowDefinition, sent: FlowDefinition, saved: FlowDefinition): FlowDefinition {
+  const cur = current as unknown as Record<string, unknown>;
+  const req = sent as unknown as Record<string, unknown>;
+  const reply = saved as unknown as Record<string, unknown>;
+  const keys = [...Object.keys(reply), ...Object.keys(cur).filter((k) => !(k in reply))];
+  const merged: Record<string, unknown> = {};
+  for (const key of keys) {
+    const edited = !MAIN_OWNED_FIELDS.has(key) && JSON.stringify(cur[key]) !== JSON.stringify(req[key]);
+    const value = edited ? cur[key] : reply[key];
+    if (value !== undefined) merged[key] = value;
+  }
+  return merged as unknown as FlowDefinition;
 }

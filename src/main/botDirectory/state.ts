@@ -101,6 +101,14 @@ export function revokePairing(map: BotContactMap, platform: BotPlatform, id: str
   return { ...map, [key]: rest };
 }
 
+export function revokeAllPairings(map: BotContactMap): BotContactMap {
+  let next = map;
+  for (const entry of Object.values(map)) {
+    if (entry.kind === 'user') next = revokePairing(next, entry.platform, entry.id);
+  }
+  return next;
+}
+
 export function forgetContact(map: BotContactMap, key: string): BotContactMap {
   if (!map[key]) return map;
   const { [key]: _dropped, ...rest } = map;

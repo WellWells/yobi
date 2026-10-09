@@ -1,19 +1,9 @@
-/* Row highlight for the lists above the composer (slash commands, /model).
-   The highlight is driven entirely by NavLink's `active` prop, which
-   PromptInputArea keeps in sync with the pointer via onMouseEnter. Mantine's
-   built-in :hover background paints a light grey instantly, one frame before
-   React commits `active` (a near-black fill) — so every row the pointer
-   crosses does a grey -> active swap that reads as flicker. Suppress the hover
-   background on non-active rows so `active` stays the single, consistent
-   highlight (the active row keeps its own background when hovered). */
+/* Rows highlight only via NavLink's `active`; Mantine's :hover fill lands a frame earlier and flickers. */
 .item:not([data-active]):hover {
   background-color: transparent;
 }
 
-/* The menu is only 340px wide, so a long description (the English /agent and
-   /quicksearch blurbs both run past 60 characters) would wrap to three or four
-   lines and push the rest of the list out of the 320px viewport. Cap it at two
-   lines — the command name already carries the identity. */
+/* The menu is 340px wide; cap descriptions at two lines so the list stays in view. */
 .description {
   display: -webkit-box;
   -webkit-box-orient: vertical;

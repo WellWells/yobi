@@ -1,10 +1,8 @@
-import { FLOW_EXPORT_TYPE, LEGACY_FLOW_EXPORT_TYPE } from '../../../../shared/types';
+import { FLOW_EXPORT_TYPE, LEGACY_FLOW_EXPORT_TYPE, TRIGGER_TYPES } from '../../../../shared/types';
 import type { FlowDefinition, SkillInstance, TriggerConfig, TriggerType } from '../../../../shared/types';
 import { SKILL_TYPES } from '../../../../shared/flowSkillSchema';
 import { sanitizeFlowVariables } from '../../../../shared/flowVariables';
 import { createId } from '../../store/flowHelpers';
-
-const TRIGGER_TYPES: TriggerType[] = ['hotkey', 'cron', 'manual', 'bot', 'chat'];
 
 function hasFlowShape(val: unknown): val is Record<string, unknown> {
   if (typeof val !== 'object' || val === null) return false;
@@ -19,7 +17,7 @@ function hasFlowShape(val: unknown): val is Record<string, unknown> {
 
 function sanitizeTrigger(raw: unknown): TriggerConfig {
   const obj = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {};
-  const type = TRIGGER_TYPES.includes(obj.type as TriggerType) ? obj.type as TriggerType : 'manual';
+  const type = (TRIGGER_TYPES as readonly string[]).includes(String(obj.type)) ? obj.type as TriggerType : 'manual';
   return { ...obj, type } as TriggerConfig;
 }
 

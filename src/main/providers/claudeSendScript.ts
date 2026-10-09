@@ -1,13 +1,9 @@
 import { CLAUDE_USAGE_LIMIT_JS } from './claudeUsageLimit';
 
 /*
- * claude.ai's composer, measured 2026-09-18 on the live page (Free account, Chrome 151).
- *
- * Every element here is found by `data-testid`; the visible labels (and the stop button, which has
- * no test id at all) are localized. `execCommand('insertText')` lands in the TipTap editor as text
- * even at 150k characters — it never becomes a pasted-file attachment the way a paste event can.
- * While Claude answers, the send button is replaced by a stop button, so "the send button is gone"
- * reads as "generating".
+ * claude.ai's composer, found by `data-testid` (labels are localized). `insertText` keeps long prompts
+ * as text rather than a pasted-file attachment. While Claude answers the send button is replaced by
+ * a stop button, so "the send button is gone" reads as "generating".
  */
 export const CLAUDE_INPUT_SELECTOR = '[data-testid="chat-input"]';
 export const CLAUDE_SEND_SELECTOR = '[data-testid="chat-input-send"]';
@@ -17,16 +13,12 @@ export const CLAUDE_ATTACHMENT_TILE_SELECTOR = '[data-testid="file-thumbnail"]';
 
 /**
  * Fills the composer, clicks send once, and waits for the page to confirm the message was taken.
- * Needs `sleep` and `waitFor` in scope.
+ * Needs `sleep` and `waitFor` in scope. Confirmation is a NEW user-message node (not a count: the
+ * transcript is virtualized) or an emptied composer with the send button gone; an unclear click is
+ * never repeated (a second click is a second question). A rejected send next to a limit signal ends
+ * with `CLAUDE_USAGE_LIMIT`.
  *
- * The confirmation is a NEW user-message node (the transcript is virtualized, so a count can sit
- * still while an old turn unmounts) or an emptied composer with the send button swapped for stop.
- * A click whose outcome is unclear is never repeated: a second click would be a second question.
- *
- * Out of messages, the send button stays disabled, or the click draws the turn and opens the
- * upgrade dialog at once, then takes the turn back (~0.3 s / ~0.8 s). Either failure next to a
- * limit signal ends the wait with `CLAUDE_USAGE_LIMIT`. The composer notice alone is not enough:
- * text in the composer can swap it for another notice.
+ * Returns the conversation id the message went into, so the read can tell its own reply apart.
  */
 export const CLAUDE_SUBMIT_JS = `async function claudeSubmit(promptText, opts) {
   opts = opts || {};
@@ -34,6 +26,7 @@ export const CLAUDE_SUBMIT_JS = `async function claudeSubmit(promptText, opts) {
   var ACCEPT_MS = opts.acceptMs === undefined ? 5000 : opts.acceptMs;
   var CONFIRM_MS = opts.confirmMs === undefined ? 10000 : opts.confirmMs;
   var SETTLE_MS = opts.settleMs === undefined ? 300 : opts.settleMs;
+  var CONVERSATION_MS = opts.conversationMs === undefined ? 5000 : opts.conversationMs;
 
   function composer() { return document.querySelector(${JSON.stringify(CLAUDE_INPUT_SELECTOR)}); }
   function composerText() {
@@ -48,6 +41,10 @@ export const CLAUDE_SUBMIT_JS = `async function claudeSubmit(promptText, opts) {
   function latest(selector) {
     var all = document.querySelectorAll(selector);
     return all[all.length - 1] || null;
+  }
+  function conversationId() {
+    var path = location.pathname.split('/');
+    return path[1] === 'chat' ? (path[2] || '') : '';
   }
   ${CLAUDE_USAGE_LIMIT_JS}
 
@@ -109,5 +106,11 @@ export const CLAUDE_SUBMIT_JS = `async function claudeSubmit(promptText, opts) {
   }
   if (rejected()) throw claudeLimitError();
 
-  return { lastAssistant: previousAssistant, lastAssistantText: previousAssistantText };
+  // Without the id the read simply cannot tell a switched page apart.
+  var conversation = conversationId();
+  if (!conversation) {
+    try { conversation = await waitFor(conversationId, 'Claude opened the conversation', CONVERSATION_MS, 100); } catch (e) { conversation = ''; }
+  }
+
+  return { lastAssistant: previousAssistant, lastAssistantText: previousAssistantText, conversation: conversation };
 }`;

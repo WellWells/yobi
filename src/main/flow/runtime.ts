@@ -1,8 +1,9 @@
-import type { FlowExecutionLog, SkillInstance, SkillType } from '../../shared/types';
+import type { FlowExecutionLog, FlowStepNote, SkillInstance, SkillType } from '../../shared/types';
 import type { FlowExecutorDeps, LogCallback } from './types';
+import { FlowUserError } from './userError';
 
 const DEFAULT_STEP_TIMEOUT_MS = 60_000;
-const BROWSER_STEP_TIMEOUT_MS = 300_000;
+export const BROWSER_STEP_TIMEOUT_MS = 300_000;
 const DEFAULT_LLM_TIMEOUT_MS = 120_000;
 const MAX_DELAY_MS = 3_600_000;
 
@@ -26,7 +27,7 @@ export function resolveStepTimeoutMs(
   if (type === 'delay') {
     return resolveDelayMs(config) + 10_000;
   }
-  if (type === 'browser' || type === 'rss' || type === 'scraper' || type === 'research' || type === 'gmap_reviews' || type === 'youtube' || type === 'youtube_subs' || type === 'browser_js' || type === 'file_download' || type === 'share') {
+  if (type === 'browser' || type === 'rss' || type === 'scraper' || type === 'research' || type === 'gmap_reviews' || type === 'youtube' || type === 'youtube_subs' || type === 'x_posts' || type === 'x_thread' || type === 'x_trends' || type === 'browser_js' || type === 'file_download' || type === 'share') {
     return BROWSER_STEP_TIMEOUT_MS;
   }
   return DEFAULT_STEP_TIMEOUT_MS;
@@ -57,7 +58,12 @@ export function withStepTimeout<T>(
     const timer = setTimeout(() => {
       try { onInterrupt?.(); } catch {}
       cleanupAbort();
-      reject(new Error(`${stepType} step timed out after ${Math.ceil(timeoutMs / 1_000)} seconds`));
+      const seconds = String(Math.ceil(timeoutMs / 1_000));
+      reject(new FlowUserError(
+        'flow.error.stepTimeout',
+        { seconds },
+        `${stepType} step timed out after ${seconds} seconds`,
+      ));
     }, timeoutMs);
 
     const onAbort = (): void => {
@@ -107,6 +113,7 @@ export function emitLog(
   status: FlowExecutionLog['status'],
   output?: string,
   error?: string,
+  displayError?: string,
 ): void {
   onLog?.({
     flowId,
@@ -115,6 +122,25 @@ export function emitLog(
     status,
     output,
     error,
+    ...(displayError ? { displayError } : {}),
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/** A step skipped on purpose: it carries a note code for the run panel to word, never an `error`. */
+export function emitSkipNote(
+  onLog: LogCallback | undefined,
+  flowId: string,
+  stepId: string,
+  stepIndex: number,
+  note: FlowStepNote,
+): void {
+  onLog?.({
+    flowId,
+    stepId,
+    stepIndex,
+    status: 'skipped',
+    note,
     timestamp: new Date().toISOString(),
   });
 }

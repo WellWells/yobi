@@ -1,11 +1,10 @@
 /**
  * Session orchestration for LINE access: locate → preflight → extract key → open reader.
  *
- * The wxSQLite3 key is kept between launches in the encrypted data-key store, because
- * scanning it out of LINE's process memory costs ~80s and the flow chat picker is what pays
- * it. It is never logged and never reaches config.json or a backup archive. Loads the native
- * driver, so this stays out of the offline test path (validated by the self-test); the pure
- * tool surface is tested via a fake service that satisfies LineServiceLike.
+ * The key is kept between launches in the encrypted data-key store, because scanning it out of
+ * LINE's memory is slow. It is never logged and never reaches config.json or a backup archive.
+ * Loads the native driver, so it is imported lazily; the tool surface works against
+ * LineServiceLike.
  */
 import { openEncryptedQueryable, preflightDbAccess, probeKey, type EncryptedHandle } from './cipherDb';
 import { LineError } from './errors';
@@ -51,9 +50,8 @@ export class LineService implements LineServiceLike {
   }
 
   /**
-   * Verify, never trust: a stored key is probed before use. LINE rotating its passphrase then
-   * self-heals into one extra scan, instead of surfacing at the far end of a flow as "no
-   * messages" — the one failure this skill must never produce silently.
+   * A stored key is probed before use, so a rotated LINE passphrase costs one extra scan instead
+   * of a flow silently reporting "no messages".
    */
   private async resolveKey(dbPath: string): Promise<string> {
     const stored = loadStoredLineKey();
@@ -64,7 +62,7 @@ export class LineService implements LineServiceLike {
     return scanned;
   }
 
-  /** Warm the key cache in the background so the first tool call is not blocked ~80s. */
+  /** Warms the key cache in the background so the first tool call does not wait for the key scan. */
   async warmUp(): Promise<void> {
     await this.getReader();
   }

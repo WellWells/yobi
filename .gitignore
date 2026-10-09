@@ -43,5 +43,7 @@ user-memory/
 flow-schedule-state.json
 data-keys.json
 secret-health.json
+# writeFileAtomic temp files left behind when a dev run is killed mid-write
+.*.tmp
 
 flow-checkpoints

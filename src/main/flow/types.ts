@@ -1,8 +1,10 @@
 import type { BrowserWindow } from 'electron';
 import type {
-  AgentStageLabel, CaptureFormat, CardTheme, FlowExecutionLog, MarkdownCapturePayload,
+  CaptureFormat, CardTheme, FlowExecutionLog, MarkdownCapturePayload,
   ShareExpire, ShareSettings,
 } from '../../shared/types';
+import type { ResearchProgress } from '../../shared/researchProgress';
+import type { RecipientDirectory } from '../../shared/botRecipients';
 
 export type LogCallback = (log: FlowExecutionLog) => void;
 
@@ -14,7 +16,8 @@ export interface SaveHistoryInfo {
 
 export interface FlowExecutorDeps {
   getWorkerWin: () => BrowserWindow | null;
-  onStage?: (label: AgentStageLabel, detail?: string) => void;
+  /** A research call's checklist, re-sent whole each time a phase or a count changes. */
+  onResearchProgress?: (progress: ResearchProgress) => void;
   ensureWorkerWin?: () => Promise<BrowserWindow | null>;
   getTargetUrl: () => string;
   getResponseTimeoutMs?: () => number;
@@ -24,6 +27,8 @@ export interface FlowExecutorDeps {
   sendLineMessage?: (userId: string, text: string) => Promise<void>;
   sendLineImage?: (userId: string, imageUrl: string) => Promise<void>;
   getLinePairedUsers?: () => Array<{ userId: string; displayName?: string }>;
+  /** The chats a bot step may name instead of giving an id ("me", a person, a channel). */
+  getBotRecipients?: () => Promise<RecipientDirectory>;
   captureMarkdown?: (
     payload: MarkdownCapturePayload,
     format: CaptureFormat,

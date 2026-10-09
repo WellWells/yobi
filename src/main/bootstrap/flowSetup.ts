@@ -1,7 +1,6 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { DEFAULT_CAPTURE_WIDTH, IPC } from '../../shared/types';
-import type { QueueState } from '../../shared/types';
 import { config } from '../config';
 import { sendToRenderer } from '../helpers';
 import { getWorkerWin, ensureWorkerWindow } from '../windows';
@@ -19,28 +18,15 @@ import {
 } from '../files';
 import { loadLanguageData } from '../i18n';
 import { FlowManager } from '../flow';
-import type { QueueManager } from '../queueManager';
+import { loadRecipientDirectory } from '../flow/botRecipientDirectory';
+import { appQueueState, type QueueManager } from '../queueManager';
 import type { TelegramRuntime } from '../telegram';
 import type { LineRuntime } from '../line';
 
 export function broadcastMergedQueueState(queue: QueueManager, flowManager: FlowManager | null): void {
-  const promptState = queue.getState();
-  const flowItems = flowManager?.getPendingQueueItems() ?? [];
-  if (flowItems.length === 0) {
-    sendToRenderer(IPC.QUEUE_UPDATE, promptState);
-    sendToRenderer(IPC.STATUS, promptState.status);
-    return;
-  }
-  const allItems = [...promptState.items, ...flowItems];
-  const anyRunning = allItems.some((i) => i.status === 'running');
-  const merged: QueueState = {
-    total: allItems.length,
-    current: anyRunning ? 1 : 0,
-    status: anyRunning ? 'processing' : 'idle',
-    items: allItems,
-  };
-  sendToRenderer(IPC.QUEUE_UPDATE, merged);
-  sendToRenderer(IPC.STATUS, merged.status);
+  const state = appQueueState(queue, flowManager);
+  sendToRenderer(IPC.QUEUE_UPDATE, state);
+  sendToRenderer(IPC.STATUS, state.status);
 }
 
 export function initFlowManager(deps: {
@@ -106,6 +92,7 @@ export function initFlowManager(deps: {
     getShareSettings: () => config.share,
     createShareLink: (markdown, opts) => createPaste(config.share.instanceUrl, markdown, opts),
     getPairedUsers: () => config.telegram.pairing.pairedUsers,
+    getBotRecipients: () => loadRecipientDirectory(),
     onSaveHistory: async ({ prompt, response, providerLabel }) => {
       const outputDir = await getOutputDir();
       const langData = await loadLanguageData(config.locale);

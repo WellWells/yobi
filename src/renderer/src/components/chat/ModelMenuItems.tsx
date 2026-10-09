@@ -44,12 +44,12 @@ export const ModelMenuItems: React.FC<ModelMenuItemsProps> = ({ value, onChange 
             const badges = (
               <>
                 {model.hidden && (
-                  <Badge size="xs" variant="light" color="gray" style={{ textTransform: 'none' }}>
+                  <Badge size="xs" variant="light" color="gray">
                     {t('settings.modelSources.hidden')}
                   </Badge>
                 )}
                 {showLoginBadge && (
-                  <Badge size="xs" variant="light" style={{ textTransform: 'none' }}>
+                  <Badge size="xs" variant="light">
                     {t('chat.model.badge.loginRequired')}
                   </Badge>
                 )}

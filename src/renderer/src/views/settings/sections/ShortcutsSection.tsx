@@ -138,9 +138,9 @@ export const ShortcutsSection: React.FC<Props> = ({
                 </AppButton>
               </Group>
             ))}
+            <Text fz="var(--font-size-sm)" mt={12} c="dimmed">{t('settings.shortcut.flowTriggers.hint')}</Text>
           </Stack>
         )}
-        <Text fz="var(--font-size-sm)" mt={12} c="dimmed">{t('settings.shortcut.flowTriggers.hint')}</Text>
       </SectionCard>
 
       <Group justify="flex-end" mb={sectionGap}>

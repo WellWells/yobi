@@ -1,6 +1,6 @@
 import { nativeImage } from 'electron';
 import { assertPublicHttpUrl } from '../net/ssrfGuard';
-import { CLEAN_UA } from '../userAgent';
+import { userAgentForUrl } from '../userAgent';
 
 const MAX_EDGE = 1200;
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -122,7 +122,7 @@ export async function fetchOptimizedImage(
         redirect: 'manual',
         signal: controller.signal,
         headers: {
-          'User-Agent': CLEAN_UA,
+          'User-Agent': userAgentForUrl(target.href),
           Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
           ...(referer ? { Referer: referer } : {}),
         },

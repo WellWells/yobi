@@ -11,12 +11,8 @@ export class TaskHardTimeoutError extends Error {
 }
 
 /**
- * The user stopped waiting for the running task.
- *
- * Skipping used to resolve the race rather than reject it, so no outcome was reported at all:
- * the renderer's thinking bubble is only ever cleared by a CHAT_TURN, and the task the log
- * called "skipped" carried on regardless. Nothing here can actually cancel provider
- * automation — the point is that the user is told exactly once what happened.
+ * The user stopped waiting for the running task. It rejects so the renderer gets exactly one
+ * outcome; provider automation itself is not cancelled.
  */
 export class TaskSkippedError extends Error {
   constructor(taskId: string) {
@@ -142,4 +138,26 @@ export class QueueManager {
 
 function summarizePrompt(prompt: string): string {
   return compactPreview(prompt, 96) || '(empty prompt)';
+}
+
+interface FlowQueueSource {
+  getPendingQueueItems(): QueueTaskItem[];
+}
+
+/**
+ * What the app is doing as a whole: the prompt queue plus the flow queue, where flows, /agent
+ * and /search run. The title bar and the bot's /status both read this, so they cannot disagree.
+ */
+export function appQueueState(queue: Pick<QueueManager, 'getState'>, flows: FlowQueueSource | null): QueueState {
+  const promptState = queue.getState();
+  const flowItems = flows?.getPendingQueueItems() ?? [];
+  if (flowItems.length === 0) return promptState;
+  const items = [...promptState.items, ...flowItems];
+  const anyRunning = items.some((item) => item.status === 'running');
+  return {
+    total: items.length,
+    current: anyRunning ? 1 : 0,
+    status: anyRunning ? 'processing' : 'idle',
+    items,
+  };
 }

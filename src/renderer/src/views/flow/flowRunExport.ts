@@ -21,11 +21,25 @@ function formatTimestamp(iso: string | undefined): string {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleString();
 }
 
-function latestLog(logs: FlowExecutionLog[], stepId: string): FlowExecutionLog | undefined {
-  for (let i = logs.length - 1; i >= 0; i -= 1) {
-    if (logs[i].stepId === stepId) return logs[i];
+/**
+ * One log per step for the run panel and the report. A looped step keeps its latest failure so a
+ * later pass's `running` cannot hide it; runs share one list, so failures reset at each run's
+ * first-step `running`.
+ */
+export function stepLogsById(logs: FlowExecutionLog[]): Map<string, FlowExecutionLog> {
+  const latest = new Map<string, FlowExecutionLog>();
+  const failed = new Map<string, FlowExecutionLog>();
+  for (const log of logs) {
+    if (log.stepIndex === 0 && log.status === 'running') failed.clear();
+    latest.set(log.stepId, log);
+    if (log.error) failed.set(log.stepId, log);
   }
-  return undefined;
+  for (const [stepId, log] of latest) {
+    const failure = failed.get(stepId);
+    if (log.error || !failure) continue;
+    latest.set(stepId, { ...log, error: failure.error, displayError: failure.displayError });
+  }
+  return latest;
 }
 
 export function buildFlowRunMarkdown(
@@ -37,7 +51,8 @@ export function buildFlowRunMarkdown(
 ): string {
   const title = flowName.trim() || t('flow.flowName');
   const stepsWord = t('flow.steps').toLowerCase();
-  const completed = steps.filter((step) => latestLog(logs, step.id)?.status === 'completed').length;
+  const byStep = stepLogsById(logs);
+  const completed = steps.filter((step) => byStep.get(step.id)?.status === 'completed').length;
 
   const time = formatTimestamp(result?.completedAt) || formatTimestamp(logs[logs.length - 1]?.timestamp);
   const successMark = result ? (result.success ? '✓' : '✗') : '';
@@ -50,12 +65,15 @@ export function buildFlowRunMarkdown(
 
   const lines: string[] = [`# ${title}`, '', summary, ''];
 
-  if (result && !result.success && result.error) {
+  // A run the user stopped did not fail: its `error` is the engine's own marker, not a reason.
+  if (result?.aborted) {
+    lines.push(`_${t('flow.execution.note.aborted')}_`, '');
+  } else if (result && !result.success && result.error) {
     lines.push(`**${t('flow.export.result.error')}:** ${result.error}`, '');
   }
 
   steps.forEach((step, index) => {
-    const log = latestLog(logs, step.id);
+    const log = byStep.get(step.id);
     const status = log?.status ?? 'pending';
     const symbol = STATUS_SYMBOL[status] ?? '';
     const token = stepHasOutput(step) ? ` · \`{{${step.outputKey}}}\`` : '';
@@ -64,7 +82,7 @@ export function buildFlowRunMarkdown(
     if (!log) {
       lines.push(t('flow.export.result.notRun'), '');
     } else if (status === 'skipped') {
-      lines.push(`_${t('flow.export.result.skipped')}_`, '');
+      lines.push(`_${t(log.note ? `flow.execution.note.${log.note}` : 'flow.export.result.skipped')}_`, '');
     } else if (log.error) {
       lines.push(`**${t('flow.export.result.error')}:**`, '', fence(log.error), '');
     } else if (log.output) {

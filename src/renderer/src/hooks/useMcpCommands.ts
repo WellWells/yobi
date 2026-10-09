@@ -19,10 +19,8 @@ export function useMcpCommands(
 ): ChatCommand[] {
   const servers = useMcpStore(useShallow((s) => s.servers));
   return useMemo(() => {
-    // Listed whether or not it is connected. Filtering on `status === 'connected'` made the
-    // command vanish after every launch for the no-auth connectors — syncOnBoot only reconnects
-    // servers that already hold a token — and a command that disappears is harder to recover from
-    // than one that runs and says "connect this first".
+    // Listed whether or not it is connected: no-auth connectors are not reconnected on boot, and a
+    // command that says "connect this first" is easier to recover from than one that vanishes.
     const usable = servers.filter((server) => server.agentEnabled !== false);
     return assignMcpCommandNames(usable, new Set(reservedNames)).map(({ server, command }) => ({
       flowId: mcpCommandFlowId(server.id),

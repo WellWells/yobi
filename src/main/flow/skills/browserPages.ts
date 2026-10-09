@@ -2,10 +2,12 @@ import { BrowserWindow } from 'electron';
 import type { WebContents } from 'electron';
 import * as path from 'node:path';
 import { createEntityId } from '../flowPersistence';
-import { CLEAN_UA } from '../../userAgent';
+import { userAgentForUrl } from '../../userAgent';
+import { loadURLFollowingIdentity } from '../../navigationIdentity';
 import { SILENT_WEB_PREFERENCES, muteWindow } from '../../silentWindow';
 import { executeAutomationWithTimeout } from '../../providers/automationExecutor';
 import { BROWSER_HELPER_PREAMBLE } from '../../providers/browserHelpers';
+import { FlowUserError } from '../userError';
 
 export const BROWSER_FLOW_PARTITION = 'persist:browser-flow';
 
@@ -53,10 +55,14 @@ function assertHttpUrl(url: string): void {
   try {
     parsed = new URL(url);
   } catch {
-    throw new Error(`browser_open: invalid URL: ${url}`);
+    throw new FlowUserError('flow.error.httpUrlOnly', { url }, `browser_open: invalid URL: ${url}`);
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new Error(`browser_open: only http(s) URLs are allowed (got ${parsed.protocol})`);
+    throw new FlowUserError(
+      'flow.error.httpUrlOnly',
+      { url },
+      `browser_open: only http(s) URLs are allowed (got ${parsed.protocol})`,
+    );
   }
 }
 
@@ -69,7 +75,11 @@ export function isManagedPageWebContents(wc: WebContents): boolean {
 
 export async function openPage(url: string, opts: OpenPageOptions): Promise<OpenPageResult> {
   if (pages.size >= MAX_OPEN_PAGES) {
-    throw new Error(`browser_open: too many open pages (max ${MAX_OPEN_PAGES}). Close pages with browser_close.`);
+    throw new FlowUserError(
+      'flow.error.tooManyPages',
+      { max: String(MAX_OPEN_PAGES) },
+      `browser_open: too many open pages (max ${MAX_OPEN_PAGES}). Close pages with browser_close.`,
+    );
   }
   assertHttpUrl(url);
 
@@ -92,7 +102,7 @@ export async function openPage(url: string, opts: OpenPageOptions): Promise<Open
       ...SILENT_WEB_PREFERENCES,
     },
   });
-  win.webContents.setUserAgent(CLEAN_UA);
+  win.webContents.setUserAgent(userAgentForUrl(url));
   muteWindow(win);
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e, navUrl) => {
@@ -114,7 +124,7 @@ export async function openPage(url: string, opts: OpenPageOptions): Promise<Open
     win.webContents.once('did-fail-load', (_e, code, _desc, _u, isMainFrame) => {
       if (isMainFrame && code !== -3) finish();
     });
-    win.loadURL(url).catch(() => finish());
+    loadURLFollowingIdentity(win.webContents, url).catch(() => finish());
     setTimeout(finish, OPEN_LOAD_TIMEOUT_MS);
   });
 

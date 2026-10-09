@@ -45,10 +45,7 @@ export function useComboRecorder({
   const [rejected, setRejected] = useState(false);
 
   useEffect(() => {
-    // Only a field that is actually recording pauses the global hotkeys. Sending the
-    // "not recording" call on mount as well meant every shortcut row fired a redundant
-    // IPC the moment the settings page mounted — measured at 32 of them per boot, each
-    // telling the main process nothing had changed. The cleanup already unpauses.
+    // Only a field that is actually recording pauses the global hotkeys; the cleanup unpauses.
     if (!recording) return undefined;
     void settingsApi.setHotkeyPaused(true).catch(() => {});
     return () => { void settingsApi.setHotkeyPaused(false).catch(() => {}); };

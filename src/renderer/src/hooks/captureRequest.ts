@@ -1,4 +1,5 @@
 import { stripConversationMarkers } from '../../../shared/conversationDoc';
+import { mustShowPrompt } from '../../../shared/captureCard';
 import type {
   CaptureFormat,
   CaptureRange,
@@ -36,9 +37,7 @@ export interface ConversationCaptureInput extends CaptureLook {
   tokensTotal?: string;
 }
 
-export function mustShowPrompt(cardLayout: CardLayout, exportedTurnCount: number): boolean {
-  return cardLayout === 'bubble' || exportedTurnCount > 1;
-}
+export { mustShowPrompt };
 
 export function buildCaptureRequest(input: ConversationCaptureInput): MarkdownCaptureRequest {
   const turns = input.range === 'last' ? input.turns.slice(-1) : input.turns;

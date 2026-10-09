@@ -12,15 +12,16 @@ import { GeminiModelSummary } from './GeminiModelMenu';
 import { ClaudeModelSummary } from './ClaudeModelMenu';
 import { ChatgptModelSummary, chatgptSummaryText } from './ChatgptModelMenu';
 import { ModelMenuItems } from './ModelMenuItems';
+import { composerMenuPosition, type MenuDirection } from './composerMenuDirection';
 
-/** What the composer has always used: below every modal layer, above the page. */
+/** Below every modal layer, above the page. */
 const DEFAULT_MENU_Z = 20;
 
 interface ModelDropdownProps {
   value: string;
   onChange: (url: string) => void;
   disabled?: boolean;
-  menuDirection?: 'up' | 'down';
+  menuDirection?: MenuDirection;
   /**
    * Above the composer this sits on the page, so a low value keeps it under anything modal.
    * Inside a modal it has to clear `Z_MODAL`, or the menu opens behind the overlay — visible,
@@ -82,7 +83,7 @@ export const ModelDropdown: React.FC<ModelDropdownProps> = ({
     <Menu
       opened={open}
       onChange={setOpen}
-      position={menuDirection === 'up' ? 'top-end' : 'bottom-end'}
+      position={composerMenuPosition(menuDirection, 'end')}
       offset={6}
       withinPortal
       zIndex={zIndex}

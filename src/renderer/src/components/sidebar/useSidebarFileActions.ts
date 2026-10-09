@@ -2,6 +2,7 @@ import { startTransition, useState } from 'react';
 import type React from 'react';
 import type { OutputFile } from '../../../../shared/types';
 import { fileApi } from '../../api/electronApi';
+import { noteConversationRenamed } from '../../store/recapStore';
 import type { EditMode } from './FileItem';
 
 interface SidebarFileActionsDeps {
@@ -80,6 +81,7 @@ export function useSidebarFileActions({
     if (mode === 'filename') {
       const result = await fileApi.updateTitle(activePath, nextText);
       if (!result.ok) return;
+      noteConversationRenamed(activePath, result.updatedPath);
       const latest = await loadFiles();
       const nextSelected = latest.find((file) => file.path === result.updatedPath) ?? null;
       if (selectedFile?.path === activePath) {

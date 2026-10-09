@@ -80,14 +80,14 @@ export const StepCard: React.FC<StepCardProps> = ({
 
   if (!ConfigEditor) {
     return (
-      <Paper withBorder p="sm" radius="md" bg="var(--mantine-color-red-light)">
+      <Paper withBorder p="sm" radius="md" bg="color-mix(in srgb, var(--mantine-color-error) 10%, transparent)">
         <Stack gap="xs">
           <Group justify="space-between" wrap="nowrap" align="flex-start">
             <Group gap="xs" wrap="nowrap" align="center">
-              <Badge variant="light" color="red" size="sm" leftSection={<TriangleAlert size={14} />} radius="sm">
+              <Badge variant="light" color="var(--mantine-color-error)" size="sm" leftSection={<TriangleAlert size={14} />}>
                 {t('flow.step.unknown')}
               </Badge>
-              <Code fz="xs" c="red">{step.type}</Code>
+              <Code fz="xs" c="var(--mantine-color-error)">{step.type}</Code>
               <Text fz="xs" c="dimmed">#{index + 1}</Text>
             </Group>
             <Tooltip label={t('flow.step.delete')} position="top">
@@ -119,7 +119,7 @@ export const StepCard: React.FC<StepCardProps> = ({
         <Group justify="space-between" wrap="nowrap">
           <Group gap="xs" wrap="nowrap">
             {dragHandle}
-            <Badge variant="light" color={hue} size="sm" leftSection={SKILL_ICON[step.type]} radius="sm">
+            <Badge variant="light" color={hue} size="sm" leftSection={SKILL_ICON[step.type]}>
               {t(skillLabelKey)}
             </Badge>
             <Text fz="xs" c="dimmed">#{index + 1}</Text>

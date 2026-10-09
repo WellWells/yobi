@@ -22,16 +22,10 @@ const baseTheme: MantineThemeOverride = {
   luminanceThreshold: 0.3,
   fontFamily: 'var(--font-sans)',
   fontFamilyMonospace: 'var(--font-mono)',
-  // Mantine ships a `fontSizes`/`radius` scale under the SAME key names as the CSS-var
-  // scale in globals.css but with different values, so `fz="sm"` and `fz="var(--font-size-sm)"`
-  // rendered 14px and 12px — which of the two a component got came down to the spelling its
-  // author happened to reach for. These point the colliding keys at the CSS-var scale using
-  // the pixel values Mantine already renders today, so the change moves nothing on screen and
-  // only removes the ambiguity.
-  //
-  // `md` is deliberately left out: --mantine-font-size-md is the document base size and the
-  // fallback for every <Text> without an explicit size, so remapping it shrinks the whole app
-  // (see the note above the font-size scale in globals.css).
+  // Mantine's `fontSizes`/`radius` keys collide with the CSS-var scale in globals.css; point the
+  // colliding keys at that scale, at the pixel values Mantine already renders.
+  // `md` is left out: it is the document base size and the default <Text> size, so remapping it
+  // would shrink the whole app.
   fontSizes: {
     xs: 'var(--font-size-sm)',
     sm: 'var(--font-size-md)',
@@ -50,7 +44,17 @@ const baseTheme: MantineThemeOverride = {
     },
     Modal: {
       defaultProps: {
-        overlayProps: { backgroundOpacity: 0.5, blur: 3 },
+        overlayProps: { backgroundOpacity: 0.55 },
+      },
+    },
+    // Mantine's Badge.css uppercases, bolds and letter-spaces every badge; Yobi's are sentence
+    // case. `styles` (not defaultProps `tt`/`fw`) so a call site's own `style` still wins.
+    Badge: {
+      defaultProps: {
+        radius: 'sm',
+      },
+      styles: {
+        root: { textTransform: 'none', letterSpacing: 'normal', fontWeight: 500 },
       },
     },
     ScrollArea: {

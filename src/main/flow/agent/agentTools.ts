@@ -1,7 +1,10 @@
+import * as os from 'node:os';
+import * as path from 'node:path';
 import type { SkillType } from '../../../shared/types';
 import { SKILL_SPECS, SKILLS_WITHOUT_OUTPUT_KEY } from '../../../shared/flowSkillSchema';
 import type { SkillSpec } from '../../../shared/flowSkillSchema';
-import { AGENT_BUILTIN_TOOLS, buildBuiltinCatalog, builtinRequiredFields, isBuiltinTool } from './agentBuiltins';
+import { unwrapMarkdownLink } from '../../../shared/markdownLinkUnwrap';
+import { AGENT_BUILTIN_TOOLS, buildBuiltinCatalog, builtinConfigKeys, builtinRequiredFields, isBuiltinTool } from './agentBuiltins';
 import type { AgentBuiltinTool } from './agentBuiltins';
 import { readPlanFields, readStepBudget } from './agentPrompts';
 import { readIntent } from './actionGate';
@@ -43,6 +46,11 @@ export function isAllowedTool(name: string): name is SkillType {
 export interface AgentToolScope {
   skills: readonly SkillType[];
   builtins: boolean;
+  /**
+   * With `builtins`, also offer the flow builders (`assess_flow`, `build_flow`, `edit_flow`).
+   * Absent means yes; `false` where saving a flow can never be approved.
+   */
+  flows?: boolean;
   help: boolean;
   /** Offer `delegate`. Set by the engine per run, never by a scope constant: it depends on depth and provider. */
   delegate?: boolean;
@@ -70,15 +78,14 @@ export const FULL_TOOL_SCOPE: AgentToolScope = {
 };
 
 /**
- * What a Telegram/LINE `/agent` may call. `shell` and `file_write` are removed at SCOPE level
- * rather than left to the confirmation gate, because a bot-origin run can never be approved:
- * both entry points pass `getMainWin: () => null`, so `askRenderer` denies immediately and
- * `confirmShell` denies on origin before that. Leaving them in the catalog would only buy a
- * tool the model picks, is refused on, and burns a turn plus a queue slot on.
+ * What a Telegram/LINE message from an account with the agent grant may call. A bot-origin run cannot
+ * answer a confirmation dialog, so `shell`, `file_write` and the flow builders are removed here rather
+ * than offered and refused; `withShellCapability` re-adds `shell` for a shell grant, confirmed in chat.
  */
 export const BOT_TOOL_SCOPE: AgentToolScope = {
   skills: AGENT_ALLOWED_SKILLS.filter((skill) => skill !== 'shell' && skill !== 'file_write'),
   builtins: true,
+  flows: false,
   help: true,
 };
 
@@ -95,10 +102,14 @@ export const WEB_SKILLS: readonly SkillType[] = ['search', 'research', 'browser'
 
 const WEB_SKILL_SET = new Set<SkillType>(WEB_SKILLS);
 
+/** A recorded step went online — what tells the composer the run used the web. */
+export function isWebTool(tool: string): boolean {
+  return WEB_SKILL_SET.has(tool as SkillType);
+}
+
 /**
- * Removing these shortens the built-in catalog, and `mcpCatalogBudgetChars()` is "the cap minus
- * the built-in catalog" — so switching the web off is also how a user on a tight provider buys
- * their MCP connectors room to exist. That is a consequence of the arithmetic, not a special case.
+ * Dropping these also shortens the built-in catalog, leaving more of the MCP catalog budget for
+ * connectors.
  */
 export function withWebCapability(scope: AgentToolScope, enabled: boolean): AgentToolScope {
   if (enabled) return scope;
@@ -106,11 +117,37 @@ export function withWebCapability(scope: AgentToolScope, enabled: boolean): Agen
 }
 
 /**
- * A bot message that is not an explicit `/agent`: the user is chatting, not asking for the full
- * agent. It gets the web and the harmless read-only lookups, and nothing that touches the
- * machine — files, clipboard, hardware and notifications stay behind `/agent`, where the user
- * asked for them by name. Widening this by default would turn every paired contact's small talk
- * into something that can read local files.
+ * What a bot account's "read this computer" grant covers: the tools that read the desktop's files,
+ * clipboard and hardware, or pop something up on it. Without the grant they leave the scope.
+ */
+export const LOCAL_SKILLS: readonly SkillType[] = ['file_read', 'file_list', 'clipboard', 'sysinfo', 'notify'];
+
+const LOCAL_SKILL_SET = new Set<SkillType>(LOCAL_SKILLS);
+
+export function withLocalCapability(scope: AgentToolScope, enabled: boolean): AgentToolScope {
+  if (enabled) return scope;
+  return { ...scope, skills: scope.skills.filter((skill) => !LOCAL_SKILL_SET.has(skill)) };
+}
+
+/**
+ * A bot account's shell grant: adds `shell` to a scope that lacks it, or takes it out. Only ever
+ * applied to the bot agent kit by a caller that also makes the run ask in the chat
+ * (`shellInChat`) — a scope holding `shell` without that would offer a tool every call refuses.
+ */
+export function withShellCapability(scope: AgentToolScope, enabled: boolean): AgentToolScope {
+  const has = scope.skills.includes('shell');
+  if (enabled === has) return scope;
+  return {
+    ...scope,
+    skills: enabled ? [...scope.skills, 'shell'] : scope.skills.filter((skill) => skill !== 'shell'),
+  };
+}
+
+/**
+ * A bot message from an account without the agent grant. It gets the web and the harmless
+ * read-only lookups, and nothing that touches the machine — files, clipboard, hardware and
+ * notifications need the agent grant (and the local grant on top). Widening this by default would
+ * turn every paired contact's small talk into something that can read local files.
  */
 export const BOT_CHAT_TOOL_SCOPE: AgentToolScope = {
   skills: ['search', 'research', 'browser', 'youtube', 'gmap_reviews', 'weather', 'air_quality', 'stock', 'forex', 'random'],
@@ -124,8 +161,7 @@ export function scopeHasTools(scope: AgentToolScope): boolean {
 
 /**
  * Thrown when a scoped run has no tools to work with; the caller turns it into a user-facing
- * message. It lives here rather than in agentEngine so that a test mocking the engine does not
- * have to re-export it just to let an unrelated error path run.
+ * message.
  */
 export type AgentScopeFailure = 'not-connected' | 'no-room';
 
@@ -141,6 +177,25 @@ export class AgentScopeError extends Error {
   }
 }
 
+/**
+ * How a run can end with no answer through no fault of a tool: every reply the model gave was
+ * rejected, the steps ran out before anything was learned, or a browser provider kept showing its
+ * previous answer. Lives beside AgentScopeError for the same reason.
+ */
+export type AgentRunFailure = 'invalid_output' | 'step_limit' | 'stale_provider';
+
+/**
+ * `message` keeps the English detail for the log, the trace and the run file — for
+ * `invalid_output` that is the repair text written for the model, which no user should read.
+ * The caller words `reason` instead; `provider` names the page for `stale_provider`.
+ */
+export class AgentRunError extends Error {
+  constructor(readonly reason: AgentRunFailure, detail: string, readonly provider = '') {
+    super(detail);
+    this.name = 'AgentRunError';
+  }
+}
+
 export const AGENT_HELP_TOOL = 'tool_help';
 
 export type AgentHelpTool = typeof AGENT_HELP_TOOL;
@@ -149,10 +204,8 @@ export function isHelpTool(name: string): name is AgentHelpTool {
   return name === AGENT_HELP_TOOL;
 }
 
-// `shell` and `file_write` are tier 1 deliberately, and not to save a few characters: their
-// full entries cost 910 chars, which pushes a Duck.ai REPAIR prompt (catalog + 6 observations
-// + a 4-step plan + the stall warning) past its 12,000-byte cap — and what falls off the end
-// there is the closing `</steps>` fence and the action instruction. Briefs cost 298.
+// `shell` and `file_write` are tier 1 because their full entries can push a tight provider's repair
+// prompt past its cap, cutting off the closing fence and the action instruction.
 export const AGENT_BRIEF_ONLY_TOOLS: readonly SkillType[] = [
   'sysinfo', 'air_quality', 'gmap_reviews', 'forex', 'random', 'stock', 'weather',
   'file_read', 'file_list', 'file_write', 'shell', 'clipboard', 'notify',
@@ -165,12 +218,14 @@ const BRIEF_ONLY_SET = new Set<SkillType>(AGENT_BRIEF_ONLY_TOOLS);
 const AGENT_TOOL_BRIEFS: Partial<Record<SkillType, string>> = {
   file_read: 'Read a local text file. Only your workspace is allowed (app output folder, Documents, Downloads, Desktop); a guessed path is refused, so call file_list first.',
   file_list: 'List the files in a local folder (non-recursive). Only your workspace is allowed (app output folder, Documents, Downloads, Desktop). Use it to learn a file name before reading it.',
-  stock: 'Get a stock / equity / index quote. The suffix picks the market: US as-is (AAPL), Taiwan .TW (2330.TW) or .TWO, indices with ^ (^TWII).',
-  // The flow-authored brief for file_write says the path "lands in {{file}}", which is a flow
-  // variable this run does not have — and `sanitizeFieldDesc` only ever cleans field
-  // descriptions, never a brief. An override is mandatory here, not cosmetic.
+  stock: 'Get stock / equity / index quotes, several comma-separated symbols at once. The suffix picks the market: US as-is (AAPL), Taiwan .TW (2330.TW) or .TWO, indices ^ (^TWII).',
+  // Optional fields are opt-in by key and unknown keys are dropped, so the brief names them as
+  // `fields` spells them.
+  sysinfo: "This computer's OS, CPU, memory, GPU, local IP. Only when named in fields: publicIp, disks, displays, printers, bios, macAddress, dns and other hardware/network details.",
+  // Overrides the flow brief, which mentions the `{{file}}` flow variable; `sanitizeFieldDesc`
+  // cleans field descriptions only.
   file_write: 'Save text to a local file and get back the path. Only the app output folder is allowed; anywhere else is refused, not corrected. Leave "folder" blank to use it.',
-  shell: "Run ONE system command and return its output. The user approves every command; a refusal is final. Runs in your workspace, never as admin. Credential stores and system directories are refused. Use only when no other tool fits.",
+  shell: "Run ONE system command; returns its output. The user approves each one; a refusal is final. Never as admin; credential stores and system folders are refused. For what no other tool reads: ports, processes, services.",
 };
 
 const AGENT_HIDDEN_FIELDS = new Set<string>([
@@ -179,7 +234,15 @@ const AGENT_HIDDEN_FIELDS = new Set<string>([
   'exportFormat', 'exportTitle', 'exportFileName', 'exportShowProvider', 'exportShowTimestamp', 'palette',
 ]);
 
-const AGENT_TOOL_DOCS: Partial<Record<SkillType, { summary: string; output?: string }>> = {
+/**
+ * A run's own default for a field the flow spec defaults differently. `planCall` fills it in when
+ * the model leaves the field blank, and the catalog line states it, so the two cannot disagree.
+ */
+export const AGENT_FIELD_DEFAULTS: Partial<Record<SkillType, Record<string, string>>> = {
+  research: { depth: 'quick' },
+};
+
+const AGENT_TOOL_DOCS: Partial<Record<SkillType, { summary: string; output?: string; fields?: Record<string, string> }>> = {
   browser: {
     summary: 'Fetch a human web PAGE and return its visible text (renders JavaScript; for articles / SPA pages). Accepts one URL, a JSON array of URLs, or a comma/newline list. NOT for JSON APIs, and NOT for running a web search — open a search engine with it and you get its chrome, not results; use search or research.',
     output: "the page's visible text (multiple URLs are joined with a '---' separator).",
@@ -189,8 +252,11 @@ const AGENT_TOOL_DOCS: Partial<Record<SkillType, { summary: string; output?: str
     output: "a JSON array of {title, link, snippet} ranked by relevance ('[]' if nothing matched); snippet is the result-page summary and may be empty.",
   },
   research: {
-    summary: 'Research a focused QUESTION and return a cited answer in ONE step. Long standard-mode questions are planned into search queries; short ones are searched directly. Prefer this for evidence. Repeat only for a distinct missing fact; after weak results change keywords or read a specific source with browser/urls, rather than rephrasing the same request.',
+    summary: 'Research a focused QUESTION and return a cited answer in ONE step. Prefer this for evidence. Repeat only for a distinct missing fact; after weak results change keywords or read a specific source with browser/urls, rather than rephrasing the same request.',
     output: "a written answer in prose with [n] citation markers; also provides sources (a JSON array of the {title, link} pages actually read) and count (how many).",
+    fields: {
+      depth: '"quick" (default: reads 2 pages, fast) or "standard" (several query angles, up to 12 pages, slow) — standard only when the user asks for depth, detail, a comparison or a check, or quick came back thin',
+    },
   },
   youtube: {
     summary: "Fetch a YouTube video's transcript and title from its URL.",
@@ -217,12 +283,12 @@ const AGENT_TOOL_DOCS: Partial<Record<SkillType, { summary: string; output?: str
     output: "the clipboard text when action='read'; empty when action='write'.",
   },
   sysinfo: {
-    summary: 'Collect local system / hardware / network info (OS, CPU, GPU, memory, system language, local IP, uptime, time, app versions).',
-    output: "one string (key:value lines for format='text', or a JSON document for format='json'); each collected field is also provided as an individual sub-field (e.g. locale, cpu, publicIp).",
+    summary: "Collect local system / hardware / network info (OS, CPU, GPU, memory, system language, local IP, uptime, time, app versions). The public (external) IP is collected only when fields lists publicIp — use this, not a web search or a shell command.",
+    output: "one string (key:value lines for format='text', or a JSON document for format='json'); each collected field is also provided as an individual sub-field (e.g. locale, cpu, publicIp). cpuCores counts logical processors (threads), not physical cores.",
   },
   weather: {
     summary: 'Get the current weather for a place NAME (Open-Meteo, no API key); returns current conditions plus today\'s high/low and rain chance. Use the place\'s English / Latin-script name (e.g. "Kaohsiung", not "高雄").',
-    output: 'a JSON object {location, temp, feelsLike, condition, humidity, windSpeed, unit, isDay, high, low, rainChance}; the same values are also provided as individual fields.',
+    output: 'a JSON object {location, temp, feelsLike, condition, humidity, windSpeed, unit, isDay, high, low, rainChance}; the same values are also provided as individual fields. rainChance is the DAILY MAX precipitation %, not the chance for a given part of the day; condition is English — translate it.',
   },
   air_quality: {
     summary: 'Get the current air quality (AQI) for a place NAME (Open-Meteo, no API key); a location in Taiwan reads the nearest Ministry of Environment ground station instead when the user has saved a MOENV key. Use the place\'s English / Latin-script name (e.g. "Kaohsiung", not "高雄").',
@@ -230,11 +296,11 @@ const AGENT_TOOL_DOCS: Partial<Record<SkillType, { summary: string; output?: str
   },
   stock: {
     summary: 'Get a stock / equity quote (Yahoo Finance, no API key). Market is set by the symbol suffix: US tickers as-is (AAPL), Taiwan .TW (2330.TW) or .TWO (OTC), indices with ^ (^TWII).',
-    output: 'a JSON quote object; a single symbol also provides fields symbol, name, currency, price, open, high, low, volume, previousClose, change, changePct, marketTime. Several comma/newline symbols give a JSON array.',
+    output: 'a JSON quote object; a single symbol also provides fields symbol, name, currency, price, open, high, low, volume, previousClose, change, changePct, marketTime, session. Several comma/newline symbols give a JSON array. marketTime is exchange-local time with its UTC offset; session "open" means price is intraday, NOT a close ("closed", or "" when unknown).',
   },
   forex: {
     summary: 'Get a near-live foreign-exchange rate, and an optional converted amount (Yahoo Finance, falling back to a once-daily rate table; no API key).',
-    output: 'a JSON object {base, target, rate, amount, converted, asOf, previousClose, changePct}; the values are also provided as individual fields. previousClose and changePct are empty when only the daily fallback source answered.',
+    output: 'a JSON object {base, target, rate, amount, converted, asOf, previousClose, changePct, session}; the values are also provided as individual fields. asOf carries its UTC offset. previousClose and changePct are empty when only the daily fallback source answered.',
   },
   random: {
     summary: 'Generate random WHOLE numbers within an inclusive range (both min and max can occur) — for dice, lottery numbers, picking an index, or jitter.',
@@ -244,14 +310,14 @@ const AGENT_TOOL_DOCS: Partial<Record<SkillType, { summary: string; output?: str
     summary: 'Show a desktop notification (system toast).',
   },
   shell: {
-    summary: "Run ONE system command on the user's computer (Windows \"cmd\" or \"powershell\"; macOS/Linux the login shell) and return its combined output. The user is asked to approve every command before it runs and a refusal is FINAL — never rephrase a refused command and send it again. It runs with your workspace folder as the working directory, so a relative path or a redirect lands there. It never runs as administrator, and a command that names a credential store (.ssh, .aws, .claude, a credentials file, the Credential Manager, a registry hive) or a system directory (Windows, Program Files, System32) is refused before the user is even asked. NOT for fetching web pages (use browser or research), and NOT for reading a file that file_read can read.",
+    summary: "Run ONE system command on the user's computer (Windows \"cmd\" or \"powershell\"; macOS/Linux the login shell) and return its combined output. The user is asked to approve every command before it runs and a refusal is FINAL — never rephrase a refused command and send it again. It runs with your workspace folder as the working directory, so a relative path or a redirect lands there. It never runs as administrator, and a command that names a credential store (.ssh, .aws, .claude, a credentials file, the Credential Manager, a registry hive) or a system directory (Windows, Program Files, System32) is refused before the user is even asked. Use it for this computer's state that no other tool reads (listening ports, running processes, services, installed programs): pick the command yourself, then answer from its output — never hand the user a command to run instead. NOT for fetching web pages (use browser or research), and NOT for reading a file that file_read can read.",
     output: "the command's stdout, trimmed — or its stderr when stdout is empty. A non-zero exit comes back as an ERROR observation carrying the message.",
   },
   file_write: {
     // No `output` clause: file_write is in SKILLS_WITHOUT_OUTPUT_KEY, so `renderAgentToolLine`
     // suppresses the "returns:" tail. The return contract is folded into the summary instead —
     // removing it from that list would change the flow-side `{{file}}` contract.
-    summary: 'Write text to a local file and return the full path it wrote. Only your workspace is allowed — the app output folder and your Documents, Downloads and Desktop folders; any other destination is refused, not corrected. Leave "folder" blank to write to the app output folder; parent folders are created for you. Use it to save something the user asked to keep — not to stash notes for yourself between steps.',
+    summary: 'Write text to a local file and return the full path it wrote. Only the app output folder is allowed — Documents, Downloads and Desktop can be read but not written, and any other destination is refused, not corrected. Leave "folder" blank to write to the app output folder; parent folders are created for you. Use it to save something the user asked to keep — not to stash notes for yourself between steps.',
   },
 };
 
@@ -263,18 +329,40 @@ function sanitizeFieldDesc(desc: string): string {
     .trim();
 }
 
-function visibleFieldsOf(spec: SkillSpec) {
+export function visibleFieldsOf(spec: SkillSpec) {
   return spec.fields.filter((f) => !AGENT_HIDDEN_FIELDS.has(f.key));
+}
+
+/**
+ * Which system the shell tool's commands land on, stated on the shell line so the model picks
+ * commands for the right OS. The default shell is the one `execShell` picks when "shell" is blank.
+ */
+export function describeShellHost(platform: string, release: string, loginShell: string | undefined): string {
+  if (platform === 'win32') {
+    const [major, , build] = release.split('.').map(Number);
+    const name = major === 10 ? (build >= 22_000 ? 'Windows 11' : 'Windows 10') : 'Windows';
+    return `Host: ${name}, cmd ("shell": "powershell" for PowerShell).`;
+  }
+  const shell = path.basename(loginShell || (platform === 'darwin' ? '/bin/zsh' : '/bin/bash'));
+  return `Host: ${platform === 'darwin' ? 'macOS' : 'Linux'}, ${shell}.`;
+}
+
+function shellHostNote(): string {
+  return describeShellHost(process.platform, os.release(), process.env.SHELL);
+}
+
+function withHostNote(type: SkillType, text: string): string {
+  return type === 'shell' ? `${text} ${shellHostNote()}` : text;
 }
 
 function renderAgentToolLine(spec: SkillSpec): string {
   const doc = AGENT_TOOL_DOCS[spec.type];
-  const summary = doc?.summary ?? spec.summary;
+  const summary = withHostNote(spec.type, doc?.summary ?? spec.summary);
   const visibleFields = visibleFieldsOf(spec);
   const fields = visibleFields.length === 0
     ? 'no config.'
     : `config keys: ${visibleFields
-        .map((f) => `"${f.key}" (${sanitizeFieldDesc(f.desc)}${f.required ? '; REQUIRED' : ''})`)
+        .map((f) => `"${f.key}" (${sanitizeFieldDesc(doc?.fields?.[f.key] ?? f.desc)}${f.required ? '; REQUIRED' : ''})`)
         .join('; ')}`;
   const hasOutput = !SKILLS_WITHOUT_OUTPUT_KEY.includes(spec.type);
   const returns = hasOutput && doc?.output ? ` → returns: ${doc.output}` : '';
@@ -284,7 +372,7 @@ function renderAgentToolLine(spec: SkillSpec): string {
 export const OPTS_MARKER = '[+opts]';
 
 function renderBriefToolLine(spec: SkillSpec): string {
-  const brief = AGENT_TOOL_BRIEFS[spec.type] ?? spec.brief;
+  const brief = withHostNote(spec.type, AGENT_TOOL_BRIEFS[spec.type] ?? spec.brief);
   const visibleFields = visibleFieldsOf(spec);
   const required = visibleFields.filter((f) => f.required).map((f) => `"${f.key}"`);
   const config = required.length > 0 ? `config: ${required.join(', ')} (REQUIRED).` : 'config: none required.';
@@ -309,9 +397,14 @@ function specsForAgent(scope: AgentToolScope = FULL_TOOL_SCOPE): SkillSpec[] {
   return SKILL_SPECS.filter((spec) => allowed.has(spec.type));
 }
 
+export function scopeHasFlowTools(scope: AgentToolScope): boolean {
+  return scope.builtins && scope.flows !== false;
+}
+
 function builtinNames(scope: AgentToolScope): AgentBuiltinTool[] {
   if (!scope.builtins) return [];
-  return AGENT_BUILTIN_TOOLS.filter((tool) => tool !== 'delegate' || scope.delegate === true);
+  const flows = scopeHasFlowTools(scope);
+  return AGENT_BUILTIN_TOOLS.filter((tool) => (tool === 'delegate' ? scope.delegate === true : flows));
 }
 
 function toolNames(scope: AgentToolScope): string[] {
@@ -323,13 +416,8 @@ function toolNames(scope: AgentToolScope): string[] {
 }
 
 /**
- * `allBrief` puts EVERY tool on a tier-1 line, not only `AGENT_BRIEF_ONLY_TOOLS`.
- *
- * For a provider whose cap the full catalog cannot share: measured on Duck.ai (12,000 BYTES, since removed),
- * the instruction block plus the full catalog spend 11,747 of it before a single observation, so the
- * scratch block collapses to its placeholder and the model picks the next action having seen none of
- * the page it just fetched. Briefs keep every tool VISIBLE — what a catalog is for — and `tool_help`
- * recovers any entry in full for the cost of one step.
+ * `allBrief` puts every tool on a tier-1 line, not only `AGENT_BRIEF_ONLY_TOOLS`, for a provider whose
+ * cap cannot hold the full catalog alongside observations. `tool_help` recovers any full entry.
  */
 export function buildToolCatalog(scope: AgentToolScope = FULL_TOOL_SCOPE, allBrief = false): string {
   const blocks: string[] = [];
@@ -340,7 +428,8 @@ export function buildToolCatalog(scope: AgentToolScope = FULL_TOOL_SCOPE, allBri
         : renderAgentToolLine(spec)))
       .join('\n'));
   }
-  if (scope.builtins) blocks.push(buildBuiltinCatalog(scope.delegate === true));
+  const builtinCatalog = scope.builtins ? buildBuiltinCatalog(scope.delegate === true, scopeHasFlowTools(scope)) : '';
+  if (builtinCatalog) blocks.push(builtinCatalog);
   if (scope.help) blocks.push(helpToolLine(), optsFooter());
   return blocks.join('\n');
 }
@@ -350,7 +439,7 @@ export function describeToolSpec(name: string, scope: AgentToolScope = FULL_TOOL
   if (!wanted) return 'ERROR: "tool" is required — name the tool you want the full entry for.';
   if (scope.help && isHelpTool(wanted)) return helpToolLine();
   if (builtinNames(scope).includes(wanted as AgentBuiltinTool)) {
-    const line = buildBuiltinCatalog(scope.delegate === true).split('\n').find((entry) => entry.startsWith(`- "${wanted}"`));
+    const line = buildBuiltinCatalog(scope.delegate === true, scopeHasFlowTools(scope)).split('\n').find((entry) => entry.startsWith(`- "${wanted}"`));
     if (line) return line;
   }
   const spec = specsForAgent(scope).find((entry) => entry.type === wanted);
@@ -368,7 +457,7 @@ export function describeToolSpec(name: string, scope: AgentToolScope = FULL_TOOL
  */
 function allowedConfigKeys(type: string): Set<string> {
   if (isHelpTool(type)) return new Set(['tool']);
-  if (isBuiltinTool(type)) return new Set(builtinRequiredFields(type));
+  if (isBuiltinTool(type)) return new Set(builtinConfigKeys(type));
   const spec = SKILL_SPECS.find((entry) => entry.type === type);
   return new Set(spec ? visibleFieldsOf(spec).map((field) => field.key) : []);
 }
@@ -397,6 +486,10 @@ export interface AgentAction {
   intent?: GoalIntent;
   /** `ask_user` only: answers the user can pick instead of typing. */
   choices?: string[];
+  /** `finish` only: the model's own word on whether the GOAL is fully achieved. Absent = not said. */
+  done?: boolean;
+  /** `finish` only, with `done: false`: what is still left, in the goal's language. */
+  missing?: string;
 }
 
 const MAX_CHOICES = 4;
@@ -415,6 +508,29 @@ export function readChoices(obj: Record<string, unknown>): { choices?: string[] 
 export interface FinalAnswer {
   title: string;
   content: string;
+  done?: boolean;
+  missing?: string;
+}
+
+const MAX_MISSING_CHARS = 160;
+
+/**
+ * The completion claim that rides on a finished answer. Read leniently and never a reason to
+ * reject the answer it came with — the same rule the plan fields follow: a bookkeeping field that
+ * could bounce a good answer would cost a repair round trip on exactly the runs that were done.
+ * `missing` only means something next to `done: false`, so it is dropped otherwise.
+ */
+export function readCompletion(obj: Record<string, unknown>): { done?: boolean; missing?: string } {
+  const raw = obj.done;
+  const done = typeof raw === 'boolean' ? raw
+    : typeof raw === 'string' && /^(true|false)$/i.test(raw.trim()) ? raw.trim().toLowerCase() === 'true'
+      : undefined;
+  if (done === undefined) return {};
+  if (done) return { done };
+  const missing = typeof obj.missing === 'string'
+    ? obj.missing.replace(/\s+/g, ' ').trim().slice(0, MAX_MISSING_CHARS)
+    : '';
+  return { done, ...(missing ? { missing } : {}) };
 }
 
 export function looksLikeRawData(text: string): boolean {
@@ -443,36 +559,14 @@ export function validateFinalAnswer(json: unknown): Validation<FinalAnswer> {
       error: '"content" must be a written answer in prose synthesized from the observations — not raw JSON, a data array, or a list of links.',
     };
   }
-  return { ok: true, value: { title, content } };
+  return { ok: true, value: { title, content, ...readCompletion(obj) } };
 }
 
-const WHOLE_MARKDOWN_LINK = /^\[[^\]]+\]\(([^)]+)\)$/;
-const WHOLE_ANGLE_AUTOLINK = /^<(https?:\/\/[^>\s]+)>$/i;
-/**
- * Only the OPENING bracket rode into the JSON. ChatGPT's linkifier counts the JSON's own closing
- * `"}}` as part of the URL, so the markdown breaks as `"[https://x/y"}}](https://x/y%22%7D%7D)` —
- * the object still parses, and the tool gets a URL with a bracket glued to the front
- * (measured: ERR_INVALID_URL -300). A real URL never starts with `[`, so this is unambiguous.
- */
-const TRUNCATED_LINK_LABEL = /^\[(https?:\/\/[^\]\s]+)\]?$/i;
-
-export function unwrapMarkdownLink(value: string): string {
-  const trimmed = value.trim();
-  const link = trimmed.match(WHOLE_MARKDOWN_LINK);
-  if (link) return link[1].trim();
-  const angle = trimmed.match(WHOLE_ANGLE_AUTOLINK);
-  if (angle) return angle[1].trim();
-  const truncated = trimmed.match(TRUNCATED_LINK_LABEL);
-  if (truncated) return truncated[1].trim();
-  return value;
-}
+export { unwrapMarkdownLink };
 
 /**
- * Where a linkified value is a MODEL TYPO worth undoing. Browser-UI models return
- * `[example.com](https://example.com)` where a bare URL was asked for, and unwrapping that saved
- * a repair round-trip — but applying it to every value meant `file_write` with
- * `content: "[Yobi](https://yobi.app)"` wrote a bare URL to disk and told the user it had saved
- * the markdown. A field whose value is prose must be passed through untouched.
+ * Keys whose linkified value is a model typo worth undoing (`[example.com](https://example.com)` for a
+ * bare URL). Prose fields such as file_write content pass through untouched.
  */
 const URL_VALUED_KEYS = new Set(['url', 'link']);
 
@@ -562,7 +656,7 @@ export function validateAgentAction(
       ok: true,
       value: {
         thought, action: 'finish', title: answer.value.title, content: answer.value.content,
-        ...readPlanFields(obj), ...readStepBudget(obj), ...readIntent(obj),
+        ...readCompletion(obj), ...readPlanFields(obj), ...readStepBudget(obj), ...readIntent(obj),
       },
     };
   }
@@ -583,6 +677,14 @@ export function validateAgentAction(
     error: `"tool" must be one of: ${names.join(', ')}. Got "${tool}".`,
   };
   if (!isAllowedTool(tool) && !isBuiltinTool(tool) && !isHelpTool(tool)) return rejectTool;
+  // The one exclusion worth naming: the web is off, so tell the model to answer without it rather than
+  // only listing the tools it may use.
+  if (WEB_SKILL_SET.has(tool as SkillType) && !names.includes(tool)) {
+    return {
+      ok: false,
+      error: `Web search is off in this chat, so "${tool}" cannot run. Answer from what you know in "finish", say it was not checked online, and that turning Web on lets you check it.`,
+    };
+  }
   if (!names.includes(tool)) return rejectTool;
 
   const rawConfig = obj.config;
@@ -592,12 +694,8 @@ export function validateAgentAction(
   const allowed = allowedConfigKeys(tool);
   const config: Record<string, string> = {};
   for (const [key, value] of Object.entries((rawConfig as Record<string, unknown>) ?? {})) {
-    // Silently DROPPED, not rejected: an undeclared key is never something the model needs, and
-    // rejecting it would spend a repair round-trip teaching it a key it must not use anyway.
-    // This filter is what stops a config field the catalog deliberately hides from being set by
-    // hand — `llm`'s `attachments` plus the internal `__attachmentAllowlist` escape hatch were a
-    // one-action upload of any local file to a third-party web UI — and it is why `shell`'s
-    // `cwd` can be trusted: the engine injects it AFTER this point, so the model cannot pick it.
+    // Undeclared keys are dropped, not rejected (no repair round-trip). This keeps hidden fields such as
+    // `llm` attachments out of reach and lets `shell`'s `cwd`, injected later by the engine, be trusted.
     if (!allowed.has(key)) continue;
     config[key] = coerceConfigValue(value, key);
   }

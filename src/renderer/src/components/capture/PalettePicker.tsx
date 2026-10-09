@@ -1,7 +1,8 @@
 import React from 'react';
-import { ActionIcon, Box, Flex, Group, Stack, Text } from '@mantine/core';
+import { ActionIcon, Box, Flex, Group, Stack } from '@mantine/core';
 import { Check } from 'lucide-react';
 import { AppSegmentedControl } from '../AppSegmentedControl';
+import { GroupHeader } from '../GroupHeader';
 import {
   CAPTURE_BACKGROUND_STYLES,
   CAPTURE_DIRECTIONS,
@@ -109,16 +110,7 @@ export const PaletteSwatchGrid: React.FC<PaletteSwatchGridProps> = ({
       if (items.length === 0) return null;
       return (
         <Box key={group}>
-          <Text
-            fz="var(--font-size-xs)"
-            fw={600}
-            c="var(--text-muted)"
-            mb={6}
-            tt="uppercase"
-            style={{ letterSpacing: '0.04em' }}
-          >
-            {t(`capture.palette.${group}`)}
-          </Text>
+          <GroupHeader variant="plain" label={t(`capture.palette.${group}`)} mb={6} />
           <Group gap={6} wrap="wrap">
             {items.map((item) => (
               <PaletteSwatch

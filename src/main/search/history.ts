@@ -6,13 +6,8 @@ import type { SearchMode } from '../../shared/types';
 import type { ConversationDoc } from '../../shared/conversationDoc';
 
 /*
- * A follow-up keeps its subject in the thread rather than in its own words: "is registering a
- * hassle, what personal data does it want" only means something next to the question before it.
- * Searching it verbatim retrieves whatever else on the web registers people, and the answer is
- * then faithfully grounded in the wrong pages.
- *
- * So the thread comes along — but on a short leash. Every character spent here is one the
- * sources do not get, and the sources are what the answer is allowed to cite.
+ * A follow-up only makes sense next to the question before it, so the thread comes along, capped:
+ * every character spent here is one the sources (the only citable material) do not get.
  */
 const HISTORY_BUDGET: Record<SearchMode, number> = { standard: 4_000, quick: 2_000 };
 

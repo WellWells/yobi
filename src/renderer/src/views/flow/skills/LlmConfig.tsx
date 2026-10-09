@@ -8,6 +8,7 @@ import { applyCapturePalette, buildCapturePaletteOptions } from './captureConfig
 import { PROVIDER_DROPDOWN_MAX_HEIGHT, providerSectionsToSelectData } from '../../../config/models';
 import { useProviderModels } from '../../../hooks/useProviderModels';
 import { UPLOAD_CAPABLE_PROVIDER_LABELS } from '../../../../../shared/types';
+import { DEFAULT_CAPTURE_PALETTE } from '../../../../../shared/capturePalettes';
 import type { SkillConfigProps } from './types';
 
 export const LlmConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
@@ -82,7 +83,7 @@ export const LlmConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
         <SelectDropdown
           label={t('common.background')}
           options={buildCapturePaletteOptions(t)}
-          value={step.config.palette || 'aurora'}
+          value={step.config.palette || DEFAULT_CAPTURE_PALETTE}
           onChange={(value) => onChange(applyCapturePalette(step.config, value))}
           size="sm"
         />

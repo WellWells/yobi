@@ -6,6 +6,7 @@ import { applyWorkerUserAgent } from '../clientHints';
 import { navigateAndWait, sleep } from './common';
 import { countElements } from './automationExecutor';
 import { IPC, PROVIDER_URLS } from '../../shared/types';
+import { needsModelCatalogRestamp } from '../../shared/modelCatalogFreshness';
 import {
   EMPTY_CHATGPT_CHOICE,
   chatgptCatalogFromSnapshot,
@@ -74,7 +75,10 @@ function remember(snapshot: ChatgptPickerSnapshot, choice: ChatgptModelChoice): 
   const catalog = chatgptCatalogFromSnapshot(config.chatgptModelCatalog, snapshot, new Date().toISOString());
   const catalogChanged = !sameChatgptCatalogContent(config.chatgptModelCatalog, catalog);
   const choiceChanged = !sameChatgptChoice(config.chatgptModel, choice);
-  if (!catalogChanged && !choiceChanged) return;
+  // The conversion hands back the very same object when nothing could be read; only a real read
+  // counts as "checked" (see MODEL_CATALOG_RESTAMP_MS).
+  const restamp = catalog !== config.chatgptModelCatalog && needsModelCatalogRestamp(config.chatgptModelCatalog);
+  if (!catalogChanged && !choiceChanged && !restamp) return;
   const ids = (list: typeof catalog): string => (list?.models.map((m) => m.id) ?? []).join();
   const listChanged = ids(catalog) !== ids(config.chatgptModelCatalog);
   config.chatgptModelCatalog = catalog;

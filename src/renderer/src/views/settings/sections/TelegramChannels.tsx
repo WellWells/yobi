@@ -54,7 +54,7 @@ export const TelegramChannels: React.FC<Props> = ({ channels, contacts, onForget
                 </Badge>
               )}
               {unreachable && (
-                <Badge size="xs" variant="light" color="orange" style={{ flexShrink: 0 }}>
+                <Badge size="xs" variant="light" color="var(--mantine-color-warning)" style={{ flexShrink: 0 }}>
                   {t(`settings.telegram.reach.${unreachable}`)}
                 </Badge>
               )}

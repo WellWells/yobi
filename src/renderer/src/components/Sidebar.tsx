@@ -4,6 +4,7 @@ import { useVirtualizer, observeElementRect, measureElement } from '@tanstack/re
 import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
+import { noteConversationOpened } from '../store/recapStore';
 import type { OutputFile } from '../../../shared/types';
 import { PanelToolbar, ToolbarButton, ToolbarIconButton } from './PanelToolbar';
 import { EmptyState } from './EmptyState';
@@ -12,23 +13,42 @@ import { ContextMenuPortal } from './ContextMenuPortal';
 import { GroupHeader } from './GroupHeader';
 import { ShortcutHint } from './ShortcutHint';
 import { SelectionActionBar } from './SelectionActionBar';
-import { FolderOpen, ListChecks, MessageSquare, Pencil, Search, SquarePen, Trash2 } from 'lucide-react';
-import { fileApi } from '../api/electronApi';
+import {
+  AppWindow, ChevronDown, Copy, Download, ExternalLink, FileDown, Files, FolderOpen, Link2, ListChecks, MessageSquare,
+  Pencil, Search, SquarePen, Trash2,
+} from 'lucide-react';
+import { AppButton } from './AppButton';
+import { SelectionMenuItems } from './sidebar/SelectionMenuItems';
+import type { SelectionAction } from './sidebar/SelectionMenuItems';
+import { BatchExportStrip } from './sidebar/BatchExportStrip';
+import { useBatchExport } from './sidebar/useBatchExport';
+import { clipboardApi, fileApi } from '../api/electronApi';
+import { conversationPlainMarkdown } from './sidebar/conversationText';
 import { FileItem } from './sidebar/FileItem';
 import { useSidebarFileActions } from './sidebar/useSidebarFileActions';
+import { pathsToDrag, useConversationImport } from './sidebar/useConversationImport';
+import { FileDropZone } from './chat/FileDropZone';
+import { markInternalFileDrag } from '../utils/internalFileDrag';
 import { createSidebarKeyDownHandler } from './sidebar/sidebarKeyNav';
 import { useMultiSelect } from '../hooks/useMultiSelect';
+import { useReloadOpenConversation } from '../hooks/useReloadOpenConversation';
 import { useFormatTime } from '../hooks/useFormatTime';
 import { buildSidebarRows } from '../utils/timeGroups';
 import { containsActiveElement } from '../utils/domUtils';
 import { useResolvedCombo } from '../store/shortcutStore';
 import { toTokens } from '../../../shared/shortcuts';
 import { isMac } from '../utils/keyLabels';
+import { hostPlatform } from '../utils/hostPlatform';
 import { useShortcutAction } from '../shortcuts/useShortcutAction';
 
 interface SidebarProps {
   onNewConversation: () => void;
   onOpenSearch: () => void;
+}
+
+async function copyConversationText(filePath: string): Promise<void> {
+  const raw = await fileApi.getContent(filePath);
+  if (raw !== null) await clipboardApi.copyText(conversationPlainMarkdown(raw));
 }
 
 const FILE_ROW_HEIGHT = 72;
@@ -72,9 +92,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
     return latest;
   }, [setFiles]);
 
-  // The list starts as `[]`, which is indistinguishable from "you have no saved chats" — on a
-  // cold file cache the first read stats and reads every .md, so the rail told a returning user
-  // their conversations were gone for as long as that took.
+  // `[]` looks like "no saved chats", and a cold first read can take a while, so track loading.
   const [filesLoaded, setFilesLoaded] = useState(false);
   useEffect(() => {
     void loadFiles().finally(() => setFilesLoaded(true));
@@ -83,6 +101,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
     });
     return unsub;
   }, [loadFiles, setFiles]);
+
+  useReloadOpenConversation();
 
   useShortcutAction('files.delete', () => {
     if (!selection.selectMode || selection.count === 0) return;
@@ -133,6 +153,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
   }, [files, visibleFiles]);
 
   const handleSelect = useCallback(async (file: OutputFile) => {
+    noteConversationOpened(file.path);
     selectFile(file);
     const content = await fileApi.getContent(file.path);
     startTransition(() => {
@@ -148,6 +169,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
     });
     if (result === 'open') void handleSelect(file);
   }, [selection, selectableIds, handleSelect]);
+
+  const handleImportFiles = useConversationImport(handleSelect);
+
+  const handleDragOut = useCallback((file: OutputFile) => {
+    markInternalFileDrag();
+    fileApi.startDrag(pathsToDrag(file.path, selection.selectMode, selection.selectedIds, selectableIds));
+  }, [selection.selectMode, selection.selectedIds, selectableIds]);
 
   useEffect(() => {
     if (!selection.selectMode) selection.setAnchor(selectedFile?.path ?? null);
@@ -175,6 +203,37 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
   } = useSidebarFileActions({
     visibleFiles, selectedFile, selectFile, setFileContent, loadFiles, onSelect: handleSelect,
   });
+
+  const runMenuAction = (action: (filePath: string) => Promise<unknown>) => {
+    if (contextMenu) void action(contextMenu.file.path);
+    setContextMenu(null);
+  };
+
+  const batch = useBatchExport();
+  const [selectionMenu, setSelectionMenu] = useState<{ x: number; y: number } | null>(null);
+
+  const runSelectionAction = useCallback((action: SelectionAction) => {
+    setSelectionMenu(null);
+    // List order, not click order, so the files come out in the order the user sees them.
+    const picked = visibleFiles.filter((file) => selection.selectedIds.has(file.path));
+    if (picked.length === 0) return;
+    if (action === 'copy') void fileApi.copyFiles(picked.map((file) => file.path));
+    else if (action === 'zip') void batch.exportZip(picked);
+    else void batch.exportCards(action, picked);
+  }, [visibleFiles, selection.selectedIds, batch.exportZip, batch.exportCards]);
+
+  // While selecting, a right-click acts on the selection. A row that is not checked yet joins
+  // it rather than replacing it — clearing a hand-picked set on a stray click would lose work.
+  const handleOpenMenu = useCallback((e: React.MouseEvent<HTMLElement>, file: OutputFile) => {
+    if (!selection.selectMode) {
+      openContextMenu(e, file);
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    if (!selection.isSelected(file.path)) selection.toggle(file.path);
+    setSelectionMenu({ x: e.clientX, y: e.clientY });
+  }, [selection, openContextMenu]);
 
   const handleStartSelection = useCallback((file: OutputFile) => {
     selection.enter();
@@ -235,6 +294,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
   });
 
   return (
+    <FileDropZone
+      onFiles={handleImportFiles}
+      icon={FileDown}
+      title={t('sidebar.import.dropTitle')}
+      detail={t('sidebar.import.dropDetail')}
+    >
     <Stack
       gap={0}
       w={240}
@@ -286,7 +351,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
                       checked={selection.isSelected(row.file.path)}
                       onToggleSelect={selection.toggle}
                       onRowClick={handleRowClick}
-                      onOpenMenu={openContextMenu}
+                      onOpenMenu={handleOpenMenu}
+                      onDragOut={handleDragOut}
                       onCommitEdit={handleCommitEdit}
                       onCancelEdit={handleCancelEdit}
                       timeLabel={formatTime(row.file.timestamp, row.group)}
@@ -303,7 +369,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
         )}
       </Box>
 
-      {selection.selectMode && (
+      <BatchExportStrip state={batch.state} onStop={batch.stop} onDismiss={batch.dismiss} t={t} />
+
+      {selection.selectMode && !batch.running && (
         <SelectionActionBar
           count={selection.count}
           allSelected={selection.allSelected(selectableIds)}
@@ -311,8 +379,40 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
           onDelete={() => setBulkDeleteOpen(true)}
           onCancel={selection.exit}
           t={t}
+          extraActions={(
+            <MMenu position="top-start" withinPortal>
+              <MMenu.Target>
+                <AppButton
+                  size="xs"
+                  variant="default"
+                  leftSection={<Download size={13} />}
+                  rightSection={<ChevronDown size={13} />}
+                  disabled={selection.count === 0}
+                >
+                  {t('selection.export')}
+                </AppButton>
+              </MMenu.Target>
+              <MMenu.Dropdown>
+                <SelectionMenuItems onAction={runSelectionAction} t={t} />
+              </MMenu.Dropdown>
+            </MMenu>
+          )}
         />
       )}
+
+      <ContextMenuPortal position={selectionMenu} onClose={() => setSelectionMenu(null)}>
+        <SelectionMenuItems onAction={runSelectionAction} disabled={batch.running} t={t} />
+        <MMenu.Divider />
+        <MMenu.Item
+          leftSection={<Trash2 size={13} />}
+          color="red"
+          rightSection={<ShortcutHint combo={deleteCombo} />}
+          disabled={batch.running}
+          onClick={() => { setSelectionMenu(null); setBulkDeleteOpen(true); }}
+        >
+          {t('common.delete')}
+        </MMenu.Item>
+      </ContextMenuPortal>
 
       <ContextMenuPortal
         position={contextMenu ? { x: contextMenu.x, y: contextMenu.y } : null}
@@ -325,12 +425,31 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
         >
           {t('context.editH1')}
         </MMenu.Item>
+        <MMenu.Divider />
+        <MMenu.Item leftSection={<ExternalLink size={13} />} onClick={() => runMenuAction(fileApi.openPath)}>
+          {t('context.openDefault')}
+        </MMenu.Item>
+        {hostPlatform !== 'linux' && (
+          <MMenu.Item leftSection={<AppWindow size={13} />} onClick={() => runMenuAction(fileApi.openWith)}>
+            {t(isMac ? 'context.openWith.mac' : 'context.openWith')}
+          </MMenu.Item>
+        )}
         <MMenu.Item
           leftSection={<FolderOpen size={13} />}
           rightSection={<ShortcutHint combo={revealCombo} />}
-          onClick={() => { void window.electronAPI.showInFolder(contextMenu!.file.path); setContextMenu(null); }}
+          onClick={() => runMenuAction(fileApi.showInFolder)}
         >
-          {t('context.showInFolder')}
+          {t(isMac ? 'context.showInFolder.mac' : 'context.showInFolder')}
+        </MMenu.Item>
+        <MMenu.Divider />
+        <MMenu.Item leftSection={<Link2 size={13} />} onClick={() => runMenuAction(clipboardApi.copyText)}>
+          {t('context.copyPath')}
+        </MMenu.Item>
+        <MMenu.Item leftSection={<Files size={13} />} onClick={() => runMenuAction((path) => fileApi.copyFiles([path]))}>
+          {t('context.copyFile')}
+        </MMenu.Item>
+        <MMenu.Item leftSection={<Copy size={13} />} onClick={() => runMenuAction(copyConversationText)}>
+          {t('context.copyContent')}
         </MMenu.Item>
         <MMenu.Divider />
         <MMenu.Item
@@ -372,5 +491,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
         onCancel={() => setBulkDeleteOpen(false)}
       />
     </Stack>
+    </FileDropZone>
   );
 };

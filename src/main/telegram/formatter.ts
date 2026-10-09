@@ -1,6 +1,9 @@
-import { Marked, Renderer, type TokenizerAndRendererExtension } from 'marked';
+import { Marked, Renderer } from 'marked';
 import { t } from '../i18n';
 import { promoteDisplayMath, promoteInlineMath } from '../../shared/inlineMathDelimiters';
+import { flattenFootnotes } from '../../shared/markdownFootnotes';
+import { htmlAsPlainText } from '../../shared/markdownHtmlWhitelist';
+import { mathTokenExtensions } from '../markdownMathTokens';
 
 export function escapeTelegramHtml(text: string): string {
   return text
@@ -9,46 +12,19 @@ export function escapeTelegramHtml(text: string): string {
     .replace(/>/g, '&gt;');
 }
 
-const DISPLAY_MATH = /^ {0,3}\$\$[ \t]*\n([\s\S]*?)\n {0,3}\$\$[ \t]*(?:\n+|$)/;
-/** A later line that opens a `$$` fence. marked hands `start` the source minus its first character. */
-const DISPLAY_MATH_START = /\n {0,3}\$\$[ \t]*\n/;
-const INLINE_MATH = /^\$\$([^$]+?)\$\$/;
+// Telegram cannot typeset math, so a formula goes out as its TeX: a `$$` fence as <pre>, a
+// `$$…$$` span as <code>.
+const telegramMarked = new Marked({
+  extensions: mathTokenExtensions({
+    display: (tex) => `<pre>${escapeTelegramHtml(tex)}</pre>\n`,
+    inline: (tex) => `<code>${escapeTelegramHtml(tex)}</code>`,
+  }),
+});
 
-/**
- * Telegram cannot typeset math, so a formula goes out as the TeX the model wrote. Left to
- * marked, that TeX is markdown: `\\`, `\{` and `\,` lose their backslash as escapes and `a*b*c`
- * turns into italics. These tokens claim a formula before any of that runs — a `$$` fence as
- * <pre>, a `$$…$$` span as <code> — while backticks still reach marked's own code tokenizers.
- */
-const displayMath: TokenizerAndRendererExtension = {
-  name: 'displayMath',
-  level: 'block',
-  start: (src) => {
-    const match = DISPLAY_MATH_START.exec(src);
-    return match ? match.index + 1 : undefined;
-  },
-  tokenizer: (src) => {
-    const match = DISPLAY_MATH.exec(src);
-    return match ? { type: 'displayMath', raw: match[0], text: match[1] } : undefined;
-  },
-  renderer: (token) => `<pre>${escapeTelegramHtml(String(token.text))}</pre>\n`,
-};
-
-const inlineMath: TokenizerAndRendererExtension = {
-  name: 'inlineMath',
-  level: 'inline',
-  start: (src) => {
-    const index = src.indexOf('$$');
-    return index < 0 ? undefined : index;
-  },
-  tokenizer: (src) => {
-    const match = INLINE_MATH.exec(src);
-    return match ? { type: 'inlineMath', raw: match[0], text: match[1].trim() } : undefined;
-  },
-  renderer: (token) => `<code>${escapeTelegramHtml(String(token.text))}</code>`,
-};
-
-const telegramMarked = new Marked({ extensions: [displayMath, inlineMath] });
+/** Telegram has no heading tag; bold is the one emphasis it can show. Inner <b> is dropped so a bold heading does not nest. */
+function bold(html: string): string {
+  return html ? `<b>${html.replace(/<\/?b>/g, '')}</b>` : '';
+}
 
 function escapeTelegramAttribute(text: string): string {
   return escapeTelegramHtml(text).replace(/"/g, '&quot;');
@@ -162,7 +138,7 @@ export function formatResponseForTelegramHtml(input: string): string {
     // A task item already leads with its own ☐/☑; a bullet as well reads as two markers.
     return item.task ? `${compact}\n` : `• ${compact}\n`;
   };
-  renderer.heading = ({ tokens }) => `${renderInline(tokens)}\n`;
+  renderer.heading = ({ tokens }) => `${bold(renderInline(tokens).trim())}\n`;
   renderer.hr = () => '\n';
   renderer.image = ({ text, href }) => {
     const altText = escapeTelegramHtml((text || '').trim());
@@ -172,13 +148,20 @@ export function formatResponseForTelegramHtml(input: string): string {
     return altText;
   };
   renderer.br = () => '\n';
-  renderer.html = ({ text }) => escapeTelegramHtml(text);
+  // `<kbd>Ctrl</kbd>`, `<details>` and comments keep only their words; any other HTML stays visible text.
+  renderer.html = ({ text, block }) => {
+    const plain = htmlAsPlainText(text);
+    if (plain === null) return escapeTelegramHtml(text);
+    if (!block) return escapeTelegramHtml(plain);
+    return plain.trim() ? `${escapeTelegramHtml(plain.trim())}\n` : '';
+  };
   renderer.text = (token) => {
     if (token.type === 'text' && token.tokens?.length) return renderInline(token.tokens);
     return escapeTelegramHtml(token.text);
   };
   renderer.table = ({ header, rows }) => {
-    const lines = [header.map((cell) => renderInline(cell.tokens).trim()).join(' | ')];
+    // Rows stay ` | ` text (Telegram has no table); only the header row is set apart.
+    const lines = [header.map((cell) => bold(renderInline(cell.tokens).trim())).join(' | ')];
     for (const row of rows) {
       lines.push(row.map((cell) => renderInline(cell.tokens).trim()).join(' | '));
     }
@@ -186,7 +169,7 @@ export function formatResponseForTelegramHtml(input: string): string {
   };
 
   // The app's own `$`/`$$` repair, so what renders as a formula there is sent as one here.
-  const parsed = telegramMarked.parse(promoteInlineMath(promoteDisplayMath(normalized)), {
+  const parsed = telegramMarked.parse(promoteInlineMath(promoteDisplayMath(flattenFootnotes(normalized))), {
     renderer,
     gfm: true,
     breaks: true,
@@ -204,13 +187,8 @@ const SUPPORTED_TAG =
   /^<\/(?:a|b|i|code|pre|blockquote)>$|^<(?:b|i|code|pre|blockquote)>$|^<a href="[^"<>]*">$|^<code class="language-[^"<>]*">$/;
 
 /**
- * Last line of defence before parse_mode='HTML'.
- *
- * Telegram rejects the ENTIRE message with a 400 on one unknown tag, which fails the whole flow
- * step — so a tag we did not mean to emit must degrade into visible text, never into a lost
- * send. marked's checkbox token is how this was found: the renderer overrode `html`, `image`
- * and `br`, but a token type nobody had thought about still reached the wire as
- * `<input type="checkbox">`. Escaping by whitelist covers the next one too.
+ * Last line of defence before parse_mode='HTML': Telegram rejects the whole message on one unknown
+ * tag, so any tag outside the whitelist is escaped into visible text instead of losing the send.
  */
 export function escapeUnsupportedTags(html: string): string {
   return html.replace(/<[^<>]*>/g, (tag) => (SUPPORTED_TAG.test(tag) ? tag : escapeTelegramHtml(tag)));

@@ -1,7 +1,3 @@
-/* AboutView.module.css */
-
-/* ── Keyframes ─────────────────────────────────────────────────────────── */
-
 @keyframes fadeInUp {
   from {
     opacity: 0;
@@ -28,12 +24,9 @@
   to   { transform: rotate(360deg); }
 }
 
-/* Mantine's `respectReducedMotion` covers its own components but cannot reach a keyframe
-   declared in a CSS module, so these kept running with Windows animation effects off —
-   two of them forever. Each is redefined as its own resting frame rather than switched off
-   on the consumer: glowPulse rests at opacity 0.2 / scale(0.8), and `animation: none` would
-   leave a full-opacity, full-size blurred blob behind the icon.
-   `spin` is deliberately left alone — it is the update check's only progress signal. */
+/* Mantine's `respectReducedMotion` cannot reach keyframes declared in a CSS module, so each one is
+   redefined as its own resting frame; `animation: none` would leave glowPulse as a full-size
+   blurred blob. `spin` is left alone: it is the update check's only progress signal. */
 @media (prefers-reduced-motion: reduce) {
   @keyframes fadeInUp {
     from, to { opacity: 1; transform: translateY(0); }
@@ -45,8 +38,6 @@
     0%, 100% { opacity: 0.2; transform: scale(0.8); }
   }
 }
-
-/* ── Hero ──────────────────────────────────────────────────────────────── */
 
 .hero {
   text-align: center;
@@ -93,8 +84,7 @@
      inline UI), which is too small for the app-name title under the 88px icon. */
   font-size: 30px;
   font-weight: 800;
-  /* Near-neutral tracking: the previous -0.025em was tuned for the long former
-     name and cramps a short wordmark like "Yobi". */
+  /* Near-neutral tracking: tighter tracking cramps a short wordmark. */
   letter-spacing: -0.01em;
   line-height: 1.2;
   color: var(--mantine-color-text);
@@ -108,8 +98,6 @@
   margin-bottom: 20px;
   display: block;
 }
-
-/* ── Section stagger ───────────────────────────────────────────────────── */
 
 .section0 { animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.08s both; }
 .section1 { animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.16s both; }
@@ -127,17 +115,12 @@
   animation: none;
 }
 
-/* ── Tech stack row ────────────────────────────────────────────────────── */
-
-/* No :hover — this is a static list of dependencies, not a menu. It used to slide 4px and
-   light up under the pointer, which is the app's vocabulary for "you can click this". */
+/* No :hover: this is a static list, and a hover lift means "clickable" in this app. */
 .techRow {
   border-radius: 6px;
   padding: 2px 8px;
   margin: 0 -8px;
 }
-
-/* ── Update check button spinning ──────────────────────────────────────── */
 
 .spinning {
   animation: spin 1s linear infinite;

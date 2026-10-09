@@ -1,12 +1,9 @@
 /**
  * Encrypted-database driver for LINE PC (better-sqlite3-multiple-ciphers).
  *
- * LINE uses wxSQLite3 with the `aes128cbc` scheme and a hex passphrase (NOT Zetetic
- * SQLCipher). This is the ONLY module that loads the native driver, so it is kept out
- * of the offline test path and validated by the manual self-test against a real DB.
- *
- * All access is strictly read-only. Error text from a wrong key never contains the key
- * (a fixed dummy key is used for the preflight probe).
+ * The only module that loads the native driver; the rest of the LINE code imports without it.
+ * All access is read-only. Error text from a wrong key never contains the key (the preflight
+ * probe uses a fixed dummy key).
  */
 import { existsSync } from 'node:fs';
 import Database from 'better-sqlite3-multiple-ciphers';

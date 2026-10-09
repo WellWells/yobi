@@ -1,5 +1,5 @@
 export { LineRuntime } from './runtime';
-export type { LineRuntimeDeps, LineTaskRequest } from './runtime';
+export type { LineRuntimeDeps } from './runtime';
 export type { LineFlowCommandDef } from './dispatcher';
 export { verifyLineSignature } from './signature';
 export { parseTextEvents } from './events';

@@ -2,13 +2,20 @@ import { MEMORY_NOTE_KEYS } from '../../shared/userMemory';
 import type { MemoryNote, UserMemorySource } from '../../shared/userMemory';
 import { sendLog } from '../helpers';
 import { parseMemoryReply } from './memoryProtocol';
-import { admitMemoryOps, withTidyReview } from './memoryRules';
-import type { MemoryAccess } from './memoryRules';
+import { admitMemoryOps, memoryAccess, withTidyReview } from './memoryRules';
+import type { MemoryAccess, MemoryAccessContext } from './memoryRules';
 import { applyMemoryOps } from './memoryState';
+import type { UserMemoryState } from './memoryState';
 import { updateUserMemory } from './memoryStore';
 
 export interface SettleMemoryContext {
   access: MemoryAccess;
+  /**
+   * Who is asking, worked out again from the memory file and the pairing as they are at the
+   * moment of writing. A bot answer can take minutes; an account unpaired or unmarked as "me" in
+   * that time must not change the memory through it. Absent where nothing can be revoked mid-turn.
+   */
+  currentContext?: (state: UserMemoryState) => MemoryAccessContext;
   source: UserMemorySource;
   /** This turn read an attachment, a fetched page or a tool result. */
   tainted: boolean;
@@ -51,9 +58,15 @@ export async function settleMemoryReply(reply: string, ctx: SettleMemoryContext)
   if (admitted.ops.length === 0) return { text: parsed.cleaned, notes: [] };
 
   let notes: MemoryNote[] = [];
+  let revoked = false;
   try {
     await updateUserMemory((state) => {
       if (!state.enabled) return null;
+      // Checked inside the write, against the state it writes, so nothing slips in between.
+      if (ctx.currentContext && memoryAccess(state.enabled, ctx.currentContext(state)) !== 'readWrite') {
+        revoked = true;
+        return null;
+      }
       const applied = applyMemoryOps(state, admitted.ops, {
         source: ctx.source,
         now: new Date().toISOString(),
@@ -64,6 +77,10 @@ export async function settleMemoryReply(reply: string, ctx: SettleMemoryContext)
     });
   } catch (err: unknown) {
     sendLog(`${prefix} ⚠️ memory update failed: ${err instanceof Error ? err.message : String(err)}`);
+    return { text: parsed.cleaned, notes: [] };
+  }
+  if (revoked) {
+    sendLog(`${prefix} 🧠 ${admitted.ops.length} memory change(s) dropped — this account lost its memory access while the answer was pending`);
     return { text: parsed.cleaned, notes: [] };
   }
   if (notes.length > 0) {

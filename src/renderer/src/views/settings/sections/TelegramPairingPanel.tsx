@@ -30,8 +30,8 @@ export const TelegramPairingPanel: React.FC<Props> = ({
           bg="var(--mantine-color-bg-tertiary)"
           style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 'var(--radius-sm)' }}
         >
-          <Text fz="var(--font-size-sm)" c="var(--mantine-color-default-color)" ff="var(--font-mono)">
-            {item.code}
+          <Text fz="var(--font-size-sm)" c="var(--mantine-color-default-color)">
+            <Text span inherit ff="var(--font-mono)">{item.code}</Text>
             {' · '}
             {t('settings.telegram.pairing.expires')}
             {': '}

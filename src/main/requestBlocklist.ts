@@ -3,7 +3,6 @@
 // parent also serves content (google.com, wp.com, baidu.com …). Matching is exact-or-subdomain,
 // so a content CDN, a font host, or a bot-detection vendor must never appear here: the first
 // two strip the article itself, the last gets the loader challenged as a bot.
-// Guarded by test/requestBlocklist.test.ts.
 export const BLOCKED_HOSTS: readonly string[] = [
   // Google ad + analytics stack (google.com / googleapis.com themselves stay open)
   'doubleclick.net',

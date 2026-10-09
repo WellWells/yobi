@@ -11,9 +11,10 @@ import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_SUBMIT_JS } from './chatgptSen
 import { CHATGPT_READ_JS, cleanChatgptTitle } from './chatgptReadScript';
 import { uploadFilesToChatgpt } from './chatgptUpload';
 import { syncChatgptModel } from './chatgptModelSync';
+import { CHATGPT_SIGN_IN_START_URL, startChatgptSignIn } from './chatgptSignIn';
 
 const CHATGPT_HOME = PROVIDER_URLS.chatgpt;
-export const CHATGPT_LOGIN_URL = 'https://auth.openai.com/log-in-or-create-account';
+const CHATGPT_AUTH_URL = 'https://auth.openai.com/';
 const CHATGPT_LOGIN_REQUIRED = 'CHATGPT_LOGIN_REQUIRED';
 const CHATGPT_SESSION_COOKIE_PREFIX = '__Secure-next-auth.session-token';
 const CHATGPT_LOGOUT_DEBUG_COOKIE = 'oai-logout-debug-context';
@@ -31,7 +32,7 @@ export function isChatgptLoginRequiredError(err: unknown): boolean {
 async function getChatgptCookies(workerWin: BrowserWindow) {
   const cookieCandidates = await Promise.all([
     workerWin.webContents.session.cookies.get({ url: CHATGPT_HOME }),
-    workerWin.webContents.session.cookies.get({ url: CHATGPT_LOGIN_URL }),
+    workerWin.webContents.session.cookies.get({ url: CHATGPT_AUTH_URL }),
     workerWin.webContents.session.cookies.get({ url: 'https://chat.openai.com/' }),
   ]);
   return cookieCandidates.flat();
@@ -135,7 +136,7 @@ export async function runChatgptAutomation(
   const authSignals = await getChatgptAuthSignals(workerWin);
   const pageSignals = await getChatgptPageSignals(workerWin);
   if (isLoginRequiredFromSignals(authSignals, pageSignals)) {
-    await showLoginWindowIfNeeded('ChatGPT', CHATGPT_LOGIN_URL);
+    await showLoginWindowIfNeeded('ChatGPT', CHATGPT_SIGN_IN_START_URL, startChatgptSignIn);
     throw new Error(
       `${CHATGPT_LOGIN_REQUIRED}: ChatGPT page indicates logged-out state (session=${authSignals.hasSessionCookie}, logoutDebug=${authSignals.hasLogoutDebugCookie}, composer=${pageSignals.hasComposer})`,
     );

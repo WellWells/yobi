@@ -1,6 +1,6 @@
 import type { BrowserWindow } from 'electron';
 import { runGeminiAutomation } from './gemini';
-import { isPerplexityLoginRequiredError, runPerplexityAutomation } from './perplexity';
+import { runPerplexityAutomation } from './perplexity';
 import { isChatgptLoginRequiredError, runChatgptAutomation } from './chatgpt';
 import { runClaudeAutomation } from './claude';
 import { isClaudeLoginRequiredError } from './claudeSession';
@@ -172,8 +172,7 @@ export async function runAutomation(
     if (!isSameThread(currentUrl(workerWin), expectThreadUrl)) {
       return { response: '', title: '', threadUrl: null, threadLost: true };
     }
-    // Still on the thread at `load` is not proof for every provider: Claude shows a dead thread's
-    // shell first and leaves for its landing page a moment later.
+    // Some providers render a dead thread briefly before redirecting, so wait for it to settle.
     if ((await waitForThreadSettled(workerWin.webContents, expectThreadUrl, PAGE_REUSE[provider])) === 'left') {
       return { response: '', title: '', threadUrl: null, threadLost: true };
     }
@@ -199,9 +198,6 @@ export function isLoginRequiredError(targetUrl: string, err: unknown): boolean {
   if (provider === 'gemini') {
     const msg = err instanceof Error ? err.message : String(err ?? '');
     return msg.includes('GEMINI_LOGIN_REQUIRED');
-  }
-  if (provider === 'perplexity') {
-    return isPerplexityLoginRequiredError(err);
   }
   return false;
 }

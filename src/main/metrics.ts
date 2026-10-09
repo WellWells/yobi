@@ -29,16 +29,9 @@ const store = new Store<MetricsSnapshot>({
 const recordedTasks = new WeakSet<object>();
 
 /**
- * A single model call now records three things (tokens, the request, the key that served it),
- * and an `/agent` run makes dozens of calls. Writing the whole store and broadcasting to the
- * renderer on each one would be the same JSON serialized to disk sixty times a run, so edits
- * accumulate in memory and land together.
- *
- * The window is seconds rather than milliseconds because the write is synchronous: conf writes
- * the whole store through `atomically.writeFileSync`, which blocks IPC and window events for
- * the duration. Measured on the flow store, whose shape is the same: ~4.5ms at today's 95 KB
- * and ~11ms once the 30-day retention window is actually full at ~470 KB. `before-quit` flushes
- * either way, so the exposure is still only an unclean kill.
+ * Edits accumulate in memory and flush every few seconds: an `/agent` run makes dozens of model
+ * calls, and each store write is synchronous and blocks IPC and window events. `before-quit`
+ * flushes, so only an unclean kill loses edits.
  */
 const FLUSH_DELAY_MS = 5_000;
 
@@ -99,7 +92,7 @@ function mutate(apply: (today: DailyMetricCounts, total: MetricsSnapshot) => voi
   }
 }
 
-/** One thing the user started: a queued chat task, or a whole flow run. */
+/** One thing the user started: a queued chat task, a whole agent run, or a whole flow run. */
 export function recordTaskOutcome(domain: MetricDomain, outcome: MetricOutcome, dedupeRef?: object): void {
   if (!config.metricsEnabled) return;
   if (dedupeRef) {
@@ -181,6 +174,7 @@ setTokenSink(recordTokenUsage);
 
 setLlmMeterSinks({
   onRequest: recordLlmRequest,
+  onRun: (domain, outcome) => recordTaskOutcome(domain, outcome),
   onKeyResult: recordKeyResult,
   onKeyCooldown: recordKeyCooldown,
 });

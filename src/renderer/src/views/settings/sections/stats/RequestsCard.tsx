@@ -3,9 +3,9 @@ import { Group, Stack, Text } from '@mantine/core';
 import { SectionCard, SectionTitle } from '../../components';
 import { Radio } from 'lucide-react';
 import { Figure, HelpDot, InlineStat, LegendItem } from './parts';
-import { perRun } from './aggregate';
+import { DOMAINS, perRun } from './aggregate';
 import type { StatsAggregate, StatsScope } from './aggregate';
-import { OUTCOME_COLORS } from './colors';
+import { DOMAIN_COLORS, OUTCOME_COLORS } from './colors';
 
 interface Props {
   stats: StatsAggregate;
@@ -15,12 +15,11 @@ interface Props {
 }
 
 /**
- * The level the old page had no answer for: one chat run is one request, but one `/agent` run
- * is dozens and one flow is one per llm step.
+ * Model requests, one level below runs: one chat run is one request, but one `/agent` run is
+ * dozens and one flow is one per llm step.
  */
 export const RequestsCard: React.FC<Props> = ({ stats, scope, t, onInspectFailures }) => {
-  // Request counting starts with this version, so a store carrying older days has runs but no
-  // requests. A headline "0" reads as broken; the card appears once there is something to say.
+  // Days recorded before request counting have runs but no requests; hide the card until there is a count.
   if (stats.requestTotal === 0) return null;
   const failed = stats.requests.failure + stats.requests.timeout;
   return (
@@ -45,20 +44,14 @@ export const RequestsCard: React.FC<Props> = ({ stats, scope, t, onInspectFailur
           }
         />
         <Group gap={2} wrap="wrap">
-          {scope === 'all' && (
-            <>
-              <LegendItem
-                color="var(--mantine-color-accent)"
-                label={t('settings.stats.scope.chat')}
-                value={stats.split.chat.requests.toLocaleString()}
-              />
-              <LegendItem
-                color="var(--mantine-color-dimmed)"
-                label={t('settings.stats.scope.flow')}
-                value={stats.split.flow.requests.toLocaleString()}
-              />
-            </>
-          )}
+          {scope === 'all' && DOMAINS.map((domain) => (
+            <LegendItem
+              key={domain}
+              color={DOMAIN_COLORS[domain]}
+              label={t(`settings.stats.scope.${domain}`)}
+              value={stats.split[domain].requests.toLocaleString()}
+            />
+          ))}
           <LegendItem
             color={OUTCOME_COLORS.failure}
             label={t('settings.stats.requests.failed')}

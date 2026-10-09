@@ -1,5 +1,6 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { writeFileAtomic } from '../atomicWrite';
 import { getFlowDataDir } from '../flow/paths';
 import { Mutex } from '../flow/lanes';
 import { sendLog } from '../helpers';
@@ -67,9 +68,7 @@ const writes = new Mutex();
 async function writeState(state: UserMemoryState): Promise<void> {
   const file = userMemoryPath();
   await fs.mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${Date.now()}-${process.pid}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(state, null, 2), 'utf-8');
-  await fs.rename(tmp, file);
+  await writeFileAtomic(file, JSON.stringify(state, null, 2));
 }
 
 /**

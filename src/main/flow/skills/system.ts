@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process';
+import { isIP } from 'node:net';
 import * as os from 'node:os';
 import { app } from 'electron';
 import { ensureHttpScheme } from '../../urlParser';
 import { relaunchApp, sendLog } from '../../helpers';
 import { resolveSysInfoSelection, SYSINFO_FIELDS } from '../../../shared/sysinfoFields';
+import { FlowUserError } from '../userError';
 import { createHardwareResolvers } from './hardwareInfo';
 import { resolveLocalIp } from './networkInfo';
 
@@ -81,10 +83,18 @@ const PUBLIC_IP_SOURCES: ReadonlyArray<{ url: string; parse: (text: string) => s
   { url: 'https://checkip.amazonaws.com', parse: (text) => text.trim() },
 ];
 
+/**
+ * Only an address counts as an answer: a captive portal or intercepting proxy answers these URLs with
+ * its own page, which must not be reported as the IP. The WARP suffix is the one annotation allowed.
+ */
+export function acceptPublicIp(value: string): string {
+  return isIP(value.replace(/ \(Cloudflare WARP\)$/, '')) ? value : '';
+}
+
 async function resolvePublicIp(): Promise<string> {
   for (const source of PUBLIC_IP_SOURCES) {
     try {
-      const ip = source.parse(await fetchText(source.url, PUBLIC_IP_TIMEOUT_MS));
+      const ip = acceptPublicIp(source.parse(await fetchText(source.url, PUBLIC_IP_TIMEOUT_MS)));
       if (ip) return ip;
     } catch {
     }
@@ -132,6 +142,7 @@ const SYSINFO_JSON_GROUPS: Record<string, JsonFieldGroup> = {
   bios: { group: 'motherboard', key: 'bios' },
   disks: { group: 'storage', key: 'disks', array: true },
   volumes: { group: 'storage', key: 'volumes', array: true },
+  printers: { group: 'printers', key: '', array: true },
   localIp: { group: 'network', key: 'localIp' },
   publicIp: { group: 'network', key: 'publicIp' },
   macAddress: { group: 'network', key: 'macAddress' },
@@ -143,6 +154,14 @@ const SYSINFO_JSON_GROUPS: Record<string, JsonFieldGroup> = {
   electron: { group: 'version', key: 'electron' },
   node: { group: 'version', key: 'node' },
   chrome: { group: 'version', key: 'chrome' },
+};
+
+/**
+ * Text-format annotations for values whose bare number is misread (`os.cpus()` counts logical
+ * processors). The sub-variable stays the bare number for flows that compute with it.
+ */
+const TEXT_VALUE_NOTES: Record<string, string> = {
+  cpuCores: 'logical processors (threads), not physical cores',
 };
 
 function buildGroupedSysInfo(typed: Record<string, unknown>): Record<string, unknown> {
@@ -212,7 +231,11 @@ export async function execSysInfo(config: Record<string, string>): Promise<strin
   const output = config.format === 'json'
     ? JSON.stringify(buildGroupedSysInfo(typed), null, 2)
     : Object.entries(typed)
-        .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : String(value)}`)
+        .map(([key, value]) => {
+          const text = Array.isArray(value) ? value.join(', ') : String(value);
+          const note = TEXT_VALUE_NOTES[key];
+          return `${key}: ${text}${note ? ` (${note})` : ''}`;
+        })
         .join('\n');
 
   const subVars: Record<string, string> = {};
@@ -225,7 +248,9 @@ export async function execSysInfo(config: Record<string, string>): Promise<strin
 export async function execHttp(config: Record<string, string>, timeoutMs: number): Promise<string> {
   const url = ensureHttpScheme(config.url ?? '');
   if (!url) return '';
-  if (!/^https?:\/\//i.test(url)) throw new Error(`Invalid HTTP URL: ${url}`);
+  if (!/^https?:\/\//i.test(url)) {
+    throw new FlowUserError('flow.error.httpUrlOnly', { url }, `Invalid HTTP URL: ${url}`);
+  }
 
   const method = (config.method ?? 'GET').toUpperCase();
   if (!ALLOWED_METHODS.has(method)) throw new Error(`Unsupported HTTP method: ${method}`);
@@ -240,7 +265,7 @@ export async function execHttp(config: Record<string, string>, timeoutMs: number
         Object.entries(parsed as Record<string, unknown>).map(([k, v]) => [k, String(v)]),
       );
     } catch {
-      throw new Error('HTTP headers must be a valid JSON object');
+      throw new FlowUserError('flow.error.httpHeaders', {}, 'HTTP headers must be a valid JSON object');
     }
   }
 

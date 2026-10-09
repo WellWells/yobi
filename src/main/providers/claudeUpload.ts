@@ -9,10 +9,8 @@ const DROP_TARGET_SELECTORS = [
 ];
 
 /**
- * One tile per file, mounted within ~100-260 ms of the drop. A tile that is still uploading carries
- * `data-state="pending"` and `aria-busy="true"` (measured on a 12 MB image: ~3.4 s); both go away
- * when it is done. The `blob:` preview stays after completion, so unlike ChatGPT it says nothing.
- * Text and source files are read in the page and never show a pending phase at all.
+ * One tile per file; a tile still uploading carries `data-state="pending"` or `aria-busy="true"`.
+ * The `blob:` preview stays after completion, so it is not a signal.
  */
 export function buildClaudeTileStateScript(): string {
   return `(function () {

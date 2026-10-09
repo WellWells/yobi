@@ -1,9 +1,9 @@
 /**
  * LINE PC message queries over a read-only database handle.
  *
- * This layer holds only SQL + row mapping and takes an injected `Queryable`, so its
- * logic is unit-tested offline against a node:sqlite fixture. The encrypted-DB driver
- * (better-sqlite3-multiple-ciphers) lives in cipherDb.ts and never loads here.
+ * This layer holds only SQL + row mapping and takes an injected `Queryable`. The
+ * encrypted-DB driver (better-sqlite3-multiple-ciphers) lives in cipherDb.ts and never
+ * loads here.
  */
 import {
   buildContactsMap,
@@ -96,20 +96,16 @@ const T = {
 } as const;
 
 /**
- * Keeps only the chats a human can recognise in a picker. resolveChat() falls back to the raw
- * chat id when no name table covers it, and on a real account that was 118 of 227 chats — 1:1
- * rooms with people who were never contacts, plus squares and rooms whose name rows are absent.
- * Listing those shows half the picker as hashes. They stay resolvable by id, just not offered.
+ * Keeps only the chats a human can recognise in a picker: resolveChat() falls back to the raw
+ * chat id when no name table covers it. Unnamed chats stay resolvable by id, just not offered.
  */
 export function namedChats(chats: ChatSummary[]): ChatSummary[] {
   return chats.filter((chat) => chat.name !== chat.chat_id);
 }
 
 /**
- * Name and contact tables are rebuilt from full table scans, and a `line_read` step reading
- * five chats used to pay for five of each. They are cached per reader for this long — short
- * enough that a contact renamed in LINE shows up on the next run, long enough that one flow
- * step scans them once.
+ * Name and contact tables come from full table scans, so they are cached per reader: short enough
+ * that a contact renamed in LINE shows up on the next run, long enough that one flow step scans once.
  */
 const NAME_CACHE_TTL_MS = 60_000;
 
@@ -236,11 +232,8 @@ export class LineReader {
    * it came from. `query` matches the text body and the attachment metadata of the types in
    * SEARCHABLE_META_TYPES, so a filename or a link title is findable too.
    *
-   * A full scan is deliberate — a 168MB encrypted DB with 500k messages scans in well under
-   * a second (adding the metadata column cost 81ms -> 107ms on the real DB) — and an FTS
-   * index would be both an extra copy of private message text on disk and WRONG here: the
-   * trigram tokenizer silently misses two-character CJK queries and the default tokenizer
-   * treats a whole CJK run as one token.
+   * A full scan is deliberate: an FTS index would keep an extra copy of private message text on
+   * disk, and SQLite's tokenizers mishandle short CJK queries.
    */
   searchMessages(opts: SearchOptions = {}): MessageHit[] {
     const limit = saneLimit(opts.limit, 50);
@@ -251,8 +244,7 @@ export class LineReader {
     if (opts.query) {
       const pattern = `%${escapeLike(opts.query)}%`;
       // Also match the metadata of the types that carry user content (filenames, link titles,
-      // bot ALT_TEXT). Raw LIKE rather than json_extract on purpose: 47% of real
-      // _contentMetadata values are not valid JSON and json_extract throws on those —
+      // bot ALT_TEXT). Raw LIKE, not json_extract: much of _contentMetadata is not valid JSON, and
       // safeAll would swallow the throw and turn every search into "nothing found".
       where.push(
         `(_text LIKE ? ESCAPE '\\' OR (_contentType IN (${SEARCHABLE_META_TYPES.join(',')}) AND _contentMetadata LIKE ? ESCAPE '\\'))`,
@@ -347,10 +339,8 @@ export class LineReader {
     return out;
   }
 
-  // LINE gives no reliable per-message read boundary and _firstUnreadId is a stale
-  // low-water mark, so available is capped by _unreadCount and the most recent
-  // unread_count messages are treated as the unread ones. When fewer than unread_count
-  // messages are on disk, the gap is surfaced honestly as missing_count.
+  // _firstUnreadId is unreliable, so the newest unread_count messages are treated as unread;
+  // a shortfall on disk is reported as missing_count.
   private unreadMessages(
     chatId: string,
     unreadCount: number,

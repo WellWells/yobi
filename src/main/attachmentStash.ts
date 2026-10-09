@@ -167,11 +167,8 @@ async function clipboardFilePath(): Promise<string> {
   return '';
 }
 
-// Electron 44 no longer exposes raw OS clipboard formats, so the Windows 'FileNameW'
-// handle is gone. A file copied in Explorer now surfaces as a percent-encoded
-// text/uri-list instead, which carries non-ASCII names correctly and works everywhere.
+// A copied file arrives as a percent-encoded file:// URL, which keeps non-ASCII names intact.
 // Anything that is not a file:// URL (a link copied from a browser) is ignored.
-// Exported for the test suite.
 export function filePathFromUriList(text: string): string {
   for (const line of text.split(/\r?\n/)) {
     const uri = line.trim();

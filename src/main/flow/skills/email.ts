@@ -3,19 +3,13 @@ import { createTransport } from 'nodemailer';
 import { config } from '../../config';
 import { parseAttachmentList, resolveSafeLocalAttachment } from '../../attachmentGuard';
 import { sendLog } from '../../helpers';
+import { FlowUserError } from '../userError';
+import { renderEmailHtml } from './emailHtml';
 
 /**
- * Resolves the step's attachment list to absolute paths this run is allowed to send.
- *
- * Same gate as the bot and llm steps — `resolveSafeLocalAttachment` against the files this run
- * produced plus the app's own output folder — rather than a second policy that would drift from
- * it. LOCAL FILES ONLY: nodemailer would happily treat a `path` as a URL and fetch it from this
- * machine, which turns an attachment field into a request forger aimed at localhost. Telegram
- * takes URLs because Telegram's servers do that fetching, not ours.
- *
- * A failure throws rather than sending the mail without the file. `email_send` has no
- * emitFailFlag and every other failure in it already aborts, and an email the user believes
- * carries an invoice is worse than a flow that stops and says why.
+ * Resolves the step's attachments to local paths this run may send, using the same
+ * `resolveSafeLocalAttachment` gate as the bot and llm steps. Local files only: nodemailer would
+ * fetch a URL `path` from this machine. A refused file throws rather than sending the mail without it.
  */
 async function resolveMailAttachments(
   raw: string | undefined,
@@ -33,18 +27,23 @@ async function resolveMailAttachments(
   const resolved: { path: string }[] = [];
   for (const candidate of candidates) {
     if (/^[a-z][a-z0-9+.-]*:\/\//i.test(candidate)) {
-      throw new Error(`email_send: attachments takes local file paths, not URLs (${candidate}) — download it with a file_download step first and attach {{file}}`);
+      throw new FlowUserError(
+        'flow.error.attachmentUrl',
+        { url: candidate },
+        `email_send: attachments takes local file paths, not URLs (${candidate}) — download it with a file_download step first and attach {{file}}`,
+      );
     }
     try {
       const filePath = await resolveSafeLocalAttachment(candidate, authorizedPaths);
-      // The guard answers "may this be sent", not "is it there" — a path inside the output
-      // folder passes it whether or not the file exists. Checking here means a typo or a
-      // step that never ran is reported against the file name, instead of surfacing later as
-      // a stream error from inside the mailer.
+      // The guard checks permission, not existence; check here so a missing file is reported by name.
       await fs.access(filePath, fs.constants.R_OK);
       resolved.push({ path: filePath });
     } catch (err) {
-      throw new Error(`email_send: attachment "${candidate}" was refused — ${err instanceof Error ? err.message : String(err)}`);
+      throw new FlowUserError(
+        'flow.error.attachmentRefused',
+        { file: candidate },
+        `email_send: attachment "${candidate}" was refused — ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
   return resolved;
@@ -56,14 +55,24 @@ export async function execEmailSend(skillConfig: Record<string, string>): Promis
   const body = skillConfig.body ?? '';
   const fromName = (skillConfig.fromName ?? '').trim();
 
-  if (!to || !subject) throw new Error('email_send: requires "to" and "subject"');
+  if (!to || !subject) {
+    throw new FlowUserError('flow.error.emailFields', {}, 'email_send: requires "to" and "subject"');
+  }
 
+  // The SMTP form lives on the email step itself (shared by every email step); Settings has none.
   const smtp = config.smtp;
   if (!smtp.host || !smtp.user || !smtp.password) {
-    throw new Error('email_send: SMTP not configured — set it in Settings › Email');
+    throw new FlowUserError(
+      'flow.error.smtpMissing',
+      {},
+      'email_send: SMTP not configured — fill in the SMTP account on the email step',
+    );
   }
 
   const attachments = await resolveMailAttachments(skillConfig.attachments, skillConfig.__attachmentAllowlist);
+  // The body is markdown (usually an llm step's answer). The formatted HTML is what a mail client
+  // shows; the markdown itself stays as the plain-text part for clients that do not render HTML.
+  const html = body.trim() ? renderEmailHtml(body) : '';
 
   const transporter = createTransport({
     host: smtp.host,
@@ -81,13 +90,15 @@ export async function execEmailSend(skillConfig: Record<string, string>): Promis
       to,
       subject,
       text: body,
+      ...(html ? { html } : {}),
       ...(attachments.length > 0 ? { attachments } : {}),
     });
     const withFiles = attachments.length > 0 ? ` (${attachments.length} attachment(s))` : '';
     sendLog(`✉️ [Flow] Email sent to: ${to}${withFiles}`);
     return '';
   } catch (err) {
-    throw new Error(`email_send: ${err instanceof Error ? err.message : String(err)}`);
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new FlowUserError('flow.error.emailSendFailed', { error: detail }, `email_send: ${detail}`);
   } finally {
     transporter.close();
   }

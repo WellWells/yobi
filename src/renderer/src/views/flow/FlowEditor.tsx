@@ -68,10 +68,8 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
     }
   }, [flow, saveFlow]);
 
-  // Back to the top when a different flow is opened. The editor stays mounted across the
-  // switch, so without this you land wherever the previous flow was scrolled to — on a long
-  // flow that means the new one's name, description and trigger card start off-screen, which
-  // reads as "it opened the wrong thing". useLayoutEffect, or the old offset flashes for a frame.
+  // Back to the top when a different flow is opened: the editor stays mounted across the switch.
+  // useLayoutEffect, or the old offset flashes for a frame.
   useLayoutEffect(() => {
     viewportRef.current?.scrollTo({ top: 0 });
   }, [flow.id]);
@@ -120,7 +118,7 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
         <Box maw={560} mx="auto" px="20px" py="12px">
           <Group justify="flex-end" align="center" wrap="nowrap">
             {isDirty ? (
-              <Badge color="orange" variant="light">{t('flow.unsaved')}</Badge>
+              <Badge color="var(--mantine-color-warning)" variant="light">{t('flow.unsaved')}</Badge>
             ) : (
               <Text fz="xs" c="dimmed">{t('flow.saved')}</Text>
             )}

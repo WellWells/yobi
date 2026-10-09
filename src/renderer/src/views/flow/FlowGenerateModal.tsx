@@ -212,7 +212,7 @@ export const FlowGenerateModal: React.FC<FlowGenerateModalProps> = ({
                     .replace('{{tools}}', String(state.report.skills.length))}
                 </Text>
                 {issueRows.length > 0 && (
-                  <Alert color="yellow" icon={<TriangleAlert size={14} />} p="xs">
+                  <Alert color="var(--mantine-color-warning)" icon={<TriangleAlert size={14} />} p="xs">
                     <Stack gap={2}>
                       <Text fz="xs" fw={600}>{t('flow.build.done.check')}</Text>
                       {issueRows.map((issue) => (
@@ -236,7 +236,7 @@ export const FlowGenerateModal: React.FC<FlowGenerateModalProps> = ({
 
             {screen === 'failed' && (
               <Stack gap="xs">
-                <Alert color="red" icon={<TriangleAlert size={14} />} p="xs">
+                <Alert color="var(--mantine-color-error)" icon={<TriangleAlert size={14} />} p="xs">
                   <Stack gap={2}>
                     <Text fz="xs" fw={600}>
                       {t('flow.build.failed.title')

@@ -5,8 +5,8 @@ import { existsSync } from 'node:fs';
 import { fdir } from 'fdir';
 import dayjs from 'dayjs';
 import type { OutputFile } from '../shared/types';
-import { parseConversationDoc } from '../shared/conversationDoc';
-import type { ConversationHeadingAliases } from '../shared/conversationDoc';
+import { latestTurnProvider, parseConversationDoc, visibleConversationText } from '../shared/conversationDoc';
+import type { ConversationDoc, ConversationHeadingAliases, ConversationTurn } from '../shared/conversationDoc';
 
 type MarkdownHeadingAliases = ConversationHeadingAliases;
 
@@ -102,9 +102,7 @@ export async function searchOutputFiles(query: string): Promise<OutputFile[]> {
       filePaths.map(async (filePath) => {
         try {
           const content = await fs.readFile(filePath, 'utf-8');
-          const searchable = `${path.basename(filePath)}\n${content}`.toLowerCase();
-          if (!searchable.includes(keyword)) return null;
-          return buildOutputFile(filePath, content, headingAliases);
+          return matchOutputFile(filePath, content, headingAliases, keyword);
         } catch {
           return null;
         }
@@ -189,7 +187,9 @@ function extractMetaByAliases(content: string, headingAliases: Set<string>): str
     if (!headingAliases.has(headingMatch[1].trim())) continue;
     const sectionLines: string[] = [];
     for (let j = i + 1; j < lines.length; j += 1) {
-      if (/^##\s+/.test(lines[j])) break;
+      // Stop at the first turn's `yobi:turn` marker, which sits between the `## Time` value
+      // and `## Prompt`.
+      if (/^##\s+/.test(lines[j]) || /^<!--\s*yobi:/.test(lines[j].trim())) break;
       sectionLines.push(lines[j]);
     }
     const sectionValue = sectionLines.join('\n').trim();
@@ -198,26 +198,60 @@ function extractMetaByAliases(content: string, headingAliases: Set<string>): str
   return null;
 }
 
-function buildOutputFile(filePath: string, content: string, headingAliases: MarkdownHeadingAliases): OutputFile {
+function readOutputFile(
+  filePath: string,
+  content: string,
+  headingAliases: MarkdownHeadingAliases,
+): { file: OutputFile; doc: ConversationDoc | null } {
   const name = path.basename(filePath);
   const firstLine = content.split('\n')[0]?.trim() ?? '';
   const h1Match = firstLine.match(/^#\s+(.+)$/);
-  const provider = extractMetaByAliases(content, headingAliases.provider);
-  const timestampFromName = extractTimestampFromFileName(name);
-  const timestampFromContent = extractTimestampFromContent(content, headingAliases.time);
+  const doc = content ? parseConversationDoc(content, headingAliases) : null;
+  const provider = latestTurnProvider(doc?.turns ?? [])
+    ?? extractMetaByAliases(content, headingAliases.provider);
+  const timestamp = latestTurnTimestamp(doc?.turns ?? [])
+    || extractTimestampFromContent(content, headingAliases.time)
+    || extractTimestampFromFileName(name);
   const preview = h1Match
     ? h1Match[1]
     : (content.slice(0, 200).replace(/\n/g, ' ').trim() || name);
-  const turns = content ? parseConversationDoc(content, headingAliases).turns.length : 0;
 
   return {
-    name,
-    path: filePath,
-    timestamp: timestampFromContent || timestampFromName,
-    preview,
-    provider: provider || undefined,
-    turns: Math.max(1, turns),
+    file: {
+      name,
+      path: filePath,
+      timestamp,
+      preview,
+      provider: provider || undefined,
+      turns: Math.max(1, doc?.turns.length ?? 0),
+    },
+    doc,
   };
+}
+
+export function buildOutputFile(filePath: string, content: string, headingAliases: MarkdownHeadingAliases): OutputFile {
+  return readOutputFile(filePath, content, headingAliases).file;
+}
+
+/**
+ * Matches what the row and the conversation show: the title, the provider badge, the prompts
+ * and the answers — not the metadata sections, headings and JSON markers stored around them.
+ * The raw text is checked first only as a cheap reject, since everything visible is in it.
+ */
+export function matchOutputFile(
+  filePath: string,
+  content: string,
+  headingAliases: MarkdownHeadingAliases,
+  keyword: string,
+): OutputFile | null {
+  if (!`${path.basename(filePath)}\n${content}`.toLowerCase().includes(keyword)) return null;
+  const { file, doc } = readOutputFile(filePath, content, headingAliases);
+  const visible = [
+    file.preview,
+    file.provider ?? '',
+    content ? visibleConversationText(content, headingAliases, doc ?? undefined) : '',
+  ].join('\n').toLowerCase();
+  return visible.includes(keyword) ? file : null;
 }
 
 export function buildSafeFileNameFromTitle(title: string): string {
@@ -248,6 +282,21 @@ function extractTimestampFromFileName(name: string): string {
   if (!match) return '';
   const [, year, month, day, hour, minute, second] = match;
   return toIsoTimestamp(`${year}-${month}-${day}T${hour}:${minute}:${second}`);
+}
+
+/**
+ * When the conversation last moved: the newest reply time any turn recorded. The list is ordered
+ * by it, the way chat sites order theirs, so a follow-up lifts an old conversation back to the
+ * top; the `## Time` section only records when the first turn was saved. File mtime is not used:
+ * renaming, retitling and thread-marker stamps rewrite the file without anyone talking.
+ */
+function latestTurnTimestamp(turns: readonly ConversationTurn[]): string {
+  let latest = '';
+  for (const turn of turns) {
+    const stamp = typeof turn.meta.t === 'string' ? toIsoTimestamp(turn.meta.t) : '';
+    if (stamp > latest) latest = stamp;
+  }
+  return latest;
 }
 
 function extractTimestampFromContent(content: string, timestampHeadingAliases: Set<string>): string {

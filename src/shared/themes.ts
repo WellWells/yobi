@@ -111,11 +111,12 @@ export const THEME_DEFS = {
       bgPrimary: '#faf4ed', bgSurface: '#fffaf3', bgElevated: '#f2e9e1',
       border: '#dfd7cc',
       textPrimary: '#575279', textSecondary: '#4a485b', textMuted: '#9893a5', textDisabled: '#b6b4ba',
-      accent: '#b4637a',
+      accent: '#907aa9',
       success: '#56949f', warning: '#ea9d34', error: '#b4637a',
     },
     light: true,
     shiki: 'rose-pine-dawn',
+    buttonAccent: '#736287',
   },
   gruvbox: {
     colors: {

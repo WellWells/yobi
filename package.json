@@ -1,7 +1,7 @@
 {
   "name": "yobi",
-  "version": "1.7.1",
-  "description": "Desktop AI automation that drives the ChatGPT, Claude, Gemini, and Perplexity web interfaces via global hotkeys, with visual flows, scheduling, and Telegram/LINE bot control.",
+  "version": "1.8.0",
+  "description": "Desktop AI automation: scheduled flows, chat, global hotkeys and Telegram/LINE bots that drive the Gemini, Claude, ChatGPT and Perplexity web apps without an API key (or with your own).",
   "author": "WellsTsai",
   "repository": {
     "type": "git",

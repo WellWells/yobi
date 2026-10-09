@@ -4,7 +4,7 @@ import { Brain, MessagesSquare, Pencil, Plus, Sparkles, Trash2, TriangleAlert } 
 import { useUserMemoryStore } from '../../../store/userMemoryStore';
 import { MemoryCurateModal } from './MemoryCurateModal';
 import { AppButton } from '../../../components/AppButton';
-import { MultiSelectDropdown } from '../../../components/MultiSelectDropdown';
+import { useAppStore } from '../../../store/appStore';
 import { WebDialog } from '../../../components/WebDialog';
 import { EmptyState } from '../../../components/EmptyState';
 import { GroupHeader } from '../../../components/GroupHeader';
@@ -13,7 +13,8 @@ import { buildTimeGroupHeads } from '../../../utils/timeGroups';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import type { useUserMemory } from '../hooks/useUserMemory';
 import { MemoryEntryForm } from './MemoryEntryForm';
-import type { LinePairedUser, TelegramPairedUser } from '../../../../../shared/types';
+import { ownerAccountLabels } from './botPermissionsView';
+import type { BotRoster } from './botPermissionsView';
 import { memoryNearlyFull } from '../../../../../shared/userMemory';
 import type { UserMemoryEntry } from '../../../../../shared/userMemory';
 
@@ -21,17 +22,12 @@ type UserMemory = ReturnType<typeof useUserMemory>;
 
 interface Props {
   memory: UserMemory;
-  telegramUsers: TelegramPairedUser[];
-  lineUsers: LinePairedUser[];
+  /** Paired bot accounts; the owner ("me") mark is shown here and edited in the paired lists. */
+  roster: BotRoster;
   t: (key: string) => string;
   locale: string;
   showSection: (tags: readonly string[], category: 'memory') => boolean;
   sectionGap: number;
-}
-
-function telegramLabel(user: TelegramPairedUser): string {
-  const name = [user.firstName, user.lastName].filter(Boolean).join(' ');
-  return name || (user.username ? `@${user.username}` : `ID ${user.userId}`);
 }
 
 const EntryRow: React.FC<{
@@ -67,8 +63,7 @@ const EntryRow: React.FC<{
             </ActionIcon>
           </Tooltip>
           <Tooltip label={t('settings.memory.delete')} position="top">
-            {/* Confirmed like every other permanent deletion in the app: forgetting is final by
-                design — there is no backup file, precisely so "forget this" really forgets. */}
+            {/* Confirmed first: forgetting is final, no backup is kept. */}
             <ActionIcon variant="subtle" size={26} aria-label={t('settings.memory.delete')} onClick={() => onRequestDelete(entry)}>
               <Trash2 size={13} />
             </ActionIcon>
@@ -92,7 +87,7 @@ const EntryRow: React.FC<{
 };
 
 export const MemorySection: React.FC<Props> = ({
-  memory, telegramUsers, lineUsers, t, locale, showSection, sectionGap,
+  memory, roster, t, locale, showSection, sectionGap,
 }) => {
   const [confirmClear, setConfirmClear] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<UserMemoryEntry | null>(null);
@@ -106,17 +101,9 @@ export const MemorySection: React.FC<Props> = ({
     setCurate({ focus: curateRequest.focus });
     useUserMemoryStore.getState().clearCurateRequest();
   }, [curateRequest]);
-  const botOptions = useMemo(() => [
-    ...(telegramUsers.length > 0
-      ? [{ group: 'Telegram', items: telegramUsers.map((user) => ({ value: `telegram:${user.userId}`, label: telegramLabel(user) })) }]
-      : []),
-    ...(lineUsers.length > 0
-      ? [{ group: 'LINE', items: lineUsers.map((user) => ({ value: `line:${user.userId}`, label: user.displayName || user.userId })) }]
-      : []),
-  ], [telegramUsers, lineUsers]);
+  const ownerLabels = useMemo(() => ownerAccountLabels(roster, t), [roster, t]);
 
-  // Was `return null`, i.e. the whole section vanished while the snapshot loaded — with the
-  // nav entry still pointing at it, that reads as a broken page rather than a wait.
+  // Show a busy placeholder while the snapshot loads, so the nav entry never lands on an empty page.
   if (!snapshot) {
     return (
       <Box display={showSection(TAG_SETS.memory, 'memory') ? 'block' : 'none'}>
@@ -128,18 +115,6 @@ export const MemorySection: React.FC<Props> = ({
   const full = memoryNearlyFull(snapshot.usedChars);
   // Entries are stored oldest first, so the buckets of when Yobi learned them already run in order.
   const groupHeads = buildTimeGroupHeads(snapshot.entries.map((entry) => entry.createdAt), new Date());
-  const paired = new Set(botOptions.flatMap((group) => group.items.map((item) => item.value)));
-  const botValue = [
-    ...snapshot.botSelf.telegram.map((id) => `telegram:${id}`),
-    ...snapshot.botSelf.line.map((id) => `line:${id}`),
-  ].filter((value) => paired.has(value));
-
-  const handleBotChange = (values: string[]): void => {
-    const pick = (platform: string): string[] => values
-      .filter((value) => value.startsWith(`${platform}:`))
-      .map((value) => value.slice(platform.length + 1));
-    void memory.setBotSelf({ telegram: pick('telegram'), line: pick('line') });
-  };
 
   return (
     <Box display={visible ? 'block' : 'none'}>
@@ -188,13 +163,13 @@ export const MemorySection: React.FC<Props> = ({
             <Progress
               value={Math.min(100, (snapshot.usedChars / snapshot.maxChars) * 100)}
               size="xs"
-              color={full ? 'orange' : 'brand'}
+              color={full ? 'var(--mantine-color-warning)' : 'brand'}
               aria-label={t('settings.memory.title')}
             />
             {full && (
               <Group gap={6} wrap="nowrap" align="flex-start" mt={2}>
-                <Box c="orange" mt={2} style={{ flexShrink: 0 }}><TriangleAlert size={13} /></Box>
-                <Text fz="var(--font-size-sm)" c="orange">{t('settings.memory.full')}</Text>
+                <Box c="var(--mantine-color-warning)" mt={2} style={{ flexShrink: 0 }}><TriangleAlert size={13} /></Box>
+                <Text fz="var(--font-size-sm)" c="var(--mantine-color-warning)">{t('settings.memory.full')}</Text>
               </Group>
             )}
           </Stack>
@@ -243,17 +218,27 @@ export const MemorySection: React.FC<Props> = ({
           label={t('settings.memory.bots')}
           hint={t('settings.memory.bots.hint')}
         >
-          {botOptions.length === 0
-            ? <Text fz="var(--font-size-sm)" c="dimmed" fs="italic">{t('settings.memory.bots.none')}</Text>
-            : (
-              <MultiSelectDropdown
-                value={botValue}
-                options={botOptions}
-                onChange={handleBotChange}
-                placeholder={botValue.length === 0 ? t('settings.memory.bots.placeholder') : undefined}
-                aria-label={t('settings.memory.bots')}
-              />
-            )}
+          {/* Read-only: the owner mark has one editor, the "Me" chip in the bots' paired lists. */}
+          <Group justify="space-between" align="center" gap={8} wrap="nowrap">
+            <Text
+              fz="var(--font-size-sm)"
+              c={ownerLabels.length > 0 ? 'var(--mantine-color-default-color)' : 'dimmed'}
+              fs={ownerLabels.length > 0 ? undefined : 'italic'}
+              style={{ minWidth: 0, overflowWrap: 'anywhere' }}
+            >
+              {ownerLabels.length > 0
+                ? ownerLabels.join(t('settings.bot.perm.who.separator'))
+                : t(roster.accounts.length > 0 ? 'settings.memory.bots.unset' : 'settings.memory.bots.none')}
+            </Text>
+            <AppButton
+              variant="default"
+              size="xs"
+              style={{ flexShrink: 0 }}
+              onClick={() => useAppStore.getState().openSettingsCategory('bots')}
+            >
+              {t('settings.memory.bots.open')}
+            </AppButton>
+          </Group>
         </SettingField>
       </SectionCard>
 

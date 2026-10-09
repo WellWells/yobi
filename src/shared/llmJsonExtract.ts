@@ -109,18 +109,10 @@ function looksLikeFlow(value: unknown): boolean {
 type Picker = (parsed: Parsed | undefined, whole: boolean) => unknown | null;
 
 /**
- * Candidates are ranked by SHAPE, not by the order the recovery ladder happened to reach them.
- * Arrival order was the old rule and it misread the ladder in both directions: a jsonrepair of
- * the whole body that swallowed a markdown citation footer (`[1]: https://…`, which a provider
- * running its own web search appends under every answer) into a top-level list arrived before the
- * clean object sitting inside it, and a clean parse of an inner `[…]` fragment arrived before the
- * repair that rescued the object around it. Both shipped the wrong value to callers that all want
- * one object.
- *
- * WHOLE outranks OBJECT because a candidate body that parsed cleanly end to end needs no salvage
- * at all — without it, `[{…},{…}]` would be mined for the first element instead of returned. It
- * is withheld from a scalar, which no caller can use: a fenced `42` must not beat a real object
- * found further down the reply.
+ * Candidates are ranked by shape, not by the order the recovery ladder reaches them: a repair of
+ * the whole body can fold a citation footer (`[1]: https://…`) into a list ahead of the clean
+ * object inside it. WHOLE outranks OBJECT so a cleanly parsed `[{…},{…}]` is returned as is; a
+ * scalar never gets WHOLE, so a fenced `42` cannot beat a real object later in the reply.
  */
 const RANK_FLOW = 4;
 const RANK_WHOLE = 3;

@@ -19,19 +19,9 @@ export async function getAgentFileRoots(): Promise<string[]> {
 }
 
 /**
- * WRITING IS NARROWER THAN READING, and the difference is the whole reason `file_write` needs no
- * per-call confirmation.
- *
- * The read roots are the four folders a user keeps documents in. Two of them are also auto-run
- * locations: on Windows the PowerShell profile lives at
- * `Documents\PowerShell\Microsoft.PowerShell_profile.ps1` (`WindowsPowerShell\` for 5.1), and
- * `ensureTxtExt` leaves a `.ps1`/`.bat` name untouched. So a write anywhere in Documents was
- * arbitrary code execution at the next shell launch — reached WITHOUT the shell confirmation
- * dialog, which is the one boundary this feature is built on. Reading a document the user already
- * has is not the same act as planting one, so they no longer share a root set.
- *
- * The app output folder holds only what the app itself produced, is not on any auto-run path, and
- * is where every other `/agent` artefact already lands.
+ * Writes are confined to the app output folder, narrower than the read roots: Documents holds
+ * auto-run files (e.g. the PowerShell profile), so writing there would bypass the shell
+ * confirmation. That confinement is why `file_write` needs no per-call confirmation.
  */
 export async function getAgentWriteRoots(): Promise<string[]> {
   return [await getOutputDir()];
@@ -46,25 +36,19 @@ export function isWithinRoots(resolvedAbs: string, roots: string[]): boolean {
 }
 
 /**
- * `path.resolve` alone compares the name, not the destination: a junction inside Documents that
- * points at `%USERPROFILE%\.ssh` is "inside the roots" by string and is then followed by
- * `fs.readFile`. Writing makes that worse — the same trick becomes a write-anywhere primitive —
- * so read and write share one containment rule.
- *
- * A file_write target usually does not exist yet, so realpath the deepest ancestor that does and
- * re-attach the tail; that still resolves a symlinked parent directory.
- */
-/**
- * A UNC path costs 42 SECONDS here, measured: `fs.realpath` walks it one segment at a time and
- * each hop waits on the SMB timeout, while the turn looks frozen, the wall clock keeps draining
- * and Stop cannot interrupt it. Nothing on a network share can be inside a local root anyway, so
- * it is refused before the filesystem is touched at all.
+ * Network (UNC) paths are refused before touching the filesystem: realpath can block on the SMB
+ * timeout per segment, and nothing on a share is inside a local root.
  */
 function isNonLocal(target: string): boolean {
   const abs = path.resolve(target);
   return abs.startsWith('\\\\') || abs.startsWith('//');
 }
 
+/**
+ * Containment compares realpaths so a junction or symlink inside a root cannot reach outside it.
+ * A write target may not exist yet, so the deepest existing ancestor is resolved and the tail
+ * re-attached.
+ */
 async function resolveReal(target: string): Promise<string> {
   const abs = path.resolve(target);
   let head = abs;
@@ -91,10 +75,9 @@ export async function agentWorkspaceDir(): Promise<string> {
 }
 
 /**
- * The final on-disk path a tool would touch, resolved the SAME way the executor resolves it.
- * Reading `config.folder` on its own is bypassed by one JSON key: an absolute `filename` makes
- * `resolveWritePath` drop `folder` entirely, and the `..`-segment filter it applies never sees
- * `folder` at all. Both escapes were reachable before this function covered file_write.
+ * The final on-disk path a tool would touch, resolved exactly as the executor does: an absolute
+ * `filename` makes `resolveWritePath` drop `folder`, and its `..` filter never sees `folder`, so
+ * checking `folder` alone is not enough.
  */
 async function targetPathForTool(
   tool: SkillType,
@@ -139,10 +122,8 @@ export async function denyReasonForFileTool(
 
   if (isNonLocal(resolved)) return deny();
 
-  // DENY OUTRANKS ALLOW, and it is checked first so that widening the allow list can never
-  // quietly open a deny. A credential can sit inside a folder the agent is allowed to use
-  // (`Desktop/id_rsa`), and a system folder can be added to the allow list by someone who did
-  // not think about System32.
+  // Deny is checked before allow: a credential inside an allowed folder (`Desktop/id_rsa`) stays
+  // refused, and widening the allow list never opens a deny.
   const sensitive = sensitivePathReason(resolved, roots);
   if (sensitive) {
     return `access denied: ${sensitive}. Do not retry it or a variation of it — tell the user what you needed and let them handle it themselves.`;

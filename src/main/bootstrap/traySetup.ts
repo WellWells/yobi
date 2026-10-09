@@ -5,6 +5,7 @@ import { sendToRenderer, setNotifyEnabled, applyLaunchAtStartup } from '../helpe
 import { getMainWin, setAppQuitting, setMainWindowCloseHandler } from '../windows';
 import { createTray, destroyTray, isTrayCreated, updateTrayMenu } from '../tray';
 import type { TrayDeps } from '../tray';
+import { setupAppMenu } from './appMenuSetup';
 
 export function getTrayDeps(): TrayDeps {
   return {
@@ -86,8 +87,10 @@ export function buildTrayIpcCallbacks(): {
         destroyTray();
       }
     },
+    // Fired on a language change, so the macOS menu bar is rebuilt with the tray menu.
     onTrayMenuRebuild: () => {
       if (isTrayCreated()) updateTrayMenu(getTrayDeps());
+      setupAppMenu();
     },
     onHideToTray: () => {
       if (!isTrayCreated()) createTray(getTrayDeps());

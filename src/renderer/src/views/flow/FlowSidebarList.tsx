@@ -20,10 +20,8 @@ const LONG_PRESS_MS = 500;
 const EMPTY_ISSUES: FlowIssue[] = [];
 
 /**
- * Bring the row of `flowId` into view inside `container`.
- * `block: 'nearest'` leaves an already-visible row untouched, so this never
- * yanks the list while the user is reading it.
- * Exported for the test suite.
+ * Bring the row of `flowId` into view inside `container`. `block: 'nearest'` leaves an
+ * already-visible row untouched, so this never yanks the list while the user is reading it.
  */
 export function scrollFlowRowIntoView(container: HTMLElement | null, flowId: string): void {
   if (!container) return;

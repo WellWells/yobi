@@ -1,7 +1,8 @@
 import { IPC } from '../../shared/types';
+import { botBuiltinAllowed, pairedMenuAccess } from '../botPermissions';
 import { config, getHiddenSources, saveConfig } from '../config';
 import { resolveLlmDirectTarget } from '../providerCommands';
-import { relaunchApp, sendLog, sendToRenderer, sendWebNotification, createTaskId } from '../helpers';
+import { relaunchApp, sendLog, sendToRenderer, createTaskId } from '../helpers';
 import { getLangCache } from '../i18n';
 import { resolveUrlPrompt } from '../urlParser';
 import { TelegramRuntime, normalizePairingState, parseRecipientIds } from '../telegram';
@@ -17,6 +18,7 @@ import {
   botChatKey,
   clearPendingAgentAsk,
   hasPendingAgentAsk,
+  newConversationLabel,
   resumeBotAgentAsk,
   runBotBuiltinCommand,
   takePendingAgentAsk,
@@ -29,7 +31,7 @@ import {
   exportTelegramResultDocument,
 } from '../telegramBridge';
 import { listBotContacts, listBotPairedContacts } from '../botDirectory';
-import type { QueueManager } from '../queueManager';
+import { appQueueState, type QueueManager } from '../queueManager';
 import type { FlowManager } from '../flow';
 
 export function createTelegramRuntime(deps: {
@@ -79,17 +81,20 @@ export function createTelegramRuntime(deps: {
       };
     },
     isAdminUser: (userId) => isTelegramAdminUser(userId),
+    canUseBuiltin: (key, userId, chatId) => botBuiltinAllowed('telegram', key, String(userId), String(chatId)),
+    getMenuAccess: async () => (await pairedMenuAccess('telegram')).map((entry) => ({ ...entry, userId: Number(entry.userId) })),
     getEffectiveTargetUrl: () => resolveLlmDirectTarget(
       config.telegram.llmDirect,
       getHiddenSources(),
     ).targetUrl || config.targetUrl,
     getByokContextBudgetChars: () => config.byokContextBudgetChars,
     onTaskRequest: async (request) => {
+      const requestTarget = request.targetUrl || config.targetUrl;
       const resolved = await resolveUrlPrompt(request.prompt, {
         langData: getLangCache(),
         youtubePrompt: config.youtubePrompt,
+        targetUrl: requestTarget,
         onLog: sendLog,
-        onNotify: (title, body) => sendWebNotification(title, body, 'info'),
       });
       const id = createTaskId();
       const sessionKey = botChatKey(
@@ -98,26 +103,29 @@ export function createTelegramRuntime(deps: {
         String(request.replyTarget.userId),
       );
       const conversationPath = await getBotConversation(sessionKey);
+      const fileLabel = conversationPath ? '' : await newConversationLabel(sessionKey);
       queue.enqueue({
         id,
         prompt: resolved.prompt,
         displayPrompt: resolved.displayPrompt,
-        targetUrl: resolved.forceProviderUrl ?? (request.targetUrl || config.targetUrl),
+        targetUrl: resolved.forceProviderUrl ?? requestTarget,
         title: resolved.title,
         source: 'telegram',
         replyTarget: request.replyTarget,
         requesterName: request.requesterName,
         sessionKey,
         ...(resolved.prompt !== request.prompt ? { external: true } : {}),
+        ...(resolved.map ? { mapPlace: resolved.map } : {}),
         ...(request.attachments?.length
           ? { attachments: request.attachments, ephemeralAttachments: true }
           : {}),
         ...(conversationPath ? { conversationPath } : {}),
+        ...(fileLabel ? { fileLabel } : {}),
       });
       sendLog(`[${id}] Telegram /${request.command} queued`);
       return { taskId: id };
     },
-    onStatusRequest: () => buildTelegramStatusText(queue),
+    onStatusRequest: () => buildTelegramStatusText(appQueueState(queue, getFlowManager())),
     onRestartApp: () => relaunchApp('Telegram /restart'),
     onUpdateOutputChoice: (choice) => {
       if (choice === 'compact') {
@@ -151,7 +159,7 @@ export function createTelegramRuntime(deps: {
       ];
     },
     getBuiltinCommands: () => resolveBotCommands(getFlowManager).builtins,
-    onBuiltinCommand: (key, input, targetUrl, chatId, userId, onProgressText, plain) => runBotBuiltinCommand(
+    onBuiltinCommand: (key, input, targetUrl, chatId, userId, onProgressText) => runBotBuiltinCommand(
       { getFlowManager, getStrings: getLangCache },
       {
         key,
@@ -159,7 +167,6 @@ export function createTelegramRuntime(deps: {
         targetUrl,
         chatKey: botChatKey('telegram', String(chatId), String(userId)),
         onProgressText,
-        ...(plain ? { plain: true } : {}),
       },
     ),
     onAgentAnswer: async (answer, chatId, userId, onProgressText) => {

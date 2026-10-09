@@ -8,8 +8,12 @@ import {
 import { validateTrigger } from './flowTriggerValidation';
 import { checkVariableReferences } from './flowReferenceCheck';
 import { sanitizeFlowVariables } from './flowVariables';
+import { checkBlockStructure, describeBlockIssue } from './flowBlockStructure';
+import { unwrapMarkdownLink } from './markdownLinkUnwrap';
 
 export { extractJsonFromLlmResponse } from './llmJsonExtract';
+export { checkBlockStructure, describeBlockIssue } from './flowBlockStructure';
+export type { BlockIssue } from './flowBlockStructure';
 
 type StepValidationResult =
   | { ok: true; step: SkillInstance }
@@ -23,6 +27,11 @@ const REQUIRED_KEYS: Partial<Record<SkillType, string[]>> = Object.fromEntries(
 
 const LLM_EXPORT_FORMATS = ['png', 'webp', 'pdf'];
 
+/** Legacy config key spellings, read under their current name instead of being dropped. */
+const CONFIG_KEY_ALIASES: Partial<Record<SkillType, Record<string, string>>> = {
+  bot: { chatId: 'chatIds' },
+};
+
 function coerceString(value: unknown): string {
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
@@ -34,10 +43,12 @@ function coerceString(value: unknown): string {
   }
 }
 
-function unwrapMarkdownLink(value: string): string {
-  const match = value.trim().match(/^\[[^\]]*\]\((\S+?)\)$/);
-  return match ? match[1].trim() : value;
-}
+/**
+ * Config keys whose value IS a URL, where a model-linkified `[x](https://x)` is a typo worth
+ * undoing (`channels`/`accounts` take a URL or a handle per line). Every other key is prose (a
+ * message, a prompt, file content) and keeps the user's own Markdown links verbatim.
+ */
+const URL_VALUED_KEYS = new Set(['url', 'urls', 'provider', 'attachment', 'channels', 'accounts']);
 
 function unwrapFlow(obj: Record<string, unknown>): Record<string, unknown> {
   if (obj.flow && typeof obj.flow === 'object' && !Array.isArray(obj.flow)) {
@@ -59,8 +70,15 @@ function validateStep(raw: unknown, index: number): StepValidationResult {
 
   const config: Record<string, string> = { ...DEFAULT_SKILL_CONFIG[skillType] };
   if (typeof s.config === 'object' && s.config !== null) {
-    for (const [key, value] of Object.entries(s.config as Record<string, unknown>)) {
-      if (key in config) config[key] = unwrapMarkdownLink(coerceString(value));
+    const aliases = CONFIG_KEY_ALIASES[skillType] ?? {};
+    const entries = Object.entries(s.config as Record<string, unknown>);
+    for (const [rawKey, value] of entries) {
+      const key = aliases[rawKey] ?? rawKey;
+      // The current spelling wins when a reply carries both.
+      if (key !== rawKey && entries.some(([other]) => other === key)) continue;
+      if (!(key in config)) continue;
+      const text = coerceString(value);
+      config[key] = URL_VALUED_KEYS.has(key) ? unwrapMarkdownLink(text) : text;
     }
   }
 
@@ -87,27 +105,6 @@ function validateStep(raw: unknown, index: number): StepValidationResult {
   const label = typeof s.label === 'string' && s.label.trim() ? s.label.trim() : skillType;
 
   return { ok: true, step: { id: '', type: skillType, label, config, outputKey } };
-}
-
-function checkBlockBalance(steps: SkillInstance[]): string | null {
-  let loopDepth = 0;
-  let ifDepth = 0;
-  for (const step of steps) {
-    if (step.type === 'loop') loopDepth++;
-    else if (step.type === 'end_loop') {
-      loopDepth--;
-      if (loopDepth < 0) return 'Unmatched "end_loop" without a preceding "loop"';
-    } else if (step.type === 'if') ifDepth++;
-    else if (step.type === 'end_if') {
-      ifDepth--;
-      if (ifDepth < 0) return 'Unmatched "end_if" without a preceding "if"';
-    } else if ((step.type === 'break' || step.type === 'continue') && loopDepth === 0) {
-      return `"${step.type}" must be inside a loop`;
-    }
-  }
-  if (loopDepth !== 0) return 'Unbalanced "loop"/"end_loop" blocks';
-  if (ifDepth !== 0) return 'Unbalanced "if"/"end_if" blocks';
-  return null;
 }
 
 function checkDuplicateOutputKeys(steps: SkillInstance[]): string | null {
@@ -157,8 +154,8 @@ export function validateFlowCandidate(raw: unknown): FlowGenerationResult {
   if (duplicateError) return { ok: false, error: duplicateError };
   assignFallbackOutputKeys(steps);
 
-  const balanceError = checkBlockBalance(steps);
-  if (balanceError) return { ok: false, error: balanceError };
+  const blockIssue = checkBlockStructure(steps);
+  if (blockIssue) return { ok: false, error: describeBlockIssue(blockIssue) };
 
   const triggerResult = validateTrigger(inner.trigger);
   if (!triggerResult.ok) return triggerResult;

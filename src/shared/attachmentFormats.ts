@@ -90,7 +90,7 @@ const SOURCE_FILE_ATTACHMENT_ACCEPT = [
   ...[...TEXT_EXTENSIONS].sort().map((ext) => `.${ext}`),
 ].join(',');
 
-/** Composers measured to take source and data files as real uploads, not just images and documents. */
+/** Providers whose composers accept source and data files as uploads, not just images and documents. */
 const SOURCE_FILE_PROVIDERS: ReadonlySet<Provider> = new Set(['chatgpt', 'claude']);
 
 export function attachmentAcceptFor(provider: Provider): string {

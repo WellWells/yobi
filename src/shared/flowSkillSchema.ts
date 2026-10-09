@@ -24,9 +24,11 @@ export {
   buildFlowGenerationPrompt,
   buildFlowRepairPrompt,
   buildSkillIndex,
+  flowCompilerRules,
   renderSkillBrief,
   renderSkillLine,
   resolveSelectedSkills,
   withClarifications,
 } from './flowSkillPrompt';
+export { buildFlowEditPrompt, buildFlowEditRepairPrompt, renderFlowForEdit } from './flowEditPrompt';
 export type { FlowClarification } from './types';

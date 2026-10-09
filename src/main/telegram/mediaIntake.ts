@@ -230,11 +230,6 @@ async function processBatch(
   if (!chat || !from) return;
 
   const direct = options.getLlmDirect();
-  if (!direct.enabled) {
-    await ctx.reply(t(strings, 'telegram.direct.disabledHint'));
-    return;
-  }
-
   const targetUrl = options.getEffectiveTargetUrl?.() ?? direct.targetUrl;
   const capped = items.slice(0, MAX_ALBUM_ITEMS);
   const overflow = items.length - capped.length;
@@ -404,10 +399,6 @@ export function createMediaIntake(options: TelegramCommandOptions): MediaIntake 
     handleUnsupported: async (ctx) => {
       const gate = mediaGate(ctx, options);
       if (!gate.allowed || !gate.addressed) return;
-      if (!options.getLlmDirect().enabled) {
-        await ctx.reply(t(options.getStrings(), 'telegram.direct.disabledHint'));
-        return;
-      }
       await ctx.reply(t(options.getStrings(), 'telegram.media.unsupportedType'));
     },
 

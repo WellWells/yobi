@@ -1,9 +1,4 @@
-/**
- * Anchor for one answer turn. Perplexity dropped the `markdown-content-N` ids, so the
- * current renderer is matched by the answer's own prose block, which appears with the
- * first streamed token exactly like the old anchor did. The old id stays in the union
- * because already-open threads and A/B variants can still serve it.
- */
+/** Anchor for one answer turn; the legacy id form is kept for threads still served the older markup. */
 export const PPLX_RESPONSE_SELECTOR = '[id^="markdown-content-"], .prose[data-renderer="lm"]';
 
 /** Every shape the ask box has taken. One source, shared with the page-reuse gate. */
@@ -14,10 +9,7 @@ export const PPLX_INPUT_SELECTORS = [
   'div[contenteditable="true"][data-lexical-editor="true"]',
 ];
 
-/**
- * Wrapper around an answer's final-text step. It is NOT a completion signal: measured on the
- * live page (2026-09-18) it is mounted with the first streamed token.
- */
+/** Wrapper around an answer's final text. Not a completion signal: it mounts with the first token. */
 export const PPLX_FINAL_TEXT_SELECTOR = '[data-workflow-final-text]';
 
 /** Icon id of the control Perplexity swaps in for the send button while it answers. */
@@ -186,7 +178,7 @@ export const INJECTED_PPLX_READ_JS = `
       hasGeneratedImageAsset(content) || hasGeneratedImageAsset(anchor);
   }
 
-  /** Up from the moment a turn is sent until its last token lands (measured 2026-09-18). */
+  /** Up from the moment a turn is sent until its last token lands. */
   function isPerplexityGenerating() {
     var uses = document.querySelectorAll('[data-ask-input-container="true"] button use');
     for (var i = 0; i < uses.length; i++) {
@@ -195,11 +187,7 @@ export const INJECTED_PPLX_READ_JS = `
     return false;
   }
 
-  /**
-   * Finished means the stop control is gone and the turn shows it: its action row, or an image
-   * answer's toolbar. Settling on the final-text wrapper returned answers cut off after their
-   * first sentence and left Perplexity still answering, so the next send reloaded the page.
-   */
+  /** Finished: the stop control is gone and the turn shows its action row or an image answer's toolbar. */
   function isAnswerSettled(anchor) {
     if (!anchor || isPerplexityGenerating()) return false;
     return findCopyButtonFor(anchor) !== null || findImageActionToolbarFor(anchor) !== null;
@@ -217,10 +205,9 @@ export const INJECTED_PPLX_READ_JS = `
   }
 
   /**
-   * A long thread keeps only its latest answers mounted (five, measured 2026-09-18) and unmounts
-   * the oldest as a new one mounts, so the count stops growing. The newest answer no longer being
-   * the one seen before the send says the same thing — with different text, because a re-render
-   * can hand back an equivalent node for the previous answer.
+   * A long thread unmounts its oldest answers, so the count can stop growing. A latest answer that
+   * is a different node with different text from the one seen before the send also counts as new;
+   * a re-render can hand back an equivalent node for the previous answer.
    */
   function hasNewResponse(baseline, seen) {
     if (getResponseNodes().length > baseline) return true;
@@ -230,8 +217,7 @@ export const INJECTED_PPLX_READ_JS = `
     return answerTextOf(latest) !== seen.text && hasAnswerContent(latest);
   }
 
-  /** Thread title. The heading element is gone from the current renderer, which leaves
-   *  the document title — Perplexity sets it to the thread's opening query. */
+  /** Thread title: the heading if present, else the document title (the thread's opening query). */
   function readThreadTitle() {
     var queryEl = document.querySelector('[role="heading"][aria-level="1"] span.select-text, [role="heading"][aria-level="1"] span, h1 span');
     var queryText = queryEl ? (queryEl.innerText || '').trim() : '';

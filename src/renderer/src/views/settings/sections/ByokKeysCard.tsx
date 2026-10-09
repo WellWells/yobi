@@ -71,7 +71,7 @@ export const ByokKeysCard: React.FC<Props> = ({ byok, t, sectionGap }) => {
                       <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-default-color)" truncate>
                         {instance.name}
                       </Text>
-                      <Badge variant="light" color="gray" radius="sm" size="sm" tt="none" fw={500}>
+                      <Badge variant="light" color="gray" size="sm">
                         {BYOK_PROVIDER_TYPE_LABELS[instance.providerType]}
                       </Badge>
                     </Group>

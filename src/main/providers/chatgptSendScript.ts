@@ -134,9 +134,7 @@ export const CHATGPT_SUBMIT_JS = `async function chatgptSubmit(promptText, opts)
       (body.textContent || '').replace(/\\s+/g, ' ').trim() === expected;
   }
   var assistantBaseline = countAssistantTurns();
-  // Handed to the read loop so it can tell "a new answer arrived" from "the count happens to be
-  // the same again" — ChatGPT unmounts an old turn as it mounts a new one once a conversation
-  // gets long, and the count alone then never moves.
+  // Handed to the read loop, which tells a new answer by turn identity: the count alone may not grow.
   var assistantTurns = document.querySelectorAll(${JSON.stringify(CHATGPT_ASSISTANT_TURN_SELECTOR)});
   var lastAssistantTurn = assistantTurns[assistantTurns.length - 1] || null;
   var lastAssistantId = lastAssistantTurn ? (lastAssistantTurn.getAttribute('data-message-id') || null) : null;

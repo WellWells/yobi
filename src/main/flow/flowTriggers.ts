@@ -1,7 +1,7 @@
 import { globalShortcut } from 'electron';
 import cron from 'node-cron';
 import type { ScheduledTask } from 'node-cron';
-import type { FlowDefinition, TriggerConfig } from '../../shared/types';
+import type { FlowDefinition, SystemEvent, TriggerConfig } from '../../shared/types';
 import { HOTKEY_SELECTION_VAR } from '../../shared/flowReferenceCheck';
 import { captureSelectedText } from '../clipboard';
 import { extractTemplateVariables } from './interpolation';
@@ -11,6 +11,7 @@ import { isRegisterableAccelerator, toAccelerator } from '../../shared/shortcuts
 import {
   isOnceExpired,
   normalizeCronTrigger,
+  onceDueAt,
   resolveScheduleMode,
   shouldExecuteCronTriggerNow,
   shouldNormalizeCronTrigger,
@@ -21,17 +22,13 @@ import {
   triggerStateKey,
   type TriggerRunState,
 } from './scheduleState';
+import { firstAllowedRunBetween, nextAllowedRuns, onceIsFirstCronMatch } from './scheduleRuns';
+import { SystemTriggers } from './systemTriggers';
+import { resolveSystemEvent } from '../../shared/flowSystemEvents';
 
 /**
- * Whether anything in the flow reads `{{selection}}`.
- *
- * Serialized rather than walked field by field: a reference can sit in a step config, in a
- * variable's value, or in a nested field a later skill adds, and a walk that missed one place
- * would silently hand the flow an empty selection with nothing to explain why.
- *
- * Parsed with the interpolator's own extractor rather than a regex written here, so "reference"
- * means the same thing to this check as it does at interpolation time — a hand-rolled pattern
- * disagreed about `{{ selection }}` with spaces and quietly skipped the capture.
+ * Whether anything in the flow reads `{{selection}}`. Serialized so a reference in any field counts,
+ * and parsed with the interpolator's own extractor so `{{ selection }}` matches here as it does at run time.
  */
 function referencesSelection(flow: FlowDefinition): boolean {
   return extractTemplateVariables(JSON.stringify(flow))
@@ -44,14 +41,31 @@ const CATCH_UP_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
 /** Long enough for the window and executor to be ready before a caught-up run starts. */
 const CATCH_UP_DELAY_MS = 5_000;
 
+/** How a run was started, for the decisions made after it ends. */
+export interface TriggerFire {
+  /** Started by a one-time schedule (or its catch-up): the only run that may delete the flow. */
+  oneTimeSchedule?: boolean;
+  /** Started by this system event; skipped while the flow is already queued or running. */
+  systemEvent?: SystemEvent;
+}
+
+export type TriggerHandler = (flowId: string, extraContext?: Record<string, string>, fire?: TriggerFire) => void;
+
 export class FlowTriggerRegistry {
   private cronJobs = new Map<string, ScheduledTask[]>();
   private catchUpTimers = new Map<string, NodeJS.Timeout[]>();
   private flowHotkeys = new Map<string, string[]>();
-  private onTrigger: (flowId: string, extraContext?: Record<string, string>) => void;
+  private onTrigger: TriggerHandler;
+  private system: SystemTriggers;
 
-  constructor(onTrigger: (flowId: string, extraContext?: Record<string, string>) => void) {
+  constructor(onTrigger: TriggerHandler) {
     this.onTrigger = onTrigger;
+    this.system = new SystemTriggers((flowId, systemEvent) => this.onTrigger(flowId, undefined, { systemEvent }));
+  }
+
+  /** Called once per launch, after every flow is registered; never on a save or a reload. */
+  fireStartup(): void {
+    this.system.emit('startup');
   }
 
   registerAll(flows: FlowDefinition[]): void {
@@ -71,6 +85,8 @@ export class FlowTriggerRegistry {
         this.registerHotkey(flow, trigger.keys);
       } else if (trigger.type === 'cron' && trigger.cronExpression) {
         this.registerCron(flow, trigger, index, allowCatchUp);
+      } else if (trigger.type === 'system') {
+        this.system.add(flow.id, flow.name, resolveSystemEvent(trigger.systemEvent));
       }
     });
   }
@@ -90,10 +106,8 @@ export class FlowTriggerRegistry {
       sendLog(`⚠️ [Flow] Hotkey "${keys}" is already claimed by Yobi itself (a global hotkey or another flow) — skipping for "${flow.name}"`);
       return;
     }
-    // Decided once at registration rather than on every press: capturing the selection costs
-    // a clipboard round trip (clear, synthesize the copy, poll, restore) that a flow which
-    // never reads {{selection}} should not pay for, and which would churn the user's
-    // clipboard on every press of a hotkey that only wanted {{clipboard}}.
+    // Decided at registration: capturing the selection is a clipboard round trip that a flow
+    // which never reads {{selection}} should not pay for on every press.
     const wantsSelection = referencesSelection(flow);
     try {
       const ok = globalShortcut.register(toAccelerator(keys, process.platform === 'darwin'), () => {
@@ -148,22 +162,22 @@ export class FlowTriggerRegistry {
     let task: ScheduledTask | null = null;
     const run = (): void => {
       if (shouldExecuteCronTriggerNow(trigger)) {
-        this.onTrigger(flow.id);
+        this.fireSchedule(flow.id, mode === 'once');
         const firedAt = new Date().toISOString();
         patchTriggerState(key, mode === 'once' ? { lastRunAt: firedAt, onceFiredAt: firedAt } : { lastRunAt: firedAt });
+        if (mode === 'once') void task?.stop();
       }
-      if (task) this.recordNextRun(key, task);
+      if (task) this.recordNextRun(key, task, trigger);
     };
 
-    task = cron.schedule(
-      trigger.cronExpression,
-      run,
-      mode === 'once' ? { maxExecutions: 1 } : {},
-    );
+    // node-cron counts a tick the guard skipped as an execution, so a one-shot whose cron first
+    // matches an earlier year gets no budget and is stopped after its real fire instead.
+    const options = mode === 'once' && onceIsFirstCronMatch(trigger) ? { maxExecutions: 1 } : {};
+    task = cron.schedule(trigger.cronExpression, run, options);
     this.appendEntry(this.cronJobs, flow.id, task);
-    this.recordNextRun(key, task);
+    this.recordNextRun(key, task, trigger);
 
-    if (allowCatchUp && mode !== 'once') this.catchUpIfMissed(flow, trigger, key, saved);
+    if (allowCatchUp && mode !== 'once') this.catchUpIfMissed(flow, trigger, key, saved, task);
     sendLog(`⏰ [Flow] Cron "${trigger.cronExpression}" scheduled for "${flow.name}"`);
   }
 
@@ -175,14 +189,20 @@ export class FlowTriggerRegistry {
     saved: TriggerRunState | undefined,
     allowCatchUp: boolean,
   ): boolean {
-    if (saved?.onceFiredAt) {
+    const due = onceDueAt(trigger)?.getTime() ?? Number.NaN;
+    const firedAt = saved?.onceFiredAt ? Date.parse(saved.onceFiredAt) : Number.NaN;
+    // A fire only counts for the moment it served: state is keyed by position, so an edited date or a
+    // trigger that slid into this slot carries an older fire that must not block it.
+    if (Number.isFinite(firedAt) && (Number.isNaN(due) || firedAt >= due)) {
       sendLog(`⏰ [Flow] One-time schedule for "${flow.name}" already ran — not re-arming`);
       return false;
     }
     if (!isOnceExpired(trigger)) return true;
 
     const dueAt = saved?.nextRunAt ? Date.parse(saved.nextRunAt) : Number.NaN;
-    const missedRecently = Number.isFinite(dueAt) && Date.now() - dueAt <= CATCH_UP_WINDOW_MS;
+    // Only a miss of THIS moment: a fire clears nextRunAt and an edit or a slot shift leaves
+    // another moment behind; either would otherwise pass for a recent miss.
+    const missedRecently = dueAt === due && Date.now() - dueAt <= CATCH_UP_WINDOW_MS;
     if (allowCatchUp && trigger.catchUpMissed && missedRecently) {
       this.scheduleCatchUp(flow, key, true);
     } else {
@@ -196,19 +216,23 @@ export class FlowTriggerRegistry {
     trigger: TriggerConfig,
     key: string,
     saved: TriggerRunState | undefined,
+    task: ScheduledTask,
   ): void {
     if (!trigger.catchUpMissed || !saved?.nextRunAt) return;
-    const dueAt = Date.parse(saved.nextRunAt);
-    if (!Number.isFinite(dueAt)) return;
-    const elapsed = Date.now() - dueAt;
-    if (elapsed <= 0 || elapsed > CATCH_UP_WINDOW_MS) return;
+    const recorded = Date.parse(saved.nextRunAt);
+    if (!Number.isFinite(recorded)) return;
+    const now = Date.now();
+    if (recorded > now || now - recorded > CATCH_UP_WINDOW_MS) return;
+    // The recorded tick may not be one the window allows; only an allowed run between it and now is a real miss.
+    const dueAt = firstAllowedRunBetween(task, trigger, recorded, now);
+    if (dueAt === null || dueAt >= now) return;
     this.scheduleCatchUp(flow, key, false);
   }
 
   private scheduleCatchUp(flow: FlowDefinition, key: string, isOnce: boolean): void {
     const timer = setTimeout(() => {
       sendLog(`⏰ [Flow] Catching up a missed run for "${flow.name}"`);
-      this.onTrigger(flow.id);
+      this.fireSchedule(flow.id, isOnce);
       const firedAt = new Date().toISOString();
       patchTriggerState(key, isOnce ? { lastRunAt: firedAt, onceFiredAt: firedAt } : { lastRunAt: firedAt });
     }, CATCH_UP_DELAY_MS);
@@ -216,10 +240,16 @@ export class FlowTriggerRegistry {
     this.appendEntry(this.catchUpTimers, flow.id, timer);
   }
 
-  private recordNextRun(key: string, task: ScheduledTask): void {
+  private fireSchedule(flowId: string, oneTime: boolean): void {
+    if (oneTime) this.onTrigger(flowId, undefined, { oneTimeSchedule: true });
+    else this.onTrigger(flowId);
+  }
+
+  /** Records the next run the guard allows; a schedule that can never run forgets any older one. */
+  private recordNextRun(key: string, task: ScheduledTask, trigger: TriggerConfig): void {
     try {
-      const next = task.getNextRun();
-      if (next) patchTriggerState(key, { nextRunAt: next.toISOString() });
+      const [next] = nextAllowedRuns(task, trigger, 1);
+      patchTriggerState(key, { nextRunAt: next?.toISOString() });
     } catch {
     }
   }
@@ -253,6 +283,8 @@ export class FlowTriggerRegistry {
       for (const timer of timers) clearTimeout(timer);
       this.catchUpTimers.delete(flow.id);
     }
+
+    this.system.remove(flow.id);
   }
 
   unregisterAll(flows: FlowDefinition[]): void {

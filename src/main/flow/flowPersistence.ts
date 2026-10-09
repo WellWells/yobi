@@ -1,5 +1,6 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { writeFileAtomic } from '../atomicWrite';
 import { getFlowDataDir } from './paths';
 import { LEGACY_SKILL_TYPES } from '../../shared/flowSkillSchema';
 import { migrateRemovedTargetUrl } from '../../shared/types';
@@ -38,7 +39,5 @@ export async function loadFlowsFromDisk(): Promise<FlowDefinition[]> {
 export async function saveFlowsToDisk(flows: FlowDefinition[]): Promise<void> {
   const target = getFlowsPath();
   await fs.mkdir(path.dirname(target), { recursive: true });
-  const tmp = `${target}.${createEntityId()}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(flows, null, 2), 'utf-8');
-  await fs.rename(tmp, target);
+  await writeFileAtomic(target, JSON.stringify(flows, null, 2));
 }

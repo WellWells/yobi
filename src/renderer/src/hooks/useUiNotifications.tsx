@@ -9,20 +9,9 @@ import { SECRET_SCOPE_META } from '../../../shared/types';
 import type { UiNotificationPayload } from '../../../shared/types';
 
 /**
- * The app's single in-window notice surface.
- *
- * Notices reach the user two ways, and only two: the OS banner the main process raises
- * (`helpers.ts` → `emitNotification`), and this one when the window itself has something to
- * say. The window used to have TWO — this top-right Mantine queue, plus a hand-rolled card
- * pinned bottom-right in ChatView with its own 4.5s timer and no severity at all, so the same
- * class of event ("a thing you asked for finished") appeared in different corners, in different
- * boxes, for different lengths of time, depending on which module raised it. Everything in the
- * window now goes through `showAppNotice`.
- *
- * The OS banner is still the other surface and still lands wherever the platform puts it
- * (bottom-right on Windows). That split is deliberate and documented in `src/main/CLAUDE.md`:
- * a banner is the right channel while the window is hidden. What was not deliberate was the
- * window disagreeing with itself.
+ * The app's single in-window notice surface. The other surface is the OS banner the main
+ * process raises (`emitNotification`); everything shown inside the window goes through
+ * `showAppNotice`.
  */
 
 export type NoticeLevel = NonNullable<UiNotificationPayload['level']>;
@@ -36,9 +25,7 @@ const LEVEL_COLORS: Record<NoticeLevel, string> = {
   error: 'var(--error)',
 };
 
-// Long enough to read a sentence; a failure earns twice that, since it usually names
-// something to go and do. A notice carrying buttons does not auto-close at all — 4.5s was
-// never long enough to notice a button, read it and aim at it.
+// Long enough to read a sentence; failures get twice that. Notices with buttons never auto-close.
 const DISMISS_MS = 5_000;
 const DISMISS_MS_ERROR = 10_000;
 
@@ -129,14 +116,9 @@ export function hideAppNotices(): void {
 }
 
 /**
- * Renders, in the window, the notices the OS could not show.
- *
- * Main tries the native OS notification first and sends on this channel only when Electron
- * reports it did not go out: the platform has no notifications, the OS answered `failed`
- * (macOS before the app is allowed in System Settings), or it never answered `show` inside the
- * grace period. So a notice appears once, never as a banner and a toast together, and a failure
- * is still never silent. This channel had no subscriber at all until a quick export failed on a
- * Mac and said so to nobody.
+ * Renders, in the window, the notices the OS could not show: main sends on this channel only when
+ * the native notification did not go out (no platform support, `failed` — e.g. macOS before the app
+ * is allowed — or no `show` within the grace period), so a notice appears exactly once.
  */
 export function useUiNotifications(): void {
   useEffect(() => ipcEvents.onUiNotification((payload: UiNotificationPayload) => {

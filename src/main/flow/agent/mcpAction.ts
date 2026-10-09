@@ -1,4 +1,5 @@
 import type { McpRegistry } from '../../mcp';
+import type { McpCallNotSentError, McpNotConnectedError } from '../../mcp/mcpRegistry';
 import type { McpTool } from '../../mcp/mcpTypes';
 import { FlowAbortError } from '../runtime';
 import { maskSecrets } from './secretMask';
@@ -10,8 +11,10 @@ import type { GoalIntent } from './actionGate';
 import { actionId } from './evidenceLedger';
 import type { ActionRecord, EvidenceLedger } from './evidenceLedger';
 import { resultCheckLine, verificationLine } from './actionOutcome';
-import { failedResult } from './toolContracts';
-import type { Args, DescribedRow, InterpretedResult, ReadCaller, ToolContract, ToolRisk, VerificationResult } from './toolContracts';
+import { failedResult, unsentResult } from './toolContracts';
+import type {
+  Args, DescribedRow, InterpretedResult, ReadCaller, ToolContract, ToolRisk, UnsentReason, VerificationResult,
+} from './toolContracts';
 
 export interface McpConfirmRequest {
   kind: 'mcp';
@@ -33,6 +36,8 @@ export interface McpStepContext {
   ledger: EvidenceLedger;
   runId: string;
   intent: GoalIntent | null;
+  /** The user's answers to this run's questions: an explicit "yes, delete it" widens the boundary. */
+  answers?: readonly string[];
   gate: { blocked: number; autoContext: number };
   /** No one can review a window this run opens, so nothing that changes things skips confirmation. */
   unattended?: boolean;
@@ -55,6 +60,7 @@ export interface McpStepResult {
 
 const MAX_AUTO_CONTEXT = 2;
 const ARG_CLIP = 2_000;
+const TITLE_CLIP = 80;
 
 function clipArgs(args: Args): Args {
   return Object.fromEntries(Object.entries(args).map(([key, value]) => [
@@ -65,6 +71,17 @@ function clipArgs(args: Args): Args {
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * A call the registry refused before it reached the server, or null. Read by shape: a runtime
+ * import of the registry would pull its whole connection stack in here.
+ */
+function unsentReason(err: unknown): UnsentReason | null {
+  if (!(err instanceof Error)) return null;
+  if ((err as Partial<McpCallNotSentError>).notSent === true) return 'notSent';
+  if ((err as Partial<McpNotConnectedError>).notConnected === true) return 'notConnected';
+  return null;
 }
 
 function contractOf(ctx: McpStepContext, serverId: string, name: string): { tool: McpTool; contract: ToolContract } | null {
@@ -79,7 +96,8 @@ function readerFor(ctx: McpStepContext, serverId: string): ReadCaller {
     if (!found) return { text: `unknown tool ${name}`, isError: true };
     if (found.contract.risk(args) !== 'read') return { text: `refused: ${name} is not a read`, isError: true };
     try {
-      const result = await ctx.registry.callTool(serverId, name, args, ctx.signal);
+      // A read, so the registry may send it again if the server dropped its session.
+      const result = await ctx.registry.callTool(serverId, name, args, ctx.signal, true);
       if (!result.isError) {
         ctx.ledger.add(found.contract.extractFacts?.(args, result.text) ?? []);
         ctx.ledger.addObservation(result.text);
@@ -94,9 +112,8 @@ function readerFor(ctx: McpStepContext, serverId: string): ReadCaller {
 
 function observationOf(text: string, isError: boolean, interpreted: InterpretedResult, tool: McpTool): string {
   const failed = interpreted.outcome === 'failed';
-  // Not a local source: a connector answers with opaque handles the model must pass straight back,
-  // and the entropy pass read a Gmail Message-ID as a secret, so every Thunderbird message operation
-  // was sent `[REDACTED SECRET]@mx.google.com`. Known prefixes and named credentials are still masked.
+  // No entropy masking: connectors return opaque handles (message ids, SHAs) the model must pass
+  // back verbatim. Known prefixes and named credentials are still masked.
   const base = maskSecrets(formatMcpObservation({ text, isError }), false);
   // A server that rejects the arguments reports it rather than throwing, so the schema rides along
   // here — otherwise the model spends a whole turn on `tool_help` to learn names it was just told.
@@ -106,7 +123,7 @@ function observationOf(text: string, isError: boolean, interpreted: InterpretedR
 
 async function runRead(ctx: McpStepContext, serverId: string, tool: McpTool, contract: ToolContract, args: Args): Promise<McpStepResult> {
   try {
-    const result = await ctx.registry.callTool(serverId, tool.name, args, ctx.signal);
+    const result = await ctx.registry.callTool(serverId, tool.name, args, ctx.signal, true);
     const interpreted = contract.interpret(result.text, result.isError, args, ctx.ledger);
     const failed = interpreted.outcome === 'failed';
     if (!failed) {
@@ -162,6 +179,7 @@ export async function executeMcpProposal(
   const read = readerFor(ctx, serverId);
   const decide = () => decideAction({
     serverId, tool, args, contract, ledger: ctx.ledger, intent: ctx.intent, blockedSoFar: ctx.gate.blocked, signature,
+    ...(ctx.answers ? { answers: ctx.answers } : {}),
   });
   let decision = decide();
   while (decision.verdict === 'needs' && ctx.gate.autoContext < MAX_AUTO_CONTEXT) {
@@ -170,12 +188,14 @@ export async function executeMcpProposal(
     decision = decide();
   }
 
+  const serverTitle = (tool.title ?? tool.annotations?.title ?? '').trim().slice(0, TITLE_CLIP);
   const base: ActionRecord = {
     runId: ctx.runId,
     step,
     serverId,
     server: action.server,
     tool: tool.name,
+    ...(serverTitle ? { title: serverTitle } : {}),
     args: clipArgs(args),
     risk,
     targetKey: contract.targetKey?.(args) ?? null,
@@ -189,9 +209,22 @@ export async function executeMcpProposal(
     const reasons = decision.verdict === 'blocked'
       ? decision.reasons
       : [{ code: 'context_unavailable', message: 'What this call depends on could not be looked up. Look it up with a (read) tool first.' }];
-    const extra = decision.verdict === 'blocked' && decision.recheck ? await recheckPrior(ctx, decision.recheck) : [];
+    const prior = decision.verdict === 'blocked' ? decision.recheck : undefined;
+    const extra = prior ? await recheckPrior(ctx, prior) : [];
     ctx.gate.blocked += 1;
-    const record: ActionRecord = { ...base, verdict: 'blocked', reasons: reasons.map(({ code, message }) => ({ code, message })) };
+    const record: ActionRecord = {
+      ...base,
+      verdict: 'blocked',
+      reasons: reasons.map(({ code, message }) => ({ code, message })),
+      ...(prior ? {
+        recheck: {
+          at: prior.at,
+          ...(prior.outcome ? { outcome: prior.outcome } : {}),
+          ...(prior.notice ? { notice: prior.notice } : {}),
+          ...(prior.verification ? { verification: prior.verification } : {}),
+        },
+      } : {}),
+    };
     ctx.ledger.actions.push(record);
     ctx.log(`🚧 [Agent] held back mcp:${tool.name} — ${reasons.map((reason) => reason.code).join(', ')}`);
     return {
@@ -227,6 +260,7 @@ export async function executeMcpProposal(
 
   let text: string;
   let isError: boolean;
+  let unsent: UnsentReason | null = null;
   try {
     const result = await ctx.registry.callTool(serverId, tool.name, args, ctx.signal);
     text = result.text;
@@ -235,8 +269,12 @@ export async function executeMcpProposal(
     if (err instanceof FlowAbortError) throw err;
     text = errorText(err);
     isError = true;
+    unsent = unsentReason(err);
   }
-  const interpreted = isError && !text ? failedResult('the call failed', tool.name) : contract.interpret(text, isError, args, ctx.ledger);
+  let interpreted: InterpretedResult;
+  if (unsent) interpreted = unsentResult(text, tool.name, unsent);
+  else if (isError && !text) interpreted = failedResult('', tool.name);
+  else interpreted = contract.interpret(text, isError, args, ctx.ledger);
   const record: ActionRecord = {
     ...base,
     confirmed,
@@ -263,7 +301,9 @@ export async function executeMcpProposal(
     status: failed ? 'error' : 'ok',
     write: true,
     landed: !failed && record.verification?.status !== 'not_found',
-    transientBlock: false,
+    // Nothing reached the server, so the identical call may be proposed, and confirmed, again.
+    // Not when the server is down: another confirmation would buy a call that cannot go anywhere.
+    transientBlock: unsent === 'notSent',
     record,
   };
 }

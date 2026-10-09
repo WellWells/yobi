@@ -25,8 +25,7 @@ interface Props {
 const IssueRow: React.FC<{ row: StepRow; t: (key: string) => string; onInspect: () => void }> = ({
   row, t, onInspect,
 }) => {
-  // A step keeps its skill's name until someone renames it, and printing both then reads as a
-  // stutter ("RSS 訂閱源 RSS 訂閱源").
+  // A step keeps its skill's name until renamed; print the skill only when the two differ.
   const skill = t(`flow.skill.${row.type}`);
   return (
   <UnstyledButton

@@ -5,13 +5,14 @@ import dayjs from 'dayjs';
 import { AppPasswordInput } from '../../../components/AppPasswordInput';
 import { SectionCard, SettingRow, SettingField, SettingDivider, SelectDropdown, ToggleSwitch, SectionTitle } from '../components';
 import { SecretHealthAlert } from '../../../components/SecretHealthAlert';
-import { BotLlmDirectSetting } from './BotLlmDirectSetting';
+import { BotDefaultModelSetting } from './BotDefaultModelSetting';
 import { BotReplyPreview } from './BotReplyPreview';
 import { TelegramChannels } from './TelegramChannels';
 import { TelegramPairingPanel } from './TelegramPairingPanel';
 import { TelegramPairedUsers } from './TelegramPairedUsers';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import type { useTelegramSettings } from '../hooks/useTelegramSettings';
+import type { BotAccessControls } from '../hooks/useBotAccessControls';
 
 type TelegramSettings = ReturnType<typeof useTelegramSettings>;
 
@@ -37,6 +38,8 @@ function getTelegramRuntimeLabel(t: (k: string) => string, status?: string): str
 
 interface Props {
   telegram: TelegramSettings;
+  /** Each paired account's grants and owner mark, edited under its row. */
+  access: BotAccessControls;
   t: (key: string) => string;
   showSection: (tags: readonly string[], category: 'bots') => boolean;
   isSearching: boolean;
@@ -44,25 +47,25 @@ interface Props {
 }
 
 export const TelegramSection: React.FC<Props> = ({
-  telegram, t, showSection, isSearching, sectionGap,
+  telegram, access, t, showSection, isSearching, sectionGap,
 }) => {
   const settings = telegram.telegramSettings;
   const runtimeStatus = settings?.runtime.status;
   const channels = settings?.channels ?? [];
   const pendingCodes = settings?.pairing.pendingCodes ?? [];
   const pairedUsers = settings?.pairing.pairedUsers ?? [];
-  const adminUserIds = settings?.adminUserIds ?? [];
   const expanded = (settings?.enabled ?? false) || isSearching;
 
   return (
-    <Box display={showSection(TAG_SETS.bots, 'bots') ? 'block' : 'none'}>
+    <Box display={showSection(TAG_SETS.telegram, 'bots') ? 'block' : 'none'}>
       <SectionCard style={{ marginBottom: sectionGap }}>
         <Group justify="space-between" align="center">
           <Group gap={8} align="center">
             <Send size={18} color="var(--mantine-color-accent)" style={{ flexShrink: 0 }} />
             <Text fz="var(--font-size-xl)" fw={700} c="var(--mantine-color-default-color)">Telegram</Text>
           </Group>
-          <Group gap={6} align="center">
+          {/* Hidden when off: the switch says so, and an idle dot would read as "on, waiting". */}
+          <Group gap={6} align="center" display={settings?.enabled ? 'flex' : 'none'}>
             <Box w={7} h={7} bg={getTelegramRuntimeColor(runtimeStatus)} style={{ borderRadius: '50%', flexShrink: 0 }} />
             <Text fz="var(--font-size-sm)" fw={600} c={getTelegramRuntimeColor(runtimeStatus)}>
               {getTelegramRuntimeLabel(t, runtimeStatus)}
@@ -147,6 +150,72 @@ export const TelegramSection: React.FC<Props> = ({
 
             <SettingDivider my={16} />
 
+            <SectionTitle icon={<Users size={15} />} label={t('settings.telegram.section.access')} />
+            <Stack gap={12}>
+              <Group justify="space-between" align="center">
+                <Text fz="var(--font-size-base)" fw={700} c="var(--mantine-color-default-color)">
+                  {t('settings.telegram.pairing.title')}
+                </Text>
+                <MButton
+                  variant="default"
+                  leftSection={<Link size={13} />}
+                  onClick={() => { void telegram.handleGeneratePairingCode(); }}
+                  disabled={telegram.telegramBusy}
+                >
+                  {t('settings.telegram.pairing.generate')}
+                </MButton>
+              </Group>
+
+              <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>
+                {t('settings.telegram.pairing.howto')}
+              </Text>
+
+              <TelegramPairingPanel
+                pendingCodes={pendingCodes}
+                formatExpiry={(expiresAt) => dayjs(expiresAt).format('HH:mm:ss')}
+                onOpen={(code) => { void telegram.handleOpenTelegramStart(code); }}
+                onCopyCode={(code) => { void telegram.handleCopyPairingCode(code); }}
+                onCopyLink={(code) => { void telegram.handleCopyTelegramStartUrl(code); }}
+                onRevoke={(code) => { void telegram.handleRevokePairingCode(code); }}
+                t={t}
+              />
+
+              <Group justify="space-between" align="center" gap={8} wrap="nowrap">
+                <Text fz="var(--font-size-sm)" fw={600} c="var(--mantine-color-default-color)">
+                  {t('settings.telegram.paired.title')}
+                </Text>
+                <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+                  {pendingCodes.length > 0 && (
+                    <Badge size="xs" variant="light" color="gray">
+                      {t('settings.telegram.pairing.pending')} {pendingCodes.length}
+                    </Badge>
+                  )}
+                  <Badge size="xs" variant="light" color="gray">
+                    {t('settings.telegram.pairing.paired')} {pairedUsers.length}
+                  </Badge>
+                </Group>
+              </Group>
+
+              <Stack gap={4}>
+                <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>
+                  {t('settings.bot.perm.pairedHint')}
+                </Text>
+                <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>
+                  {t('settings.telegram.admin.explain')}
+                </Text>
+              </Stack>
+
+              <TelegramPairedUsers
+                pairedUsers={pairedUsers}
+                contacts={settings?.contacts ?? []}
+                access={access}
+                onUnpair={(userId) => { void telegram.handleUnpairTelegramUser(userId); }}
+                t={t}
+              />
+            </Stack>
+
+            <SettingDivider my={16} />
+
             <SectionTitle icon={<MessageSquare size={15} />} label={t('settings.telegram.section.reply')} />
             <Stack gap={12}>
               <SettingRow
@@ -189,10 +258,10 @@ export const TelegramSection: React.FC<Props> = ({
               <SettingDivider my={4} />
 
               {settings && (
-                <BotLlmDirectSetting
+                <BotDefaultModelSetting
                   value={settings.llmDirect}
                   busy={telegram.telegramBusy}
-                  hint={t('settings.telegram.llmDirect.hint')}
+                  hint={t('settings.telegram.defaultModel.hint')}
                   onUpdate={(patch) => { void telegram.handleUpdateTelegramLlmDirect(patch); }}
                   t={t}
                 />
@@ -213,11 +282,7 @@ export const TelegramSection: React.FC<Props> = ({
               onForget={(chatId) => { void telegram.handleForgetTelegramChannel(chatId); }}
               t={t}
             />
-
-            <SettingDivider my={16} />
-
-            <SectionTitle icon={<Users size={15} />} label={t('settings.telegram.section.access')} />
-            <Stack gap={12}>
+            <Box mt={12}>
               <SettingRow
                 icon={<Users size={13} />}
                 label={t('settings.telegram.allowGroup')}
@@ -228,67 +293,7 @@ export const TelegramSection: React.FC<Props> = ({
                   />
                 }
               />
-
-              <SettingDivider my={4} />
-
-              <Group justify="space-between" align="center">
-                <Text fz="var(--font-size-base)" fw={700} c="var(--mantine-color-default-color)">
-                  {t('settings.telegram.pairing.title')}
-                </Text>
-                <MButton
-                  variant="default"
-                  leftSection={<Link size={13} />}
-                  onClick={() => { void telegram.handleGeneratePairingCode(); }}
-                  disabled={telegram.telegramBusy}
-                >
-                  {t('settings.telegram.pairing.generate')}
-                </MButton>
-              </Group>
-
-              <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>
-                {t('settings.telegram.pairing.howto')}
-              </Text>
-
-              <TelegramPairingPanel
-                pendingCodes={pendingCodes}
-                formatExpiry={(expiresAt) => dayjs(expiresAt).format('HH:mm:ss')}
-                onOpen={(code) => { void telegram.handleOpenTelegramStart(code); }}
-                onCopyCode={(code) => { void telegram.handleCopyPairingCode(code); }}
-                onCopyLink={(code) => { void telegram.handleCopyTelegramStartUrl(code); }}
-                onRevoke={(code) => { void telegram.handleRevokePairingCode(code); }}
-                t={t}
-              />
-
-              <Group justify="space-between" align="center" gap={8} wrap="nowrap">
-                <Text fz="var(--font-size-sm)" fw={600} c="var(--mantine-color-default-color)">
-                  {t('settings.telegram.paired.title')}
-                </Text>
-                <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
-                  {pendingCodes.length > 0 && (
-                    <Badge size="xs" variant="light" color="gray">
-                      {t('settings.telegram.pairing.pending')} {pendingCodes.length}
-                    </Badge>
-                  )}
-                  <Badge size="xs" variant="light" color="gray">
-                    {t('settings.telegram.pairing.paired')} {pairedUsers.length}
-                  </Badge>
-                  {adminUserIds.length > 0 && (
-                    <Badge size="xs" variant="light">
-                      {t('settings.telegram.admin.count')} {adminUserIds.length}
-                    </Badge>
-                  )}
-                </Group>
-              </Group>
-
-              <TelegramPairedUsers
-                pairedUsers={pairedUsers}
-                contacts={settings?.contacts ?? []}
-                adminUserIds={adminUserIds}
-                onToggleAdmin={(userId) => { void telegram.handleToggleTelegramAdmin(userId); }}
-                onUnpair={(userId) => { void telegram.handleUnpairTelegramUser(userId); }}
-                t={t}
-              />
-            </Stack>
+            </Box>
           </>
         )}
       </SectionCard>

@@ -29,7 +29,6 @@ function resolveFontFamily(): string {
   return declared || 'system-ui, sans-serif';
 }
 
-/** Exported for the test suite. */
 export function baseConfig(): MermaidConfig {
   return {
     startOnLoad: false,
@@ -40,8 +39,8 @@ export function baseConfig(): MermaidConfig {
     // app has always rendered so an upgrade never silently restyles a user's saved diagrams.
     layout: 'dagre',
     look: 'classic',
-    // Its new 120px minimum node width widens the box but leaves an SVG label at the left
-    // edge of it, so state labels drew off centre. Zero sizes nodes to their labels again.
+    // mermaid 12's 120px minimum node width leaves an SVG label at the box's left edge;
+    // zero sizes nodes to their labels.
     flowchart: { minNodeWidth: 0 },
     state: { minNodeWidth: 0 },
     theme: 'base',

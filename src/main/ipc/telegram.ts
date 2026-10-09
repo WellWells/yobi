@@ -7,6 +7,8 @@ import { buildTelegramSettingsSnapshot } from '../telegramBridge';
 import { forgetChannel, issuePairingCode, revokePairingCode, unpairUser } from '../telegram';
 import { clearBotConversationsForUser } from '../botConversations';
 import { forgetBotChat, revokeBotPairing } from '../botDirectory';
+import { dropBotPermissions, setTelegramAdmins } from '../botPermissions';
+import { announceBotPermissionsChanged } from './botPermissions';
 import type { IpcContext } from './context';
 
 function registerSyncSetting(
@@ -82,17 +84,10 @@ export function registerTelegramHandlers(ctx: IpcContext): void {
     return true;
   });
 
-  ipcMain.handle(IPC.UPDATE_TELEGRAM_ADMIN_USERS, (_event, userIds: number[]) => {
-    const pairedUserIds = new Set(config.telegram.pairing.pairedUsers.map((item) => item.userId));
-    const normalized = Array.isArray(userIds)
-      ? [...new Set(
-        userIds
-          .map((value) => Number(value))
-          .filter((userId) => Number.isFinite(userId) && userId > 0 && pairedUserIds.has(userId)),
-      )]
-      : [];
-    config.telegram.adminUserIds = normalized;
-    saveConfig({ telegram: config.telegram });
+  // Admin is the `admin` grant; a whole-list update only adds or removes that one grant.
+  ipcMain.handle(IPC.UPDATE_TELEGRAM_ADMIN_USERS, (_event, userIds: unknown) => {
+    setTelegramAdmins(userIds);
+    announceBotPermissionsChanged(ctx, 'telegram');
     return true;
   });
 
@@ -120,11 +115,13 @@ export function registerTelegramHandlers(ctx: IpcContext): void {
     const numericUserId = Number(userId);
     if (!Number.isFinite(numericUserId) || numericUserId <= 0) return false;
     config.telegram.pairing = unpairUser(config.telegram.pairing, numericUserId);
-    config.telegram.adminUserIds = config.telegram.adminUserIds.filter((id) => id !== numericUserId);
+    dropBotPermissions('telegram', String(numericUserId));
     config.telegram.knownUsers = config.telegram.knownUsers.filter((user) => user.userId !== numericUserId);
     saveConfig({ telegram: config.telegram });
     await clearBotConversationsForUser('telegram', numericUserId);
     await revokeBotPairing('telegram', String(numericUserId));
+    // A chat menu listing commands only its grants allowed has to go with them.
+    void ctx.telegramRuntime.refreshBotCommands().catch(() => undefined);
     return true;
   });
 

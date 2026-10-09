@@ -12,6 +12,7 @@ import {
   type ThinkingProvider,
 } from '../../config/thinkingControl';
 import { ComposerPill } from './ComposerPill';
+import { composerMenuPosition, type MenuDirection } from './composerMenuDirection';
 import { chooseGeminiModel } from './GeminiModelMenu';
 import { chooseClaudeModel } from './ClaudeModelMenu';
 import { chooseChatgptModel } from './ChatgptModelMenu';
@@ -35,7 +36,7 @@ function setLevel(provider: ThinkingLevelProvider, id: string): void {
  * only a switch, a small menu where it also offers levels, and disabled where there is nothing to
  * set. It edits the same per-provider setting the hotkey, flows and bots run on.
  */
-export const ThinkingPill: React.FC<{ url: string }> = ({ url }) => {
+export const ThinkingPill: React.FC<{ url: string; menuDirection: MenuDirection }> = ({ url, menuDirection }) => {
   const t = useI18nStore((s) => s.t);
   const gemini = useAppStore((s) => s.geminiModels);
   const claude = useAppStore((s) => s.claudeModels);
@@ -76,7 +77,7 @@ export const ThinkingPill: React.FC<{ url: string }> = ({ url }) => {
     <Menu
       opened={open}
       onChange={setOpen}
-      position="top-end"
+      position={composerMenuPosition(menuDirection, 'end')}
       offset={6}
       withinPortal
       zIndex={MENU_Z}

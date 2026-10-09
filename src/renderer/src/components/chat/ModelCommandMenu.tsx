@@ -3,6 +3,7 @@ import { Divider, Group, NavLink, Text } from '@mantine/core';
 import { Check } from 'lucide-react';
 import { startsNewStopGroup, stopKey, type ModelStop } from '../../config/modelStops';
 import { ComposerSuggestList } from './ComposerSuggestList';
+import type { MenuDirection } from './composerMenuDirection';
 import styles from './ComposerSuggestList.module.css';
 
 interface ModelCommandMenuProps {
@@ -13,13 +14,19 @@ interface ModelCommandMenuProps {
   onSelect: (stop: ModelStop) => void;
   onHover: (index: number) => void;
   emptyLabel: string;
+  direction: MenuDirection;
 }
 
 /** What `/model ` lists: every provider and each model it offers, as the model menu shows them. */
 export const ModelCommandMenu: React.FC<ModelCommandMenuProps> = ({
-  stops, currentKey, highlightedIndex, onSelect, onHover, emptyLabel,
+  stops, currentKey, highlightedIndex, onSelect, onHover, emptyLabel, direction,
 }) => (
-  <ComposerSuggestList highlightedIndex={highlightedIndex} emptyLabel={emptyLabel} isEmpty={stops.length === 0}>
+  <ComposerSuggestList
+    highlightedIndex={highlightedIndex}
+    emptyLabel={emptyLabel}
+    isEmpty={stops.length === 0}
+    direction={direction}
+  >
     {stops.map((stop, i) => {
       const key = stopKey(stop);
       const Icon = stop.icon;

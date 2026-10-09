@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Chip, Flex, Group, Pill, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Anchor, Box, Chip, Flex, Group, Pill, Stack, Text, UnstyledButton } from '@mantine/core';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
-import { systemApi } from '../api/electronApi';
+import { clipboardApi, systemApi } from '../api/electronApi';
 import { PanelToolbar, ToolbarIconButton, ToolbarSearchInput } from './PanelToolbar';
 import { EmptyState } from './EmptyState';
 import { Download, FolderOpen, ScrollText, Trash2 } from 'lucide-react';
@@ -15,7 +15,7 @@ import {
   isolateLevel,
   parseLogLine,
   scopeRoot,
-  shortenUrls,
+  splitLogUrls,
   toggleLevel,
   toggleScope,
   type LogLevel,
@@ -43,6 +43,11 @@ const levelLabelKey: Record<LogLevel, string> = {
   warning: 'log.level.warning',
   info: 'log.level.info',
 };
+
+function openLogLink(event: React.MouseEvent<HTMLAnchorElement>): void {
+  event.preventDefault();
+  void clipboardApi.openExternalUrl(event.currentTarget.href);
+}
 
 interface LogEntryProps {
   log: string;
@@ -96,7 +101,13 @@ const LogEntry = React.memo<LogEntryProps>(({
           fw={startsRun ? 600 : undefined}
           className={styles.logText}
         >
-          {shortenUrls(text)}
+          {splitLogUrls(text).map((segment, i) => (segment.href ? (
+            <Anchor key={i} href={segment.href} inherit c="var(--mantine-color-accent)" onClick={openLogLink}>
+              {segment.text}
+            </Anchor>
+          ) : (
+            <React.Fragment key={i}>{segment.text}</React.Fragment>
+          )))}
         </Text>
       </Flex>
     </Flex>

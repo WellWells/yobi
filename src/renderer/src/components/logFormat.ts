@@ -1,3 +1,7 @@
+import { charWidth, displayWidth } from '../utils/displayWidth';
+
+export { displayWidth };
+
 export type LogLevel = 'error' | 'warning' | 'info';
 
 export type LogTone = 'error' | 'warning' | 'success' | 'active' | 'plain';
@@ -105,26 +109,6 @@ const URL_TRAILING = /["'>)\]},.;:]+$/;
 const URL_WIDTH_BUDGET = 64;
 const URL_TAIL_WIDTH = 18;
 
-function charWidth(char: string): number {
-  const code = char.codePointAt(0) ?? 0;
-  if (code < 0x1100) return 1;
-  const wide = code <= 0x115f
-    || (code >= 0x2e80 && code <= 0xa4cf)
-    || (code >= 0xac00 && code <= 0xd7a3)
-    || (code >= 0xf900 && code <= 0xfaff)
-    || (code >= 0xfe30 && code <= 0xfe6f)
-    || (code >= 0xff00 && code <= 0xff60)
-    || (code >= 0xffe0 && code <= 0xffe6)
-    || (code >= 0x1f300 && code <= 0x1f9ff);
-  return wide ? 2 : 1;
-}
-
-export function displayWidth(text: string): number {
-  let width = 0;
-  for (const char of text) width += charWidth(char);
-  return width;
-}
-
 function decodeUrl(url: string): string {
   try {
     return decodeURI(url);
@@ -160,12 +144,40 @@ export function shortenUrl(url: string): string {
   return `${head.join('')}…${tail.join('')}`;
 }
 
+export interface LogSegment {
+  text: string;
+  href?: string;
+}
+
+// A URL clipped where the line was written ends in "…" and would open the wrong page.
+function openableHref(url: string): string | undefined {
+  if (url.includes('…')) return undefined;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function splitLogUrls(text: string): LogSegment[] {
+  const segments: LogSegment[] = [];
+  let cursor = 0;
+  for (const match of text.matchAll(URL_PATTERN)) {
+    const start = match.index ?? 0;
+    const trailing = URL_TRAILING.exec(match[0])?.[0] ?? '';
+    const url = trailing ? match[0].slice(0, -trailing.length) : match[0];
+    if (start > cursor) segments.push({ text: text.slice(cursor, start) });
+    const href = openableHref(url);
+    segments.push(href ? { text: shortenUrl(url), href } : { text: shortenUrl(url) });
+    cursor = start + url.length;
+  }
+  if (cursor < text.length) segments.push({ text: text.slice(cursor) });
+  return segments;
+}
+
 export function shortenUrls(text: string): string {
-  return text.replace(URL_PATTERN, (match) => {
-    const trailing = URL_TRAILING.exec(match)?.[0] ?? '';
-    const url = trailing ? match.slice(0, -trailing.length) : match;
-    return `${shortenUrl(url)}${trailing}`;
-  });
+  return splitLogUrls(text).map((segment) => segment.text).join('');
 }
 
 export interface LogFilter {

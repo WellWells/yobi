@@ -2,18 +2,18 @@ import React from 'react';
 import { Box, Group, Stack, Text } from '@mantine/core';
 import { MessageSquareDashed } from 'lucide-react';
 import { useI18nStore } from '../../store/i18nStore';
-import { ShortcutHint } from '../ShortcutHint';
 import { useResolvedCombo } from '../../store/shortcutStore';
+import { ShortcutRow } from './WelcomeScreen';
 
+/** The temporary-chat header that sits directly above the composer while the chat is empty. */
 export const IncognitoWelcome: React.FC = () => {
-  const { t } = useI18nStore();
-  const tempChatCombo = useResolvedCombo('app.tempChat');
+  const t = useI18nStore((s) => s.t);
 
   return (
-    <Stack align="center" justify="center" gap={18} h="100%" c="dimmed" p="24px 20px">
+    <Stack align="center" gap={14} c="dimmed" px={20} pb={12}>
       <Box
-        w={64}
-        h={64}
+        w={56}
+        h={56}
         style={{
           borderRadius: '50%',
           border: '1px dashed var(--mantine-color-violet-4)',
@@ -25,18 +25,26 @@ export const IncognitoWelcome: React.FC = () => {
           flexShrink: 0,
         }}
       >
-        <MessageSquareDashed size={28} />
+        <MessageSquareDashed size={26} />
       </Box>
-      <Text fw={600} fz="var(--font-size-3xl)" lts="-0.01em" c="var(--mantine-color-text)" ta="center">
+      <Text fw={500} fz="var(--font-size-display)" lts="-0.01em" c="var(--mantine-color-text)" ta="center">
         {t('chat.tempMode.welcome.title')}
       </Text>
       <Text fz="var(--font-size-base)" maw={400} ta="center" lh={1.75} c="dimmed">
         {t('chat.tempMode.welcome.desc')}
       </Text>
-      <Group gap={6} align="center" wrap="nowrap">
-        <ShortcutHint combo={tempChatCombo} />
-        <Text fz="var(--font-size-sm)" c="dimmed">{t('chat.tempMode.welcome.exit')}</Text>
-      </Group>
     </Stack>
+  );
+};
+
+/** The exit hint that sits under the composer in an empty temporary chat. */
+export const IncognitoHints: React.FC = () => {
+  const t = useI18nStore((s) => s.t);
+  const tempChatCombo = useResolvedCombo('app.tempChat');
+
+  return (
+    <Group justify="center" px={20} pt={10}>
+      <ShortcutRow combo={tempChatCombo} label={t('chat.tempMode.welcome.exit')} />
+    </Group>
   );
 };

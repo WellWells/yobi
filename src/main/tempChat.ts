@@ -1,7 +1,7 @@
 import { IPC } from '../shared/types';
 import type { TempChatResult } from '../shared/types';
-import { appendTurn, parseConversationDoc } from '../shared/conversationDoc';
-import type { ConversationDoc, TurnMeta } from '../shared/conversationDoc';
+import { appendTurn, parseConversationDoc, writeThreadMeta } from '../shared/conversationDoc';
+import type { ConversationDoc, MapPlaceRef, TurnMeta } from '../shared/conversationDoc';
 import { conversationAliases } from './chat/conversationStore';
 import { getLangCache, t } from './i18n';
 import { isMainWindowAlive, sendLog, sendToRenderer } from './helpers';
@@ -49,10 +49,13 @@ function turnLabels(): { prompt: string; response: string } {
 
 export function deliverTempChatResult(payload: TempChatResult & {
   turn?: { prompt: string; response: string; meta: TurnMeta };
+  map?: MapPlaceRef;
 }): void {
   _conversationRaw = _conversationRaw && payload.turn
     ? appendTurn(_conversationRaw, payload.turn, turnLabels())
     : payload.content;
+  // A temporary chat never records a provider thread, so the place is the marker's only field.
+  if (payload.map) _conversationRaw = writeThreadMeta(_conversationRaw, { v: 1, map: payload.map });
 
   const result: TempChatResult = { content: _conversationRaw };
   if (isMainWindowAlive()) {

@@ -5,11 +5,7 @@ import type { FlowBuildPhase, SkillType } from '../../../shared/types';
 import { useI18nStore } from '../store/i18nStore';
 import type { FlowBuildState, PhaseStatus } from '../store/useFlowBuildStore';
 
-/**
- * The five phases of a build, drawn the same way in the Flow Builder and in a chat turn. One
- * component because it is one lifecycle: a second drawing of it would be a second thing to keep
- * truthful, and the whole point is that these ticks mean something.
- */
+/** The five phases of a build, drawn the same way in the Flow Builder and in a chat turn. */
 
 const ROW_STYLE = { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 } as const;
 
@@ -24,8 +20,8 @@ const SUB_STYLE = {
 const MAX_OUTLINE_ROWS = 6;
 
 function PhaseIcon({ status }: { status: PhaseStatus | undefined }) {
-  if (status === 'done') return <Check size={11} color="var(--mantine-color-teal-6)" />;
-  if (status === 'failed') return <X size={11} color="var(--mantine-color-red-6)" />;
+  if (status === 'done') return <Check size={11} color="var(--mantine-color-success)" />;
+  if (status === 'failed') return <X size={11} color="var(--mantine-color-error)" />;
   if (status === 'active') return <Loader size={10} />;
   return <Circle size={9} color="var(--mantine-color-dimmed)" />;
 }
@@ -67,9 +63,7 @@ export function FlowBuildProgressView({ state }: { state: FlowBuildState }) {
             </Box>
 
             {phase === 'understand' && state.provider && (
-              // Named because it is not always the model that was picked: a prompt this size does
-              // not fit every provider, and a silent substitution is what made the last one look
-              // like a bug.
+              // Named because a large prompt may go to a different provider than the one picked.
               <Text component="span" pl={18} style={SUB_STYLE}>
                 {t('flow.build.provider').replace('{{name}}', state.provider)}
               </Text>
@@ -80,7 +74,7 @@ export function FlowBuildProgressView({ state }: { state: FlowBuildState }) {
               </Text>
             )}
             {phase === 'discover' && state.blocked.length > 0 && (
-              <Text component="span" pl={18} style={{ ...SUB_STYLE, color: 'var(--mantine-color-yellow-6)' }}>
+              <Text component="span" pl={18} style={{ ...SUB_STYLE, color: 'var(--mantine-color-warning)' }}>
                 {t('flow.build.tools.blocked').replace(
                   '{{names}}',
                   state.blocked.map((entry) => t(`flow.build.need.${entry.need}`)).join('、'),

@@ -1,7 +1,3 @@
-/* Sidebar.module.css */
-
-/* ── FileItem ────────────────────────────────────────────────────────────── */
-
 .fileItem {
   padding: 6px 10px;
   border-radius: 8px;
@@ -31,27 +27,12 @@
   cursor: text;
 }
 
-/* Metadata (provider, time) sits one clear step below the title. It is dimmed by
-   color alone — an extra opacity layer on top of a dimmed color used to drop these
-   to ~2.5:1, well past legible. */
+/* Metadata (provider, time) is dimmed by color alone; an extra opacity layer makes it illegible.
+   UI face with tabular figures: the mono face has no CJK glyphs. */
 .timestamp {
-  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
   color: var(--mantine-color-dimmed);
-}
-
-/* ── ProviderBadge ───────────────────────────────────────────────────────── */
-
-.providerBadge {
-  background: transparent;
-  border-color: var(--mantine-color-default-border);
-  color: var(--mantine-color-dimmed);
-}
-
-.providerBadge[data-selected='true'] {
-  border-color: var(--mantine-color-accent);
-  color: var(--mantine-color-accent);
-  opacity: 1;
 }
 
 /* The row's title: this is the document's H1 (renameable in place), and the only

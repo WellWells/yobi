@@ -83,13 +83,13 @@ export const FlowSidebarItem: React.FC<FlowSidebarItemProps> = ({
                 aria-label={issues.map((issue) => describeFlowIssue(issue, t)).join(' ')}
                 style={{ display: 'inline-flex' }}
               >
-                <TriangleAlert size={13} color="var(--mantine-color-orange-6)" />
+                <TriangleAlert size={13} color="var(--mantine-color-warning)" />
               </Box>
             </Tooltip>
           )}
           {isRunning && (
             <Box component="span" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Loader size={14} color="teal" />
+              <Loader size={14} />
             </Box>
           )}
           <Box component="span" style={{ display: 'inline-flex' }} onPointerDown={(e) => e.stopPropagation()}>

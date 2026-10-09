@@ -1,5 +1,5 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { BUILTIN_THUNDERBIRD_SERVER_ID, THUNDERBIRD_UNAVAILABLE_ERROR } from '../../shared/builtinConnectors';
+import { BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID, THUNDERBIRD_UNAVAILABLE_ERROR } from '../../shared/builtinConnectors';
 import { BUILTIN_LINE_SERVER_ID } from '../../shared/types';
 import { forgetStoredLineKey } from '../line/lineKeyStore';
 import { connectionFileFingerprint } from '../thunderbird/bridge';
@@ -41,5 +41,8 @@ export const BUILTIN_RUNTIMES: Readonly<Record<string, BuiltinRuntime>> = {
       (await import('../thunderbird/thunderbirdConnection')).prepareThunderbirdCall(args),
     availability: () => connectionFileFingerprint(),
     unavailableError: THUNDERBIRD_UNAVAILABLE_ERROR,
+  },
+  [BUILTIN_X_SERVER_ID]: {
+    connect: async (name, version) => (await import('../x/xConnection')).connectXMcp(name, version),
   },
 };

@@ -1,7 +1,7 @@
 import type {
+  SystemEvent,
   FlowBuildEvent,
   FlowBuildOutcome,
-  FlowBuildPayload,
   FlowDefinition,
   FlowExecutionEvent,
   FlowExecutionLog,
@@ -12,6 +12,7 @@ import { compactPreview } from '../../shared/textBudget';
 import { executeFlow } from './executor';
 import { closeRunPages } from './skills/browserPages';
 import { runFlowBuild } from './flowBuild';
+import { sendBuildEvent } from './flowBuildBroadcast';
 import type { FlowClarification } from '../../shared/flowSkillSchema';
 import type { FlowExecutorDeps } from './types';
 import { getWorkerAttention, sendLog, sendToRenderer, sendWebNotification } from '../helpers';
@@ -26,18 +27,24 @@ import { normalizeCronTrigger, shouldNormalizeCronTrigger } from '../../shared/f
 import { cloneFlowVariables, missingRequiredVariables, sanitizeFlowVariables } from '../../shared/flowVariables';
 import { createEntityId, loadFlowsFromDisk, saveFlowsToDisk } from './flowPersistence';
 import { pruneOrphanCheckpoints } from './checkpoint';
+import { deleteFlowMemory } from './flowMemory';
 import { FlowTriggerRegistry } from './flowTriggers';
-import { loadScheduleState, pruneScheduleState } from './scheduleState';
+import type { TriggerFire } from './flowTriggers';
+import { shouldDeleteAfterRun } from '../../shared/flowDeleteAfterRun';
+import { flushScheduleState, loadScheduleState, pruneScheduleState } from './scheduleState';
 import { FlowQueue } from './flowQueue';
 import { llmLane } from './lanes';
-import { normalizeAllowedUserIds } from '../../shared/botCommandAccess';
+import { launchedByRelaunch } from '../relaunchFlag';
+import { botCommandAccessMode, normalizeAllowedUserIds } from '../../shared/botCommandAccess';
+import type { BotCommandAccessMode } from '../../shared/botCommandAccess';
 
 export interface FlowBotCommandDef {
   flowId: string;
   command: string;
   description: string;
   inputVariable: string;
-  /** Empty means every paired user, which is what every flow written before this field meant. */
+  /** 'all' = every paired account; 'users' = only allowedUserIds, where an empty list is nobody. */
+  access: BotCommandAccessMode;
   allowedUserIds: string[];
 }
 
@@ -49,8 +56,9 @@ export class FlowManager {
   private _running = new Set<string>();
   private _abortControllers = new Map<string, AbortController>();
   private _onBotCommandsChanged: (() => void) | null = null;
-  private triggers = new FlowTriggerRegistry((flowId, extraContext) => {
-    void this.queueExecution(flowId, extraContext);
+  private triggers = new FlowTriggerRegistry((flowId, extraContext, fire) => {
+    if (fire?.systemEvent && !this.admitSystemFire(flowId, fire.systemEvent)) return;
+    void this.createQueueExecution(flowId, extraContext, 'ui', fire).result;
   });
   private queue = new FlowQueue();
 
@@ -67,12 +75,15 @@ export class FlowManager {
     await loadScheduleState();
     pruneScheduleState(this.flows.map((flow) => flow.id));
     this.triggers.registerAll(this.flows);
+    if (launchedByRelaunch()) sendLog('📋 [Flow] Yobi restarted itself — startup triggers skipped');
+    else this.triggers.fireStartup();
     if (this.flows.length > 0) this.pruneFlowData();
     sendLog(`📋 [Flow] Loaded ${this.flows.length} flow(s)`);
   }
 
   shutdown(): void {
     this.triggers.unregisterAll(this.flows);
+    flushScheduleState();
     sendLog('🛑 [Flow] Shut down — all triggers unregistered');
   }
 
@@ -129,6 +140,7 @@ export class FlowManager {
           command,
           description: trigger.botCommandDescription ?? '',
           inputVariable: trigger.botInputVariable?.trim() || 'input',
+          access: botCommandAccessMode(trigger.botAccess, trigger.botAllowedUserIds),
           allowedUserIds: normalizeAllowedUserIds(trigger.botAllowedUserIds),
         });
       }
@@ -197,6 +209,7 @@ export class FlowManager {
     this.triggers.unregister(this.flows[idx]);
     this.flows.splice(idx, 1);
     await saveFlowsToDisk(this.flows);
+    await deleteFlowMemory([flowId], this.flows.map((f) => f.id));
     if (hadBotTrigger) {
       this._onBotCommandsChanged?.();
     }
@@ -215,6 +228,7 @@ export class FlowManager {
     }
     this.flows = this.flows.filter((f) => !idSet.has(f.id));
     await saveFlowsToDisk(this.flows);
+    await deleteFlowMemory(removed.map((f) => f.id), this.flows.map((f) => f.id));
     if (hadBotTrigger) {
       this._onBotCommandsChanged?.();
     }
@@ -332,27 +346,38 @@ export class FlowManager {
     return this.queue.cancelQueued(taskId);
   }
 
-  private failureResult(flowId: string, error: string, totalSteps: number): FlowExecutionResult {
+  private failureResult(
+    flowId: string,
+    error: string,
+    totalSteps: number,
+    displayError?: string,
+  ): FlowExecutionResult {
     return {
       flowId,
       success: false,
       outputs: {},
       error,
+      ...(displayError ? { displayError } : {}),
       completedSteps: 0,
       totalSteps,
       completedAt: new Date().toISOString(),
     };
   }
 
+  private notFoundResult(flowId: string): FlowExecutionResult {
+    return this.failureResult(flowId, 'Flow not found', 0, t(getLangCache(), 'flow.error.notFound'));
+  }
+
   private createQueueExecution(
     flowId: string,
     extraContext?: Record<string, string>,
     source: FlowExecutionSource = 'ui',
+    fire?: TriggerFire,
   ): { taskId: string; result: Promise<FlowExecutionResult> } {
     const flow = this.flows.find((f) => f.id === flowId);
     const taskId = createEntityId();
     if (!flow) {
-      return { taskId, result: Promise.resolve(this.failureResult(flowId, 'Flow not found', 0)) };
+      return { taskId, result: Promise.resolve(this.notFoundResult(flowId)) };
     }
 
     const triggers = [flow.trigger, ...(flow.extraTriggers ?? [])];
@@ -384,7 +409,7 @@ export class FlowManager {
     const result = this.queue.enqueue(
       taskId,
       `[Flow] ${flow.name || flowId}`,
-      () => this.execute(flowId, extraContext),
+      () => this.execute(flowId, extraContext, fire),
       (err) => this.failureResult(
         flowId,
         err instanceof Error ? err.message : String(err),
@@ -426,6 +451,19 @@ export class FlowManager {
   }
 
   /**
+   * An agent's change to a saved flow, written over it. Refuses a flow that was deleted while the
+   * change was being made rather than bringing it back. A change may switch a flow off (one that
+   * adds a step acting on the computer does) but never on.
+   */
+  async replaceFlowFromAgent(candidate: FlowDefinition): Promise<FlowDefinition> {
+    const current = this.flows.find((flow) => flow.id === candidate.id);
+    if (!current) throw new Error('That flow no longer exists, so the change was not saved');
+    const saved = await this.save({ ...candidate, enabled: current.enabled && candidate.enabled });
+    sendToRenderer(IPC.FLOW_UPDATED, saved);
+    return saved;
+  }
+
+  /**
    * One build attempt, streamed to the renderer under `buildId`. Answers arriving on a second
    * call are what makes the ask gate one round deep: with any answer in hand the build no longer
    * stops to ask, so it cannot loop back to the user twice for the same request.
@@ -442,9 +480,7 @@ export class FlowManager {
     const taskId = createEntityId();
     const { buildId } = options;
     const answers = options.answers ?? [];
-    const emit = (event: FlowBuildEvent): void => {
-      sendToRenderer(IPC.FLOW_BUILD_PROGRESS, { buildId, event } satisfies FlowBuildPayload);
-    };
+    const emit = (event: FlowBuildEvent): void => sendBuildEvent(buildId, event, getLangCache());
     return this.queue.enqueue<FlowBuildOutcome>(
       taskId,
       `[Flow] ${options.queueLabel ?? 'AI Flow'}`,
@@ -475,7 +511,9 @@ export class FlowManager {
     void llmLane.runExclusive(async () => {
       if (this._running.size !== 0 || getWorkerAttention() !== 'idle') return;
       const workerWin = this.deps.getWorkerWin();
-      if (workerWin && !workerWin.isDestroyed()) {
+      // A focusable worker is one the user revealed and is looking at (`revealWorkerWindow`):
+      // blanking it would empty the window under them.
+      if (workerWin && !workerWin.isDestroyed() && !workerWin.isFocusable()) {
         void workerWin.webContents.loadURL('about:blank').catch(() => { });
       }
     });
@@ -495,14 +533,23 @@ export class FlowManager {
     return removedFromQueue;
   }
 
-  async execute(flowId: string, extraContext?: Record<string, string>): Promise<FlowExecutionResult> {
+  async execute(
+    flowId: string,
+    extraContext?: Record<string, string>,
+    fire?: TriggerFire,
+  ): Promise<FlowExecutionResult> {
     const flow = this.flows.find((f) => f.id === flowId);
     if (!flow) {
-      return this.failureResult(flowId, 'Flow not found', 0);
+      return this.notFoundResult(flowId);
     }
 
     if (this._running.has(flowId)) {
-      return this.failureResult(flowId, 'Flow is already running', flow.steps.length);
+      return this.failureResult(
+        flowId,
+        'Flow is already running',
+        flow.steps.length,
+        t(getLangCache(), 'flow.error.alreadyRunning'),
+      );
     }
 
     this._running.add(flowId);
@@ -512,6 +559,8 @@ export class FlowManager {
     sendToRenderer(IPC.FLOW_EXECUTION_STARTED, event);
 
     try {
+      // A failed step arrives with both texts: the run panel shows `displayError`, while its copy
+      // button and the run export keep the raw `error`.
       const onLog = (log: FlowExecutionLog): void => {
         sendToRenderer(IPC.FLOW_EXECUTION_LOG, log);
       };
@@ -520,7 +569,8 @@ export class FlowManager {
         () => executeFlow(flow, this.deps, onLog, extraContext, controller.signal),
       );
       this.recordRunMetrics(result);
-      this.notifyRunOutcome(flow, result);
+      const deleted = fire?.oneTimeSchedule === true && await this.deleteAfterOneTimeRun(flowId, result);
+      this.notifyRunOutcome(flow, result, deleted);
       return result;
     } finally {
       closeRunPages(flowId);
@@ -529,6 +579,33 @@ export class FlowManager {
       sendToRenderer(IPC.FLOW_EXECUTION_ENDED, { flowId, name: flow.name } satisfies FlowExecutionEvent);
       this.blankWorkerWhenIdle();
     }
+  }
+
+  /**
+   * Lock and unlock can come seconds apart, and a lid can flap: a copy queued behind a run of the
+   * same flow would only fail with "already running", so it is dropped here, and said so.
+   */
+  private admitSystemFire(flowId: string, event: SystemEvent): boolean {
+    const name = this.flows.find((f) => f.id === flowId)?.name ?? flowId;
+    if (this._running.has(flowId) || this.queue.hasFlow(flowId)) {
+      sendLog(`🖥️ [Flow] "${name}" is still queued or running — skipped this ${event}`);
+      return false;
+    }
+    sendLog(`🖥️ [Flow] "${name}" started by system event: ${event}`);
+    return true;
+  }
+
+  /**
+   * A one-time flow set to delete itself, after its schedule's run. Judged against the flow as it
+   * is now, not as it was when the run started: the option may have been switched off meanwhile.
+   */
+  private async deleteAfterOneTimeRun(flowId: string, result: FlowExecutionResult): Promise<boolean> {
+    const current = this.flows.find((f) => f.id === flowId);
+    if (!current || !shouldDeleteAfterRun(current, result)) return false;
+    await this.delete(flowId);
+    sendToRenderer(IPC.FLOW_REMOVED, flowId);
+    sendLog(`🗑️ [Flow] One-time flow "${current.name}" ran and was deleted`);
+    return true;
   }
 
   /**
@@ -543,17 +620,45 @@ export class FlowManager {
     recordFlowRun({ flowId: result.flowId, outcome, degraded: (result.softFailures ?? 0) > 0 });
   }
 
-  private notifyRunOutcome(flow: FlowDefinition, result: FlowExecutionResult): void {
+  /**
+   * A run that lost steps to `emitFailFlag` gets its own notice, not a silent success: the skipped
+   * items are already marked as read.
+   */
+  private notifyRunOutcome(flow: FlowDefinition, result: FlowExecutionResult, deleted: boolean): void {
     if (result.aborted) return;
     const strings = getLangCache();
-    if (result.success && config.notifyEvents.flowSuccess) {
+    // Told whatever the success setting says: a flow vanishing from the list is not routine news.
+    if (deleted) {
+      sendWebNotification(
+        t(strings, 'notify.flow.deletedAfterRun.title'),
+        t(strings, 'notify.flow.deletedAfterRun.body', { flow: flow.name }),
+        'success',
+      );
+      return;
+    }
+    const softFailures = result.softFailures ?? 0;
+    if (result.success && softFailures > 0) {
+      if (!config.notifyEvents.flowFailure && !config.notifyEvents.flowSuccess) return;
+      sendWebNotification(
+        t(strings, 'notify.flow.partial.title'),
+        t(strings, 'notify.flow.partial.body', {
+          flow: flow.name,
+          count: String(softFailures),
+          error: compactPreview(result.softFailureError ?? '', 90),
+        }),
+        'warning',
+      );
+    } else if (result.success && config.notifyEvents.flowSuccess) {
       sendWebNotification(
         t(strings, 'notify.flow.success.title'),
         t(strings, 'notify.flow.success.body', { flow: flow.name }),
         'success',
       );
     } else if (!result.success && config.notifyEvents.flowFailure) {
-      const displayError = compactPreview(localizeUserFacingError(result.error ?? '', strings), 90);
+      const displayError = compactPreview(
+        result.displayError ?? localizeUserFacingError(result.error ?? '', strings),
+        90,
+      );
       sendWebNotification(
         t(strings, 'notify.flow.failure.title'),
         t(strings, 'notify.flow.failure.body', { flow: flow.name, error: displayError }),

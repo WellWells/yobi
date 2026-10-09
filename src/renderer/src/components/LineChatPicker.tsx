@@ -27,19 +27,17 @@ function splitIds(value: string): string[] {
 
 /**
  * Picks the LINE conversations a line_read step reads. The list comes from the LINE app on this
- * computer, grouped by kind with the bare chat name as the label — the chat model menu does the
- * same, and a "（群組）" suffix on every row only repeats what its group heading already says.
+ * computer, grouped by kind with the bare chat name as the label (the group heading already names
+ * the kind).
  *
- * Selecting NOTHING means every chat: a step with no chats reads the whole account as one
- * combined search. There is deliberately no "all chats" entry — a sentinel inside a multi-select
- * has to clear the other rows to mean anything, and that is a trap.
+ * Selecting nothing means every chat, read as one combined search. There is no "all chats" entry:
+ * a sentinel in a multi-select would have to clear the other rows to mean anything.
  *
- * A chat id absent from the list (a flow carried over from another machine) is kept as its own
- * option rather than silently dropped.
+ * A chat id missing from the list (a flow from another machine) is kept as its own option.
  */
 export const LineChatPicker: React.FC<LineChatPickerProps> = ({ value, onChange, label, hint }) => {
   const t = useI18nStore((s) => s.t);
-  const setView = useAppStore((s) => s.setView);
+  const openSettingsCategory = useAppStore((s) => s.openSettingsCategory);
   const currentView = useAppStore((s) => s.currentView);
   const [result, setResult] = useState<LineChatListResult | null>(null);
 
@@ -98,13 +96,13 @@ export const LineChatPicker: React.FC<LineChatPickerProps> = ({ value, onChange,
       )}
       {result !== null && !result.ok && (
         <Group gap="xs" align="center" wrap="nowrap">
-          <Text fz="xs" c="orange" style={{ flex: 1 }}>{result.message}</Text>
+          <Text fz="xs" c="var(--mantine-color-warning)" style={{ flex: 1 }}>{result.message}</Text>
           {result.reason === 'disabled' ? (
             <Button
               variant="light"
               size="compact-xs"
               leftSection={<Settings size={12} />}
-              onClick={() => setView('settings')}
+              onClick={() => openSettingsCategory('connectors')}
               style={{ flexShrink: 0 }}
             >
               {t('flow.setup.openSettings')}

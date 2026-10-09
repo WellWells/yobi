@@ -2,21 +2,12 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 /**
- * The DENY half of the agent's file policy, and it outranks every allow.
+ * The deny half of the agent's file policy. It outranks every allow, so widening an allow root can
+ * never open a credential or system path.
  *
- * The allow side (`getAgentFileRoots` / `getAgentWriteRoots`) answers "where may the agent work".
- * This answers "what may it never touch, wherever it is" — which is a different question, because
- * a credential can sit inside an allowed folder (`Desktop/id_rsa`) and a system folder can be
- * added to the allow list later by a user who did not think about `System32`.
- *
- * Deny-wins is the same precedence Claude Code uses for its permission rules, and it is the only
- * ordering that is safe to reason about: widening an allow can never quietly open a deny.
- *
- * SCOPE, stated honestly. For `file_read` / `file_list` / `file_write` this is EXACT — the path
- * is resolved before it is checked, so it cannot be dodged. For `shell` it is a best-effort scan
- * of the command STRING (see `sensitiveCommandReason`), which a rename, an environment variable
- * or a generated script defeats. That scan is defence in depth, not a boundary; the boundary for
- * shell is the confirmation dialog plus the output masking in `secretMask.ts`.
+ * Exact for file_read / file_list / file_write, because the path is resolved first. For `shell` it is
+ * only a best-effort scan of the command string; the shell boundary is the confirmation dialog plus
+ * the output masking in `secretMask.ts`.
  */
 
 const HOME = os.homedir();
@@ -61,21 +52,9 @@ function systemRoots(): string[] {
 }
 
 /**
- * ANY dot-prefixed path segment. This is a rule where the rest of this file is a list, and it
- * carries most of the weight: `.ssh`, `.aws`, `.gnupg`, `.claude`, `.docker`, `.kube`, `.env`,
- * `.npmrc`, `.netrc`, `.git-credentials` and every `.foobarrc` a tool invents next year all fall
- * out of one line. An enumeration is only ever as current as the day it was written.
- *
- * The premise is the convention itself: a leading dot means "configuration, not content", and
- * configuration is where credentials live. Nothing the agent is asked to help with — a document,
- * a spreadsheet, a download — is dot-prefixed.
- *
- * `.` and `..` are NOT dotfiles; they are relative-path notation, and treating them as a hit
- * would refuse `./build.sh` and `cd ..`.
- *
- * KNOWN COST, accepted deliberately: `.gitignore`, `.editorconfig` and `.prettierrc` become
- * unreadable too. They are harmless, but separating them needs an exception list, and an
- * exception list is the enumeration this rule exists to avoid.
+ * Any dot-prefixed path segment (`.ssh`, `.aws`, `.env`, `.npmrc`, ...): by convention that is
+ * configuration, which is where credentials live. `.` and `..` are relative-path notation, not dotfiles.
+ * Harmless dotfiles such as `.gitignore` are blocked too; an exception list would defeat the rule.
  */
 function dotSegment(target: string): string | null {
   for (const segment of target.split('/')) {
@@ -107,12 +86,8 @@ function credentialDirs(): string[] {
 }
 
 /**
- * File names that are a credential wherever they sit, including inside a folder the agent is
- * otherwise allowed to use. Matched on the BASENAME, case-insensitively.
- *
- * A rename defeats this and that is fine: for the file tools the directory allow list is the real
- * boundary, and this list only has to cover the credential that a user genuinely does keep on
- * their Desktop.
+ * Credential file names, matched case-insensitively on the basename, even inside an allowed folder.
+ * A rename defeats this; the directory allow list is the real boundary for the file tools.
  */
 const CREDENTIAL_FILE_PATTERNS: readonly RegExp[] = [
   // NOTE: anything dot-prefixed is already refused by `dotSegment`, so this list is only the
@@ -175,30 +150,17 @@ export function sensitivePathReason(resolvedAbs: string, roots: readonly string[
 }
 
 /*
- * ---------------------------------------------------------------------------------------------
- * The shell half. READ THE LIMITS BEFORE TRUSTING THIS.
- *
- * A shell command has no inspectable path: `%USERPROFILE%\.claude` contains no path until cmd.exe
- * expands it, and `set A=.cre& set B=dentials& type %A%%B%.json` builds the name at run time.
- * Both were measured. So this scan stops the obvious and the accidental — a model that simply
- * asks for the file by name, which is exactly what happened — and stops nothing that is trying.
- *
- * It is here because the alternative to a leaky first layer is no first layer, not a perfect one.
- * The layer that actually has to hold is `secretMask.ts`, which inspects the OUTPUT and therefore
- * does not care how the path was spelled.
- * ---------------------------------------------------------------------------------------------
+ * The shell half: a best-effort scan of the command string. Variable expansion or a file name built
+ * at run time defeats it, so it only catches the obvious and the accidental; the layer that must hold
+ * is `secretMask.ts`, which inspects the output.
  */
 
 /** Literal fragments that only appear in a command reaching for a secret or for system territory. */
 const COMMAND_MARKERS: readonly { re: RegExp; reason: string }[] = [
   /*
-   * The dot rule, in command form: a path segment that begins with a dot. One line instead of the
-   * nine per-folder markers it replaced (.ssh, .aws, .gnupg, .claude, .config/gcloud, .npmrc,
-   * .pypirc, .netrc, .credentials.json).
-   *
-   * The lead-in class is what keeps it quiet. A dot only starts a SEGMENT after whitespace, a
-   * quote, `=` or a separator — so `x.py`, `python3.11`, `README.md`, `./build.sh` (the char after
-   * the dot must be alphanumeric) and `cd ..` all pass through untouched.
+   * The dot rule in command form. A dot starts a segment only after whitespace, a quote, `=` or a
+   * separator, and must be followed by an alphanumeric, so `x.py`, `python3.11`, `./build.sh` and
+   * `cd ..` pass.
    */
   { re: /(?:^|[\s"'=/\\])\.[A-Za-z0-9_][^\s"']*/, reason: 'it names a dot-prefixed file or folder, which is configuration and is where credentials live' },
   { re: /\bid_(rsa|dsa|ecdsa|ed25519)\b/i, reason: 'it names an ssh private key' },

@@ -1336,7 +1336,7 @@
   "urlParser.log.fetching": "🔗 URLを検出しました — ページコンテンツを取得中...",
   "urlParser.notify.body": "取得中: {{url}}",
   "urlParser.notify.title": "Yobi",
-  "urlParser.prompt": "以下のWebページの内容を、わかりやすい要点にまとめてください。Markdown形式で、日本語で直接回答してください。内容が途中で切れているように見える場合は、ある範囲でまとめ、不完全な可能性がある旨を記してください。\n\n---\n{{cleaned_text}}\n---",
+  "urlParser.prompt": "以下のWebページの内容を、わかりやすい要点にまとめてください。Markdown形式で、日本語で直接回答してください。\n\n---\n{{cleaned_text}}\n---",
   "urlParser.truncated": "(コンテンツが長すぎるため切り詰められました)",
   "welcome.greeting.dusk.1": "こんばんは[、{{name}}]",
   "welcome.greeting.evening.1": "こんばんは[、{{name}}]",

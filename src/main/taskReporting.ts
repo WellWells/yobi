@@ -58,11 +58,8 @@ export function reportChatTurnFailure(task: Task, message: string): void {
 /**
  * A task removed from the queue before it ever ran.
  *
- * The renderer's "thinking" bubble is only ever cleared by an IPC.CHAT_TURN, and the queue
- * state carries no sendId to reconcile against, so a cancel that reported nothing left the
- * bubble spinning until the app restarted. Bot tasks have no sendId and so report nothing,
- * which is what `reportChatTurnFailure` already decides for us. Either way the task still
- * owns whatever temporary files were staged for it.
+ * Only IPC.CHAT_TURN clears the renderer's "thinking" bubble, so a cancel must report one; bot
+ * tasks have no sendId and report nothing. Either way the task still owns its staged temp files.
  */
 export function handleDiscardedTask(task: Task): void {
   reportChatTurnFailure(task, t(getLangCache(), 'main.error.taskCancelled'));

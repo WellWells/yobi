@@ -1,4 +1,12 @@
 import * as http from 'node:http';
+import {
+  MCP_AUTH_CANCELLED,
+  MCP_AUTH_DENIED_PREFIX,
+  MCP_AUTH_MISSING_CODE,
+  MCP_AUTH_STATE_MISMATCH,
+  MCP_AUTH_TIMED_OUT,
+} from './mcpErrors';
+import type { McpAuthPageText } from './mcpErrors';
 
 const CALLBACK_PATH = '/callback';
 
@@ -30,14 +38,18 @@ function respond(res: http.ServerResponse, status: number, message: string): voi
   );
 }
 
-export function startCallbackServer(successMessage = 'Authorization complete. You can close this window.'): Promise<CallbackServer> {
+/**
+ * `pageText` is asked at the moment the browser arrives, so the page follows a language
+ * changed after boot. Without one the page shows the keys.
+ */
+export function startCallbackServer(pageText: McpAuthPageText = (key) => key): Promise<CallbackServer> {
   return new Promise((resolve, reject) => {
     let pending: Pending | null = null;
 
     const server = http.createServer((req, res) => {
       const url = new URL(req.url ?? '/', 'http://127.0.0.1');
       if (url.pathname !== CALLBACK_PATH) {
-        respond(res, 404, 'Not found');
+        respond(res, 404, pageText('mcp.auth.notFound'));
         return;
       }
       const code = url.searchParams.get('code');
@@ -45,25 +57,25 @@ export function startCallbackServer(successMessage = 'Authorization complete. Yo
       const errorParam = url.searchParams.get('error');
 
       if (!pending) {
-        respond(res, 400, 'No authorization in progress.');
+        respond(res, 400, pageText('mcp.auth.noPending'));
         return;
       }
       if (errorParam) {
-        respond(res, 400, `Authorization failed: ${errorParam}`);
-        finish(new Error(`Authorization failed: ${errorParam}`));
+        respond(res, 400, pageText('mcp.auth.failed', { error: errorParam }));
+        finish(new Error(`${MCP_AUTH_DENIED_PREFIX}${errorParam}`));
         return;
       }
       if (!state || state !== pending.state) {
-        respond(res, 400, 'Authorization state mismatch.');
-        finish(new Error('OAuth state mismatch — possible CSRF, authorization rejected'));
+        respond(res, 400, pageText('mcp.auth.incomplete'));
+        finish(new Error(MCP_AUTH_STATE_MISMATCH));
         return;
       }
       if (!code) {
-        respond(res, 400, 'Missing authorization code.');
-        finish(new Error('Authorization response missing the code'));
+        respond(res, 400, pageText('mcp.auth.incomplete'));
+        finish(new Error(MCP_AUTH_MISSING_CODE));
         return;
       }
-      respond(res, 200, successMessage);
+      respond(res, 200, pageText('mcp.auth.success'));
       finish(null, code);
     });
 
@@ -89,7 +101,7 @@ export function startCallbackServer(successMessage = 'Authorization complete. Yo
             const timer = setTimeout(() => {
               if (pending) {
                 pending = null;
-                rej(new Error('Timed out waiting for authorization'));
+                rej(new Error(MCP_AUTH_TIMED_OUT));
               }
             }, timeoutMs);
             timer.unref();
@@ -99,7 +111,7 @@ export function startCallbackServer(successMessage = 'Authorization complete. Yo
         close() {
           if (pending) {
             clearTimeout(pending.timer);
-            pending.reject(new Error('Authorization cancelled'));
+            pending.reject(new Error(MCP_AUTH_CANCELLED));
             pending = null;
           }
           server.close();

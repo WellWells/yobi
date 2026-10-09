@@ -6,9 +6,10 @@ import { SectionCard } from '../../components/SectionCard';
 import { CopyIconButton } from '../../components/CopyIconButton';
 import { flowApi } from '../../api/electronApi';
 import { stepHasOutput } from './StepCard';
-import { buildFlowRunMarkdown } from './flowRunExport';
+import { buildFlowRunMarkdown, stepLogsById } from './flowRunExport';
+import { isCodeOutput } from './flowCapabilities';
 import { useFlowStore } from '../../store/useFlowStore';
-import type { FlowExecutionLog, SkillInstance } from '../../../../shared/types';
+import type { SkillInstance } from '../../../../shared/types';
 
 export interface ExecutionResultPanelProps {
   steps: SkillInstance[];
@@ -34,11 +35,7 @@ export const ExecutionResultPanel: React.FC<ExecutionResultPanelProps> = React.m
   const handleSave = useCallback(() => {
     void flowApi.exportFlowResult(buildMarkdown(), flowName);
   }, [buildMarkdown, flowName]);
-  const latestLogByStep = useMemo(() => {
-    const map = new Map<string, FlowExecutionLog>();
-    for (const log of executionLogs) map.set(log.stepId, log);
-    return map;
-  }, [executionLogs]);
+  const latestLogByStep = useMemo(() => stepLogsById(executionLogs), [executionLogs]);
   return (
     <SectionCard>
       <Stack gap="sm">
@@ -51,7 +48,7 @@ export const ExecutionResultPanel: React.FC<ExecutionResultPanelProps> = React.m
             <Button
               variant="default"
               size="compact-xs"
-              color={copyAllClipboard.copied ? 'teal' : undefined}
+              c={copyAllClipboard.copied ? 'var(--mantine-color-success)' : undefined}
               onClick={handleCopyAll}
               leftSection={copyAllClipboard.copied ? <Check size={12} /> : <Copy size={12} />}
             >
@@ -74,8 +71,8 @@ export const ExecutionResultPanel: React.FC<ExecutionResultPanelProps> = React.m
             return (
               <Box key={step.id}>
                 <Group gap="xs" wrap="nowrap">
-                  {log.status === 'completed' && <CheckCircle2 size={14} color="var(--mantine-color-green-6)" />}
-                  {log.status === 'error' && <XCircle size={14} color="var(--mantine-color-red-6)" />}
+                  {log.status === 'completed' && <CheckCircle2 size={14} color="var(--mantine-color-success)" />}
+                  {log.status === 'error' && <XCircle size={14} color="var(--mantine-color-error)" />}
                   <Text fz="xs" fw={500}>{step.label}</Text>
                   {stepHasOutput(step) && (
                     <CopyButton value={`{{${step.outputKey}}}`}>
@@ -91,7 +88,7 @@ export const ExecutionResultPanel: React.FC<ExecutionResultPanelProps> = React.m
                   <Group gap={4} wrap="nowrap" align="flex-start" mt={2}>
                     <Box style={{ flex: 1, minWidth: 0 }}>
                       <Spoiler maxHeight={72} showLabel={t('common.showMore')} hideLabel={t('common.showLess')}>
-                        <Text className="selectable" fz="xs" c="dimmed" ff="monospace" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                        <Text className="selectable" fz="xs" c="dimmed" ff={isCodeOutput(step.type, log.output) ? 'monospace' : undefined} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                           {log.output}
                         </Text>
                       </Spoiler>
@@ -99,10 +96,13 @@ export const ExecutionResultPanel: React.FC<ExecutionResultPanelProps> = React.m
                     <CopyIconButton value={log.output} copyLabel={copyLabel} copiedLabel={copiedLabel} size="sm" />
                   </Group>
                 )}
+                {log.note && (
+                  <Text fz="xs" c="dimmed" mt={2}>{t(`flow.execution.note.${log.note}`)}</Text>
+                )}
                 {log.error && (
                   <Group gap={4} wrap="nowrap" align="flex-start" mt={2}>
-                    <Text className="selectable" fz="xs" c="red" style={{ flex: 1, minWidth: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                      {log.error}
+                    <Text className="selectable" fz="xs" c="var(--mantine-color-error)" style={{ flex: 1, minWidth: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                      {log.displayError ?? log.error}
                     </Text>
                     <CopyIconButton value={log.error} copyLabel={copyLabel} copiedLabel={copiedLabel} size="sm" />
                   </Group>

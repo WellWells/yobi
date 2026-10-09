@@ -1,11 +1,15 @@
 import type { BrowserWindow } from 'electron';
-import type { FlowAssessResult, FlowAssessment, FlowGenerationResult, TriggerType } from '../../shared/types';
-import { PROVIDER_URLS, isByokTargetUrl } from '../../shared/types';
+import type {
+  FlowAssessResult, FlowAssessment, FlowBuildFailureReason, FlowDefinition, FlowGenerationResult, TriggerType,
+} from '../../shared/types';
+import { PROVIDER_URLS, TRIGGER_TYPES, isByokTargetUrl } from '../../shared/types';
 import {
   ALWAYS_INCLUDED_SKILLS,
   MAX_ASSESS_QUESTIONS,
   buildFlowAssessPrompt,
   buildFlowAssessRepairPrompt,
+  buildFlowEditPrompt,
+  buildFlowEditRepairPrompt,
   buildFlowGenerationPrompt,
   buildFlowRepairPrompt,
   resolveSelectedSkills,
@@ -14,21 +18,16 @@ import { extractJsonFromLlmResponse, validateFlowCandidate } from '../../shared/
 import { getProviderLabel, preparePromptForProvider, runAutomation } from '../providers';
 import { runByokCompletion } from '../providers/byokClient';
 import { sendLog } from '../helpers';
+import { WORKER_WINDOW_UNAVAILABLE, workerWindowUnavailable } from '../workerWindowError';
 import { llmLane } from './lanes';
 import type { FlowExecutorDeps } from './types';
 
 const DEFAULT_GENERATION_TIMEOUT_MS = 120_000;
 
 /**
- * How many times a phase may ask before giving up, counting the first try.
- *
- * Both phases share it because both fail the same way: a browser-UI model answers with a
- * sentence, or with JSON wrapped in chatter, and one rejected reply is not evidence that the
- * model cannot do it. The assessment had NO retry at all — a single chatty reply ended the whole
- * build at "understand", which is the failure users actually hit.
- *
- * Three, not more: each attempt is a full provider round trip, and a model that has been shown
- * its own rejected output twice and still will not emit JSON is not going to on the fourth.
+ * How many times a phase may ask before giving up, counting the first try. Browser-UI models often
+ * wrap JSON in chatter, so one rejected reply is not proof the model cannot do it; but each attempt
+ * is a full round trip, and a model shown its rejected output twice rarely recovers on a fourth.
  */
 export const MAX_ATTEMPTS = 3;
 
@@ -38,10 +37,8 @@ const FALLBACK_PROVIDER_URL = PROVIDER_URLS.gemini;
 export interface FlowPhaseOptions {
   providerUrl?: string;
   /**
-   * The model the request actually went to, once per phase. Not always the one asked for:
-   * `pickProvider` substitutes when the chosen model cannot hold the prompt, and with a model
-   * picker in the UI that substitution has to be visible or the panel is telling the user their
-   * choice was honoured when it was not.
+   * The model the request actually went to, once per phase. `pickProvider` may substitute one that
+   * can hold the prompt, and the panel must show the substitution.
    */
   onProvider?: (resolvedUrl: string) => void;
   onAttempt?: (attempt: number, lastError?: string) => void;
@@ -78,7 +75,7 @@ async function resolveWorker(deps: FlowExecutorDeps): Promise<BrowserWindow | nu
 async function ensureProviderReady(providerUrl: string, deps: FlowExecutorDeps): Promise<string | null> {
   if (isByokTargetUrl(providerUrl)) return null;
   const worker = await resolveWorker(deps);
-  return worker && !worker.isDestroyed() ? null : 'Worker window not available';
+  return worker && !worker.isDestroyed() ? null : WORKER_WINDOW_UNAVAILABLE;
 }
 
 async function askProvider(
@@ -94,14 +91,14 @@ async function askProvider(
   const prepared = preparePromptForProvider(prompt, providerUrl);
   return llmLane.runExclusive(async () => {
     const win = deps.ensureWorkerWin ? await deps.ensureWorkerWin() : deps.getWorkerWin();
-    if (!win || win.isDestroyed()) throw new Error('Worker window not available');
+    if (!win || win.isDestroyed()) throw workerWindowUnavailable();
     const result = await runAutomation(win, prepared.prompt, timeoutMs, providerUrl);
     return result.response;
   });
 }
 
 const VERDICTS = new Set<FlowAssessment['verdict']>(['full', 'partial', 'none']);
-const TRIGGERS = new Set<TriggerType>(['hotkey', 'cron', 'manual', 'bot', 'chat']);
+const TRIGGERS = new Set<TriggerType>(TRIGGER_TYPES);
 
 function readStringArray(value: unknown, limit: number): string[] {
   if (!Array.isArray(value)) return [];
@@ -165,7 +162,7 @@ export async function assessFlowSupport(
     if (picked.error) {
       // On a retry the original prompt already fitted, so stop with the reason the reply was
       // rejected rather than with a size complaint about the prompt that was never sent.
-      if (attempt > 1) return { ok: false, error: lastError };
+      if (attempt > 1) return { ok: false, error: lastError, reason: 'invalid_output' };
       sendLog(`❌ [Flow] ${picked.error}`);
       return { ok: false, error: picked.error };
     }
@@ -200,7 +197,8 @@ export async function assessFlowSupport(
     sendLog(`❌ [Flow] Assessment rejected: ${lastError}${willRetry ? ' — asking again' : ` (gave up after ${MAX_ATTEMPTS} attempts)`}`);
   }
 
-  return { ok: false, error: lastError };
+  // `lastError` is the validator talking to the model; `reason` is what the user is told.
+  return { ok: false, error: lastError, reason: 'invalid_output' };
 }
 
 export async function generateFlowDefinition(
@@ -215,7 +213,7 @@ export async function generateFlowDefinition(
   let triggerHint = options.triggerHint;
   if (skills.length === 0) {
     const assessed = await assessFlowSupport(trimmed, deps, { ...(options.providerUrl ? { providerUrl: options.providerUrl } : {}) });
-    if (!assessed.ok) return { ok: false, error: assessed.error };
+    if (!assessed.ok) return assessed;
     if (assessed.assessment.verdict === 'none') {
       return {
         ok: false,
@@ -226,21 +224,92 @@ export async function generateFlowDefinition(
     triggerHint = assessed.assessment.trigger;
   }
 
+  const compiled = await compileFlow(
+    (attempt, lastResponse, lastError) => (attempt === 1
+      ? buildFlowGenerationPrompt(trimmed, skills, triggerHint)
+      : buildFlowRepairPrompt(trimmed, skills, lastResponse, lastError, triggerHint)),
+    deps,
+    options,
+    { verb: 'Generating', disclosed: skills.length },
+  );
+  return compiled.ok ? { ok: true, flow: compiled.flow } : compiled;
+}
+
+export type FlowRevisionResult =
+  | {
+    ok: true;
+    flow: FlowDefinition;
+    /** The "id" the reply gave each step, in step order: an existing step's id, or nothing for a new one. */
+    stepIds: Array<string | undefined>;
+  }
+  | { ok: false; error: string; reason?: FlowBuildFailureReason };
+
+function unwrapCandidate(json: unknown): Record<string, unknown> | null {
+  if (typeof json !== 'object' || json === null || Array.isArray(json)) return null;
+  const obj = json as Record<string, unknown>;
+  return obj.flow && typeof obj.flow === 'object' && !Array.isArray(obj.flow) ? obj.flow as Record<string, unknown> : obj;
+}
+
+/**
+ * The whole flow again with one change made. The variables are put back into the reply before it
+ * is validated rather than shown to the model: steps may reference `{{var.x}}`, the check rejects
+ * a reference to an undeclared variable, and the declarations carry the values the user filled in.
+ */
+export async function reviseFlowDefinition(
+  flow: FlowDefinition,
+  change: string,
+  skills: readonly string[],
+  deps: FlowExecutorDeps,
+  options: FlowPhaseOptions = {},
+): Promise<FlowRevisionResult> {
+  if (!change.trim()) return { ok: false, error: 'Empty change request' };
+  let stepIds: Array<string | undefined> = [];
+  const compiled = await compileFlow(
+    (attempt, lastResponse, lastError) => (attempt === 1
+      ? buildFlowEditPrompt(flow, change, skills)
+      : buildFlowEditRepairPrompt(flow, change, skills, lastResponse, lastError)),
+    deps,
+    options,
+    { verb: 'Revising', disclosed: skills.length },
+    (json) => {
+      const inner = unwrapCandidate(json);
+      if (!inner) return json;
+      stepIds = Array.isArray(inner.steps)
+        ? inner.steps.map((step) => {
+          const id = (step as Record<string, unknown> | null)?.id;
+          return typeof id === 'string' && id.trim() ? id.trim() : undefined;
+        })
+        : [];
+      return flow.variables?.length ? { ...inner, variables: flow.variables } : inner;
+    },
+  );
+  return compiled.ok ? { ok: true, flow: compiled.flow, stepIds } : compiled;
+}
+
+/**
+ * The attempt loop both a new flow and a revision go through: pick a provider that holds the
+ * prompt, ask, validate, and on a rejected reply ask again with the rejection quoted back.
+ */
+async function compileFlow(
+  promptAt: (attempt: number, lastResponse: string, lastError: string) => string,
+  deps: FlowExecutorDeps,
+  options: FlowPhaseOptions,
+  label: { verb: string; disclosed: number },
+  prepare: (json: unknown) => unknown = (json) => json,
+): Promise<FlowGenerationResult> {
   const timeoutMs = deps.getResponseTimeoutMs?.() ?? DEFAULT_GENERATION_TIMEOUT_MS;
   let lastError = 'Could not generate a valid flow';
   let lastResponse = '';
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     options.onAttempt?.(attempt, attempt > 1 ? lastError : undefined);
-    const promptText = attempt === 1
-      ? buildFlowGenerationPrompt(trimmed, skills, triggerHint)
-      : buildFlowRepairPrompt(trimmed, skills, lastResponse, lastError, triggerHint);
+    const promptText = promptAt(attempt, lastResponse, lastError);
 
     const picked = pickProvider(promptText, options.providerUrl);
     if (picked.error) {
       if (attempt > 1) {
         sendLog(`⚠️ [Flow] Repair prompt exceeds the input limit — skipping the retry`);
-        return { ok: false, error: lastError };
+        return { ok: false, error: lastError, reason: 'invalid_output' };
       }
       sendLog(`❌ [Flow] ${picked.error}`);
       return { ok: false, error: picked.error };
@@ -250,8 +319,8 @@ export async function generateFlowDefinition(
 
     if (attempt === 1) options.onProvider?.(picked.url);
     sendLog(attempt === 1
-      ? `🤖 [Flow] Generating flow via ${getProviderLabel(picked.url)} (${skills.length} skills disclosed)…`
-      : `🔁 [Flow] Generation attempt ${attempt}/${MAX_ATTEMPTS} — asking ${getProviderLabel(picked.url)} to fix: ${lastError}`);
+      ? `🤖 [Flow] ${label.verb} flow via ${getProviderLabel(picked.url)} (${label.disclosed} skills disclosed)…`
+      : `🔁 [Flow] ${label.verb} attempt ${attempt}/${MAX_ATTEMPTS} — asking ${getProviderLabel(picked.url)} to fix: ${lastError}`);
 
     try {
       lastResponse = await askProvider(promptText, picked.url, deps, timeoutMs);
@@ -265,10 +334,10 @@ export async function generateFlowDefinition(
     if (json === null) {
       lastError = 'No JSON found in the AI response';
     } else {
-      const validation = validateFlowCandidate(json);
+      const validation = validateFlowCandidate(prepare(json));
       if (validation.ok) {
         const suffix = attempt > 1 ? ' (after retry)' : '';
-        sendLog(`✅ [Flow] Generated flow "${validation.flow.name}" (${validation.flow.steps.length} steps)${suffix}`);
+        sendLog(`✅ [Flow] ${label.verb} done: "${validation.flow.name}" (${validation.flow.steps.length} steps)${suffix}`);
         return validation;
       }
       lastError = validation.error;
@@ -278,5 +347,5 @@ export async function generateFlowDefinition(
     sendLog(`❌ [Flow] Invalid generated flow: ${lastError}${willRetry ? ' — asking again' : ` (gave up after ${MAX_ATTEMPTS} attempts)`}`);
   }
 
-  return { ok: false, error: lastError };
+  return { ok: false, error: lastError, reason: 'invalid_output' };
 }

@@ -1,14 +1,6 @@
 /**
- * chatgpt.com's model picker, mirrored.
- *
- * What the composer offers depends on the plan (measured 2026-09-18):
- * - Free: one "Think" pill that toggles (`aria-pressed`) — off is the default model, on Thinking mini.
- * - Plus: an effort slider (Instant, Medium, High; a locked step belongs to a higher plan) with the
- *   model versions (GPT-5.6 Sol, GPT-5.5) behind it. Every version offers its own steps.
- *
- * Only the current step's label is on the page, so the list comes from the page's own model API
- * (the account's versions and their presets), matched to the picker's rows. Yobi keeps ONE ChatGPT
- * setting and makes the page match it before every send, like Gemini's and Claude's.
+ * The ChatGPT model setting: a thinking toggle on plans without a model choice, otherwise a model
+ * and an effort step. Yobi keeps one setting and makes the page match it before every send.
  */
 
 export interface ChatgptOptionInfo {

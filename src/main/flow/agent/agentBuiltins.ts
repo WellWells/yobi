@@ -1,14 +1,23 @@
 import type {
-  AgentStageLabel, FlowAssessment, FlowBuildEvent, FlowBuildIssue, FlowBuildPhase,
+  AgentStageLabel, FlowAssessment, FlowBuildEvent, FlowBuildPhase,
   FlowDefinition, SkillType, TriggerType,
 } from '../../../shared/types';
+import { describeRecipientSetup, withRecipientQuestion } from '../../../shared/botRecipientQuestion';
+import type { RecipientDirectory } from '../../../shared/botRecipients';
+import { lazyRecipients, recipientWording } from '../botRecipientDirectory';
 import { assessFlowSupport } from '../flowGenerator';
 import { BUILD_DECLINED, runFlowBuild } from '../flowBuild';
+import type { FlowRef } from '../flowEdit';
 import { FlowAbortError } from '../runtime';
 import { sendLog } from '../../helpers';
 import type { FlowExecutorDeps } from '../types';
+import { renderIssueLines, sensitiveTypesOf } from './agentFlowShared';
+import type { FlowWriteConfirmRequest } from './agentFlowShared';
+import { runEditFlowTool } from './agentFlowEdit';
 
-export const AGENT_BUILTIN_TOOLS = ['assess_flow', 'build_flow', 'delegate'] as const;
+export type { FlowWriteConfirmRequest } from './agentFlowShared';
+
+export const AGENT_BUILTIN_TOOLS = ['assess_flow', 'build_flow', 'edit_flow', 'delegate'] as const;
 
 export type AgentBuiltinTool = typeof AGENT_BUILTIN_TOOLS[number];
 
@@ -18,21 +27,19 @@ export function isBuiltinTool(name: string): name is AgentBuiltinTool {
   return BUILTIN_SET.has(name);
 }
 
-const SENSITIVE_STEP_TYPES = new Set<string>([
-  'shell', 'run', 'js', 'browser_js', 'power', 'restart_app', 'file_delete',
-]);
-
-export interface FlowWriteConfirmRequest {
-  kind: 'flow';
-  flowName: string;
-  stepTypes: string[];
-  sensitiveTypes: string[];
-}
-
 export interface BuiltinDeps {
   deps: FlowExecutorDeps;
   providerUrl: string;
   saveFlow?: (flow: FlowDefinition) => Promise<FlowDefinition>;
+  /** Saves a changed flow over the one with the same id. Absent means this run cannot edit flows. */
+  replaceFlow?: (flow: FlowDefinition) => Promise<FlowDefinition>;
+  listFlows?: () => readonly FlowDefinition[];
+  /** The flows this conversation made or changed, oldest first. `edit_flow` with no name means the last one. */
+  recentFlows?: FlowRef[];
+  /** The user's own words in this run — the goal and their answers — read for "send it to me". */
+  userWords?: () => string;
+  /** The paired chats; read live when omitted. */
+  recipients?: RecipientDirectory;
   confirm?: (request: FlowWriteConfirmRequest) => Promise<boolean>;
   /**
    * The whole assessment, not a digest of it: `build_flow` reuses the skills and trigger to skip
@@ -64,23 +71,37 @@ function budgetedDeps(ctx: BuiltinDeps): FlowExecutorDeps {
 }
 
 /**
- * Framed as the rung above `research`, not as an overflow valve: framed as the valve it was never
- * called once in ten days of logs, while comparisons crawled one page per turn. It still costs a
- * whole helper loop, so a sub-question one `research` call answers must not come here.
+ * Framed as the rung above `research`, not as an overflow valve. It still costs a whole helper
+ * loop, so a sub-question one `research` call answers must not come here.
  */
-const DELEGATE_LINE = '- "delegate": Hand a READ-ONLY sub-question that needs SEVERAL steps of its own (find, then read pages or messages) to a helper with a fresh context. Use it when one "research" call cannot answer it; send several at once in "call_tools". It never changes anything or asks the user. config keys: "task" (self-contained: what to find and what to report back, since it cannot see this conversation; REQUIRED) → returns: the helper\'s written findings.';
+const DELEGATE_LINE = '- "delegate": Hand a READ-ONLY sub-question that needs SEVERAL steps of its own (find, then read pages or messages) to a helper with a fresh context. Use it when one tool call cannot answer it; send several at once in "call_tools". It never changes anything or asks the user. config keys: "task" (self-contained: what to find and what to report back, since it cannot see this conversation; REQUIRED) → returns: the helper\'s written findings.';
 
-export function buildBuiltinCatalog(includeDelegate = false): string {
+/*
+ * Keep these lines budget-neutral: the catalog is the largest fixed deduction from Gemini's cap,
+ * and the MCP catalog gets what is left.
+ */
+const FLOW_TOOL_LINES = [
+  '- "assess_flow": Can Yobi AUTOMATE this as a saved flow, and how? Read-only. config keys: "goal" (what to automate, user\'s words; REQUIRED) → returns: verdict, step outline, gaps, what to ask first.',
+  '- "build_flow": SAVE a new flow, DISABLED for review. Call "assess_flow" first; ask what it reports missing, never invent it. config keys: "goal" (the request plus what the user said since; REQUIRED) → returns: name, steps, what to check.',
+  '- "edit_flow": Change a flow the user has (never build a copy); saves over it once they approve. Yobi already holds bot tokens and chat IDs — never ask for them. config keys: "change" (user\'s words; REQUIRED), "flow" (its name; omit for the one made earlier in this chat) → returns: what changed.',
+];
+
+export function buildBuiltinCatalog(includeDelegate = false, includeFlows = true): string {
   return [
-    '- "assess_flow": Check whether Yobi could AUTOMATE something as a saved flow, and how. Read-only — nothing is created. config keys: "goal" (what the user wants automated, in their own words; REQUIRED) → returns: a coverage verdict, a step outline, the gaps, and anything it would have to invent a value for.',
-    '- "build_flow": Build and SAVE the flow. Call "assess_flow" first and say what it found — it writes to their app and asks them to approve it, so never the opening move. Anything the assessment reported missing, ask the user for first; never invent it. Saved DISABLED for them to review and switch on. config keys: "goal" (the same request, refined by anything the user said since; REQUIRED) → returns: the flow\'s name, its steps, and what still needs checking.',
+    ...(includeFlows ? FLOW_TOOL_LINES : []),
     ...(includeDelegate ? [DELEGATE_LINE] : []),
   ].join('\n');
 }
 
 export function builtinRequiredFields(tool: AgentBuiltinTool): string[] {
   if (tool === 'delegate') return ['task'];
+  if (tool === 'edit_flow') return ['change'];
   return tool === 'assess_flow' || tool === 'build_flow' ? ['goal'] : [];
+}
+
+/** Every key a builtin reads — the required ones plus the optional, which the validator would otherwise drop. */
+export function builtinConfigKeys(tool: AgentBuiltinTool): string[] {
+  return tool === 'edit_flow' ? ['change', 'flow'] : builtinRequiredFields(tool);
 }
 
 const ASSESS_OBSERVATION_LIMIT = 1_500;
@@ -97,9 +118,14 @@ const TRIGGER_TEXT: Record<TriggerType, string> = {
   bot: 'It runs when the user sends the bot a /command.',
   chat: 'It runs when the user types a /command in this chat.',
   manual: 'It runs when the user presses Run.',
+  system: 'It runs when the computer starts Yobi, wakes from sleep, or locks or unlocks the screen.',
 };
 
-export function renderAssessment(assessment: FlowAssessment): string {
+/**
+ * `setup` is what the app already has for the steps that need it. Without it the model assumes a
+ * bot needs a token and a chat ID and asks the user for both, though Yobi already paired one.
+ */
+export function renderAssessment(assessment: FlowAssessment, setup: readonly string[] = []): string {
   const lines = [VERDICT_TEXT[assessment.verdict], TRIGGER_TEXT[assessment.trigger]];
   if (assessment.outline.length > 0) {
     lines.push('', 'The flow would:');
@@ -108,6 +134,10 @@ export function renderAssessment(assessment: FlowAssessment): string {
   if (assessment.gaps.length > 0) {
     lines.push('', 'Not covered:');
     assessment.gaps.forEach((gap) => lines.push(`- ${gap}`));
+  }
+  if (setup.length > 0) {
+    lines.push('', 'ALREADY SET UP IN YOBI — never ask the user for a bot token, a chat ID or a password:');
+    setup.forEach((line) => lines.push(`- ${line}`));
   }
   if (assessment.questions.length > 0) {
     // Stated as an instruction, not a list, because the observation is read by the model and the
@@ -119,32 +149,20 @@ export function renderAssessment(assessment: FlowAssessment): string {
   return text.length > ASSESS_OBSERVATION_LIMIT ? `${text.slice(0, ASSESS_OBSERVATION_LIMIT)}…` : text;
 }
 
-const ISSUE_TEXT: Record<FlowBuildIssue['kind'], (issue: FlowBuildIssue) => string> = {
-  blank: (issue) => `step ${issue.step} (${issue.skill}) has no "${issue.detail}" — the user has to fill it in`,
-  failsoft: (issue) => `step ${issue.step} (${issue.skill}) runs in a loop without fail-soft`,
-  setup: (issue) => `step ${issue.step} (${issue.skill}) needs ${issue.detail} to be set up first`,
-};
-
 /**
  * What the model is allowed to say about the flow it just saved. The issues are here because the
  * alternative — a cheerful "done!" over a flow with an empty feed URL — is the same class of
  * false claim `withActionFooter` exists to stop one layer down.
  */
-function describeFlow(flow: FlowDefinition, issues: readonly FlowBuildIssue[]): string {
+function describeFlow(flow: FlowDefinition, issues: Parameters<typeof renderIssueLines>[0]): string {
   const steps = flow.steps.map((step) => step.type as SkillType);
   const shown = steps.slice(0, 12).join(' → ');
   const more = steps.length > 12 ? ` (+${steps.length - 12} more)` : '';
-  const lines = [
+  return [
     `Saved the flow "${flow.name}" with ${steps.length} step(s), DISABLED for the user to review: ${shown}${more}.`,
-  ];
-  if (issues.length > 0) {
-    lines.push(
-      'Needs the user to check, and you must say so rather than report plain success:',
-      ...issues.slice(0, 6).map((issue) => `- ${ISSUE_TEXT[issue.kind](issue)}`),
-    );
-  }
-  lines.push('Tell the user it is waiting in the flow list and what it will do — do not build it again.');
-  return lines.join('\n');
+    ...renderIssueLines(issues),
+    'Tell the user it is waiting in the flow list and what it will do — do not build it again; to change it, use "edit_flow".',
+  ].join('\n');
 }
 
 const PHASE_STAGE: Record<FlowBuildPhase, AgentStageLabel> = {
@@ -169,12 +187,28 @@ export interface BuiltinOutcome {
   status: 'ok' | 'error';
 }
 
+/**
+ * Whose words decide who a bot step sends to: the user's, in this run — their request and their
+ * answers. Not the model's "goal" or "change": a name the model wrote there would otherwise count
+ * as the user having chosen, and slip a flow past the question that asks them.
+ */
+function userWordsOf(fallback: string, ctx: BuiltinDeps): string {
+  return ctx.userWords?.() ?? fallback;
+}
+
 async function runAssess(goal: string, ctx: BuiltinDeps): Promise<BuiltinOutcome> {
   ctx.onStage?.('analyzing');
   const result = await assessFlowSupport(goal, budgetedDeps(ctx), { providerUrl: ctx.providerUrl });
   if (!result.ok) return { observation: `ERROR: ${result.error}`, status: 'error' };
-  ctx.assessed = result.assessment;
-  return { observation: renderAssessment(result.assessment), status: 'ok' };
+  let assessment = result.assessment;
+  let setup: string[] = [];
+  if (assessment.skills.includes('bot')) {
+    const directory = await lazyRecipients(ctx.recipients)();
+    assessment = withRecipientQuestion(assessment, userWordsOf(goal, ctx), directory, recipientWording());
+    setup = describeRecipientSetup(directory);
+  }
+  ctx.assessed = assessment;
+  return { observation: renderAssessment(assessment, setup), status: 'ok' };
 }
 
 /**
@@ -218,15 +252,19 @@ async function runBuild(goal: string, ctx: BuiltinDeps): Promise<BuiltinOutcome>
     save: saveFlow,
     ...(ctx.providerUrl ? { providerUrl: ctx.providerUrl } : {}),
     ...(ctx.assessed ? { assessed: ctx.assessed } : {}),
+    ...(ctx.recipients ? { recipients: ctx.recipients } : {}),
+    ...(ctx.userWords ? { words: ctx.userWords() } : {}),
     // The agent asks with `ask_user`; the gate above is what makes sure it did.
     askUser: false,
     ...(report ? { emit: report } : {}),
-    confirm: async (flow) => {
+    confirm: async (flow, recipients) => {
       if (!ctx.confirm) return false;
       const stepTypes = flow.steps.map((step) => String(step.type));
-      const sensitiveTypes = [...new Set(stepTypes.filter((type) => SENSITIVE_STEP_TYPES.has(type)))];
       ctx.onStage?.('confirming');
-      return ctx.confirm({ kind: 'flow', flowName: flow.name, stepTypes, sensitiveTypes });
+      return ctx.confirm({
+        kind: 'flow', flowName: flow.name, stepTypes, sensitiveTypes: sensitiveTypesOf(stepTypes),
+        ...(recipients.length > 0 ? { recipients } : {}),
+      });
     },
   });
 
@@ -246,6 +284,8 @@ async function runBuild(goal: string, ctx: BuiltinDeps): Promise<BuiltinOutcome>
   }
 
   sendLog(`🧩 [Agent] built flow "${outcome.flow.name}" (${outcome.flow.steps.length} steps, disabled)`);
+  // What a later "change it" in this conversation refers to.
+  ctx.recentFlows?.push({ id: outcome.flow.id, name: outcome.flow.name });
   return { observation: describeFlow(outcome.flow, outcome.report.issues), status: 'ok' };
 }
 
@@ -261,6 +301,19 @@ export async function runBuiltinTool(
     if (!task) return { observation: 'ERROR: "task" is required.', status: 'error' };
     if (!ctx.runSubtask) return { observation: 'ERROR: This run cannot hand off sub-tasks. Do the reading yourself.', status: 'error' };
     return ctx.runSubtask(task, step);
+  }
+  if (tool === 'edit_flow') {
+    return runEditFlowTool(config, {
+      deps: budgetedDeps(ctx),
+      providerUrl: ctx.providerUrl,
+      recentFlows: ctx.recentFlows ?? [],
+      words: userWordsOf(config.change ?? '', ctx),
+      ...(ctx.listFlows ? { listFlows: ctx.listFlows } : {}),
+      ...(ctx.replaceFlow ? { replaceFlow: ctx.replaceFlow } : {}),
+      ...(ctx.recipients ? { recipients: ctx.recipients } : {}),
+      ...(ctx.confirm ? { confirm: ctx.confirm } : {}),
+      ...(ctx.onStage ? { onStage: (label: AgentStageLabel) => ctx.onStage?.(label) } : {}),
+    });
   }
   const goal = (config.goal ?? '').trim();
   if (!goal) return { observation: 'ERROR: "goal" is required.', status: 'error' };

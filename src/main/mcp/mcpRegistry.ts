@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { FetchLike, Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
@@ -13,6 +13,14 @@ import type { McpConnectionStatus, McpServerActionResult, McpServerConfig, McpSe
 import type { McpTool, McpToolResult } from './mcpTypes';
 import { McpAuthProvider } from './mcpAuthProvider';
 import { startCallbackServer } from './mcpCallbackServer';
+import {
+  MCP_INVALID_URL_PREFIX,
+  MCP_SERVER_NOT_FOUND,
+  MCP_UNKNOWN_BUILTIN,
+  MCP_UNKNOWN_SERVER,
+  MCP_URL_NEEDS_HTTPS,
+} from './mcpErrors';
+import type { McpAuthPageText } from './mcpErrors';
 import { clearAuthRecord, getAuthRecord, setAuthRecord } from './mcpTokenStore';
 import { buildManualAuthHeaders } from './mcpAuthHeaders';
 import { filterAgentServers } from '../flow/agent/mcpTools';
@@ -31,9 +39,10 @@ export interface McpRegistryDeps {
   broadcast: (servers: McpServerView[]) => void;
   openExternal: (url: string) => Promise<void>;
   log: (message: string) => void;
-  authSuccessMessage?: string;
+  /** Text of the page the browser shows after the provider's sign-in, in the app's language. */
+  authPageText?: McpAuthPageText;
   fetchImpl?: FetchLike;
-  // Overridable for tests; production uses BUILTIN_RUNTIMES, which loads each connection lazily.
+  // Defaults to BUILTIN_RUNTIMES, which loads each connection lazily.
   builtins?: Readonly<Record<string, BuiltinRuntime>>;
   builtinRetryMs?: number;
 }
@@ -51,6 +60,8 @@ interface ServerRuntime {
   // they skip URL validation and OAuth and are never persisted in config.mcpServers.
   kind: 'http' | 'builtin';
   close?: () => Promise<void>;
+  /** Times the user ended this connection (disconnected it, gave it a new URL); a renewal that sees it move stands down. */
+  cuts: number;
 }
 
 export interface ConnectedServerTools {
@@ -59,6 +70,38 @@ export interface ConnectedServerTools {
   /** Carried so the agent catalog can tell a server holding the user's own data from a public one. */
   url: string;
   tools: McpTool[];
+}
+
+/**
+ * A 404 to a request that carried a session id: the server no longer knows that session (it was
+ * redeployed or swept idle sessions) and never ran the request. A 404 without one — a stateless
+ * server, a URL that moved — is an ordinary failure, and so is everything else: a timeout or a
+ * reset leaves open whether the call ran.
+ */
+function isSessionLost(rt: ServerRuntime, transport: Transport | null, err: unknown): boolean {
+  return rt.kind === 'http'
+    && err instanceof StreamableHTTPError && err.code === 404
+    && transport instanceof StreamableHTTPClientTransport && Boolean(transport.sessionId);
+}
+
+/**
+ * A call refused because its server is not connected: nothing reached the server. Read by shape
+ * (`notConnected`), like `McpCallNotSentError`, so callers need no runtime import of the registry.
+ */
+export class McpNotConnectedError extends Error {
+  readonly notConnected = true;
+}
+
+function notConnectedError(serverId: string): Error {
+  return new McpNotConnectedError(`MCP server "${serverId}" is not connected`);
+}
+
+/**
+ * A call held back after its server's lost session was renewed: nothing reached the server. Callers
+ * read `notSent` rather than the class, so they need no runtime import of the registry.
+ */
+export class McpCallNotSentError extends Error {
+  readonly notSent = true;
 }
 
 function flattenResult(result: CallToolResult): McpToolResult {
@@ -84,6 +127,8 @@ export class McpRegistry {
   private readonly watchers = new Map<string, ReturnType<typeof setInterval>>();
   /** The availability value the last failed attempt saw; the next attempt waits for a different one. */
   private readonly failedAvailability = new Map<string, string | null>();
+  /** One session renewal per server at a time; calls that fail or arrive meanwhile share it. */
+  private readonly renewing = new Map<string, Promise<void>>();
 
   constructor(private readonly deps: McpRegistryDeps) {
     for (const server of config.mcpServers) {
@@ -141,13 +186,13 @@ export class McpRegistry {
 
   private async connect(id: string, interactive: boolean): Promise<McpServerView> {
     const rt = this.runtimes.get(id);
-    if (!rt) throw new Error('Unknown MCP server');
+    if (!rt) throw new Error(MCP_UNKNOWN_SERVER);
     if (rt.status === 'connecting') return this.viewFor(rt);
     if (rt.kind === 'builtin') return this.connectBuiltin(rt);
     try {
       await assertPublicHttpUrl(rt.config.url);
     } catch (err) {
-      rt.error = `Invalid MCP server URL: ${errText(err)}`;
+      rt.error = `${MCP_INVALID_URL_PREFIX}${errText(err)}`;
       this.setStatus(rt, 'error');
       return this.viewFor(rt);
     }
@@ -185,7 +230,7 @@ export class McpRegistry {
     rt.interactive = interactive;
     rt.needsAuth = false;
 
-    const callback = await startCallbackServer(this.deps.authSuccessMessage);
+    const callback = await startCallbackServer(this.deps.authPageText);
     const provider = new McpAuthProvider(rt.config.id, callback.redirectUri, {
       isInteractive: () => rt.interactive,
       openBrowser: this.deps.openExternal,
@@ -238,7 +283,7 @@ export class McpRegistry {
     const id = rt.config.id;
     const runtime = this.builtinRuntime(id);
     if (!runtime) {
-      rt.error = 'Unknown built-in connector';
+      rt.error = MCP_UNKNOWN_BUILTIN;
       this.setStatus(rt, 'error');
       return this.viewFor(rt);
     }
@@ -319,7 +364,7 @@ export class McpRegistry {
   /** Switches a built-in connector on or off. Its opt-in is a config flag, not a `config.mcpServers` entry. */
   async setBuiltinEnabled(id: string, enabled: boolean): Promise<McpServerActionResult> {
     const builtin = findBuiltinConnector(id);
-    if (!builtin) return { ok: false, servers: this.listServers(), error: 'Unknown built-in connector' };
+    if (!builtin) return { ok: false, servers: this.listServers(), error: MCP_UNKNOWN_BUILTIN };
     config[builtin.flag] = enabled;
     const patch: Partial<Config> = {};
     patch[builtin.flag] = enabled;
@@ -348,6 +393,7 @@ export class McpRegistry {
   disconnectServer(id: string): McpServerActionResult {
     const rt = this.runtimes.get(id);
     if (rt) {
+      rt.cuts += 1;
       this.stopWatching(id);
       void rt.close?.();
       void rt.client?.close();
@@ -365,9 +411,9 @@ export class McpRegistry {
     const url = (req.url ?? '').trim();
     try {
       const parsed = await assertPublicHttpUrl(url);
-      if (parsed.protocol !== 'https:') throw new Error('MCP server URL must use https');
+      if (parsed.protocol !== 'https:') throw new Error(MCP_URL_NEEDS_HTTPS);
     } catch (err) {
-      return { ok: false, servers: this.listServers(), error: `Invalid MCP server URL: ${errText(err)}` };
+      return { ok: false, servers: this.listServers(), error: `${MCP_INVALID_URL_PREFIX}${errText(err)}` };
     }
     const name = (req.name ?? '').trim() || hostnameOf(url);
     const headerName = (req.headerName ?? '').trim() || undefined;
@@ -387,6 +433,7 @@ export class McpRegistry {
       const rt = this.runtimes.get(existing.id);
       if (rt) rt.config = existing;
       if (urlChanged && rt) {
+        rt.cuts += 1;
         void rt.client?.close();
         rt.client = null;
         rt.transport = null;
@@ -420,15 +467,9 @@ export class McpRegistry {
   }
 
   /**
-   * Rebuilds the runtime table from `config.mcpServers`.
-   *
-   * The table is built once, in the constructor, which is fine while every change goes through
-   * this class. A config replaced wholesale does not: after a backup import the Connectors view
-   * still listed the servers from before it, and `connectServer` could not find any of the
-   * imported ids until the app was restarted.
-   *
-   * A server whose id and URL both survived keeps its runtime, connection included — only its
-   * config object is refreshed, so renaming one in a backup does not drop a live connection.
+   * Rebuilds the runtime table from `config.mcpServers` after the config was replaced wholesale
+   * (a backup import). A server whose id and URL both survived keeps its runtime and connection;
+   * only its config object is refreshed.
    */
   syncWithConfig(): void {
     const wanted = new Set(config.mcpServers.map((server) => server.id));
@@ -452,7 +493,7 @@ export class McpRegistry {
 
   removeServer(id: string): McpServerActionResult {
     const index = config.mcpServers.findIndex((s) => s.id === id);
-    if (index === -1) return { ok: false, servers: this.listServers(), error: 'Server not found' };
+    if (index === -1) return { ok: false, servers: this.listServers(), error: MCP_SERVER_NOT_FOUND };
     const rt = this.runtimes.get(id);
     void rt?.client?.close();
     this.runtimes.delete(id);
@@ -496,13 +537,88 @@ export class McpRegistry {
     return this.runtimes.get(serverId)?.tools.find((tool) => tool.name === name);
   }
 
-  async callTool(serverId: string, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<McpToolResult> {
+  /**
+   * Opens a new session for a server that dropped the one `failed` holds. Never interactive, so a
+   * run never opens a browser. Does nothing when `failed` is no longer the server's client: another
+   * call already renewed it, or the user disconnected, removed or re-pointed the server.
+   */
+  private renewSession(id: string, failed: Client): Promise<void> {
+    const pending = this.renewing.get(id);
+    if (pending) return pending;
+    const task = (async () => {
+      const rt = this.runtimes.get(id);
+      if (!rt || rt.client !== failed) return;
+      const cuts = rt.cuts;
+      this.deps.log(`[mcp] ${rt.config.name} dropped its session; reconnecting`);
+      try {
+        await this.connect(id, false);
+      } catch (err) {
+        this.deps.log(`[mcp] session renewal failed ${rt.config.name}: ${errText(err)}`);
+      } finally {
+        // connect() swaps its new client in without closing the one it replaces.
+        void failed.close().catch(() => {});
+      }
+      this.standDownIfOverruled(id, rt, cuts);
+    })().finally(() => this.renewing.delete(id));
+    this.renewing.set(id, task);
+    return task;
+  }
+
+  /**
+   * connect() installs what it opened whatever happened while it waited on the server. A renewal
+   * runs with no one asking for it, so if the user removed, re-pointed or disconnected the server
+   * meanwhile, the session it opened is closed and the user's choice stands.
+   */
+  private standDownIfOverruled(id: string, rt: ServerRuntime, cuts: number): void {
+    if (this.runtimes.get(id) !== rt) {
+      // Removed or replaced: nothing can reach this runtime any more, so its session would never close.
+      void rt.client?.close().catch(() => {});
+      rt.client = null;
+      rt.transport = null;
+      rt.tools = [];
+      return;
+    }
+    if (rt.cuts === cuts) return;
+    this.deps.log(`[mcp] ${rt.config.name} was disconnected while its session was renewed; leaving it disconnected`);
+    this.disconnectServer(id);
+  }
+
+  /**
+   * `replayable` marks a call that is safe to send twice (a read). When the server has dropped
+   * its session, such a call is sent once more on a new one; any other call is not resent, since
+   * whether a change should go out again is for the user to decide.
+   */
+  async callTool(
+    serverId: string,
+    name: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+    replayable = false,
+  ): Promise<McpToolResult> {
+    // A renewal in flight shows the server as 'connecting'; wait for it instead of failing on that.
+    await this.renewing.get(serverId);
     const rt = this.runtimes.get(serverId);
-    if (!rt?.client || rt.status !== 'connected') throw new Error(`MCP server "${serverId}" is not connected`);
+    if (!rt?.client || rt.status !== 'connected') throw notConnectedError(serverId);
+    const client = rt.client;
+    const transport = rt.transport;
     const prepare = rt.kind === 'builtin' ? this.builtinRuntime(serverId)?.prepareCall : undefined;
     const verdict = prepare ? await prepare(name, args) : { args };
     if ('denied' in verdict) return { text: verdict.denied, isError: true };
-    const result = await rt.client.callTool({ name, arguments: verdict.args }, undefined, { signal, timeout: CALL_TIMEOUT_MS });
+    try {
+      const result = await client.callTool({ name, arguments: verdict.args }, undefined, { signal, timeout: CALL_TIMEOUT_MS });
+      return flattenResult(result as CallToolResult);
+    } catch (err) {
+      if (signal?.aborted || !isSessionLost(rt, transport, err)) throw err;
+    }
+
+    await this.renewSession(serverId, client);
+    const fresh = this.runtimes.get(serverId);
+    if (!fresh?.client || fresh.status !== 'connected') throw notConnectedError(serverId);
+    if (!replayable) {
+      // Worded so the action gate does not read it as a final failure of this exact call.
+      throw new McpCallNotSentError(`MCP server "${serverId}" had dropped its session and has been reconnected; this call was not sent. Send it again if it is still wanted.`);
+    }
+    const result = await fresh.client.callTool({ name, arguments: verdict.args }, undefined, { signal, timeout: CALL_TIMEOUT_MS });
     return flattenResult(result as CallToolResult);
   }
 
@@ -518,11 +634,11 @@ export class McpRegistry {
 }
 
 function newRuntime(server: McpServerConfig): ServerRuntime {
-  return { config: server, status: 'disconnected', tools: [], client: null, transport: null, interactive: false, needsAuth: false, kind: 'http' };
+  return { config: server, status: 'disconnected', tools: [], client: null, transport: null, interactive: false, needsAuth: false, kind: 'http', cuts: 0 };
 }
 
 function newBuiltinRuntime(server: McpServerConfig): ServerRuntime {
-  return { config: server, status: 'disconnected', tools: [], client: null, transport: null, interactive: false, needsAuth: false, kind: 'builtin' };
+  return { config: server, status: 'disconnected', tools: [], client: null, transport: null, interactive: false, needsAuth: false, kind: 'builtin', cuts: 0 };
 }
 
 function hostnameOf(url: string): string {

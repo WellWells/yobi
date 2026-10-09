@@ -135,6 +135,9 @@ const SUMMARY_KEYS: Partial<Record<SkillType, string[]>> = {
   line_read: ['chat', 'query'],
   youtube: ['url'],
   youtube_subs: ['channels'],
+  x_posts: ['accounts'],
+  x_thread: ['url'],
+  x_trends: ['maxItems'],
   llm: ['prompt'],
   bot: ['message'],
   email_send: ['to', 'subject'],
@@ -157,6 +160,30 @@ const SUMMARY_KEYS: Partial<Record<SkillType, string[]>> = {
   delay: ['delayMs'],
   comment: ['note'],
 };
+
+/** Steps whose summary and output are code or console text, read character by character. */
+const CODE_SKILLS: ReadonlySet<SkillType> = new Set<SkillType>(['shell', 'run', 'js', 'browser_js']);
+
+/** Summaries that are a target — URL or path — where I/l and 0/O lookalikes must stay apart. */
+const TARGET_SUMMARY_SKILLS: ReadonlySet<SkillType> = new Set<SkillType>([
+  'browser', 'browser_open', 'http', 'rss', 'scraper', 'gmap_reviews', 'youtube', 'x_thread',
+  'file_download', 'file_read', 'file_delete', 'file_list', 'file_write',
+]);
+
+// A bracket followed by what JSON can hold there, so "[Note] … [1][2]" stays prose.
+const JSON_START = /^\s*(?:\[\s*[[{"\d\]-]|\{\s*["}])/;
+const JSON_END = /[\]}]\s*$/;
+
+/** Monospace is for code, targets and structured data; prompts, messages and answers stay in the UI face. */
+export function isCodeSummary(type: SkillType): boolean {
+  return CODE_SKILLS.has(type) || TARGET_SUMMARY_SKILLS.has(type);
+}
+
+export function isCodeOutput(type: SkillType, output: string): boolean {
+  if (CODE_SKILLS.has(type)) return true;
+  if (/^\s*</.test(output)) return true;
+  return JSON_START.test(output) && JSON_END.test(output);
+}
 
 export function summarizeStep(type: SkillType, config: Record<string, string>): string {
   const keys = SUMMARY_KEYS[type] ?? Object.keys(config).slice(0, 1);

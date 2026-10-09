@@ -7,7 +7,11 @@ import { MAX_PLAN_QUERIES } from './types';
 import { languageForLocale, runWorkerCompletion } from './synthesize';
 import type { QueryPlan, TemporalFilter } from './types';
 
-const PLANNER_TIMEOUT_MS = 20_000;
+/*
+ * One deadline for the whole planner across every key of a group; past it the regex plan is used.
+ * Keys that fail fast (429, 503) still hand over inside the deadline.
+ */
+export const PLANNER_DEADLINE_MS = 6_000;
 /*
  * A browser provider answers on its own schedule and the whole search waits behind it, so the
  * planner gets a fraction of the answer's 300 s: past this the follow-up is better searched
@@ -17,7 +21,7 @@ const WEB_PLANNER_TIMEOUT_MS = 90_000;
 
 /**
  * The planner never fails a search: a plan that could not be read, or a call that never came
- * back, falls through to the regex plan the pipeline used before there was a planner at all.
+ * back, falls through to the regex plan.
  */
 async function runPlanner(
   query: string,
@@ -57,7 +61,9 @@ export function planQueryLlm(
   history = '',
 ): Promise<QueryPlan> {
   return runPlanner(query, locale, history, async (prompt) => {
-    const { response } = await runByokCompletion(targetUrl, prompt, PLANNER_TIMEOUT_MS);
+    const { response } = await runByokCompletion(
+      targetUrl, prompt, PLANNER_DEADLINE_MS, AbortSignal.timeout(PLANNER_DEADLINE_MS),
+    );
     return response;
   });
 }
@@ -101,7 +107,9 @@ function buildPlannerPrompt(query: string, locale: string, history: string): str
     history
       ? '{"temporal":"day"|"week"|"month"|"none","queries":["...","..."],"resolved":"..."}'
       : '{"temporal":"day"|"week"|"month"|"none","queries":["...","..."]}',
-    '- temporal: how recent results must be; "none" if timing does not matter.',
+    '- temporal: a filter that hides every page older than the period. Use "day"/"week"/"month" only',
+    '  for news or events of a period (today, this week, recent announcements). Products, specs,',
+    '  prices, rankings and "latest model/version" questions use "none": their official pages are older.',
     `- queries: 2-3 concrete search-engine queries. Include one refined in the user's language (${language}),`,
     '  one English variant, and optionally one from a different angle. Strip filler words; keep proper nouns.',
     ...(history

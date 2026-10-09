@@ -6,6 +6,7 @@ import { AGENT_HELP_TOOL, OPTS_MARKER } from './agentTools';
 import { readIntent } from './actionGate';
 import type { GoalIntent } from './actionGate';
 import { resolveToolContract } from './contractRegistry';
+import { toolNouns } from './mcpToolNouns';
 import { genericRisk, riskLabel } from './toolContracts';
 import type { Validation } from './structuredLlm';
 import type { McpTool, McpToolResult } from '../../mcp/mcpTypes';
@@ -50,6 +51,25 @@ export function buildMcpIndex(connected: ConnectedServerTools[]): McpRuntimeInde
   return { handles, byHandle: new Map(handles.map((h) => [h.handle, h])) };
 }
 
+function foldHandle(value: string): string {
+  return value.trim().normalize('NFKC').toLowerCase();
+}
+
+/**
+ * The server a model-written handle names. Exact first; otherwise a case- and width-folded match,
+ * but only when exactly one handle folds to it. Models write `"X"` for the handle `"x"`, and a
+ * rejection for that alone costs a whole repair round trip on a web provider. Callers record the
+ * returned server's own `handle`, so the repeat guard, the evidence and the trace see one spelling.
+ */
+export function findMcpServer(index: McpRuntimeIndex, written: string): McpServerHandle | undefined {
+  const exact = index.byHandle.get(written);
+  if (exact) return exact;
+  const folded = foldHandle(written);
+  if (!folded) return undefined;
+  const matches = index.handles.filter((server) => foldHandle(server.handle) === folded);
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 export function hasMcpTools(index: McpRuntimeIndex): boolean {
   return index.handles.length > 0;
 }
@@ -85,21 +105,9 @@ const MCP_MIN_BUDGET = 1_000;
 const BYOK_CATALOG_BUDGET = 40_000;
 
 /**
- * How many observation slots the BUDGETS reserve — deliberately fewer than the window
- * `renderScratch` prints.
- *
- * The two used to be the same number, and they measure different things. A browser run sends the
- * full turn prompt exactly twice: on turn 1, where the scratchpad is empty, and on a thread-loss
- * rebuild. Every turn in between is a delta carrying ONE observation. Reserving the whole
- * three-slot window up front therefore billed every run 11,640 of Gemini's 33,499 characters to
- * protect a prompt shape the normal path never sends — and `scratchFitFor` and `historyThatFits`
- * already trim the rebuild that does. What it bought was nothing; what it cost was the
- * conversation history, which came out at 887 characters and so fell under its own floor for any
- * goal longer than a greeting: /agent could not see the turn above it on Yobi's default provider.
- *
- * The trade this makes explicit: a rebuild after a lost thread now trims what the run had
- * gathered more aggressively. That is the exceptional path, and it degrades; the reserve was
- * charged on every run, and it did not.
+ * Observation slots the budgets reserve: fewer than the window `renderScratch` prints. On a browser
+ * provider only turn 1 (empty scratchpad) and a thread-loss rebuild send the full prompt; every other
+ * turn is a delta with one observation, and `scratchFitFor`/`historyThatFits` already trim the rebuild.
  */
 export const MCP_SCRATCH_RESERVE_SLOTS = 1;
 
@@ -150,12 +158,8 @@ function renderToolLine(tool: McpTool, serverId: string): string {
 }
 
 /**
- * Description budgets for a tier-1 line, widest first. Under contention the descriptions are
- * squeezed before any tool is dropped: a tool the model cannot see at all is worse than one
- * whose description is clipped, because disclosing the connector is only useful if the model can
- * see every instrument it might pick. The last step is a floor, not a target — below roughly
- * thirty characters a description stops distinguishing one tool from the next, and omitting is
- * the more honest outcome.
+ * Description widths for tier-1 lines, widest first: descriptions are squeezed before any tool is
+ * dropped. The last is a floor; below ~30 characters a description no longer tells tools apart.
  */
 const BRIEF_DESC_LIMITS = [72, 48, 32] as const;
 const BRIEF_ARGS_SHOWN = 4;
@@ -166,12 +170,9 @@ function briefDesc(text: string, limit: number): string {
 }
 
 /**
- * Tier-1 line: name, read/write, a clipped description and the REQUIRED arguments only — about
- * half the cost of a full line, which is what lets more than one connector be disclosed at once
- * on a browser provider. The description is clipped rather than dropped on purpose: disclosing a
- * connector is only useful if the model can judge which tool fits, and a bare name cannot carry
- * that judgement. `OPTS_MARKER` is shared with the built-in catalog so the model learns one
- * grammar, not two.
+ * Tier-1 line: name, read/write, a clipped description and the required arguments only, about half
+ * the cost of a full line. `OPTS_MARKER` is shared with the built-in catalog so the model learns one
+ * grammar.
  */
 function renderBriefToolLine(tool: McpTool, serverId: string, descLimit: number): string {
   const rw = toolLabel(tool, serverId);
@@ -204,12 +205,9 @@ interface CatalogBlock {
 }
 
 /**
- * What a hidden tail says. The old line — `(+78 more tool(s) not shown due to length limits.)` —
- * told the model something existed and gave it no way to ask for it, so on Gemini with four
- * connectors two thirds of the user's tools were not merely undisclosed but unreachable. This one
- * names the server and the call that expands it, and it is emitted per server because
- * `fillCatalog` hands out equal shares: a 78-tool server hides a long tail while the 3-tool
- * server beside it hides nothing, and one global count cannot say which is which.
+ * One tail per truncated server, naming the handle and, when `canHelp`, the call that expands it.
+ * Per server because `fillCatalog` hands out equal shares, so one global count cannot say which
+ * server was cut.
  */
 function tailLine(handle: string, hidden: number, canHelp: boolean): string {
   const ask = canHelp
@@ -219,20 +217,16 @@ function tailLine(handle: string, hidden: number, canHelp: boolean): string {
 }
 
 /**
- * Upper bound on one `tailLine`, wide enough for a 60-character handle. Like the section heading
- * and the footer it replaces, a tail is not charged against the catalog budget — it comes out of
- * `SAFETY_MARGIN`. Charging it instead was tried and reverted: reserving one per server before
- * the layout puts a cliff in the small budgets, where the reserve can exceed the budget and no
- * tool fits at all. Bounded rather than charged: at most one tail per connected server, so four
- * connectors overspend by at most 640 against a 1,200 margin. Pinned in `test/mcpTools.test.ts`.
+ * Upper bound on one `tailLine` (fits a 60-character handle). Tails come out of `SAFETY_MARGIN`,
+ * not the catalog budget: at most one per server, so four connectors overspend by at most 640 of
+ * 1,200. Charging them up front would leave small budgets with no room for any tool.
  */
 export const TAIL_LINE_MAX = 160;
 
 /**
- * Equal shares first, leftovers second. Filling greedily in registry order — which is
- * `config.json` add-order, NOT the order the user named the connectors — let the oldest
- * connector eat the whole budget while the one just asked for contributed nothing. That failure
- * is silent: a run that keeps its built-in tools never throws `AgentScopeError('no-room')`.
+ * Equal shares first, leftovers second. Registry order is `config.json` add-order, not the order the
+ * user named connectors, so a greedy fill would let the oldest connector take the whole budget, and
+ * silently: a run that keeps its built-in tools never throws `AgentScopeError('no-room')`.
  */
 function fillCatalog(
   index: McpRuntimeIndex,
@@ -270,10 +264,7 @@ function fillCatalog(
   for (const block of blocks) take(block, share);
   for (const block of blocks) take(block, block.used + (budgetChars - spent()));
 
-  // The tail rides under its own server's block, so the model reads "these fitted, that many did
-  // not" in one place. A server that could not fit even one line gets the tail ALONE, with no
-  // header: the header rule — never spend the budget on a bare name — still holds, and the tail
-  // already names the handle, which is the only thing the model needs to ask for the rest.
+  // Each tail follows its server's block; a server with no line fitted gets the tail alone, no header.
   const lines = blocks.flatMap((block) => {
     const hidden = block.tools.length - block.next;
     if (hidden === 0) return block.lines;
@@ -303,25 +294,20 @@ function sampleToolNames(tools: readonly McpTool[], count: number): string[] {
 }
 
 /**
- * The third catalog tier: one line per SERVER instead of one per tool.
- *
- * Tiers 1 and 2 both scale with the tools CONNECTED rather than with the tools a goal could use.
- * Measured on four connected servers (127 tools), tier 2 spends ~8,500 characters of Gemini's
- * 33,499 on every run — including the run that only wanted a currency conversion — and that is
- * the block that squeezes the conversation history and the observations.
- *
- * Nothing is hidden by this, which is the difference between a summary and the omission it
- * replaces: `tool_help` with a bare handle already returns a server's full tier-1 listing, and
- * `resolveMcpTool` matches against the runtime index rather than against whatever the prompt
- * rendered, so a tool reached that way is callable. A run WITHOUT `tool_help` has no way back,
- * which is why the caller must not choose this tier when `canHelp` is false.
+ * The third catalog tier: one line per server, because tiers 1 and 2 scale with the tools connected
+ * rather than the tools a goal can use. Nothing is hidden: `tool_help` with a bare handle returns the
+ * server's tier-1 listing and `resolveMcpTool` matches the runtime index, so a caller without
+ * `tool_help` (`canHelp` false) must not choose this tier. The "covers:" nouns (`toolNouns`) surface
+ * capabilities a four-name sample misses.
  */
 export function buildMcpSummary(index: McpRuntimeIndex, canHelp: boolean): string {
   return index.handles.map((server) => {
     const marker = server.userData ? ` ${USER_DATA_MARKER}` : '';
     const names = sampleToolNames(server.tools, SUMMARY_SAMPLE).join(', ');
+    const nouns = toolNouns(server.tools, server.serverName);
+    const covers = nouns.length > 0 ? `; covers: ${nouns.join(', ')}` : '';
     const open = canHelp ? ` — call "${AGENT_HELP_TOOL}" with "${server.handle}" for the full list` : '';
-    return `- [${server.handle}] ${server.serverName}${marker} — ${server.tools.length} tools, e.g. ${names}${open}.`;
+    return `- [${server.handle}] ${server.serverName}${marker} — ${server.tools.length} tools${covers}; e.g. ${names}${open}.`;
   }).join('\n');
 }
 
@@ -351,19 +337,17 @@ export function buildMcpCatalog(
 }
 
 /**
- * One server's tools, tier-1, for a `tool_help` call that named a bare handle. Squeezed by the
- * same ladder the catalog uses and tailed the same way, because the observation this lands in has
- * a cap of its own — a 78-tool server does not fit a browser provider's 3,500 characters either,
- * and a listing that ran off the end would hide the tail a second time.
+ * One server's tools, tier-1, for a `tool_help` call that named a bare handle. Squeezed and tailed
+ * like the catalog, because the observation it lands in has its own cap.
  */
 export function describeMcpServer(
   index: McpRuntimeIndex,
   handle: string,
   budgetChars: number,
 ): string | null {
-  const server = index.byHandle.get(handle);
+  const server = findMcpServer(index, handle);
   if (!server) return null;
-  const single: McpRuntimeIndex = { handles: [server], byHandle: new Map([[handle, server]]) };
+  const single: McpRuntimeIndex = { handles: [server], byHandle: new Map([[server.handle, server]]) };
   const room = Math.max(0, budgetChars - TAIL_LINE_MAX);
   let last = '';
   for (const limit of BRIEF_DESC_LIMITS) {
@@ -387,14 +371,14 @@ export function describeMcpTool(
   if (!raw) return null;
   const colon = raw.indexOf(':');
   if (colon > 0) {
-    const server = index.byHandle.get(raw.slice(0, colon));
+    const server = findMcpServer(index, raw.slice(0, colon));
     const tool = server?.tools.find((t) => t.name === raw.slice(colon + 1));
     if (server && tool) return `${renderToolLine(tool, server.serverId)}${schemaHint(tool)}`;
   }
   // A bare handle lists the server. Checked before the bare tool-name search, because a name that
   // is BOTH a handle and a tool almost certainly means the server the catalog just advertised —
   // and that tool is still reachable the explicit way, as `handle:tool`.
-  if (serverListBudget > 0 && index.byHandle.has(raw)) {
+  if (serverListBudget > 0 && findMcpServer(index, raw)) {
     return describeMcpServer(index, raw, serverListBudget);
   }
   const matches = index.handles.flatMap((server) => server.tools
@@ -426,12 +410,27 @@ function enumSpec(values: readonly unknown[]): string {
   return `one of: ${shown.join('|')}`;
 }
 
+/**
+ * The one value a nested key may take, if it has exactly one, so a discriminator shows as
+ * `type="page_id"` instead of a bare `type`.
+ */
+function fixedValue(raw: unknown): string | null {
+  const schema = asSchema(raw);
+  if (!schema) return null;
+  if (schema.const !== undefined) return JSON.stringify(schema.const);
+  return Array.isArray(schema.enum) && schema.enum.length === 1 ? JSON.stringify(schema.enum[0]) : null;
+}
+
 function objectSpec(schema: JsonSchema): string {
   const props = asSchema(schema.properties);
   const keys = props ? Object.keys(props) : [];
   if (keys.length === 0) return 'object';
   const required = new Set(Array.isArray(schema.required) ? schema.required.map(String) : []);
-  const shown = keys.slice(0, MAX_NESTED_KEYS).map((key) => (required.has(key) ? `${key}*` : key));
+  const shown = keys.slice(0, MAX_NESTED_KEYS).map((key) => {
+    const name = required.has(key) ? `${key}*` : key;
+    const fixed = fixedValue(props?.[key]);
+    return fixed ? `${name}=${fixed}` : name;
+  });
   if (keys.length > MAX_NESTED_KEYS) shown.push('…');
   return `object{${shown.join(', ')}}`;
 }
@@ -524,14 +523,8 @@ function dropOverflow(entries: readonly SchemaEntry[], budget: number): string {
 
 /**
  * A readable digest of a tool's input schema, required arguments first, inside a fixed budget.
- *
- * This was `JSON.stringify(inputSchema).slice(0, 1_200)`. On a real connector schema that cut
- * lands mid-object: for Notion's update-page it fell just after `"command":`, hiding the six legal
- * values of the one argument the model had to get right, along with `content_updates` and its
- * `old_str`/`new_str` shape. A severed blob still reads as a whole schema, so the model could not
- * tell it was guessing, and every write in the run failed on invented argument names. Enum values
- * and nested shapes decide whether a call is accepted, so they are never traded away; only
- * descriptions are squeezed, and anything the budget still cannot hold is reported as missing.
+ * Enum values and nested shapes decide whether a call is accepted, so they are never traded away;
+ * only descriptions are squeezed, and anything still over budget is reported as omitted.
  */
 export function schemaHint(tool: McpTool): string {
   const schema = asSchema(tool.inputSchema);
@@ -557,16 +550,34 @@ export function isArgumentError(text: string): boolean {
 }
 
 export function validateMcpArguments(tool: McpTool, args: Record<string, unknown>): { ok: boolean; error?: string } {
-  const required = tool.inputSchema?.required;
-  if (!Array.isArray(required)) return { ok: true };
-  // An empty string is a value, not an absence: Thunderbird's searchMessages documents `query: ""`
-  // as "match everything", and refusing it cost a run a whole turn.
+  const raw = tool.inputSchema?.required;
+  const required = Array.isArray(raw) ? raw : [];
+  // An empty string is a value, not an absence (a search `query: ""` can mean "match everything").
   const missing = required.filter((key) => {
     const value = (args ?? {})[key];
     return value === undefined || value === null;
   });
   if (missing.length > 0) return { ok: false, error: `Missing required argument(s): ${missing.join(', ')}` };
+  const invalid = enumMismatch(tool, args ?? {});
+  if (invalid) return { ok: false, error: invalid };
   return { ok: true };
+}
+
+/**
+ * A value outside an argument's enum, caught before the action gate so the model gets the real
+ * values from the schema instead of a gate verdict on a call the server would refuse anyway.
+ */
+function enumMismatch(tool: McpTool, args: Record<string, unknown>): string | null {
+  const props = asSchema(tool.inputSchema?.properties);
+  if (!props) return null;
+  for (const [key, value] of Object.entries(args)) {
+    const allowed = asSchema(props[key])?.enum;
+    if (!Array.isArray(allowed) || allowed.length === 0) continue;
+    if (value === undefined || value === null || typeof value === 'object') continue;
+    if (allowed.some((option) => String(option) === String(value))) continue;
+    return `Invalid value for "${key}": "${String(value)}" — ${enumSpec(allowed)}`;
+  }
+  return null;
 }
 
 export function formatMcpObservation(result: McpToolResult): string {
@@ -592,23 +603,26 @@ export function validateMcpAction(obj: Record<string, unknown>, index: McpRuntim
   const server = typeof obj.server === 'string' ? obj.server.trim() : '';
   const name = typeof obj.name === 'string' ? obj.name.trim() : '';
 
-  const handle = index.byHandle.get(server);
+  const handle = findMcpServer(index, server);
   if (!handle) {
     return { ok: false, error: `"server" must be one of: ${index.handles.map((h) => `"${h.handle}"`).join(', ')}. Got "${server}".` };
   }
   if (!handle.tools.some((tool) => tool.name === name)) {
-    return { ok: false, error: `"name" must be a tool on server "${server}". Got "${name}".` };
+    return { ok: false, error: `"name" must be a tool on server "${handle.handle}". Got "${name}".` };
   }
   const rawArgs = obj.arguments;
   const args = rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? (rawArgs as Record<string, unknown>) : {};
   return {
     ok: true,
-    value: { thought, action: 'call_mcp', server, name, arguments: args, ...readPlanFields(obj), ...readStepBudget(obj), ...readIntent(obj) },
+    value: {
+      thought, action: 'call_mcp', server: handle.handle, name, arguments: args,
+      ...readPlanFields(obj), ...readStepBudget(obj), ...readIntent(obj),
+    },
   };
 }
 
 export function resolveMcpTool(index: McpRuntimeIndex, server: string, name: string): { serverId: string; tool: McpTool } | undefined {
-  const handle = index.byHandle.get(server);
+  const handle = findMcpServer(index, server);
   const tool = handle?.tools.find((t) => t.name === name);
   return handle && tool ? { serverId: handle.serverId, tool } : undefined;
 }

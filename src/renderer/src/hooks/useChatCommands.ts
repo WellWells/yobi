@@ -9,6 +9,7 @@ import {
   BUILTIN_MODEL_FLOW_ID,
   BUILTIN_NEW_FLOW_ID,
   BUILTIN_QUICKSEARCH_FLOW_ID,
+  BUILTIN_RECAP_FLOW_ID,
   BUILTIN_SEARCH_FLOW_ID,
 } from '../../../shared/types';
 
@@ -25,8 +26,8 @@ export interface ChatCommand {
 export type CommandGroup = 'action' | 'builtin' | 'mcp' | 'flow';
 
 // `/model` acts on the app rather than asking anything, so it sits with `/new` even though it
-// takes an argument where `/new` runs at once.
-const ACTION_FLOW_IDS = new Set<string>([BUILTIN_NEW_FLOW_ID, BUILTIN_MODEL_FLOW_ID]);
+// takes an argument where `/new` runs at once. `/recap` only shows what is already recorded.
+const ACTION_FLOW_IDS = new Set<string>([BUILTIN_NEW_FLOW_ID, BUILTIN_MODEL_FLOW_ID, BUILTIN_RECAP_FLOW_ID]);
 const BUILTIN_FLOW_IDS = new Set<string>([
   BUILTIN_CHAT_FLOW_ID,
   BUILTIN_AGENT_FLOW_ID,

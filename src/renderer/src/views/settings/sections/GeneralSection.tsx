@@ -1,15 +1,17 @@
 import React from 'react';
 import { ActionIcon, Box, Group, Stack, Tooltip } from '@mantine/core';
 import {
-  AppWindow, ChevronRight, FolderOpen, Keyboard, Languages,
+  AppWindow, FolderOpen, Languages,
 } from 'lucide-react';
-import { AppButton } from '../../../components/AppButton';
 import {
   SectionCard, SettingRow, SelectDropdown, ToggleSwitch,
   SectionTitle,
 } from '../components';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import type { useSystemSettings } from '../hooks/useSystemSettings';
+import { LANGUAGE_PACK_GUIDE_URL } from '../../../config/projectLinks';
+import { ExternalLink } from './lineLinks';
+import { ExternalEditorSetting } from './ExternalEditorSetting';
 
 type SystemSettings = ReturnType<typeof useSystemSettings>;
 
@@ -21,29 +23,18 @@ interface Props {
   onSetLocale: (locale: string) => Promise<void>;
   getLocaleLabel: (locale: string) => string;
   onOpenLanguagesFolder: () => Promise<void>;
-  onOpenShortcuts: () => void;
   showSection: (tags: readonly string[], category: 'general') => boolean;
   sectionGap: number;
 }
 
 export const GeneralSection: React.FC<Props> = ({
   system, t, locale, availableLocales, onSetLocale, getLocaleLabel,
-  onOpenLanguagesFolder, onOpenShortcuts, showSection, sectionGap,
+  onOpenLanguagesFolder, showSection, sectionGap,
 }) => (
-  <Box display={showSection(TAG_SETS.hotkey, 'general') || showSection(TAG_SETS.tray, 'general') || showSection(TAG_SETS.language, 'general') ? 'block' : 'none'}>
-
-    <SectionCard style={{ marginBottom: sectionGap, display: showSection(TAG_SETS.language, 'general') ? 'block' : 'none' }}>
-      <SettingRow
-        icon={<Keyboard size={13} />}
-        label={t('settings.hotkey')}
-        hint={t('settings.shortcut.movedHint')}
-        control={(
-          <AppButton variant="subtle" size="xs" rightSection={<ChevronRight size={13} />} onClick={onOpenShortcuts}>
-            {t('settings.group.shortcuts')}
-          </AppButton>
-        )}
-      />
-    </SectionCard>
+  <Box
+    display={showSection(TAG_SETS.tray, 'general') || showSection(TAG_SETS.language, 'general')
+      || showSection(TAG_SETS.editor, 'general') ? 'block' : 'none'}
+  >
 
     <SectionCard style={{ marginBottom: sectionGap, display: showSection(TAG_SETS.tray, 'general') ? 'block' : 'none' }}>
       {(() => {
@@ -74,7 +65,12 @@ export const GeneralSection: React.FC<Props> = ({
       <SettingRow
         icon={<Languages size={13} />}
         label={t('settings.language')}
-        hint={t('settings.language.customHint')}
+        hint={(
+          <>
+            {t('settings.language.customHint')}{' '}
+            <ExternalLink url={LANGUAGE_PACK_GUIDE_URL} label={t('settings.language.guide')} />
+          </>
+        )}
         control={(
           <Group gap={6} wrap="nowrap">
             <SelectDropdown
@@ -96,6 +92,8 @@ export const GeneralSection: React.FC<Props> = ({
         )}
       />
     </SectionCard>
+
+    <ExternalEditorSetting t={t} visible={showSection(TAG_SETS.editor, 'general')} sectionGap={sectionGap} />
 
   </Box>
 );

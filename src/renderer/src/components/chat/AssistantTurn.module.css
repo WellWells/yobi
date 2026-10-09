@@ -1,5 +1,3 @@
-/* AssistantTurn.module.css */
-
 /* The action row stays laid out but invisible until the pointer is on this reply,
    so a long conversation is not a column of repeated buttons. Space is reserved
    (opacity, not display) so revealing one never shifts the turns below it. */

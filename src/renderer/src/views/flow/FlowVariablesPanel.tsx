@@ -52,8 +52,8 @@ const UsageHint: React.FC<{ usages: number; t: (k: string) => string }> = ({ usa
   }
   return (
     <Group gap={4} wrap="nowrap" align="center">
-      <TriangleAlert size={12} color="var(--mantine-color-orange-filled)" />
-      <Text fz="xs" c="orange">{t('flow.variables.unused')}</Text>
+      <TriangleAlert size={12} color="var(--mantine-color-warning)" />
+      <Text fz="xs" c="var(--mantine-color-warning)">{t('flow.variables.unused')}</Text>
     </Group>
   );
 };
@@ -239,7 +239,7 @@ export const FlowVariablesPanel: React.FC<FlowVariablesPanelProps> = ({ flow, t,
               {t('flow.variables')}
             </Text>
             {missingCount > 0 && (
-              <Badge color="red" variant="light" size="sm">
+              <Badge color="var(--mantine-color-error)" variant="light" size="sm">
                 {t('flow.variables.missingBadge')}
               </Badge>
             )}

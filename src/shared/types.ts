@@ -1,9 +1,12 @@
 import { SHARE_EXPIRE_VALUES } from './shareExpire';
 import { CAPTURE_PALETTES } from './capturePalettes';
 import type { ShareExpire, ShareExpireCache } from './shareExpire';
-import type { TurnMeta } from './conversationDoc';
+import type { MapPlaceRef, TurnMeta } from './conversationDoc';
 import type { TokenUsage } from './tokenEstimate';
 import type { Theme } from './themes';
+import type { BotGrant } from './botPermissions';
+import type { ResearchProgress } from './researchProgress';
+import type { MarkdownLabels } from './markdownLabels';
 
 export const PROVIDER_URLS = {
   gemini: 'https://gemini.google.com/',
@@ -27,7 +30,23 @@ export const PROVIDERS = ['gemini', 'claude', 'chatgpt', 'perplexity'] as const;
 export const AUTH_PROVIDERS = ['gemini', 'claude', 'chatgpt', 'perplexity'] as const;
 export type AuthProvider = (typeof AUTH_PROVIDERS)[number];
 
-export const LOGIN_REQUIRED_PROVIDERS = ['claude', 'chatgpt', 'perplexity'] as const;
+/**
+ * Sign-ins that are not model providers: sites a flow skill reads with the user's own account.
+ * Each lives in its own session partition, never the AI worker's.
+ */
+export const SITE_ACCOUNTS = ['x'] as const;
+export type SiteAccount = (typeof SITE_ACCOUNTS)[number];
+
+export const SITE_ACCOUNT_LABELS: Record<SiteAccount, string> = {
+  x: 'X',
+} as const;
+
+export interface SiteAccountStatus {
+  site: SiteAccount;
+  loggedIn: boolean;
+}
+
+export const LOGIN_REQUIRED_PROVIDERS = ['claude', 'chatgpt'] as const;
 export type LoginRequiredProvider = (typeof LOGIN_REQUIRED_PROVIDERS)[number];
 
 export function loginRequiredProviderForUrl(url: string): LoginRequiredProvider | null {
@@ -43,11 +62,17 @@ export const DEFAULT_PROVIDER_COMMANDS: Record<Provider, string> = {
 
 export const BOT_COMMAND_RE = /^[a-z][a-z0-9_]{0,31}$/;
 
-export const BOT_BUILTIN_COMMAND_KEYS = ['agent', 'search'] as const;
+/**
+ * The built-in commands a bot user can type. There is no `/agent`: every message the bot answers is
+ * already an agent run.
+ */
+export const BOT_BUILTIN_COMMAND_KEYS = ['search'] as const;
 export type BotBuiltinCommandKey = (typeof BOT_BUILTIN_COMMAND_KEYS)[number];
 
+/** What a bot run does: answer as an agent (a message, or a model command such as `/gemini`), or `/search`. */
+export type BotRunKind = 'agent' | BotBuiltinCommandKey;
+
 export const DEFAULT_BUILTIN_COMMANDS: Record<BotBuiltinCommandKey, string> = {
-  agent: 'agent',
   search: 'search',
 } as const;
 
@@ -66,10 +91,20 @@ export function providerFromUrl(url: string): Provider {
   return 'gemini';
 }
 
+const BUILTIN_PROVIDER_URLS: readonly string[] = Object.values(PROVIDER_URLS);
+
 /**
- * Duck.ai was removed in 2026-09. A target saved before then (chat model, bot command, flow step)
- * still names it, and `providerFromUrl` would call it Gemini while the runner navigated to duck.ai.
- * Every stored target passes through here so it lands on Gemini instead.
+ * A built-in provider's URL spelled exactly as `PROVIDER_URLS`, whatever its trailing slash; any
+ * other URL unchanged. The renderer matches model options by exact URL.
+ */
+export function canonicalProviderUrl(url: string): string {
+  const bare = url.replace(/\/+$/, '');
+  return BUILTIN_PROVIDER_URLS.find((known) => known.replace(/\/+$/, '') === bare) ?? url;
+}
+
+/**
+ * Moves a legacy duck.ai target (chat model, bot command, flow step) to Gemini, so the label and
+ * the runner agree on where it goes.
  */
 export function migrateRemovedTargetUrl(url: string): string {
   try {
@@ -387,10 +422,8 @@ export const PROVIDER_ATTACHMENT_POLICIES: Record<Provider, ProviderAttachmentPo
 };
 
 /**
- * The providers that accept uploads, named for the three places that disclose the capability:
- * the skill spec sent to the model, the flow config hint and the bot's rejection reply. Derived
- * from the policies above on purpose — ChatGPT gained uploads while all three still said "Gemini
- * only", which made the app tell users (and the model) that a working feature did not exist.
+ * The providers that accept uploads, for the skill spec, the flow config hint and the bot's rejection
+ * reply. Derived from the policies above so the disclosure cannot drift from what actually works.
  */
 export const UPLOAD_CAPABLE_PROVIDER_LABELS = PROVIDERS
   .filter((provider) => PROVIDER_ATTACHMENT_POLICIES[provider].maxFiles > 0)
@@ -405,6 +438,7 @@ export const IPC = {
   UPDATE_NOT_AVAILABLE: 'update:not-available',
   UPDATE_ERROR: 'update:error',
   FILE_LIST: 'file:list',
+  OUTPUT_FILES_CHANGED: 'file:outputs-changed',
   UI_NOTIFICATION: 'ui:notification',
   TELEGRAM_RUNTIME: 'telegram:runtime',
   LINE_RUNTIME: 'line:runtime',
@@ -422,6 +456,10 @@ export const IPC = {
   GET_ACCOUNT_STATUSES: 'account:get-statuses',
   OPEN_ACCOUNT_LOGIN: 'account:open-login',
   ACCOUNT_LOGOUT: 'account:logout',
+  SITE_ACCOUNT_STATUS_CHANGED: 'site-account:status-changed',
+  GET_SITE_ACCOUNT_STATUSES: 'site-account:get-statuses',
+  OPEN_SITE_ACCOUNT_LOGIN: 'site-account:open-login',
+  SITE_ACCOUNT_LOGOUT: 'site-account:logout',
   PROVIDER_CLEAR_DATA: 'provider:clear-data',
   UPDATE_CHECK: 'update:check',
   GET_UPDATE_SOURCE: 'update:get-source',
@@ -434,6 +472,8 @@ export const IPC = {
   UPDATE_FILE_TITLE: 'file:update-title',
   UPDATE_FILE_H1: 'file:update-h1',
   START_CONVERSATION: 'file:start-conversation',
+  IMPORT_CONVERSATIONS: 'file:import-conversations',
+  START_FILE_DRAG: 'file:start-drag',
   UPDATE_HOTKEY: 'hotkey:update',
   GET_HOTKEY: 'hotkey:get',
   SET_HOTKEY_PAUSED: 'hotkey:set-paused',
@@ -463,7 +503,18 @@ export const IPC = {
   RESET_SETTINGS: 'settings:reset',
   SHOW_IN_FOLDER: 'file:show-in-folder',
   OPEN_PATH: 'file:open-path',
+  OPEN_FILE_WITH: 'file:open-with',
+  COPY_FILES_TO_CLIPBOARD: 'file:copy-to-clipboard',
+  COMPOSER_EDITOR_OPEN: 'composer:editor-open',
+  COMPOSER_EDITOR_FINISH: 'composer:editor-finish',
+  COMPOSER_EDITOR_EVENT: 'composer:editor-event',
+  COMPOSER_EDITOR_SETTINGS_GET: 'composer:editor-settings-get',
+  COMPOSER_EDITOR_SETTINGS_SET: 'composer:editor-settings-set',
   CAPTURE_MARKDOWN_IMAGE: 'markdown:capture-image',
+  EXPORT_FILES_ZIP: 'file:export-zip',
+  BATCH_CAPTURE_START: 'markdown:batch-capture-start',
+  BATCH_CAPTURE_STOP: 'markdown:batch-capture-stop',
+  BATCH_CAPTURE_PROGRESS: 'markdown:batch-capture-progress',
   SHARE_CREATE_LINK: 'share:create-link',
   SHARE_REVOKE_LINK: 'share:revoke-link',
   GET_SHARE_SETTINGS: 'share:get-settings',
@@ -480,6 +531,8 @@ export const IPC = {
   UPDATE_TELEGRAM_DEFAULT_REPLY_MODE: 'telegram:update-default-reply-mode',
   UPDATE_TELEGRAM_COMPACT_REPLY: 'telegram:update-compact-reply',
   UPDATE_TELEGRAM_ADMIN_USERS: 'telegram:update-admin-users',
+  /** Replaces one paired Telegram / LINE account's grants (`BotSetPermissionsRequest`). */
+  BOT_SET_PERMISSIONS: 'bot:set-permissions',
   UPDATE_TELEGRAM_LLM_DIRECT: 'telegram:update-llm-direct',
   GET_BOT_PROVIDER_COMMANDS: 'bot:get-provider-commands',
   UPDATE_BOT_PROVIDER_COMMANDS: 'bot:update-provider-commands',
@@ -566,10 +619,8 @@ export const IPC = {
   AGENT_CONFIRM_SHOW: 'agent-confirm:show',
   AGENT_CONFIRM_RESPOND: 'agent-confirm:respond',
   /**
-   * Main has already settled a confirmation the renderer is still showing (it timed out, the run
-   * was cancelled, or the window closed). Without it the stale modal stays up and the NEXT
-   * request pops into the same box under the user's cursor — one click lands on nothing, the
-   * second lands on a command they never read.
+   * Main settled a confirmation the renderer still shows (timeout, cancel, window closed). Without it
+   * the next request reuses the stale modal and a stray click can approve a command the user never read.
    */
   AGENT_CONFIRM_DISMISS: 'agent-confirm:dismiss',
   CLOSE_TO_TRAY_CHANGED: 'tray:close-to-tray-changed',
@@ -607,6 +658,8 @@ export const IPC = {
   FLOW_BUILD_PROGRESS: 'flow:build-progress',
   FLOW_GET_AI_URL: 'flow:get-ai-url',
   FLOW_CREATED: 'flow:created',
+  FLOW_UPDATED: 'flow:updated',
+  FLOW_REMOVED: 'flow:removed',
   FLOW_EXECUTION_LOG: 'flow:execution-log',
   FLOW_EXECUTION_STARTED: 'flow:execution-started',
   FLOW_EXECUTION_ENDED: 'flow:execution-ended',
@@ -629,6 +682,8 @@ export const IPC = {
   SCRAPER_PICK_SELECTOR: 'scraper:pick-selector',
   YT_SUBS_HAS_CHECKPOINT: 'youtube-subs:has-checkpoint',
   YT_SUBS_CLEAR_CHECKPOINT: 'youtube-subs:clear-checkpoint',
+  X_POSTS_HAS_CHECKPOINT: 'x-posts:has-checkpoint',
+  X_POSTS_CLEAR_CHECKPOINT: 'x-posts:clear-checkpoint',
   CAPTURE_PAGE: 'browser:capture-page',
   METRICS_GET: 'metrics:get',
   METRICS_CONVERSATION_TOKENS: 'metrics:conversation-tokens',
@@ -657,7 +712,7 @@ export interface NotifyEventPrefs {
   flowFailure: boolean;
 }
 
-export type MetricDomain = 'chat' | 'flow';
+export type MetricDomain = 'chat' | 'agent' | 'flow';
 export type MetricOutcome = 'success' | 'failure' | 'timeout';
 
 export interface MetricCounts {
@@ -679,10 +734,9 @@ export interface KeyMetrics {
 }
 
 /**
- * Two levels, deliberately separate: `runs` is what the user started (one queued chat task,
- * one whole flow run), `requests` is how many times that reached a model. A single `/agent`
- * run is one chat run and many requests; a flow with three llm steps is one flow run and
- * three requests. Collapsing them is what made "total executions" unreadable.
+ * Two levels, kept separate: `runs` is what the user started (one queued chat task, one whole agent
+ * run, one whole flow run), `requests` is how many times that reached a model. One `/agent` run is
+ * one run and many requests; a flow with three llm steps is one run and three requests.
  */
 export interface DomainMetrics {
   runs: MetricCounts;
@@ -693,14 +747,16 @@ export interface DomainMetrics {
 
 export interface DailyMetricCounts {
   chat: DomainMetrics;
+  agent: DomainMetrics;
   flow: DomainMetrics;
-  /** Every metered token, including calls made outside a chat or flow (e.g. flow authoring). */
+  /** Every metered token, including calls made outside a run (e.g. flow authoring). */
   tokens: TokenCounts;
   keys: Record<string, KeyMetrics>;
 }
 
 export interface MetricsSnapshot {
   chat: DomainMetrics;
+  agent: DomainMetrics;
   flow: DomainMetrics;
   tokens: TokenCounts;
   keys: Record<string, KeyMetrics>;
@@ -829,6 +885,19 @@ export interface StartedConversation {
   files: OutputFile[];
 }
 
+/** What a drop of Markdown files onto the conversation list did, file by file. */
+export interface ConversationImportResult {
+  /** Copied into the outputs folder, in drop order. */
+  imported: string[];
+  /** Already in the list (dragged back in, or the same file dropped twice): opened, not copied. */
+  existing: string[];
+  /** Not a Markdown file. */
+  skipped: number;
+  /** Markdown, but unreadable, too large or not a file. */
+  failed: number;
+  files: OutputFile[];
+}
+
 /** Every place a secret is stored behind safeStorage. */
 export type SecretScope = 'telegram' | 'line' | 'smtp' | 'byok' | 'mcp' | 'dataKey';
 
@@ -879,6 +948,31 @@ export interface SecretTarget {
   scope: SecretScope;
   id: string;
   field: string;
+}
+
+/** What the external editor opened from the composer (Ctrl+G) reports back. */
+export type ComposerEditorEvent =
+  | { kind: 'saved'; text: string }
+  /** `text` is null when the file did not change since the composer last heard. */
+  | { kind: 'closed'; text: string | null }
+  | { kind: 'failed'; detail: string };
+
+export type ComposerEditorEventPayload = ComposerEditorEvent & { id: string };
+
+/**
+ * Which editor Ctrl+G opens: '' follows VISUAL/EDITOR and then the system editor, 'system' is the
+ * system editor regardless, 'custom' runs `externalEditorCommand`, anything else is a preset id
+ * (`vscode`, `cursor`…) found on this machine.
+ */
+export type ExternalEditorChoice = string;
+
+export interface ExternalEditorSettings {
+  choice: ExternalEditorChoice;
+  command: string;
+  /** Presets found on this machine, plus the chosen one if it has gone missing. */
+  editors: { id: string; label: string }[];
+  /** What the automatic choice opens now, by name (`Visual Studio Code`, `vim`); null is the system editor. */
+  autoName: string | null;
 }
 
 export interface UiNotificationPayload {
@@ -968,8 +1062,8 @@ export interface BotProviderCommand {
   command: string;
 }
 
+/** The bot's default model: what answers a message that names no model. `''` follows the app's chat model. */
 export interface BotLlmDirectConfig {
-  enabled: boolean;
   targetUrl: string;
 }
 
@@ -1016,7 +1110,10 @@ export interface TelegramSettingsSnapshot {
   allowGroupCommands: boolean;
   defaultReplyMode: TelegramReplyMode;
   compactReply: boolean;
+  /** Paired accounts holding the `admin` grant. */
   adminUserIds: number[];
+  /** Per-account grants keyed by the stringified user id; no entry means no grants. */
+  permissions: Record<string, BotGrant[]>;
   llmDirect: BotLlmDirectConfig;
   runtime: TelegramRuntimeSnapshot;
   pairing: TelegramPairingState;
@@ -1099,6 +1196,8 @@ export interface LineSettingsSnapshot {
   channelSecretPreview: string;
   port: number;
   pairing: LinePairingSnapshot;
+  /** Per-account grants keyed by the LINE user id; no entry means no grants. */
+  permissions: Record<string, BotGrant[]>;
   webhookPath: string;
   llmDirect: BotLlmDirectConfig;
   runtime: LineRuntimeSnapshot;
@@ -1126,9 +1225,8 @@ export interface DataKeyStatus {
 export const DATA_KEY_MOENV = 'moenv';
 
 /**
- * The LINE PC wxSQLite3 passphrase. Scanning it out of LINE's process memory takes ~80s, so it
- * is kept between launches — in the data-key store rather than config.json, because that store
- * is the one secret file the backup archive does NOT collect.
+ * The LINE PC database key. Recovering it is slow, so it is kept between launches, in the data-key
+ * store rather than config.json because the backup archive does not collect that store.
  */
 export const DATA_KEY_LINE_DB = 'line.dbKey';
 
@@ -1156,8 +1254,14 @@ export interface Task {
   placeholderTitle?: string;
   sendId?: string;
   sessionKey?: string;
+  /** Name prefix when the reply starts a new file (a bot chat's conversation). */
+  fileLabel?: string;
   /** The prompt carries fetched outside content (a page or a transcript), not only what the user typed. */
   external?: boolean;
+  /** The Maps place whose reviews this prompt carries; the conversation remembers it for replayed follow-ups. */
+  mapPlace?: MapPlaceRef;
+  /** Clipboard digest taken right after a hotkey capture; the answer goes back on the clipboard only while it still matches. */
+  clipboardFingerprint?: string;
 }
 
 export interface PromptTriggerOptions {
@@ -1220,38 +1324,16 @@ export const MIN_CAPTURE_WIDTH = 600;
 export const MAX_CAPTURE_WIDTH = 1200;
 
 /**
- * The ceiling for any raster capture, in ENCODED pixels (logical height x pixel ratio).
- *
- * Two unrelated mechanisms land on the same number, both measured 2026-08-28 against a
- * real Chromium:
- *  - WebP stores each dimension in 14 bits, so 16383 is a hard format ceiling. At an
- *    encoded height of 16382 the encoder returned 48008 bytes; at 16384, nothing at all.
- *  - PNG has no format limit, but Chromium's max texture size does. A capture of encoded
- *    height 26798 came back at full size and passed every surface check — yet row 16384
- *    onward was the document drawn a second time from the top. It does not fail loudly;
- *    it hands back a plausible image that is wrong.
- *
- * The PNG half is why "it produced bytes" is not evidence a capture succeeded.
+ * The ceiling for any raster capture, in encoded pixels (logical height x pixel ratio). WebP caps
+ * each dimension at 16383; past Chromium's max texture size a PNG silently repeats the document from
+ * the top, so producing bytes is not proof a capture succeeded.
  */
 export const MAX_CAPTURE_ENCODED_HEIGHT = 16_383;
 
 /**
- * Extra page height a PDF export needs beyond the measured layout.
- *
- * printToPDF does not photograph the screen: Chromium lays the document out a second
- * time through its print engine, and that layout comes out slightly TALLER — per-line
- * rounding accumulating over a few hundred line boxes. Sizing the page from the screen
- * layout therefore left the bottom of the card off the page, where the injected
- * `overflow: hidden` silently clipped it, and the export came back with a bottom border
- * thinner than the other three.
- *
- * The inflation is NOT a fixed ratio, so it cannot be extrapolated from one sample.
- * Rasterising the real exports and measuring the bottom band row by row (2026-08-29):
- * a 7995px document inflated about 0.09%, but a 14524px one needed at least 0.37%. What
- * drives it is how many line boxes the content produces — tables and code blocks — not
- * the height alone. 1% + 8px covers both, with roughly 3x headroom over the worse of the
- * two. Whatever is left over is absorbed inside the card rather than between the card and
- * the page edge, so the border stays exactly the configured margin on all four sides.
+ * Extra page height a PDF export needs beyond the measured layout: printToPDF lays the document out
+ * again and comes out slightly taller, by an amount that grows with line boxes (tables, code), not a
+ * fixed ratio. 1% + 8px leaves headroom; the excess is absorbed inside the card so the margin stays even.
  */
 export function printPageSlack(logicalHeight: number): number {
   return Math.ceil(Math.max(0, logicalHeight) * 0.01) + 8;
@@ -1266,11 +1348,7 @@ export interface CaptureHeightVerdict {
   suggestedWidth: number | null;
 }
 
-/**
- * The encoder sees `logicalHeight * pixelRatio`, not the logical height.
- * Comparing the logical height let tall documents through to a WebP encoder that returns
- * nothing at all and a PNG encoder that returns the document drawn twice.
- */
+/** The encoder sees `logicalHeight * pixelRatio`, so the limit is checked against that, not the logical height. */
 export function checkCaptureHeight(
   format: CaptureFormat,
   logicalHeight: number,
@@ -1575,6 +1653,8 @@ export interface MarkdownCaptureOptions {
 export interface MarkdownCaptureRequest {
   payload: MarkdownCapturePayload;
   options: MarkdownCaptureOptions;
+  /** Filled in by main: the capture window has no language loaded. */
+  markdownLabels?: MarkdownLabels;
 }
 
 export interface MarkdownCaptureResult {
@@ -1584,7 +1664,46 @@ export interface MarkdownCaptureResult {
   canceled?: boolean;
 }
 
-export type SkillType = 'shell' | 'run' | 'js' | 'browser' | 'browser_open' | 'browser_js' | 'browser_close' | 'llm' | 'clipboard' | 'delay' | 'notify' | 'capture' | 'share' | 'bot' | 'rss' | 'stop' | 'comment' | 'scraper' | 'search' | 'research' | 'gmap_reviews' | 'line_read' | 'loop' | 'end_loop' | 'if' | 'end_if' | 'on_change' | 'sysinfo' | 'http' | 'youtube' | 'youtube_subs' | 'power' | 'restart_app' | 'file_write' | 'file_read' | 'file_list' | 'file_delete' | 'file_download' | 'email_send' | 'text' | 'stock' | 'forex' | 'weather' | 'air_quality' | 'random' | 'break' | 'continue';
+/** Several conversations at once: one file each, into a folder the user picks. */
+export type BatchCaptureFormat = 'pdf' | 'png';
+
+export interface BatchCaptureItem {
+  /** What the user calls it — shown when this one fails. */
+  name: string;
+  fileStem: string;
+  request: MarkdownCaptureRequest;
+}
+
+export interface BatchCaptureProgress {
+  done: number;
+  total: number;
+  failed: number;
+}
+
+export interface BatchCaptureFailure {
+  name: string;
+  /** `tooTall`: past the raster ceiling, so only PDF can hold it. */
+  reason: 'tooTall' | 'error';
+  detail?: string;
+}
+
+export interface BatchCaptureResult {
+  /** `busy`: another batch is still running; `canceled`: the folder picker was dismissed. */
+  status: 'done' | 'stopped' | 'canceled' | 'busy';
+  folder?: string;
+  saved: number;
+  failed: BatchCaptureFailure[];
+}
+
+export interface ZipExportResult {
+  ok: boolean;
+  canceled?: boolean;
+  filePath?: string;
+  count?: number;
+  error?: string;
+}
+
+export type SkillType = 'shell' | 'run' | 'js' | 'browser' | 'browser_open' | 'browser_js' | 'browser_close' | 'llm' | 'clipboard' | 'delay' | 'notify' | 'capture' | 'share' | 'bot' | 'rss' | 'stop' | 'comment' | 'scraper' | 'search' | 'research' | 'gmap_reviews' | 'line_read' | 'loop' | 'end_loop' | 'if' | 'end_if' | 'on_change' | 'sysinfo' | 'http' | 'youtube' | 'youtube_subs' | 'x_posts' | 'x_thread' | 'x_trends' | 'power' | 'restart_app' | 'file_write' | 'file_read' | 'file_list' | 'file_delete' | 'file_download' | 'email_send' | 'text' | 'stock' | 'forex' | 'weather' | 'air_quality' | 'random' | 'break' | 'continue';
 
 export interface SkillInstance {
   id: string;
@@ -1594,7 +1713,12 @@ export interface SkillInstance {
   outputKey: string;
 }
 
-export type TriggerType = 'hotkey' | 'cron' | 'manual' | 'bot' | 'chat';
+export const TRIGGER_TYPES = ['hotkey', 'cron', 'manual', 'bot', 'chat', 'system'] as const;
+export type TriggerType = typeof TRIGGER_TYPES[number];
+
+/** What the computer did: Yobi started (as at sign-in), woke from sleep, or the screen was unlocked or locked. */
+export const SYSTEM_EVENTS = ['startup', 'resume', 'unlock', 'lock'] as const;
+export type SystemEvent = typeof SYSTEM_EVENTS[number];
 
 export type BotPlatform = 'telegram' | 'line';
 export const BOT_PLATFORMS: readonly BotPlatform[] = ['telegram', 'line'] as const;
@@ -1631,14 +1755,24 @@ export interface TriggerConfig {
   onceDate?: string;
   /** Run once on next launch when the machine was off at the scheduled time. */
   catchUpMissed?: boolean;
+  /** once: delete the flow after the schedule's run succeeds (see `shouldDeleteAfterRun`). */
+  deleteAfterRun?: boolean;
   botCommand?: string;
   botCommandDescription?: string;
   botInputVariable?: string;
-  /** Bot user ids allowed to run this command; empty or absent means every paired user. */
+  /**
+   * Who may run this bot command: 'all' = every paired account, 'users' = only botAllowedUserIds
+   * (an empty list is nobody). Absent on flows saved before the field existed, which keep the
+   * legacy reading of the list: empty = every paired account, non-empty = only those ids.
+   */
+  botAccess?: 'all' | 'users';
+  /** Bot user ids allowed to run this command; see botAccess for what an empty list means. */
   botAllowedUserIds?: string[];
   chatCommand?: string;
   chatCommandDescription?: string;
   chatInputVariable?: string;
+  /** system: which event starts the flow. */
+  systemEvent?: SystemEvent;
 }
 
 export interface SchedulePreview {
@@ -1677,6 +1811,8 @@ export interface FlowVariable {
   pickUrlKey?: string;
   pickWriteKeys?: { title?: string; link?: string };
   hiddenInSetup?: boolean;
+  /** `chat` only: the variable whose value ("telegram" | "line") decides which bot's chats the picker lists. */
+  platformKey?: string;
 }
 
 export interface FlowDefinition {
@@ -1697,13 +1833,27 @@ export const LEGACY_FLOW_EXPORT_TYPE = 'agentflow-export';
 
 export type FlowStepStatus = 'pending' | 'running' | 'completed' | 'error' | 'skipped';
 
+/**
+ * Why a step was skipped on purpose: a stop step, break/continue, or the user pressing Stop.
+ * A code, not prose — the run panel words it in the app language, and none of these is a failure.
+ * A stop step ends the run only at the top level; inside a loop it skips the item (`stoppedItem`).
+ */
+export type FlowStepNote = 'stopped' | 'stoppedItem' | 'aborted' | 'break' | 'continue' | 'notInLoop';
+
 export interface FlowExecutionLog {
   flowId: string;
   stepId: string;
   stepIndex: number;
   status: FlowStepStatus;
   output?: string;
+  /** What went wrong. Only real failures carry one; an intentional skip carries `note` instead. */
   error?: string;
+  /**
+   * `error` in the user's language — what the run panel shows. `error` itself stays the engine's
+   * English diagnostic, which the copy button and the run export keep.
+   */
+  displayError?: string;
+  note?: FlowStepNote;
   timestamp: string;
 }
 
@@ -1711,7 +1861,13 @@ export interface FlowExecutionResult {
   flowId: string;
   success: boolean;
   outputs: Record<string, string>;
+  /** The engine's English diagnostic: the log, the metrics and the run export read this one. */
   error?: string;
+  /**
+   * The failure as a person reads it — in the user's language and naming the step that failed.
+   * Notifications, bot replies and the chat toast show this, falling back to `error`.
+   */
+  displayError?: string;
   completedSteps: number;
   totalSteps: number;
   completedAt: string;
@@ -1725,6 +1881,8 @@ export interface FlowExecutionResult {
    * so this is the only place the loss is visible to the caller.
    */
   softFailures?: number;
+  /** The first of those failures as a person reads it, like `displayError`. */
+  softFailureError?: string;
 }
 
 export interface ChatCommandResult {
@@ -1741,6 +1899,9 @@ export const BUILTIN_CHAT_FLOW_ID = '__builtin:chat__';
 
 export const BUILTIN_MODEL_COMMAND = 'model';
 export const BUILTIN_MODEL_FLOW_ID = '__builtin:model__';
+
+export const BUILTIN_RECAP_COMMAND = 'recap';
+export const BUILTIN_RECAP_FLOW_ID = '__builtin:recap__';
 
 export const BUILTIN_SEARCH_COMMAND = 'search';
 export const BUILTIN_SEARCH_FLOW_ID = '__builtin:search__';
@@ -1774,6 +1935,11 @@ export interface AgentCommandResult {
    * no composer scope to record, and the reply typed under its connector still has to match one.
    */
   mcpServerIds?: string[];
+  /**
+   * The run went online (a web tool, or a pasted link fetched). The composer turns its "web" switch
+   * on to match, with the same undo notice an explicit search request gets, so the user can turn it back off.
+   */
+  usedWeb?: boolean;
 }
 
 /**
@@ -1808,9 +1974,29 @@ export interface AgentTurnRecord {
   config: Record<string, string>;
   observation: string;
   status: 'ok' | 'error';
+  /** When the call started (ISO). Absent on records written before timings were kept. */
+  at?: string;
+  /**
+   * How long the model took to decide on this turn, repairs included. Only on the first step of a
+   * turn — the other calls of a batch came out of the same decision.
+   */
+  modelMs?: number;
+  /** How long the tool itself ran. */
+  toolMs?: number;
+  /** A research call's checklist as it ended: what was read, what failed, how many sources. */
+  research?: ResearchProgress;
 }
 
 export type AgentRunStatus = 'running' | 'failed' | 'cancelled' | 'done' | 'awaiting';
+
+/**
+ * Whether a delivered answer achieved the whole goal. `unfinished`: the model itself said part of the
+ * goal is still undone. `limit`: the run stopped on its step, time or token budget (or stopped
+ * producing usable steps) before the model said it was done. Absent on runs written before this.
+ */
+export type AgentCompletion =
+  | { status: 'complete' }
+  | { status: 'partial'; reason: 'unfinished' | 'limit'; missing?: string };
 
 export interface AgentRunState {
   runId: string;
@@ -1834,6 +2020,27 @@ export interface AgentRunState {
    * on resume would widen a run the user deliberately narrowed.
    */
   web?: boolean;
+  /**
+   * Set on every run a Telegram/LINE message starts: `agent` when the account holds the agent grant
+   * (the full bot kit), `chat` otherwise (the narrow chat scope). A resume re-applies it and narrows
+   * it to `chat` if the grant is gone; a bot run without it resumes on the narrow scope — answering a
+   * question must never widen what the run may touch.
+   */
+  botScope?: 'chat' | 'agent';
+  /**
+   * `none`: the program decided this run reaches no MCP connector at all — a bot requester who is
+   * not the user's own account in a private chat. Unlike an empty `mcpServerIds` (which means "not
+   * scoped"), this survives a save and a resume, so a later turn cannot widen it.
+   */
+  connectors?: 'none';
+  /**
+   * Set on every Telegram/LINE run: what the requesting account's grants allowed when the run
+   * started — the web tools, this computer's files and devices, and which connectors (`all`, none,
+   * or the listed server ids). A resume re-reads the grants and keeps only what both allow, so
+   * revoking a grant while a question is pending narrows the run and a new grant never widens it.
+   * `shell` is absent on runs saved before the grant existed, which reads as not granted.
+   */
+  botGrants?: { web: boolean; local: boolean; shell?: boolean; connectors: 'all' | 'none' | string[] };
   status: AgentRunStatus;
   /**
    * The step ceiling this run negotiated for itself. Absent on runs written before the ceiling
@@ -1850,9 +2057,25 @@ export interface AgentRunState {
    * the same conversation loads these instead of trusting the answer text written about them.
    */
   evidence?: { facts: unknown[]; actions: AgentActionSummary[] };
+  /**
+   * The flows this run saved or changed, oldest first. A later "change it" in the same
+   * conversation means the last of them; absent on runs written before flows could be edited.
+   */
+  flows?: { id: string; name: string }[];
   turns: AgentTurnRecord[];
-  result?: { title: string; content: string };
+  result?: { title: string; content: string; completion?: AgentCompletion };
+  /** What the user was told, in their language. */
   error?: string;
+  /**
+   * The engine's English behind `error`, when it says something `error` does not — the copied
+   * trace is a bug report, and "could not produce a result" alone does not say why.
+   */
+  errorDetail?: string;
+  /**
+   * A failure of this run is already on the stats page. Resuming a failed run continues the same
+   * run, so whatever the resume ends in is not counted a second time.
+   */
+  metricCounted?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -1860,14 +2083,21 @@ export interface AgentRunState {
 export interface AgentRunSummary {
   runId: string;
   goal: string;
+  /** The conversation the run was started in; "Continue" reopens it. */
+  conversationPath?: string;
   status: AgentRunStatus;
   turns: number;
   updatedAt: string;
 }
 
 export type AgentStageLabel =
-  | 'planning' | 'fetching' | 'read' | 'analyzing' | 'synthesizing' | 'repairing'
+  /** Flow building's own phases (research reports its checklist as a `research` event instead). */
+  | 'planning' | 'analyzing' | 'repairing'
+  /** The provider answered with its previous reply word for word; the turn is asked again in a new chat. */
+  | 'repeated'
   | 'delegating' | 'confirming' | 'verifying'
+  /** The model finished while saying the goal is not done, and was sent back to finish the work. */
+  | 'held'
   /** Flow building: matching the request against the skill list, and writing the steps. */
   | 'discovering' | 'building';
 
@@ -1876,6 +2106,7 @@ export type AgentTraceEvent =
   | { kind: 'tool'; turn: number; tool: string; config: Record<string, string>; thought?: string }
   | { kind: 'plan'; steps: string[]; done: number[] }
   | { kind: 'stage'; turn: number; label: AgentStageLabel; detail?: string }
+  | { kind: 'research'; turn: number; progress: ResearchProgress }
   | { kind: 'observation'; turn: number; tool: string; status: 'ok' | 'error'; preview: string }
   | { kind: 'synthesizing' }
   | { kind: 'done'; title: string }
@@ -1888,9 +2119,16 @@ export interface AgentTracePayload {
   event: AgentTraceEvent;
 }
 
+/**
+ * Why a build phase stopped, when the raw `error` is not something to show a person: the model
+ * answered every attempt, but never with output the validator accepted. `error` is then the last
+ * rejection, written for the model's repair prompt.
+ */
+export type FlowBuildFailureReason = 'invalid_output';
+
 export type FlowGenerationResult =
   | { ok: true; flow: FlowDefinition }
-  | { ok: false; error: string };
+  | { ok: false; error: string; reason?: FlowBuildFailureReason };
 
 export interface FlowAssessment {
   skills: string[];
@@ -1908,7 +2146,7 @@ export interface FlowAssessment {
 
 export type FlowAssessResult =
   | { ok: true; assessment: FlowAssessment }
-  | { ok: false; error: string };
+  | { ok: false; error: string; reason?: FlowBuildFailureReason };
 
 /** The five phases of building a flow, in the order they run. */
 export const FLOW_BUILD_PHASES = ['understand', 'discover', 'plan', 'build', 'verify'] as const;
@@ -1929,14 +2167,18 @@ export type FlowBuildIssueKind =
   /** An in-loop step that would strand the whole batch when one item fails. */
   | 'failsoft'
   /** A step whose integration is not set up yet. */
-  | 'setup';
+  | 'setup'
+  /** A bot step naming a recipient that matched no paired chat, or more than one. */
+  | 'recipient'
+  /** A bot step that, left blank, sends to every one of several paired people. */
+  | 'broadcast';
 
 export interface FlowBuildIssue {
   kind: FlowBuildIssueKind;
   /** 1-based, matching how steps are numbered everywhere else the user sees them. */
   step: number;
   skill: SkillType;
-  /** The config key at fault for 'blank'; the integration for 'setup'. */
+  /** The config key at fault for 'blank'; the integration for 'setup'; the name for 'recipient'; the head count for 'broadcast'. */
   detail: string;
 }
 
@@ -1957,7 +2199,10 @@ export type FlowBuildEvent =
   | { kind: 'outline'; outline: string[] }
   | { kind: 'questions'; questions: string[] }
   | { kind: 'done'; report: FlowBuildReport; flowName: string }
-  | { kind: 'failed'; phase: FlowBuildPhase; error: string; blocked?: FlowBuildBlocker[] };
+  | {
+    kind: 'failed'; phase: FlowBuildPhase; error: string; reason?: FlowBuildFailureReason;
+    blocked?: FlowBuildBlocker[];
+  };
 
 export interface FlowBuildPayload {
   buildId: string;
@@ -1975,17 +2220,50 @@ export interface FlowBuildRequestPayload {
   description: string;
   buildId: string;
   answers?: FlowClarification[];
-  /** The model the user picked for this build. Empty falls back the way it always has. */
+  /** The model the user picked for this build; empty uses the default flow-build model. */
   providerUrl?: string;
 }
 
 export type FlowBuildOutcome =
   | { status: 'created'; flow: FlowDefinition; report: FlowBuildReport }
   | { status: 'questions'; questions: string[] }
-  | { status: 'failed'; phase: FlowBuildPhase; error: string; blocked?: FlowBuildBlocker[] };
+  | {
+    status: 'failed'; phase: FlowBuildPhase; error: string; reason?: FlowBuildFailureReason;
+    blocked?: FlowBuildBlocker[];
+  };
+
+/** A step named in a flow-change confirmation: the user's label, and the skill for the badge. */
+export interface AgentFlowStepRef {
+  label: string;
+  type: string;
+}
+
+/** What an agent's change to a saved flow does, for the confirmation that precedes saving over it. */
+export interface AgentFlowEditSummary {
+  added: AgentFlowStepRef[];
+  removed: AgentFlowStepRef[];
+  changed: AgentFlowStepRef[];
+  renamedFrom?: string;
+  trigger: boolean;
+  /** Whether the flow is switched on — a change to an enabled flow runs on its next trigger. */
+  enabled: boolean;
+  /** It was on, and is saved switched off because the change adds a step that acts on the computer. */
+  paused?: boolean;
+}
+
+/** Who a flow's bot steps send to, as the confirmation shows it: a chat's name, everyone paired, or the sender of a command. */
+export interface AgentFlowRecipient {
+  kind: 'name' | 'everyone' | 'sender';
+  name?: string;
+}
 
 export type AgentConfirmRequestData =
-  | { kind: 'flow'; flowName: string; stepTypes: string[]; sensitiveTypes: string[] }
+  | {
+    kind: 'flow'; flowName: string; stepTypes: string[]; sensitiveTypes: string[];
+    edit?: AgentFlowEditSummary;
+    /** Absent when no bot step is involved. */
+    recipients?: AgentFlowRecipient[];
+  }
   | {
     kind: 'mcp';
     serverName: string;
@@ -2019,17 +2297,10 @@ export type AgentConfirmChoice = 'approve' | 'approveAlways' | 'deny';
 export type PromptTone = 'default' | 'professional' | 'casual' | 'direct';
 export type PromptLength = 'auto' | 'concise' | 'detailed';
 
-export interface CustomTemplate {
-  id: string;
-  name: string;
-  prompt: string;
-}
-
 export interface PromptPreferences {
   tone: PromptTone;
   length: PromptLength;
   customInstructions: string;
-  customTemplates: CustomTemplate[];
   nickname?: string;
 }
 

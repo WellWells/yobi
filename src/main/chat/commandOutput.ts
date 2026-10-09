@@ -26,6 +26,12 @@ export interface CommandResult {
   choices?: string[];
   /** What the answer changed in the user's memory. */
   memoryNotes?: MemoryNote[];
+  /** The Agent's recap line; `''` marks a run made where no recap is kept. Absent for other commands. */
+  recap?: string;
+  /** Name prefix when the result starts a new file (a bot chat's conversation). */
+  fileLabel?: string;
+  /** `Date.now()` when the command started running, for the turn's duration. */
+  startedAt?: number;
 }
 
 function turnMetaFor(args: CommandResult): TurnMeta {
@@ -35,6 +41,7 @@ function turnMetaFor(args: CommandResult): TurnMeta {
   return {
     p: args.providerLabel,
     t: new Date().toISOString(),
+    ...(args.startedAt !== undefined ? { d: Math.max(0, Date.now() - args.startedAt) } : {}),
     m: 'replay',
     ...(args.command ? { c: args.command } : {}),
     ...(attached.length > 0 ? { a: attached } : {}),
@@ -42,23 +49,18 @@ function turnMetaFor(args: CommandResult): TurnMeta {
     ...(choices.length > 0 ? { ch: choices } : {}),
     ...(args.memoryNotes?.length ? { mem: args.memoryNotes } : {}),
     ...(args.usage ? tokenMetaFields(args.usage) : {}),
+    ...(args.recap !== undefined ? { rc: args.recap } : {}),
   };
 }
 
 /**
- * Shows a slash command's answer in temporary chat.
- *
- * The turn is not optional: a temporary conversation is one markdown blob, and delivering
- * content with no turn REPLACES it. `/search` and flow chat commands used to do exactly that,
- * so answering one wiped every temporary turn before it. Going through here means a call site
- * can no longer leave the turn out.
+ * Shows a slash command's answer in temporary chat. The turn is always passed: content delivered
+ * without a turn replaces the whole temporary conversation.
  */
 export function deliverCommandResultToTempChat(args: CommandResult): void {
   const meta = turnMetaFor(args);
   deliverTempChatResult({
-    // The same meta on both paths: `content` is what an empty temporary conversation starts
-    // from, `turn` is what every later answer appends, and a turn should not describe itself
-    // differently depending on which of the two it happened to arrive through.
+    // Same meta on both paths: `content` seeds an empty temporary conversation, `turn` appends to one.
     content: buildOutputMarkdown({
       ...args.markdownOptions,
       turnMeta: { ...args.markdownOptions.turnMeta, ...meta },
@@ -68,15 +70,12 @@ export function deliverCommandResultToTempChat(args: CommandResult): void {
 }
 
 export async function saveCommandOutput(args: CommandResult): Promise<string> {
-  const { conversationPath, markdownOptions, prompt, response, usage } = args;
-  const tokens = usage ? tokenMetaFields(usage) : {};
+  const { conversationPath, markdownOptions, prompt, response } = args;
 
   if (conversationPath) {
     try {
       await fs.access(conversationPath);
-      // Same builder as the temporary-chat path: the two used to spell the same meta out
-      // separately, and a field added to one (the run id was the first) went missing from the
-      // other with nothing to catch it.
+      // Same meta builder as the temporary-chat path, so both write identical fields.
       await appendConversationTurn(conversationPath, { prompt, response, meta: turnMetaFor(args) });
       return conversationPath;
     } catch (err: unknown) {
@@ -85,10 +84,13 @@ export async function saveCommandOutput(args: CommandResult): Promise<string> {
     }
   }
 
+  // A new file's first turn gets the same meta as later turns, minus the mode: it replays nothing.
+  const { m: _mode, ...meta } = turnMetaFor(args);
   const outputDir = await getOutputDir();
   return saveOutput({
     ...markdownOptions,
-    turnMeta: { ...markdownOptions.turnMeta, ...tokens },
+    turnMeta: { ...markdownOptions.turnMeta, ...meta },
     outputDir,
+    ...(args.fileLabel ? { fileLabel: args.fileLabel } : {}),
   });
 }

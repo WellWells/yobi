@@ -2,19 +2,16 @@ import type { QueueTaskItem } from '../../shared/types';
 import { Semaphore } from './lanes';
 
 /**
- * Two, not more, on purpose. Everything that cannot overlap is now behind a lane — `llmLane`
- * (one worker window), `clipboardLane`, `pageFetchLane`, `youtubeLane` — so the remaining
- * limit is machine resources: each concurrent flow can hold a hidden Chromium window open.
- * Raise it only after watching memory on a low-end machine.
+ * Two, not more, on purpose. Everything that cannot overlap is behind a lane (`llmLane`,
+ * `clipboardLane`, `pageFetchLane`, `youtubeLane`), so the limit is machine resources: each
+ * concurrent flow can hold a hidden Chromium window open. Raise it only after watching memory on a
+ * low-end machine.
  */
 const MAX_CONCURRENT_FLOWS = 2;
 
 /**
- * External tasks (`/agent`, `/search`) hold a shared slot AND this one, so at most one of them
- * can be in flight and a flow slot is always reachable. Without it two long agent runs took
- * both slots for their whole duration and every cron flow, flow hotkey, UI Run and bot flow
- * command queued behind them — which a 30-minute step ceiling turns from a corner case into
- * the normal shape of a long run.
+ * External tasks (`/agent`, `/search`) hold a shared slot AND this one, so at most one of them runs
+ * at a time and a long agent run can never take every slot from cron, hotkey, UI and bot-command flows.
  */
 const MAX_CONCURRENT_EXTERNAL = 1;
 
@@ -69,6 +66,11 @@ export class FlowQueue {
     this.removeEntry(taskId);
     entry.cancel();
     return true;
+  }
+
+  /** Whether a run of this flow is waiting or in progress. */
+  hasFlow(flowId: string): boolean {
+    return this.pending.some((e) => e.flowId === flowId && !this.cancelled.has(e.id));
   }
 
   cancelQueuedForFlow(flowId: string): boolean {

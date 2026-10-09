@@ -1,11 +1,10 @@
-import { app, Notification, session } from 'electron';
+import { app, Notification } from 'electron';
 import type { BrowserWindow } from 'electron';
 import * as path from 'node:path';
 import type { UiNotificationPayload, WorkerAttention } from '../shared/types';
-import { IPC, PROVIDER_URLS } from '../shared/types';
-import { detectProvider, getProviderLabel } from './providers';
-import { isPerplexitySessionCookie } from './providers/perplexity';
+import { canonicalProviderUrl, IPC, PROVIDER_URLS } from '../shared/types';
 import { appendLogLine, fileStamp } from './logFile';
+import { relaunchArgs } from './relaunchFlag';
 
 let _mainWin: BrowserWindow | null = null;
 let _notifyEnabled = true;
@@ -38,15 +37,14 @@ export function applyLaunchAtStartup(enabled: boolean, hideOnStart: boolean = fa
       args: enabled && hideOnStart ? ['--hidden'] : [],
     });
   } else {
-    // Electron 44 removed openAsHidden — it only ever worked on macOS 12 and below, so
-    // launching hidden is no longer expressible there. openAtLogin still applies.
+    // Electron offers no hidden launch on macOS; only openAtLogin applies.
     app.setLoginItemSettings({ openAtLogin: enabled });
   }
 }
 
 export function relaunchApp(reason = 'restart requested'): void {
   sendLog(`🔄 Relaunching Yobi (${reason})...`);
-  app.relaunch();
+  app.relaunch({ args: relaunchArgs() });
   setTimeout(() => app.quit(), 600);
 }
 
@@ -114,15 +112,12 @@ export function sendSecurityNotification(
 }
 
 /**
- * How long the native notification gets to report `show` before the in-app toast steps in.
- * Electron emits `show` only after the OS accepted the notice (WinRT `ToastNotifier::Show`,
- * `UNUserNotificationCenter addNotificationRequest`, `notify_notification_show`) and `failed`
- * when it did not; measured at ~10 ms on Windows, so silence this long means it was dropped.
- * Exported for the test suite.
+ * How long the native notification gets to report `show` (emitted once the OS accepts it)
+ * before the in-app toast steps in.
  */
 export const NATIVE_SHOW_GRACE_MS = 1_500;
 
-/** The two verdicts a native notification can give. Exported for the test suite. */
+/** The two verdicts a native notification can give. */
 export interface NativeDeliveryEvents {
   once(event: 'show', listener: () => void): unknown;
   once(event: 'failed', listener: (event: unknown, error: string) => void): unknown;
@@ -132,7 +127,6 @@ export interface NativeDeliveryEvents {
  * Calls `onUndelivered` exactly once if the native notification never reaches the user:
  * the OS reported `failed`, or stayed silent past the grace period. A verdict that arrives
  * after that is ignored, so the user never gets the same notice twice.
- * Exported for the test suite.
  */
 export function watchNativeDelivery(
   notification: NativeDeliveryEvents,
@@ -201,6 +195,8 @@ export function isHttpUrl(rawUrl: string): boolean {
 export function normalizeAiUrl(url: string): string {
   const trimmed = url.trim();
   if (!trimmed) return PROVIDER_URLS.gemini;
+  const canonical = canonicalProviderUrl(trimmed);
+  if ((Object.values(PROVIDER_URLS) as string[]).includes(canonical)) return canonical;
   if (trimmed.includes('?')) return trimmed;
   return trimmed.endsWith('/') ? trimmed : `${trimmed}/`;
 }
@@ -212,38 +208,6 @@ export function createTaskId(): string {
 export function isExpiredCookie(expirationDate?: number): boolean {
   if (!expirationDate) return false;
   return expirationDate * 1000 <= Date.now();
-}
-
-export async function hasPerplexityReusableSiteCookie(): Promise<boolean> {
-  const workerSession = session.fromPartition('persist:gemini');
-  const cookies = await workerSession.cookies.get({ url: PROVIDER_URLS.perplexity });
-  return cookies.some(
-    (cookie) =>
-      isPerplexitySessionCookie(cookie) ||
-      (cookie.name === 'cf_clearance' && !isExpiredCookie(cookie.expirationDate)),
-  );
-}
-
-export async function clearPerplexitySiteDataIfNeeded(
-  targetUrl: string,
-  log: (msg: string) => void = sendLog,
-): Promise<void> {
-  if (detectProvider(targetUrl) !== 'perplexity') return;
-  const providerLabel = getProviderLabel(targetUrl);
-  try {
-    if (await hasPerplexityReusableSiteCookie()) {
-      log(`🔐 ${providerLabel} session or security clearance detected — keep cookies/storage`);
-      return;
-    }
-    const workerSession = session.fromPartition('persist:gemini');
-    await workerSession.clearStorageData({
-      origin: PROVIDER_URLS.perplexity.replace(/\/$/, ''),
-      storages: ['cookies', 'localstorage', 'indexdb', 'serviceworkers', 'cachestorage', 'filesystem'],
-    });
-    log(`🧹 Cleared ${providerLabel} cookies/storage`);
-  } catch (err: unknown) {
-    log(`⚠️ Failed to clear ${providerLabel} site data: ${(err as Error).message}`);
-  }
 }
 
 export function maskToken(token: string): string {

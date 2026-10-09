@@ -2,10 +2,11 @@ import React from 'react';
 import { Group, Stack, Text } from '@mantine/core';
 import { Bot, MessageSquare, TriangleAlert } from 'lucide-react';
 import { AppTextInput } from '../../components/AppTextInput';
-import { BotUserAllowlist } from '../../components/BotUserAllowlist';
+import { GroupHeader } from '../../components/GroupHeader';
 import type { TriggerConfig } from '../../../../shared/types';
 import type { FlowIssue } from '../../../../shared/flowIssues';
 import { describeFlowIssue } from './flowIssueText';
+import { BotCommandAccessField } from './BotCommandAccessField';
 
 interface CommandTriggerFieldsProps {
   kind: 'bot' | 'chat';
@@ -40,12 +41,7 @@ export const CommandTriggerFields: React.FC<CommandTriggerFieldsProps> = ({
 
   return (
     <Stack gap="sm" p="sm" style={cardStyle}>
-      <Group gap={6} align="center">
-        <Icon size={13} color="var(--mantine-color-dimmed)" />
-        <Text fz="xs" fw={600} c="dimmed" tt="uppercase" style={{ letterSpacing: '0.05em' }}>
-          {tk('section')}
-        </Text>
-      </Group>
+      <GroupHeader variant="plain" icon={<Icon size={13} />} label={tk('section')} />
 
       <AppTextInput
         label={tk('command')}
@@ -79,24 +75,19 @@ export const CommandTriggerFields: React.FC<CommandTriggerFieldsProps> = ({
         size="sm"
       />
 
-      {kind === 'bot' && (
-        <BotUserAllowlist
-          value={value.botAllowedUserIds}
-          onChange={(botAllowedUserIds) => patch({ botAllowedUserIds })}
-        />
-      )}
+      {kind === 'bot' && <BotCommandAccessField value={value} patch={patch} t={t} />}
 
       {commandEmpty && (
         <Group gap={6} align="center">
-          <TriangleAlert size={13} color="var(--mantine-color-orange-6)" />
-          <Text fz="xs" c="orange">{tk('command.empty')}</Text>
+          <TriangleAlert size={13} color="var(--mantine-color-warning)" />
+          <Text fz="xs" c="var(--mantine-color-warning)">{tk('command.empty')}</Text>
         </Group>
       )}
 
       {conflict && (
         <Group gap={6} align="flex-start" wrap="nowrap">
-          <TriangleAlert size={13} color="var(--mantine-color-orange-6)" style={{ marginTop: 2, flexShrink: 0 }} />
-          <Text fz="xs" c="orange">{describeFlowIssue(conflict, t)}</Text>
+          <TriangleAlert size={13} color="var(--mantine-color-warning)" style={{ marginTop: 2, flexShrink: 0 }} />
+          <Text fz="xs" c="var(--mantine-color-warning)">{describeFlowIssue(conflict, t)}</Text>
         </Group>
       )}
 

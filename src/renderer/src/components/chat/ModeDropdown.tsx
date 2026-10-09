@@ -2,14 +2,16 @@ import React, { useMemo, useState } from 'react';
 import { Divider, Group, Menu, Text } from '@mantine/core';
 import { Check, Globe, MessageSquare, Waypoints, X } from 'lucide-react';
 import type { ChatMode } from '../../config/chatModes';
-import { renderConnectorIcon } from '../../config/connectorIcons';
-import { findCatalogEntry } from '../../../../shared/mcpCatalog';
+import { renderServerIcon } from '../../config/connectorIcons';
 import type { KeywordCandidate } from '../../../../shared/connectorKeywords';
 import { ComposerPill } from './ComposerPill';
+import { composerMenuPosition, type MenuDirection } from './composerMenuDirection';
 
 interface ModeDropdownProps {
-  /** Derived, never picked: what the current capabilities add up to. Shown, not chosen. */
+  /** Agent when switched on by itself or implied by the web or a connector; otherwise chat. */
   value: ChatMode;
+  /** The Agent row: on switches Agent on by itself; off returns to chat and clears the capabilities. */
+  onChangeMode: (mode: ChatMode) => void;
   web: boolean;
   onToggleWeb: () => void;
   /** Every connector the user could disclose, already filtered to the agent-enabled ones. */
@@ -17,6 +19,7 @@ interface ModeDropdownProps {
   activeConnectorIds: readonly string[];
   onToggleConnector: (id: string) => void;
   t: (key: string) => string;
+  menuDirection: MenuDirection;
 }
 
 const MENU_WIDTH = 300;
@@ -36,12 +39,14 @@ function pillLabel(
 
 export const ModeDropdown: React.FC<ModeDropdownProps> = ({
   value,
+  onChangeMode,
   web,
   onToggleWeb,
   connectors,
   activeConnectorIds,
   onToggleConnector,
   t,
+  menuDirection,
 }) => {
   const [open, setOpen] = useState(false);
   const active = useMemo(
@@ -62,12 +67,13 @@ export const ModeDropdown: React.FC<ModeDropdownProps> = ({
     (count) => t('chat.mode.connectors.more').replace('{{count}}', String(count)),
   );
   const anythingActive = web || active.length > 0;
+  const agentOn = value === 'agent';
 
   return (
     <Menu
       opened={open}
       onChange={setOpen}
-      position="top-start"
+      position={composerMenuPosition(menuDirection, 'start')}
       offset={6}
       withinPortal
       zIndex={20}
@@ -90,12 +96,33 @@ export const ModeDropdown: React.FC<ModeDropdownProps> = ({
           icon={<CurrentIcon size={14} />}
           label={label}
           open={open}
-          accent={anythingActive}
+          accent={agentOn}
           onClick={() => setOpen((prev) => !prev)}
         />
       </Menu.Target>
 
       <Menu.Dropdown>
+        {/* Agent stands on its own: it has tools without the web, and picks among every connected
+            connector by itself. The rows below are optional — choosing one brings it in for sure. */}
+        <Menu.Item
+          onClick={() => onChangeMode(agentOn ? 'chat' : 'agent')}
+          leftSection={<Waypoints size={15} />}
+          rightSection={agentOn ? <Check size={13} color="var(--mantine-color-accent)" /> : null}
+          style={{
+            background: agentOn ? 'var(--mantine-color-accent-dim)' : undefined,
+            color: agentOn ? 'var(--mantine-color-accent)' : undefined,
+          }}
+        >
+          <Text fz="var(--font-size-md)" fw={agentOn ? 600 : 400} lh={1.3}>
+            {t('chat.mode.agent.label')}
+          </Text>
+          <Text fz="var(--font-size-sm)" c="var(--mantine-color-dimmed)" lh={1.4} mt={2}>
+            {t('chat.mode.agent.description')}
+          </Text>
+        </Menu.Item>
+
+        <Divider my={4} color="var(--mantine-color-default-border)" />
+
         <Menu.Label>
           <Group gap={6} justify="space-between" wrap="nowrap">
             <Text fz="var(--font-size-sm)" c="var(--mantine-color-dimmed)">
@@ -142,7 +169,7 @@ export const ModeDropdown: React.FC<ModeDropdownProps> = ({
                 <Menu.Item
                   key={connector.id}
                   onClick={() => onToggleConnector(connector.id)}
-                  leftSection={renderConnectorIcon(findCatalogEntry(connector.url), 15)}
+                  leftSection={renderServerIcon(connector.url, 15)}
                   rightSection={isActive ? <Check size={13} color="var(--mantine-color-accent)" /> : null}
                   style={{
                     background: isActive ? 'var(--mantine-color-accent-dim)' : undefined,

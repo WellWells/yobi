@@ -6,14 +6,10 @@ export interface SendTarget {
 }
 
 /**
- * Works out which conversation a composer send belongs to.
- *
- * Temporary chat has its own view, but selecting a file does not leave it and the toggle is
- * only hidden — the keyboard shortcut still fires. A send made in that state used to keep
- * pointing at the open conversation, so the provider thread was resumed for a reply that was
- * then thrown away, and the pending bubble was filed under a file whose view does not render
- * pending turns. Releasing the selection puts the user in front of the thread they are
- * actually talking to.
+ * Works out which conversation a composer send belongs to. Selecting a file does not leave
+ * temporary chat (and its shortcut still fires), so in temporary chat the open file is released
+ * and the send goes to the temporary thread, not to a file whose provider thread would be resumed
+ * and whose view never shows the pending turn.
  */
 export function resolveSendTarget(args: {
   selectedFilePath: string;

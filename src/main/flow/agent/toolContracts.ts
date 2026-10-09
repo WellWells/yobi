@@ -94,6 +94,11 @@ export interface ToolContract {
   verify?: (args: Args, at: string, ledger: LedgerView, read: ReadCaller) => Promise<VerificationResult>;
   /** Plain words for the action in logs and in the EARLIER ACTIONS block. */
   label?: (args: Args, ledger: LedgerView) => string;
+  /**
+   * i18n key for what the user's result lines call this tool. Only connectors Yobi describes itself
+   * have one; a server's own title, then the id spelled out, stand in for the rest.
+   */
+  titleKey?: string;
 }
 
 const DESTRUCTIVE_VERBS = new Set(['delete', 'del', 'remove', 'clear', 'drop', 'purge', 'empty', 'destroy', 'revoke']);
@@ -117,8 +122,8 @@ function nameTokens(name: string): string[] {
 }
 
 /**
- * Read or not, decided the way `classifyMcpTool` always has: a write verb in the name beats a
- * `readOnlyHint`, because a server that marks `delete_account` read-only is wrong, not reassuring.
+ * Same rule as `classifyMcpTool`: a write verb in the name beats a `readOnlyHint`, because a server
+ * that marks `delete_account` read-only is wrong, not reassuring.
  */
 function isReadTool(tool: McpTool): boolean {
   const tokens = nameTokens(tool.name);
@@ -189,15 +194,22 @@ export function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 /**
- * A connector that reports failure inside a successful response. The Thunderbird add-on answers
- * every business error as `{"error": "..."}` with no `isError`, and trusting the flag alone counted
- * "Message not found" as a write that landed.
+ * Stands in for a failure the server gave no words for. The model reads it as is; the user's line
+ * is written by us instead (`failedResult`), so this English never reaches a localized footer.
+ */
+const UNSTATED_FAILURE = 'the tool reported a failure';
+
+/**
+ * A failure reported inside a successful response: some connectors (the Thunderbird add-on) return
+ * business errors as `{"error": "..."}` without `isError`.
  */
 export function embeddedError(text: string): string | null {
   const obj = asRecord(parseJsonValue(text));
   if (!obj) return null;
   if (typeof obj.error === 'string' && obj.error.trim()) return obj.error.trim();
-  if (obj.success === false) return typeof obj.message === 'string' ? obj.message : 'the tool reported a failure';
+  if (obj.success === false) {
+    return typeof obj.message === 'string' && obj.message.trim() ? obj.message.trim() : UNSTATED_FAILURE;
+  }
   return null;
 }
 
@@ -206,13 +218,38 @@ function firstLine(text: string, limit = 200): string {
   return line.length > limit ? `${line.slice(0, limit - 1)}…` : line;
 }
 
+/**
+ * `detail` is the server's own words, relayed to the user as received. When there are none — an
+ * empty error, or a bare `success: false` — the user's line says only that it failed, in their
+ * language, instead of splicing our English placeholder into it.
+ */
 export function failedResult(detail: string, tool: string): InterpretedResult {
+  const said = detail === UNSTATED_FAILURE ? '' : firstLine(detail, 120);
   return {
     outcome: 'failed',
     failure: classifyFailure(detail),
-    summary: `the tool reported an error ("${firstLine(detail)}")`,
-    notice: { key: 'agent.outcome.failed', vars: { tool, detail: firstLine(detail, 120) } },
+    summary: said ? `the tool reported an error ("${firstLine(detail)}")` : 'the tool reported an error and gave no reason',
+    notice: said
+      ? { key: 'agent.outcome.failed', vars: { tool, detail: said } }
+      : { key: 'agent.outcome.failedNoReason', vars: { tool } },
   };
+}
+
+/** Why Yobi's own connection layer stopped a call before it reached the server. */
+export type UnsentReason = 'notConnected' | 'notSent';
+
+export const UNSENT_NOTICE_KEYS: Readonly<Record<UnsentReason, string>> = {
+  notConnected: 'agent.outcome.notConnected',
+  notSent: 'agent.outcome.notSent',
+};
+
+/**
+ * A call the connection layer refused before it reached the server (not connected, or a change not
+ * resent after a session renewal). The model reads the registry's English; the user's line is ours,
+ * so neither that English nor the raw server id is relayed as the connector's words.
+ */
+export function unsentResult(detail: string, tool: string, reason: UnsentReason): InterpretedResult {
+  return { ...failedResult(detail, tool), notice: { key: UNSENT_NOTICE_KEYS[reason], vars: { tool } } };
 }
 
 export function interpretGeneric(text: string, isError: boolean, toolName: string): InterpretedResult {

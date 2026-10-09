@@ -4,18 +4,16 @@ import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import { systemApi } from '../api/electronApi';
 import { useExportSettingsStore } from '../store/exportSettingsStore';
-import { getResponseAliases } from '../utils/parseMarkdownBlocks';
-import { stripConversationMarkers } from '../../../shared/conversationDoc';
-import { totalTokenLabel, turnTokenLabel } from '../utils/captureTokens';
+import { formatCardTime } from '../../../shared/captureCard';
 import {
   CAPTURE_PALETTES,
   captureBackgroundCss,
-  paletteCardTheme,
   type CaptureBackgroundStyle,
   type CaptureDirection,
 } from './captureTheme';
-import { buildCaptureRequest, buildTurnCaptureRequest } from './captureRequest';
+import { buildTurnCaptureRequest } from './captureRequest';
 import type { CaptureLook } from './captureRequest';
+import { captureLookFrom, captureTurnsFor, conversationCaptureRequest } from './conversationCapture';
 import type { NoticeLevel } from './useUiNotifications';
 import type {
   CaptureFormat,
@@ -26,14 +24,12 @@ import type {
 } from '../../../shared/types';
 import { DEFAULT_CAPTURE_WIDTH, clampCaptureMargin } from '../../../shared/types';
 
-export { CAPTURE_PALETTES, captureBackgroundCss };
+export { CAPTURE_PALETTES, captureBackgroundCss, formatCardTime };
 export type { CaptureBackgroundStyle, CaptureDirection };
 
 /**
- * A notice raised from inside the window. It carries a `level` because the surface it lands on
- * colours by severity — the hand-rolled card this replaced had no level at all, so "copied to
- * clipboard" and "export failed" were the same grey box for the same 4.5 seconds.
- * `null` retracts whatever this window has up.
+ * A notice raised from inside the window; the surface colours it by `level`. `null` retracts
+ * whatever this window has up.
  */
 export type ExportToast = {
   message: string;
@@ -41,39 +37,6 @@ export type ExportToast = {
   filePath?: string;
   fileName?: string;
 } | null;
-
-function stripAfterResponseHeading(raw: string): string {
-  const lines = raw.split('\n');
-  const responseAliases = getResponseAliases();
-  const responseIdx = lines.findIndex((line) => {
-    const m = line.trim().match(/^##\s+(.+)$/);
-    return m != null && responseAliases.has(m[1].trim());
-  });
-  if (responseIdx < 0) return raw;
-  return lines.slice(0, responseIdx).join('\n').trim();
-}
-
-export function formatCardTime(ts: string, locale: string): string {
-  if (!ts) return '';
-  const date = new Date(ts);
-  if (Number.isNaN(date.getTime())) return ts;
-  return new Intl.DateTimeFormat(locale, {
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(date);
-}
-
-function buildSummary(raw: string): string {
-  const plain = raw
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/\[(.*?)\]\((.*?)\)/g, '$1')
-    .replace(/[#>*_~\-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!plain) return '';
-  return plain.length > 220 ? `${plain.slice(0, 220)}…` : plain;
-}
 
 export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
   const { fileContent, selectedFile, parsedBlocks, conversation } = useAppStore(
@@ -139,82 +102,28 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
   const setCaptureShowTimestamp = useCallback((v: boolean) => patchCapture({ showTimestamp: v }), [patchCapture]);
   const setCaptureShowTokens = useCallback((v: boolean) => patchCapture({ showTokens: v }), [patchCapture]);
 
-  const captureBackground = useMemo(
-    () => captureBackgroundCss(capturePaletteKey, captureBackgroundStyle, captureDirection),
-    [capturePaletteKey, captureBackgroundStyle, captureDirection],
+  const captureLook = useMemo<CaptureLook>(() => captureLookFrom(capture), [capture]);
+  const captureBackground = captureLook.background;
+  const captureCardTheme = captureLook.cardTheme;
+
+  const captureTurns = useMemo<CaptureTurn[]>(
+    () => captureTurnsFor(conversation, parsedBlocks, locale, t),
+    [conversation, parsedBlocks, locale, t],
   );
-
-  const captureCardTheme = useMemo(() => paletteCardTheme(capturePaletteKey), [capturePaletteKey]);
-
-  const docTime = useMemo(
-    () => formatCardTime(parsedBlocks?.time || '', locale),
-    [parsedBlocks?.time, locale],
-  );
-
-  const captureTurns = useMemo<CaptureTurn[]>(() => {
-    const docProvider = parsedBlocks?.provider || '';
-    if (conversation && conversation.turns.length > 0) {
-      return conversation.turns.map((turn) => ({
-        prompt: turn.prompt,
-        response: turn.response,
-        provider: turn.meta.p || docProvider,
-        timestamp: formatCardTime(turn.meta.t ?? '', locale) || docTime,
-        tokens: turnTokenLabel(turn.meta, t),
-      }));
-    }
-    if (!parsedBlocks?.prompt && !parsedBlocks?.response) return [];
-    return [{
-      prompt: parsedBlocks.prompt || '',
-      response: parsedBlocks.response || '',
-      provider: docProvider,
-      timestamp: docTime,
-    }];
-  }, [conversation, parsedBlocks, docTime, locale]);
-
-  const captureLook = useMemo<CaptureLook>(() => ({
-    background: captureBackground,
-    cardTheme: captureCardTheme,
-    cardLayout: captureCardLayout,
-    width: captureWidth,
-    margin: captureMargin,
-    pixelRatio: captureHiDpi ? 2 : 1,
-    zip: captureZip,
-    showProvider: captureShowProvider,
-    showTimestamp: captureShowTimestamp,
-    showTokens: captureShowTokens,
-  }), [
-    captureBackground, captureCardTheme, captureCardLayout, captureWidth, captureMargin, captureHiDpi, captureZip,
-    captureShowProvider, captureShowTimestamp, captureShowTokens,
-  ]);
 
   const captureRequest = useMemo<MarkdownCaptureRequest | null>(() => {
     if (!fileContent || !selectedFile || !parsedBlocks) return null;
     const title = captureTitle.trim() || parsedBlocks.title
       || selectedFile.name.replace(/\.md$/i, '') || t('capture.noTitle');
-    const cleanFile = stripConversationMarkers(fileContent);
-    const contentToCapture = stripConversationMarkers(parsedBlocks.response || fileContent);
-    const preResponse = stripAfterResponseHeading(cleanFile);
-    return buildCaptureRequest({
-      ...captureLook,
-      title,
-      fileName: captureFileName.trim(),
-      format: captureFormat,
-      range: captureRange,
-      showPrompt: captureShowPrompt,
-      prompt: stripConversationMarkers(parsedBlocks.prompt || ''),
-      content: contentToCapture,
-      summary: buildSummary(preResponse || contentToCapture),
-      provider: parsedBlocks.provider || '',
-      timestamp: docTime,
-      turns: captureTurns,
-      tokensTotal: totalTokenLabel(
-        captureRange === 'last' ? (conversation?.turns ?? []).slice(-1) : (conversation?.turns ?? []),
-        t,
-      ),
-    });
+    return conversationCaptureRequest(
+      { content: fileContent, blocks: parsedBlocks, conversation, title, fileName: captureFileName.trim() },
+      {
+        look: captureLook, format: captureFormat, range: captureRange, showPrompt: captureShowPrompt, locale, t,
+      },
+    );
   }, [
-    fileContent, selectedFile, parsedBlocks, captureTitle, captureTurns, captureRange, captureFormat, t, conversation,
-    captureShowPrompt, captureFileName, docTime, captureLook,
+    fileContent, selectedFile, parsedBlocks, captureTitle, captureRange, captureFormat, t, conversation,
+    captureShowPrompt, captureFileName, locale, captureLook,
   ]);
 
   const handleCaptureImage = useCallback(async (mode: 'save' | 'copy') => {

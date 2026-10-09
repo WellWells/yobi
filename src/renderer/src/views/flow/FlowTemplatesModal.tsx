@@ -3,6 +3,7 @@ import { Box, Code, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { LayoutTemplate, Search } from 'lucide-react';
 import { AppModal } from '../../components/AppModal';
 import { AppTextInput } from '../../components/AppTextInput';
+import { GroupHeader } from '../../components/GroupHeader';
 import { useDragScroll } from '../../hooks/useDragScroll';
 import { FLOW_TEMPLATES, type FlowTemplate, type TemplateCategory } from './examples';
 import { TemplateIcon } from './TemplateIcon';
@@ -120,9 +121,7 @@ export const FlowTemplatesModal: React.FC<FlowTemplatesModalProps> = ({
               {/* Heading plus one line on what the whole category does, so a tile can get
                   away with carrying nothing but its name. */}
               <Stack gap={2}>
-                <Text fz="xs" fw={700} c="dimmed" tt="uppercase" style={{ letterSpacing: 0.4 }}>
-                  {t(labelKey)}
-                </Text>
+                <GroupHeader variant="plain" label={t(labelKey)} />
                 <Text fz="xs" c="dimmed" lh={1.4}>
                   {t(descKey)}
                 </Text>
@@ -130,10 +129,8 @@ export const FlowTemplatesModal: React.FC<FlowTemplatesModalProps> = ({
 
               <Box className={classes.rail} onWheel={railWheel} {...dragScroll}>
                 {templates.map((tpl) => (
-                  // The description lives here rather than on the tile: clamped to two lines it
-                  // ellipsised the longer half of the catalogue, and it was the single biggest
-                  // contributor to the gallery's height. A tooltip is mouse-only, so the copy
-                  // also reaches the accessible name below.
+                  // The description lives in the tooltip to keep tiles short; a tooltip is mouse-only,
+                  // so it also goes into the accessible name below.
                   <Tooltip
                     key={tpl.key}
                     label={t(tpl.descKey)}

@@ -1,11 +1,16 @@
 import type {
-  FlowAssessment, FlowBuildEvent, FlowBuildOutcome, FlowBuildPhase, FlowBuildReport,
-  FlowDefinition, SkillType,
+  AgentFlowRecipient, FlowAssessment, FlowBuildEvent, FlowBuildFailureReason, FlowBuildOutcome, FlowBuildPhase,
+  FlowBuildReport, FlowDefinition, SkillType,
 } from '../../shared/types';
 import { SKILL_TYPES, withClarifications } from '../../shared/flowSkillSchema';
 import type { FlowClarification } from '../../shared/flowSkillSchema';
+import { flowRecipients, resolveFlowRecipients } from '../../shared/botRecipients';
+import type { RecipientDirectory } from '../../shared/botRecipients';
+import { withRecipientQuestion } from '../../shared/botRecipientQuestion';
+import type { RecipientWording } from '../../shared/botRecipientQuestion';
+import { lazyRecipients, recipientWording } from './botRecipientDirectory';
 import { assessFlowSupport, generateFlowDefinition } from './flowGenerator';
-import { lintGeneratedFlow } from './flowLint';
+import { lintGeneratedFlow, recipientBuildIssues } from './flowLint';
 import { probeReadiness, snapshotIntegrations } from './flowReadiness';
 import type { IntegrationSnapshot } from './flowReadiness';
 import { sendLog } from '../helpers';
@@ -14,9 +19,7 @@ import type { FlowExecutorDeps } from './types';
 
 /**
  * One pass of understand → discover → plan → build → verify, shared by the Flow Builder and by
- * `/agent`'s `build_flow`. There is no model-driven tool loop in here: the two LLM calls this
- * makes are the two the generator always made, and every other phase is local. Showing the work
- * is a broadcasting problem, not a reason to think harder.
+ * `/agent`'s `build_flow`. Only understand and build call the model; every other phase is local.
  */
 
 const KNOWN_SKILLS = new Set<string>(SKILL_TYPES);
@@ -43,28 +46,51 @@ export interface FlowBuildRequest {
   askUser?: boolean;
   providerUrl?: string;
   emit?: (event: FlowBuildEvent) => void;
-  /** Returns false when the user declines to save. Absent means the caller already has consent. */
-  confirm?: (flow: FlowDefinition) => Promise<boolean>;
-  /** Injected by tests; production reads the live config. */
+  /**
+   * Returns false when the user declines to save. Absent means the caller already has consent.
+   * `recipients` is who the bot steps send to, by name — empty when the flow has none.
+   */
+  confirm?: (flow: FlowDefinition, recipients: AgentFlowRecipient[]) => Promise<boolean>;
+  /** Read from the live config when omitted. */
   snapshot?: IntegrationSnapshot;
+  /** The chats a bot step can reach. Passed by `/agent`; read live otherwise. */
+  recipients?: RecipientDirectory;
+  /**
+   * The user's own words, read for "send it to me" and for whether a recipient was named. Defaults
+   * to the goal, which in the Flow Builder is what the user typed. `/agent` passes its user's words
+   * instead: its goal is the model's rewording, and a name the model wrote there must not count as
+   * the user having chosen who receives the flow.
+   */
+  words?: string;
+  /** Defaults to wording the recipient question in the app's language. */
+  wording?: RecipientWording;
 }
 
+/**
+ * `reason` travels with the raw `error` so the broadcast can word it for the user; the outcome
+ * keeps `error` raw for the log, the `/agent` observation and the `BUILD_DECLINED` comparison.
+ * With a reason the raw text is a validator line written for the model, so the phase event does
+ * not carry it as its detail either.
+ */
 function failure(
   emit: ((event: FlowBuildEvent) => void) | undefined,
   phase: FlowBuildPhase,
   error: string,
+  reason?: FlowBuildFailureReason,
 ): FlowBuildOutcome {
-  emit?.({ kind: 'phase', phase, status: 'failed', detail: error });
-  emit?.({ kind: 'failed', phase, error });
-  return { status: 'failed', phase, error };
+  const why = reason ? { reason } : {};
+  emit?.({ kind: 'phase', phase, status: 'failed', ...(reason ? {} : { detail: error }) });
+  emit?.({ kind: 'failed', phase, error, ...why });
+  return { status: 'failed', phase, error, ...why };
 }
 
 export async function runFlowBuild(request: FlowBuildRequest): Promise<FlowBuildOutcome> {
   const { deps, emit, save } = request;
   const goal = withClarifications(request.goal, request.answers ?? []);
   if (!goal.trim()) return failure(emit, 'understand', 'Empty description');
+  const words = request.words ?? goal;
+  const recipients = lazyRecipients(request.recipients);
 
-  // ── understand ────────────────────────────────────────────────────────────────────────────
   let assessment = request.assessed;
   if (!assessment) {
     emit?.({ kind: 'phase', phase: 'understand', status: 'active' });
@@ -77,8 +103,12 @@ export async function runFlowBuild(request: FlowBuildRequest): Promise<FlowBuild
         if (attempt > 1) emit?.({ kind: 'phase', phase: 'understand', status: 'active', detail: 'repair' });
       },
     });
-    if (!assessed.ok) return failure(emit, 'understand', assessed.error);
+    if (!assessed.ok) return failure(emit, 'understand', assessed.error, assessed.reason);
     assessment = assessed.assessment;
+    // An assessment handed in by `/agent` already carries this question; it asked it there.
+    if (assessment.skills.includes('bot')) {
+      assessment = withRecipientQuestion(assessment, words, await recipients(), request.wording ?? recipientWording());
+    }
   }
   emit?.({ kind: 'phase', phase: 'understand', status: 'done' });
 
@@ -86,29 +116,24 @@ export async function runFlowBuild(request: FlowBuildRequest): Promise<FlowBuild
     return failure(emit, 'understand', assessment.gaps[0] ?? 'No Yobi skill can carry out this request');
   }
 
-  // ── ask, rather than invent ───────────────────────────────────────────────────────────────
-  // Before any discovery or generation: a question answered now changes which skills get picked,
-  // so asking after the plan exists would throw the plan away.
+  // Ask before discovery: an answer changes which skills get picked, so asking later would discard the plan.
   if (request.askUser && assessment.questions.length > 0) {
     sendLog(`❓ [Flow] Needs ${assessment.questions.length} answer(s) before building`);
     emit?.({ kind: 'questions', questions: assessment.questions });
     return { status: 'questions', questions: assessment.questions };
   }
 
-  // ── discover ──────────────────────────────────────────────────────────────────────────────
   emit?.({ kind: 'phase', phase: 'discover', status: 'active' });
   const skills = asSkillTypes(assessment.skills);
   const { blocked } = probeReadiness(skills, request.snapshot ?? snapshotIntegrations());
   emit?.({ kind: 'tools', skills, blocked });
   emit?.({ kind: 'phase', phase: 'discover', status: 'done' });
 
-  // ── plan ──────────────────────────────────────────────────────────────────────────────────
-  // The outline was already paid for by the assessment and, until now, thrown away.
+  // The outline comes from the assessment; this phase makes no model call.
   emit?.({ kind: 'phase', phase: 'plan', status: 'active' });
   emit?.({ kind: 'outline', outline: assessment.outline });
   emit?.({ kind: 'phase', phase: 'plan', status: 'done' });
 
-  // ── build ─────────────────────────────────────────────────────────────────────────────────
   emit?.({ kind: 'phase', phase: 'build', status: 'active' });
   const generated = await generateFlowDefinition(goal, deps, {
     ...(request.providerUrl ? { providerUrl: request.providerUrl } : {}),
@@ -118,27 +143,36 @@ export async function runFlowBuild(request: FlowBuildRequest): Promise<FlowBuild
       if (attempt > 1) emit?.({ kind: 'phase', phase: 'build', status: 'active', detail: 'repair' });
     },
   });
-  if (!generated.ok) return failure(emit, 'build', generated.error);
+  if (!generated.ok) return failure(emit, 'build', generated.error, generated.reason);
   emit?.({ kind: 'phase', phase: 'build', status: 'done' });
 
-  // ── verify ────────────────────────────────────────────────────────────────────────────────
   emit?.({ kind: 'phase', phase: 'verify', status: 'active' });
-  const issues = lintGeneratedFlow(generated.flow, blocked);
+  let flow = generated.flow;
+  const issues = lintGeneratedFlow(flow, blocked);
+  let sendsTo: AgentFlowRecipient[] = [];
+  // The model wrote who the user said ("me", a name); the paired chats turn that into ids here.
+  if (flow.steps.some((step) => step.type === 'bot')) {
+    const directory = await recipients();
+    const resolved = resolveFlowRecipients(flow, directory, { words });
+    flow = resolved.flow;
+    issues.push(...recipientBuildIssues(resolved.issues));
+    sendsTo = flowRecipients(flow, directory);
+  }
   const report: FlowBuildReport = {
     skills,
-    steps: generated.flow.steps.length,
-    trigger: generated.flow.trigger.type,
+    steps: flow.steps.length,
+    trigger: flow.trigger.type,
     issues,
     gaps: assessment.gaps,
   };
   emit?.({ kind: 'phase', phase: 'verify', status: 'done' });
 
-  if (request.confirm && !(await request.confirm(generated.flow))) {
+  if (request.confirm && !(await request.confirm(flow, sendsTo))) {
     return failure(emit, 'verify', BUILD_DECLINED);
   }
 
   try {
-    const saved = await save(generated.flow);
+    const saved = await save(flow);
     sendLog(`🧩 [Flow] built "${saved.name}" — ${report.steps} steps, ${issues.length} issue(s) to check`);
     emit?.({ kind: 'done', report, flowName: saved.name });
     return { status: 'created', flow: saved, report };

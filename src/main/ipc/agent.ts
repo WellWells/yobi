@@ -37,7 +37,6 @@ interface DisclosedServers {
  * something the user can no longer see. Dropping every id of a non-empty request is still an
  * error — that one the user can act on.
  */
-// Exported for the test suite.
 export function resolveDisclosedServers(serverIds: readonly string[] | undefined): DisclosedServers {
   const wanted = [...new Set((serverIds ?? []).map((id) => id.trim()).filter(Boolean))];
   const resolved = wanted
@@ -94,8 +93,7 @@ export function registerAgentHandlers(ctx: IpcContext): void {
         ...(conversationPath ? { conversationPath } : {}),
         ...(attachments?.length ? { attachments: attachments.filter(Boolean) } : {}),
         ...(scoped.ids.length > 0 ? { mcpServerIds: scoped.ids, mcpCommandName: scoped.command } : {}),
-        // Only the off state is persisted. `undefined` means on, so a run written before the
-        // toggle existed — and every default run since — reads as "web allowed" with no migration.
+        // Only the off state is persisted; `undefined` means web allowed, so legacy runs need no migration.
         ...(web === false ? { web: false } : {}),
         status: 'running',
         turns: [],
@@ -127,6 +125,7 @@ export function registerAgentHandlers(ctx: IpcContext): void {
     state.turns = resumeFrom;
     state.status = 'running';
     state.error = undefined;
+    state.errorDetail = undefined;
     state.updatedAt = new Date().toISOString();
     return executeAgentRun(deps, {
       state,
@@ -184,15 +183,17 @@ export function registerAgentHandlers(ctx: IpcContext): void {
    */
   ipcMain.handle(
     IPC.AGENT_SET_CONNECTORS,
-    async (_event, filePath: string, serverIds: string[], web?: boolean): Promise<boolean> => {
+    async (_event, filePath: string, serverIds: string[], web?: boolean, agent?: boolean): Promise<boolean> => {
       const target = (filePath ?? '').trim();
       if (!target) return false;
       try {
         const { ids } = resolveDisclosedServers(serverIds);
         await mergeConversationThread(target, {
           ...(ids.length > 0 ? { mcp: ids } : { mcp: undefined }),
-          // Written only when on, so the marker of a default conversation stays as it was.
-          web: web === true ? true : undefined,
+          // On, or switched off by the user (`false`); absent is the default, where the agent may
+          // turn it on itself. A default conversation's marker stays as it was.
+          web: web === true ? true : web === false ? false : undefined,
+          agent: agent === true ? true : undefined,
         });
         return true;
       } catch (err: unknown) {

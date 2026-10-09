@@ -7,16 +7,19 @@ export interface SectionCardProps {
   style?: React.CSSProperties;
 }
 
+// The danger card is the normal card surface with a faint cast of the theme's error colour,
+// the same colour its title and divider use.
+const DANGER_BG = 'color-mix(in srgb, var(--mantine-color-error) 6%, var(--mantine-color-default))';
+const DANGER_BORDER = 'color-mix(in srgb, var(--mantine-color-error) 45%, transparent)';
+
 export const SectionCard: React.FC<SectionCardProps> = ({ children, danger, style }) => (
   <Paper
     withBorder
     shadow="xs"
     radius="md"
     p="md"
-    bg={danger
-      ? 'linear-gradient(180deg, rgba(248,81,73,0.08), rgba(248,81,73,0.03))'
-      : 'var(--mantine-color-default)'}
-    style={{ ...(danger ? { borderColor: 'rgba(248,81,73,0.45)' } : {}), ...style }}
+    bg={danger ? DANGER_BG : 'var(--mantine-color-default)'}
+    style={{ ...(danger ? { borderColor: DANGER_BORDER } : {}), ...style }}
   >
     {children}
   </Paper>

@@ -1,4 +1,3 @@
-/* ComposerPill.module.css */
 /* Hover + expanded state for the composer footer's pill triggers. */
 
 .pill:hover:not([data-disabled]),
@@ -15,9 +14,7 @@
   border-color: transparent !important;
 }
 
-/* An accented pill (a mode other than plain chat) keeps its tint under the pointer
-   rather than flattening to the neutral hover fill — the whole point of the tint is
-   that "this send is not an ordinary chat message" stays visible. */
+/* An accented pill (non-chat mode) keeps its tint on hover so the mode stays visible. */
 .accent:hover:not([data-disabled]),
 .accent[data-expanded] {
   background: var(--mantine-color-accent-dim) !important;

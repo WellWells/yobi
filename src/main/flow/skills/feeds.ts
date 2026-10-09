@@ -1,5 +1,5 @@
 import { load } from 'cheerio';
-import { fetchAndParse, fetchRawText, parseRssFeed, type RssFeedItem } from '../../urlParser';
+import { fetchAndParse, fetchRawResponse, fetchRawText, parseRssFeed, type RssFeedItem } from '../../urlParser';
 import { pageFetchLane, Semaphore } from '../lanes';
 import { extractYoutubeVideoId, youtubeThumbnailUrl } from '../../youtubeTranscript';
 import { sendLog } from '../../helpers';
@@ -10,11 +10,27 @@ export { buildYoutubeEnvelope, execYoutube } from './youtube';
 
 const rssCheckpoints = makeCheckpointStore<SeenCheckpoint>('rss');
 
-function pushResolved(items: Array<{ title: string; link: string }>, title: string, rawLink: string, base: string): void {
+/** Legacy link forms (resolved against the configured URL's origin), keyed by the current form. */
+interface LegacyLinks {
+  origin: string;
+  byLink: Map<string, string>;
+}
+
+function pushResolved(
+  items: Array<{ title: string; link: string }>,
+  title: string,
+  rawLink: string,
+  base: string,
+  legacy?: LegacyLinks,
+): void {
   if (!rawLink) return;
   try {
     const resolved = new URL(rawLink, base).href;
-    if (/^https?:\/\//i.test(resolved)) items.push({ title: title || resolved, link: resolved });
+    if (!/^https?:\/\//i.test(resolved)) return;
+    items.push({ title: title || resolved, link: resolved });
+    if (!legacy?.origin) return;
+    const old = new URL(rawLink, legacy.origin).href;
+    if (old !== resolved) legacy.byLink.set(resolved, old);
   } catch {
   }
 }
@@ -37,10 +53,11 @@ export async function execRss(
 
   sendLog(`📡 [Flow] RSS step — fetching feed: ${url}`);
 
-  const rawXml = await fetchRawText(url);
+  const { status, text: rawXml } = await fetchRawResponse(url);
   const allItems = parseRssFeed(rawXml);
 
   if (allItems.length === 0) {
+    if (status >= 400) throw new Error(`HTTP ${status}`);
     sendLog('📡 [Flow] RSS: feed returned 0 items');
     return '[]';
   }
@@ -58,8 +75,8 @@ export async function execRss(
     sendLog(`📡 [Flow] RSS: first run — seeding the checkpoint, returning the latest ${FIRST_RUN_COUNT} item`);
     newLinks = allItems.slice(0, FIRST_RUN_COUNT).map((item) => item.link);
   } else if (newLinks.length > BURST_CAP) {
-    sendLog(`📡 [Flow] RSS: burst of ${newLinks.length} — returning latest ${BURST_CAP}`);
-    newLinks = allItems.slice(0, BURST_CAP).map((item) => item.link);
+    sendLog(`📡 [Flow] RSS: burst of ${newLinks.length} — returning the first ${BURST_CAP} unseen in feed order`);
+    newLinks = fresh.slice(0, BURST_CAP);
   } else {
     sendLog(`📡 [Flow] RSS: found ${newLinks.length} new items since checkpoint`);
   }
@@ -77,6 +94,36 @@ const scraperCheckpoints = makeCheckpointStore<SeenCheckpoint>('scraper');
 
 const SCRAPER_MAX_HTML_CHARS = 2_000_000;
 
+// Relative hrefs resolve like a browser: against the page's <base href> when it is a
+// usable http(s) URL, otherwise against the full page URL (not its origin, which would
+// turn `post.html` under /news/ into /post.html and drop the path from `?id=3`).
+function documentBase(baseHref: string | undefined, pageUrl: string): string {
+  if (!baseHref) return pageUrl;
+  try {
+    const resolved = new URL(baseHref, pageUrl).href;
+    return /^https?:\/\//i.test(resolved) ? resolved : pageUrl;
+  } catch {
+    return pageUrl;
+  }
+}
+
+function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return '';
+  }
+}
+
+// Legacy checkpoints hold links resolved against the configured URL's origin; an item seen in that
+// form was already delivered and must not be sent again (reconciling rewrites it in the current form).
+async function legacySeenLinks(stepId: string, byLink: Map<string, string>): Promise<Set<string>> {
+  if (byLink.size === 0) return new Set();
+  const prev = readSeenEntries(await scraperCheckpoints.load(stepId), new Date().toISOString());
+  const seen = new Set(prev.map((entry) => entry.link));
+  return new Set([...byLink].filter(([, old]) => seen.has(old)).map(([link]) => link));
+}
+
 export async function execScraper(
   config: Record<string, string>,
   stepId: string,
@@ -89,12 +136,10 @@ export async function execScraper(
   const html = result.cleanedText;
 
   const $ = load(`<html>${html}</html>`);
-
-  let baseOrigin = '';
-  try {
-    baseOrigin = new URL(url).origin;
-  } catch {
-  }
+  // The fetch reports the address the page was served from (after redirects such as
+  // /news -> /news/); relative links belong to that document, not the configured URL.
+  const docBase = documentBase($('base[href]').first().attr('href'), result.url || url);
+  const legacy: LegacyLinks = { origin: originOf(url), byLink: new Map() };
 
   const items: Array<{ title: string; link: string }> = [];
 
@@ -122,7 +167,7 @@ export async function execScraper(
         rawLink = $el.attr('href') ?? '';
       }
 
-      pushResolved(items, title, rawLink, baseOrigin || url);
+      pushResolved(items, title, rawLink, docBase, legacy);
     });
   } else if (titleSel && linkSel) {
     const titleEls = $(titleSel).toArray();
@@ -147,16 +192,16 @@ export async function execScraper(
       titleEls.forEach((tEl, i) => {
         const $link = linkEls[i] ? $(linkEls[i]) : null;
         const rawLink = $link ? ($link.attr('href') ?? $link.text().trim()) : '';
-        pushResolved(items, $(tEl).text().trim(), rawLink, baseOrigin || url);
+        pushResolved(items, $(tEl).text().trim(), rawLink, docBase, legacy);
       });
     } else {
-      for (const p of paired) pushResolved(items, p.title, p.link, baseOrigin || url);
+      for (const p of paired) pushResolved(items, p.title, p.link, docBase, legacy);
     }
   } else if (linkSel) {
     $(linkSel).each((_, el) => {
       const $el = $(el);
       const rawLink = $el.attr('href') ?? $el.text().trim();
-      pushResolved(items, $el.text().trim(), rawLink, baseOrigin || url);
+      pushResolved(items, $el.text().trim(), rawLink, docBase, legacy);
     });
   }
 
@@ -166,13 +211,14 @@ export async function execScraper(
     return '[]';
   }
 
+  const seenAsLegacy = await legacySeenLinks(stepId, legacy.byLink);
   const { fresh, isFirstRun } = await reconcileSeenCache(
     scraperCheckpoints,
     stepId,
     items.map((item) => item.link),
     undefined,
   );
-  const freshSet = new Set(fresh);
+  const freshSet = new Set(fresh.filter((link) => !seenAsLegacy.has(link)));
   const newItems = items.filter((item) => freshSet.has(item.link.trim()));
 
   const parsedMax = parseInt(config.maxItems ?? '', 10);
@@ -192,7 +238,6 @@ const ytSubsCheckpoints = makeCheckpointStore<SeenCheckpoint>('youtube_subs');
 
 const YT_RSS_BASE = 'https://www.youtube.com/feeds/videos.xml?channel_id=';
 
-/** How many channel feeds may be in flight at once. */
 const YT_SUBS_CONCURRENCY = 5;
 
 interface ChannelFeedCheckpoint {
@@ -286,12 +331,8 @@ function feedUrlFromEntry(raw: string): string | null {
 }
 
 /**
- * The id of the channel a page belongs to.
- *
- * The order is not cosmetic. A @handle page carries several channel ids, and `"channelId"`
- * is not one that identifies the page: it appeared twice on a real @JeffGeerling page and the
- * first hit was a channel the page merely links to, so matching it resolved the feed of
- * "Geerling Engineering" instead. Each pattern below names the page's own channel.
+ * The id of the channel a page belongs to. Pattern order matters: a @handle page also carries
+ * the ids of channels it links to.
  */
 function channelIdFromPage(html: string): string | null {
   const patterns = [
@@ -307,9 +348,8 @@ function channelIdFromPage(html: string): string | null {
 }
 
 /**
- * Resolves a @handle by reading its channel page — the expensive path, which is why its
- * answer is cached. The page measured 1.37 MB against a 39 KB feed, and the id in it is
- * fixed for the life of the handle.
+ * Resolves a @handle by reading its channel page. The page is large, so the answer is cached;
+ * the id is fixed for the life of the handle.
  */
 async function resolveFeedFromChannelPage(
   entry: string,
@@ -379,8 +419,7 @@ export async function execYoutubeSubs(
   const cachedFeeds = readChannelFeeds(await ytChannelCheckpoints.load(stepId), now);
   const learnedFeeds: Record<string, string> = {};
 
-  // Fetched together, reported in the order the user listed the channels: the logs stay
-  // readable and the run no longer costs one round trip per channel end to end.
+  // Fetched concurrently, reported in the order the user listed the channels so the log stays readable.
   const gate = new Semaphore(YT_SUBS_CONCURRENCY);
   const fetched = await Promise.all(channels.map((entry) => gate.runExclusive(
     async (): Promise<ChannelFetch> => {
@@ -424,8 +463,7 @@ export async function execYoutubeSubs(
       const fresh = unseen.filter(isFresh);
       sendLog(`📺 [Flow] YT Subs: ${entry} — ${fresh.length} new video(s)`);
       for (const v of fresh) sendLog(`📺 [Flow] YT Subs: ${entry} — new: ${describeVideo(v, now)}`);
-      // Rare, and exactly the case that matters when an old video turns up: a never-seen
-      // upload in the window that only its date keeps out.
+      // Log never-seen uploads kept out only by their age, so a missing old video can be traced.
       for (const v of unseen.filter((u) => !isFresh(u))) {
         sendLog(`📺 [Flow] YT Subs: ${entry} — skipped ${describeVideo(v, now)}: older than ${windowDays} days`);
       }

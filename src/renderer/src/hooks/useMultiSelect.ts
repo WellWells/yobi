@@ -20,6 +20,47 @@ export interface MultiSelect {
   selectClick: (id: string, mods: ClickModifiers) => 'open' | 'multi';
 }
 
+export interface SelectClickState {
+  selectMode: boolean;
+  selectedIds: Set<string>;
+  anchorId: string | null;
+}
+
+/**
+ * One row click. Once selection mode is on, a plain click toggles the row like its
+ * checkbox does — leaving the mode is the action bar's Cancel, never a missed checkbox.
+ */
+export function resolveSelectClick(
+  current: SelectClickState,
+  id: string,
+  mods: ClickModifiers,
+): { state: SelectClickState; result: 'open' | 'multi' } {
+  const { ctrlKey, shiftKey, orderedIds } = mods;
+  const { selectMode, selectedIds, anchorId } = current;
+
+  if (shiftKey && anchorId) {
+    const from = orderedIds.indexOf(anchorId);
+    const to = orderedIds.indexOf(id);
+    if (from >= 0 && to >= 0) {
+      const [lo, hi] = from <= to ? [from, to] : [to, from];
+      return {
+        state: { selectMode: true, selectedIds: new Set(orderedIds.slice(lo, hi + 1)), anchorId },
+        result: 'multi',
+      };
+    }
+  }
+
+  if (ctrlKey || shiftKey || selectMode) {
+    const seedable = anchorId !== null && orderedIds.includes(anchorId);
+    const base = selectMode ? new Set(selectedIds) : new Set(seedable ? [anchorId] : []);
+    if (base.has(id)) base.delete(id);
+    else base.add(id);
+    return { state: { selectMode: true, selectedIds: base, anchorId: id }, result: 'multi' };
+  }
+
+  return { state: { selectMode: false, selectedIds: new Set(), anchorId: id }, result: 'open' };
+}
+
 export function useMultiSelect(): MultiSelect {
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
@@ -58,37 +99,12 @@ export function useMultiSelect(): MultiSelect {
   const setAnchor = useCallback((id: string | null) => setAnchorId(id), []);
 
   const selectClick = useCallback((id: string, mods: ClickModifiers): 'open' | 'multi' => {
-    const { ctrlKey, shiftKey, orderedIds } = mods;
-
-    if (shiftKey && anchorId) {
-      const from = orderedIds.indexOf(anchorId);
-      const to = orderedIds.indexOf(id);
-      if (from >= 0 && to >= 0) {
-        const [lo, hi] = from <= to ? [from, to] : [to, from];
-        setSelectedIds(new Set(orderedIds.slice(lo, hi + 1)));
-        setSelectMode(true);
-        return 'multi';
-      }
-    }
-
-    if (ctrlKey || shiftKey) {
-      setSelectedIds((prev) => {
-        const seedable = anchorId !== null && orderedIds.includes(anchorId);
-        const base = selectMode ? new Set(prev) : new Set(seedable ? [anchorId] : []);
-        if (base.has(id)) base.delete(id);
-        else base.add(id);
-        return base;
-      });
-      setSelectMode(true);
-      setAnchorId(id);
-      return 'multi';
-    }
-
-    setSelectMode(false);
-    setSelectedIds(new Set());
-    setAnchorId(id);
-    return 'open';
-  }, [anchorId, selectMode]);
+    const next = resolveSelectClick({ selectMode, selectedIds, anchorId }, id, mods);
+    setSelectMode(next.state.selectMode);
+    setSelectedIds(next.state.selectedIds);
+    setAnchorId(next.state.anchorId);
+    return next.result;
+  }, [anchorId, selectMode, selectedIds]);
 
   return useMemo(
     () => ({

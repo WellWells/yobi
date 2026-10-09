@@ -38,12 +38,7 @@ function niceAxisMax(value: number): number {
   return nice * pow;
 }
 
-/**
- * Stacked day columns. Stacked rather than grouped on purpose: these series are parts of one
- * day's total, and side-by-side bars make the smaller series unreadable whenever one dominates
- * — which is the normal case for both outcomes (successes swamp failures) and tokens (input
- * swamps output).
- */
+/** Stacked day columns: the series are parts of one day's total, and grouped bars hide the small series. */
 export const TrendBarChart: React.FC<Props> = ({
   labels,
   series,

@@ -1,5 +1,6 @@
 import { ClipboardItem, clipboard, systemPreferences } from 'electron';
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 
 export function checkMacosAccessibility(): boolean {
@@ -12,10 +13,8 @@ export function promptMacosAccessibility(): void {
   systemPreferences.isTrustedAccessibilityClient(true);
 }
 
-// Electron 44 replaced the clipboard module with an async, W3C-shaped API: the whole
-// module is clear/has/read/write/readText/writeText and nothing else. Entries arrive as
-// ClipboardItem objects whose payloads are Blobs, and an item handed back by read()
-// cannot be passed to write() — it has to be rebuilt from its bytes.
+// Electron's clipboard is async and W3C-shaped: entries are ClipboardItems holding Blobs, and an
+// item returned by read() cannot be passed to write(); it has to be rebuilt from its bytes.
 const RESTORABLE_TYPES: readonly string[] = [
   'text/plain',
   'text/html',
@@ -98,9 +97,7 @@ export async function restoreClipboard(snapshot: ClipboardSnapshot): Promise<voi
     Object.fromEntries(entries.map((entry) => [entry.type, clipboardBlob(entry.bytes, entry.type)])),
   ));
 
-  // If the OS refuses the write, whatever the capture left behind stays put. That is the
-  // text the user selected, which is what a plain Ctrl+C would have left them with —
-  // strictly better than clearing and handing back an empty clipboard.
+  // If the OS refuses the write, keep the captured selection rather than clearing the clipboard.
   try {
     await clipboard.write(items);
   } catch {
@@ -121,14 +118,10 @@ async function pollClipboard(finish: (value: string) => Promise<void>): Promise<
 }
 
 /**
- * Undoes a provider's own "Copy" click at the end of a task — and nothing else.
- *
- * This used to restore unconditionally, 30 seconds to 10 minutes after the snapshot was taken,
- * so anything the user copied in another app meanwhile was overwritten, or cleared outright
- * when the snapshot had been empty. Bot tasks fire at arbitrary times, so there was nothing to
- * connect the loss to. Requiring the clipboard to still hold the answer we just read makes
- * that impossible: normally `interceptCopy` keeps the OS clipboard out of it entirely, and
- * then this correctly does nothing at all.
+ * Undoes a provider's own "Copy" click at the end of a task, and nothing else: the snapshot is
+ * restored only while the clipboard still holds the answer just read, so anything the user copied
+ * in the meantime is never overwritten. Normally `interceptCopy` keeps the OS clipboard out of it
+ * and this does nothing.
  */
 export async function restoreClipboardAfterTask(
   snapshot: ClipboardSnapshot,
@@ -142,6 +135,41 @@ export async function restoreClipboardAfterTask(
   return true;
 }
 
+/** A digest of everything restorable on the clipboard: equal digests mean nothing was copied in between. */
+export async function clipboardFingerprint(): Promise<string> {
+  const hash = createHash('sha256');
+  for (const entries of (await backupClipboard()).items) {
+    for (const { type, bytes } of entries) hash.update(`${type}\0`).update(bytes).update('\0');
+    hash.update('\n');
+  }
+  return hash.digest('hex');
+}
+
+/**
+ * Puts a hotkey task's answer on the clipboard — select, press, paste is the loop the hotkey
+ * exists for. Skipped when the user has copied something else since the press: a task can run
+ * for minutes, and replacing that copy is the loss `restoreClipboardAfterTask` guards against.
+ * A provider "Copy" click that leaked through still counts as untouched, since it holds the answer.
+ */
+export async function handAnswerToClipboard(
+  fingerprintAtPress: string,
+  answer: string,
+  providerAnswer: string,
+): Promise<boolean> {
+  const text = answer.trim();
+  if (!text) return false;
+  const leaked = providerAnswer.trim();
+  const untouched = await clipboardFingerprint() === fingerprintAtPress
+    || (leaked !== '' && (await readClipboardText()).trim() === leaked);
+  if (!untouched) return false;
+  try {
+    await clipboard.writeText(text);
+  } catch {
+    return false;
+  }
+  return true;
+}
+
 let captureInFlight: Promise<string> | null = null;
 
 export function isClipboardCaptureInFlight(): boolean {
@@ -151,12 +179,9 @@ export function isClipboardCaptureInFlight(): boolean {
 /**
  * Captures the current selection, leaving the clipboard as it found it.
  *
- * Only one capture may run at a time. The hotkey debounce is 1 s but polling runs for up to
- * 3 s, so a second press used to overlap the first: it snapshotted a clipboard the first had
- * already cleared, then read the text the first restored as if it were a new selection, and
- * finally handed back its own empty snapshot. That sent the user's old clipboard to the
- * provider AND left them with an empty clipboard. An overlapping press is dropped instead —
- * the capture already running is the one the user is waiting for.
+ * Only one capture runs at a time: polling outlasts the hotkey debounce, and an overlapping capture
+ * would snapshot a clipboard the first had already cleared and send the old clipboard as the
+ * selection. An overlapping press is dropped; the running capture is the one the user awaits.
  */
 export function captureSelectedText(): Promise<string> {
   if (captureInFlight) return Promise.resolve('');

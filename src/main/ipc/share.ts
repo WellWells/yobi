@@ -6,25 +6,36 @@ import { sendLog } from '../helpers';
 import { ShareError, createPaste, revokePaste } from '../share/privatebin';
 import { effectiveExpire, probeInstanceExpires } from '../share/instanceExpires';
 
+/**
+ * Reads the expiry options a share server offers and caches them under that URL. A reply for a
+ * URL the user has already replaced is dropped, so a slow probe never files its options under
+ * the newer server.
+ */
+export async function refreshInstanceExpires(url: string): Promise<void> {
+  const values = await probeInstanceExpires(url);
+  if (config.share.instanceUrl !== url) return;
+  config.share = normalizeShareSettings({
+    ...config.share,
+    instanceExpires: values ? { url, values } : null,
+  });
+  saveConfig({ share: config.share });
+  sendLog(
+    values
+      ? `🔗 Share instance offers: ${values.join(', ')}`
+      : `⚠️ Could not read the expiry options of ${url} — using the PrivateBin defaults`,
+  );
+}
+
 export function registerShareHandlers(): void {
   ipcMain.handle(IPC.GET_SHARE_SETTINGS, (): ShareSettings => config.share);
 
-  ipcMain.handle(IPC.UPDATE_SHARE_SETTINGS, async (_event, patch: Partial<ShareSettings>) => {
+  ipcMain.handle(IPC.UPDATE_SHARE_SETTINGS, (_event, patch: Partial<ShareSettings>): ShareSettings => {
     const previousUrl = config.share.instanceUrl;
     config.share = normalizeShareSettings({ ...config.share, ...patch });
-    if (config.share.instanceUrl !== previousUrl) {
-      const values = await probeInstanceExpires(config.share.instanceUrl);
-      config.share = normalizeShareSettings({
-        ...config.share,
-        instanceExpires: values ? { url: config.share.instanceUrl, values } : null,
-      });
-      sendLog(
-        values
-          ? `🔗 Share instance offers: ${values.join(', ')}`
-          : `⚠️ Could not read the expiry options of ${config.share.instanceUrl} — using the PrivateBin defaults`,
-      );
-    }
     saveConfig({ share: config.share });
+    // The probe can take its full timeout, so the URL is saved and answered first; holding the
+    // reply would overwrite a field the user edited during the wait.
+    if (config.share.instanceUrl !== previousUrl) void refreshInstanceExpires(config.share.instanceUrl);
     return config.share;
   });
 

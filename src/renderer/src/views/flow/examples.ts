@@ -15,6 +15,7 @@ import {
   stockQuotePrompt,
   stockWatchPrompt,
   summarizeUrlPrompt,
+  xPostExplainPrompt,
   youtubeSummaryPrompt,
   ytCommandPrompt,
 } from './templatePrompts';
@@ -28,13 +29,9 @@ type Translate = (key: string) => string;
 export type TemplateCategory = 'push' | 'command';
 
 /**
- * Gallery identity colour. It answers "what is this template about", which is a different
- * question from `skillHue()`'s "what does this step do" — nearly every template starts by
- * fetching something, so the skill categories collapsed fifteen of seventeen tiles onto one
- * colour. Templates over the same source share a hue on purpose (the five LINE ones).
- *
- * `gray` and `dark` are deliberately absent: their `-light` value is darker than the tile
- * on Yobi's dark themes, which turns the icon chip into a hole.
+ * Gallery identity colour: what the template is about, not what its first step does
+ * (`skillHue()`), since most templates start by fetching. Templates over the same source share
+ * a hue. `gray` and `dark` are omitted: their `-light` value is darker than the tile on dark themes.
  */
 export type TemplateHue =
   | 'green' | 'red' | 'orange' | 'yellow' | 'blue' | 'cyan' | 'teal' | 'violet' | 'pink' | 'indigo';
@@ -326,6 +323,28 @@ function whenSet(varKey: string, labelKey: string, t: Translate, ...inner: Skill
   ];
 }
 
+/** Telegram or LINE, chosen in setup. A `chat` variable linked to it lists that bot's chats. */
+function botPlatformVar(t: Translate): FlowVariable {
+  return selectVar('botPlatform', t, [
+    { value: 'telegram', label: t('flow.skill.bot.platform.telegram') },
+    { value: 'line', label: t('flow.skill.bot.platform.line') },
+  ], 'telegram');
+}
+
+/** The header is written here, not by the model, so the post link is never retyped. */
+const X_POST_HEADER = '**[{{post.name}} ({{post.author}})]({{post.link}})** · {{post.date}}';
+
+function xPostMessage(t: Translate, body: string, labelKey: string, outputKey: string): SkillInstance {
+  return step('bot', {
+    platform: '{{var.botPlatform}}',
+    chatIds: '{{var.chatId}}',
+    message: `${X_POST_HEADER}\n\n${body}`,
+    attachment: '{{post.image}}',
+    attachmentType: 'auto',
+    emitFailFlag: 'true',
+  }, t(labelKey), outputKey);
+}
+
 function lineChatVar(t: Translate): FlowVariable {
   return {
     key: 'lineChat',
@@ -550,6 +569,49 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
         step('llm', llmConfig(youtubeSummaryPrompt(locale), { emitFailFlag: 'true' }), t('flow.templates.ytSubs.step.llm'), 'llm_1'),
         ...skipEmpty('flow.templates.rss.step.skipFailed', t, '{{llm_1.isFailed}}', 'equals', '1'),
         step('bot', { chatId: '{{var.chatId}}', message: '**[{{video.title}}]({{video.link}})**\n\n{{llm_1}}', attachment: '{{video.image}}', attachmentType: 'auto', emitFailFlag: 'true' }, t('flow.templates.step.bot'), 'bot_1'),
+        step('end_loop', {}, t('flow.skill.end_loop')),
+      ],
+      ...timestamps(),
+    }),
+  },
+  {
+    key: 'x_watch',
+    category: 'push',
+    titleKey: 'flow.templates.xWatch',
+    descKey: 'flow.templates.xWatch.desc',
+    primarySkill: 'x_posts',
+    hue: 'indigo',
+    setupCount: 4,
+    build: (t, locale): FlowDefinition => ({
+      id: makeId(),
+      name: t('flow.templates.xWatch'),
+      description: t('flow.templates.xWatch.desc'),
+      enabled: false,
+      // Half-hourly so a busy account's new posts are not missed between runs.
+      trigger: intervalCron(30),
+      variables: [
+        { ...textVar('xAccounts', t, true, true), placeholder: '@nasa\n@github' },
+        selectVar('xMode', t, [
+          { value: 'explain', label: t('flow.templates.var.xMode.explain') },
+          { value: 'plain', label: t('flow.templates.var.xMode.plain') },
+        ], 'explain'),
+        botPlatformVar(t),
+        { ...chatVar(t), platformKey: 'botPlatform' },
+      ],
+      steps: [
+        recipientGuard(t),
+        step('x_posts', { accounts: '{{var.xAccounts}}', perAccount: '5' }, t('flow.templates.xWatch.step.posts'), 'xposts_1'),
+        step('stop', { value: '{{xposts_1}}' }, t('flow.templates.step.stop_noNew')),
+        step('loop', { input: '{{xposts_1}}', loopVar: 'post', limitIterations: 'true', maxIterations: '10' }, t('flow.templates.xWatch.step.loop'), 'loop_1'),
+        step('if', { left: '{{var.xMode}}', operator: 'equals', right: 'explain' }, t('flow.templates.xWatch.step.ifExplain')),
+        step('llm', llmConfig(xPostExplainPrompt(locale), { emitFailFlag: 'true' }), t('flow.templates.xWatch.step.llm'), 'llm_1'),
+        step('if', { left: '{{llm_1.isFailed}}', operator: 'not_equals', right: '1' }, t('flow.templates.xWatch.step.ifExplained')),
+        xPostMessage(t, '{{llm_1}}', 'flow.templates.xWatch.step.sendExplained', 'bot_1'),
+        step('continue', {}, t('flow.skill.continue')),
+        step('end_if', {}, t('flow.skill.end_if')),
+        step('end_if', {}, t('flow.skill.end_if')),
+        // The bare post, and the fallback when the explanation failed: the promise is the alert.
+        xPostMessage(t, '{{post.text}}', 'flow.templates.xWatch.step.sendPost', 'bot_2'),
         step('end_loop', {}, t('flow.skill.end_loop')),
       ],
       ...timestamps(),

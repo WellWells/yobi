@@ -31,8 +31,6 @@ export function getWindowActionTitle(
   maximized = false,
 ): string {
   if (action === 'minimize') return t('window.minimize');
-  // The same button restores once the window is maximized; saying "maximize" there described
-  // the opposite of what it does.
   if (action === 'maximize') return t(maximized ? 'window.restore' : 'window.maximize');
   return t('window.close');
 }

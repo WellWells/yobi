@@ -1,12 +1,7 @@
-/* SearchPalette.module.css — query field + result-row chrome for the shared
-   command palette. Row layout/content is supplied per use via renderRow; this
-   owns only the hover + keyboard-active container so every palette highlights
-   identically. */
+/* Query field and row highlight for the shared palette. Row content comes from renderRow;
+   this owns only the hover and keyboard-active state, so every palette highlights the same way. */
 
-/* The field is autofocused on every open, so the app-wide focus ring
-   (globals.css) would paint a permanent accent halo around the whole header
-   row. Inside a palette the field is the only focus target and the card is
-   already the visual boundary, so the ring reads as noise — drop it. */
+/* Always autofocused, and the card is already the boundary: drop the global focus ring. */
 .input,
 .input:focus,
 .input:focus-visible {

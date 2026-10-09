@@ -2,7 +2,7 @@ import React, { useCallback, useContext, useEffect, useRef, useState } from 'rea
 import { ActionIcon, Group, Text, Tooltip } from '@mantine/core';
 import { Check, Code2, Copy, Workflow } from 'lucide-react';
 import { ShikiCodeBlock } from '../ShikiCodeBlock';
-import { CaptureDiagramThemeContext, ForcedCodeThemeContext } from '../../utils/forcedCodeTheme';
+import { CaptureContentThemeContext } from '../../utils/forcedCodeTheme';
 import { getCachedMermaid, renderMermaid } from '../../utils/mermaidRuntime';
 import type { MermaidState } from '../../utils/mermaidRuntime';
 import { useThemeStore } from '../../store/themeStore';
@@ -14,10 +14,9 @@ interface MermaidBlockProps {
 
 export const MermaidBlock = React.memo<MermaidBlockProps>(({ code }) => {
   const storeTheme = useThemeStore((state) => state.theme);
-  const forcedCodeTheme = useContext(ForcedCodeThemeContext);
-  const forcedDiagramTheme = useContext(CaptureDiagramThemeContext);
-  const theme = forcedDiagramTheme ?? storeTheme;
-  const staticRender = forcedCodeTheme !== null;
+  const forcedTheme = useContext(CaptureContentThemeContext);
+  const theme = forcedTheme ?? storeTheme;
+  const staticRender = forcedTheme !== null;
   const { t } = useI18nStore();
 
   const [state, setState] = useState<MermaidState | null>(() => getCachedMermaid(code, theme) ?? null);

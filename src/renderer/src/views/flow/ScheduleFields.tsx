@@ -15,6 +15,7 @@ import {
 } from '../../../../shared/flowSchedule';
 import { AppNumberInput } from '../../components/AppNumberInput';
 import { AppTextInput } from '../../components/AppTextInput';
+import { GroupHeader } from '../../components/GroupHeader';
 import { SelectDropdown } from '../../components/SelectDropdown';
 import { ToggleSwitch } from '../../components/ToggleSwitch';
 import { CalendarGrid, MonthDayGrid, MonthGrid } from './DateGrid';
@@ -38,15 +39,11 @@ export interface ScheduleFieldsProps {
   value: TriggerConfig;
   patch: (next: Partial<TriggerConfig>) => void;
   t: (key: string) => string;
+  /** The flow has no other trigger, so deleting it after a one-time run takes nothing else with it. */
+  soleTrigger?: boolean;
 }
 
-const FieldLabel: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <Text fz="xs" fw={600} c="dimmed" tt="uppercase" style={{ letterSpacing: '0.05em' }}>
-    {children}
-  </Text>
-);
-
-export const ScheduleFields: React.FC<ScheduleFieldsProps> = ({ value, patch, t }) => {
+export const ScheduleFields: React.FC<ScheduleFieldsProps> = ({ value, patch, t, soleTrigger = false }) => {
   const mode = resolveScheduleMode(value);
   const hour = value.scheduleHour ?? SCHEDULE_DEFAULTS.hour;
   const minute = value.scheduleMinute ?? SCHEDULE_DEFAULTS.minute;
@@ -162,7 +159,7 @@ export const ScheduleFields: React.FC<ScheduleFieldsProps> = ({ value, patch, t 
 
       {mode === 'weekly' && (
         <Stack gap="xs">
-          <FieldLabel>{t('flow.trigger.schedule.days')}</FieldLabel>
+          <GroupHeader variant="plain" label={t('flow.trigger.schedule.days')} />
           <Chip.Group
             multiple
             value={weekdays.map(String)}
@@ -217,14 +214,14 @@ export const ScheduleFields: React.FC<ScheduleFieldsProps> = ({ value, patch, t 
 
       {mode === 'monthly' && (
         <Stack gap="xs">
-          <FieldLabel>{t('flow.trigger.schedule.monthDays')}</FieldLabel>
+          <GroupHeader variant="plain" label={t('flow.trigger.schedule.monthDays')} />
           <MonthDayGrid selected={monthDays} onToggle={toggleMonthDay} t={t} showLastDay />
         </Stack>
       )}
 
       {mode === 'yearly' && (
         <Stack gap="xs">
-          <FieldLabel>{t('flow.trigger.schedule.yearDate')}</FieldLabel>
+          <GroupHeader variant="plain" label={t('flow.trigger.schedule.yearDate')} />
           <MonthGrid
             value={scheduleMonth}
             onChange={(month) => patch({
@@ -244,7 +241,7 @@ export const ScheduleFields: React.FC<ScheduleFieldsProps> = ({ value, patch, t 
 
       {mode === 'once' && (
         <Stack gap="xs">
-          <FieldLabel>{t('flow.trigger.schedule.onceDate')}</FieldLabel>
+          <GroupHeader variant="plain" label={t('flow.trigger.schedule.onceDate')} />
           <CalendarGrid
             value={value.onceDate ?? toIsoDate(new Date())}
             onChange={(iso) => patch({ onceDate: iso })}
@@ -262,6 +259,21 @@ export const ScheduleFields: React.FC<ScheduleFieldsProps> = ({ value, patch, t 
             onChange={(e) => patch({ catchUpMissed: e.currentTarget.checked })}
           />
           <Text fz="xs" c="dimmed">{t('flow.trigger.schedule.catchUp.hint')}</Text>
+        </Stack>
+      )}
+
+      {mode === 'once' && (
+        <Stack gap={2}>
+          <ToggleSwitch
+            label={t('flow.trigger.schedule.deleteAfterRun')}
+            size="sm"
+            disabled={!soleTrigger}
+            checked={soleTrigger && (value.deleteAfterRun ?? false)}
+            onChange={(e) => patch({ deleteAfterRun: e.currentTarget.checked })}
+          />
+          <Text fz="xs" c="dimmed">
+            {t(soleTrigger ? 'flow.trigger.schedule.deleteAfterRun.hint' : 'flow.trigger.schedule.deleteAfterRun.otherTriggers')}
+          </Text>
         </Stack>
       )}
 
@@ -289,7 +301,7 @@ export const ScheduleFields: React.FC<ScheduleFieldsProps> = ({ value, patch, t 
               onBlur={(e) => applyCron(e.currentTarget.value)}
             />
             {cronError && (
-              <Text fz="xs" c="orange">{t('flow.trigger.schedule.advanced.invalid')}</Text>
+              <Text fz="xs" c="var(--mantine-color-warning)">{t('flow.trigger.schedule.advanced.invalid')}</Text>
             )}
           </Stack>
         </Collapse>

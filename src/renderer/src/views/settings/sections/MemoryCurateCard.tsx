@@ -49,7 +49,7 @@ export const MemoryCurateCard: React.FC<Props> = ({ change, pick, maxChars, onCh
         <Stack gap={4} style={{ minWidth: 0, flex: 1 }}>
           <Group gap={6} wrap="nowrap">
             <Text fz="var(--font-size-sm)" fw={600}>{label}</Text>
-            {!change.sure && <Badge size="xs" variant="light" color="orange">{t('settings.memory.curate.unsure')}</Badge>}
+            {!change.sure && <Badge size="xs" variant="light" color="var(--mantine-color-warning)">{t('settings.memory.curate.unsure')}</Badge>}
           </Group>
           {change.why && <Text fz="var(--font-size-sm)" c="dimmed" style={{ overflowWrap: 'anywhere' }}>{change.why}</Text>}
           {change.before.map((item) => (

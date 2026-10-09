@@ -221,17 +221,16 @@ export const useAppStore = create<AppState>((set) => ({
     if (options?.markUnread) {
       for (const file of files) {
         const isNewPath = !existingPaths.has(file.path);
-        const isGeneratedOutput = /^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}\.md$/i.test(file.name);
+        // A bot chat's file carries its chat ahead of the stamp (`tg-Alice-2026-…`).
+        const isGeneratedOutput = /(?:^|-)\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}\.md$/i.test(file.name);
         if (isNewPath && isGeneratedOutput && file.path !== state.selectedFile?.path) {
           nextUnread[file.path] = true;
         }
       }
     }
 
-    // A selected file that is no longer listed has been deleted under us — most often the
-    // placeholder the main process unlinks when a new conversation's first turn fails. Holding
-    // on to it leaves the header pointing at a path with nothing behind it, so rename, share
-    // and show-in-folder all fail silently.
+    // A selected file no longer listed was deleted (e.g. the placeholder main unlinks when a first turn
+    // fails); drop it so rename, share and show-in-folder don't target a missing path.
     const selectionGone = Boolean(state.selectedFile) && !incomingPaths.has(state.selectedFile!.path);
     const cleared = selectionGone
       ? { selectedFile: null, fileContent: null, parsedBlocks: null, conversation: null }

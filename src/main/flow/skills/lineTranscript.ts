@@ -1,9 +1,8 @@
 /**
  * Pure transcript + watermark logic for the `line_read` skill.
  *
- * Deliberately free of the native cipher driver, Electron and i18n: it takes plain
- * ParsedMessage rows and an injected label map, so the whole of it is unit-tested offline
- * against the node:sqlite fixture. The native wiring lives in lineMessages.ts.
+ * Free of the native cipher driver, Electron and i18n: it takes plain ParsedMessage rows and an
+ * injected label map. The native wiring lives in lineMessages.ts.
  */
 import { createHash } from 'node:crypto';
 import type { ParsedMessage } from '../../line/schema';
@@ -17,10 +16,8 @@ export interface LineWatermark {
 }
 
 /**
- * One watermark per chat, because a step can now read several at once. A single shared
- * watermark would let a busy chat's timestamp suppress a quiet chat's older-but-unreported
- * messages — they would be silently skipped, which is the one outcome this step must never
- * produce. The global (all-chats) search stores itself under GLOBAL_WATERMARK_KEY.
+ * One watermark per chat: a shared one would let a busy chat's timestamp suppress a quiet chat's
+ * older, unreported messages. The global (all-chats) search stores itself under GLOBAL_WATERMARK_KEY.
  */
 export interface LineWatermarkFile {
   chats: Record<string, LineWatermark>;
@@ -29,9 +26,8 @@ export interface LineWatermarkFile {
 export const GLOBAL_WATERMARK_KEY = '*';
 
 /**
- * The skill previously stored a bare LineWatermark. Rather than guess which chat such a file
- * belonged to, an unrecognised shape is treated as no memory at all: one extra first-run
- * report is cheaper — and far more honest — than attributing a watermark to the wrong chat.
+ * Any unrecognised shape (including the legacy bare LineWatermark) is treated as no memory: one
+ * extra first-run report beats attributing a watermark to the wrong chat.
  */
 export function readWatermarkFile(raw: unknown): LineWatermarkFile {
   if (!raw || typeof raw !== 'object') return { chats: {} };
@@ -41,9 +37,8 @@ export function readWatermarkFile(raw: unknown): LineWatermarkFile {
 }
 
 /**
- * LINE's local DB syncs lazily: a message received while the client was offline is written
- * later but keeps its original _createdTime. A strict `> lastTs` would skip those forever and
- * silently, so every query reaches this far back and the tail keys drop the duplicates.
+ * Messages can land in the local DB after newer ones, keeping their original timestamp. Every
+ * query reaches this far back and the tail keys drop the duplicates.
  */
 export const WATERMARK_OVERLAP_MS = 600_000;
 
@@ -93,13 +88,33 @@ export function messageTs(msg: ParsedMessage): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+/** A search hit carries the chat it came from; a bare ParsedMessage does not. */
+type MaybeChatMessage = ParsedMessage & { chat_id?: string };
+
+function hashKey(ts: number, fields: string[]): string {
+  return `${ts}:${createHash('sha1').update(fields.join('|'), 'utf-8').digest('hex').slice(0, 12)}`;
+}
+
+function bodyFields(msg: ParsedMessage): string[] {
+  return [msg.sender ?? '', msg.type, msg.content ?? '', msg.filename ?? '', msg.url ?? ''];
+}
+
 /**
- * `<ts>:<hash>` rather than a row id: the message table's typed columns carry no stable
- * identifier, and embedding the timestamp lets an old key be aged out without a second lookup.
+ * `<ts>:<hash>`: rows carry no stable id, and the timestamp lets old keys age out without a lookup.
+ * The chat is part of the key so the same text posted to two chats in the same second stays two messages.
  */
 export function messageKey(msg: ParsedMessage): string {
-  const body = [msg.sender ?? '', msg.type, msg.content ?? '', msg.filename ?? '', msg.url ?? ''].join('|');
-  return `${messageTs(msg)}:${createHash('sha1').update(body, 'utf-8').digest('hex').slice(0, 12)}`;
+  const chatId = (msg as MaybeChatMessage).chat_id;
+  if (!chatId) return legacyMessageKey(msg);
+  return hashKey(messageTs(msg), [`chat:${chatId}`, ...bodyFields(msg)]);
+}
+
+/**
+ * Legacy key without the chat id. Still matched on read so an upgrade does not re-send reported
+ * messages; it ages out of the tail within one overlap window.
+ */
+function legacyMessageKey(msg: ParsedMessage): string {
+  return hashKey(messageTs(msg), bodyFields(msg));
 }
 
 function keyTs(key: string): number {
@@ -113,7 +128,7 @@ function flatten(value: string | null | undefined): string {
 function messageBody(msg: ParsedMessage, labels: TranscriptLabels): string {
   const text = flatten(msg.content);
   if (msg.type === 'file') {
-    // Only a minority of file messages carry FILE_NAME; the rest keep the name in _text.
+    // The file name may be in either field.
     const name = flatten(msg.filename) || text;
     return name ? `${labels.file} ${name}` : labels.file;
   }
@@ -154,56 +169,72 @@ export function renderTranscript(messages: ParsedMessage[], labels: TranscriptLa
 }
 
 /**
- * Trims from the OLDEST end. The provider prompt cap is enforced downstream by truncating the
- * TAIL, which on a chronological transcript would silently eat the newest messages — exactly
- * the part worth summarizing — so the budget is spent here instead.
+ * Which end of a batch survives the budget. `newest` (default) drops from the oldest end, because
+ * the provider cap downstream truncates the tail, i.e. the newest messages. `oldest` is for
+ * sinceLastRun reads, which deliver in order and leave the rest for the next run.
  */
+export type TranscriptKeep = 'newest' | 'oldest';
+
+/** The messages a batch trimmed to `kept` actually shows. */
+export function keptMessages<T>(messages: T[], kept: number, keep: TranscriptKeep = 'newest'): T[] {
+  return keep === 'oldest' ? messages.slice(0, kept) : messages.slice(messages.length - kept);
+}
+
 export function budgetedTranscript(
   messages: ParsedMessage[],
   maxChars: number,
   labels: TranscriptLabels,
+  keep: TranscriptKeep = 'newest',
 ): { text: string; kept: number; dropped: number } {
   const cap = Math.max(0, maxChars);
   const days = new Set<string>();
+  const order = messages.map((_, i) => i);
+  if (keep === 'newest') order.reverse();
   let cost = 0;
-  let firstKept = messages.length;
+  let count = 0;
 
-  for (let i = messages.length - 1; i >= 0; i--) {
+  for (const i of order) {
     const day = dayOf(messages[i]);
-    // Every entry costs its own separator; the join emits one fewer than it counted.
+    // Every entry costs its own separator; the join emits one fewer than it counted. A date
+    // header is paid once per day whichever end the walk starts from.
     let add = lineOf(messages[i], labels).length + 1;
     if (day && !days.has(day)) add += day.length + 1;
     if (cost + add - 1 > cap) break;
     cost += add;
     if (day) days.add(day);
-    firstKept = i;
+    count += 1;
   }
 
-  const kept = messages.slice(firstKept);
+  const kept = keptMessages(messages, count, keep);
   return { text: renderTranscript(kept, labels), kept: kept.length, dropped: messages.length - kept.length };
 }
 
 /**
- * Splits a freshly queried batch into "not reported before" and the watermark to store next.
- * The batch must already be bounded by `lastTs - WATERMARK_OVERLAP_MS`.
- *
- * `maxFresh` is the step's own limit. The watermark advances only as far as the last message
- * actually returned, so a backlog bigger than the limit is drained over several runs instead
- * of being stranded — the same failure mode a seen-cache has when it marks a batch it never
- * delivered. The caller must therefore over-fetch by the number of tail keys, or the
- * already-reported messages inside the overlap window would spend the whole limit.
+ * The messages of a freshly queried, oldest-first batch that were not reported before, capped
+ * at `maxFresh` (the step's own limit) from the oldest end. The batch must already be bounded
+ * by `lastTs - WATERMARK_OVERLAP_MS`.
  */
-export function selectFresh(
+export function pickUnreported(
   messages: ParsedMessage[],
   previous: LineWatermark | null,
-  nowIso: string,
-  options: { maxFresh?: number } = {},
-): { fresh: ParsedMessage[]; next: LineWatermark } {
+  maxFresh?: number,
+): ParsedMessage[] {
   const reported = new Set(previous?.tailKeys ?? []);
-  const unreported = messages.filter((msg) => !reported.has(messageKey(msg)));
-  const fresh = options.maxFresh === undefined ? unreported : unreported.slice(0, options.maxFresh);
+  const unreported = messages.filter((msg) => !reported.has(messageKey(msg)) && !reported.has(legacyMessageKey(msg)));
+  return maxFresh === undefined ? unreported : unreported.slice(0, maxFresh);
+}
 
-  const advanced = Math.max(previous?.lastTs ?? 0, ...fresh.map(messageTs), 0);
+/**
+ * The watermark to store once `delivered` (and only it) has been shown. It advances only to the last
+ * delivered message so a backlog drains over several runs; that holds only if everything held back is
+ * newer, which is why sinceLastRun reads keep the oldest end. Tail keys stay at or below `lastTs`.
+ */
+export function advanceWatermark(
+  previous: LineWatermark | null,
+  delivered: ParsedMessage[],
+  nowIso: string,
+): LineWatermark {
+  const advanced = Math.max(previous?.lastTs ?? 0, ...delivered.map(messageTs), 0);
   // A first run that found nothing must start from now, not from zero — otherwise the next
   // run would report the oldest matching messages in the whole history as if they were new.
   const lastTs = advanced > 0 ? advanced : Date.parse(nowIso);
@@ -212,9 +243,19 @@ export function selectFresh(
   for (const key of previous?.tailKeys ?? []) {
     if (keyTs(key) >= cutoff) tailKeys.add(key);
   }
-  for (const msg of fresh) {
+  for (const msg of delivered) {
     if (messageTs(msg) >= cutoff) tailKeys.add(messageKey(msg));
   }
+  return { lastTs, tailKeys: [...tailKeys], updatedAt: nowIso };
+}
 
-  return { fresh, next: { lastTs, tailKeys: [...tailKeys], updatedAt: nowIso } };
+/** pickUnreported + advanceWatermark, for a caller that delivers everything it picks. */
+export function selectFresh(
+  messages: ParsedMessage[],
+  previous: LineWatermark | null,
+  nowIso: string,
+  options: { maxFresh?: number } = {},
+): { fresh: ParsedMessage[]; next: LineWatermark } {
+  const fresh = pickUnreported(messages, previous, options.maxFresh);
+  return { fresh, next: advanceWatermark(previous, fresh, nowIso) };
 }

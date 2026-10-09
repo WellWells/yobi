@@ -89,27 +89,27 @@ export const AssistantTurn = React.memo<AssistantTurnProps>(({ response, meta, f
           </Text>
         )}
         {commandLabel && (
-          <Badge variant="light" size="sm" radius="sm">
+          <Badge variant="light" size="sm">
             {commandLabel}
           </Badge>
         )}
         {awaiting && (
-          <Badge variant="light" size="sm" radius="sm">
+          <Badge variant="light" size="sm">
             {t('agent.question.waiting')}
           </Badge>
         )}
         {meta.m === 'replay' && (
-          <Badge variant="light" size="sm" radius="sm">
+          <Badge variant="light" size="sm">
             {t('chat.context.degraded')}
           </Badge>
         )}
         {typeof meta.summarized === 'number' && meta.summarized > 0 && (
-          <Badge variant="light" size="sm" radius="sm">
+          <Badge variant="light" size="sm">
             {t('chat.context.summarized').replace('{{count}}', String(meta.summarized))}
           </Badge>
         )}
         {typeof meta.dropped === 'number' && meta.dropped > 0 && (
-          <Badge variant="light" size="sm" radius="sm">
+          <Badge variant="light" size="sm">
             {t('chat.context.dropped').replace('{{count}}', String(meta.dropped))}
           </Badge>
         )}

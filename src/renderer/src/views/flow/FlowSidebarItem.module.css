@@ -3,10 +3,7 @@
    long press anywhere on it picks it up for reordering. */
 /* Same vocabulary as the chat rail (`Sidebar.module.css .fileItem`) and the command palette
    (`SearchPalette.module.css .row`): flat, transparent, selected marked by a left accent bar.
-   This rail swaps in place when switching Chat ↔ Flows, and it used to swap language too —
-   outlined cards that lifted on hover against flat strips with a left bar. The vertical margin
-   stays larger than the chat rail's 2px: these rows are two lines plus badges plus a switch,
-   and they no longer have a border to separate them from the row below. */
+   The vertical margin is larger than the chat rail's 2px: these rows are taller and have no border. */
 .row {
   padding: 6px 10px;
   margin: 4px 8px;

@@ -32,7 +32,7 @@ export const WebDialog: React.FC<WebDialogProps> = ({
     styles={{
       content: {
         background: 'var(--bg-secondary)',
-        border: `1px solid ${danger ? 'rgba(248,81,73,0.5)' : 'var(--border)'}`,
+        border: `1px solid ${danger ? 'color-mix(in srgb, var(--mantine-color-error) 50%, transparent)' : 'var(--border)'}`,
         borderRadius: 'var(--radius-lg)',
       },
       header: {

@@ -11,6 +11,7 @@ export {
   isScheduleMode,
   normalizeMonthDays,
   normalizeWeekdays,
+  onceDueAt,
   parseOnceDate,
   resolveScheduleMode,
   snapToStep,

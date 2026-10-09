@@ -1,23 +1,25 @@
 /**
  * `line_read` — reads the local LINE message store as a flow data source.
  *
- * The orchestration here takes an injected reader, checkpoint store and clock, so the whole
- * skill is unit-tested offline against a node:sqlite fixture. execLineRead() is the only part
- * that touches the native driver, and it imports it lazily for exactly that reason.
+ * The orchestration here takes an injected reader, checkpoint store and clock. execLineRead() is
+ * the only part that touches the native driver, and it imports it lazily.
  */
 import type { CheckpointStore } from '../checkpoint';
 import { makeCheckpointStore } from '../checkpoint';
 import { resolveLineRange, type ResolvedRange } from './lineRange';
 import { planTranscript, type ChatBatch } from './lineBudget';
 import {
+  advanceWatermark,
   charBudgetFor,
   GLOBAL_WATERMARK_KEY,
+  keptMessages,
   messageTs,
+  pickUnreported,
   readWatermarkFile,
-  selectFresh,
   WATERMARK_OVERLAP_MS,
   type LineWatermark,
   type LineWatermarkFile,
+  type TranscriptKeep,
   type TranscriptLabels,
 } from './lineTranscript';
 import { envelope } from './dataSources';
@@ -26,21 +28,20 @@ import { sendLog } from '../../helpers';
 import { getLangCache, t } from '../../i18n';
 import { detectProvider, PROVIDER_PROMPT_POLICIES } from '../../providers';
 import type { FlowExecutorDeps } from '../types';
+import { FlowUserError } from '../userError';
 import type { ChatSummary, MessageHit, SearchOptions } from '../../line/reader';
 import type { ParsedMessage } from '../../line/schema';
 import { MAX_LIMIT, saneLimit } from '../../line/schema';
 
-/** The slice of LineReader this skill uses; kept structural so tests inject a fixture reader. */
+/** The slice of LineReader this skill uses; structural, so any reader of this shape fits. */
 export interface LineReaderLike {
   listChats(opts?: { query?: string; chatType?: string; limit?: number }): ChatSummary[];
   searchMessages(opts?: SearchOptions): MessageHit[];
 }
 
 /**
- * The failures a flow author has to be able to act on, as templates with `{{placeholder}}`
- * holes. Injected for the same reason TranscriptLabels is: this module is unit-tested offline,
- * so it must not reach for the language cache — and since these now travel back to whoever sent
- * the bot command, they can no longer be hardcoded English either.
+ * Failures a flow author can act on, as `{{placeholder}}` templates. Injected, like TranscriptLabels,
+ * so this module stays off the language cache; they reach bot users, so they are localized.
  */
 export interface LineReadErrorLabels {
   /** `{{name}}` — nothing in the local LINE store carries that name. */
@@ -64,9 +65,8 @@ export interface LineReadDeps {
 const DEFAULT_LIMIT = 200;
 
 /**
- * One fragment can name half the address book — a bare "群" would. Reading them all spends the
- * whole character budget on headings and takes minutes, so past this many the step says the
- * fragment is too broad rather than returning a transcript of nothing.
+ * One fragment can name half the address book (a single common word would). Past this many
+ * matches the step reports the fragment as too broad instead of spending the budget on headings.
  */
 const MAX_MATCHED_CHATS = 20;
 
@@ -89,14 +89,9 @@ function toSeconds(ms: number): number {
 /**
  * Turns one entry the author typed into the chats it names.
  *
- * A chat id, or a name typed in full, is a precise request and resolves to that one chat. Any
- * other text is read as a FRAGMENT and matches every chat containing it — which is what makes a
- * command work when the group is really called "<fragment> 專案討論", and what lets one word
- * gather the several groups that share it into a single summary.
- *
- * A fragment that matches nothing still aborts the run. An empty transcript is indistinguishable
- * from a quiet day, the step after this one is always a stop, and a mistyped name would
- * otherwise report "nothing happened" every morning forever.
+ * A chat id or a full name resolves to that one chat; any other text is a fragment matching every
+ * chat whose name contains it. A fragment that matches nothing aborts the run: an empty transcript
+ * would look like a quiet day, so a mistyped name would never be noticed.
  */
 function resolveOne(chats: ChatSummary[], wanted: string, labels: LineReadErrorLabels): ResolvedChat[] {
   const byId = chats.find((chat) => chat.chat_id === wanted);
@@ -165,29 +160,62 @@ interface FetchArgs {
   nowMs: number;
 }
 
+interface QueryWindow {
+  sinceMs: number | null;
+  untilMs: number | null;
+  order: 'asc' | 'desc';
+  limit: number;
+}
+
+function search(reader: LineReaderLike, args: FetchArgs, window: QueryWindow): ParsedMessage[] {
+  const sinceTs = window.sinceMs === null ? undefined : toSeconds(window.sinceMs);
+  const untilTs = window.untilMs === null ? undefined : toSeconds(window.untilMs);
+  // An empty window is a full table scan for nothing.
+  if (sinceTs !== undefined && untilTs !== undefined && sinceTs > untilTs) return [];
+  return reader.searchMessages({
+    query: args.query || undefined,
+    chatId: args.chatId ?? undefined,
+    excludeOfficial: args.chatId === null,
+    sinceTs,
+    untilTs,
+    order: window.order,
+    limit: window.limit,
+  });
+}
+
 /**
- * One query per chat. Draining a watermark reads OLDEST-first so a backlog bigger than the
- * limit is delivered in order across runs; every other read is "the newest N inside the
- * range", which is what `limit` has always meant.
+ * Draining a watermark reads oldest-first so a backlog larger than `limit` is delivered in order
+ * across runs; every other read is the newest N inside the range.
+ *
+ * The drain is two queries: the overlap re-scan (up to the watermark's own second) only catches
+ * late-synced rows, and the forward read from the next second spends its whole limit on messages
+ * never reported, so reported rows in the overlap cannot crowd out new ones. Every reported key
+ * sits at or below `lastTs` (see advanceWatermark).
  */
 function fetchMessages(reader: LineReaderLike, args: FetchArgs): ParsedMessage[] {
-  const { chatId, query, limit, range, previous, nowMs } = args;
-  const draining = previous !== null;
-  const sinceMs = draining ? lowerOf(range.sinceMs, previous.lastTs - WATERMARK_OVERLAP_MS) : range.sinceMs;
-  const untilMs = draining ? upperOf(range.untilMs, nowMs) : range.untilMs;
-  // Over-fetch by the tail so the messages the overlap window re-reads cannot spend the limit.
-  const overFetch = Math.min(MAX_LIMIT, limit + (previous?.tailKeys.length ?? 0));
+  const { limit, range, previous, nowMs } = args;
+  if (previous === null) {
+    const newest = search(reader, args, { sinceMs: range.sinceMs, untilMs: range.untilMs, order: 'desc', limit });
+    return [...newest].reverse();
+  }
 
-  const hits = reader.searchMessages({
-    query: query || undefined,
-    chatId: chatId ?? undefined,
-    excludeOfficial: chatId === null,
-    sinceTs: sinceMs === null ? undefined : toSeconds(sinceMs),
-    untilTs: untilMs === null ? undefined : toSeconds(untilMs),
-    order: draining ? 'asc' : 'desc',
-    limit: draining ? overFetch : limit,
+  // Bounds are whole seconds and inclusive at both ends, so the boundary second is read by
+  // both queries; sent_at (whole seconds) decides which side a row belongs to.
+  const nextSecondMs = (toSeconds(previous.lastTs) + 1) * 1000;
+  const overlap = search(reader, args, {
+    sinceMs: lowerOf(range.sinceMs, previous.lastTs - WATERMARK_OVERLAP_MS),
+    untilMs: upperOf(range.untilMs, Math.min(nowMs, nextSecondMs)),
+    order: 'asc',
+    // Over-fetch by the tail so the reported rows the window re-reads cannot spend the limit.
+    limit: Math.min(MAX_LIMIT, limit + previous.tailKeys.length),
+  }).filter((msg) => messageTs(msg) <= previous.lastTs);
+  const forward = search(reader, args, {
+    sinceMs: lowerOf(range.sinceMs, nextSecondMs),
+    untilMs: upperOf(range.untilMs, nowMs),
+    order: 'asc',
+    limit,
   });
-  return draining ? hits : [...hits].reverse();
+  return [...overlap, ...forward];
 }
 
 export async function runLineRead(
@@ -204,22 +232,19 @@ export async function runLineRead(
   // Throws on a malformed or inverted range: a typo must not widen the window to all time.
   const range = resolveLineRange(config, nowDate);
 
-  // Never soft-fail: "" already means "nothing new", and the step after this one is a stop.
-  // A mistyped chat name that returned "" would look exactly like a quiet day, every run.
+  // Never soft-fail: "" already means "nothing new" (see resolveOne).
   const reader = await deps.getReader();
   const targets = resolveChats(reader, config.chat ?? '', deps.errorLabels);
   const global = targets.length === 0;
 
   const previousFile = sinceLastRun ? readWatermarkFile(await deps.store.load(stepId)) : { chats: {} };
   const hadMemory = Object.keys(previousFile.chats).length > 0;
-  // Only the chats this run actually read are carried forward. Keeping the rest would grow the
-  // file with every edit and, worse, resurrect a months-old watermark if a chat were ever
-  // re-added — dumping a backlog the author never asked for.
-  const nextChats: Record<string, LineWatermark> = {};
-  const nowIso = new Date(nowMs).toISOString();
+  // A watermark run delivers in order and leaves what the budget cannot carry for its next run,
+  // as it does with what `limit` cannot carry; any other read is "the newest N".
+  const keep: TranscriptKeep = sinceLastRun ? 'oldest' : 'newest';
 
   const keys = global ? [GLOBAL_WATERMARK_KEY] : targets.map((target) => target.chatId);
-  const batches: ChatBatch[] = keys.map((key, index) => {
+  const reads = keys.map((key) => {
     const previous = sinceLastRun ? previousFile.chats[key] ?? null : null;
     const fetched = fetchMessages(reader, {
       chatId: global ? null : key,
@@ -229,22 +254,50 @@ export async function runLineRead(
       previous,
       nowMs,
     });
-    let fresh = fetched;
-    if (sinceLastRun) {
-      const selected = selectFresh(fetched, previous, nowIso, { maxFresh: limit });
-      fresh = selected.fresh;
-      nextChats[key] = selected.next;
-    }
-    return { name: global ? '' : targets[index].chatName, messages: global ? tagWithChat(fresh) : fresh };
+    // Untagged: the dedupe key hashes the sender, which tagWithChat rewrites.
+    const fresh = sinceLastRun ? pickUnreported(fetched, previous, limit) : fetched;
+    return { key, previous, fresh };
   });
+  const batches: ChatBatch[] = reads.map(({ fresh }, index) => ({
+    name: global ? '' : targets[index].chatName,
+    messages: global ? tagWithChat(fresh) : fresh,
+    keep,
+  }));
 
-  const assembled = assemble(batches, { targets, global, hadMemory, sinceLastRun, deps, log });
-  // Saved only once the transcript is in hand. Advancing the watermark first would mark a batch
-  // as reported that a failed assembly never delivered — the exact way a seen-cache strands a
-  // backlog for good.
-  if (sinceLastRun) await deps.store.save(stepId, { chats: nextChats });
+  const { output, kept } = assemble(batches, { targets, global, hadMemory, sinceLastRun, deps, log });
+  // Saved only once the transcript is in hand, and built from what it actually shows. Advancing
+  // the watermark first, or over what the budget cut, would mark a batch as reported that was
+  // never delivered — the exact way a seen-cache strands a backlog for good.
+  if (sinceLastRun) {
+    const nowIso = new Date(nowMs).toISOString();
+    await deps.store.save(stepId, { chats: nextWatermarks(reads, kept, keep, nowIso) });
+  }
 
-  return envelope(...assembled);
+  return envelope(...output);
+}
+
+/**
+ * Only the chats this run actually read are carried forward. Keeping the rest would grow the
+ * file with every edit and, worse, resurrect a months-old watermark if a chat were ever re-added
+ * — dumping a backlog the author never asked for.
+ *
+ * A chat read for the first time that the budget left out entirely gets no watermark at all: the
+ * "nothing found, start from now" rule would otherwise skip the very messages it just held back.
+ * Its next run is simply its first run again.
+ */
+function nextWatermarks(
+  reads: { key: string; previous: LineWatermark | null; fresh: ParsedMessage[] }[],
+  kept: number[],
+  keep: TranscriptKeep,
+  nowIso: string,
+): Record<string, LineWatermark> {
+  const next: Record<string, LineWatermark> = {};
+  reads.forEach(({ key, previous, fresh }, index) => {
+    const delivered = keptMessages(fresh, kept[index], keep);
+    if (previous === null && delivered.length === 0 && fresh.length > 0) return;
+    next[key] = advanceWatermark(previous, delivered, nowIso);
+  });
+  return next;
 }
 
 interface AssembleContext {
@@ -256,8 +309,14 @@ interface AssembleContext {
   log: (message: string) => void;
 }
 
-/** Renders the batches inside the provider budget and derives every sub-variable from them. */
-function assemble(batches: ChatBatch[], ctx: AssembleContext): [string, Record<string, string>] {
+/**
+ * Renders the batches inside the provider budget and derives every sub-variable from them.
+ * `kept` is how many messages of each batch the transcript shows — the watermark is built from it.
+ */
+function assemble(
+  batches: ChatBatch[],
+  ctx: AssembleContext,
+): { output: [string, Record<string, string>]; kept: number[] } {
   const { targets, global, deps } = ctx;
   const headings = targets.length > 1;
   const plan = planTranscript(batches, deps.maxChars, deps.labels, { headings });
@@ -266,7 +325,7 @@ function assemble(batches: ChatBatch[], ctx: AssembleContext): [string, Record<s
   if (plan.starved) throw new Error(deps.errorLabels.starved);
 
   const shown = plan.sections
-    .flatMap((section, index) => batches[index].messages.slice(batches[index].messages.length - section.kept))
+    .flatMap((section, index) => keptMessages(batches[index].messages, section.kept, batches[index].keep))
     .sort((a, b) => messageTs(a) - messageTs(b));
 
   const contributing = plan.sections.filter((section) => section.kept > 0);
@@ -280,7 +339,7 @@ function assemble(batches: ChatBatch[], ctx: AssembleContext): [string, Record<s
   const label = global ? 'all chats' : (targets.length === 1 ? targets[0].chatName : `${targets.length} chats`);
   ctx.log(`💬 [Flow] line_read: ${plan.kept} message(s) from ${label}${plan.dropped > 0 ? ` (${plan.dropped} dropped to fit)` : ''}`);
 
-  return [plan.text, {
+  const output: [string, Record<string, string>] = [plan.text, {
     count: String(plan.kept),
     dropped: String(plan.dropped),
     chatName,
@@ -289,6 +348,7 @@ function assemble(batches: ChatBatch[], ctx: AssembleContext): [string, Record<s
     lastAt: shown[shown.length - 1]?.sent_at ?? '',
     isFirstRun: ctx.sinceLastRun && !ctx.hadMemory ? '1' : '0',
   }];
+  return { output, kept: plan.sections.map((section) => section.kept) };
 }
 
 const lineWatermarkStore = makeCheckpointStore<LineWatermarkFile>('line_read');
@@ -325,9 +385,13 @@ export async function execLineRead(
     getReader: async () => {
       // Reading LINE is opt-in for the whole app; a flow must not be a way around that switch.
       if (!appConfig.lineReaderEnabled) {
-        throw new Error('the LINE connector is off — enable it in Settings before a flow can read LINE messages');
+        throw new FlowUserError(
+          'flow.error.lineReaderOff',
+          {},
+          'the LINE connector is off — enable it in Settings before a flow can read LINE messages',
+        );
       }
-      // Lazy: pulls in the native cipher driver, which must stay out of the offline test path.
+      // Lazy: the native cipher driver is only loaded when a flow actually reads LINE.
       const { getSharedLineService } = await import('../../line/sharedService');
       return getSharedLineService().getReader();
     },

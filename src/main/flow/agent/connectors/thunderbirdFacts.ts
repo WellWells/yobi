@@ -4,7 +4,7 @@ import type { Args, Fact, LedgerView } from '../toolContracts';
 /**
  * What the Thunderbird add-on's read tools tell us about the user's mailbox, reduced to the three
  * things the gate reasons about: who the user can send as, where folders are, and which messages
- * the model has actually seen. Shapes are the add-on's own (v0.7.4 `api.js`), not guesses.
+ * the model has actually seen. Shapes follow the add-on's `api.js`.
  */
 export const TB_IDENTITY = 'tb.identity';
 export const TB_FOLDER = 'tb.folder';

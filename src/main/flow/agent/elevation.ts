@@ -1,20 +1,10 @@
 import { execFile } from 'node:child_process';
 
 /**
- * Whether THIS process is running with administrator / root rights.
- *
- * It matters because a child shell inherits the parent's token: if the user happened to start the
- * app elevated, every command the agent runs is elevated too, and the whole class of damage that
- * needs admin — services, scheduled tasks under SYSTEM, replacing a binary in System32, exporting
- * a credential hive — comes into reach without anything in the app asking for it.
- *
- * The agent's shell tool refuses to run at all in that case. Refusing is chosen over DE-elevating
- * because dropping privileges properly on Windows needs `CreateRestrictedToken` /
- * `CreateProcessAsUser` through native bindings, and a de-elevation that half works is worse than
- * an honest refusal: it looks like a boundary and is not one.
- *
- * Detection is `fltmc.exe`, which exits non-zero without admin. Measured at ~25 ms, and cached for
- * the life of the process because a token cannot change under a running process.
+ * Whether this process runs as administrator/root. A child shell inherits the token, so the agent's
+ * shell tool refuses to run when elevated (proper de-elevation on Windows needs native bindings).
+ * On Windows this probes `fltmc.exe`, which exits non-zero without admin; cached since a running
+ * process's token cannot change.
  */
 let cached: Promise<boolean> | undefined;
 
@@ -38,7 +28,6 @@ export function isElevated(): Promise<boolean> {
   return cached;
 }
 
-/** Exported for the test suite. */
 export function resetElevationCache(): void {
   cached = undefined;
 }

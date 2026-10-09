@@ -121,7 +121,7 @@ const StepDragPreview: React.FC<{ step: SkillInstance; flow: FlowDefinition; t: 
   return (
     <Paper withBorder p="xs" radius="md" shadow="md" style={{ borderLeft: `3px solid var(--mantine-color-${hue}-filled)`, cursor: 'grabbing' }}>
       <Group gap="xs" wrap="nowrap">
-        <Badge variant="light" color={hue} size="sm" leftSection={SKILL_ICON[step.type]} radius="sm">
+        <Badge variant="light" color={hue} size="sm" leftSection={SKILL_ICON[step.type]}>
           {t(`flow.skill.${step.type}`)}
         </Badge>
         <Text fz="xs" c="dimmed" lineClamp={1}>

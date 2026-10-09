@@ -23,11 +23,8 @@ export interface TileUploadSpec {
 }
 
 /**
- * Claude and ChatGPT both accept a trusted file drop on the composer and then mount one tile per
- * file. What differs is only where the drop lands and how a tile says "still uploading"; the
- * wait loop — baseline, appearance deadline, two settled polls, failure classification — is the
- * same, and drifting the two copies apart is how an upload silently starts reporting success
- * before the files are attached.
+ * Shared upload wait loop for Claude and ChatGPT, which mount one tile per dropped file; only the
+ * drop target and the tile-state script differ per provider.
  */
 export async function uploadViaTiles(
   wc: WebContents,

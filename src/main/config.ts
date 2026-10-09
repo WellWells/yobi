@@ -2,6 +2,7 @@ import { app } from 'electron';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { openStoreWithRecovery } from './configStore';
+import { repairStoredShape } from './configShapeRepair';
 import { PROVIDER_URLS, byokIdFromUrl, byokGroupIdFromUrl } from '../shared/types';
 import type { HiddenSources, SecretFailure, SecretScope } from '../shared/types';
 import { defaultStored } from './configTypes';
@@ -25,6 +26,7 @@ import {
   normalizeSmtp,
   deserializePairingConfig,
 } from './configNormalizers';
+import { carryCurrentGrantsIntoLegacyBackup, telegramAdminMirror } from './botPermissions/normalize';
 
 function getLegacyWindowsConfigPath(): string | null {
   if (!app.isPackaged || process.platform !== 'win32') return null;
@@ -70,6 +72,15 @@ migrateProviderCommandsIfNeeded(configDir);
 
 const store = openStoreWithRecovery<StoredConfig>('config', configDir, defaultStored);
 
+function repairStoredShapeIfNeeded(): void {
+  const result = repairStoredShape(store.store as Record<string, unknown>, defaultStored);
+  if (!result) return;
+  store.store = result.repaired;
+  console.warn(`[config] repaired malformed field(s) in config.json: ${result.fields.join(', ')}`);
+}
+
+repairStoredShapeIfNeeded();
+
 function buildConfigFromStore(): Config {
   const stored = store.store as StoredConfig & {
     telegram: StoredTelegramConfig & { botToken?: string };
@@ -99,10 +110,7 @@ function markTelegramTokenResolved(): void {
   telegramTokenUnavailable = false;
 }
 
-/**
- * Decrypts one stored secret and files a failure the UI can show. Before this, a secret that
- * would not decrypt just became an empty string and the bot quietly stopped answering.
- */
+/** Decrypts one stored secret and files a failure the UI can show instead of silently returning ''. */
 function readSecretChecked(stored: string, at: SecretFailure): { value: string; failed: boolean } {
   const suffix = at.label ? ` (${at.label})` : '';
   const result = decryptTokenChecked(stored, `${at.scope}.${at.field}${suffix}`);
@@ -352,9 +360,7 @@ function wipeSensitiveConfig(): void {
   clearAllSecretFailures();
 }
 
-// `theme` is deliberately left at the shipped default of 'auto'. Resolving it to whatever the
-// OS happened to be showing pinned it, so a factory reset stopped following the system theme
-// while a fresh install still did.
+// `theme` stays at the shipped 'auto' so a factory reset keeps following the system theme.
 function getDefaultConfig(): Config {
   const { telegram: { botTokenEncrypted: _enc, ...telegramRest }, ...rest } = defaultStored;
   return normalizeConfig({ ...rest, telegram: { ...telegramRest, botToken: '' } });
@@ -420,7 +426,20 @@ function importConfigFromJson(raw: unknown): Config | null {
     });
   }
 
+  // A backup from before per-account grants must not re-run the upgrade migration: the grants
+  // in force now are kept, pruned to the restored pairing (the same rule as mcpServers below).
+  const telegramGrants = carryCurrentGrantsIntoLegacyBackup(patched.telegram, config.telegram.permissions);
+  const lineGrants = carryCurrentGrantsIntoLegacyBackup(patched.line, config.line.permissions);
+  patched.telegram = telegramGrants.value;
+  patched.line = lineGrants.value;
+
   const normalized = normalizeConfig(patched);
+  if (telegramGrants.carried) {
+    normalized.telegram.adminUserIds = telegramAdminMirror(
+      normalized.telegram.permissions,
+      normalized.telegram.pairing.pairedUsers.map((user) => user.userId),
+    );
+  }
   if (!normalized.smtp.password) normalized.smtp.password = config.smtp.password;
   if (!normalized.telegram.botToken) normalized.telegram.botToken = config.telegram.botToken;
   if (!normalized.line.channelAccessToken) normalized.line.channelAccessToken = config.line.channelAccessToken;

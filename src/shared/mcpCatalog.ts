@@ -73,22 +73,18 @@ export function findCatalogEntry(url: string): McpCatalogEntry | undefined {
 }
 
 /**
- * Whether a connector reaches the user's OWN world — their messages, documents, tickets, repos —
- * as opposed to public reference material anyone could look up.
- *
- * The agent needs the distinction to decide where to look for a person or a file the user speaks
- * of as theirs. Without it a goal like "what does <a name only my contacts know> want" goes to
- * the web, which can only offer a public figure whose name merely resembles it.
- *
- * `docs` connectors are public by definition; every other catalog category is reached through the
- * user's own account. A connector that is not in the catalog stays UNKNOWN rather than guessed
- * at — the marker only ever ADDS a positive signal, so an unmarked server is not a server being
- * claimed to hold nothing of the user's.
+ * Whether a connector reaches the user's own data (messages, documents, tickets, repos) rather
+ * than public reference material, so the agent looks there first for a person or file the user
+ * calls theirs. `docs` connectors are public; other catalog categories go through the user's
+ * account. Servers outside the catalog return false: the flag only adds a positive signal.
  */
 export function connectorHoldsUserData(url: string): boolean {
   // `?? ''` although the type requires it: a missing url must come out UNMARKED, never throw inside
   // a live agent run. The type is what keeps a production caller from omitting it.
   const trimmed = (url ?? '').trim().toLowerCase();
+  // X is read as the user but holds public posts, not the user's own data: "look in your own
+  // data first" would send a question about the news to a search of strangers' posts.
+  if (trimmed === 'builtin://x') return false;
   if (trimmed.startsWith('builtin://')) return true;
   const entry = findCatalogEntry(trimmed);
   return entry ? entry.category !== 'docs' : false;

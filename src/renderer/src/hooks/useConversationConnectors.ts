@@ -5,8 +5,14 @@ import { useMcpStore } from '../store/useMcpStore';
 import { agentApi } from '../api/electronApi';
 import type { KeywordCandidate } from '../../../shared/connectorKeywords';
 
-function scopeKey(ids: readonly string[], web: boolean): string {
-  return `${web ? 'w' : '-'}:${[...ids].sort().join(',')}`;
+function scopeKey(ids: readonly string[], web: boolean, webOff: boolean, agent: boolean): string {
+  return `${agent ? 'a' : '-'}${web ? 'w' : webOff ? 'x' : '-'}:${[...ids].sort().join(',')}`;
+}
+
+/** What an agent run is told about the web: on, switched off by the user, or the default (undefined). */
+export function webForRun(web: boolean, webOff: boolean): boolean | undefined {
+  if (web) return true;
+  return webOff ? false : undefined;
 }
 
 export interface ConversationConnectors {
@@ -14,12 +20,29 @@ export interface ConversationConnectors {
   connectors: KeywordCandidate[];
   activeIds: readonly string[];
   /**
-   * Whether this conversation may go online. Off by default — a send that holds no capability is
-   * an ordinary chat turn that continues the provider's own thread — so only the on state is stored.
+   * Whether the web switch is on. Off by default — a send that holds no capability is an ordinary
+   * chat turn that continues the provider's own thread.
    */
   web: boolean;
+  /**
+   * The user switched the web off themself (the pill, or the undo on the auto-on notice). Only then
+   * is an agent run kept offline; off by default, the agent may go online and the switch follows.
+   * Stored as `web: false` in the marker, the same value legacy conversations wrote for "off".
+   */
+  webOff: boolean;
+  /** The user's own click: turning it off is a choice that sticks to the conversation. */
   toggleWeb: () => void;
+  /** Set by the app, not chosen by the user: never marks the web as switched off. */
   setWeb: (next: boolean) => void;
+  /** The user said no to the web for this conversation (the undo on an auto-on notice). */
+  optOutWeb: () => void;
+  /**
+   * Agent switched on by itself. The web and the connectors imply it too, but it can stand alone:
+   * an agent with neither still has its own tools, and still picks among every connected
+   * connector — selecting one only means "bring this one in for sure".
+   */
+  agent: boolean;
+  setAgent: (next: boolean) => void;
   /**
    * Adds whichever of these are not disclosed yet; returns the resulting set either way. Takes
    * a list rather than one id because each call computes its result from the set it closed
@@ -54,9 +77,12 @@ export function useConversationConnectors(
   const selectedPath = useAppStore((s) => s.selectedFile?.path ?? '');
   const threadConnectors = useAppStore((s) => s.conversation?.thread.mcp);
   const threadWeb = useAppStore((s) => s.conversation?.thread.web);
+  const threadAgent = useAppStore((s) => s.conversation?.thread.agent);
   const conversationLoaded = useAppStore((s) => s.conversation !== null);
   const [activeIds, setActiveIds] = useState<readonly string[]>([]);
-  const [web, setWeb] = useState(false);
+  const [web, setWebState] = useState(false);
+  const [webOff, setWebOff] = useState(false);
+  const [agent, setAgent] = useState(false);
 
   const connectors = useMemo<KeywordCandidate[]>(
     () => servers
@@ -99,20 +125,24 @@ export function useConversationConnectors(
     // Seeded with what was on disk, not with what survived the filter, so a marker naming a
     // connector that no longer exists gets rewritten instead of being read again every open.
     const storedWeb = threadWeb === true;
-    persisted.current = { path: selectedPath, key: scopeKey(stored, storedWeb) };
+    const storedWebOff = threadWeb === false;
+    const storedAgent = threadAgent === true;
+    persisted.current = { path: selectedPath, key: scopeKey(stored, storedWeb, storedWebOff, storedAgent) };
     const restored = stored.filter((id) => knownIds.has(id));
     setActiveIds(restored);
-    setWeb(storedWeb);
+    setWebState(storedWeb);
+    setWebOff(storedWebOff);
+    setAgent(storedAgent);
     if (restored.length > 0) onRestored(restored);
-  }, [selectedPath, conversationLoaded, threadConnectors, threadWeb, knownIds, onRestored]);
+  }, [selectedPath, conversationLoaded, threadConnectors, threadWeb, threadAgent, knownIds, onRestored]);
 
   useEffect(() => {
     if (!selectedPath) return;
-    const key = scopeKey(activeIds, web);
+    const key = scopeKey(activeIds, web, webOff, agent);
     if (persisted.current.path === selectedPath && persisted.current.key === key) return;
     persisted.current = { path: selectedPath, key };
-    void agentApi.setConversationConnectors(selectedPath, [...activeIds], web);
-  }, [selectedPath, activeIds, web]);
+    void agentApi.setConversationConnectors(selectedPath, [...activeIds], webForRun(web, webOff), agent);
+  }, [selectedPath, activeIds, web, webOff, agent]);
 
   const discloseAll = useCallback((ids: readonly string[]): readonly string[] => {
     const additions = [...new Set(ids)].filter((id) => knownIds.has(id) && !activeIds.includes(id));
@@ -136,7 +166,20 @@ export function useConversationConnectors(
 
   const clear = useCallback((): void => setActiveIds([]), []);
 
-  const toggleWeb = useCallback((): void => setWeb((current) => !current), []);
+  const toggleWeb = useCallback((): void => {
+    setWebState(!web);
+    setWebOff(web);
+  }, [web]);
+  // Turning it on clears an earlier "no"; the app switching it off (a new chat, `/chat`) is not the
+  // user saying no, so it returns to the default rather than remembering a refusal.
+  const setWeb = useCallback((next: boolean): void => {
+    setWebState(next);
+    setWebOff(false);
+  }, []);
+  const optOutWeb = useCallback((): void => {
+    setWebState(false);
+    setWebOff(true);
+  }, []);
 
-  return { connectors, activeIds, web, toggleWeb, setWeb, discloseAll, toggle, remove, clear };
+  return { connectors, activeIds, web, webOff, toggleWeb, setWeb, optOutWeb, agent, setAgent, discloseAll, toggle, remove, clear };
 }

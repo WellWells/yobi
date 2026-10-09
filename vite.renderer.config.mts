@@ -23,8 +23,7 @@ const NON_WOFF2_FONT_SOURCE = /,\s*url\([^)]*\.(?:woff|ttf)\)\s*format\(["'](?:w
 
 /**
  * KaTeX's stylesheet lists every font as woff2, woff and ttf, and Vite emits whatever it lists.
- * Chromium always takes the woff2, so the other two only add ~0.8 MB to the bundle.
- * Exported for the test suite.
+ * Chromium always takes the woff2, so the other two only add size to the bundle.
  */
 export function katexWoff2Only(): Plugin {
   return {
@@ -53,11 +52,8 @@ export default defineConfig({
       },
       output: {
         manualChunks(id: string) {
-          // KaTeX is reached only through the dynamic import in utils/katexBundle.
-          // Naming a chunk here would hoist it back into the eagerly preloaded
-          // vendor graph (rehype-katex otherwise matches the `rehype-` rule below),
-          // which is exactly what keeping it off the first paint has to avoid —
-          // let rollup leave both in the on-demand chunk.
+          // KaTeX is loaded only via the dynamic import in utils/katexBundle; naming a chunk here
+          // (rehype-katex would match `rehype-` below) would pull it into the preloaded vendor graph.
           if (id.includes('node_modules/katex') || id.includes('node_modules/rehype-katex')) return;
           if (
             id.includes('node_modules/react-markdown') ||

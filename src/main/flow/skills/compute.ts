@@ -1,14 +1,42 @@
 import { spawn } from 'node:child_process';
 import { Worker } from 'node:worker_threads';
 import { sendLog } from '../../helpers';
+import { FlowUserError } from '../userError';
 
+/**
+ * Split a command line the way a shell would, minus backslash escapes (Windows paths stay literal):
+ * whitespace ends a token, and a quoted segment anywhere in a token joins it without its quotes, so
+ * `--title="hello world"` is the one argument `--title=hello world`. `""` is an empty argument; a
+ * quote with no closing partner is an ordinary character, and so is an apostrophe right after a
+ * letter or digit (`--name=O'Brien 'a b'` keeps the name instead of pairing with the next quote).
+ */
 export function parseArgs(input: string): string[] {
   const out: string[] = [];
-  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(input)) !== null) {
-    out.push(m[1] ?? m[2] ?? m[3] ?? '');
+  let token = '';
+  let started = false;
+  let i = 0;
+  while (i < input.length) {
+    const ch = input[i];
+    if (/\s/.test(ch)) {
+      if (started) out.push(token);
+      token = '';
+      started = false;
+      i++;
+      continue;
+    }
+    const apostrophe = ch === "'" && started && /[\p{L}\p{N}]/u.test(input[i - 1]);
+    started = true;
+    const opensQuote = ch === '"' || (ch === "'" && !apostrophe);
+    const close = opensQuote ? input.indexOf(ch, i + 1) : -1;
+    if (close === -1) {
+      token += ch;
+      i++;
+      continue;
+    }
+    token += input.slice(i + 1, close);
+    i = close + 1;
   }
+  if (started) out.push(token);
   return out;
 }
 
@@ -47,16 +75,52 @@ export function execText(config: Record<string, string>): string {
 }
 
 const RANDOM_MAX_COUNT = 10_000;
+const RANDOM_DEFAULT_MIN = 1;
+const RANDOM_DEFAULT_MAX = 100;
 
 function parseIntOr(raw: string | undefined, fallback: number): number {
   const n = Number.parseInt((raw ?? '').trim(), 10);
   return Number.isFinite(n) ? n : fallback;
 }
 
+/** A uniform index in [0, size); the clamp covers `random() * size` rounding up to `size`. */
+function randomIndex(size: number): number {
+  return Math.min(Math.floor(Math.random() * size), size - 1);
+}
+
+/**
+ * Above Number.MAX_SAFE_INTEGER doubles skip integers, so `max - min + 1` overstates the reachable
+ * values and unique sampling could never finish; reject unsafe bounds up front.
+ */
+function assertSafeRange(min: number, max: number, config: Record<string, string>): void {
+  if (Number.isSafeInteger(min) && Number.isSafeInteger(max) && Number.isSafeInteger(max - min + 1)) return;
+  // A blank bound means its default; name that instead of an empty "()".
+  const rawMin = (config.min ?? '').trim() || String(RANDOM_DEFAULT_MIN);
+  const rawMax = (config.max ?? '').trim() || String(RANDOM_DEFAULT_MAX);
+  throw new FlowUserError(
+    'flow.error.randomRange',
+    { min: rawMin, max: rawMax },
+    `random: min (${rawMin}) and max (${rawMax}) must be whole numbers between ${-Number.MAX_SAFE_INTEGER} and ${Number.MAX_SAFE_INTEGER}, at most ${Number.MAX_SAFE_INTEGER - 1} apart`,
+  );
+}
+
+/** `target` distinct offsets in [0, size): a partial Fisher-Yates over a sparse virtual array, exactly `target` draws. */
+function sampleDistinctOffsets(size: number, target: number): number[] {
+  const swapped = new Map<number, number>();
+  const out: number[] = [];
+  for (let i = 0; i < target; i++) {
+    const j = i + randomIndex(size - i);
+    out.push(swapped.get(j) ?? j);
+    swapped.set(j, swapped.get(i) ?? i);
+  }
+  return out;
+}
+
 export function execRandom(config: Record<string, string>): string {
-  let min = parseIntOr(config.min, 1);
-  let max = parseIntOr(config.max, 100);
+  let min = parseIntOr(config.min, RANDOM_DEFAULT_MIN);
+  let max = parseIntOr(config.max, RANDOM_DEFAULT_MAX);
   if (min > max) [min, max] = [max, min];
+  assertSafeRange(min, max, config);
 
   let count = Math.max(1, parseIntOr(config.count, 1));
   if (count > RANDOM_MAX_COUNT) {
@@ -65,7 +129,7 @@ export function execRandom(config: Record<string, string>): string {
   }
 
   const rangeSize = max - min + 1;
-  const pick = (): number => Math.floor(Math.random() * rangeSize) + min;
+  const pick = (): number => randomIndex(rangeSize) + min;
 
   if (count <= 1) return String(pick());
 
@@ -74,9 +138,7 @@ export function execRandom(config: Record<string, string>): string {
     if (target < count) {
       sendLog(`⚠️ [Flow] random: cannot pick ${count} unique numbers from ${min}–${max}, capping to ${target}`);
     }
-    const picked = new Set<number>();
-    while (picked.size < target) picked.add(pick());
-    return JSON.stringify([...picked]);
+    return JSON.stringify(sampleDistinctOffsets(rangeSize, target).map((offset) => offset + min));
   }
 
   const out: number[] = [];
@@ -95,12 +157,20 @@ export function coerceJsOutput(value: unknown): string {
   }
 }
 
-const JS_RESERVED = new Set([
+const JS_PARAM_NAMES = [
+  'vars', 'JSON', 'Math', 'Date', 'console', 'fetch', 'URL', 'URLSearchParams',
+  'TextEncoder', 'TextDecoder', 'Buffer', 'structuredClone', 'crypto',
+] as const;
+
+// A `const` named like a function parameter is a SyntaxError in the body, so context
+// keys that collide with a parameter stay reachable only through `vars[...]`.
+const JS_RESERVED = new Set<string>([
+  ...JS_PARAM_NAMES,
   'arguments', 'await', 'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger',
   'default', 'delete', 'do', 'else', 'enum', 'eval', 'export', 'extends', 'false', 'finally',
   'for', 'function', 'if', 'implements', 'import', 'in', 'instanceof', 'interface', 'let', 'new',
   'null', 'package', 'private', 'protected', 'public', 'return', 'static', 'super', 'switch',
-  'this', 'throw', 'true', 'try', 'typeof', 'var', 'void', 'while', 'with', 'yield', 'vars',
+  'this', 'throw', 'true', 'try', 'typeof', 'var', 'void', 'while', 'with', 'yield',
 ]);
 
 export function isInjectableIdentifier(key: string): boolean {
@@ -118,11 +188,6 @@ function parseContextJson(raw: string | undefined): Record<string, string> {
   }
   return {};
 }
-
-const JS_PARAM_NAMES = [
-  'vars', 'JSON', 'Math', 'Date', 'console', 'fetch', 'URL', 'URLSearchParams',
-  'TextEncoder', 'TextDecoder', 'Buffer', 'structuredClone', 'crypto',
-] as const;
 
 const JS_WORKER_SOURCE = `
 const { parentPort, workerData } = require('node:worker_threads');

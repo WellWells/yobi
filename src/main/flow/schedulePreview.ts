@@ -5,15 +5,13 @@ import {
   isOnceExpired,
   normalizeCronTrigger,
   resolveScheduleMode,
-  shouldExecuteCronTriggerNow,
 } from '../../shared/flowSchedule';
-
-/** The guard trims window edges, so ask for more candidates than we intend to show. */
-const CANDIDATE_MULTIPLIER = 6;
+import { nextAllowedRuns } from './scheduleRuns';
 
 /**
- * The preview asks the scheduler itself for its next fire times rather than recomputing them, so
- * what the editor promises and what actually runs cannot drift apart.
+ * The preview asks the scheduler itself for its next fire times rather than recomputing them, and
+ * shares `nextAllowedRuns` with the registry, so what the editor promises and what actually runs
+ * cannot drift apart.
  */
 export function previewSchedule(trigger: TriggerConfig, count = 3): SchedulePreview {
   if (trigger.type !== 'cron') return { runs: [], expression: '' };
@@ -34,11 +32,7 @@ export function previewSchedule(trigger: TriggerConfig, count = 3): SchedulePrev
   let task: ReturnType<typeof cron.createTask> | null = null;
   try {
     task = cron.createTask(expression, () => {});
-    const candidates = task.getNextRuns(wanted * CANDIDATE_MULTIPLIER) ?? [];
-    const runs = candidates
-      .filter((date) => shouldExecuteCronTriggerNow(normalized, date))
-      .slice(0, wanted)
-      .map((date) => date.toISOString());
+    const runs = nextAllowedRuns(task, normalized, wanted).map((date) => date.toISOString());
     return { runs, expression };
   } catch {
     return { runs: [], expression, error: 'invalid-expression' };

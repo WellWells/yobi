@@ -1,10 +1,10 @@
 import { session } from 'electron';
-import type { Cookie } from 'electron';
+import type { Cookie, WebContents } from 'electron';
 import { isExpiredCookie } from '../helpers';
 import { WORKER_USER_AGENTS } from '../userAgent';
-import { CHATGPT_LOGIN_URL } from './chatgpt';
+import { CHATGPT_SIGN_IN_START_URL, startChatgptSignIn } from './chatgptSignIn';
 import { CLAUDE_LOGIN_URL, isClaudeSessionCookie } from './claudeSession';
-import { isPerplexitySessionCookie } from './perplexity';
+import { isPerplexitySessionCookie } from './perplexitySession';
 import { PROVIDER_URLS, AUTH_PROVIDERS } from '../../shared/types';
 import type { AccountStatus, AuthProvider, Provider } from '../../shared/types';
 
@@ -12,6 +12,8 @@ const WORKER_PARTITION = 'persist:gemini';
 
 interface AuthProviderConfig {
   loginUrl: string;
+  /** Runs once loginUrl has loaded, when that page is only where the sign-in starts. */
+  startSignIn?: (contents: WebContents) => Promise<void>;
   userAgent: string;
   isSessionCookie: (cookie: Cookie) => boolean;
 }
@@ -60,7 +62,8 @@ const GEMINI_SESSION_COOKIES = ['__Secure-1PSID', '__Secure-3PSID', 'SID'];
 
 const AUTH_CONFIG: Record<AuthProvider, AuthProviderConfig> = {
   chatgpt: {
-    loginUrl: CHATGPT_LOGIN_URL,
+    loginUrl: CHATGPT_SIGN_IN_START_URL,
+    startSignIn: startChatgptSignIn,
     userAgent: WORKER_USER_AGENTS.chatgpt,
     isSessionCookie: (c) =>
       c.name.startsWith('__Secure-next-auth.session-token') && !isExpiredCookie(c.expirationDate),
