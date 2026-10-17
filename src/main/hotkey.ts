@@ -14,12 +14,10 @@ export function isHotkeyPaused(): boolean {
   return _paused;
 }
 
-export function registerHotkey(
-  slot: HotkeySlot,
-  accelerator: string,
-  handler: () => void,
-  debounceMs: number = 1000,
-): boolean {
+/** A second press within this window is ignored. */
+const HOTKEY_DEBOUNCE_MS = 1_000;
+
+export function registerHotkey(slot: HotkeySlot, accelerator: string, handler: () => void): boolean {
   const previous = registered.get(slot);
   if (previous) {
     try {
@@ -39,7 +37,7 @@ export function registerHotkey(
     ok = globalShortcut.register(target, () => {
       if (_paused) return;
       const now = Date.now();
-      if (now - lastTrigger < debounceMs) return;
+      if (now - lastTrigger < HOTKEY_DEBOUNCE_MS) return;
       lastTrigger = now;
       handler();
     });

@@ -13,6 +13,7 @@ import { QuoteChips } from './QuoteChips';
 import { SlashCommandMenu } from './SlashCommandMenu';
 import { ModelCommandMenu } from './ModelCommandMenu';
 import {
+  builtinChatCommand,
   filterChatCommands,
   modelMenuQuery,
   parseSlashCommand,
@@ -34,10 +35,11 @@ import { looksLikeFlowRequest } from '../../../../shared/flowIntent';
 import { looksLikeWebSearchRequest } from '../../../../shared/webIntent';
 import { looksLikeToolRequest } from '../../../../shared/toolIntent';
 import { useAppStore } from '../../store/appStore';
+import { useAgentRunStore } from '../../store/useAgentRunStore';
 import { endTarget, homeTarget } from '../../utils/composerKeys';
 import { withQuotedContext } from '../../utils/composerQuotes';
 import { collectPastedFiles, pasteMayHoldSystemFile } from '../../utils/pastedFiles';
-import { toTokens } from '../../../../shared/shortcuts';
+import { comboLabel } from '../../../../shared/shortcuts';
 import { isMac } from '../../utils/keyLabels';
 import {
   BUILTIN_AGENT_FLOW_ID,
@@ -48,6 +50,7 @@ import {
 } from '../../../../shared/types';
 import { mcpCommandFlowId, parseMcpCommandFlowId } from '../../../../shared/mcpCommand';
 import { matchConnectorKeywords, type KeywordCandidate } from '../../../../shared/connectorKeywords';
+import { desktopLinkFlowFor } from '../../../../shared/builtinFlows';
 import { useResolvedCombo } from '../../store/shortcutStore';
 import { deleteAllText, wantsComposerClear } from './composerClear';
 import { replaceAllText, useExternalEditor, wantsExternalEditor } from './composerExternalEditor';
@@ -166,7 +169,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     if (autoWebSignal > 0) setAutoWeb(true);
   }, [autoWebSignal]);
   const [menuDismissed, setMenuDismissed] = useState(false);
-  const cycleModelKeys = toTokens(useResolvedCombo('chat.cycleModel'), isMac).join(' + ');
+  const cycleModelKeys = comboLabel(useResolvedCombo('chat.cycleModel'), isMac);
   const modelTooltip = cycleModelKeys
     ? t('chat.model.tooltip').replace('{{shortcut}}', cycleModelKeys)
     : t('chat.model.tooltip').replace(' · {{shortcut}}', '').replace('{{shortcut}}', '');
@@ -469,6 +472,18 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
       keepFocus();
       return;
     }
+    // A link on its own runs what a bot chat runs for it, in any mode — the agent too: an X post
+    // shows its text and media, a YouTube video the download menu with its summary button. No
+    // model and no connector; the turn's buttons download, summarize or analyze.
+    // An agent waiting on this conversation takes the link as its answer, as a bot chat does.
+    const answering = useAgentRunStore.getState().pendingQuestion?.conversationPath
+      === (useAppStore.getState().selectedFile?.path ?? '');
+    const linkFlow = quotes.length === 0 && attachments.length === 0 && !answering ? desktopLinkFlowFor(text) : null;
+    if (linkFlow) {
+      if (onRunCommand(builtinChatCommand(linkFlow), text)) clearComposer();
+      keepFocus();
+      return;
+    }
     // Naming a connector in an ordinary sentence discloses it and makes this an agent turn.
     // Disclosure, not instruction: the model still decides the connector is not the right
     // instrument for this question, exactly as it does for one the user typed a slash for.
@@ -518,7 +533,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     if (onSend(withQuotes(text))) clearComposer();
     keepFocus();
   }, [
-    promptInput, chatCommands, chatMode, connectors, activeConnectorIds, web,
+    promptInput, chatCommands, chatMode, connectors, activeConnectorIds, web, quotes, attachments,
     modeCommand, handleChangeMode, pickMode, onDiscloseConnectors, onRunCommand, onUnknownCommand,
     onSetWeb, onSend, withQuotes, clearComposer, modelStops, pickModel, onUnknownModel,
   ]);

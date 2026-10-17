@@ -1,8 +1,22 @@
 import type { WebContents } from 'electron';
 import { loadURLFollowingIdentity } from '../navigationIdentity';
+import { PROVIDER_URLS } from '../../shared/types';
+import type { Provider } from '../../shared/types';
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * `url` is on the provider's own host, exactly (no subdomains, no legacy hosts); false when it does
+ * not parse. Unlike `providerFromUrl`, nothing falls back to Gemini.
+ */
+export function isProviderHost(url: string, provider: Provider): boolean {
+  try {
+    return new URL(url).hostname === new URL(PROVIDER_URLS[provider]).hostname;
+  } catch {
+    return false;
+  }
 }
 
 export async function navigateAndWait(
@@ -64,11 +78,16 @@ export const INJECTED_SLEEP_JS = `function sleep(ms) {
     return new Promise(function(r) { setTimeout(r, ms); });
   }`;
 
+// Checks once before the first interval: a condition that already holds resolves at once instead
+// of paying one interval for nothing on every step.
 export const INJECTED_WAIT_FOR_JS = `function waitFor(conditionFn, label, timeout, interval) {
     if (timeout  === undefined) timeout  = TIMEOUT;
     if (interval === undefined) interval = 300;
     var waitStart = Date.now();
     return new Promise(function(resolve, reject) {
+      var initial;
+      try { initial = conditionFn(); } catch(e) { initial = undefined; }
+      if (initial) { resolve(initial); return; }
       var handle = setInterval(function() {
         if (Date.now() - waitStart > timeout) {
           clearInterval(handle);

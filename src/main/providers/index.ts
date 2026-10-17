@@ -5,7 +5,7 @@ import { isChatgptLoginRequiredError, runChatgptAutomation } from './chatgpt';
 import { runClaudeAutomation } from './claude';
 import { isClaudeLoginRequiredError } from './claudeSession';
 import { getByokLabel } from './byokClient';
-import { ensureOnPage, isSamePage, PAGE_REUSE, pageIdentity, parseHttpUrl, waitForThreadSettled } from './pageReuse';
+import { ensureOnPage, extractThreadUrl, isSamePage, PAGE_REUSE, waitForThreadSettled } from './pageReuse';
 import { meterText } from '../tokenMeter';
 import { meterLlmRequest } from '../llmMeter';
 import { PROVIDER_LABELS, isByokTargetUrl, migrateRemovedTargetUrl, providerFromUrl } from '../../shared/types';
@@ -13,6 +13,7 @@ import type { Provider } from '../../shared/types';
 import { utf8Len, truncateToBytes, charsPlusBreaks, truncateToCharsPlusBreaks } from '../../shared/textBudget';
 
 export type { Provider };
+export { extractThreadUrl };
 
 const PROVIDER_RUNNER: Record<
   Provider,
@@ -107,22 +108,6 @@ export function preparePromptForProvider(prompt: string, targetUrl: string): Pre
     removedBlankLines,
     truncated,
   };
-}
-
-const THREAD_PATH_PATTERNS: Record<Provider, RegExp> = {
-  gemini: /^\/app\/[^/]+\/?$/,
-  chatgpt: /^\/c\/[^/]+\/?$/,
-  claude: /^\/chat\/[^/]+\/?$/,
-  perplexity: /^\/search\/[^/]+\/?$/,
-};
-
-export function extractThreadUrl(provider: Provider, url: string): string | null {
-  const pattern = THREAD_PATH_PATTERNS[provider];
-  const parsed = parseHttpUrl(url);
-  if (!parsed) return null;
-  if (detectProvider(parsed.href) !== provider) return null;
-  if (!pattern.test(parsed.pathname)) return null;
-  return pageIdentity(parsed);
 }
 
 /** A thread is one page, so telling two threads apart is telling two pages apart. */

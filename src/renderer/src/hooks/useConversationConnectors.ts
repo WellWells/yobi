@@ -4,6 +4,7 @@ import { useAppStore } from '../store/appStore';
 import { useMcpStore } from '../store/useMcpStore';
 import { agentApi } from '../api/electronApi';
 import type { KeywordCandidate } from '../../../shared/connectorKeywords';
+import { reachableOnSend } from '../../../shared/mcpConnectOnUse';
 
 function scopeKey(ids: readonly string[], web: boolean, webOff: boolean, agent: boolean): string {
   return `${agent ? 'a' : '-'}${web ? 'w' : webOff ? 'x' : '-'}:${[...ids].sort().join(',')}`;
@@ -74,7 +75,13 @@ export function useConversationConnectors(
   onRestored: (ids: readonly string[]) => void,
 ): ConversationConnectors {
   const servers = useMcpStore(useShallow((s) => s.servers));
-  const selectedPath = useAppStore((s) => s.selectedFile?.path ?? '');
+  // A Notion document has no composer: its marker is never read for modes nor written with them.
+  // The row's flag counts before the file is read, or the modes would be written while it loads.
+  const selectedPath = useAppStore((s) => (
+    s.selectedFile?.notion || (s.conversation?.thread.notion && s.conversation.provider === 'Notion')
+      ? ''
+      : s.selectedFile?.path ?? ''
+  ));
   const threadConnectors = useAppStore((s) => s.conversation?.thread.mcp);
   const threadWeb = useAppStore((s) => s.conversation?.thread.web);
   const threadAgent = useAppStore((s) => s.conversation?.thread.agent);
@@ -91,7 +98,7 @@ export function useConversationConnectors(
         id: server.id,
         name: server.name,
         url: server.url,
-        connected: server.status === 'connected',
+        connected: reachableOnSend(server),
       })),
     [servers],
   );

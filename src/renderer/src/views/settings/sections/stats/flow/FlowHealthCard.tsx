@@ -15,6 +15,10 @@ interface Props {
   onInspect: () => void;
 }
 
+/** The flow row's chevron and the gap after it; expanded step names start where the flow name does. */
+const CHEVRON_SIZE = 14;
+const CHEVRON_GAP = 7;
+
 /** One step inside an expanded flow. Steps that never ran in the range are not listed at all. */
 const StepLine: React.FC<{ row: StepRow; t: (key: string) => string; onInspect: () => void }> = ({
   row, t, onInspect,
@@ -71,7 +75,8 @@ const StepLine: React.FC<{ row: StepRow; t: (key: string) => string; onInspect: 
   );
 };
 
-const FlowLine: React.FC<{
+/** One flow and, expanded, its steps. */
+export const FlowLine: React.FC<{
   row: FlowRow;
   opened: boolean;
   onToggle: () => void;
@@ -89,7 +94,7 @@ const FlowLine: React.FC<{
       style={{ borderRadius: 'var(--radius)', display: 'block' }}
     >
       <Group justify="space-between" gap={12} wrap="nowrap">
-        <Group gap={7} wrap="nowrap" style={{ minWidth: 0 }}>
+        <Group gap={CHEVRON_GAP} wrap="nowrap" style={{ minWidth: 0 }}>
           <Box
             c="dimmed"
             style={{
@@ -99,7 +104,7 @@ const FlowLine: React.FC<{
               transition: 'transform 0.15s ease',
             }}
           >
-            <ChevronRight size={14} />
+            <ChevronRight size={CHEVRON_SIZE} />
           </Box>
           <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-text)" truncate>
             {row.name}
@@ -136,7 +141,7 @@ const FlowLine: React.FC<{
     </UnstyledButton>
 
     <Collapse expanded={opened}>
-      <Box pl={14} pt={4}>
+      <Box pl={CHEVRON_SIZE + CHEVRON_GAP} pt={4}>
         {row.steps.map((step) => (
           <StepLine key={step.stepId} row={step} t={t} onInspect={onInspect} />
         ))}

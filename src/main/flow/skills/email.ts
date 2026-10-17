@@ -3,6 +3,7 @@ import { createTransport } from 'nodemailer';
 import { config } from '../../config';
 import { parseAttachmentList, resolveSafeLocalAttachment } from '../../attachmentGuard';
 import { sendLog } from '../../helpers';
+import { isSmtpAccountComplete } from '../../smtpAccount';
 import { FlowUserError } from '../userError';
 import { renderEmailHtml } from './emailHtml';
 
@@ -61,7 +62,7 @@ export async function execEmailSend(skillConfig: Record<string, string>): Promis
 
   // The SMTP form lives on the email step itself (shared by every email step); Settings has none.
   const smtp = config.smtp;
-  if (!smtp.host || !smtp.user || !smtp.password) {
+  if (!isSmtpAccountComplete(smtp)) {
     throw new FlowUserError(
       'flow.error.smtpMissing',
       {},

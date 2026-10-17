@@ -10,6 +10,8 @@ import { flattenPdfBackdrop } from './capturePdfBackdrop';
 import { buildMarkdownLabels } from '../shared/markdownLabels';
 import { sendLog } from './helpers';
 import { getLangCache, t } from './i18n';
+import { config } from './config';
+import { exportReadingFont } from '../shared/readingPrefs';
 import { SILENT_WEB_PREFERENCES, muteWindow, parkWindowOffscreen } from './silentWindow';
 
 const CAPTURE_TIMEOUT_MS = 30_000;
@@ -21,8 +23,9 @@ interface CaptureDocumentResult {
 }
 
 export function normalizeCaptureRequest(request: MarkdownCaptureRequest): MarkdownCaptureRequest {
+  // No title means no heading on the card — never a stock English one.
   const fallback = {
-    title: 'Markdown Snapshot',
+    title: '',
     prompt: '',
     content: '',
     summary: '',
@@ -132,6 +135,8 @@ export async function captureMarkdownDocument(
   const request: MarkdownCaptureRequest = {
     ...normalizeCaptureRequest(rawRequest),
     markdownLabels: buildMarkdownLabels((key) => t(getLangCache(), key)),
+    // One place for every export entry point (chat, quick export, Telegram, flows, batch).
+    readingFont: exportReadingFont(config.readingFont),
   };
   const logicalWidth = request.options.width;
 
@@ -317,16 +322,4 @@ async function captureScreenshotCdp(
     await debuggerSession.sendCommand('Emulation.clearDeviceMetricsOverride').catch(() => undefined);
     if (!alreadyAttached && debuggerSession.isAttached()) debuggerSession.detach();
   }
-}
-
-export function buildCaptureSummary(raw: string): string {
-  const plain = raw
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/\[(.*?)\]\((.*?)\)/g, '$1')
-    .replace(/[#>*_~\-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!plain) return '';
-  return plain.length > 220 ? `${plain.slice(0, 220)}…` : plain;
 }

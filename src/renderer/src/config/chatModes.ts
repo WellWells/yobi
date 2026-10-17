@@ -62,8 +62,6 @@ export const CHAT_MODES: ChatModeOption[] = [
   },
 ];
 
-export const DEFAULT_CHAT_MODE: ChatMode = 'chat';
-
 export function findChatMode(mode: ChatMode): ChatModeOption {
   return CHAT_MODES.find((option) => option.mode === mode) ?? CHAT_MODES[0];
 }

@@ -3,9 +3,18 @@ import { repairSplitTableRows } from './markdownTableRepair';
 import { buildShareTurns } from './shareTurns';
 import type { ShareTurnLabels } from './shareTurns';
 import type { MemoryNote } from './userMemory';
+import type { TurnPostCard } from './postCard';
+import { turnButtonCommands } from './builtinFlows';
+import { isStoryLink, parseXMediaInput } from './xMedia';
+import { turnMediaKind } from './turnMedia';
 
 export interface ThreadMeta {
   v: 1;
+  /**
+   * The conversation's own id, written the first time a version of it is kept. Its version history
+   * is filed under it, so renaming or moving the file keeps the history; a copy must not carry it.
+   */
+  id?: string;
   provider?: string;
   threadUrl?: string;
   threadTurns?: number;
@@ -35,6 +44,22 @@ export interface ThreadMeta {
   agent?: boolean;
   /** The Google Maps place this conversation is about, so a replayed follow-up can re-attach its reviews. */
   map?: MapPlaceRef;
+  /**
+   * The file is a Notion page kept in sync, not a conversation: no turns, the body after the marker
+   * is the page's content. See `shared/notion/notionDoc.ts`.
+   */
+  notion?: NotionLink;
+}
+
+export interface NotionLink {
+  /** The MCP server the page was imported through. */
+  server: string;
+  /** The page id, 32 lowercase hex digits. */
+  page: string;
+  url: string;
+  icon?: string;
+  /** When the body last changed (import, sync, local edit): the sidebar's time for the file. */
+  at: string;
 }
 
 export interface MapPlaceRef {
@@ -56,6 +81,8 @@ export interface TurnMeta {
   /** How long the reply took, in ms, from when the send started running to the saved answer. */
   d?: number;
   m?: 'native' | 'replay';
+  /** Set on a replay that stood in for the provider's own thread (model switched, thread lost or behind). */
+  fb?: 1;
   c?: string;
   a?: string[];
   dropped?: number;
@@ -82,6 +109,135 @@ export interface TurnMeta {
    * recap may be out of date; a missing key means "unchanged" (or a turn from before the feature).
    */
   rc?: string;
+  /**
+   * When the user last edited this turn's answer in Yobi. An edit newer than the conversation's
+   * latest turn has not reached the model yet: the next follow-up carries it.
+   */
+  ed?: string;
+  /**
+   * A translation of this turn's answer, shown below it. Nothing replays, summarises, shares,
+   * searches or exports it: it is a reading aid, not part of the conversation. Read it only
+   * through `readTurnTranslation`, which checks its shape.
+   */
+  tr?: TurnTranslation;
+  /**
+   * Buttons a flow command offered with this answer (a quality menu). Pressing one sends `i`, the
+   * whole command line, as if typed. Read through `readTurnButtons`, which checks the shape.
+   */
+  bt?: TurnButton[];
+  /**
+   * Files a flow command saved on this computer (a downloaded video), each offered as "show in
+   * folder" under the answer. Read through `readTurnFiles`, which checks the shape.
+   */
+  fl?: string[];
+  /**
+   * Photos and videos shown under the answer from the chat's media cache (a pasted X post's media,
+   * a video's cover) — shown, not saved, so no "show in folder". Read through `readTurnMedia`.
+   */
+  mv?: string[];
+  /**
+   * The X, Threads, Instagram or Facebook post this turn forwarded (a link pasted alone): offered as "analyze
+   * the post and its replies". Read through `readTurnXPost`, which rebuilds the link from the post id.
+   */
+  xp?: string;
+  /**
+   * A forwarded forum article's header (a PTT article), drawn as a card in place of the answer's
+   * opening block. Read through `readPostCard`, which checks the shape and that block.
+   */
+  pc?: TurnPostCard;
+}
+
+/** Every item "all" takes of a person's stories (`MAX_STORY_ITEMS`), so the turn shows them all. */
+const MAX_TURN_FILES = 20;
+
+/**
+ * The post a turn forwarded, rebuilt from its id, or null. The file may have been edited by hand,
+ * so all a click can ever do is analyze one post, in words Yobi writes. An Instagram story has no
+ * caption or comments to analyze.
+ */
+export function readTurnXPost(meta: TurnMeta | undefined): string | null {
+  const raw: unknown = meta?.xp;
+  if (typeof raw !== 'string') return null;
+  const post = parseXMediaInput(raw.trim());
+  return post && !post.prompt && !isStoryLink(post) ? post.url : null;
+}
+
+/** A turn's saved files, or `[]`: absolute paths only (the file may have been edited by hand). */
+export function readTurnFiles(meta: TurnMeta | undefined): string[] {
+  return absolutePaths(meta?.fl);
+}
+
+/**
+ * The files the turn's "show in folder" buttons reveal: the first of each folder, in order. A
+ * person's stories saved together are one folder, so one button — not one per story.
+ */
+export function revealTargets(files: readonly string[]): string[] {
+  const seen = new Set<string>();
+  return files.filter((file) => {
+    const folder = file.replace(/[\\/][^\\/]*$/, '');
+    if (seen.has(folder)) return false;
+    seen.add(folder);
+    return true;
+  });
+}
+
+/** A turn's shown-only media, or `[]`; the same shape check as `readTurnFiles`. */
+export function readTurnMedia(meta: TurnMeta | undefined): string[] {
+  return absolutePaths(meta?.mv);
+}
+
+function absolutePaths(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((f): f is string => typeof f === 'string' && (/^[A-Za-z]:[\\/]/.test(f) || f.startsWith('/')))
+    .slice(0, MAX_TURN_FILES);
+}
+
+export interface TurnButton {
+  /** Label. */
+  l: string;
+  /** The command line the button sends, e.g. `/ytdl https://… 720`. */
+  i: string;
+  /** A picture of what it takes (one of a person's stories), in the chat's media cache: drawn as the button. */
+  p?: string;
+}
+
+const MAX_TURN_BUTTONS = 12;
+
+/**
+ * A turn's flow buttons, or `[]` when the field is missing or not the expected shape. A button
+ * may only send the command that produced the turn (`c`): the file can be imported or edited by
+ * hand, and a "720p" label must not be able to start `/agent` with someone else's goal.
+ */
+export function readTurnButtons(meta: TurnMeta | undefined): TurnButton[] {
+  const raw: unknown = meta?.bt;
+  const command = (meta?.c ?? '').trim();
+  if (!Array.isArray(raw) || !command) return [];
+  const allowed = turnButtonCommands(command).map((c) => `/${c}`);
+  return raw
+    .filter((b): b is TurnButton => Boolean(b) && typeof (b as TurnButton).l === 'string' && typeof (b as TurnButton).i === 'string')
+    .filter((b) => b.l.trim() && allowed.some((own) => b.i.trim() === own || b.i.trim().startsWith(`${own} `)))
+    .slice(0, MAX_TURN_BUTTONS)
+    .map((b) => {
+      // Only a picture file on this computer: anything else and the button is its label.
+      const [picture] = absolutePaths([b.p]);
+      return { l: b.l, i: b.i, ...(picture && turnMediaKind(picture) === 'image' ? { p: picture } : {}) };
+    });
+}
+
+export interface TurnTranslation {
+  /** The target language (BCP-47). */
+  to: string;
+  text: string;
+  /** `fnv1a` of the answer's trimmed text when it was translated: a different hash means it is out of date. */
+  h: string;
+  /** An AI model translated it, or OpenCC converted it on this computer. */
+  by: 'ai' | 'opencc';
+  /** The model's provider label, for `ai`. */
+  p?: string;
+  at: string;
+  /** The model did not give back every code block, formula or link exactly once; shown as it wrote it. */
+  unmatched?: true;
 }
 
 /** The turn's prompt as the model received it: the stored `sent` text when there is one, else the prompt. */
@@ -241,6 +397,42 @@ function previousMeaningfulLine(lines: string[], index: number): number {
   return -1;
 }
 
+interface TurnSpan {
+  /** The `## Prompt` heading line. */
+  start: number;
+  /** The `yobi:turn` marker line before it, or -1. */
+  markerLine: number;
+  /** The `## Response` heading line, or -1. */
+  responseIdx: number;
+  /** First line after the turn: the next turn's marker or heading, or the line count. */
+  end: number;
+}
+
+/**
+ * Where each turn sits in the file. A prompt heading starts a turn when a marker precedes it, or
+ * when no marker has appeared yet — a file from before markers is all unmarked turns, and after
+ * the first marker an unmarked heading is part of an answer.
+ */
+function locateTurns(lines: string[], scanned: ScannedLine[]): TurnSpan[] {
+  const firstTurnMarker = scanned.findIndex((info) => info.marker === 'turn');
+  const starts: { start: number; markerLine: number }[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (scanned[i].heading !== 'prompt') continue;
+    const prev = previousMeaningfulLine(lines, i);
+    const markerLine = prev >= 0 && scanned[prev].marker === 'turn' ? prev : -1;
+    if (firstTurnMarker < 0 || i < firstTurnMarker || markerLine >= 0) starts.push({ start: i, markerLine });
+  }
+  return starts.map(({ start, markerLine }, index) => {
+    const next = starts[index + 1];
+    const end = next ? (next.markerLine >= 0 ? next.markerLine : next.start) : lines.length;
+    let responseIdx = -1;
+    for (let i = start + 1; i < end; i++) {
+      if (scanned[i].heading === 'response') { responseIdx = i; break; }
+    }
+    return { start, markerLine, responseIdx, end };
+  });
+}
+
 export function parseConversationDoc(
   raw: string,
   aliases: ConversationHeadingAliases,
@@ -252,12 +444,10 @@ export function parseConversationDoc(
   let providerIdx = -1;
   let timeIdx = -1;
   let threadIdx = -1;
-  let firstTurnMarker = Number.POSITIVE_INFINITY;
 
   for (let i = 0; i < lines.length; i++) {
     const info = scanned[i];
     if (info.marker === 'thread' && threadIdx < 0) threadIdx = i;
-    if (info.marker === 'turn' && !Number.isFinite(firstTurnMarker)) firstTurnMarker = i;
     if (title === null && !info.fenced && !info.isHeading && info.marker === null) {
       const h1 = H1_RE.exec(lines[i]);
       if (h1) title = h1[1].trim();
@@ -269,21 +459,7 @@ export function parseConversationDoc(
   const rawThread = parseMarkerJson(threadIdx >= 0 ? scanned[threadIdx].markerJson : null);
   const thread: ThreadMeta = { ...(rawThread as Omit<ThreadMeta, 'v'>), v: 1 };
 
-  const turnStarts: { start: number; markerLine: number }[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (scanned[i].heading !== 'prompt') continue;
-    const prev = previousMeaningfulLine(lines, i);
-    const markerLine = prev >= 0 && scanned[prev].marker === 'turn' ? prev : -1;
-    if (i < firstTurnMarker || markerLine >= 0) turnStarts.push({ start: i, markerLine });
-  }
-
-  const turns: ConversationTurn[] = turnStarts.map(({ start, markerLine }, index) => {
-    const next = turnStarts[index + 1];
-    const end = next ? (next.markerLine >= 0 ? next.markerLine : next.start) : lines.length;
-    let responseIdx = -1;
-    for (let i = start + 1; i < end; i++) {
-      if (scanned[i].heading === 'response') { responseIdx = i; break; }
-    }
+  const turns: ConversationTurn[] = locateTurns(lines, scanned).map(({ start, markerLine, responseIdx, end }) => {
     const promptEnd = responseIdx >= 0 ? responseIdx : end;
     const prompt = unescapeSectionHeadings(lines.slice(start + 1, promptEnd).join('\n').trim());
     const response = responseIdx >= 0
@@ -401,6 +577,103 @@ export function appendTurn(
   return body ? [body, '', ...block].join('\n') : block.join('\n');
 }
 
+/**
+ * Text going into a turn with its `yobi:` marker lines dropped: outside a code fence one would be
+ * read as a marker of the file (a turn of its own, or the file's thread binding). They render as
+ * nothing anyway; inside a fence they are code and stay.
+ */
+export function withoutMarkerLines(text: string): string {
+  const lines = splitLines(text);
+  const fenced = fencedLines(lines);
+  return lines.filter((line, i) => fenced[i] || !MARKER_RE.test(line.trim())).join('\n');
+}
+
+function turnMarkerLine(meta: TurnMeta): string {
+  return `<!-- yobi:turn ${stringifyMarker(meta)} -->`;
+}
+
+/**
+ * The file with one turn's answer replaced and its marker set to `meta`; `null` when there is no
+ * such turn or it has no answer section. Only that answer's lines change, so a reply appended or
+ * an edit made elsewhere in the file survives.
+ *
+ * A turn from before markers gets one, and so does every unmarked turn after it: once a marker
+ * exists, an unmarked prompt heading below it would be read as part of the answer above.
+ */
+export function replaceTurnResponse(
+  raw: string,
+  aliases: ConversationHeadingAliases,
+  index: number,
+  response: string,
+  meta: TurnMeta,
+): string | null {
+  const lines = splitLines(raw);
+  const scanned = scan(lines, aliases);
+  const spans = locateTurns(lines, scanned);
+  const target = spans[index];
+  if (!target || target.responseIdx < 0) return null;
+
+  // A marker line in the answer would start a turn of its own; it renders as nothing anyway.
+  const body = splitLines(withoutMarkerLines(repairSplitTableRows(response.trim())));
+
+  const inserts = new Map<number, string>();
+  if (target.markerLine >= 0) {
+    lines[target.markerLine] = turnMarkerLine(meta);
+  } else {
+    spans.slice(index).forEach((span, offset) => {
+      if (span.markerLine < 0) inserts.set(span.start, turnMarkerLine(offset === 0 ? meta : {}));
+    });
+  }
+
+  const bodyStart = target.responseIdx + 1;
+  const replacement = ['', ...body, ''];
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (i === bodyStart) {
+      out.push(...replacement);
+      if (target.end > bodyStart) {
+        i = target.end - 1;
+        continue;
+      }
+    }
+    const marker = inserts.get(i);
+    if (marker) out.push(marker);
+    out.push(lines[i]);
+  }
+  if (bodyStart >= lines.length) out.push(...replacement);
+  return out.join('\n');
+}
+
+/**
+ * The file with one turn's marker set to `meta`; the turn's text is left exactly as it is. `null`
+ * when there is no such turn. A turn from before markers gets one, and so does every unmarked turn
+ * after it, as in `replaceTurnResponse`.
+ */
+export function replaceTurnMeta(
+  raw: string,
+  aliases: ConversationHeadingAliases,
+  index: number,
+  meta: TurnMeta,
+): string | null {
+  const lines = splitLines(raw);
+  const scanned = scan(lines, aliases);
+  const spans = locateTurns(lines, scanned);
+  const target = spans[index];
+  if (!target) return null;
+  if (target.markerLine >= 0) {
+    lines[target.markerLine] = turnMarkerLine(meta);
+    return lines.join('\n');
+  }
+  const inserts = new Map<number, string>();
+  spans.slice(index).forEach((span, offset) => {
+    if (span.markerLine < 0) inserts.set(span.start, turnMarkerLine(offset === 0 ? meta : {}));
+  });
+  return lines.flatMap((line, i) => {
+    const marker = inserts.get(i);
+    return marker ? [marker, line] : [line];
+  }).join('\n');
+}
+
 export function stripConversationMarkers(raw: string): string {
   return splitLines(raw).filter((line) => !MARKER_RE.test(line.trim())).join('\n');
 }
@@ -449,10 +722,24 @@ export function buildShareMarkdown(
   return buildShareTurns(doc.title, turns, labels);
 }
 
+const NO_HEADING_ALIASES: ConversationHeadingAliases = {
+  provider: new Set(), time: new Set(), prompt: new Set(), response: new Set(),
+};
+
+/**
+ * Whether `writeThreadMeta` has a place for the marker other than line 1: a thread marker to
+ * replace or a title to follow. Lines inside code fences are neither, as they are there.
+ */
+export function hasThreadMetaAnchor(raw: string): boolean {
+  const lines = splitLines(raw);
+  const scanned = scan(lines, NO_HEADING_ALIASES);
+  return scanned.some((info, index) => info.marker === 'thread' || (!info.fenced && H1_RE.test(lines[index])));
+}
+
 export function writeThreadMeta(raw: string, meta: ThreadMeta): string {
   const line = `<!-- yobi:thread ${stringifyMarker({ ...meta, v: 1 })} -->`;
   const lines = splitLines(raw);
-  const scanned = scan(lines, { provider: new Set(), time: new Set(), prompt: new Set(), response: new Set() });
+  const scanned = scan(lines, NO_HEADING_ALIASES);
 
   const existing = scanned.findIndex((info) => info.marker === 'thread');
   if (existing >= 0) {

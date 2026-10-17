@@ -13,6 +13,7 @@ import { emptyDailyEntry, emptyMetrics, normalizeSnapshot, toCount, zeroKey } fr
 import { config, getConfigDir } from './config';
 import { sendToRenderer } from './helpers';
 import { setTokenSink } from './tokenMeter';
+import { setDownloadSink } from './downloader/usage';
 import { currentMetricDomain, setLlmMeterSinks } from './llmMeter';
 
 export { classifyFailure } from './metricsNormalize';
@@ -159,6 +160,17 @@ export function recordKeyCooldown(keyId: string): void {
   }, 'key/cooldown');
 }
 
+/** One use of the Downloader for a link-site; the caller leaves a Stop out. */
+export function recordDownload(site: string, outcome: 'success' | 'failure'): void {
+  mutate((today, total) => {
+    for (const bucket of [today.downloads, total.downloads]) {
+      const entry = bucket[site] ?? { success: 0, failure: 0 };
+      entry[outcome] += 1;
+      bucket[site] = entry;
+    }
+  }, `download/${site}/${outcome}`);
+}
+
 /** Key totals mirror token totals: an unscoped call lands in the day total and nowhere else. */
 function keyBuckets(
   today: DailyMetricCounts,
@@ -171,6 +183,7 @@ function keyBuckets(
 }
 
 setTokenSink(recordTokenUsage);
+setDownloadSink(recordDownload);
 
 setLlmMeterSinks({
   onRequest: recordLlmRequest,

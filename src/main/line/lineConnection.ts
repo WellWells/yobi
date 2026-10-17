@@ -5,32 +5,18 @@
  * Loads the native driver via LineService, so the MCP registry imports this lazily
  * (dynamic import): the driver loads only when the LINE connector is used.
  */
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { connectInProcess, type InProcessConnection } from '../mcp/inProcessServer';
 import { createLineMcpServer } from './lineMcpServer';
 import { getSharedLineService, resetSharedLineService } from './sharedService';
-import type { LineService } from './lineService';
 
-export interface LineConnection {
-  client: Client;
-  service: LineService;
-  close: () => Promise<void>;
-}
-
-export async function connectLineMcp(clientName: string, clientVersion: string): Promise<LineConnection> {
+export async function connectLineMcp(clientName: string, clientVersion: string): Promise<InProcessConnection> {
   // Shared with the line_read flow skill so the slow key extraction runs once per session.
-  const service = getSharedLineService();
-  const server = createLineMcpServer(service);
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  const client = new Client({ name: clientName, version: clientVersion });
-  await client.connect(clientTransport);
+  const connection = await connectInProcess(createLineMcpServer(getSharedLineService()), clientName, clientVersion);
   return {
-    client,
-    service,
+    client: connection.client,
     close: async () => {
-      await client.close().catch(() => undefined);
-      await server.close().catch(() => undefined);
+      // Never throws (both closes swallow their errors), so the reset always runs.
+      await connection.close();
       resetSharedLineService();
     },
   };

@@ -69,14 +69,9 @@ export const ByokGroupsCard: React.FC<Props> = ({ byokGroups, t, sectionGap }) =
                       <Layers size={16} />
                     </Box>
                     <Stack gap={6} miw={0}>
-                      <Group gap={8} wrap="nowrap">
-                        <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-default-color)" truncate>
-                          {group.name}
-                        </Text>
-                        <Badge variant="light" color="gray" size="sm">
-                          {t('settings.byok.group.memberCount').replace('{{count}}', String(group.memberIds.length))}
-                        </Badge>
-                      </Group>
+                      <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-default-color)" truncate>
+                        {group.name}
+                      </Text>
                       <Group gap={6} wrap="wrap">
                         {group.memberIds.map((id) => (
                           <Badge key={id} variant="default" size="sm">

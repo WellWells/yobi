@@ -2,8 +2,24 @@ import { startTransition, useState } from 'react';
 import type React from 'react';
 import type { OutputFile } from '../../../../shared/types';
 import { fileApi } from '../../api/electronApi';
-import { noteConversationRenamed } from '../../store/recapStore';
-import type { EditMode } from './FileItem';
+import { conversationHeaderTitle } from '../chat/headerMenu/headerMenuModel';
+import type { FileContextMenuState } from './FileContextMenu';
+
+/**
+ * What "Edit H1 title" starts from: the title the chat header shows — the H1, else the file name
+ * without `.md`. Never the row's preview: a file without an H1 previews its first 200 characters of
+ * body, which must not come back as an H1.
+ */
+export function titleEditSeed(content: string | null, file: Pick<OutputFile, 'name'>): string {
+  return conversationHeaderTitle(content, file.name);
+}
+
+/** The title to write, or null when there is nothing to write: empty, or the same as where the edit started. */
+export function titleToWrite(draft: string, seed: string): string | null {
+  const next = draft.trim();
+  if (!next || next === seed.trim()) return null;
+  return next;
+}
 
 interface SidebarFileActionsDeps {
   visibleFiles: OutputFile[];
@@ -14,14 +30,18 @@ interface SidebarFileActionsDeps {
   onSelect: (file: OutputFile) => Promise<void>;
 }
 
+/**
+ * Per-row actions: edit the title, delete, the right-click menu. A conversation's title is its
+ * H1; the file name is not edited from here.
+ */
 export function useSidebarFileActions({
   visibleFiles, selectedFile, selectFile, setFileContent, loadFiles, onSelect,
 }: SidebarFileActionsDeps) {
   const [editingPath, setEditingPath] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
-  const [editingMode, setEditingMode] = useState<EditMode>(null);
+  const [editingSeed, setEditingSeed] = useState('');
   const [pendingDeleteFile, setPendingDeleteFile] = useState<OutputFile | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: OutputFile } | null>(null);
+  const [contextMenu, setContextMenu] = useState<FileContextMenuState | null>(null);
 
   const openContextMenu = (e: React.MouseEvent<HTMLElement>, file: OutputFile) => {
     e.preventDefault();
@@ -29,21 +49,12 @@ export function useSidebarFileActions({
     setContextMenu({ x: e.clientX, y: e.clientY, file });
   };
 
-  const startRenameFile = (file: OutputFile) => {
-    setContextMenu(null);
-    setEditingPath(file.path);
-    setEditingMode('filename');
-    setEditingText(file.name.replace(/\.md$/i, '') || file.preview || file.name);
-  };
-
   const startEditH1 = async (file: OutputFile) => {
     setContextMenu(null);
-    const content = await fileApi.getContent(file.path);
-    const firstLine = content?.split('\n')[0]?.trim() || '';
-    const h1 = firstLine.match(/^#\s+(.+)$/)?.[1] || file.preview || file.name.replace(/\.md$/i, '');
+    const seed = titleEditSeed(await fileApi.getContent(file.path), file);
     setEditingPath(file.path);
-    setEditingMode('h1');
-    setEditingText(h1);
+    setEditingSeed(seed);
+    setEditingText(seed);
   };
 
   const startDelete = (file: OutputFile) => {
@@ -70,33 +81,12 @@ export function useSidebarFileActions({
   };
 
   const handleCommitEdit = async () => {
-    if (!editingPath || !editingMode) return;
-    const nextText = editingText.trim();
+    if (!editingPath) return;
+    const nextText = titleToWrite(editingText, editingSeed);
     const activePath = editingPath;
-    const mode = editingMode;
     setEditingPath(null);
-    setEditingMode(null);
+    // Enter or a click elsewhere (blur commits) without typing leaves the file untouched.
     if (!nextText) return;
-
-    if (mode === 'filename') {
-      const result = await fileApi.updateTitle(activePath, nextText);
-      if (!result.ok) return;
-      noteConversationRenamed(activePath, result.updatedPath);
-      const latest = await loadFiles();
-      const nextSelected = latest.find((file) => file.path === result.updatedPath) ?? null;
-      if (selectedFile?.path === activePath) {
-        selectFile(nextSelected);
-        if (!nextSelected) {
-          setFileContent(null);
-          return;
-        }
-        const updated = await fileApi.getContent(nextSelected.path);
-        startTransition(() => {
-          setFileContent(updated);
-        });
-      }
-      return;
-    }
 
     const ok = await fileApi.updateH1(activePath, nextText);
     if (!ok) return;
@@ -111,21 +101,19 @@ export function useSidebarFileActions({
 
   const handleCancelEdit = () => {
     setEditingPath(null);
-    setEditingMode(null);
     setEditingText('');
+    setEditingSeed('');
   };
 
   return {
     editingPath,
     editingText,
     setEditingText,
-    editingMode,
     pendingDeleteFile,
     setPendingDeleteFile,
     contextMenu,
     setContextMenu,
     openContextMenu,
-    startRenameFile,
     startEditH1,
     startDelete,
     handleConfirmDelete,

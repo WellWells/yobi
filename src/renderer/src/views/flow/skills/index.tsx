@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  Terminal, Globe, MessageSquare, Clipboard, Timer, Bell, Camera, Bot, Rss, OctagonX, StickyNote, ListTree, Repeat, IterationCcw, Split, Merge, Cpu, Webhook, MonitorPlay, ListVideo, Rocket, Braces, Power, RotateCcw, AppWindow, SquareCode, SquareX, FilePen, FileText, Share2, FolderOpen, Mail, Trash2, Type, TrendingUp, ArrowRightLeft, Cloud, Wind, Download, Dices, CircleStop, SkipForward, Search, MapPin, Microscope, GitCompare, MessagesSquare, MessageSquareQuote, Flame,
+  Terminal, Globe, MessageSquare, Clipboard, Timer, Bell, Camera, Bot, Rss, OctagonX, StickyNote, ListTree, Repeat, IterationCcw, Split, Merge, Cpu, Webhook, MonitorPlay, ListVideo, Film, MonitorDown, Rocket, Braces, Power, RotateCcw, AppWindow, SquareCode, SquareX, FilePen, FileText, Share2, FolderOpen, Mail, Trash2, Type, TrendingUp, ArrowRightLeft, Cloud, Wind, Download, Dices, CircleStop, SkipForward, Search, MapPin, Microscope, GitCompare, MessagesSquare, MessageSquareQuote, Flame, SquarePlay,
 } from 'lucide-react';
 import { XIcon } from '../../../config/brandIcons';
 import type { SkillType } from '../../../../../shared/types';
@@ -32,8 +32,11 @@ import { SysInfoConfig } from './SysInfoConfig';
 import { HttpConfig } from './HttpConfig';
 import { YoutubeConfig } from './YoutubeConfig';
 import { YoutubeSubsConfig } from './YoutubeSubsConfig';
+import { YoutubeInfoConfig } from './YoutubeInfoConfig';
+import { YoutubeDownloadConfig } from './YoutubeDownloadConfig';
 import { XPostsConfig } from './XPostsConfig';
 import { XThreadConfig } from './XThreadConfig';
+import { XMediaConfig } from './XMediaConfig';
 import { XTrendsConfig } from './XTrendsConfig';
 import { JsConfig } from './JsConfig';
 import { PowerConfig } from './PowerConfig';
@@ -88,9 +91,12 @@ export const STEP_CONFIG_EDITOR: SkillConfigEditorMap = {
   http: HttpConfig,
   youtube: YoutubeConfig,
   youtube_subs: YoutubeSubsConfig,
+  youtube_info: YoutubeInfoConfig,
+  youtube_download: YoutubeDownloadConfig,
   x_posts: XPostsConfig,
   x_thread: XThreadConfig,
   x_trends: XTrendsConfig,
+  x_media: XMediaConfig,
   power: PowerConfig,
   restart_app: NoConfig,
   file_write: FileWriteConfig,
@@ -141,9 +147,12 @@ export const SKILL_ICON: Record<SkillType, React.ReactNode> = {
   http: <Webhook size={14} />,
   youtube: <MonitorPlay size={14} />,
   youtube_subs: <ListVideo size={14} />,
+  youtube_info: <Film size={14} />,
+  youtube_download: <MonitorDown size={14} />,
   x_posts: <XIcon size={14} />,
   x_thread: <MessageSquareQuote size={14} />,
   x_trends: <Flame size={14} />,
+  x_media: <SquarePlay size={14} />,
   power: <Power size={14} />,
   restart_app: <RotateCcw size={14} />,
   file_write: <FilePen size={14} />,

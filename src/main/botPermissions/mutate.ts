@@ -1,8 +1,17 @@
 import { config, saveConfig } from '../config';
-import { isBotGrant, isGrantAvailableOn, sortBotGrants } from '../../shared/botPermissions';
-import type { BotGrant, BotSetPermissionsResult } from '../../shared/botPermissions';
+import {
+  groupGrantsOf,
+  isBotChatId,
+  isBotGrant,
+  isBotGroupGrant,
+  isGrantAvailableOn,
+  normalizeBlockedUsers,
+  normalizeGroupGrantList,
+  sortBotGrants,
+} from '../../shared/botPermissions';
+import type { BotGrant, BotSetBlockedResult, BotSetGroupPermissionsResult, BotSetPermissionsResult } from '../../shared/botPermissions';
 import type { BotPlatform } from '../../shared/types';
-import { isBotUserPaired, pairedBotUserIds } from './rights';
+import { isBotUserPaired } from './rights';
 import { telegramAdminMirror } from './normalize';
 
 function isPlatform(value: unknown): value is BotPlatform {
@@ -65,19 +74,44 @@ export function setBotPermissions(request: unknown): BotSetPermissionsResult {
 }
 
 /**
- * Sets the admin grant from a whole list of ids: each paired account gains or loses only admin;
- * every other grant is left as it was.
+ * Allows a group with what it grants everyone in it, or (`grants: null`) puts it back to waiting
+ * for approval, where the bot does nothing there. Strict like the account grants: one token a
+ * group may not grant refuses the whole request.
  */
-export function setTelegramAdmins(userIds: unknown): void {
-  const wanted = new Set(Array.isArray(userIds) ? userIds.map((value) => readUserId(value)) : []);
-  const permissions = currentPermissions('telegram');
-  for (const id of pairedBotUserIds('telegram')) {
-    const others = (permissions[id] ?? []).filter((grant) => grant !== 'admin');
-    const next = wanted.has(id) ? sortBotGrants([...others, 'admin']) : others;
-    if (next.length > 0) permissions[id] = next;
-    else delete permissions[id];
+export function setBotGroupPermissions(request: unknown): BotSetGroupPermissionsResult {
+  const body = (request && typeof request === 'object') ? request as Record<string, unknown> : {};
+  const { platform } = body;
+  const chatId = readUserId(body.chatId);
+  if (!isPlatform(platform) || !chatId || !isBotChatId(chatId)) return { ok: false, reason: 'invalidRequest' };
+  if (body.grants !== null && !Array.isArray(body.grants)) return { ok: false, reason: 'invalidRequest' };
+  const target = platform === 'telegram' ? config.telegram : config.line;
+  const map = { ...target.groupPermissions };
+  if (body.grants === null) {
+    delete map[chatId];
+  } else {
+    for (const value of body.grants as unknown[]) {
+      if (!isBotGroupGrant(typeof value === 'string' ? value.trim() : value)) return { ok: false, reason: 'invalidGrant' };
+    }
+    map[chatId] = normalizeGroupGrantList(body.grants);
   }
-  writePermissions('telegram', permissions);
+  target.groupPermissions = map;
+  saveConfig(platform === 'telegram' ? { telegram: config.telegram } : { line: config.line });
+  const grants = groupGrantsOf(map, chatId);
+  return { ok: true, grants: grants ?? [], pending: grants === null };
+}
+
+/** Blocks or unblocks one person. A paired account is not blocked — it is unpaired instead. */
+export function setBotUserBlocked(request: unknown): BotSetBlockedResult {
+  const body = (request && typeof request === 'object') ? request as Record<string, unknown> : {};
+  const { platform } = body;
+  const userId = readUserId(body.userId);
+  if (!isPlatform(platform) || !userId || typeof body.blocked !== 'boolean') return { ok: false, reason: 'invalidRequest' };
+  if (body.blocked && isBotUserPaired(platform, userId)) return { ok: false, reason: 'paired' };
+  const target = platform === 'telegram' ? config.telegram : config.line;
+  const rest = target.blockedUsers.filter((id) => id !== userId);
+  target.blockedUsers = normalizeBlockedUsers(body.blocked ? [...rest, userId] : rest);
+  saveConfig(platform === 'telegram' ? { telegram: config.telegram } : { line: config.line });
+  return { ok: true, blocked: body.blocked };
 }
 
 /**

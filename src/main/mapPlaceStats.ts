@@ -1,6 +1,7 @@
 import { BrowserWindow, session } from 'electron';
 import { userAgentForUrl } from './userAgent';
 import { SILENT_WEB_PREFERENCES, muteWindow } from './silentWindow';
+import { withTimeout } from './promiseRace';
 import { computeVerdictTier, VERDICT_I18N_KEYS, VERDICT_LABEL_EN } from '../shared/steamVerdict';
 
 export function localizedVerdict(rating: string, total: string, langData: Record<string, string>): { verdict: string; tier: string } {
@@ -114,6 +115,8 @@ export async function fetchPlaceStats(
     });
     win.webContents.setUserAgent(userAgentForUrl(placeUrl));
     muteWindow(win);
+    // Electron has no popup blocker: a window.open() from the page would show a real window.
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
     const finish = (stats: PlaceStats | null): void => {
       if (settled) return;
@@ -153,15 +156,12 @@ export async function fetchPlaceStats(
       const loaded = await waitForLoad();
       if (settled || !loaded) return finish(null);
       await new Promise((r) => setTimeout(r, JS_SETTLE_MS));
-      let execTimer: ReturnType<typeof setTimeout> | undefined;
-      const execTimeout = new Promise<never>((_, rej) => {
-        execTimer = setTimeout(() => rej(new Error('extraction timed out')), JS_EXEC_TIMEOUT_MS);
-      });
-      const raw = await Promise.race([
+      const raw = await withTimeout(
         win.webContents.executeJavaScript(STATS_EXTRACTION_SCRIPT, true) as Promise<string | null>,
-        execTimeout,
-      ]).catch(() => null).finally(() => clearTimeout(execTimer));
-      const stats = parsePlaceStats(raw as string | null);
+        JS_EXEC_TIMEOUT_MS,
+        () => new Error('extraction timed out'),
+      ).catch(() => null);
+      const stats = parsePlaceStats(raw);
       if (stats) log(`Maps Reviews: overall ${stats.rating}★ from ${stats.total} reviews`);
       finish(stats);
     };

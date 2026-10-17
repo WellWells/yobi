@@ -11,7 +11,7 @@ function nextCommandSendId(): string {
 export function useCommandTurn() {
   const originBySendId = useRef(new Map<string, string>());
 
-  const begin = useCallback((prompt: string, runId?: string, attachments?: string[]): string => {
+  const begin = useCallback((prompt: string, runId?: string, attachments?: string[], command?: boolean): string => {
     const conversationPath = useAppStore.getState().selectedFile?.path ?? '';
     const sendId = nextCommandSendId();
     originBySendId.current.set(sendId, conversationPath);
@@ -22,6 +22,7 @@ export function useCommandTurn() {
         prompt,
         ...(runId ? { runId } : {}),
         ...(attachments?.length ? { attachments } : {}),
+        ...(command ? { command } : {}),
       },
     );
     return sendId;

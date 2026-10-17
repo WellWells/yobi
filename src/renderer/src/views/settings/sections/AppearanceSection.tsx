@@ -1,11 +1,13 @@
 import React from 'react';
 import { ActionIcon, Box, Group, Text, Tooltip } from '@mantine/core';
 import { useShallow } from 'zustand/react/shallow';
-import { BookOpen, Coins, Minus, Palette, Plus, RotateCcw, ZoomIn } from 'lucide-react';
+import { BookOpen, Coins, Minus, MoveHorizontal, Palette, Plus, RotateCcw, Type, ZoomIn } from 'lucide-react';
 import { SectionCard, SettingRow, SectionTitle, SettingDivider, SegmentedControl, ToggleSwitch } from '../components';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import { useAppStore } from '../../../store/appStore';
 import { useThemeStore } from '../../../store/themeStore';
+import { useReadingStore } from '../../../store/readingStore';
+import { READING_FONTS, isReadingFont } from '../../../../../shared/readingPrefs';
 import type { LayoutMode } from '../../../store/appStore';
 import { THEME_SWATCHES, AUTO_THEME_SWATCH } from '../../../theme';
 
@@ -54,6 +56,8 @@ interface Props {
 
 export const AppearanceSection: React.FC<Props> = ({ t, showSection, sectionGap }) => {
   const { preference, setTheme, previewTheme } = useThemeStore();
+  const reading = useReadingStore((s) => s.prefs);
+  const setReadingPrefs = useReadingStore((s) => s.setReadingPrefs);
   const settingsVisible = useAppStore((s) => s.currentView === 'settings');
   React.useEffect(() => {
     if (!settingsVisible) previewTheme(null);
@@ -130,6 +134,27 @@ export const AppearanceSection: React.FC<Props> = ({ t, showSection, sectionGap 
               ]}
             />
           }
+        />
+        <SettingDivider my={14} />
+        <SettingRow
+          icon={<Type size={13} />}
+          label={t('settings.appearance.font')}
+          hint={t('settings.appearance.font.hint')}
+          control={
+            <SegmentedControl
+              value={reading.font}
+              onChange={(value) => { if (isReadingFont(value)) setReadingPrefs({ font: value }); }}
+              fullWidth={false}
+              options={READING_FONTS.map((font) => ({ label: t(`reading.font.${font}`), value: font }))}
+            />
+          }
+        />
+        <SettingDivider my={14} />
+        <SettingRow
+          icon={<MoveHorizontal size={13} />}
+          label={t('reading.fullWidth')}
+          hint={t('settings.appearance.fullWidth.hint')}
+          control={<ToggleSwitch checked={reading.fullWidth} onChange={() => setReadingPrefs({ fullWidth: !reading.fullWidth })} />}
         />
         <SettingDivider my={14} />
         <SettingRow

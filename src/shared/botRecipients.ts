@@ -1,6 +1,7 @@
 import type {
   AgentFlowRecipient, BotPlatform, FlowDefinition, LinePairedUser, TelegramChannel, TelegramPairedUser, TriggerType,
 } from './types';
+import { escapeRegExp } from './regex';
 
 /**
  * Who a flow's bot step can send to, and how a recipient the user NAMED becomes the chat id the
@@ -185,10 +186,6 @@ export function saysEveryone(words: string): boolean {
 }
 
 const ASCII_KEY_RE = /^[\x20-\x7e]+$/;
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 /** The chats the user's words name. An ASCII name must stand as its own word, so "Test" is not found in "testing". */
 export function namedIn(words: string, entries: readonly RecipientEntry[]): RecipientEntry[] {

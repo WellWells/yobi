@@ -1,5 +1,7 @@
 import type { FlowBuildBlocker, FlowSetupNeed, SkillType } from '../../shared/types';
 import { config } from '../config';
+import { isSmtpAccountComplete } from '../smtpAccount';
+import { getYtdlToolsState } from '../youtubeDownload';
 
 /**
  * What the app has actually been set up with. A plain snapshot rather than a live read so the
@@ -13,6 +15,8 @@ export interface IntegrationSnapshot {
   botRecipients: number;
   smtp: boolean;
   lineReader: boolean;
+  /** The video download tools are installed (or pointed at). Absent counts as not installed. */
+  ytdlTools?: boolean;
 }
 
 /**
@@ -24,6 +28,7 @@ const NEED_BY_SKILL: Partial<Record<SkillType, FlowSetupNeed>> = {
   bot: 'bot',
   email_send: 'email',
   line_read: 'line',
+  youtube_download: 'ytdl',
 };
 
 export function setupNeedFor(skill: SkillType): FlowSetupNeed | null {
@@ -39,8 +44,9 @@ export function snapshotIntegrations(): IntegrationSnapshot {
     telegram,
     line,
     botRecipients: (telegram ? telegramPaired : 0) + (line ? linePaired : 0),
-    smtp: Boolean(config.smtp?.enabled && config.smtp.host && config.smtp.user),
+    smtp: isSmtpAccountComplete(config.smtp),
     lineReader: Boolean(config.lineReaderEnabled),
+    ytdlTools: ['ready', 'custom'].includes(getYtdlToolsState().status),
   };
 }
 
@@ -54,6 +60,7 @@ export function snapshotIntegrations(): IntegrationSnapshot {
 export function isSetupDone(need: FlowSetupNeed, snap: IntegrationSnapshot): boolean {
   if (need === 'bot') return (snap.telegram || snap.line) && snap.botRecipients > 0;
   if (need === 'email') return snap.smtp;
+  if (need === 'ytdl') return snap.ytdlTools === true;
   return snap.lineReader;
 }
 

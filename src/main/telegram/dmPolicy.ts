@@ -21,14 +21,13 @@ export function hasPairedUser(state: TelegramPairingState, userId: number): bool
 
 export function issuePairingCode(
   state: TelegramPairingState,
-  sessionId: string,
 ): { nextState: TelegramPairingState; code: string; expiresAt: string } {
   const normalized = normalizePairingState(state);
   const issued = issuePendingCode(normalized.pendingCodes);
   return {
     nextState: {
       ...normalized,
-      pendingCodes: [...normalized.pendingCodes, { ...issued, sessionId }],
+      pendingCodes: [...normalized.pendingCodes, issued],
     },
     code: issued.code,
     expiresAt: issued.expiresAt,
@@ -95,9 +94,12 @@ export function createPairingBridge(
       return hasPairedUser(pairing, userId);
     },
     consumePairingCode: (code, user) => {
-      const pairing = normalizePairingState(getPairing());
-      const result = consumePairingCode(pairing, code, user);
-      savePairing(result.nextState);
+      const current = getPairing();
+      const result = consumePairingCode(current, code, user);
+      // A wrong code changes nothing unless pruning dropped an expired one, so a stranger's guess
+      // neither rewrites config.json nor re-pushes the runtime snapshot.
+      const pruned = result.nextState.pendingCodes.length !== current.pendingCodes.length;
+      if (result.ok || pruned) savePairing(result.nextState);
       if (result.ok) onPaired?.(user);
       return { ok: result.ok, reason: result.reason };
     },

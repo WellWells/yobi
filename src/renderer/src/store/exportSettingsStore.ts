@@ -7,7 +7,6 @@ import type { CaptureSettings, HotkeyBindResult, QuickExportSettings } from '../
 interface ExportSettingsState {
   capture: CaptureSettings;
   quick: QuickExportSettings;
-  loaded: boolean;
   load: () => Promise<void>;
   patchCapture: (changes: Partial<CaptureSettings>) => void;
   patchQuick: (changes: Partial<QuickExportSettings>) => void;
@@ -43,7 +42,6 @@ let loadPromise: Promise<void> | null = null;
 export const useExportSettingsStore = create<ExportSettingsState>((set, get) => ({
   capture: CAPTURE_FALLBACK,
   quick: QUICK_FALLBACK,
-  loaded: false,
 
   load: () => {
     if (loadPromise) return loadPromise;
@@ -52,11 +50,10 @@ export const useExportSettingsStore = create<ExportSettingsState>((set, get) => 
       settingsApi.getQuickExport(),
     ])
       .then(([capture, quick]) => {
-        set({ capture, quick, loaded: true });
+        set({ capture, quick });
       })
-      .catch(() => {
-        set({ loaded: true });
-      });
+      // A failed read keeps the fallbacks; callers that await load() must not see a rejection.
+      .catch(() => {});
     return loadPromise;
   },
 

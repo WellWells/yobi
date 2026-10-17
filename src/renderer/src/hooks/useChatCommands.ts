@@ -23,6 +23,14 @@ export interface ChatCommand {
   connectorUrl?: string;
 }
 
+/**
+ * A desktop built-in (a pasted link's flow, or a button under its answer): never listed in the
+ * menu, never typed; its command is its id.
+ */
+export function builtinChatCommand(flowId: string): ChatCommand {
+  return { flowId, command: flowId, description: '' };
+}
+
 export type CommandGroup = 'action' | 'builtin' | 'mcp' | 'flow';
 
 // `/model` acts on the app rather than asking anything, so it sits with `/new` even though it

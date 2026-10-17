@@ -5,7 +5,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import { noteConversationOpened } from '../store/recapStore';
-import type { OutputFile } from '../../../shared/types';
+import type { BatchCaptureFormat, OutputFile } from '../../../shared/types';
 import { PanelToolbar, ToolbarButton, ToolbarIconButton } from './PanelToolbar';
 import { EmptyState } from './EmptyState';
 import { WebDialog } from './WebDialog';
@@ -13,20 +13,19 @@ import { ContextMenuPortal } from './ContextMenuPortal';
 import { GroupHeader } from './GroupHeader';
 import { ShortcutHint } from './ShortcutHint';
 import { SelectionActionBar } from './SelectionActionBar';
-import {
-  AppWindow, ChevronDown, Copy, Download, ExternalLink, FileDown, Files, FolderOpen, Link2, ListChecks, MessageSquare,
-  Pencil, Search, SquarePen, Trash2,
-} from 'lucide-react';
+import { ChevronDown, Download, MessageSquare, Search, SquarePen, Trash2, Upload } from 'lucide-react';
 import { AppButton } from './AppButton';
 import { SelectionMenuItems } from './sidebar/SelectionMenuItems';
 import type { SelectionAction } from './sidebar/SelectionMenuItems';
 import { BatchExportStrip } from './sidebar/BatchExportStrip';
 import { useBatchExport } from './sidebar/useBatchExport';
-import { clipboardApi, fileApi } from '../api/electronApi';
-import { conversationPlainMarkdown } from './sidebar/conversationText';
+import { fileApi } from '../api/electronApi';
 import { FileItem } from './sidebar/FileItem';
+import { FileContextMenu } from './sidebar/FileContextMenu';
+import { copyFilesWithNotice } from './sidebar/fileMenuActions';
 import { useSidebarFileActions } from './sidebar/useSidebarFileActions';
 import { pathsToDrag, useConversationImport } from './sidebar/useConversationImport';
+import { SidebarImportMenu } from './sidebar/SidebarImportMenu';
 import { FileDropZone } from './chat/FileDropZone';
 import { markInternalFileDrag } from '../utils/internalFileDrag';
 import { createSidebarKeyDownHandler } from './sidebar/sidebarKeyNav';
@@ -36,9 +35,8 @@ import { useFormatTime } from '../hooks/useFormatTime';
 import { buildSidebarRows } from '../utils/timeGroups';
 import { containsActiveElement } from '../utils/domUtils';
 import { useResolvedCombo } from '../store/shortcutStore';
-import { toTokens } from '../../../shared/shortcuts';
+import { comboLabel } from '../../../shared/shortcuts';
 import { isMac } from '../utils/keyLabels';
-import { hostPlatform } from '../utils/hostPlatform';
 import { useShortcutAction } from '../shortcuts/useShortcutAction';
 
 interface SidebarProps {
@@ -46,13 +44,12 @@ interface SidebarProps {
   onOpenSearch: () => void;
 }
 
-async function copyConversationText(filePath: string): Promise<void> {
-  const raw = await fileApi.getContent(filePath);
-  if (raw !== null) await clipboardApi.copyText(conversationPlainMarkdown(raw));
-}
-
 const FILE_ROW_HEIGHT = 72;
 const HEADER_ROW_HEIGHT = 34;
+// Group labels start in the same column as the conversation titles: the row inset plus the
+// `.fileItem` left border and left padding in Sidebar.module.css.
+const ROW_INSET = 8;
+const HEADER_INSET = 20;
 
 const observeRectKeepLast: typeof observeElementRect = (instance, cb) =>
   observeElementRect(instance, (rect) => {
@@ -110,8 +107,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
   }, 'chat');
 
   const newChatCombo = useResolvedCombo('chat.newConversation');
-  const editTitleCombo = useResolvedCombo('files.editTitle');
-  const revealCombo = useResolvedCombo('files.revealInFolder');
   const deleteCombo = useResolvedCombo('files.delete');
 
   const visibleFiles = files;
@@ -171,6 +166,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
   }, [selection, selectableIds, handleSelect]);
 
   const handleImportFiles = useConversationImport(handleSelect);
+  const resetImportPicker = useRef<() => void>(null);
+  const handlePickedFiles = useCallback((picked: File[]) => {
+    handleImportFiles(picked);
+    // Picking the same file again must fire onChange again.
+    resetImportPicker.current?.();
+  }, [handleImportFiles]);
+  // A Notion import names its file; the list main broadcast has the row to open.
+  const handleOpenImported = useCallback((path: string): void => {
+    void fileApi.getList().then((list) => {
+      const file = list.find((entry) => entry.path === path);
+      if (file) void handleSelect(file);
+    });
+  }, [handleSelect]);
 
   const handleDragOut = useCallback((file: OutputFile) => {
     markInternalFileDrag();
@@ -196,20 +204,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
   }, [selection, selectedFile, selectFile, setFileContent, loadFiles]);
 
   const {
-    editingPath, editingText, setEditingText, editingMode,
+    editingPath, editingText, setEditingText,
     pendingDeleteFile, setPendingDeleteFile, contextMenu, setContextMenu,
-    openContextMenu, startRenameFile, startEditH1, startDelete,
+    openContextMenu, startEditH1, startDelete,
     handleConfirmDelete, handleCommitEdit, handleCancelEdit,
   } = useSidebarFileActions({
     visibleFiles, selectedFile, selectFile, setFileContent, loadFiles, onSelect: handleSelect,
   });
-
-  const runMenuAction = (action: (filePath: string) => Promise<unknown>) => {
-    if (contextMenu) void action(contextMenu.file.path);
-    setContextMenu(null);
-  };
+  const closeContextMenu = useCallback(() => setContextMenu(null), [setContextMenu]);
 
   const batch = useBatchExport();
+  const exportOneCard = useCallback((format: BatchCaptureFormat, file: OutputFile) => {
+    void batch.exportCards(format, [file]);
+  }, [batch.exportCards]);
   const [selectionMenu, setSelectionMenu] = useState<{ x: number; y: number } | null>(null);
 
   const runSelectionAction = useCallback((action: SelectionAction) => {
@@ -217,10 +224,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
     // List order, not click order, so the files come out in the order the user sees them.
     const picked = visibleFiles.filter((file) => selection.selectedIds.has(file.path));
     if (picked.length === 0) return;
-    if (action === 'copy') void fileApi.copyFiles(picked.map((file) => file.path));
+    if (action === 'copy') void copyFilesWithNotice(picked.map((file) => file.path), t);
     else if (action === 'zip') void batch.exportZip(picked);
     else void batch.exportCards(action, picked);
-  }, [visibleFiles, selection.selectedIds, batch.exportZip, batch.exportCards]);
+  }, [visibleFiles, selection.selectedIds, batch.exportZip, batch.exportCards, t]);
 
   // While selecting, a right-click acts on the selection. A row that is not checked yet joins
   // it rather than replacing it — clearing a hand-picked set on a stray click would lose work.
@@ -282,21 +289,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
     editingPath,
     pendingDeleteFile,
     visibleFiles,
-    selectedFile,
     fileItemRefs,
     scrollToIndex: scrollToFileIndex,
     getFocusedFile,
     onSelect: handleSelect,
-    onRename: startRenameFile,
     onEditH1: startEditH1,
     onDelete: startDelete,
-    onCloseContextMenu: () => setContextMenu(null),
+    onCloseContextMenu: closeContextMenu,
   });
 
   return (
     <FileDropZone
       onFiles={handleImportFiles}
-      icon={FileDown}
+      icon={Download}
       title={t('sidebar.import.dropTitle')}
       detail={t('sidebar.import.dropDetail')}
     >
@@ -309,10 +314,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
       style={{ borderRight: '1px solid var(--mantine-color-default-border)', overflow: 'hidden', position: 'relative' }}
     >
       <PanelToolbar>
-        <Tooltip label={toTokens(newChatCombo, isMac).join(' + ')} position="bottom">
+        <Tooltip label={comboLabel(newChatCombo, isMac)} position="bottom">
           <ToolbarButton icon={SquarePen} label={t('chat.new')} onClick={onNewConversation} />
         </Tooltip>
         <ToolbarIconButton icon={Search} label={t('sidebar.search.tooltip')} onClick={onOpenSearch} />
+        {/* Local files (the same import as dropping them on the list) or a Notion page. */}
+        <SidebarImportMenu onPickFiles={handlePickedFiles} resetRef={resetImportPicker} onOpenPath={handleOpenImported} t={t} />
       </PanelToolbar>
 
       <Box ref={sidebarViewportRef} flex={1} style={{ overflowY: 'auto', padding: '6px 0' }} onKeyDown={selection.selectMode ? undefined : handleListKeyDown}>
@@ -334,7 +341,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
                     left: 0,
                     width: '100%',
                     transform: `translateY(${virtualRow.start}px)`,
-                    padding: row.kind === 'header' ? '0 12px' : '2px 8px',
+                    padding: row.kind === 'header' ? `0 ${ROW_INSET}px 0 ${HEADER_INSET}px` : `2px ${ROW_INSET}px`,
                   }}
                 >
                   {row.kind === 'file' ? (
@@ -344,7 +351,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
                       unread={Boolean(unreadFilePaths[row.file.path])}
                       unreadLabel={unreadLabel}
                       isEditing={editingPath === row.file.path}
-                      editingMode={editingMode}
                       editingText={editingText}
                       setEditingText={setEditingText}
                       selectMode={selection.selectMode}
@@ -385,7 +391,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
                 <AppButton
                   size="xs"
                   variant="default"
-                  leftSection={<Download size={13} />}
+                  leftSection={<Upload size={13} />}
                   rightSection={<ChevronDown size={13} />}
                   disabled={selection.count === 0}
                 >
@@ -414,60 +420,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
         </MMenu.Item>
       </ContextMenuPortal>
 
-      <ContextMenuPortal
-        position={contextMenu ? { x: contextMenu.x, y: contextMenu.y } : null}
-        onClose={() => setContextMenu(null)}
-      >
-        <MMenu.Item
-          leftSection={<Pencil size={13} />}
-          rightSection={<ShortcutHint combo={editTitleCombo} />}
-          onClick={() => { void startEditH1(contextMenu!.file); }}
-        >
-          {t('context.editH1')}
-        </MMenu.Item>
-        <MMenu.Divider />
-        <MMenu.Item leftSection={<ExternalLink size={13} />} onClick={() => runMenuAction(fileApi.openPath)}>
-          {t('context.openDefault')}
-        </MMenu.Item>
-        {hostPlatform !== 'linux' && (
-          <MMenu.Item leftSection={<AppWindow size={13} />} onClick={() => runMenuAction(fileApi.openWith)}>
-            {t(isMac ? 'context.openWith.mac' : 'context.openWith')}
-          </MMenu.Item>
-        )}
-        <MMenu.Item
-          leftSection={<FolderOpen size={13} />}
-          rightSection={<ShortcutHint combo={revealCombo} />}
-          onClick={() => runMenuAction(fileApi.showInFolder)}
-        >
-          {t(isMac ? 'context.showInFolder.mac' : 'context.showInFolder')}
-        </MMenu.Item>
-        <MMenu.Divider />
-        <MMenu.Item leftSection={<Link2 size={13} />} onClick={() => runMenuAction(clipboardApi.copyText)}>
-          {t('context.copyPath')}
-        </MMenu.Item>
-        <MMenu.Item leftSection={<Files size={13} />} onClick={() => runMenuAction((path) => fileApi.copyFiles([path]))}>
-          {t('context.copyFile')}
-        </MMenu.Item>
-        <MMenu.Item leftSection={<Copy size={13} />} onClick={() => runMenuAction(copyConversationText)}>
-          {t('context.copyContent')}
-        </MMenu.Item>
-        <MMenu.Divider />
-        <MMenu.Item
-          leftSection={<ListChecks size={13} />}
-          disabled={visibleFiles.length < 2}
-          onClick={() => handleStartSelection(contextMenu!.file)}
-        >
-          {t('selection.selectMultiple')}
-        </MMenu.Item>
-        <MMenu.Item
-          leftSection={<Trash2 size={13} />}
-          color="red"
-          rightSection={<ShortcutHint combo={deleteCombo} />}
-          onClick={() => startDelete(contextMenu!.file)}
-        >
-          {t('common.delete')}
-        </MMenu.Item>
-      </ContextMenuPortal>
+      <FileContextMenu
+        menu={contextMenu}
+        onClose={closeContextMenu}
+        t={t}
+        canSelectMultiple={visibleFiles.length >= 2}
+        exportBusy={batch.running}
+        onEditH1={startEditH1}
+        onStartSelection={handleStartSelection}
+        onDelete={startDelete}
+        onExportCards={exportOneCard}
+      />
 
       <WebDialog
         open={Boolean(pendingDeleteFile)}

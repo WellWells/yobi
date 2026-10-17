@@ -2,6 +2,7 @@ import { app } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { IPC } from '../shared/types';
 import type { UpdateAvailablePayload } from '../shared/types';
+import { errorText } from '../shared/errorText';
 import { isHttpUrl, sendWebNotification } from './helpers';
 import { getLangCache, t } from './i18n';
 
@@ -16,11 +17,6 @@ let initialized = false;
 let checking = false;
 let sendLogRef: UpdaterDeps['sendLog'] = () => {};
 let sendToRendererRef: UpdaterDeps['sendToRenderer'] = () => {};
-
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return String(error);
-}
 
 function normalizeVersion(rawVersion: unknown): string {
   if (typeof rawVersion === 'string' && rawVersion.trim()) return rawVersion.trim();
@@ -86,7 +82,7 @@ export function initializeUpdater(deps: UpdaterDeps): void {
   });
 
   autoUpdater.on('error', (error: unknown) => {
-    const msg = getErrorMessage(error);
+    const msg = errorText(error);
     sendLogRef(`⚠️ Update check failed: ${msg}`);
     // Offline included: a check that never reached the server has not shown we are up to date.
     sendToRendererRef(IPC.UPDATE_ERROR);

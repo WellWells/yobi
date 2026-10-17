@@ -14,8 +14,8 @@ import { AppWindow, Info, ListOrdered, MessageSquare, ScrollText, Settings } fro
 import { agentApi, flowApi, systemApi } from '../api/electronApi';
 import { useAgentRunStore } from '../store/useAgentRunStore';
 import { useFlowBuildStore } from '../store/useFlowBuildStore';
+import { isMac } from '../utils/keyLabels';
 import {
-  isMac,
   navScrollStyle,
   statusWrapperStyle,
   titleBarDynStyle,

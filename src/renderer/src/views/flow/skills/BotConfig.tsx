@@ -76,12 +76,37 @@ export const BotConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
             { value: 'auto', label: t('flow.skill.bot.attachmentType.auto') },
             { value: 'photo', label: t('flow.skill.bot.attachmentType.photo') },
             { value: 'document', label: t('flow.skill.bot.attachmentType.document') },
+            { value: 'video', label: t('flow.skill.bot.attachmentType.video') },
+            { value: 'audio', label: t('flow.skill.bot.attachmentType.audio') },
           ]}
           value={step.config.attachmentType || 'auto'}
           onChange={(value) => onChange({ ...step.config, attachmentType: value })}
           size="sm"
         />
       )}
+      {platform !== 'telegram' && (step.config.attachment ?? '').trim() !== '' && (
+        <AppTextInput
+          label={t('flow.skill.bot.preview')}
+          description={t('flow.skill.bot.preview.desc')}
+          value={step.config.preview ?? ''}
+          onChange={(e) => onChange({ ...step.config, preview: e.currentTarget.value })}
+          size="sm"
+          tone="body"
+          mono
+        />
+      )}
+      <AppTextarea
+        label={t('flow.skill.bot.buttons')}
+        description={t('flow.skill.bot.buttons.desc')}
+        placeholder={t('flow.skill.bot.buttons.placeholder')}
+        value={step.config.buttons ?? ''}
+        onChange={(e) => onChange({ ...step.config, buttons: e.currentTarget.value })}
+        minRows={2}
+        autosize
+        size="sm"
+        tone="body"
+        mono
+      />
       <ToggleSwitch
         label={t('flow.skill.bot.emitFailFlag')}
         size="sm"
@@ -89,7 +114,9 @@ export const BotConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
         onChange={(e) => onChange({ ...step.config, emitFailFlag: e.currentTarget.checked ? 'true' : 'false' })}
       />
       {step.config.emitFailFlag === 'true' && (
-        <Text fz="xs" c="dimmed">{t('flow.skill.bot.emitFailFlag.hint')}</Text>
+        <Text fz="xs" c="dimmed">
+          {t('flow.skill.bot.emitFailFlag.hint').replace('{{flag}}', `{{${step.outputKey}.isFailed}}`)}
+        </Text>
       )}
     </Stack>
   );

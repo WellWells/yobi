@@ -1,6 +1,7 @@
 import type { McpRegistry } from '../../mcp';
 import type { McpCallNotSentError, McpNotConnectedError } from '../../mcp/mcpRegistry';
 import type { McpTool } from '../../mcp/mcpTypes';
+import { errorText } from '../../../shared/errorText';
 import { FlowAbortError } from '../runtime';
 import { maskSecrets } from './secretMask';
 import { formatMcpObservation, isArgumentError, resolveMcpTool, schemaHint, validateMcpArguments } from './mcpTools';
@@ -67,10 +68,6 @@ function clipArgs(args: Args): Args {
     key,
     typeof value === 'string' && value.length > ARG_CLIP ? `${value.slice(0, ARG_CLIP)}…` : value,
   ]));
-}
-
-function errorText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 /**

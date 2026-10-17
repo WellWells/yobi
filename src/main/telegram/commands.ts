@@ -1,4 +1,4 @@
-import { Bot, session } from 'grammy';
+import { Bot } from 'grammy';
 import { conversations, createConversation } from '@grammyjs/conversations';
 import { t } from '../i18n';
 import { BUILTIN_NEW_COMMAND } from '../../shared/types';
@@ -9,6 +9,7 @@ import {
   handleBuiltinCommand,
   handleDirectMessage,
   handleNewCommand,
+  handleFlowButton,
   handleFlowCommand,
   handleOutputCommand,
   handleProviderCommand,
@@ -19,11 +20,10 @@ import {
 } from './commandHandlers';
 import { handleInitCommand, handleStartCommand, pairingConversation } from './pairing';
 import { createMediaIntake, type MediaIntake } from './mediaIntake';
+import { parseFlowButtonCallback } from './flowButtons';
 import type { ResolvedBuiltinCommand, ResolvedProviderCommand } from '../providerCommands';
 
 export type {
-  TelegramAgentAnswerRequest,
-  TelegramBuiltinRequest,
   TelegramCommandOptions,
   TelegramContext,
   TelegramTaskRequest,
@@ -33,7 +33,28 @@ export function attachTelegramHandlers(
   bot: Bot<TelegramContext>,
   options: TelegramCommandOptions,
 ): MediaIntake {
-  bot.use(session({ initial: () => ({}) }));
+  // Someone the owner blocked, and anyone in a group the owner has not allowed yet (paired
+  // accounts and the owner too), gets nothing at all — no reply, no pairing, no button, no
+  // download — before any handler sees the update. The group itself is registered earlier
+  // (presence tracking, or `onPendingGroupSeen` here), so it still shows in settings.
+  const pendingSeen = new Set<number>();
+  bot.use(async (ctx, next) => {
+    if (ctx.from && options.isBlocked?.(ctx.from.id)) {
+      options.onLog(`[telegram] update from blocked user ${ctx.from.id} — ignored`);
+      return;
+    }
+    const chat = ctx.chat;
+    if (chat && (chat.type === 'group' || chat.type === 'supergroup') && options.isGroupPending?.(chat.id)) {
+      if (!pendingSeen.has(chat.id)) {
+        pendingSeen.add(chat.id);
+        options.onLog(`[telegram] ${chat.type} ${chat.id} waits for the owner's approval in settings — its updates are ignored`);
+        options.onPendingGroupSeen?.({ id: chat.id, type: chat.type, ...(chat.title ? { title: chat.title } : {}) });
+      }
+      return;
+    }
+    if (chat) pendingSeen.delete(chat.id);
+    await next();
+  });
   bot.use(conversations());
   bot.use(createConversation((conversation, ctx) => pairingConversation(conversation, ctx, options), 'pairing-init'));
 
@@ -88,6 +109,13 @@ export function attachTelegramHandlers(
     return next();
   });
 
+  // Registered before the export buttons, which only see the presses that are not a flow's.
+  bot.on('callback_query:data', async (ctx, next) => {
+    const token = parseFlowButtonCallback(ctx.callbackQuery.data);
+    if (!token) return next();
+    await handleFlowButton(ctx, options, token);
+  });
+
   bot.on('message:text', async (ctx) => {
     const hasLeadingCommand = ctx.message?.entities?.some((e) => e.type === 'bot_command' && e.offset === 0);
     if (hasLeadingCommand) {
@@ -126,7 +154,10 @@ function readLeadingCommand(ctx: TelegramContext, botUsername: string): string |
 export interface MenuFlowCommand {
   command: string;
   description: string;
-  /** 'users': only allowedUserIds may run it (none when empty), so only their own chats list it. */
+  /**
+   * 'users': only allowedUserIds may run it (none when empty); 'admins': the accounts whose
+   * `flowAdmin` is set. Either way only their own chats list it.
+   */
   access?: BotCommandAccessMode;
   /** Without `access`, a non-empty list alone restricts the command (the legacy reading). */
   allowedUserIds?: readonly string[];
@@ -139,6 +170,8 @@ export interface MenuAccountAccess {
   builtins: readonly BotBuiltinCommandKey[];
   /** May run the Telegram admin commands. */
   admin: boolean;
+  /** May run flow commands limited to admins (the owner, or the admin grant). Absent = no. */
+  flowAdmin?: boolean;
 }
 
 export interface CommandMenuOptions {
@@ -204,7 +237,9 @@ export async function syncPrivateCommands(
     const builtins = builtinCommands
       .filter((bc) => access?.builtins.includes(bc.key))
       .map((bc) => ({ command: bc.command, description: clampDescription(t(strings, bc.descriptionKey)) }));
-    const flows = restricted.filter((fc) => isBotCommandAllowed(fc, String(chatId))).map(toMenu);
+    const flows = restricted
+      .filter((fc) => isBotCommandAllowed(fc, String(chatId), { admin: access?.flowAdmin === true }))
+      .map(toMenu);
     const isAdmin = access?.admin === true;
     if (builtins.length === 0 && flows.length === 0 && !isAdmin) return null;
     return [...head, ...(isAdmin ? admin : []), ...common, ...builtins, ...openFlows, ...flows];

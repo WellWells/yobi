@@ -49,7 +49,6 @@ export const QueuePopover: React.FC<QueuePopoverProps> = ({
                 {isRunningItem && item.progress && (
                   <Text className={styles.queueItemProgress}>{item.progress}</Text>
                 )}
-                <Text className={styles.queueItemId}>#{item.id}</Text>
               </Box>
               <Box className={styles.queueItemRight}>
                 <Box className={`${styles.queueItemStatusBadge} ${isRunningItem ? styles.running : styles.queued}`}>

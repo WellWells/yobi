@@ -1,80 +1,26 @@
-@keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(18px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes floatIcon {
-  0%, 100% { transform: translateY(0px); }
-  50%       { transform: translateY(-8px); }
-}
-
-@keyframes glowPulse {
-  0%, 100% { opacity: 0.2; transform: scale(0.8); }
-  50%       { opacity: 0.55; transform: scale(1.2); }
-}
-
+/* Static on purpose: no glow, frame or entrance animation. `spin` is the update check's only
+   progress signal, so it keeps running even with reduced motion. */
 @keyframes spin {
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
-}
-
-/* Mantine's `respectReducedMotion` cannot reach keyframes declared in a CSS module, so each one is
-   redefined as its own resting frame; `animation: none` would leave glowPulse as a full-size
-   blurred blob. `spin` is left alone: it is the update check's only progress signal. */
-@media (prefers-reduced-motion: reduce) {
-  @keyframes fadeInUp {
-    from, to { opacity: 1; transform: translateY(0); }
-  }
-  @keyframes floatIcon {
-    0%, 100% { transform: translateY(0px); }
-  }
-  @keyframes glowPulse {
-    0%, 100% { opacity: 0.2; transform: scale(0.8); }
-  }
 }
 
 .hero {
   text-align: center;
   padding: 48px 24px 36px;
   margin-bottom: 20px;
-  border-radius: 16px;
-  border: 1px solid var(--mantine-color-default-border);
-  background: radial-gradient(ellipse 90% 70% at 50% -5%, var(--mantine-color-accent-dim) 0%, transparent 65%);
-  animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .heroIconWrapper {
-  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   margin-bottom: 20px;
-  animation: floatIcon 4s ease-in-out infinite;
-}
-
-.heroIconGlow {
-  position: absolute;
-  inset: -16px;
-  border-radius: 50%;
-  background: var(--mantine-color-accent-dim);
-  animation: glowPulse 4s ease-in-out infinite;
-  filter: blur(18px);
-  z-index: 0;
-  pointer-events: none;
 }
 
 .heroIconImg {
-  position: relative;
-  z-index: 1;
   width: 88px;
   height: 88px;
-  border-radius: 22px;
   object-fit: contain;
   display: block;
 }
@@ -97,29 +43,6 @@
   color: var(--mantine-color-dimmed);
   margin-bottom: 20px;
   display: block;
-}
-
-.section0 { animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.08s both; }
-.section1 { animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.16s both; }
-.section2 { animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.26s both; }
-.section3 { animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.34s both; }
-
-/* The view is hidden with `display: none`, which cancels animations and replays
-   them on re-display. Once the entrance has run, drop it so reopening is instant.
-   The ambient icon float/glow keep running. */
-.entered .hero,
-.entered .section0,
-.entered .section1,
-.entered .section2,
-.entered .section3 {
-  animation: none;
-}
-
-/* No :hover: this is a static list, and a hover lift means "clickable" in this app. */
-.techRow {
-  border-radius: 6px;
-  padding: 2px 8px;
-  margin: 0 -8px;
 }
 
 .spinning {

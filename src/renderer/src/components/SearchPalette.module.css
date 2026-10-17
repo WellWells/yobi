@@ -10,13 +10,12 @@
 }
 
 .row {
-  padding: 6px 10px;
+  padding: 6px 10px 6px 12px;
   border-radius: 8px;
   background: transparent;
-  border-left: 2px solid transparent;
   cursor: pointer;
   user-select: none;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  transition: background 0.12s ease;
 }
 
 .row:hover {
@@ -25,5 +24,4 @@
 
 .row[data-active='true'] {
   background: var(--mantine-color-accent-dim);
-  border-left-color: var(--mantine-color-accent);
 }

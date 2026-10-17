@@ -60,6 +60,15 @@
   overflow-wrap: anywhere;
 }
 
+/* The blank tile's chip: same footprint as `TemplateIcon`, but no hue, since it is about
+   nothing yet. */
+.blankChip {
+  flex-shrink: 0;
+  border-radius: var(--mantine-radius-md);
+  border: 1px dashed var(--mantine-color-default-border);
+  color: var(--text-muted);
+}
+
 /* Pins the command chip / setup count to the bottom edge whether the title above it took
    one line or two. */
 .meta {

@@ -4,6 +4,7 @@ import { fileApi } from '../../api/electronApi';
 import { useI18nStore } from '../../store/i18nStore';
 import { useExportSettingsStore } from '../../store/exportSettingsStore';
 import { parseConversationDoc } from '../../../../shared/conversationDoc';
+import { fillTemplate as fill } from '../../../../shared/fillTemplate';
 import type { BatchCaptureFormat, BatchCaptureItem, BatchCaptureResult, OutputFile } from '../../../../shared/types';
 import { conversationAliases, parseMarkdownBlocks } from '../../utils/parseMarkdownBlocks';
 import { captureLookFrom, conversationCaptureRequest } from '../../hooks/conversationCapture';
@@ -22,10 +23,6 @@ export type BatchExportState =
   };
 
 type Translate = (key: string) => string;
-
-function fill(text: string, vars: Record<string, string>): string {
-  return Object.entries(vars).reduce((acc, [key, value]) => acc.split(`{{${key}}}`).join(value), text);
-}
 
 function batchResultState(result: BatchCaptureResult, format: BatchCaptureFormat, t: Translate): BatchExportState {
   if (result.status === 'canceled') return { phase: 'idle' };

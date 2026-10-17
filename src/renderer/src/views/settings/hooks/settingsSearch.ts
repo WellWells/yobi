@@ -5,7 +5,7 @@ const BOT_ACCOUNT_KEYS = [
   'settings.bot.perm.add', 'settings.bot.perm.none', 'settings.bot.perm.owner',
   'settings.bot.perm.pairedHint', 'settings.bot.perm.remove', 'settings.bot.perm.group',
   'settings.bot.perm.limit', 'settings.bot.perm.grant.agent', 'settings.bot.perm.grant.web',
-  'settings.bot.perm.grant.local', 'settings.bot.perm.grant.shell',
+  'settings.bot.perm.grant.download', 'settings.bot.perm.grant.local', 'settings.bot.perm.grant.shell',
   'settings.bot.perm.grant.allConnectors', 'settings.bot.perm.grant.connector',
 ] as const;
 
@@ -16,10 +16,11 @@ export const TAG_SETS = {
   notify: ['settings.notifications', 'settings.search.alias.notify'],
   tray: ['settings.tray', 'settings.search.alias.tray'],
   editor: ['settings.editor', 'settings.search.alias.editor'],
+  ytdl: ['settings.ytdl', 'ytdl.tools', 'settings.bot.perm.who.downloader', 'settings.search.alias.ytdl'],
   theme: ['settings.theme', 'settings.search.alias.theme'],
   reading: [
     'settings.appearance', 'layout.stacked', 'layout.sideBySide',
-    'zoom.in', 'zoom.out', 'zoom.reset', 'settings.search.alias.reading',
+    'zoom.in', 'zoom.out', 'zoom.reset', 'reading', 'settings.search.alias.reading',
   ],
   quickExport: ['settings.quickExport', 'settings.search.alias.quickExport'],
   cardStyle: ['settings.cardStyle', 'capture', 'common.background', 'settings.search.alias.cardStyle'],
@@ -43,7 +44,7 @@ export const TAG_SETS = {
 } as const;
 
 export const CATEGORY_TAG_MAP: Record<Category, (keyof typeof TAG_SETS)[]> = {
-  general: ['language', 'tray', 'editor', 'notify'],
+  general: ['language', 'tray', 'editor', 'ytdl', 'notify'],
   shortcuts: ['shortcuts', 'hotkey'],
   appearance: ['theme', 'reading'],
   export: ['quickExport', 'cardStyle', 'shareLink'],

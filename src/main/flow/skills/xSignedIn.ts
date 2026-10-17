@@ -3,6 +3,7 @@ import { CLEAN_UA } from '../../userAgent';
 import { SILENT_WEB_PREFERENCES, muteWindow, parkWindowOffscreen } from '../../silentWindow';
 import { siteSession } from '../../siteAccounts';
 import { Semaphore } from '../lanes';
+import { within } from '../../promiseRace';
 import { readGraphqlResponse, readSsrGraphql, type XGraphqlResult } from './xSsr';
 
 const LOAD_TIMEOUT_MS = 25_000;
@@ -34,36 +35,39 @@ interface Pending {
   postData?: string;
 }
 
-function within<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error(`${what} did not finish within ${ms / 1_000} s`)), ms);
-  });
-  return Promise.race([work, deadline]).finally(() => clearTimeout(timer));
-}
-
 /**
  * Loads an x.com page in a hidden window on the signed-in X session and returns the GraphQL
  * results the page received, whether streamed into the HTML or fetched by the page itself.
  *
- * `ready` says when enough has arrived; without it the load runs to its timeout.
+ * `ready` says when enough has arrived; without it the load runs to its timeout. `signal` (a
+ * flow's Stop) ends the wait and closes the window, rejecting with the signal's reason.
  */
 export async function readSignedInXPage(
   url: string,
   ready: (results: XGraphqlResult[]) => boolean,
   /** Which GraphQL operations to keep; the timeline and post queries unless a page needs others. */
   keep: RegExp = GRAPHQL_RE,
+  signal?: AbortSignal,
 ): Promise<XCapturedPage> {
-  return signedInGate.runExclusive(() => capture(url, ready, keep));
+  return signedInGate.runExclusive(() => capture(url, ready, keep, signal));
 }
 
-async function capture(url: string, ready: (results: XGraphqlResult[]) => boolean, keep: RegExp): Promise<XCapturedPage> {
+async function capture(
+  url: string,
+  ready: (results: XGraphqlResult[]) => boolean,
+  keep: RegExp,
+  signal: AbortSignal | undefined,
+): Promise<XCapturedPage> {
+  // Stopped while another read held the gate: no window is opened at all.
+  signal?.throwIfAborted();
   const win = new BrowserWindow({
     width: 1_280,
     height: 900,
     show: false,
     skipTaskbar: true,
     focusable: false,
+    hasShadow: false,
+    hiddenInMissionControl: process.platform === 'darwin',
     webPreferences: {
       session: siteSession('x'),
       contextIsolation: true,
@@ -87,7 +91,8 @@ async function capture(url: string, ready: (results: XGraphqlResult[]) => boolea
 
   try {
     // Mapped, not merely created: a window that has never been shown stalls rendering, and with
-    // it the page's own fetches.
+    // it the page's own fetches. Transparent before it is mapped, so it never flashes before parking.
+    win.setOpacity(0);
     win.showInactive();
     parkWindowOffscreen(win);
     // A webContents that has never navigated gives the debugger no page, and `Network.enable`
@@ -134,12 +139,15 @@ async function capture(url: string, ready: (results: XGraphqlResult[]) => boolea
       }).catch(() => {});
     });
     await within(dbg.sendCommand('Network.enable'), SETUP_TIMEOUT_MS, 'Watching the hidden X window');
+    signal?.throwIfAborted();
     void win.loadURL(url).catch(() => {});
 
     const started = Date.now();
     let readyAt = 0;
     while (Date.now() - started < LOAD_TIMEOUT_MS) {
       await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+      // The window closes in `finally` either way.
+      signal?.throwIfAborted();
       if (win.isDestroyed()) break;
       if (!readyAt && ready(results)) readyAt = Date.now();
       if (readyAt && Date.now() - readyAt >= SETTLE_MS) break;

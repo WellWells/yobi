@@ -7,8 +7,9 @@ import { deliverTempChatResult } from '../tempChat';
 import { tokenMetaFields } from '../../shared/tokenEstimate';
 import type { TokenUsage } from '../../shared/tokenEstimate';
 import { attachmentMetaNames } from '../../shared/conversationDoc';
-import type { TurnMeta } from '../../shared/conversationDoc';
+import type { TurnButton, TurnMeta } from '../../shared/conversationDoc';
 import type { MemoryNote } from '../../shared/userMemory';
+import type { TurnPostCard } from '../../shared/postCard';
 import { appendConversationTurn } from './conversationStore';
 
 export interface CommandResult {
@@ -32,17 +33,29 @@ export interface CommandResult {
   fileLabel?: string;
   /** `Date.now()` when the command started running, for the turn's duration. */
   startedAt?: number;
+  /** A flow's buttons, each already the full command line it sends. */
+  buttons?: TurnButton[];
+  /** Files the command saved on this computer, offered as "show in folder". */
+  files?: string[];
+  /** Photos and videos shown under the answer from the chat's media cache (not "saved"). */
+  chatMedia?: string[];
+  /** The X post a bare pasted link forwarded, offered as "analyze the post and its replies". */
+  xPost?: string;
+  /** A forwarded forum article's header, drawn as a card in place of the answer's opening block. */
+  postCard?: TurnPostCard;
 }
 
-function turnMetaFor(args: CommandResult): TurnMeta {
+export function turnMetaFor(args: CommandResult): TurnMeta {
   const attached = attachmentMetaNames(args.attachments ?? []);
   // The meta rides in an HTML comment, so a choice must not be able to close it.
   const choices = (args.choices ?? []).map((choice) => choice.replace(/-->/g, '--')).filter(Boolean);
+  const buttons = (args.buttons ?? [])
+    .map((b) => ({ l: b.l.replace(/-->/g, '--'), i: b.i.replace(/-->/g, '--'), ...(b.p ? { p: b.p.replace(/-->/g, '--') } : {}) }))
+    .filter((b) => b.l && b.i);
   return {
     p: args.providerLabel,
     t: new Date().toISOString(),
     ...(args.startedAt !== undefined ? { d: Math.max(0, Date.now() - args.startedAt) } : {}),
-    m: 'replay',
     ...(args.command ? { c: args.command } : {}),
     ...(attached.length > 0 ? { a: attached } : {}),
     ...(args.runId ? { r: args.runId } : {}),
@@ -50,6 +63,11 @@ function turnMetaFor(args: CommandResult): TurnMeta {
     ...(args.memoryNotes?.length ? { mem: args.memoryNotes } : {}),
     ...(args.usage ? tokenMetaFields(args.usage) : {}),
     ...(args.recap !== undefined ? { rc: args.recap } : {}),
+    ...(buttons.length > 0 ? { bt: buttons } : {}),
+    ...(args.files?.length ? { fl: args.files.map((f) => f.replace(/-->/g, '--')) } : {}),
+    ...(args.chatMedia?.length ? { mv: args.chatMedia.map((f) => f.replace(/-->/g, '--')) } : {}),
+    ...(args.xPost ? { xp: args.xPost } : {}),
+    ...(args.postCard ? { pc: args.postCard } : {}),
   };
 }
 

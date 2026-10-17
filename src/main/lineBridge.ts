@@ -4,7 +4,6 @@ import { maskToken } from './helpers';
 import {
   buildLinePairingLink,
   createLinePairingBridge,
-  findLinePairedDisplayName,
   LINE_WEBHOOK_PATH,
   normalizeLinePairingState,
 } from './line';
@@ -43,12 +42,6 @@ export function consumeLinePairingCode(
   user: LinePairingUserProfile,
 ): { ok: boolean; reason?: string } {
   return pairingBridge.consumePairingCode(code, user);
-}
-
-export function getLinePairedDisplayName(userId: string): string | undefined {
-  const id = (userId ?? '').trim();
-  if (!id) return undefined;
-  return findLinePairedDisplayName(config.line.pairing, id);
 }
 
 function buildLinePairingSnapshot(): LinePairingSnapshot {

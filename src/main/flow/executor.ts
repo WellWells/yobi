@@ -1,14 +1,22 @@
 import { clipboard } from 'electron';
-import type { FlowDefinition, FlowExecutionResult, SkillInstance, SkillType } from '../../shared/types';
+import type {
+  FlowButton,
+  FlowDefinition,
+  FlowExecutionResult,
+  FlowStepStatus,
+  SkillInstance,
+  SkillType,
+} from '../../shared/types';
+import { parseFlowButtons, withButtonImages } from '../../shared/ytdl';
 import type { FlowStepOutcome } from '../../shared/flowMetrics';
 import { METRIC_SILENT_STEP_TYPES } from '../../shared/flowMetrics';
+import { escapeRegExp } from '../../shared/regex';
 import { sendLog } from '../helpers';
 import { getLangCache, t } from '../i18n';
 import { measureTokens } from '../tokenMeter';
 import { recordFlowStep } from '../flowMeter';
 import type { FlowExecutorDeps, LogCallback } from './types';
 import {
-  escapeRegExp,
   getProducedFiles,
   interpolate,
   interpolateConfig,
@@ -23,19 +31,27 @@ import {
   StopFlowSignal,
   emitLog,
   emitSkipNote,
-  findIfEndIndex,
-  findLoopEndIndex,
+  findBlockEndIndex,
   resolveStepTimeoutMs,
   withStepTimeout,
 } from './runtime';
 import { executeSkill } from './skills';
 import { navigatePageBlank } from './skills/browserPages';
+import { signInUseOf } from './skills/readAccess';
 import { describeStepError, localizeStepError } from './userError';
 import { getProviderLabel } from '../providers';
 import { PERPLEXITY_CLOUDFLARE_ERROR_NAME } from '../providers/perplexity';
 import { FLOW_VAR_PREFIX } from '../../shared/flowVariables';
 import { botStepTargets } from '../../shared/botRecipients';
 import { checkBlockStructure, describeBlockIssue } from '../../shared/flowBlockStructure';
+
+/**
+ * Skills whose `emitFailFlag` turns a throw into `{{key.isFailed}}`="1" and sets "0" on success.
+ * One list for both paths: a skill in only one of them leaves `.isFailed` unset on success.
+ */
+const FAIL_SOFT_SKILLS: ReadonlySet<SkillType> = new Set<SkillType>([
+  'llm', 'browser', 'browser_js', 'bot', 'research', 'share', 'x_thread', 'youtube_download',
+]);
 
 interface RunProgress {
   completed: number;
@@ -55,6 +71,12 @@ interface RunProgress {
   finalOutput?: string;
   lastLlmProvider?: string;
   titleHint?: string;
+  buttons?: FlowButton[];
+  /** Buttons the step that produced `finalOutput` offers itself (`youtube_info`'s menu). */
+  resultButtons?: FlowButton[];
+  savedFiles?: string[];
+  chatMedia?: string[];
+  postCard?: string;
 }
 
 /**
@@ -83,8 +105,27 @@ function noteStep(
 export function titleHintFor(type: SkillType, subVars: Record<string, string>): string {
   const place = (subVars.place ?? '').trim();
   if (type === 'gmap_reviews' && place) return t(getLangCache(), 'mapReviews.title', { place });
-  if (type === 'youtube') return (subVars.title ?? '').trim();
+  if (type === 'youtube' || type === 'youtube_info' || type === 'youtube_download') return (subVars.title ?? '').trim();
+  if (type === 'x_media') {
+    // A forum article has a title of its own (a PTT article).
+    const title = (subVars.title ?? '').trim();
+    if (title) return title;
+    const who = (subVars.name ?? '').trim() || (subVars.author ?? '').trim();
+    const said = (subVars.text ?? '').split('\n').map((line) => line.trim()).find(Boolean)?.slice(0, 40) ?? '';
+    return [who, said].filter(Boolean).join(': ');
+  }
   return '';
+}
+
+/**
+ * What a step contributes to the chat answer. A download's output is a file path; the person
+ * reading the chat wants the sentence that says where it went.
+ */
+function resultTextFor(type: SkillType, output: string, subVars: Record<string, string>): string {
+  if (type === 'youtube_download') return (subVars.summary ?? '').trim() || output;
+  // The post itself, then where its media went (or that it had none).
+  if (type === 'x_media') return [subVars.message, subVars.summary || subVars.notice].filter((part) => part?.trim()).join('\n\n') || output;
+  return output;
 }
 
 const NON_RESULT_STEP_TYPES = new Set<SkillType>(['loop', 'end_loop', 'if', 'end_if', 'comment', 'bot', 'break', 'continue', 'stop']);
@@ -131,7 +172,7 @@ export function unwrapStepOutput(type: SkillType, raw: string): StepOutput {
     }
     return { output: raw, subVars: {} };
   }
-  if (type === 'stock' || type === 'forex' || type === 'weather' || type === 'air_quality' || type === 'gmap_reviews' || type === 'research' || type === 'sysinfo' || type === 'share' || type === 'line_read' || type === 'x_thread') {
+  if (type === 'stock' || type === 'forex' || type === 'weather' || type === 'air_quality' || type === 'gmap_reviews' || type === 'research' || type === 'sysinfo' || type === 'share' || type === 'line_read' || type === 'x_thread' || type === 'x_media' || type === 'youtube_info' || type === 'youtube_download') {
     try {
       const env = JSON.parse(raw) as Record<string, unknown>;
       if (env && typeof env.output === 'string') {
@@ -166,10 +207,36 @@ export function unwrapStepOutput(type: SkillType, raw: string): StepOutput {
 
 // The __attachmentAllowlist injection is the wiring half of the attachment gate: a step type
 // missing from it can send no file at all.
+/**
+ * Set (to "1") only on a run the person started in the desktop chat: the one kind of run that may
+ * show them a window. `FlowManager` sets it from the run's source and drops it from anything else.
+ */
+export const INTERACTIVE_RUN_KEY = '__run.interactive';
+
+/**
+ * How far a run may read a pasted link with the site sign-ins in Settings: `full` (runs not
+ * started by a bot, an admin in their private chat) or `others` (anyone else's bot message: no post
+ * marked as shown to some people only, no stories or profiles; `signInUseForRun`).
+ * `FlowManager` sets it and drops it from anything a caller hands it; a run without it reads
+ * every link as a visitor.
+ */
+export const SIGNED_IN_RUN_KEY = '__run.signedIn';
+
+/** The steps that read a pasted link, and so may be told to leave the sign-ins alone. */
+const LINK_READING_STEPS: ReadonlySet<string> = new Set(['x_media', 'x_thread', 'youtube_info', 'youtube_download', 'youtube']);
+
+/** The flow's own bot command, which its bot steps' buttons run again. */
+export function flowBotCommand(flow: FlowDefinition): string {
+  const trigger = [flow.trigger, ...(flow.extraTriggers ?? [])]
+    .find((t) => t?.type === 'bot' && (t.botCommand ?? '').trim());
+  return (trigger?.botCommand ?? '').trim().replace(/^\//, '');
+}
+
 export async function resolveStepConfig(
   step: SkillInstance,
   context: Map<string, string>,
   flowId: string,
+  botCommand = '',
 ): Promise<Record<string, string>> {
   const resolvedConfig = interpolateConfig(step.config, context);
   if (step.type === 'bot') {
@@ -184,6 +251,30 @@ export async function resolveStepConfig(
     resolvedConfig.__originalChatIdsTemplate = botStepTargets(step.config);
     resolvedConfig.__attachmentAllowlist = JSON.stringify(getProducedFiles(context));
     resolvedConfig.__triggerPlatform = context.get('bot.triggerPlatform') ?? '';
+    // Buttons run this flow again on a press, on behalf of whoever started this run.
+    resolvedConfig.__flowId = flowId;
+    resolvedConfig.__botCommand = botCommand;
+    resolvedConfig.__triggerUserId = context.get('bot.triggerUserId') ?? '';
+  }
+  if (step.type === 'youtube_info' || step.type === 'youtube_download') {
+    resolvedConfig.__triggerPlatform = context.get('bot.triggerPlatform') ?? '';
+    // Who asked decides the size cap and whether the reply may name a folder on this computer.
+    resolvedConfig.__triggerUserId = context.get('bot.triggerUserId') ?? '';
+    resolvedConfig.__triggerChatId = context.get('bot.triggerChatId') ?? '';
+  }
+  if (step.type === 'x_media') {
+    // Which chat started the run decides where the media goes: a file for Telegram, a URL for LINE.
+    resolvedConfig.__triggerPlatform = context.get('bot.triggerPlatform') ?? '';
+  }
+  if (step.type === 'x_media' || step.type === 'x_thread') {
+    // A site that wants a person to click its check may show them a window only when they started
+    // the run at the computer (`siteVerification.ts`).
+    resolvedConfig.__interactive = context.get(INTERACTIVE_RUN_KEY) === '1' ? '1' : '';
+  }
+  if (LINK_READING_STEPS.has(step.type)) {
+    // Someone else's bot message reads a link through the owner's sign-ins only as far as `others` allows.
+    const signIn = signInUseOf(context.get(SIGNED_IN_RUN_KEY));
+    resolvedConfig.__signedIn = signIn === 'none' ? '' : signIn;
   }
   if (step.type === 'js') {
     const entries = Object.fromEntries(context);
@@ -213,21 +304,48 @@ async function runStep(
   if (step.type === 'llm') {
     return executeSkill(step.type, step.id, resolvedConfig, deps, stepTimeoutMs, signal);
   }
-  const onStepTimeout =
-    step.type === 'browser_js'
-      ? () => {
-          navigatePageBlank((resolvedConfig.page ?? '').trim());
-        }
-      : undefined;
-  // `withStepTimeout` rejects on Stop but never cancels the work it gives up on, so the signal also
-  // goes to the skill itself: a running shell command is killed instead of finishing after Stop.
-  return withStepTimeout(
-    executeSkill(step.type, step.id, resolvedConfig, deps, stepTimeoutMs, signal),
-    stepTimeoutMs,
-    step.type,
-    onStepTimeout,
-    signal,
-  );
+  // `withStepTimeout` gives up on the work but cannot cancel it, so the skill gets a signal of its
+  // own that fires on Stop AND on the timeout: a shell command or a download is killed rather than
+  // finishing later for nobody (and holding the one download slot meanwhile).
+  const stepController = new AbortController();
+  const stopStep = (): void => stepController.abort();
+  if (signal?.aborted) stopStep();
+  else signal?.addEventListener('abort', stopStep, { once: true });
+  const onStepTimeout = (): void => {
+    stopStep();
+    if (step.type === 'browser_js') navigatePageBlank((resolvedConfig.page ?? '').trim());
+  };
+  try {
+    return await withStepTimeout(
+      executeSkill(step.type, step.id, resolvedConfig, deps, stepTimeoutMs, stepController.signal),
+      stepTimeoutMs,
+      step.type,
+      onStepTimeout,
+      signal,
+    );
+  } finally {
+    signal?.removeEventListener('abort', stopStep);
+  }
+}
+
+/**
+ * When a top-level loop ends each body step keeps the outcome of its last pass: a pass logs its own
+ * 'completed', a skip or soft failure stays as logged, note included (a Stop keeps "stopped"); still
+ * 'running' means that pass finished without a log of its own; a step that never ran is skipped.
+ */
+function settleLoopBody(
+  flow: FlowDefinition,
+  loopIndex: number,
+  bodyEnd: number,
+  lastStatus: ReadonlyMap<string, FlowStepStatus>,
+  onLog: LogCallback | undefined,
+): void {
+  for (let j = loopIndex + 1; j < bodyEnd; j++) {
+    const { id } = flow.steps[j];
+    const status = lastStatus.get(id);
+    if (status === 'running') emitLog(onLog, flow.id, id, j, 'completed');
+    else if (status === undefined) emitLog(onLog, flow.id, id, j, 'skipped');
+  }
 }
 
 async function expandLoop(
@@ -260,8 +378,15 @@ async function expandLoop(
     items = items.slice(0, limit);
   }
 
-  const bodyEnd = Math.min(findLoopEndIndex(flow.steps, loopIndex), rangeEnd);
+  const bodyEnd = Math.min(findBlockEndIndex(flow.steps, loopIndex), rangeEnd);
   const nested = depth > 0;
+  const lastStatus = new Map<string, FlowStepStatus>();
+  const bodyLog: LogCallback | undefined = nested
+    ? onLog
+    : (log) => {
+      lastStatus.set(log.stepId, log.status);
+      onLog?.(log);
+    };
 
   if (items.length > 0) {
     sendLog(`🔄 [${trace}] Looping ${items.length} items${nested ? ' (nested)' : ''} as "{{${loopVar}}}"`);
@@ -290,23 +415,16 @@ async function expandLoop(
         loopContext.set(loopVar, valStr);
       }
       try {
-        await runRange(flow, loopIndex + 1, bodyEnd, loopContext, deps, onLog, progress, depth + 1, iterationTrace, signal);
+        await runRange(flow, loopIndex + 1, bodyEnd, loopContext, deps, bodyLog, progress, depth + 1, iterationTrace, signal);
       } catch (err) {
         if (err instanceof BreakLoopSignal) break;
         if (!(err instanceof ContinueLoopSignal)) throw err;
       }
       if (progress.aborted) break;
     }
-    if (depth === 0) {
-      if (progress.aborted) {
-        for (let j = loopIndex + 1; j < bodyEnd; j++) {
-          emitLog(onLog, flow.id, flow.steps[j].id, j, 'skipped');
-        }
-      } else {
-        for (let j = loopIndex + 1; j < bodyEnd; j++) {
-          progress.completed++;
-        }
-      }
+    if (!nested) {
+      settleLoopBody(flow, loopIndex, bodyEnd, lastStatus, onLog);
+      if (!progress.aborted) progress.completed += Math.max(0, bodyEnd - loopIndex - 1);
     }
     sendLog(`🔄 [${trace}] Loop complete (${items.length} items)`);
   } else {
@@ -362,7 +480,7 @@ async function runRange(
 
     const startedAt = Date.now();
     try {
-      const resolvedConfig = await resolveStepConfig(step, context, flow.id);
+      const resolvedConfig = await resolveStepConfig(step, context, flow.id, flowBotCommand(flow));
       const rawOutput = await runStep(step, resolvedConfig, deps, signal);
       const { output, subVars } = unwrapStepOutput(step.type, rawOutput);
 
@@ -377,8 +495,25 @@ async function runRange(
         context.set('file', output);
         recordProducedFile(context, output);
       }
-      if (output && step.outputKey && !NON_RESULT_STEP_TYPES.has(step.type)) {
-        progress.finalOutput = output;
+      // A post's output is its media, empty for a post with none; its text still answers.
+      const resultText = resultTextFor(step.type, output, subVars);
+      if (resultText && step.outputKey && !NON_RESULT_STEP_TYPES.has(step.type)) {
+        progress.finalOutput = resultText;
+        // What the answer offers and shows in the desktop chat (a menu's choices, a post's media)
+        // belongs to that answer: the next step that answers drops them.
+        const offered = withButtonImages(parseFlowButtons(subVars.buttons ?? ''), subVars.buttonImages);
+        progress.resultButtons = offered.length > 0 ? offered : undefined;
+        const shown = (subVars.chatMedia ?? '').split('\n').map((line) => line.trim()).filter(Boolean);
+        progress.chatMedia = shown.length > 0 ? shown : undefined;
+        progress.postCard = subVars.card?.trim() || undefined;
+      }
+      // A video kept on this computer rather than handed to a bot step: the chat offers its folder.
+      if ((step.type === 'youtube_download' || step.type === 'x_media') && subVars.savedLocally === '1' && output) {
+        progress.savedFiles = [...(progress.savedFiles ?? []), ...output.split('\n').filter(Boolean)];
+      }
+      if (step.type === 'bot') {
+        const buttons = parseFlowButtons(resolvedConfig.buttons ?? '');
+        if (buttons.length > 0) progress.buttons = buttons;
       }
       if (depth === 0) {
         const titleHint = titleHintFor(step.type, subVars);
@@ -387,7 +522,7 @@ async function runRange(
       if (step.type === 'llm' && output) {
         progress.lastLlmProvider = getProviderLabel((resolvedConfig.provider ?? '').trim() || deps.getTargetUrl());
       }
-      if ((step.type === 'llm' || step.type === 'browser_js' || step.type === 'bot' || step.type === 'research' || step.type === 'share' || step.type === 'x_thread') && step.config.emitFailFlag === 'true' && step.outputKey) {
+      if (FAIL_SOFT_SKILLS.has(step.type) && step.config.emitFailFlag === 'true' && step.outputKey) {
         context.set(`${step.outputKey}.isFailed`, '0');
       }
 
@@ -404,7 +539,7 @@ async function runRange(
 
       if (step.type === 'if') {
         const conditionMet = output === 'true';
-        const bodyEnd = Math.min(findIfEndIndex(flow.steps, i), endIndex);
+        const bodyEnd = Math.min(findBlockEndIndex(flow.steps, i), endIndex);
         if (!conditionMet) {
           for (let j = i + 1; j < bodyEnd; j++) {
             emitLog(onLog, flow.id, flow.steps[j].id, j, 'skipped');
@@ -458,15 +593,7 @@ async function runRange(
       const isVerificationChallenge =
         err instanceof Error && err.name === PERPLEXITY_CLOUDFLARE_ERROR_NAME;
 
-      const canFailSoft = step.type === 'llm'
-        || step.type === 'browser'
-        || step.type === 'browser_js'
-        || step.type === 'bot'
-        || step.type === 'research'
-        || step.type === 'share'
-        || step.type === 'x_thread';
-
-      if (canFailSoft && step.config.emitFailFlag === 'true' && !isVerificationChallenge) {
+      if (FAIL_SOFT_SKILLS.has(step.type) && step.config.emitFailFlag === 'true' && !isVerificationChallenge) {
         const msg = err instanceof Error ? err.message : String(err);
         if (step.outputKey) {
           context.set(step.outputKey, '');
@@ -594,6 +721,7 @@ async function runFlowSteps(
       aborted: true,
       outputs: Object.fromEntries(context),
       error: 'Aborted by user',
+      displayError: t(getLangCache(), 'flow.error.aborted'),
       completedSteps: progress.completed,
       totalSteps: flow.steps.length,
       completedAt: new Date().toISOString(),
@@ -632,5 +760,9 @@ async function runFlowSteps(
     titleHint: progress.titleHint,
     softFailures: progress.softFailures,
     softFailureError: progress.softFailureError,
+    ...((progress.buttons ?? progress.resultButtons) ? { buttons: progress.buttons ?? progress.resultButtons } : {}),
+    ...(progress.savedFiles ? { savedFiles: progress.savedFiles } : {}),
+    ...(progress.chatMedia ? { chatMedia: progress.chatMedia } : {}),
+    ...(progress.postCard ? { postCard: progress.postCard } : {}),
   };
 }

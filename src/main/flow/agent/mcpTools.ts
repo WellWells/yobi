@@ -1,5 +1,6 @@
 import { connectorHoldsUserData } from '../../../shared/mcpCatalog';
 import { isByokTargetUrl } from '../../../shared/types';
+import { clipLine } from '../../../shared/textBudget';
 import { detectProvider, PROVIDER_PROMPT_POLICIES } from '../../providers';
 import { INSTRUCTION_EST, readPlanFields, readStepBudget, USER_DATA_MARKER } from './agentPrompts';
 import { AGENT_HELP_TOOL, OPTS_MARKER } from './agentTools';
@@ -7,7 +8,7 @@ import { readIntent } from './actionGate';
 import type { GoalIntent } from './actionGate';
 import { resolveToolContract } from './contractRegistry';
 import { toolNouns } from './mcpToolNouns';
-import { genericRisk, riskLabel } from './toolContracts';
+import { riskLabel } from './toolContracts';
 import type { Validation } from './structuredLlm';
 import type { McpTool, McpToolResult } from '../../mcp/mcpTypes';
 import type { ConnectedServerTools } from '../../mcp/mcpRegistry';
@@ -89,11 +90,6 @@ export function isWriteAutoApproved(
   return servers.some((s) => s.id === serverId && s.autoApproveWrites === true);
 }
 
-/** The coarse read/write split, kept for callers that only need that much. `toolContracts` owns the rule. */
-export function classifyMcpTool(tool: McpTool): 'read' | 'write' {
-  return genericRisk(tool) === 'read' ? 'read' : 'write';
-}
-
 /** What the catalog prints next to a tool: the connector's own contract when Yobi has one. */
 function toolLabel(tool: McpTool, serverId: string): string {
   return riskLabel(resolveToolContract(serverId, tool).risk({}));
@@ -164,11 +160,6 @@ function renderToolLine(tool: McpTool, serverId: string): string {
 const BRIEF_DESC_LIMITS = [72, 48, 32] as const;
 const BRIEF_ARGS_SHOWN = 4;
 
-function briefDesc(text: string, limit: number): string {
-  const trimmed = text.replace(/\s+/g, ' ').trim();
-  return trimmed.length > limit ? `${trimmed.slice(0, limit - 1)}…` : trimmed;
-}
-
 /**
  * Tier-1 line: name, read/write, a clipped description and the required arguments only, about half
  * the cost of a full line. `OPTS_MARKER` is shared with the built-in catalog so the model learns one
@@ -183,7 +174,7 @@ function renderBriefToolLine(tool: McpTool, serverId: string, descLimit: number)
   const shown = required.slice(0, BRIEF_ARGS_SHOWN);
   const args = shown.length > 0 ? ` args: ${shown.map((key) => `${String(key)}*`).join(', ')}` : '';
   const opts = keyCount > shown.length ? ` ${OPTS_MARKER}` : '';
-  return `- ${tool.name} (${rw}): ${briefDesc(tool.description ?? '', descLimit)}${args}${opts}`;
+  return `- ${tool.name} (${rw}): ${clipLine(tool.description ?? '', descLimit)}${args}${opts}`;
 }
 
 export interface McpCatalogFill {
@@ -205,15 +196,11 @@ interface CatalogBlock {
 }
 
 /**
- * One tail per truncated server, naming the handle and, when `canHelp`, the call that expands it.
- * Per server because `fillCatalog` hands out equal shares, so one global count cannot say which
- * server was cut.
+ * One tail per truncated server, naming the handle and the call that expands it. Per server
+ * because `fillCatalog` hands out equal shares, so one global count cannot say which server was cut.
  */
-function tailLine(handle: string, hidden: number, canHelp: boolean): string {
-  const ask = canHelp
-    ? `call "${AGENT_HELP_TOOL}" with that handle for the full list`
-    : 'no room in this prompt for the rest';
-  return `  …and ${hidden} more tool(s) on [${handle}] — ${ask}.`;
+function tailLine(handle: string, hidden: number): string {
+  return `  …and ${hidden} more tool(s) on [${handle}] — call "${AGENT_HELP_TOOL}" with that handle for the full list.`;
 }
 
 /**
@@ -226,13 +213,12 @@ export const TAIL_LINE_MAX = 160;
 /**
  * Equal shares first, leftovers second. Registry order is `config.json` add-order, not the order the
  * user named connectors, so a greedy fill would let the oldest connector take the whole budget, and
- * silently: a run that keeps its built-in tools never throws `AgentScopeError('no-room')`.
+ * silently: a run that named no connector never throws `AgentScopeError('no-room')`.
  */
 function fillCatalog(
   index: McpRuntimeIndex,
   budgetChars: number,
   render: (tool: McpTool, serverId: string) => string,
-  canHelp = true,
 ): Omit<McpCatalogFill, 'brief'> {
   const blocks: CatalogBlock[] = index.handles.map((server) => ({
     serverId: server.serverId,
@@ -268,7 +254,7 @@ function fillCatalog(
   const lines = blocks.flatMap((block) => {
     const hidden = block.tools.length - block.next;
     if (hidden === 0) return block.lines;
-    return [...block.lines, tailLine(block.handle, hidden, canHelp)];
+    return [...block.lines, tailLine(block.handle, hidden)];
   });
   const includedCount = spentTools(blocks);
   const omitted = blocks.reduce((sum, block) => sum + (block.tools.length - block.next), 0);
@@ -296,18 +282,16 @@ function sampleToolNames(tools: readonly McpTool[], count: number): string[] {
 /**
  * The third catalog tier: one line per server, because tiers 1 and 2 scale with the tools connected
  * rather than the tools a goal can use. Nothing is hidden: `tool_help` with a bare handle returns the
- * server's tier-1 listing and `resolveMcpTool` matches the runtime index, so a caller without
- * `tool_help` (`canHelp` false) must not choose this tier. The "covers:" nouns (`toolNouns`) surface
- * capabilities a four-name sample misses.
+ * server's tier-1 listing and `resolveMcpTool` matches the runtime index. The "covers:" nouns
+ * (`toolNouns`) surface capabilities a four-name sample misses.
  */
-export function buildMcpSummary(index: McpRuntimeIndex, canHelp: boolean): string {
+export function buildMcpSummary(index: McpRuntimeIndex): string {
   return index.handles.map((server) => {
     const marker = server.userData ? ` ${USER_DATA_MARKER}` : '';
     const names = sampleToolNames(server.tools, SUMMARY_SAMPLE).join(', ');
     const nouns = toolNouns(server.tools, server.serverName);
     const covers = nouns.length > 0 ? `; covers: ${nouns.join(', ')}` : '';
-    const open = canHelp ? ` — call "${AGENT_HELP_TOOL}" with "${server.handle}" for the full list` : '';
-    return `- [${server.handle}] ${server.serverName}${marker} — ${server.tools.length} tools${covers}; e.g. ${names}${open}.`;
+    return `- [${server.handle}] ${server.serverName}${marker} — ${server.tools.length} tools${covers}; e.g. ${names} — call "${AGENT_HELP_TOOL}" with "${server.handle}" for the full list.`;
   }).join('\n');
 }
 
@@ -318,15 +302,14 @@ export function buildMcpSummary(index: McpRuntimeIndex, canHelp: boolean): strin
 export function buildMcpCatalog(
   index: McpRuntimeIndex,
   budgetChars: number,
-  canHelp = true,
 ): McpCatalogFill {
-  const full = fillCatalog(index, budgetChars, renderToolLine, canHelp);
+  const full = fillCatalog(index, budgetChars, renderToolLine);
   if (full.omitted === 0) return { ...full, brief: false };
 
   let best = full;
   let bestIsBrief = false;
   for (const limit of BRIEF_DESC_LIMITS) {
-    const attempt = fillCatalog(index, budgetChars, (tool, serverId) => renderBriefToolLine(tool, serverId, limit), canHelp);
+    const attempt = fillCatalog(index, budgetChars, (tool, serverId) => renderBriefToolLine(tool, serverId, limit));
     if (attempt.includedCount > best.includedCount) {
       best = attempt;
       bestIsBrief = true;

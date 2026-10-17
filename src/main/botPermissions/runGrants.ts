@@ -2,20 +2,15 @@ import { NO_BOT_RIGHTS, intersectBotRights } from '../../shared/botPermissions';
 import type { BotRights } from '../../shared/botPermissions';
 import type { AgentRunState } from '../../shared/types';
 import { parseBotChatKey } from '../memory/memoryContext';
-import { getBotRights, isBotUserPaired } from './rights';
+import { getBotRights } from './rights';
 
-export type BotRunGrants = NonNullable<AgentRunState['botGrants']>;
+type BotRunGrants = NonNullable<AgentRunState['botGrants']>;
 
 /**
- * Whether the account behind a bot chat key is paired now. Every message of a paired account is
- * answered, so this — not a grant — is what stands between a stranger and a run.
+ * The rights of the person behind a bot chat key in that chat, read now; an unreadable key gets
+ * none. Its `chat` is what stands between a stranger and a run: every paired account has it, an
+ * unpaired person only in a group that grants it.
  */
-export function botChatPaired(chatKey: string): boolean {
-  const parsed = parseBotChatKey(chatKey);
-  return parsed !== null && isBotUserPaired(parsed.platform, parsed.userId);
-}
-
-/** The rights of the account behind a bot chat key, read now; an unreadable key gets none. */
 export async function botChatRights(chatKey: string): Promise<BotRights> {
   const parsed = parseBotChatKey(chatKey);
   if (!parsed) return { ...NO_BOT_RIGHTS };
@@ -34,8 +29,11 @@ function grantsOf(rights: BotRights): BotRunGrants {
 
 function asRights(grants: BotRunGrants): BotRights {
   return {
+    // A run that exists was allowed to start; whether it may go on is the rights read now.
+    chat: true,
     agent: true,
     admin: true,
+    download: true,
     web: grants.web,
     local: grants.local,
     shell: grants.shell === true,

@@ -1,7 +1,7 @@
 import type { BrowserWindow } from 'electron';
 import { isCloudflareChallengeActive, waitForPageLoad, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
-import { ensureOnPage, PAGE_REUSE } from './pageReuse';
-import { countElements, executeAutomationWithTimeout, dispatchFocusEvents, settledElementCount } from './automationExecutor';
+import { ensureOnPage, landingMayStillRender, PAGE_REUSE } from './pageReuse';
+import { anchorCounts, executeAutomationWithTimeout, dispatchFocusEvents } from './automationExecutor';
 import { INJECTED_PPLX_READ_JS, PPLX_RESPONSE_SELECTOR } from './perplexityReadScript';
 import { PPLX_SUBMIT_JS } from './perplexitySendScript';
 import { forgetPerplexityVisitor, isPerplexitySignInWall, PERPLEXITY_SIGN_IN_WALL_ERROR } from './perplexityVisitor';
@@ -13,8 +13,6 @@ import { raiseVerificationChallenge, VERIFICATION_CHALLENGE_ERROR_NAME } from '.
 import { PROVIDER_URLS } from '../../shared/types';
 import { WORKER_USER_AGENTS } from '../userAgent';
 import { applyWorkerUserAgent } from '../clientHints';
-
-export { isPerplexitySessionCookie } from './perplexitySession';
 
 export const PERPLEXITY_CLOUDFLARE_ERROR_NAME = VERIFICATION_CHALLENGE_ERROR_NAME;
 
@@ -78,10 +76,11 @@ async function askPerplexity(
 
   await dispatchFocusEvents(wc);
 
-  // A kept page settled its counts on the previous turn; only a fresh load can still hydrate.
-  const baseline = reused
-    ? await countElements(wc, PPLX_RESPONSE_SELECTOR)
-    : await settledElementCount(wc, PPLX_RESPONSE_SELECTOR);
+  // Only a freshly loaded conversation can still be rendering earlier answers in; a kept page
+  // settled on the previous turn and a new conversation's landing page has none.
+  const [baseline = 0] = await anchorCounts(
+    wc, [PPLX_RESPONSE_SELECTOR], landingMayStillRender(wc, landing, { continuingThread }),
+  );
 
   type PplxResult = { response: string; title: string; isImageOnly?: boolean };
   let fullyNavigated = false;

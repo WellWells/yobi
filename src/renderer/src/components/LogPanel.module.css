@@ -1,6 +1,7 @@
+/* Baseline, not top: the 11px level/scope tags share one text line with the 14px time and message. */
 .logEntry {
   display: flex;
-  align-items: flex-start;
+  align-items: baseline;
   gap: 7px;
   padding: 3px 6px;
   border-radius: var(--mantine-radius-sm);

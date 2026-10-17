@@ -1,15 +1,15 @@
 import { BrowserWindow, session } from 'electron';
 import { userAgentForUrl } from './userAgent';
-import { youtubeLane } from './flow/lanes';
-import { SILENT_WEB_PREFERENCES, muteWindow } from './silentWindow';
+import { YOUTUBE_PARTITION, youtubeLane } from './flow/lanes';
+import { SILENT_WEB_PREFERENCES, muteWindow, parkWindowOffscreen } from './silentWindow';
+import { withTimeout } from './promiseRace';
+import { extractYoutubeVideoId } from '../shared/youtubeUrl';
 
 const LOAD_TIMEOUT_MS = 25_000;
 
 const JS_SETTLE_MS = 800;
 
 const JS_EXEC_TIMEOUT_MS = 40_000;
-
-const YOUTUBE_PARTITION = 'persist:youtube';
 
 export interface YoutubeTranscriptResult {
   title: string;
@@ -24,49 +24,8 @@ export interface YoutubeVideoResult {
 
 const FAILED_VIDEO_RESULT: YoutubeVideoResult = { title: '', transcript: '', ok: false };
 
-const YOUTUBE_HOSTS = ['youtube.com', 'youtu.be', 'm.youtube.com', 'music.youtube.com'];
-
-export function extractYoutubeVideoId(url: string): string | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(url.trim());
-  } catch {
-    return null;
-  }
-  const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
-  const idPattern = /^[\w-]{11}$/;
-
-  if (host === 'youtu.be') {
-    const id = parsed.pathname.slice(1).split('/')[0];
-    return idPattern.test(id) ? id : null;
-  }
-
-  if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'music.youtube.com') {
-    const vParam = parsed.searchParams.get('v');
-    if (vParam && idPattern.test(vParam)) return vParam;
-    const match = parsed.pathname.match(/^\/(?:shorts|embed|live)\/([\w-]{11})/);
-    if (match) return match[1];
-  }
-
-  return null;
-}
-
-export function youtubeThumbnailUrl(url: string): string {
-  const id = extractYoutubeVideoId(url);
-  return id ? `https://i.ytimg.com/vi/${id}/hqdefault.jpg` : '';
-}
-
-export function isYoutubeUrl(url: string): boolean {
-  let parsed: URL;
-  try {
-    parsed = new URL(url.trim());
-  } catch {
-    return false;
-  }
-  const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
-  if (!YOUTUBE_HOSTS.includes(host)) return false;
-  return extractYoutubeVideoId(url) !== null;
-}
+export { isYoutubeUrl, youtubeThumbnailUrl } from '../shared/youtubeUrl';
+export { extractYoutubeVideoId };
 
 export function fetchYoutubeVideo(
   url: string,
@@ -101,6 +60,8 @@ function fetchYoutubeVideoExclusive(
       show: visible,
       skipTaskbar: !visible,
       focusable: visible,
+      hasShadow: visible,
+      hiddenInMissionControl: !visible && process.platform === 'darwin',
       webPreferences: {
         partition: YOUTUBE_PARTITION,
         contextIsolation: true,
@@ -114,6 +75,16 @@ function fetchYoutubeVideoExclusive(
 
     win.webContents.setUserAgent(userAgentForUrl(watchUrl));
     muteWindow(win);
+    // Electron has no popup blocker: a window.open() from the page would show a real window.
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    if (!visible) {
+      // Mapped, not merely created: a never-shown window stalls rendering, and the watch page then
+      // never builds its description or transcript panel. Transparent before it is mapped, so it
+      // never flashes before parking.
+      win.setOpacity(0);
+      win.showInactive();
+      parkWindowOffscreen(win);
+    }
 
     const finish = (result: YoutubeVideoResult): void => {
       if (settled) return;
@@ -151,14 +122,11 @@ function fetchYoutubeVideoExclusive(
 
     const extract = async (): Promise<string | null> => {
       await sleep(JS_SETTLE_MS);
-      let execTimer: ReturnType<typeof setTimeout> | undefined;
-      const execTimeout = new Promise<never>((_, rej) => {
-        execTimer = setTimeout(() => rej(new Error('extraction timed out')), JS_EXEC_TIMEOUT_MS);
-      });
-      return (await Promise.race([
+      return (await withTimeout(
         win.webContents.executeJavaScript(EXTRACTION_SCRIPT, true),
-        execTimeout,
-      ]).finally(() => clearTimeout(execTimer))) as string | null;
+        JS_EXEC_TIMEOUT_MS,
+        () => new Error('extraction timed out'),
+      )) as string | null;
     };
 
     const logFailure = (raw: string | null, result: YoutubeVideoResult): void => {

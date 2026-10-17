@@ -8,6 +8,8 @@ interface WebDialogProps {
   confirmText: string;
   cancelText: string;
   danger?: boolean;
+  /** Above the default only when it opens over another dialog. */
+  zIndex?: number;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -19,6 +21,7 @@ export const WebDialog: React.FC<WebDialogProps> = ({
   confirmText,
   cancelText,
   danger = false,
+  zIndex = 60,
   onConfirm,
   onCancel,
 }) => (
@@ -28,7 +31,7 @@ export const WebDialog: React.FC<WebDialogProps> = ({
     title={title}
     centered
     size="md"
-    zIndex={60}
+    zIndex={zIndex}
     styles={{
       content: {
         background: 'var(--bg-secondary)',

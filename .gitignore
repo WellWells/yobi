@@ -40,6 +40,10 @@ mcp-auth.json
 bot-conversations.json
 bot-directory.json
 user-memory/
+# Version history of conversations and flows (the dev flow data dir is the repo root)
+/history/
+# What each Notion document last agreed on with its page (same flow data dir)
+/notion-sync/
 flow-schedule-state.json
 data-keys.json
 secret-health.json
@@ -47,3 +51,7 @@ secret-health.json
 .*.tmp
 
 flow-checkpoints
+# MTProto sign-in for big Telegram uploads (the dev config dir is the repo root)
+telegram-upload.session
+# Brainstorming mockups (superpowers visual companion)
+.superpowers/

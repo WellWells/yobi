@@ -40,6 +40,34 @@ export function checkBlockStructure(steps: ReadonlyArray<{ type: SkillType }>): 
   return unclosed ? { kind: 'unclosed', index: unclosed.index, open: unclosed.type } : null;
 }
 
+const MATCHING_MARKER: Partial<Record<SkillType, { other: SkillType; dir: 1 | -1 }>> = {
+  loop: { other: 'end_loop', dir: 1 },
+  if: { other: 'end_if', dir: 1 },
+  end_loop: { other: 'loop', dir: -1 },
+  end_if: { other: 'if', dir: -1 },
+};
+
+/**
+ * The index of the marker that pairs with the one at `index`: forward from an opener to its
+ * closer, backward from a closer to its opener, counting nested blocks of the same kind.
+ * -1 when `index` is not a block marker or the block has no partner. The editor and the
+ * executor both read a block's extent from here, so they cannot disagree about it.
+ */
+export function findMatchingMarker(steps: ReadonlyArray<{ type: SkillType }>, index: number): number {
+  const type = steps[index]?.type;
+  const entry = type ? MATCHING_MARKER[type] : undefined;
+  if (!type || !entry) return -1;
+  let depth = 1;
+  for (let j = index + entry.dir; j >= 0 && j < steps.length; j += entry.dir) {
+    if (steps[j].type === type) depth++;
+    else if (steps[j].type === entry.other) {
+      depth--;
+      if (depth === 0) return j;
+    }
+  }
+  return -1;
+}
+
 /** The English, model-facing wording of a block issue (validation errors go back into the repair prompt). */
 export function describeBlockIssue(issue: BlockIssue): string {
   const step = `Step ${issue.index + 1}`;

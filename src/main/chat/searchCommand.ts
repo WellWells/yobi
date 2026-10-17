@@ -12,6 +12,7 @@ import { localizeUserFacingError, t } from '../i18n';
 import { getProviderLabel } from '../providers';
 import { buildSearchHistory, runWebSearch, SearchPipelineError } from '../search';
 import { measureTokens } from '../tokenMeter';
+import { publicWebOnlyIf } from '../net/publicWebScope';
 import { mdLinkDestination } from '../search/synthesize';
 import type { SearchProgress, SourceDoc } from '../search';
 import type { TokenUsage } from '../../shared/tokenEstimate';
@@ -187,10 +188,12 @@ export function runSearchCommand(
     }
   };
 
-  if (!flowManager) return run();
+  // A bot's /search reads the public web only, the link shortcut included.
+  const scoped = (taskId?: string): Promise<SearchRunOutcome> => publicWebOnlyIf(origin === 'bot', () => run(taskId));
+  if (!flowManager) return scoped();
   return flowManager.enqueueExternalTask(
     `/${commandName} ${summarizeQuery(query)}`,
-    run,
+    scoped,
     (err) => ({
       success: false,
       error: localizeUserFacingError(err instanceof Error ? err.message : String(err), strings),

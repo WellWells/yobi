@@ -1,4 +1,4 @@
-import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_STOP_SELECTOR } from './chatgptSendScript';
+import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_MESSAGE_ID_JS, CHATGPT_STOP_SELECTOR } from './chatgptSendScript';
 
 /**
  * Waits for ChatGPT's answer and reads it back. Runs in the page via `executeJavaScript`, so
@@ -19,6 +19,7 @@ export const CHATGPT_READ_JS = `async function chatgptWaitAndRead(submitted, opt
   var STABLE_POLLS = opts.stablePolls === undefined ? 3 : opts.stablePolls;
   var WAIT_MS = opts.waitMs === undefined ? 350 : opts.waitMs;
   var EMPTY_SETTLE_MS = opts.emptySettleMs === undefined ? 2500 : opts.emptySettleMs;
+  ${CHATGPT_MESSAGE_ID_JS}
 
   function getAssistantTurns() {
     return document.querySelectorAll(${JSON.stringify(CHATGPT_ASSISTANT_TURN_SELECTOR)});
@@ -29,17 +30,41 @@ export const CHATGPT_READ_JS = `async function chatgptWaitAndRead(submitted, opt
     return turns[turns.length - 1] || null;
   }
 
+  // A turn can also hold a localized "ChatGPT said:" heading, so the body is read from the
+  // message's own copy region, never from the whole turn.
   function getTurnText(turn) {
     if (!turn) return '';
-    var markdown = turn.querySelector('.markdown.prose, .markdown, [class*="markdown"]');
+    var bodies = turn.querySelectorAll('[data-markdown-copy="contents"]');
+    var markdown = bodies.length
+      ? bodies[bodies.length - 1]
+      : turn.querySelector('.markdown.prose, .markdown, [class*="markdown"]');
     if (markdown && (markdown.innerText || '').trim()) {
       return (markdown.innerText || '').trim();
     }
+    if (turn.hasAttribute('data-chatgpt-search-unit-key')) return '';
     return (turn.innerText || '').trim();
+  }
+
+  // Where the copy control has no marker, it is the first button after the answer inside the same
+  // exchange ([data-turn-key]), and only if that button carries no ARIA menu/pressed state. Not
+  // offered while the exchange is still answering: a copy taken then is a partial answer.
+  function redesignedCopyButton(turn) {
+    var exchange = turn.closest('[data-turn-key]');
+    if (!exchange || exchange.querySelector('[data-talvt-turn-state="in_progress"]')) return null;
+    var btns = exchange.querySelectorAll('button');
+    for (var i = 0; i < btns.length; i++) {
+      var b = btns[i];
+      if (turn.contains(b)) continue;
+      if (!(turn.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+      if (b.hasAttribute('aria-haspopup') || b.hasAttribute('aria-pressed')) return null;
+      return b;
+    }
+    return null;
   }
 
   function findCopyButtonForTurn(turn) {
     if (!turn) return null;
+    if (turn.hasAttribute('data-chatgpt-search-unit-key')) return redesignedCopyButton(turn);
 
     var turnContainer = turn.closest('.agent-turn') || turn.closest('.group\\\\/turn-messages') || turn.parentElement.parentElement;
     var searchContext = turnContainer || document;
@@ -60,7 +85,7 @@ export const CHATGPT_READ_JS = `async function chatgptWaitAndRead(submitted, opt
   }
 
   function turnId(turn) {
-    return turn ? (turn.getAttribute('data-message-id') || null) : null;
+    return chatgptMessageId(turn);
   }
 
   /*
@@ -81,6 +106,7 @@ export const CHATGPT_READ_JS = `async function chatgptWaitAndRead(submitted, opt
   // The copy control inside THIS turn only: one found elsewhere would copy the previous answer.
   function ownCopyButton(turn) {
     if (!turn) return null;
+    if (turn.hasAttribute('data-chatgpt-search-unit-key')) return redesignedCopyButton(turn);
     var container = turn.closest('.agent-turn') || turn.closest('.group\\\\/turn-messages') || turn;
     var btns = container.querySelectorAll('button[data-testid="copy-turn-action-button"]');
     return btns.length ? btns[btns.length - 1] : null;

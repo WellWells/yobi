@@ -19,7 +19,6 @@ export interface IpcContext {
   queue: QueueManager;
   telegramRuntime: TelegramRuntime;
   lineRuntime: LineRuntime;
-  telegramSessionId: string;
   getMainWin: () => BrowserWindow | null;
   bindHotkey: () => boolean;
   bindQuickExportHotkey: () => boolean;

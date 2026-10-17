@@ -5,6 +5,7 @@ import { useI18nStore } from '../store/i18nStore';
 import { systemApi } from '../api/electronApi';
 import { useExportSettingsStore } from '../store/exportSettingsStore';
 import { formatCardTime } from '../../../shared/captureCard';
+import { plainNotionTitle } from '../../../shared/notion/notionDisplay';
 import {
   CAPTURE_PALETTES,
   captureBackgroundCss,
@@ -63,11 +64,13 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
 
   useEffect(() => {
     if (!selectedFile || !parsedBlocks) return;
-    const defaultTitle = parsedBlocks.title || selectedFile.name.replace(/\.md$/i, '');
+    // A Notion document's title is shown without the markers Notion splits its bold runs with.
+    const docTitle = conversation?.thread.notion && parsedBlocks.title ? plainNotionTitle(parsedBlocks.title) : parsedBlocks.title;
+    const defaultTitle = docTitle || selectedFile.name.replace(/\.md$/i, '');
     const defaultFileName = selectedFile.name.replace(/\.md$/i, '');
     setCaptureTitle(defaultTitle);
     setCaptureFileName(defaultFileName);
-  }, [selectedFile?.path, selectedFile?.name, parsedBlocks?.title, parsedBlocks?.provider, parsedBlocks?.time]);
+  }, [selectedFile?.path, selectedFile?.name, parsedBlocks?.title, parsedBlocks?.provider, parsedBlocks?.time, conversation?.thread.notion]);
 
   const captureFormat = capture.format;
   const capturePaletteKey = capture.palette;

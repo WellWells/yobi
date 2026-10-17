@@ -7,20 +7,23 @@ interface SidebarKeyNavDeps {
   editingPath: string | null;
   pendingDeleteFile: OutputFile | null;
   visibleFiles: OutputFile[];
-  selectedFile: OutputFile | null;
   fileItemRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
   scrollToIndex: (index: number, options: { align: 'auto' }) => void;
   getFocusedFile: () => OutputFile | null;
   onSelect: (file: OutputFile) => Promise<void>;
-  onRename: (file: OutputFile) => void;
   onEditH1: (file: OutputFile) => Promise<void>;
   onDelete: (file: OutputFile) => void;
   onCloseContextMenu: () => void;
 }
 
+/**
+ * The conversation list's own keys (registry owner `sidebarList`): arrows move focus, Enter and
+ * Space open the focused row (`sidebar.activate`) — the open one included, which reloads it —
+ * F2 edits the title, Alt+R reveals it, Delete deletes it.
+ */
 export function createSidebarKeyDownHandler({
-  editingPath, pendingDeleteFile, visibleFiles, selectedFile, fileItemRefs,
-  scrollToIndex, getFocusedFile, onSelect, onRename, onEditH1, onDelete, onCloseContextMenu,
+  editingPath, pendingDeleteFile, visibleFiles, fileItemRefs,
+  scrollToIndex, getFocusedFile, onSelect, onEditH1, onDelete, onCloseContextMenu,
 }: SidebarKeyNavDeps): (e: React.KeyboardEvent) => void {
   return (e) => {
     if (editingPath || pendingDeleteFile || isTypingTarget(e.target)) return;
@@ -68,17 +71,7 @@ export function createSidebarKeyDownHandler({
       return;
     }
 
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      if (selectedFile?.path === focusedFile.path) {
-        onRename(focusedFile);
-        return;
-      }
-      void onSelect(focusedFile);
-      return;
-    }
-
-    if (e.key === ' ') {
+    if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       void onSelect(focusedFile);
     }

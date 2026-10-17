@@ -18,13 +18,17 @@
 
 **Yobi** is a flow engine that runs on your desktop. Chain data, AI and actions into an automation, then trigger it on a schedule, from a global hotkey, with a command to your Telegram or LINE bot, from a slash command in the app, or when Yobi starts, the PC wakes, or the screen locks or unlocks. Because it runs on your machine rather than a server, a flow reaches what a hosted tool cannot: LINE on this PC (Windows), your files, your shell, a real browser. The AI steps drive the providers' own web pages, so there is no API key and no per-token bill.
 
+<!-- demos:hero:start -->
+<p align="center"><img src="assets/demos/en-US/agent.webp" alt="Multi-step tasks with the agent" width="100%" /></p>
+<!-- demos:hero:end -->
+
 ---
 
 ## Why Yobi
 
 | Feature | What it does |
 | ------- | ------------ |
-| **No-code flows** | 50 kinds of step, chained with `{{variables}}`. Add them from a menu and drag to reorder, or describe the automation and let AI build it. |
+| **No-code flows** | 53 kinds of step, chained with `{{variables}}`. Add them from a menu and drag to reorder, or describe the automation and let AI build it. |
 | **Runs on your PC** | Flows read LINE on this PC (Windows) and use your files, your shell and a browser window; the agent can also work in Thunderbird. Nothing to host. |
 | **No API key** | AI steps drive the providers' web pages, not paid APIs. Add your own key only if you want to (BYOK). |
 | **An agent that acts** | Switch chat to **Agent** (or type `/agent`) and give it a goal: it picks its own tools and asks before it changes anything. Messages to your Telegram or LINE bot run as the agent too, with the tools you grant each account. |
@@ -33,6 +37,56 @@
 | **Every major AI** | Gemini, Claude, ChatGPT and Perplexity. Pick the model and thinking level for Gemini, Claude and ChatGPT. Gemini and Perplexity work without signing in. |
 | **No middleman** | Yobi runs no server of its own. Prompts go to the AI site you picked. Anything else leaves your PC only through a feature that sends it, such as web search, a bot, a share link or a connector. |
 | **Multilingual** | English, 繁體中文 and 简体中文 built in, plus drop-in language packs ([guide](language/README.md)). |
+
+---
+
+<!-- demos:start -->
+## See It in Action
+
+<table>
+<tr>
+<td width="33%" valign="top">
+<a href="assets/demos/en-US/flow-build.webp"><img src="assets/demos/en-US/flow-build.webp" alt="Build a flow from a description" width="100%" /></a>
+<br /><b>Build a flow from a description</b>
+<br /><sub>A one-sentence description becomes a flow that runs as is or can be edited step by step.</sub>
+</td>
+<td width="33%" valign="top">
+<a href="assets/demos/en-US/writing.webp"><img src="assets/demos/en-US/writing.webp" alt="Rewrite a selected passage" width="100%" /></a>
+<br /><b>Rewrite a selected passage</b>
+<br /><sub>Rewrites only the selected passage of an answer, in place in the Markdown.</sub>
+</td>
+<td width="33%" valign="top">
+<a href="assets/demos/en-US/telegram.webp"><img src="assets/demos/en-US/telegram.webp" alt="Google Maps reviews over Telegram" width="100%" /></a>
+<br /><b>Google Maps reviews over Telegram</b>
+<br /><sub>A Google Maps link sent to the Telegram bot is analyzed on the desktop, and the review summary is sent back.</sub>
+</td>
+</tr>
+<tr>
+<td width="33%" valign="top">
+<a href="assets/demos/en-US/downloader.webp"><img src="assets/demos/en-US/downloader.webp" alt="Download video from a post link" width="100%" /></a>
+<br /><b>Download video from a post link</b>
+<br /><sub>Saves the video from a pasted post link; questions about the post are also supported.</sub>
+</td>
+<td width="33%" valign="top">
+<a href="assets/demos/en-US/notion.webp"><img src="assets/demos/en-US/notion.webp" alt="Import and edit a Notion page" width="100%" /></a>
+<br /><b>Import and edit a Notion page</b>
+<br /><sub>Imports a Notion page for AI-assisted editing and syncs the changes back to Notion.</sub>
+</td>
+<td width="33%" valign="top">
+<a href="assets/demos/en-US/thunderbird.webp"><img src="assets/demos/en-US/thunderbird.webp" alt="Summarize email in Thunderbird" width="100%" /></a>
+<br /><b>Summarize email in Thunderbird</b>
+<br /><sub>Summarizes messages from Thunderbird on this PC.</sub>
+</td>
+</tr>
+<tr>
+<td width="33%" valign="top">
+<a href="assets/demos/en-US/files.webp"><img src="assets/demos/en-US/files.webp" alt="Summarize files on this PC" width="100%" /></a>
+<br /><b>Summarize files on this PC</b>
+<br /><sub>Reads files on this PC and summarizes them in one place.</sub>
+</td>
+</tr>
+</table>
+<!-- demos:end -->
 
 ---
 
@@ -54,7 +108,7 @@ You don't have to build one by hand. Describe what you want and AI assembles the
 
 > *"Every weekday at 8am, summarize my RSS feed and send it to Telegram."*
 
-The flow above also ships as a template. There are 18 templates to start from: some run on a schedule, some as a command typed in chat or sent to your bot.
+The flow above also ships as a template. There are 19 templates to start from: some run on a schedule, some as a command typed in chat or sent to your bot.
 
 **The steps, by kind:**
 
@@ -117,7 +171,11 @@ Personal memory holds short facts about you: your city, what you're working on, 
 
 **1. Install:**
 
-On Windows, get it from the [Microsoft Store](https://apps.microsoft.com/detail/9nnx8prfstc9), which installs and updates automatically. Or download the Windows installer or the macOS DMG (Intel & Apple Silicon) from [GitHub Releases](https://github.com/WellWells/yobi/releases). The GitHub builds are unsigned: on Windows, choose **More info → Run anyway** the first time; on macOS, the [release notes](https://github.com/WellWells/yobi/releases) explain how to open it.
+```bash
+brew install --cask wellwells/tap/yobi   # macOS (Intel & Apple Silicon)
+```
+
+Or download it from the [Microsoft Store](https://apps.microsoft.com/detail/9nnx8prfstc9) (Windows, installs and updates automatically) or [GitHub Releases](https://github.com/WellWells/yobi/releases) (Windows installer, macOS DMG). The GitHub builds are unsigned: on Windows, choose **More info → Run anyway** the first time; on macOS, the [release notes](https://github.com/WellWells/yobi/releases) explain how to open it.
 
 **2. Run something in 30 seconds:**
 
@@ -233,7 +291,6 @@ npm run dev         # dev mode: the UI reloads live; press Enter to restart Elec
 npm run typecheck   # TypeScript type checking
 npm run i18n:check  # compare language/*.json with the source; deletes keys the code no longer uses
 npm run build:win   # build Windows (NSIS installer)
-npm run build:msix  # build Windows (MSIX for the Microsoft Store)
 npm run build:mac   # build macOS (DMG)
 ```
 

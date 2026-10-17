@@ -1,9 +1,13 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { getLanguageDir, getUserLanguageDir } from './files';
+import { fillTemplate } from '../shared/fillTemplate';
 import { formatResetTime, parseClaudeUsageLimit } from './providers/claudeUsageLimit';
 import { CLAUDE_BUSY, CLAUDE_LEFT_CONVERSATION } from './providers/claudeReadScript';
 import { WORKER_WINDOW_UNAVAILABLE } from './workerWindowError';
+import { QUEUE_CANCELLED } from './flow/flowQueue';
+import { mtprotoErrorKey } from './telegram/mtproto/errors';
+import { TELEGRAM_LARGE_UPLOAD_FAILED, TELEGRAM_LARGE_UPLOAD_NOT_READY } from './telegram/largeUploadError';
 import {
   MCP_AUTH_CANCELLED,
   MCP_AUTH_DENIED_PREFIX,
@@ -78,16 +82,13 @@ export function t(
   key: string,
   vars?: Record<string, string>,
 ): string {
-  let result = strings[key] ?? enCache[key] ?? key;
-  if (vars) {
-    for (const [k, v] of Object.entries(vars)) {
-      result = result.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), () => v);
-    }
-  }
-  return result;
+  const result = strings[key] ?? enCache[key] ?? key;
+  return vars ? fillTemplate(result, vars) : result;
 }
 
 const LOGIN_REQUIRED_RE = /\b(GEMINI|CHATGPT|CLAUDE|PERPLEXITY)_LOGIN_REQUIRED\b/;
+/** `siteVerification.ts`'s two English diagnostics: `<site> needs a one-time verification…` / `<site> verification was not completed…`. */
+const SITE_VERIFICATION_RE = /^(\S+) (needs) a one-time verification in Yobi on this computer|^(\S+) verification was not completed/;
 const LOGIN_REQUIRED_PROVIDERS: Record<string, string> = {
   GEMINI: 'Gemini',
   CHATGPT: 'ChatGPT',
@@ -175,12 +176,25 @@ function localizeKnownError(raw: string, strings: Record<string, string>): strin
     'BYOK group has no usable keys — add at least one key to the group': t(strings, 'main.error.byokGroupEmpty'),
     'Telegram bot is not running': t(strings, 'main.error.botNotRunning', { bot: 'Telegram' }),
     'LINE bot is not running': t(strings, 'main.error.botNotRunning', { bot: 'LINE' }),
+    [QUEUE_CANCELLED]: t(strings, 'main.error.cancelledInQueue'),
+    [TELEGRAM_LARGE_UPLOAD_FAILED]: t(strings, 'main.error.telegramLargeUploadFailed'),
+    [TELEGRAM_LARGE_UPLOAD_NOT_READY]: t(strings, 'main.error.telegramLargeUploadNotReady'),
   };
   if (exactMap[raw]) return exactMap[raw];
 
   const mcp = localizeMcpError(raw, strings);
   if (mcp) return mcp;
+  // A big Telegram upload over MTProto (`telegram/mtproto/errors.ts`): only the code is read.
+  const upload = mtprotoErrorKey(raw);
+  if (upload) return t(strings, upload.key, upload.vars);
   if (raw.startsWith(WORKER_WINDOW_UNAVAILABLE)) return t(strings, 'main.error.workerWindowUnavailable');
+  // A link site's click-to-verify check that a bot message or a schedule could not answer
+  // (`siteVerification.ts`), and a verification window the person left unfinished.
+  const verify = SITE_VERIFICATION_RE.exec(raw);
+  if (verify) {
+    const key = verify[2] ? 'flow.error.siteVerificationNeeded' : 'flow.error.siteVerificationIncomplete';
+    return t(strings, key, { site: verify[1] ?? verify[3] });
+  }
   const login = LOGIN_REQUIRED_RE.exec(raw);
   if (login) return t(strings, 'main.error.loginRequired', { provider: LOGIN_REQUIRED_PROVIDERS[login[1]] });
   // Only reaches the user once the bounce retries in gemini.ts have run out.

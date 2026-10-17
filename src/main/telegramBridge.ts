@@ -5,16 +5,14 @@ import type {
   TelegramRuntimeSnapshot,
   TelegramSettingsSnapshot,
 } from '../shared/types';
-import { captureBackgroundCss, paletteCardTheme } from '../shared/capturePalettes';
-import type { CaptureBackgroundStyle, CaptureDirection } from '../shared/capturePalettes';
-import { formatCardTime, mustShowPrompt } from '../shared/captureCard';
+import { cardStyleFromSettings, formatCardTime, mustShowPrompt } from '../shared/captureCard';
 import { normalizePairingState } from './telegram';
 import { listBotContacts } from './botDirectory';
 import { isTelegramAdminGrant, telegramAdminMirror } from './botPermissions';
 import { config, saveConfig } from './config';
 import { maskToken, sendLog } from './helpers';
 import { getLangCache, localizeUserFacingError, t } from './i18n';
-import { captureMarkdownDocument, buildCaptureSummary } from './capture';
+import { captureMarkdownDocument } from './capture';
 import { buildSafeFileNameFromTitle, getOutputDir, getUniquePath } from './files';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -59,16 +57,19 @@ export async function buildTelegramSettingsSnapshot(): Promise<TelegramSettingsS
     enabled: config.telegram.enabled,
     hasToken: Boolean(config.telegram.botToken.trim()),
     tokenPreview: maskToken(config.telegram.botToken),
+    largeUpload: {
+      apiId: config.telegram.apiId,
+      hasApiHash: Boolean(config.telegram.apiHash),
+      apiHashPreview: maskToken(config.telegram.apiHash),
+    },
     allowGroupCommands: config.telegram.allowGroupCommands,
     defaultReplyMode: config.telegram.defaultReplyMode,
     compactReply: config.telegram.compactReply,
-    adminUserIds: normalizedAdmins,
     permissions: config.telegram.permissions,
     llmDirect: config.telegram.llmDirect,
     runtime: _telegramRuntimeSnapshot,
     pairing: normalizedPairing,
     channels: config.telegram.channels,
-    knownUsers: config.telegram.knownUsers,
     contacts: await listBotContacts({ platform: 'telegram' }),
   };
 }
@@ -115,12 +116,13 @@ export function buildTelegramCaptureRequest(
   locale: string,
 ): MarkdownCaptureRequest {
   const timestamp = formatCardTime(exportedAt, locale);
+  const style = cardStyleFromSettings(settings);
   return {
     payload: {
       title: request.title || request.savedFileName.replace(/\.md$/i, ''),
       prompt: request.prompt,
       content: request.response,
-      summary: buildCaptureSummary(request.response),
+      summary: '',
       provider: request.providerLabel,
       timestamp,
       turns: [{ prompt: request.prompt, response: request.response, provider: request.providerLabel, timestamp }],
@@ -134,16 +136,12 @@ export function buildTelegramCaptureRequest(
       showProvider: settings.showProvider,
       showTimestamp: settings.showTimestamp,
       showTokens: false,
-      width: settings.width,
-      margin: settings.margin,
-      background: captureBackgroundCss(
-        settings.palette,
-        settings.backgroundStyle as CaptureBackgroundStyle,
-        settings.direction as CaptureDirection,
-      ),
-      cardTheme: paletteCardTheme(settings.palette),
+      width: style.width,
+      margin: style.margin,
+      background: style.background,
+      cardTheme: style.cardTheme,
       cardLayout: settings.cardLayout,
-      pixelRatio: settings.pixelRatio,
+      pixelRatio: style.pixelRatio,
       zip: false,
     },
   };

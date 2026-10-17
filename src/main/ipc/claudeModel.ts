@@ -1,38 +1,24 @@
 import { ipcMain } from 'electron';
-import { IPC, PROVIDER_URLS } from '../../shared/types';
+import { IPC } from '../../shared/types';
 import { claudeOptionsUnknown } from '../../shared/claudeModels';
 import type { ClaudeModelChoice, ClaudeModelState } from '../../shared/claudeModels';
-import { isModelCatalogStale } from '../../shared/modelCatalogFreshness';
 import { config } from '../config';
-import { sendLog } from '../helpers';
 import { llmLane } from '../flow/lanes';
-import { ensureWorkerWindow, getWorkerWin, isWorkerRevealed } from '../windows';
-import { getAccountStatus } from '../providers/authStatus';
+import { getWorkerWin } from '../windows';
 import {
   getClaudeModelState,
   refreshClaudeModels,
   setClaudeModelChoice,
   syncClaudeModelIfParked,
 } from '../providers/claudeModelSync';
+import { refreshModelList } from './modelListRefresh';
 
-/**
- * Reads the signed-in account's model list into the cache. Skipped for anyone who hid Claude or is
- * not signed in: loading it would only land on the login page.
- */
-export async function refreshClaudeModelList(force = false): Promise<void> {
-  if (config.hiddenProviders.includes('claude')) return;
-  if (!force && !isModelCatalogStale(config.claudeModelCatalog)) return;
-  if (!(await getAccountStatus('claude'))) return;
-  await llmLane.runExclusive(async () => {
-    if (!force && !isModelCatalogStale(config.claudeModelCatalog)) return;
-    if (!force && isWorkerRevealed()) return; // see refreshGeminiModelList
-    try {
-      const worker = await ensureWorkerWindow(PROVIDER_URLS.claude);
-      if (worker) await refreshClaudeModels(worker);
-    } catch (err) {
-      sendLog(`⚠️ Could not read Claude's model list: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  });
+/** Reads the signed-in account's model list into the cache when it is missing or stale (or `force`). */
+export function refreshClaudeModelList(force = false): Promise<void> {
+  return refreshModelList(
+    { provider: 'claude', catalog: () => config.claudeModelCatalog, refresh: refreshClaudeModels, requireSignIn: true },
+    force,
+  );
 }
 
 export function registerClaudeModelHandlers(): void {

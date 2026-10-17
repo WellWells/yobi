@@ -45,3 +45,17 @@ export function splitLeadingTitle(markdown: string): LeadingTitle {
   }
   return { title: '', body: markdown };
 }
+
+/**
+ * The heading an exported card prints and the body under it, one rule for every card a flow
+ * renders (an llm step's export, a share step's file), the same as quick export: a title the user
+ * filled in wins; otherwise the heading the content opens with, lifted out of the body so the card
+ * does not print it twice; otherwise no title. A filled-in title that repeats that opening heading
+ * lifts it too.
+ */
+export function resolveCardTitle(explicitTitle: string, markdown: string): LeadingTitle {
+  const leading = splitLeadingTitle(markdown);
+  const title = explicitTitle.trim();
+  if (!title) return leading;
+  return { title, body: leading.title === title ? leading.body : markdown };
+}

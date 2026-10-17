@@ -1,5 +1,6 @@
 import { localeInstruction, outputOnlyRule, mapReviewsPrompt } from '../../../../shared/mapReviewsPrompt';
 export { mapReviewsPrompt };
+export { ytCommandPrompt } from '../../../../shared/builtinFlows';
 
 const MARKDOWN_LINK_RULE =
   '- Write every link as a Markdown link — `[text](url)`, with no space between "]" and "(" — copying the url verbatim from the input. Never leave a bare URL and never put the url in plain parentheses: both render as a naked domain name instead of the title.';
@@ -80,16 +81,6 @@ ${localeInstruction(locale)}
 {{browser_1}}`;
 }
 
-export function ytCommandPrompt(locale: string): string {
-  return `Summarize the video below from its transcript, keeping the speaker's line of reasoning. Keep it easy to skim — short lines under bold mini-headings, no emoji — and end with one line of 3-6 topic hashtags.
-
-Base the summary only on the transcript. Where it is partial or garbled, say so rather than filling the gap.
-
-${localeInstruction(locale)}
-
-{{yt_1.transcript}}`;
-}
-
 export function stockQuotePrompt(locale: string): string {
   return `Write a one-paragraph plain-language read on how this stock is doing today, from the quote data below: the price, the change, the day's range. No advice.
 
@@ -117,6 +108,10 @@ Transcript:
 {{yt_1.transcript}}`;
 }
 
+/**
+ * Someone sent an X post link with words of their own: do what they asked about the post. Their
+ * request comes last, after the material, so nothing in the post can talk over it.
+ */
 /**
  * The bot step writes the header (name, time, link), so the model never retypes a link. The
  * length cap fits Telegram's 1,024-character photo caption, used when the post has an image.

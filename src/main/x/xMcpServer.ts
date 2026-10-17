@@ -4,13 +4,14 @@
  * Takes an injected service so the tool surface is tested offline with a fake; the real one,
  * which loads x.com pages, is wired in xConnection.ts.
  */
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult, type Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { localIsoString } from '../../shared/localTime';
 import { parseXHandle, parseXPostUrl } from '../../shared/xHandles';
 import type { XPost, XThread, XTrend } from '../flow/skills/xPosts';
+import { createToolServer } from '../mcp/inProcessServer';
 
 export const X_SERVER_NAME = 'X';
-const SERVER_VERSION = '1.0.0';
 
 export interface XServiceLike {
   search: (query: string) => Promise<XPost[]>;
@@ -87,13 +88,7 @@ export const X_TOOLS: Tool[] = [
 
 /** `2026-10-03T22:09:05+08:00` — the reader's own zone, with the offset said out loud. */
 export function localIso(ms: number): string {
-  if (!ms) return '';
-  const date = new Date(ms);
-  const offset = -date.getTimezoneOffset();
-  const sign = offset >= 0 ? '+' : '-';
-  const pad = (n: number): string => String(Math.abs(n)).padStart(2, '0');
-  const local = new Date(ms + offset * 60_000).toISOString().slice(0, 19);
-  return `${local}${sign}${pad(Math.trunc(offset / 60))}:${pad(offset % 60)}`;
+  return ms ? localIsoString(new Date(ms)) : '';
 }
 
 function postView(post: XPost): Record<string, unknown> {
@@ -166,17 +161,6 @@ async function dispatch(service: XServiceLike, name: string, args: Record<string
 }
 
 export function createXMcpServer(service: XServiceLike): Server {
-  const server = new Server({ name: X_SERVER_NAME, version: SERVER_VERSION }, { capabilities: { tools: {} } });
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: X_TOOLS }));
-  server.setRequestHandler(CallToolRequestSchema, async (req): Promise<CallToolResult> => {
-    const args = (req.params.arguments ?? {}) as Record<string, unknown>;
-    try {
-      const result = await dispatch(service, req.params.name, args);
-      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
-    } catch (err) {
-      const body = { error: err instanceof Error ? err.name : 'Error', message: err instanceof Error ? err.message : String(err) };
-      return { content: [{ type: 'text', text: JSON.stringify(body) }], isError: true };
-    }
-  });
-  return server;
+  // The X readers cannot be cancelled, so the call's abort signal is not passed on.
+  return createToolServer({ name: X_SERVER_NAME, tools: X_TOOLS, dispatch: (name, args) => dispatch(service, name, args) });
 }

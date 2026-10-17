@@ -42,12 +42,14 @@ import type { AgentBuiltinTool } from '../flow/agent/agentBuiltins';
 import type { AgentToolScope } from '../flow/agent/agentTools';
 import type { AgentRunFailure, AgentScopeFailure } from '../flow/agent/agentTools';
 import { buildAgentConfirm, shellApprovalText } from './agentConfirm';
+import { numberedQuestion } from '../flow/agent/shellApproval';
 import { measureTokens } from '../tokenMeter';
 import type { TokenUsage } from '../../shared/tokenEstimate';
 import type { AgentProgress, ShellConfirmRequest } from '../flow/agent/agentEngine';
 import {
-  deleteRunState, loadRunState, readRunConnectors, registerRun, saveRunState, unregisterRun,
+  deleteRunState, isBotRun, loadRunState, readRunConnectors, registerRun, saveRunState, unregisterRun,
 } from '../flow/agent/agentRunStore';
+import { publicWebOnlyIf } from '../net/publicWebScope';
 import type { CommandOrigin } from './commandOrigin';
 import type { FlowManager } from '../flow';
 import type { MemoryNote } from '../../shared/userMemory';
@@ -118,6 +120,8 @@ export interface AgentRunOutcome extends AgentCommandResult {
   title?: string;
   /** What the answer changed in the user's memory; a bot appends these to its message. */
   memoryNotes?: MemoryNote[];
+  /** The question asks to approve a shell command: a bot sends it word for word (see `BotBuiltinRunResult.verbatim`). */
+  shellApproval?: boolean;
 }
 
 function summarizeGoal(goal: string): string {
@@ -137,6 +141,7 @@ const BUILTIN_PROGRESS_KEYS: Record<AgentBuiltinTool, string> = {
  * or `mcp:notion-search`.
  */
 export function progressText(progress: AgentProgress, strings: Strings): string {
+  if (progress.stage === 'connecting') return t(strings, 'agent.progress.connecting', { server: progress.server });
   if (progress.stage !== 'tool') return t(strings, 'agent.progress.thinking');
   if (progress.server) return t(strings, 'agent.progress.tool', { tool: progress.server });
   if (isBuiltinTool(progress.tool)) return t(strings, BUILTIN_PROGRESS_KEYS[progress.tool]);
@@ -429,6 +434,8 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
           },
           ...(state.maxTurns ? { maxTurns: state.maxTurns } : {}),
           ...(state.conversationPath ? { conversationPath: state.conversationPath } : {}),
+          // Only the desktop composer's run is the temporary chat; a bot run never reads it.
+          ...(isEphemeralDelivery(origin) ? { temporaryChat: true } : {}),
           ...(state.attachments?.length ? { attachments: state.attachments } : {}),
           signal: controller.signal,
           onConfirm: buildAgentConfirm(deps.getMainWin, strings, origin),
@@ -471,11 +478,7 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
 
       if (outcome.kind === 'question') {
         const choices = outcome.choices ?? [];
-        // Numbered in the text as well as offered as buttons: a bot user can only type, and "2" is
-        // expanded back to the choice when the answer arrives.
-        const questionText = choices.length > 0
-          ? `${outcome.question}\n\n${choices.map((choice, index) => `${index + 1}. ${choice}`).join('\n')}`
-          : outcome.question;
+        const questionText = numberedQuestion(outcome.question, choices);
         const delivered = await deliver({
           prompt: deliveredPrompt,
           title: '',
@@ -501,6 +504,7 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
           ...delivered,
           question: outcome.question,
           ...(choices.length > 0 ? { choices } : {}),
+          ...(outcome.shellApproval ? { shellApproval: true } : {}),
           ...(usedWeb ? { usedWeb } : {}),
           runId,
           ...(state.mcpServerIds?.length ? { mcpServerIds: [...state.mcpServerIds] } : {}),
@@ -590,7 +594,10 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
   // every model request inside it — delegated helpers too — attributed to it. A resume is the same
   // run continuing, so only the call that finishes it records an outcome — and a failed run the user
   // resumes was already counted when it failed, so its resume adds nothing.
-  const run = (taskId?: string): Promise<AgentRunOutcome> => runInMetricDomain('agent', async () => {
+  //
+  // A bot run reads the public web only, the link shortcut included; `isBotRun` as well as the
+  // origin, so a bot run's state can never be resumed into the open web by another entry point.
+  const run = (taskId?: string): Promise<AgentRunOutcome> => publicWebOnlyIf(origin === 'bot' || isBotRun(state), () => runInMetricDomain('agent', async () => {
     const alreadyCounted = state.metricCounted === true;
     const result = await attempt(taskId);
     const outcome = alreadyCounted ? null : agentRunMetricOutcome(result, state);
@@ -601,7 +608,7 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
       await saveRunState(state);
     }
     return result;
-  });
+  }));
 
   return flowManager.enqueueExternalTask(
     `/${command} ${summarizeGoal(goal)}`,

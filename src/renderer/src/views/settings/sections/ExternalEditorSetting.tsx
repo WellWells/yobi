@@ -4,7 +4,7 @@ import { SquarePen, Terminal } from 'lucide-react';
 import { AppTextInput, SectionCard, SectionTitle, SelectDropdown, SettingField, SettingRow } from '../components';
 import { composerEditorApi } from '../../../api/electronApi';
 import { useResolvedCombo } from '../../../store/shortcutStore';
-import { toTokens } from '../../../../../shared/shortcuts';
+import { comboLabel } from '../../../../../shared/shortcuts';
 import { isMac } from '../../../utils/keyLabels';
 import { hostPlatform } from '../../../utils/hostPlatform';
 import type { ExternalEditorSettings } from '../../../../../shared/types';
@@ -40,7 +40,7 @@ export function editorOptions(
 export const ExternalEditorSetting: React.FC<Props> = ({ t, visible, sectionGap }) => {
   const [settings, setSettings] = useState<ExternalEditorSettings | null>(null);
   const [command, setCommand] = useState('');
-  const shortcut = toTokens(useResolvedCombo('chat.externalEditor'), isMac).join(' + ');
+  const shortcut = comboLabel(useResolvedCombo('chat.externalEditor'), isMac);
 
   const load = useCallback(async (): Promise<void> => {
     const next = await composerEditorApi.getSettings();

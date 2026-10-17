@@ -1,13 +1,13 @@
 import type { BrowserWindow } from 'electron';
 import { sleep, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
-import { ensureOnPage, PAGE_REUSE } from './pageReuse';
-import { executeAutomationWithTimeout, dispatchFocusEvents, settledElementCount } from './automationExecutor';
+import { ensureOnPage, landingMayStillRender, PAGE_REUSE } from './pageReuse';
+import { executeAutomationWithTimeout, dispatchFocusEvents, settledElementCounts } from './automationExecutor';
 import { isExpiredCookie, sendLog } from '../helpers';
 import { showLoginWindowIfNeeded } from '../windows';
 import { PROVIDER_URLS } from '../../shared/types';
 import { WORKER_USER_AGENTS } from '../userAgent';
 import { applyWorkerUserAgent } from '../clientHints';
-import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_SUBMIT_JS } from './chatgptSendScript';
+import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_INPUT_SELECTORS, CHATGPT_SUBMIT_JS } from './chatgptSendScript';
 import { CHATGPT_READ_JS, cleanChatgptTitle } from './chatgptReadScript';
 import { uploadFilesToChatgpt } from './chatgptUpload';
 import { syncChatgptModel } from './chatgptModelSync';
@@ -66,10 +66,7 @@ async function getChatgptPageSignals(workerWin: BrowserWindow): Promise<{
     (() => {
       const host = (location.hostname || '').toLowerCase();
       const isAuthHost = host.includes('auth.openai.com');
-      const hasComposer = Boolean(
-        document.querySelector('#prompt-textarea[contenteditable="true"]') ||
-        document.querySelector('form[data-type="unified-composer"] #prompt-textarea'),
-      );
+      const hasComposer = Boolean(document.querySelector(${JSON.stringify(CHATGPT_INPUT_SELECTORS.join(', '))}));
       const ctas = Array.from(document.querySelectorAll('button, a'))
         .map((el) => (el.textContent || '').trim())
         .filter(Boolean);
@@ -101,10 +98,7 @@ async function waitForChatgptComposerOrTimeout(
   while (Date.now() < deadline) {
     try {
       const found = await wc.executeJavaScript(
-        `Boolean(
-          document.querySelector('#prompt-textarea[contenteditable="true"]') ||
-          document.querySelector('form[data-type="unified-composer"] #prompt-textarea')
-        )`,
+        `Boolean(document.querySelector(${JSON.stringify(CHATGPT_INPUT_SELECTORS.join(', '))}))`,
         false,
       ) as boolean;
       if (found) return;
@@ -152,9 +146,11 @@ export async function runChatgptAutomation(
   await dispatchFocusEvents(wc);
 
   // Called for the settling, not the count: the baseline that matters is taken in the page
-  // after the composer is filled, because history can still be hydrating out here. A page kept
-  // from the previous turn finished hydrating long ago, so it has nothing left to settle.
-  if (!reused) await settledElementCount(wc, CHATGPT_ASSISTANT_TURN_SELECTOR);
+  // after the composer is filled, because history can still be hydrating out here. A kept page
+  // finished hydrating long ago, and a new conversation's fresh page has no history to hydrate.
+  if (landingMayStillRender(wc, landing, { continuingThread })) {
+    await settledElementCounts(wc, [CHATGPT_ASSISTANT_TURN_SELECTOR]);
+  }
 
   const autoScript = buildChatgptAutomationScript(prompt, timeoutMs);
   const result = await executeAutomationWithTimeout<{ response: string; title: string }>(

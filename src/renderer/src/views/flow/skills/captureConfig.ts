@@ -1,7 +1,6 @@
 import {
   CAPTURE_PALETTE_GROUPS,
   CAPTURE_PALETTES,
-  captureBackgroundCss,
 } from '../../../../../shared/capturePalettes';
 
 export function buildCapturePaletteOptions(t: (k: string) => string) {
@@ -11,10 +10,17 @@ export function buildCapturePaletteOptions(t: (k: string) => string) {
   }));
 }
 
-export function applyCapturePalette(
+/**
+ * An llm step's Background stores the palette key only ('' = Settings › Card style's palette).
+ * Solid/gradient/mesh, direction and width come from Card style when the step runs. Picking a
+ * Background drops any stored `background` gradient, which would override Card style; nothing else
+ * rewrites a saved step.
+ */
+export function withCapturePalette(
   config: Record<string, string>,
   paletteKey: string,
 ): Record<string, string> {
-  const palette = CAPTURE_PALETTES.find((p) => p.key === paletteKey) ?? CAPTURE_PALETTES[0];
-  return { ...config, palette: palette.key, background: captureBackgroundCss(palette.key) };
+  const next: Record<string, string> = { ...config, palette: paletteKey };
+  delete next.background;
+  return next;
 }

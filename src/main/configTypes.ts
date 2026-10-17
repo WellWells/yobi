@@ -3,6 +3,8 @@ import { DEFAULT_CAPTURE_MARGIN, DEFAULT_CAPTURE_WIDTH, defaultMainHotkey, defau
 import { DEFAULT_SHARE_INSTANCE } from '../shared/types';
 import { DEFAULT_CAPTURE_BACKGROUND_STYLE, DEFAULT_CAPTURE_PALETTE } from '../shared/capturePalettes';
 import { DEFAULT_AGENT_ASK_TTL_MINUTES } from '../shared/types';
+import { bySiteFlag } from '../shared/siteConnectors';
+import type { SiteConnectorFlag } from '../shared/siteConnectors';
 import type { ShortcutOverride } from '../shared/shortcuts';
 import { EMPTY_GEMINI_CHOICE } from '../shared/geminiModels';
 import type { GeminiModelCatalog, GeminiModelChoice } from '../shared/geminiModels';
@@ -11,8 +13,11 @@ import type { ClaudeModelCatalog, ClaudeModelChoice } from '../shared/claudeMode
 import { EMPTY_CHATGPT_CHOICE } from '../shared/chatgptModels';
 import type { ChatgptModelCatalog, ChatgptModelChoice } from '../shared/chatgptModels';
 import { BOT_PERMISSIONS_VERSION } from '../shared/botPermissions';
-import type { BotGrant } from '../shared/botPermissions';
-import type { BotBuiltinCommands, BotByokCommands, BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureRange, CaptureSettings, CardLayout, QuickExportSettings, LinePairingState, McpServerConfig, NotifyEventPrefs, PromptPreferences, Provider, ShareSettings, TelegramChannel, TelegramKnownUser, TelegramPairingState } from '../shared/types';
+import type { BotGrant, BotGroupGrant } from '../shared/botPermissions';
+import type { ReadingFont } from '../shared/readingPrefs';
+import { DEFAULT_DOWNLOADS_KEEP } from '../shared/downloads';
+import type { DownloadsKeep } from '../shared/downloads';
+import type { BotBuiltinCommands, BotByokCommands, BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureRange, CaptureSettings, CardLayout, QuickExportSettings, LinePairingState, McpServerConfig, NotifyEventPrefs, PromptPreferences, Provider, ShareSettings, TelegramChannel, TelegramPairingState } from '../shared/types';
 
 /**
  * The main window's last geometry. `x`/`y`/`width`/`height` are the *restored* rect even when
@@ -27,7 +32,10 @@ export interface WindowBounds {
   maximized: boolean;
 }
 
-export interface Config {
+/** Opt-ins of the sign-in site connectors, one per row of `shared/siteConnectors.ts` (`instagramConnectorEnabled`, …). */
+type SiteConnectorFlags = Record<SiteConnectorFlag, boolean>;
+
+export interface Config extends SiteConnectorFlags {
   targetUrl: string;
   /**
    * Which model the Flow Builder's "create with AI" uses. Deliberately NOT `targetUrl`: the chat
@@ -38,6 +46,8 @@ export interface Config {
   flowGenerateUrl: string;
   /** Which model tidies the personal memory. Empty follows the chat model. */
   memoryCurateUrl: string;
+  /** Which model the writing tools (rewrite a selection) last used. Empty follows the chat model. */
+  writingToolsUrl: string;
   /** Which editor the composer's Ctrl+G opens; see `ExternalEditorChoice`. */
   externalEditor: string;
   /** The command line for `externalEditor: 'custom'`. */
@@ -45,7 +55,6 @@ export interface Config {
   hotkey: string;
   hotkeyEnabled: boolean;
   shortcuts: Record<string, ShortcutOverride>;
-  debounceMs: number;
   responseTimeout: number;
   byokContextBudgetChars: number;
   locale: string;
@@ -72,6 +81,11 @@ export interface Config {
   thunderbirdEnabled: boolean;
   /** Opt-in: let `/agent` search and read X through an in-process MCP connector. */
   xConnectorEnabled: boolean;
+  /**
+   * The Taiwan rail connector. null = not decided yet: the first launch decides from the system
+   * language (on for Taiwan Chinese) and stores it; after that only the user changes it.
+   */
+  taiwanRailEnabled: boolean | null;
   hiddenProviders: Provider[];
   hiddenByokIds: string[];
   hiddenByokGroupIds: string[];
@@ -92,12 +106,18 @@ export interface Config {
   launchAtStartup: boolean;
   layoutMode: 'stacked' | 'side-by-side';
   markdownZoom: number;
+  /** The reading column's typeface; the UI keeps its own font. */
+  readingFont: ReadingFont;
+  /** No maximum width on the reading column. */
+  readingFullWidth: boolean;
   showTokenUsage: boolean;
   /** Where the main window was last left. `null` until the first run has produced one. */
   windowBounds: WindowBounds | null;
   captureSettings: CaptureSettings;
   quickExport: QuickExportSettings;
   share: ShareSettings;
+  /** How long Downloads/Yobi keeps what Yobi saved there; the sweep reads it every time. */
+  downloadsKeep: DownloadsKeep;
 }
 
 export interface ByokInstance {
@@ -112,6 +132,12 @@ export interface ByokInstance {
 export interface TelegramConfig {
   enabled: boolean;
   botToken: string;
+  /**
+   * my.telegram.org app credentials the bot signs in with over MTProto to send files over the
+   * Bot API's 50 MB upload limit. 0 / '' = not set (big files are not sent).
+   */
+  apiId: number;
+  apiHash: string;
   allowGroupCommands: boolean;
   defaultReplyMode: 'markdown' | 'png' | 'webp' | 'pdf';
   compactReply: boolean;
@@ -123,11 +149,18 @@ export interface TelegramConfig {
   llmDirect: BotLlmDirectConfig;
   pairing: TelegramPairingState;
   channels: TelegramChannel[];
-  knownUsers: TelegramKnownUser[];
   /** Per-account grants, keyed by the stringified Telegram user id. No entry means no grants. */
   permissions: Record<string, BotGrant[]>;
   /** Missing on configs written before per-account grants; set once the migration has run. */
   permissionsVersion?: number;
+  /**
+   * What each group the owner allowed grants everyone in it, paired or not, keyed by chat id. No
+   * entry means the group waits for approval and the bot does nothing there; an empty list means
+   * allowed, granting everyone nothing.
+   */
+  groupPermissions: Record<string, BotGroupGrant[]>;
+  /** People the owner blocked (user ids): every message of theirs is ignored. */
+  blockedUsers: string[];
 }
 
 export interface LineConfig {
@@ -141,18 +174,22 @@ export interface LineConfig {
   permissions: Record<string, BotGrant[]>;
   /** Missing on configs written before per-account grants; set once the migration has run. */
   permissionsVersion?: number;
+  /** What each allowed group or room grants everyone in it, keyed by its id. No entry = waits for approval. */
+  groupPermissions: Record<string, BotGroupGrant[]>;
+  /** People the owner blocked (user ids): every message of theirs is ignored. */
+  blockedUsers: string[];
 }
 
 export interface SmtpConfig {
-  enabled: boolean;
   host: string;
   port: number;
   user: string;
   password: string;
 }
 
-export interface StoredTelegramConfig extends Omit<TelegramConfig, 'botToken'> {
+export interface StoredTelegramConfig extends Omit<TelegramConfig, 'botToken' | 'apiHash'> {
   botTokenEncrypted: string;
+  apiHashEncrypted: string;
 }
 export interface StoredLineConfig extends Omit<LineConfig, 'channelAccessToken' | 'channelSecret'> {
   channelAccessTokenEncrypted: string;
@@ -175,12 +212,12 @@ export const defaultStored: StoredConfig = {
   targetUrl: PROVIDER_URLS.gemini,
   flowGenerateUrl: '',
   memoryCurateUrl: '',
+  writingToolsUrl: '',
   externalEditor: '',
   externalEditorCommand: '',
   hotkey: defaultMainHotkey(process.platform === 'darwin'),
   hotkeyEnabled: true,
   shortcuts: {},
-  debounceMs: 1000,
   responseTimeout: 120_000,
   byokContextBudgetChars: 32_000,
   locale: 'en-US',
@@ -200,6 +237,8 @@ export const defaultStored: StoredConfig = {
   launchAtStartup: false,
   layoutMode: 'stacked',
   markdownZoom: 100,
+  readingFont: 'default',
+  readingFullWidth: false,
   showTokenUsage: true,
   windowBounds: null,
   captureSettings: {
@@ -252,6 +291,8 @@ export const defaultStored: StoredConfig = {
   telegram: {
     enabled: false,
     botTokenEncrypted: '',
+    apiId: 0,
+    apiHashEncrypted: '',
     allowGroupCommands: false,
     defaultReplyMode: 'markdown',
     compactReply: false,
@@ -259,9 +300,10 @@ export const defaultStored: StoredConfig = {
     llmDirect: { targetUrl: '' },
     pairing: { pendingCodes: [], pairedUsers: [] },
     channels: [],
-    knownUsers: [],
     permissions: {},
     permissionsVersion: BOT_PERMISSIONS_VERSION,
+    groupPermissions: {},
+    blockedUsers: [],
   },
   line: {
     enabled: false,
@@ -272,9 +314,10 @@ export const defaultStored: StoredConfig = {
     pairing: { pendingCodes: [], pairedUsers: [] },
     permissions: {},
     permissionsVersion: BOT_PERMISSIONS_VERSION,
+    groupPermissions: {},
+    blockedUsers: [],
   },
   smtp: {
-    enabled: false,
     host: '',
     port: 587,
     user: '',
@@ -286,6 +329,8 @@ export const defaultStored: StoredConfig = {
   lineReaderEnabled: false,
   thunderbirdEnabled: false,
   xConnectorEnabled: false,
+  taiwanRailEnabled: null,
+  ...bySiteFlag(() => false),
   hiddenProviders: [],
   hiddenByokIds: [],
   hiddenByokGroupIds: [],
@@ -295,4 +340,5 @@ export const defaultStored: StoredConfig = {
   claudeModelCatalog: null,
   chatgptModel: EMPTY_CHATGPT_CHOICE,
   chatgptModelCatalog: null,
+  downloadsKeep: DEFAULT_DOWNLOADS_KEEP,
 };

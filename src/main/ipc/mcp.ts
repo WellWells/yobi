@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import { IPC } from '../../shared/types';
 import type { McpServerActionResult, McpServerSaveRequest, McpServerView } from '../../shared/types';
+import { errorText } from '../../shared/errorText';
 import { getMcpRegistry } from '../mcp';
 import { MCP_UNAVAILABLE } from '../mcp/mcpErrors';
 import { localizeActionResult, localizeServerViews } from '../mcp/mcpServerViews';
@@ -19,7 +20,7 @@ export function registerMcpHandlers(): void {
     try {
       return localizeActionResult(await registry.saveServer(req));
     } catch (err) {
-      return localizeActionResult({ ok: false, servers: registry.listServers(), error: errText(err) });
+      return localizeActionResult({ ok: false, servers: registry.listServers(), error: errorText(err) });
     }
   });
 
@@ -35,7 +36,7 @@ export function registerMcpHandlers(): void {
     try {
       return localizeActionResult(await registry.connectServer((id ?? '').trim()));
     } catch (err) {
-      return localizeActionResult({ ok: false, servers: registry.listServers(), error: errText(err) });
+      return localizeActionResult({ ok: false, servers: registry.listServers(), error: errorText(err) });
     }
   });
 
@@ -51,11 +52,7 @@ export function registerMcpHandlers(): void {
     try {
       return localizeActionResult(await registry.setBuiltinEnabled((id ?? '').trim(), enabled === true));
     } catch (err) {
-      return localizeActionResult({ ok: false, servers: registry.listServers(), error: errText(err) });
+      return localizeActionResult({ ok: false, servers: registry.listServers(), error: errorText(err) });
     }
   });
-}
-
-function errText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

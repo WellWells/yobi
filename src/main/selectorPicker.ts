@@ -8,7 +8,7 @@ import { executeAutomationWithTimeout } from './providers/automationExecutor';
 import { buildPickerScript, type PickerStrings } from './selectorPickerScript';
 import { getLangCache, t } from './i18n';
 import type { ScraperPickRequest, ScraperPickResult } from '../shared/types';
-import { toTokens } from '../shared/shortcuts';
+import { comboLabel } from '../shared/shortcuts';
 
 const LOAD_TIMEOUT_MS = 25_000;
 const PICK_TIMEOUT_MS = 180_000;
@@ -26,7 +26,7 @@ function pickerStrings(strings: Record<string, string>): PickerStrings {
   return {
     banner: t(strings, 'flow.skill.scraper.pickBannerList'),
     cancelHint: t(strings, 'flow.skill.scraper.pickBannerCancel')
-      .replace('{{shortcut}}', toTokens('Escape', process.platform === 'darwin').join(' + ')),
+      .replace('{{shortcut}}', comboLabel('Escape', process.platform === 'darwin')),
     notAList: t(strings, 'flow.skill.scraper.pickNotAList'),
     scope: t(strings, 'flow.skill.scraper.pickScope'),
     rowCount: t(strings, 'flow.skill.scraper.matchCount'),

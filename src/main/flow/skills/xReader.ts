@@ -27,15 +27,24 @@ export class XSignInRequiredError extends Error {
 }
 
 /** The public, signed-out page; X embeds a limited timeline in its HTML. */
-async function readPublicPage<T>(url: string, pick: (results: XGraphqlResult[]) => T | null): Promise<XRead<T>> {
-  const { status, text } = await fetchRawResponse(url);
+async function readPublicPage<T>(url: string, pick: (results: XGraphqlResult[]) => T | null, signal?: AbortSignal): Promise<XRead<T>> {
+  const { status, text } = await fetchRawResponse(url, signal ? { signal } : undefined);
   return { status, value: pick(readSsrGraphql(text)) };
 }
 
-async function readXPage<T>(url: string, pick: (results: XGraphqlResult[]) => T | null): Promise<XRead<T>> {
-  if (await getSiteAccountStatus('x').catch(() => false)) {
+/**
+ * `signal` (a flow's Stop) ends the read: a stopped signed-in read does not fall back to the public
+ * page. `signedIn` false: the public page alone, whether or not X is signed in (`SiteReadOptions.signedIn`).
+ */
+async function readXPage<T>(
+  url: string,
+  pick: (results: XGraphqlResult[]) => T | null,
+  signal?: AbortSignal,
+  signedIn = true,
+): Promise<XRead<T>> {
+  if (signedIn && await getSiteAccountStatus('x').catch(() => false)) {
     try {
-      const page = await readSignedInXPage(url, (results) => pick(results) !== null);
+      const page = await readSignedInXPage(url, (results) => pick(results) !== null, undefined, signal);
       const value = pick(page.results);
       if (value !== null) {
         sendLog(`🐦 [Flow] X: read signed in — ${url} (${page.results.length} result(s))`);
@@ -43,10 +52,11 @@ async function readXPage<T>(url: string, pick: (results: XGraphqlResult[]) => T 
       }
       sendLog(`🐦 [Flow] X: the signed-in page held nothing readable (HTTP ${page.status}, ${page.results.length} result(s); page called: ${page.operations.join(', ') || 'no GraphQL'}) — reading the public page instead`);
     } catch (err) {
+      signal?.throwIfAborted();
       sendLog(`🐦 [Flow] X: signed-in read failed: ${err instanceof Error ? err.message : String(err)} — reading the public page instead`);
     }
   }
-  return readPublicPage(url, pick);
+  return readPublicPage(url, pick, signal);
 }
 
 /** The account's own newest posts, newest first; reposts of others left out. `value` is null when the page held no timeline. */
@@ -61,8 +71,9 @@ export async function readAccountPosts(handle: string, limit: number): Promise<X
   return { status: page.status, value: posts };
 }
 
-export async function readPostThread(ref: { author: string; id: string }): Promise<XRead<XThread>> {
-  return readXPage(postLink(ref.author, ref.id), (results) => readThread(results, ref.id));
+/** A post and its replies; `signedIn` false reads it as a visitor even when X is signed in. */
+export async function readPostThread(ref: { author: string; id: string }, signal?: AbortSignal, signedIn = true): Promise<XRead<XThread>> {
+  return readXPage(postLink(ref.author, ref.id), (results) => readThread(results, ref.id), signal, signedIn);
 }
 
 /** The first page of a search, in X's order. Signed in only — the caller checks. */
@@ -105,8 +116,4 @@ export async function readXTrends(): Promise<XTrend[]> {
   return trends;
 }
 
-/** Local `YYYY-MM-DD HH:mm`, the same stamp the log uses. */
-export function formatPostTime(ms: number): string {
-  if (!ms) return '';
-  return new Date(ms).toLocaleString('sv-SE', { hour12: false }).slice(0, 16);
-}
+export { formatPostTime } from './xPosts';

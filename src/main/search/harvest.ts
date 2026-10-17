@@ -5,6 +5,7 @@ import { parseHtml } from '../urlParser';
 import { extractPublishedAt } from './publishedAt';
 import { searchRenderLane } from './renderLane';
 import { sendLog } from '../helpers';
+import { withTimeout } from '../promiseRace';
 import type { SerpHit, SourceDoc } from './types';
 
 export const DEFAULT_MAX_SOURCES = 3;
@@ -62,6 +63,7 @@ export async function harvest(
         const value = await withTimeout(
           fetchClean(hit, controller.signal),
           PER_PAGE_TIMEOUT_MS,
+          () => new Error(`timed out after ${PER_PAGE_TIMEOUT_MS / 1_000}s`),
           () => controller.abort(),
         );
         const doc: SourceDoc = { ...value, id: docs.length + 1 };
@@ -201,15 +203,3 @@ function isBlockedAddressLiteral(host: string): boolean {
   return host.includes(':');
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () => void): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      onTimeout();
-      reject(new Error(`timed out after ${ms / 1_000}s`));
-    }, ms);
-    promise.then(
-      (value) => { clearTimeout(timer); resolve(value); },
-      (err) => { clearTimeout(timer); reject(err); },
-    );
-  });
-}

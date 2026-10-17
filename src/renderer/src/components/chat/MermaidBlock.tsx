@@ -2,6 +2,7 @@ import React, { useCallback, useContext, useEffect, useRef, useState } from 'rea
 import { ActionIcon, Group, Text, Tooltip } from '@mantine/core';
 import { Check, Code2, Copy, Workflow } from 'lucide-react';
 import { ShikiCodeBlock } from '../ShikiCodeBlock';
+import { CODE_CHROME } from '../codeBlockChrome';
 import { CaptureContentThemeContext } from '../../utils/forcedCodeTheme';
 import { getCachedMermaid, renderMermaid } from '../../utils/mermaidRuntime';
 import type { MermaidState } from '../../utils/mermaidRuntime';
@@ -72,12 +73,12 @@ export const MermaidBlock = React.memo<MermaidBlockProps>(({ code }) => {
   const toolbar = staticRender ? null : (
     <Group
       gap={4}
-      style={{ position: 'absolute', top: 6, right: 6, zIndex: 2 }}
+      style={{ position: 'absolute', top: CODE_CHROME.top, right: CODE_CHROME.side, zIndex: 2 }}
     >
       <Tooltip label={showSource ? t('mermaid.showDiagram') : t('mermaid.showSource')}>
         <ActionIcon
           variant="default"
-          size={26}
+          size={CODE_CHROME.control}
           onClick={() => setShowSource((previous) => !previous)}
           aria-label={showSource ? t('mermaid.showDiagram') : t('mermaid.showSource')}
         >
@@ -87,7 +88,7 @@ export const MermaidBlock = React.memo<MermaidBlockProps>(({ code }) => {
       <Tooltip label={copied ? t('mermaid.copied') : t('mermaid.copySource')}>
         <ActionIcon
           variant="default"
-          size={26}
+          size={CODE_CHROME.control}
           onClick={handleCopy}
           aria-label={copied ? t('mermaid.copied') : t('mermaid.copySource')}
           style={{ color: copied ? 'var(--success)' : 'var(--text-muted)' }}

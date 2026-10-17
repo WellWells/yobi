@@ -2,7 +2,7 @@ import { app } from 'electron';
 import { IPC } from '../../shared/types';
 import { config, saveConfig } from '../config';
 import { sendToRenderer, setNotifyEnabled, applyLaunchAtStartup } from '../helpers';
-import { getMainWin, setAppQuitting, setMainWindowCloseHandler } from '../windows';
+import { getMainWin, setAppQuitting, setMainWindowCloseHandler, shouldStartHidden } from '../windows';
 import { createTray, destroyTray, isTrayCreated, updateTrayMenu } from '../tray';
 import type { TrayDeps } from '../tray';
 import { setupAppMenu } from './appMenuSetup';
@@ -40,8 +40,8 @@ export function setupTrayAndCloseBehavior(): void {
 
   applyLaunchAtStartup(config.launchAtStartup, config.closeToTray);
 
-  const isStartupHidden = process.argv.includes('--hidden');
-  if (isStartupHidden && config.closeToTray) {
+  // The window was created unmapped for this; hiding it again only matters if something showed it.
+  if (shouldStartHidden()) {
     const win = getMainWin();
     win?.hide();
     if (!isTrayCreated()) createTray(getTrayDeps());

@@ -4,8 +4,10 @@ import { getConfigPath } from '../config';
 import { getFlowDataDir } from '../flow';
 import { getOutputDir } from '../files';
 import { USER_MEMORY_DIR, userMemoryDir } from '../memory/memoryStore';
+import { HISTORY_DIR_NAME } from '../history/historyPaths';
 import { BACKUP_CATEGORY_IDS } from '../../shared/types';
 import type { BackupCategoryId } from '../../shared/types';
+import { toIsoDate } from '../../shared/localTime';
 
 export const BACKUP_TYPE = 'yobi-backup';
 export const BACKUP_VERSION = 1;
@@ -73,6 +75,13 @@ export const CATEGORY_DEFS: Record<BackupCategoryId, CategoryDef> = {
     fileFilter: isMarkdown,
     replaceMode: 'by-filter',
   },
+  history: {
+    id: 'history',
+    kind: 'dir',
+    zipPrefix: HISTORY_DIR_NAME,
+    resolveSource: () => path.join(getFlowDataDir(), HISTORY_DIR_NAME),
+    replaceMode: 'whole-dir',
+  },
 };
 
 export function orderCategories(ids: BackupCategoryId[]): BackupCategoryId[] {
@@ -98,8 +107,5 @@ export function manifestCategories(manifest: BackupManifest): BackupCategoryId[]
 }
 
 export function buildBackupBaseName(prefix = 'backup-yobi'): string {
-  const now = new Date();
-  const pad = (n: number): string => String(n).padStart(2, '0');
-  const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-  return `${prefix}-${date}`;
+  return `${prefix}-${toIsoDate(new Date())}`;
 }

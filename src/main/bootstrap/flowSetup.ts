@@ -41,17 +41,26 @@ export function initFlowManager(deps: {
     ensureWorkerWin: () => ensureWorkerWindow(config.targetUrl),
     getTargetUrl: () => config.targetUrl,
     getResponseTimeoutMs: () => config.responseTimeout,
-    sendTelegramMessage: async (chatId, text) => {
-      await telegramRuntime.sendProactive(chatId, text);
+    sendTelegramMessage: async (chatId, text, extras) => {
+      await telegramRuntime.sendProactive(chatId, text, extras);
     },
-    sendTelegramFile: async (chatId, filePath, sendAs, caption, authorizedPaths) => {
-      await telegramRuntime.sendProactiveFile(chatId, filePath, sendAs, caption, authorizedPaths);
+    sendTelegramFile: async (chatId, filePath, sendAs, caption, authorizedPaths, extras) => {
+      await telegramRuntime.sendProactiveFile(chatId, filePath, sendAs, caption, authorizedPaths, extras);
+    },
+    sendTelegramAlbum: async (chatId, filePaths, caption, authorizedPaths) => {
+      await telegramRuntime.sendProactiveAlbum(chatId, filePaths, caption, authorizedPaths);
     },
     sendLineMessage: async (userId, text) => {
       await lineRuntime.sendProactive(userId, text);
     },
     sendLineImage: async (userId, imageUrl) => {
       await lineRuntime.sendProactiveImage(userId, imageUrl);
+    },
+    sendLineVideo: async (userId, videoUrl, previewUrl) => {
+      await lineRuntime.sendProactiveVideo(userId, videoUrl, previewUrl);
+    },
+    sendLineCarousel: async (userId, items, altText) => {
+      await lineRuntime.sendProactiveCarousel(userId, items, altText);
     },
     getLinePairedUsers: () => config.line.pairing.pairedUsers,
     captureMarkdown: async (payload, format, background, options) => {
@@ -69,9 +78,10 @@ export function initFlowManager(deps: {
           showTimestamp: options?.showTimestamp ?? false,
           showTokens: false,
           cardLayout: 'document',
-          pixelRatio: 1,
+          pixelRatio: options?.pixelRatio ?? 1,
           zip: options?.zip === true,
           width: options?.width ?? DEFAULT_CAPTURE_WIDTH,
+          margin: options?.margin,
           background,
           cardTheme: options?.cardTheme ?? 'dark',
         },

@@ -49,16 +49,15 @@ export function insertTokenAtCaret(
 
 const VarChip: React.FC<{
   token: string;
-  color?: string;
   insertHint: string;
   onInsert: (token: string) => void;
-}> = ({ token, color, insertHint, onInsert }) => {
+}> = ({ token, insertHint, onInsert }) => {
   const label = `{{${token}}}`;
   return (
     <Tooltip label={insertHint} position="top">
       <Code
         fz="xs"
-        c={color}
+        c="dimmed"
         style={{ cursor: 'pointer', userSelect: 'none' }}
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => onInsert(label)}
@@ -98,96 +97,113 @@ export const AvailableVarsHint: React.FC<{
   const botFailSteps = allPrevSteps.filter(
     (s) => s.type === 'bot' && s.config.emitFailFlag === 'true' && s.outputKey,
   );
+  const stepNo = new Map(allPrevSteps.map((s, i) => [s.id, i + 1]));
+  const stepHint = (s: SkillInstance): string => {
+    const n = stepNo.get(s.id);
+    return n ? t('flow.availableVars.stepHint').replace('{{step}}', String(n)) : insertHint;
+  };
 
   return (
     <Group gap={6} wrap="wrap" align="center">
       <Text fz="xs" c="dimmed">{t('flow.availableVars')}</Text>
-      <VarChip token="clipboard" color="dimmed" insertHint={insertHint} onInsert={onInsert} />
-      <VarChip token="timestamp" color="dimmed" insertHint={insertHint} onInsert={onInsert} />
+      <VarChip token="clipboard" insertHint={insertHint} onInsert={onInsert} />
+      <VarChip token="timestamp" insertHint={insertHint} onInsert={onInsert} />
       {hasHotkeyTrigger && (
-        <VarChip
-          token="selection"
-          color="dimmed"
-          insertHint={t('flow.availableVars.selectionHint')}
-          onInsert={onInsert}
-        />
+        <VarChip token="selection" insertHint={t('flow.availableVars.selectionHint')} onInsert={onInsert} />
       )}
       {flowVariables.map((variable) => (
         <VarChip
           key={variable.key}
           token={`${FLOW_VAR_PREFIX}.${variable.key}`}
-          color="violet"
           insertHint={variable.label || insertHint}
           onInsert={onInsert}
         />
       ))}
       {hasFileOutput && (
-        <VarChip token="file" color="green" insertHint={t('flow.availableVars.fileHint')} onInsert={onInsert} />
+        <VarChip token="file" insertHint={t('flow.availableVars.fileHint')} onInsert={onInsert} />
       )}
       {inputVar && (
-        <VarChip token={inputVar} color="teal" insertHint={insertHint} onInsert={onInsert} />
+        <VarChip token={inputVar} insertHint={insertHint} onInsert={onInsert} />
       )}
       {flowTrigger?.type === 'bot' && (
         <>
-          <VarChip token="bot.triggerChatId" color="teal" insertHint={insertHint} onInsert={onInsert} />
-          <VarChip token="bot.triggerUserId" color="teal" insertHint={insertHint} onInsert={onInsert} />
-          <VarChip token="bot.triggerPlatform" color="teal" insertHint={insertHint} onInsert={onInsert} />
+          <VarChip token="bot.triggerChatId" insertHint={insertHint} onInsert={onInsert} />
+          <VarChip token="bot.triggerUserId" insertHint={insertHint} onInsert={onInsert} />
+          <VarChip token="bot.triggerPlatform" insertHint={insertHint} onInsert={onInsert} />
         </>
       )}
       {loopVars.map((v) => (
         <React.Fragment key={v.name}>
-          <VarChip token={v.name} color="orange" insertHint={insertHint} onInsert={onInsert} />
+          <VarChip token={v.name} insertHint={insertHint} onInsert={onInsert} />
           {loopSubfields(v.sourceType).map((sub) => (
-            <VarChip key={sub} token={`${v.name}.${sub}`} color="orange" insertHint={insertHint} onInsert={onInsert} />
+            <VarChip key={sub} token={`${v.name}.${sub}`} insertHint={insertHint} onInsert={onInsert} />
           ))}
         </React.Fragment>
       ))}
-      {prevSteps.map((s) => (
-        <React.Fragment key={s.id}>
-          <VarChip token={s.outputKey} color="blue" insertHint={insertHint} onInsert={onInsert} />
-          {(s.type === 'llm' || s.type === 'browser' || s.type === 'research') && s.config.emitFailFlag === 'true' && (
-            <VarChip token={`${s.outputKey}.isFailed`} color="grape" insertHint={insertHint} onInsert={onInsert} />
-          )}
-          {s.type === 'research' && ['sources', 'count'].map((sub) => (
-            <VarChip key={sub} token={`${s.outputKey}.${sub}`} color="grape" insertHint={insertHint} onInsert={onInsert} />
-          ))}
-          {s.type === 'youtube' && (
-            <>
-              <VarChip token={`${s.outputKey}.title`} color="grape" insertHint={insertHint} onInsert={onInsert} />
-              <VarChip token={`${s.outputKey}.isFailed`} color="grape" insertHint={insertHint} onInsert={onInsert} />
-              <VarChip token={`${s.outputKey}.image`} color="grape" insertHint={insertHint} onInsert={onInsert} />
-            </>
-          )}
-          {s.type === 'x_thread' && ['text', 'author', 'date', 'link', 'replyText', 'replies', 'shown', 'replyCount', 'image'].map((sub) => (
-            <VarChip key={sub} token={`${s.outputKey}.${sub}`} color="grape" insertHint={insertHint} onInsert={onInsert} />
-          ))}
-          {s.type === 'x_thread' && s.config.emitFailFlag === 'true' && (
-            <VarChip token={`${s.outputKey}.isFailed`} color="grape" insertHint={insertHint} onInsert={onInsert} />
-          )}
-          {s.type === 'browser' && s.config.includeImage === 'true' && (
-            <VarChip token={`${s.outputKey}.image`} color="grape" insertHint={insertHint} onInsert={onInsert} />
-          )}
-          {s.type === 'stock' && !/[,\n]/.test(s.config.symbol ?? '') && (
-            ['price', 'changePct', 'name', 'currency', 'isFailed'].map((sub) => (
-              <VarChip key={sub} token={`${s.outputKey}.${sub}`} color="grape" insertHint={insertHint} onInsert={onInsert} />
-            ))
-          )}
-          {s.type === 'forex' && ['rate', 'converted', 'asOf', 'previousClose', 'changePct', 'isFailed'].map((sub) => (
-            <VarChip key={sub} token={`${s.outputKey}.${sub}`} color="grape" insertHint={insertHint} onInsert={onInsert} />
-          ))}
-          {s.type === 'weather' && ['temp', 'condition', 'high', 'low', 'isFailed'].map((sub) => (
-            <VarChip key={sub} token={`${s.outputKey}.${sub}`} color="grape" insertHint={insertHint} onInsert={onInsert} />
-          ))}
-          {s.type === 'air_quality' && ['aqi', 'level', 'status', 'statusLocal', 'pollutant', 'pm2_5', 'station', 'isFailed'].map((sub) => (
-            <VarChip key={sub} token={`${s.outputKey}.${sub}`} color="grape" insertHint={insertHint} onInsert={onInsert} />
-          ))}
-          {s.type === 'sysinfo' && resolveSysInfoSelection(s.config).map((sub) => (
-            <VarChip key={sub} token={`${s.outputKey}.${sub}`} color="grape" insertHint={insertHint} onInsert={onInsert} />
-          ))}
-        </React.Fragment>
-      ))}
+      {prevSteps.map((s) => {
+        const hint = stepHint(s);
+        return (
+          <React.Fragment key={s.id}>
+            <VarChip token={s.outputKey} insertHint={hint} onInsert={onInsert} />
+            {(s.type === 'llm' || s.type === 'browser' || s.type === 'research') && s.config.emitFailFlag === 'true' && (
+              <VarChip token={`${s.outputKey}.isFailed`} insertHint={hint} onInsert={onInsert} />
+            )}
+            {s.type === 'research' && ['sources', 'count'].map((sub) => (
+              <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
+            ))}
+            {s.type === 'youtube' && (
+              <>
+                <VarChip token={`${s.outputKey}.title`} insertHint={hint} onInsert={onInsert} />
+                <VarChip token={`${s.outputKey}.isFailed`} insertHint={hint} onInsert={onInsert} />
+                <VarChip token={`${s.outputKey}.image`} insertHint={hint} onInsert={onInsert} />
+              </>
+            )}
+            {s.type === 'youtube_info' && ['url', 'quality', 'download', 'buttons', 'title', 'image', 'notice', 'downloadReady', 'available'].map((sub) => (
+              <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
+            ))}
+            {s.type === 'youtube_info' && s.config.emitFailFlag === 'true' && (
+              <VarChip token={`${s.outputKey}.isFailed`} insertHint={hint} onInsert={onInsert} />
+            )}
+            {s.type === 'youtube_download' && ['savedLocally', 'summary', 'title', 'quality', 'kind', 'sizeMb', 'fileName'].map((sub) => (
+              <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
+            ))}
+            {s.type === 'youtube_download' && s.config.emitFailFlag === 'true' && (
+              <VarChip token={`${s.outputKey}.isFailed`} insertHint={hint} onInsert={onInsert} />
+            )}
+            {s.type === 'x_thread' && ['text', 'author', 'date', 'link', 'replyText', 'replies', 'shown', 'replyCount', 'image', 'platform'].map((sub) => (
+              <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
+            ))}
+            {s.type === 'x_media' && ['count', 'kind', 'message', 'caption', 'overflow', 'previews', 'text', 'author', 'name', 'date', 'link', 'prompt', 'videoText', 'savedLocally', 'summary', 'notice'].map((sub) => (
+              <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
+            ))}
+            {s.type === 'x_thread' && s.config.emitFailFlag === 'true' && (
+              <VarChip token={`${s.outputKey}.isFailed`} insertHint={hint} onInsert={onInsert} />
+            )}
+            {s.type === 'browser' && s.config.includeImage === 'true' && (
+              <VarChip token={`${s.outputKey}.image`} insertHint={hint} onInsert={onInsert} />
+            )}
+            {s.type === 'stock' && !/[,\n]/.test(s.config.symbol ?? '') && (
+              ['price', 'changePct', 'name', 'currency', 'isFailed'].map((sub) => (
+                <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
+              ))
+            )}
+            {s.type === 'forex' && ['rate', 'converted', 'asOf', 'previousClose', 'changePct', 'isFailed'].map((sub) => (
+              <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
+            ))}
+            {s.type === 'weather' && ['temp', 'condition', 'high', 'low', 'isFailed'].map((sub) => (
+              <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
+            ))}
+            {s.type === 'air_quality' && ['aqi', 'level', 'status', 'statusLocal', 'pollutant', 'pm2_5', 'station', 'isFailed'].map((sub) => (
+              <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
+            ))}
+            {s.type === 'sysinfo' && resolveSysInfoSelection(s.config).map((sub) => (
+              <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
+            ))}
+          </React.Fragment>
+        );
+      })}
       {botFailSteps.map((s) => (
-        <VarChip key={`${s.id}-fail`} token={`${s.outputKey}.isFailed`} color="grape" insertHint={insertHint} onInsert={onInsert} />
+        <VarChip key={`${s.id}-fail`} token={`${s.outputKey}.isFailed`} insertHint={stepHint(s)} onInsert={onInsert} />
       ))}
     </Group>
   );

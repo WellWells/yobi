@@ -1,6 +1,6 @@
 import { FLOW_EXPORT_TYPE } from './types';
 import type { FlowDefinition, FlowVariable, TriggerConfig } from './types';
-import { botTriggerAccess, isBotCommandRestricted } from './botCommandAccess';
+import { botCommandAccessMode, readsOwnerData } from './botCommandAccess';
 
 export const FLOW_EXPORT_VERSION = 1;
 
@@ -80,13 +80,15 @@ const USER_DATA_TRIGGER_FIELDS = (Object.keys(TRIGGER_FIELD_IS_USER_DATA) as (ke
   .filter((field) => TRIGGER_FIELD_IS_USER_DATA[field]);
 
 /**
- * A legacy trigger has no mode and reads an empty list as everyone, so stripping its list would
- * open it up. Its mode is pinned to the one it ran under before the ids go.
+ * A legacy trigger has no mode and reads an empty list as everyone (the admins over a flow that
+ * reads the owner's own data), so stripping its list would open it up. Its mode is pinned to the
+ * one it ran under before the ids go.
  */
-function stripTrigger(trigger: TriggerConfig): TriggerConfig {
+function stripTrigger(trigger: TriggerConfig, steps: FlowDefinition['steps']): TriggerConfig {
   const out = { ...trigger };
-  if (trigger.type === 'bot' && trigger.botAccess === undefined && isBotCommandRestricted(botTriggerAccess(trigger))) {
-    out.botAccess = 'users';
+  if (trigger.type === 'bot' && trigger.botAccess === undefined) {
+    const mode = botCommandAccessMode(undefined, trigger.botAllowedUserIds, readsOwnerData(steps));
+    if (mode !== 'all') out.botAccess = mode;
   }
   for (const field of USER_DATA_TRIGGER_FIELDS) delete out[field];
   return out;
@@ -94,10 +96,11 @@ function stripTrigger(trigger: TriggerConfig): TriggerConfig {
 
 /** Every trigger a flow can fire from, the primary one and the extras alike. */
 export function stripTriggerUserIds(flow: FlowDefinition): FlowDefinition {
+  const strip = (trigger: TriggerConfig): TriggerConfig => stripTrigger(trigger, flow.steps);
   return {
     ...flow,
-    trigger: stripTrigger(flow.trigger),
-    ...(flow.extraTriggers ? { extraTriggers: flow.extraTriggers.map(stripTrigger) } : {}),
+    trigger: strip(flow.trigger),
+    ...(flow.extraTriggers ? { extraTriggers: flow.extraTriggers.map(strip) } : {}),
   };
 }
 

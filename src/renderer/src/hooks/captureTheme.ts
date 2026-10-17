@@ -2,8 +2,6 @@ import type { CardTheme } from '../../../shared/types';
 
 export {
   CAPTURE_PALETTES,
-  CAPTURE_BACKGROUND_STYLES,
-  DEFAULT_CAPTURE_BACKGROUND_STYLE,
   captureBackgroundCss,
   paletteCardTheme,
 } from '../../../shared/capturePalettes';
@@ -117,4 +115,15 @@ export function captureCardCssVars(theme: CardTheme): Record<string, string> {
     vars[CARD_TOKEN_CSS_VARS[key]] = tokens[key];
   }
   return vars;
+}
+
+/**
+ * The serif reading face for a card. The capture window loads no globals.css and does not know the
+ * locale, so this is the app's serif stack (globals.css `--font-reading`) with both Chinese scripts.
+ */
+export const CARD_SERIF_STACK = "Georgia, Cambria, 'Noto Serif TC', 'Noto Serif SC', 'Songti TC', 'Songti SC', PMingLiU, SimSun, serif";
+
+/** Inline vars for the card root: only serif carries over; mono stays on code alone. */
+export function cardReadingVars(font: 'default' | 'serif' | undefined): Record<string, string> {
+  return font === 'serif' ? { '--cap-font-reading': CARD_SERIF_STACK } : {};
 }

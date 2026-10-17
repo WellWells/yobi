@@ -3,8 +3,9 @@ import { promoteDisplayMath, promoteInlineMath } from '../../shared/inlineMathDe
 import { flattenFootnotes } from '../../shared/markdownFootnotes';
 import { htmlAsPlainText } from '../../shared/markdownHtmlWhitelist';
 import { mathTokenExtensions } from '../markdownMathTokens';
+import { LINE_TEXT_MAX } from '../../shared/botMessageLimits';
 
-const LINE_TEXT_LIMIT = 5_000;
+const LINE_TEXT_LIMIT = LINE_TEXT_MAX;
 const LINE_REPLY_MAX = 4_800;
 
 /** A table header written in CJK takes a full-width colon before its value. */
@@ -170,6 +171,14 @@ export function markdownToLineText(markdown: string): string {
 /** A message for LINE: Markdown flattened to plain text, then held to LINE's length limit. */
 export function formatLineText(text: string): string {
   return truncateLineText(markdownToLineText(text));
+}
+
+/**
+ * A message that must arrive exactly as written (a shell approval): no Markdown flattening, no
+ * cut. Null when LINE could not carry it whole — the caller must then not send it at all.
+ */
+export function verbatimLineText(text: string): string | null {
+  return text.length <= LINE_TEXT_LIMIT ? text : null;
 }
 
 export function formatLineReply(text: string, emptyFallback: string): string {

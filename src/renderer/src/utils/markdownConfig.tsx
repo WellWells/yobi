@@ -11,6 +11,8 @@ import { isMermaidLanguage } from '../../../shared/mermaidFences';
 import { repairSplitTableRows } from '../../../shared/markdownTableRepair';
 import { promoteDisplayMath, promoteInlineMath } from '../../../shared/inlineMathDelimiters';
 import type { MarkdownLabels } from '../../../shared/markdownLabels';
+import { citationHost } from '../../../shared/citations';
+import { isHttpUrl } from '../../../shared/webUrl';
 import { useKatexPlugins } from './katexRuntime';
 import { rehypeTightTableColumns } from './markdownTableColumns';
 import { remarkHtmlTags } from './markdownHtmlTags';
@@ -126,16 +128,6 @@ export const ScrollableTable: React.FC<React.ComponentPropsWithoutRef<'table'> &
   </Box>
 );
 
-function isHttpUrl(href?: string): boolean {
-  if (!href) return false;
-  try {
-    const parsed = new URL(href);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
-
 function prefersReducedMotion(): boolean {
   return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 }
@@ -172,14 +164,6 @@ export const ExternalLink: React.FC<React.ComponentPropsWithoutRef<'a'> & ExtraP
   );
 };
 
-function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, '');
-  } catch {
-    return url;
-  }
-}
-
 /**
  * A markdown image. The page only loads images from the app itself (CSP `img-src 'self' data:`),
  * and loading a remote one would tell its host the reader's address — an answer is untrusted, so
@@ -188,7 +172,7 @@ function hostOf(url: string): string {
  */
 export const MarkdownImage: React.FC<React.ComponentPropsWithoutRef<'img'> & ExtraProps> = ({ node: _node, src, alt, title }) => {
   const url = typeof src === 'string' ? src : '';
-  const label = alt?.trim() || hostOf(url);
+  const label = alt?.trim() || citationHost(url);
   if (!isHttpUrl(url)) return <>{label}</>;
   return (
     <ExternalLink href={url} title={title || url} className="md-image-link">

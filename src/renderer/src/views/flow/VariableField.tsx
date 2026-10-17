@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { Button, Group, Stack, Text } from '@mantine/core';
+import { Box, Group, Stack, Text } from '@mantine/core';
 import { FileText, Folder, MousePointerClick } from 'lucide-react';
 import { AppButton } from '../../components/AppButton';
 import { AppNumberInput } from '../../components/AppNumberInput';
@@ -151,26 +151,29 @@ export const VariableField: React.FC<VariableFieldProps> = ({
     const isFolder = variable.type === 'folder';
     return (
       <Stack gap={4}>
-        <Text fz="sm" fw={500}>{label}</Text>
+        <AppTextInput
+          label={label}
+          value={variable.value}
+          onChange={(e) => onChange(e.currentTarget.value)}
+          error={error}
+          size="sm"
+          tone="body"
+          mono
+          inputContainer={(input) => (
+            <Group gap="xs" wrap="nowrap">
+              <Box flex={1} miw={0}>{input}</Box>
+              <AppButton
+                variant="default"
+                size="sm"
+                leftSection={isFolder ? <Folder size={14} /> : <FileText size={14} />}
+                onClick={() => { void pickPath(isFolder ? 'folder' : 'file'); }}
+              >
+                {t('flow.variables.browse')}
+              </AppButton>
+            </Group>
+          )}
+        />
         {variable.hint && <Text fz="xs" c="dimmed">{variable.hint}</Text>}
-        <Group gap="xs" wrap="nowrap" align="flex-start">
-          <AppTextInput
-            value={variable.value}
-            onChange={(e) => onChange(e.currentTarget.value)}
-            error={error}
-            tone="body"
-            mono
-            style={{ flex: 1 }}
-          />
-          <Button
-            variant="default"
-            size="sm"
-            leftSection={isFolder ? <Folder size={14} /> : <FileText size={14} />}
-            onClick={() => { void pickPath(isFolder ? 'folder' : 'file'); }}
-          >
-            {t('flow.variables.browse')}
-          </Button>
-        </Group>
       </Stack>
     );
   }

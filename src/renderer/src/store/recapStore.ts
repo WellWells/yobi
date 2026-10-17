@@ -16,8 +16,3 @@ export const useRecapStore = create<RecapStore>((set) => ({
 export function noteConversationOpened(path: string): void {
   useRecapStore.getState().dispatch({ kind: 'opened', path });
 }
-
-/** Called before the renamed file is selected, so a rename is neither a switch nor an opening. */
-export function noteConversationRenamed(from: string, to: string): void {
-  if (from !== to) useRecapStore.getState().dispatch({ kind: 'renamed', from, to });
-}

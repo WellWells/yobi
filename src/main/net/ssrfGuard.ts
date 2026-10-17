@@ -49,6 +49,14 @@ export function isBlockedAddress(ip: string): boolean {
   return false;
 }
 
+/** The URL is, or resolves to, this computer or a local network: never requested. */
+export class BlockedAddressError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BlockedAddressError';
+  }
+}
+
 const MAX_GUARDED_REDIRECTS = 5;
 
 export async function guardedFetch(input: string | URL, init?: RequestInit): Promise<Response> {
@@ -71,13 +79,13 @@ export async function assertPublicHttpUrl(rawUrl: string): Promise<URL> {
   }
   const host = u.hostname.replace(/^\[|\]$/g, '');
   if (net.isIP(host)) {
-    if (isBlockedAddress(host)) throw new Error(`blocked address: ${host}`);
+    if (isBlockedAddress(host)) throw new BlockedAddressError(`blocked address: ${host}`);
     return u;
   }
   const resolved = await dns.lookup(host, { all: true });
   if (resolved.length === 0) throw new Error(`could not resolve host: ${host}`);
   for (const { address } of resolved) {
-    if (isBlockedAddress(address)) throw new Error(`host resolves to a blocked address: ${host} → ${address}`);
+    if (isBlockedAddress(address)) throw new BlockedAddressError(`host resolves to a blocked address: ${host} → ${address}`);
   }
   return u;
 }

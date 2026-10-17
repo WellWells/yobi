@@ -6,15 +6,13 @@ import { AppTextInput } from '../AppTextInput';
 import { ProviderTag } from '../ProviderTag';
 import styles from '../Sidebar.module.css';
 
-export type EditMode = 'filename' | 'h1' | null;
-
 interface FileItemProps {
   file: OutputFile;
   selected: boolean;
   unread: boolean;
   unreadLabel: string;
+  /** The title (H1) is being edited in place; an editing row always shows its input. */
   isEditing: boolean;
-  editingMode: EditMode;
   editingText: string;
   setEditingText: (title: string) => void;
   selectMode: boolean;
@@ -32,7 +30,7 @@ interface FileItemProps {
 }
 
 export const FileItem: React.FC<FileItemProps> = React.memo(({
-  file, selected, unread, unreadLabel, isEditing, editingMode, editingText, setEditingText,
+  file, selected, unread, unreadLabel, isEditing, editingText, setEditingText,
   selectMode, checked, onToggleSelect,
   onRowClick, onOpenMenu, onDragOut, onCommitEdit, onCancelEdit, timeLabel, turnsLabel, registerItemRef,
 }) => {
@@ -68,7 +66,7 @@ export const FileItem: React.FC<FileItemProps> = React.memo(({
         )}
       </Flex>
 
-      {isEditing && editingMode === 'h1' ? (
+      {isEditing ? (
         <AppTextInput
           autoFocus
           value={editingText}

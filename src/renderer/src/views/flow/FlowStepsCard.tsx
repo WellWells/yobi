@@ -119,7 +119,7 @@ const StepDragPreview: React.FC<{ step: SkillInstance; flow: FlowDefinition; t: 
     if (match >= 0) count = Math.abs(match - from) + 1;
   }
   return (
-    <Paper withBorder p="xs" radius="md" shadow="md" style={{ borderLeft: `3px solid var(--mantine-color-${hue}-filled)`, cursor: 'grabbing' }}>
+    <Paper withBorder p="xs" radius="md" shadow="md" style={{ cursor: 'grabbing' }}>
       <Group gap="xs" wrap="nowrap">
         <Badge variant="light" color={hue} size="sm" leftSection={SKILL_ICON[step.type]}>
           {t(`flow.skill.${step.type}`)}

@@ -1,3 +1,4 @@
+import { clipLine } from '../../../../shared/textBudget';
 import { asRecord, embeddedError, failedResult, parseJsonValue } from '../toolContracts';
 import type {
   ActionBoundary, Args, ConfirmPolicy, ContractCheck, DescribedRow, Fact, GateReason, InterpretedResult,
@@ -94,11 +95,6 @@ function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-function clip(text: string, limit: number): string {
-  const flat = text.replace(/\s+/g, ' ').trim();
-  return flat.length > limit ? `${flat.slice(0, limit - 1)}…` : flat;
-}
-
 function hhmm(iso: string): string {
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? iso : `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
@@ -149,7 +145,7 @@ function checkTarget(id: string, folderPath: string, ledger: LedgerView, reasons
     if (!ledger.hasValue(id)) {
       reasons.push({
         code: 'target_unobserved',
-        message: `"messageId" is "${clip(id, 70)}", which is not the id of any message a tool returned. Find the message with searchMessages or getRecentMessages and use its exact "id".`,
+        message: `"messageId" is "${clipLine(id, 70)}", which is not the id of any message a tool returned. Find the message with searchMessages or getRecentMessages and use its exact "id".`,
       });
     }
     return undefined;
@@ -217,7 +213,7 @@ function checkActor(tool: string, args: Args, ledger: LedgerView, reasons: GateR
   if (from) {
     const identity = findIdentity(ledger, from);
     if (!identity) {
-      reasons.push({ code: 'actor_unknown', message: `"from" is "${clip(from, 60)}", which is not one of the user's accounts.`, choices: identityChoices(ledger) });
+      reasons.push({ code: 'actor_unknown', message: `"from" is "${clipLine(from, 60)}", which is not one of the user's accounts.`, choices: identityChoices(ledger) });
       return;
     }
     const grounded = all.length === 1 || words.includes(identity.email.toLowerCase()) || derived?.email === identity.email;
@@ -273,7 +269,7 @@ function checkDelete(args: Args, ledger: LedgerView, reasons: GateReason[]): voi
   const folderPath = str(args.folderPath);
   const unseen = ids.filter((id) => !ledger.fact(TB_MESSAGE, id) && !ledger.hasValue(id));
   if (unseen.length > 0) {
-    reasons.push({ code: 'target_unobserved', message: `${unseen.length} of these ids came from no tool result (e.g. "${clip(unseen[0], 60)}"). Delete only messages a (read) tool returned.` });
+    reasons.push({ code: 'target_unobserved', message: `${unseen.length} of these ids came from no tool result (e.g. "${clipLine(unseen[0], 60)}"). Delete only messages a (read) tool returned.` });
   }
   const elsewhere = ids.map((id) => ledger.fact(TB_MESSAGE, id)).filter((fact): fact is Fact => {
     if (!fact) return false;
@@ -472,7 +468,7 @@ function describeFor(tool: string) {
       const labels = args.messageIds.map((id) => ledger.fact(TB_MESSAGE, String(id))).map((fact, index) => (fact ? messageLabel(fact) : String((args.messageIds as unknown[])[index])));
       rows.push({ key: 'items', value: labels.join('\n') });
     }
-    if (str(args.body)) rows.push({ key: 'content', value: clip(str(args.body), 300) });
+    if (str(args.body)) rows.push({ key: 'content', value: clipLine(str(args.body), 300) });
     return rows;
   };
 }
@@ -483,13 +479,13 @@ function labelFor(tool: string) {
     const target = targetFact(ledger, args);
     switch (tool) {
       case 'saveDraft':
-        return `saveDraft as ${identity ? identityLabel(identity) : 'the default account'}, subject "${clip(str(args.subject), 60)}"${str(args.to) ? ` to ${str(args.to)}` : ', no recipient'}`;
+        return `saveDraft as ${identity ? identityLabel(identity) : 'the default account'}, subject "${clipLine(str(args.subject), 60)}"${str(args.to) ? ` to ${str(args.to)}` : ', no recipient'}`;
       case 'replyToMessage':
         return `replyToMessage${args.replyAll === true ? ' (reply all)' : ''} to ${target ? messageLabel(target) : str(args.messageId)}`;
       case 'forwardMessage':
         return `forwardMessage ${target ? messageLabel(target) : str(args.messageId)} to ${str(args.to)}`;
       case 'sendMail':
-        return `sendMail to ${str(args.to)}, subject "${clip(str(args.subject), 60)}"`;
+        return `sendMail to ${str(args.to)}, subject "${clipLine(str(args.subject), 60)}"`;
       case 'deleteMessages':
         return `deleteMessages ${Array.isArray(args.messageIds) ? args.messageIds.length : 0} message(s)`;
       default:

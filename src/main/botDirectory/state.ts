@@ -56,8 +56,27 @@ export function upsertContact(map: BotContactMap, input: BotContactInput, now: s
     reachability: existing?.reachability ?? 'ok',
     ...(existing?.unreachableSince ? { unreachableSince: existing.unreachableSince } : {}),
     ...(existing?.lastError ? { lastError: existing.lastError } : {}),
+    ...(existing?.lastUsedAt ? { lastUsedAt: existing.lastUsedAt } : {}),
+    ...(existing?.useCount ? { useCount: existing.useCount } : {}),
+    ...(existing?.lastUsedChatId ? { lastUsedChatId: existing.lastUsedChatId } : {}),
   };
   return { ...map, [key]: next };
+}
+
+/**
+ * An unpaired person addressed the bot (a mention, a command, a link in a group, a private
+ * message): their entry, with when, how often and where — the "people who used the bot" list
+ * the owner blocks from.
+ */
+export function recordUse(map: BotContactMap, input: BotContactInput, chatId: string, now: string): BotContactMap {
+  const withContact = upsertContact(map, { ...input, kind: 'user' }, now);
+  const key = contactKey(input.platform, 'user', input.id.trim());
+  const entry = withContact[key];
+  if (!entry) return map;
+  return {
+    ...withContact,
+    [key]: { ...entry, lastUsedAt: now, useCount: (entry.useCount ?? 0) + 1, lastUsedChatId: chatId.trim() || entry.id },
+  };
 }
 
 export function setReachability(
@@ -227,6 +246,9 @@ function normalizeContact(raw: unknown): BotContact | null {
     reachability,
     ...optional('unreachableSince', pickString(entry.unreachableSince)),
     ...optional('lastError', pickString(entry.lastError)),
+    ...optional('lastUsedAt', pickString(entry.lastUsedAt)),
+    ...optional('useCount', typeof entry.useCount === 'number' && Number.isInteger(entry.useCount) && entry.useCount > 0 ? entry.useCount : undefined),
+    ...optional('lastUsedChatId', pickString(entry.lastUsedChatId)),
   };
 }
 

@@ -23,11 +23,12 @@ export const SKILL_CATALOG: SkillCategory[] = [
     { type: 'browser', keywords: ['fetch', 'web', 'page', '網頁', '瀏覽'] },
     { type: 'rss',     keywords: ['feed', '訂閱'] },
     { type: 'http',    keywords: ['api', 'request', '請求'] },
-    { type: 'youtube', keywords: ['transcript', 'subtitle', 'yt', '字幕', '影片'] },
+    { type: 'youtube', keywords: ['youtube', 'transcript', 'subtitle', 'yt', '字幕', '影片'] },
     { type: 'youtube_subs', keywords: ['youtube', 'channel', 'subscribe', 'subscription', 'creator', 'yt', '訂閱', '頻道', '創作者'] },
-    { type: 'x_posts', keywords: ['x', 'twitter', 'tweet', 'post', 'follow', 'account', 'timeline', '推特', '推文', '貼文', '追蹤', '帳號'] },
+    { type: 'youtube_info', keywords: ['youtube', 'yt', 'video', 'quality', 'resolution', 'menu', 'info', '影片', '畫質', '解析度', '選單', '資訊'] },    { type: 'x_posts', keywords: ['x', 'twitter', 'tweet', 'post', 'follow', 'account', 'timeline', '推特', '推文', '貼文', '追蹤', '帳號'] },
     { type: 'x_trends', keywords: ['x', 'twitter', 'trending', 'trends', 'hot', 'explore', '推特', '趨勢', '熱門', '熱搜', '話題', '排行'] },
-    { type: 'x_thread', keywords: ['x', 'twitter', 'tweet', 'reply', 'replies', 'comment', 'thread', '推特', '推文', '回覆', '留言', '討論串'] },
+    { type: 'x_thread', keywords: ['x', 'twitter', 'tweet', 'threads', 'instagram', 'ig', 'facebook', 'fb', '臉書', 'reply', 'replies', 'comment', 'thread', '推特', '推文', '脆', '回覆', '留言', '討論串'] },
+    { type: 'x_media', keywords: ['x', 'twitter', 'tweet', 'threads', 'instagram', 'ig', 'facebook', 'fb', '臉書', 'reels', 'story', 'stories', 'video', 'gif', 'photo', 'media', 'download', 'forward', '推特', '推文', '脆', '限時動態', '貼文', '影片', '圖片', '下載', '轉發', '轉傳'] },
     { type: 'stock',   keywords: ['stock', 'ticker', 'price', 'equity', 'quote', 'shares', '股票', '股價', '報價', '個股'] },
     { type: 'forex',   keywords: ['forex', 'fx', 'currency', 'exchange', 'rate', '匯率', '外匯', '貨幣', '換匯'] },
     { type: 'weather', keywords: ['weather', 'forecast', 'temperature', 'rain', '天氣', '氣溫', '溫度', '預報', '降雨'] },
@@ -70,6 +71,7 @@ export const SKILL_CATALOG: SkillCategory[] = [
     { type: 'file_list',  keywords: ['list', 'dir', 'directory', 'folder', 'files', '列出', '目錄', '清單', '資料夾'] },
     { type: 'file_delete', keywords: ['delete', 'remove', 'rm', 'file', 'cleanup', 'temp', '刪除', '移除', '檔案', '清理', '暫存'] },
     { type: 'file_download', keywords: ['download', 'fetch', 'save', 'url', 'binary', 'file', '下載', '抓檔', '存檔', '檔案'] },
+    { type: 'youtube_download', keywords: ['youtube', 'yt', 'download', 'video', 'mp4', 'mp3', 'ytdl', 'yt-dlp', '影片', '下載', '畫質', '音訊'] },
     { type: 'comment', keywords: ['note', '備註', '註解'] },
   ] },
 ];
@@ -84,7 +86,7 @@ export const SKILL_CATEGORY: Record<SkillType, SkillCategoryKey> = (() => {
   return map;
 })();
 
-export const DANGER_SKILLS: SkillType[] = ['stop', 'power', 'restart_app', 'file_delete'];
+export const DANGER_SKILLS: SkillType[] = ['power', 'restart_app', 'file_delete'];
 
 export interface SearchableSkill {
   type: SkillType;

@@ -39,7 +39,6 @@ export function reduceChannelState(
   channels: TelegramChannel[],
   event: ChannelMemberEvent,
   isPairedUser: (userId: number) => boolean,
-  now: string,
 ): ChannelReduceResult {
   const kind = asChatKind(event.chatType);
   if (!kind) return { next: channels, change: 'ignored' };
@@ -60,7 +59,6 @@ export function reduceChannelState(
       ...(username ? { username } : {}),
       chatType: kind,
       canPost: true,
-      discoveredAt: existing?.discoveredAt ?? now,
     };
     const next = [...channels];
     if (existing) next[index] = channel; else next.push(channel);
@@ -75,7 +73,6 @@ export function reduceChannelState(
     ...(username ? { username } : {}),
     chatType: kind,
     canPost: false,
-    lostAt: existing.lostAt ?? now,
   };
   const next = [...channels];
   next[index] = channel;
@@ -122,12 +119,7 @@ export function attachChannelDiscovery(
       return next();
     }
 
-    const result = reduceChannelState(
-      options.getChannels(),
-      event,
-      options.isPairedUser,
-      new Date().toISOString(),
-    );
+    const result = reduceChannelState(options.getChannels(), event, options.isPairedUser);
     if (result.change === 'ignored') return next();
 
     options.saveChannels(result.next);

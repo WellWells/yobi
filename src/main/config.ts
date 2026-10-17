@@ -1,5 +1,4 @@
-import { app } from 'electron';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { openStoreWithRecovery } from './configStore';
 import { repairStoredShape } from './configShapeRepair';
@@ -28,25 +27,6 @@ import {
 } from './configNormalizers';
 import { carryCurrentGrantsIntoLegacyBackup, telegramAdminMirror } from './botPermissions/normalize';
 
-function getLegacyWindowsConfigPath(): string | null {
-  if (!app.isPackaged || process.platform !== 'win32') return null;
-  return path.join(path.dirname(app.getPath('exe')), 'config.json');
-}
-
-function migrateLegacyWindowsConfigIfNeeded(configDir: string): void {
-  const legacyPath = getLegacyWindowsConfigPath();
-  if (!legacyPath) return;
-  const targetPath = path.join(configDir, 'config.json');
-  if (!existsSync(legacyPath) || existsSync(targetPath)) return;
-  try {
-    mkdirSync(configDir, { recursive: true });
-    copyFileSync(legacyPath, targetPath);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'unknown migration error';
-    console.warn(`[config] failed to migrate legacy config: ${message}`);
-  }
-}
-
 function migrateProviderCommandsIfNeeded(dir: string): void {
   const configPath = path.join(dir, 'config.json');
   if (!existsSync(configPath)) return;
@@ -67,7 +47,6 @@ function migrateProviderCommandsIfNeeded(dir: string): void {
 }
 
 const configDir = getConfigDir();
-migrateLegacyWindowsConfigIfNeeded(configDir);
 migrateProviderCommandsIfNeeded(configDir);
 
 const store = openStoreWithRecovery<StoredConfig>('config', configDir, defaultStored);
@@ -87,7 +66,7 @@ function buildConfigFromStore(): Config {
     smtp: StoredSmtpConfig & { password?: string };
   };
   const {
-    telegram: { botTokenEncrypted: _enc, ...telegramRest },
+    telegram: { botTokenEncrypted: _enc, apiHashEncrypted: _hashEnc, ...telegramRest },
     line: { channelAccessTokenEncrypted: _laEnc, channelSecretEncrypted: _lsEnc, ...lineRest },
     smtp: { passwordEncrypted: _smtpEnc, ...smtpRest },
     byokInstances: storedByok,
@@ -95,7 +74,7 @@ function buildConfigFromStore(): Config {
   } = stored;
   return normalizeConfig({
     ...rest,
-    telegram: { ...telegramRest, botToken: '' },
+    telegram: { ...telegramRest, botToken: '', apiHash: '' },
     line: { ...lineRest, channelAccessToken: '', channelSecret: '' },
     smtp: { ...smtpRest, password: '' },
     byokInstances: (storedByok ?? []).map(({ apiKeyEncrypted: _keyEnc, ...instRest }) => ({ ...instRest, apiKey: '' })),
@@ -105,9 +84,15 @@ function buildConfigFromStore(): Config {
 const config: Config = buildConfigFromStore();
 
 let telegramTokenUnavailable = false;
+let telegramApiHashUnavailable = false;
 
 function markTelegramTokenResolved(): void {
   telegramTokenUnavailable = false;
+}
+
+/** The API hash's twin of `markTelegramTokenResolved`: the user typed a new one or cleared it. */
+function markTelegramApiHashResolved(): void {
+  telegramApiHashUnavailable = false;
 }
 
 /** Decrypts one stored secret and files a failure the UI can show instead of silently returning ''. */
@@ -125,23 +110,21 @@ function readSecret(stored: string, at: SecretFailure): string {
 
 function initSensitiveConfig(): void {
   const stored = store.store as StoredConfig & {
-    telegram: StoredTelegramConfig & { botToken?: string };
     smtp: StoredSmtpConfig & { password?: string };
   };
-  const encrypted = stored.telegram?.botTokenEncrypted ?? '';
-  const legacyToken = stored.telegram?.botToken ?? '';
+  const telegramToken = readSecretChecked(
+    stored.telegram?.botTokenEncrypted ?? '',
+    { scope: 'telegram', id: '', field: 'botToken', label: '' },
+  );
+  config.telegram.botToken = telegramToken.value;
+  telegramTokenUnavailable = telegramToken.failed;
 
-  if (!encrypted && legacyToken) {
-    const newEncrypted = encryptToken(legacyToken);
-    const { botToken: _removed, ...telegramWithout } = stored.telegram as StoredTelegramConfig & { botToken?: string };
-    store.set('telegram', { ...telegramWithout, botTokenEncrypted: newEncrypted } as StoredTelegramConfig);
-    config.telegram.botToken = legacyToken;
-    telegramTokenUnavailable = false;
-  } else {
-    const telegramToken = readSecretChecked(encrypted, { scope: 'telegram', id: '', field: 'botToken', label: '' });
-    config.telegram.botToken = telegramToken.value;
-    telegramTokenUnavailable = telegramToken.failed;
-  }
+  const apiHash = readSecretChecked(
+    stored.telegram?.apiHashEncrypted ?? '',
+    { scope: 'telegram', id: '', field: 'apiHash', label: '' },
+  );
+  config.telegram.apiHash = apiHash.value;
+  telegramApiHashUnavailable = apiHash.failed;
 
   config.smtp.password = readSecret(stored.smtp?.passwordEncrypted ?? '', { scope: 'smtp', id: '', field: 'password', label: '' });
 
@@ -173,7 +156,11 @@ function initSensitiveConfig(): void {
 function clearStoredSecret(scope: SecretScope, id: string, field: string): void {
   const current = store.store;
 
-  if (scope === 'telegram') {
+  if (scope === 'telegram' && field === 'apiHash') {
+    store.store = { ...current, telegram: { ...current.telegram, apiHashEncrypted: '' } } as StoredConfig;
+    config.telegram.apiHash = '';
+    telegramApiHashUnavailable = false;
+  } else if (scope === 'telegram') {
     store.store = { ...current, telegram: { ...current.telegram, botTokenEncrypted: '' } } as StoredConfig;
     config.telegram.botToken = '';
     telegramTokenUnavailable = false;
@@ -219,6 +206,7 @@ function reEncryptSensitiveConfig(): void {
     telegram: {
       ...current.telegram,
       botTokenEncrypted: config.telegram.botToken ? encryptToken(config.telegram.botToken) : current.telegram.botTokenEncrypted,
+      apiHashEncrypted: config.telegram.apiHash ? encryptToken(config.telegram.apiHash) : current.telegram.apiHashEncrypted,
     },
     line: {
       ...current.line,
@@ -266,12 +254,16 @@ function saveConfig(cfg: Partial<Config>): void {
   const mergedTelegram = partialTelegram !== undefined
     ? deserializePairingConfig({ ...config.telegram, ...partialTelegram })
     : config.telegram;
-  const { botToken, ...telegramWithoutToken } = mergedTelegram;
+  const { botToken, apiHash, ...telegramWithoutToken } = mergedTelegram;
   const previousStoredTelegram = store.store.telegram;
   const telegramTokenEncrypted = botToken
     ? encryptToken(botToken)
     : (telegramTokenUnavailable ? (previousStoredTelegram?.botTokenEncrypted ?? '') : '');
-  if (botToken) clearSecretFailures('telegram');
+  if (botToken) clearSecretFailures('telegram', '', 'botToken');
+  const telegramApiHashEncrypted = apiHash
+    ? encryptToken(apiHash)
+    : (telegramApiHashUnavailable ? (previousStoredTelegram?.apiHashEncrypted ?? '') : '');
+  if (apiHash) clearSecretFailures('telegram', '', 'apiHash');
 
   const mergedLine = partialLine !== undefined
     ? normalizeLine({ ...config.line, ...partialLine })
@@ -329,6 +321,7 @@ function saveConfig(cfg: Partial<Config>): void {
     telegram: {
       ...telegramWithoutToken,
       botTokenEncrypted: telegramTokenEncrypted,
+      apiHashEncrypted: telegramApiHashEncrypted,
     },
     line: storedLine,
     smtp: {
@@ -345,13 +338,15 @@ function wipeSensitiveConfig(): void {
   const current = store.store;
   store.store = {
     ...current,
-    telegram: { ...current.telegram, botTokenEncrypted: '' },
+    telegram: { ...current.telegram, botTokenEncrypted: '', apiHashEncrypted: '' },
     line: { ...current.line, channelAccessTokenEncrypted: '', channelSecretEncrypted: '' },
     smtp: { ...current.smtp, passwordEncrypted: '' },
     byokInstances: (current.byokInstances ?? []).map((instance) => ({ ...instance, apiKeyEncrypted: '' })),
   } as StoredConfig;
   telegramTokenUnavailable = false;
+  telegramApiHashUnavailable = false;
   config.telegram.botToken = '';
+  config.telegram.apiHash = '';
   config.line.channelAccessToken = '';
   config.line.channelSecret = '';
   config.smtp.password = '';
@@ -362,8 +357,8 @@ function wipeSensitiveConfig(): void {
 
 // `theme` stays at the shipped 'auto' so a factory reset keeps following the system theme.
 function getDefaultConfig(): Config {
-  const { telegram: { botTokenEncrypted: _enc, ...telegramRest }, ...rest } = defaultStored;
-  return normalizeConfig({ ...rest, telegram: { ...telegramRest, botToken: '' } });
+  const { telegram: { botTokenEncrypted: _enc, apiHashEncrypted: _hashEnc, ...telegramRest }, ...rest } = defaultStored;
+  return normalizeConfig({ ...rest, telegram: { ...telegramRest, botToken: '', apiHash: '' } });
 }
 
 function importConfigFromJson(raw: unknown): Config | null {
@@ -383,11 +378,14 @@ function importConfigFromJson(raw: unknown): Config | null {
   const patched: Record<string, unknown> = { ...rawConfig };
 
   const rawTelegram = rawConfig.telegram;
-  if (rawTelegram && typeof rawTelegram === 'object' && 'botTokenEncrypted' in (rawTelegram as Record<string, unknown>)) {
-    const enc = (rawTelegram as Record<string, unknown>).botTokenEncrypted;
+  if (rawTelegram && typeof rawTelegram === 'object') {
+    const telegramObj = rawTelegram as Record<string, unknown>;
+    const enc = telegramObj.botTokenEncrypted;
+    const hashEnc = telegramObj.apiHashEncrypted;
     patched.telegram = {
-      ...(rawTelegram as Record<string, unknown>),
-      botToken: decryptToken(typeof enc === 'string' ? enc : ''),
+      ...telegramObj,
+      ...('botTokenEncrypted' in telegramObj ? { botToken: decryptToken(typeof enc === 'string' ? enc : '') } : {}),
+      ...('apiHashEncrypted' in telegramObj ? { apiHash: decryptToken(typeof hashEnc === 'string' ? hashEnc : '') } : {}),
     };
   }
 
@@ -426,8 +424,9 @@ function importConfigFromJson(raw: unknown): Config | null {
     });
   }
 
-  // A backup from before per-account grants must not re-run the upgrade migration: the grants
-  // in force now are kept, pruned to the restored pairing (the same rule as mcpServers below).
+  // An old backup must not re-run an upgrade migration: the grants in force now are kept (from
+  // before the downloader grant, only that one), pruned to the restored pairing (the same rule as
+  // mcpServers below).
   const telegramGrants = carryCurrentGrantsIntoLegacyBackup(patched.telegram, config.telegram.permissions);
   const lineGrants = carryCurrentGrantsIntoLegacyBackup(patched.line, config.line.permissions);
   patched.telegram = telegramGrants.value;
@@ -442,6 +441,14 @@ function importConfigFromJson(raw: unknown): Config | null {
   }
   if (!normalized.smtp.password) normalized.smtp.password = config.smtp.password;
   if (!normalized.telegram.botToken) normalized.telegram.botToken = config.telegram.botToken;
+  // The API id and hash are one pair: a hash the backup cannot give back (another machine's key,
+  // or a backup from before big uploads) keeps the current pair rather than mixing the two.
+  if (!normalized.telegram.apiHash) {
+    normalized.telegram.apiHash = config.telegram.apiHash;
+    normalized.telegram.apiId = config.telegram.apiId;
+  } else if (!normalized.telegram.apiId) {
+    normalized.telegram.apiId = config.telegram.apiId;
+  }
   if (!normalized.line.channelAccessToken) normalized.line.channelAccessToken = config.line.channelAccessToken;
   if (!normalized.line.channelSecret) normalized.line.channelSecret = config.line.channelSecret;
   if (!Array.isArray(rawByok)) {
@@ -459,6 +466,11 @@ function importConfigFromJson(raw: unknown): Config | null {
   // ARRAY is still honoured, so a backup can deliberately clear the list.
   if (!Array.isArray(rawConfig.mcpServers)) {
     normalized.mcpServers = config.mcpServers;
+  }
+  // Same for how long Downloads/Yobi keeps files: the default would let the next sweep delete
+  // downloads the person chose to keep.
+  if (!('downloadsKeep' in rawConfig)) {
+    normalized.downloadsKeep = config.downloadsKeep;
   }
   const importedByokId = byokIdFromUrl(normalized.targetUrl);
   const importedGroupId = byokGroupIdFromUrl(normalized.targetUrl);
@@ -494,6 +506,7 @@ export {
   getHiddenSources,
   wipeSensitiveConfig,
   markTelegramTokenResolved,
+  markTelegramApiHashResolved,
   getDefaultConfig,
   getConfigDir,
   getConfigPath,

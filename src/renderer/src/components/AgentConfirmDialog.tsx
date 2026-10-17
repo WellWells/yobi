@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Badge, Code, Collapse, Group, ScrollArea, Stack, Text } from '@mantine/core';
-import { ChevronDown, ChevronRight, Minus, Pencil, Plus, TriangleAlert, ShieldCheck, Terminal, Workflow } from 'lucide-react';
-import type { AgentConfirmChoice, AgentConfirmPayload, AgentConfirmRow, AgentFlowEditSummary } from '../../../shared/types';
+import { ChevronDown, ChevronRight, TriangleAlert, ShieldCheck, Terminal, Workflow } from 'lucide-react';
+import type { AgentConfirmChoice, AgentConfirmPayload, AgentConfirmRow } from '../../../shared/types';
+import { fillTemplate } from '../../../shared/fillTemplate';
+import { FlowEditRows } from './FlowEditRows';
 import { ipcEvents, windowApi } from '../api/electronApi';
 import { useI18nStore } from '../store/i18nStore';
 import { AppModal } from './AppModal';
@@ -9,42 +11,7 @@ import { AppButton } from './AppButton';
 import { Z_MODAL_CONFIRM } from '../config/zLayers';
 
 function rowValue(row: AgentConfirmRow, t: (key: string) => string): string {
-  if (!row.valueKey) return row.value;
-  return Object.entries(row.vars ?? {}).reduce(
-    (text, [name, value]) => text.split(`{{${name}}}`).join(value),
-    t(row.valueKey),
-  );
-}
-
-const EDIT_ICON = { added: Plus, removed: Minus, changed: Pencil } as const;
-
-/** One line per step the change touches, then the flow-level changes — what is about to be saved over. */
-function FlowEditRows({ edit, t }: { edit: AgentFlowEditSummary; t: (key: string) => string }) {
-  const rows = (['added', 'removed', 'changed'] as const).flatMap((kind) => edit[kind].map((step, index) => ({ kind, step, index })));
-  return (
-    <ScrollArea.Autosize mah={200}>
-      <Stack gap={6}>
-        {rows.map(({ kind, step, index }) => {
-          const Icon = EDIT_ICON[kind];
-          return (
-            <Group key={`${kind}-${index}-${step.label}`} gap={8} wrap="nowrap" align="flex-start">
-              <Icon size={14} style={{ flexShrink: 0, marginTop: 3 }} color="var(--text-muted)" />
-              <Text fz="var(--font-size-sm)" c="var(--text-primary)" style={{ lineHeight: 1.6, wordBreak: 'break-word' }}>
-                {t(`agent.flow.edit.${kind}`).replace('{{label}}', step.label)}
-                <Text span fz="var(--font-size-xs)" c="var(--text-muted)">{` · ${t(`flow.skill.${step.type}`)}`}</Text>
-              </Text>
-            </Group>
-          );
-        })}
-        {edit.renamedFrom && (
-          <Text fz="var(--font-size-sm)" c="var(--text-primary)">
-            {t('agent.flow.edit.renamed').replace('{{from}}', edit.renamedFrom)}
-          </Text>
-        )}
-        {edit.trigger && <Text fz="var(--font-size-sm)" c="var(--text-primary)">{t('agent.flow.edit.trigger')}</Text>}
-      </Stack>
-    </ScrollArea.Autosize>
-  );
+  return row.valueKey ? fillTemplate(t(row.valueKey), row.vars ?? {}) : row.value;
 }
 
 /** The facts behind a connector action, each on its own line — the JSON stays one click away. */

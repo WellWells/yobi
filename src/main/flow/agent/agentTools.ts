@@ -51,7 +51,6 @@ export interface AgentToolScope {
    * Absent means yes; `false` where saving a flow can never be approved.
    */
   flows?: boolean;
-  help: boolean;
   /** Offer `delegate`. Set by the engine per run, never by a scope constant: it depends on depth and provider. */
   delegate?: boolean;
 }
@@ -66,7 +65,6 @@ export function readOnlyScope(scope: AgentToolScope): AgentToolScope {
   return {
     skills: scope.skills.filter((skill) => !HELPER_EXCLUDED_SKILLS.has(skill)),
     builtins: false,
-    help: scope.help,
     delegate: false,
   };
 }
@@ -74,7 +72,6 @@ export function readOnlyScope(scope: AgentToolScope): AgentToolScope {
 export const FULL_TOOL_SCOPE: AgentToolScope = {
   skills: AGENT_ALLOWED_SKILLS,
   builtins: true,
-  help: true,
 };
 
 /**
@@ -86,11 +83,7 @@ export const BOT_TOOL_SCOPE: AgentToolScope = {
   skills: AGENT_ALLOWED_SKILLS.filter((skill) => skill !== 'shell' && skill !== 'file_write'),
   builtins: true,
   flows: false,
-  help: true,
 };
-
-/** A run driven by one MCP server alone: no Yobi skills, no flow builders, no tool_help. */
-export const MCP_ONLY_TOOL_SCOPE: AgentToolScope = { skills: [], builtins: false, help: false };
 
 /**
  * What the composer's "web" checkbox switches off.
@@ -152,16 +145,11 @@ export function withShellCapability(scope: AgentToolScope, enabled: boolean): Ag
 export const BOT_CHAT_TOOL_SCOPE: AgentToolScope = {
   skills: ['search', 'research', 'browser', 'youtube', 'gmap_reviews', 'weather', 'air_quality', 'stock', 'forex', 'random'],
   builtins: false,
-  help: true,
 };
 
-export function scopeHasTools(scope: AgentToolScope): boolean {
-  return scope.skills.length > 0 || scope.builtins;
-}
-
 /**
- * Thrown when a scoped run has no tools to work with; the caller turns it into a user-facing
- * message.
+ * Thrown when the connectors a run declared cannot be used; the caller turns it into a
+ * user-facing message.
  */
 export type AgentScopeFailure = 'not-connected' | 'no-room';
 
@@ -411,7 +399,7 @@ function toolNames(scope: AgentToolScope): string[] {
   return [
     ...scope.skills,
     ...builtinNames(scope),
-    ...(scope.help ? [AGENT_HELP_TOOL] : []),
+    AGENT_HELP_TOOL,
   ];
 }
 
@@ -430,14 +418,14 @@ export function buildToolCatalog(scope: AgentToolScope = FULL_TOOL_SCOPE, allBri
   }
   const builtinCatalog = scope.builtins ? buildBuiltinCatalog(scope.delegate === true, scopeHasFlowTools(scope)) : '';
   if (builtinCatalog) blocks.push(builtinCatalog);
-  if (scope.help) blocks.push(helpToolLine(), optsFooter());
+  blocks.push(helpToolLine(), optsFooter());
   return blocks.join('\n');
 }
 
 export function describeToolSpec(name: string, scope: AgentToolScope = FULL_TOOL_SCOPE): string {
   const wanted = name.trim();
   if (!wanted) return 'ERROR: "tool" is required — name the tool you want the full entry for.';
-  if (scope.help && isHelpTool(wanted)) return helpToolLine();
+  if (isHelpTool(wanted)) return helpToolLine();
   if (builtinNames(scope).includes(wanted as AgentBuiltinTool)) {
     const line = buildBuiltinCatalog(scope.delegate === true, scopeHasFlowTools(scope)).split('\n').find((entry) => entry.startsWith(`- "${wanted}"`));
     if (line) return line;
@@ -622,19 +610,14 @@ export function validateAgentAction(
   }
 
   if (action !== 'call_tool' && action !== 'finish' && action !== 'ask_user') {
-    // A connector-scoped run has no call_tool; naming only ask_user and finish would steer the
-    // model away from call_mcp, the one shape that can actually do anything for it.
-    const canCallTool = scopeHasTools(scope) || scope.help;
     const shapes = [
-      ...(canCallTool ? ['"call_tool"'] : ['"call_mcp"']),
+      '"call_tool"',
       ...(batch ? ['"call_tools"'] : []),
       ...(allowAsk ? ['"ask_user"'] : []),
       ...(deliverable.length > 0 ? ['"deliver"'] : []),
       '"finish"',
     ];
-    const listed = shapes.length > 1
-      ? `${shapes.slice(0, -1).join(', ')} or ${shapes[shapes.length - 1]}`
-      : shapes[0];
+    const listed = `${shapes.slice(0, -1).join(', ')} or ${shapes[shapes.length - 1]}`;
     return { ok: false, error: `The "action" field must be exactly ${listed}.` };
   }
 
@@ -663,12 +646,6 @@ export function validateAgentAction(
 
   const tool = typeof obj.tool === 'string' ? obj.tool : '';
   const names = toolNames(scope);
-  if (names.length === 0) {
-    return {
-      ok: false,
-      error: 'There is no "call_tool" action in this run — every tool here is an MCP tool, so use "call_mcp" (or "finish").',
-    };
-  }
   // The catalog only suggests; a model can still name a tool it remembers from training, so the
   // scope is re-checked here. Both branches answer the same way — knowing which one rejected it
   // would only tell the model that an excluded tool exists.

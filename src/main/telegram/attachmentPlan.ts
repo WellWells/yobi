@@ -5,7 +5,7 @@ import {
 } from '../../shared/types';
 import { isTextLike, isUploadable, normalizeMime } from '../../shared/attachmentFormats';
 
-export { extensionOf, isTextLike, isUploadable } from '../../shared/attachmentFormats';
+export { isTextLike, isUploadable } from '../../shared/attachmentFormats';
 
 export const TELEGRAM_MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024;
 

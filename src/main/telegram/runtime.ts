@@ -3,7 +3,6 @@ import type {
   BotLlmDirectConfig,
   FlowExecutionResult,
   TelegramChannel,
-  TelegramKnownUser,
   TelegramOutputChoice,
   TelegramPairingState,
   TelegramReplyMode,
@@ -13,6 +12,7 @@ import type {
 } from '../../shared/types';
 import { Mutex } from '../flow/lanes';
 import { createPairingBridge } from './dmPolicy';
+import type { PairingUserProfile } from './dmPolicy';
 import { attachChannelDiscovery } from './channels';
 import { collectDirectoryCandidates, runDirectoryBackfill } from './directory';
 import type { DirectorySources } from './directory';
@@ -43,8 +43,12 @@ import { ExportTokenRegistry } from './exporter';
 import type { TelegramExportContext, TelegramExportFormat } from './exporter';
 import { handleExportCallback } from './exportHandlers';
 import * as messaging from './messaging';
+import type { BotSendExtras, TelegramSendAs } from '../flow/types';
+import { clearFlowButtons } from './flowButtons';
 import type { TelegramMessagingContext, TelegramTaskSuccessPayload } from './messaging';
 import { telegramFetchCompat } from './fetchCompat';
+import { queuedMessageProgress } from './progressMessage';
+import type { StepProgress } from '../../shared/stepProgress';
 
 export interface TelegramRuntimeDeps {
   getEnabled: () => boolean;
@@ -57,12 +61,24 @@ export interface TelegramRuntimeDeps {
   savePairing: (next: TelegramPairingState) => void;
   getChannels: () => TelegramChannel[];
   saveChannels: (next: TelegramChannel[]) => void;
-  getKnownUsers: () => TelegramKnownUser[];
-  saveKnownUsers: (next: TelegramKnownUser[]) => void;
   getDirectorySources: () => Promise<Omit<DirectorySources, 'channels' | 'pairedUserIds'>>;
   isAdminUser: (userId: number) => boolean;
   /** Whether an account may type a built-in command in a chat (its grants). */
   canUseBuiltin?: (key: BotBuiltinCommandKey, userId: number, chatId: number) => Promise<boolean>;
+  /** Whether an account's pasted link may run the downloader in a chat (its download grant). */
+  canUseDownloader?: (userId: number, chatId: number) => Promise<boolean>;
+  /** Whether someone may talk to the bot in a chat (paired, or a group's grant). */
+  canChat?: (userId: number, chatId: number) => Promise<boolean>;
+  /** Whether an account may run a flow command limited to admins in a chat. */
+  isFlowAdmin?: (userId: number, chatId: number) => Promise<boolean>;
+  /** Blocked by the owner. */
+  isBlocked?: (userId: number) => boolean;
+  /** A group the owner has not allowed yet: the bot ignores everything in it. */
+  isGroupPending?: (chatId: number) => boolean;
+  /** The bot was just added to a group (not a channel). */
+  onGroupJoined?: (group: { id: string; title?: string }) => void;
+  /** An unpaired person addressed the bot in a chat. */
+  onUse?: (user: PairingUserProfile, chatId: number) => void;
   /** Per paired account, what its own private-chat "/" menu should add to the shared one. */
   getMenuAccess?: () => Promise<MenuAccountAccess[]>;
   onTaskRequest: (request: TelegramTaskRequest) => Promise<{ taskId: string }>;
@@ -108,6 +124,7 @@ export interface TelegramRuntimeDeps {
     input: string,
     userId: number,
     chatId: number,
+    onProgress?: (progress: StepProgress) => void,
   ) => Promise<{ taskId: string; result: Promise<FlowExecutionResult> }>;
   getEffectiveTargetUrl: () => string;
   getByokContextBudgetChars: () => number;
@@ -117,6 +134,7 @@ export class TelegramRuntime {
   private bot: Bot<TelegramContext> | null = null;
   private status: TelegramRuntimeStatus = 'idle';
   private botUsername = '';
+  private readsAllGroupMessages: boolean | undefined;
   private errorMessage = '';
   private currentToken = '';
   private currentAllowGroupCommands = false;
@@ -144,25 +162,31 @@ export class TelegramRuntime {
     return {
       status: this.status,
       botUsername: this.botUsername || undefined,
+      readsAllGroupMessages: this.readsAllGroupMessages,
       errorMessage: this.errorMessage || undefined,
       updatedAt: new Date().toISOString(),
     };
   }
 
-  async sendProactive(chatId: number, text: string): Promise<void> {
-    await this.tracked(chatId, () => messaging.sendProactive(this.msgCtx, chatId, text));
+  async sendProactive(chatId: number, text: string, extras?: BotSendExtras): Promise<void> {
+    await this.tracked(chatId, () => messaging.sendProactive(this.msgCtx, chatId, text, extras));
   }
 
   async sendProactiveFile(
     chatId: number,
     filePath: string,
-    sendAs: 'photo' | 'document' | 'auto',
+    sendAs: TelegramSendAs,
     caption?: string,
     authorizedPaths?: string[],
+    extras?: BotSendExtras,
   ): Promise<void> {
     await this.tracked(chatId, () => messaging.sendProactiveFile(
-      this.msgCtx, chatId, filePath, sendAs, caption, authorizedPaths,
+      this.msgCtx, chatId, filePath, sendAs, caption, authorizedPaths, extras,
     ));
+  }
+
+  async sendProactiveAlbum(chatId: number, filePaths: string[], caption?: string, authorizedPaths?: string[]): Promise<void> {
+    await this.tracked(chatId, () => messaging.sendProactiveAlbum(this.msgCtx, chatId, filePaths, caption, authorizedPaths));
   }
 
   /**
@@ -271,21 +295,9 @@ export class TelegramRuntime {
     prompt: string,
     result: BotBuiltinRunResult,
   ): Promise<void> {
-    if (!result.ok) {
-      await messaging.sendTaskError(this.msgCtx, target, {
-        providerLabel: result.providerLabel,
-        message: result.text,
-      });
-      return;
-    }
-    await messaging.sendTaskSuccess(this.msgCtx, target, {
-      providerLabel: result.providerLabel,
-      savedFileName: result.savedFileName,
-      response: result.text,
-      prompt,
-      title: result.title,
-      elapsedSeconds: result.elapsedSeconds,
-    });
+    const shown = await messaging.sendBuiltinReply(this.msgCtx, target, prompt, result);
+    // A question the user never saw whole cannot be answered: no "1" may approve it.
+    if (!shown) this.deps.onDropAgentAsk(target.chatId, target.userId);
   }
 
   private async startOrReplaceBot(token: string): Promise<void> {
@@ -325,6 +337,7 @@ export class TelegramRuntime {
     this.currentToken = token;
     this.currentAllowGroupCommands = this.deps.getAllowGroupCommands();
     this.botUsername = me.username || '';
+    this.readsAllGroupMessages = me.can_read_all_group_messages;
     this.pollerActive = true;
     this.registry.startPeriodicPrune();
 
@@ -372,8 +385,6 @@ export class TelegramRuntime {
         {
           getChannels: () => this.deps.getChannels(),
           saveChannels: (next) => this.deps.saveChannels(next),
-          getKnownUsers: () => this.deps.getKnownUsers(),
-          saveKnownUsers: (next) => this.deps.saveKnownUsers(next),
           getPairing: () => this.deps.getPairing(),
           savePairing: (next) => this.deps.savePairing(next),
           recordContact: (input) => { void recordBotContact(input).catch(() => undefined); },
@@ -408,7 +419,8 @@ export class TelegramRuntime {
       },
     );
     attachPresenceTracking(bot, {
-      onPresence: ({ contact, reachability }) => {
+      onPresence: ({ contact, reachability, joinedGroup }) => {
+        if (joinedGroup) this.deps.onGroupJoined?.({ id: contact.id, ...(contact.title ? { title: contact.title } : {}) });
         void recordBotContact(contact)
           .then(() => (
             reachability === 'ok'
@@ -436,6 +448,18 @@ export class TelegramRuntime {
       getByokContextBudgetChars: () => this.deps.getByokContextBudgetChars(),
       isAdminUser: (userId) => this.deps.isAdminUser(userId),
       ...(this.deps.canUseBuiltin ? { canUseBuiltin: this.deps.canUseBuiltin } : {}),
+      ...(this.deps.canUseDownloader ? { canUseDownloader: this.deps.canUseDownloader } : {}),
+      ...(this.deps.canChat ? { canChat: this.deps.canChat } : {}),
+      ...(this.deps.isFlowAdmin ? { isFlowAdmin: this.deps.isFlowAdmin } : {}),
+      ...(this.deps.isBlocked ? { isBlocked: this.deps.isBlocked } : {}),
+      ...(this.deps.isGroupPending ? { isGroupPending: this.deps.isGroupPending } : {}),
+      onPendingGroupSeen: (group) => {
+        const id = String(group.id);
+        void recordBotContact({ platform: 'telegram', kind: 'chat', id, ...(group.title ? { title: group.title } : {}), chatType: group.type })
+          .then(() => markBotReachable('telegram', 'chat', id))
+          .catch(() => undefined);
+      },
+      ...(this.deps.onUse ? { onUse: this.deps.onUse } : {}),
       onTaskRequest: (request) => this.deps.onTaskRequest(request),
       onStatusRequest: () => this.deps.onStatusRequest(),
       onRestartApp: this.deps.onRestartApp,
@@ -447,7 +471,7 @@ export class TelegramRuntime {
       getProviderCommands: this.deps.getProviderCommands,
       getBuiltinCommands: this.deps.getBuiltinCommands,
       onBuiltinCommand: async (request) => {
-        const progress = messaging.createProgressEditor(this.msgCtx, request.replyTarget);
+        const progress = queuedMessageProgress(this.msgCtx, request.replyTarget);
         let result: BotBuiltinRunResult;
         try {
           result = await this.deps.onBuiltinCommand(
@@ -459,7 +483,9 @@ export class TelegramRuntime {
             progress.push,
           );
         } finally {
-          progress.stop();
+          // Not awaited: the answer deletes the acknowledgement, so an edit still in flight
+          // can only fail quietly, and a hung edit must not hold the answer back.
+          void progress.close();
         }
         await this.deliverBuiltinResult(request.replyTarget, request.input, result);
       },
@@ -467,7 +493,7 @@ export class TelegramRuntime {
       onDropAgentAsk: (chatId, userId) => this.deps.onDropAgentAsk(chatId, userId),
       onNewConversation: (chatId, userId) => this.deps.onNewConversation(chatId, userId),
       onAgentAnswer: async (request) => {
-        const progress = messaging.createProgressEditor(this.msgCtx, request.replyTarget);
+        const progress = queuedMessageProgress(this.msgCtx, request.replyTarget);
         let result: BotBuiltinRunResult | null;
         try {
           result = await this.deps.onAgentAnswer(
@@ -477,7 +503,7 @@ export class TelegramRuntime {
             progress.push,
           );
         } finally {
-          progress.stop();
+          void progress.close();
         }
         if (!result) {
           await messaging.sendTaskError(this.msgCtx, request.replyTarget, {
@@ -507,6 +533,8 @@ export class TelegramRuntime {
   private async stopInternal(): Promise<void> {
     this.mediaIntake?.dispose();
     this.mediaIntake = null;
+    // A menu sent under the old token must not start a run on a bot that has been stopped or swapped.
+    clearFlowButtons();
     if (!this.bot) {
       this.pollerActive = false;
       this.currentToken = '';
@@ -521,6 +549,7 @@ export class TelegramRuntime {
     this.currentToken = '';
     this.currentAllowGroupCommands = false;
     this.botUsername = '';
+    this.readsAllGroupMessages = undefined;
     this.registry.clear();
     try {
       await Promise.race([

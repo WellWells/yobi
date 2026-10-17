@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { BYOK_PROVIDER_TYPES, IPC, PROVIDER_URLS, byokIdFromUrl, byokGroupIdFromUrl, detectByokProviderType } from '../../shared/types';
 import type { ByokConnectionProbe, ByokGroupSaveRequest, ByokInstanceSaveRequest, ByokModelsResult, ByokProviderType, ByokSettingsSnapshot, ByokTestResult } from '../../shared/types';
+import { isHttpUrl } from '../../shared/webUrl';
 import { config, saveConfig } from '../config';
 import type { ByokInstance } from '../configTypes';
 import { maskToken, sendLog } from '../helpers';
@@ -30,15 +31,6 @@ function buildByokSnapshot(): ByokSettingsSnapshot {
       memberIds: group.memberIds.filter((memberId) => existingKeyIds.has(memberId)),
     })),
   };
-}
-
-function isValidBaseUrl(raw: string): boolean {
-  try {
-    const parsed = new URL(raw);
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
-  } catch {
-    return false;
-  }
 }
 
 function isDanglingByokTarget(url: string): boolean {
@@ -101,7 +93,7 @@ export function registerByokHandlers(ctx: IpcContext): void {
     const providerType: ByokProviderType = BYOK_PROVIDER_TYPES.includes(rawType as ByokProviderType)
       ? (rawType as ByokProviderType)
       : detectByokProviderType(baseUrl);
-    if (!name || !model || !isValidBaseUrl(baseUrl)) {
+    if (!name || !model || !isHttpUrl(baseUrl)) {
       return { ok: false as const, snapshot: buildByokSnapshot() };
     }
 

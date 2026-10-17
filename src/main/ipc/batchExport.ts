@@ -10,6 +10,7 @@ import type {
   BatchCaptureResult,
   ZipExportResult,
 } from '../../shared/types';
+import { toIsoDate } from '../../shared/localTime';
 import { CaptureTooTallError, captureMarkdownDocument } from '../capture';
 import {
   BATCH_CAPTURE_MAX_ITEMS,
@@ -37,12 +38,6 @@ function parseBatchItems(raw: unknown): BatchCaptureItem[] {
     items.push({ name, fileStem: buildSafeFileNameFromTitle(stem), request: item.request });
   }
   return items;
-}
-
-function todayStamp(): string {
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
 /** The window can be covered by the time a long batch ends; a notice then says it finished. */
@@ -137,7 +132,7 @@ export function registerBatchExportHandlers(): void {
 
     const strings = getLangCache();
     const outputDir = await getOutputDir();
-    const stem = buildSafeFileNameFromTitle(`${t(strings, 'batchExport.zipStem')}-${todayStamp()}`);
+    const stem = buildSafeFileNameFromTitle(`${t(strings, 'batchExport.zipStem')}-${toIsoDate(new Date())}`);
     const picked = await showSaveDialogForWin(getMainWindow(), {
       defaultPath: await getUniquePath(path.join(lastBatchFolder || outputDir, `${stem}.zip`), ''),
       filters: [{ name: 'ZIP', extensions: ['zip'] }],

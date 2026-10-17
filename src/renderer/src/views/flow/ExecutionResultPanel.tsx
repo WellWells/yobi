@@ -1,15 +1,34 @@
 import React, { useCallback, useMemo } from 'react';
 import { Box, Button, Code, CopyButton, Group, Spoiler, Stack, Text, Tooltip } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
-import { Check, CheckCircle2, Copy, Download, History, XCircle } from 'lucide-react';
+import { Check, Copy, Download, History } from 'lucide-react';
 import { SectionCard } from '../../components/SectionCard';
 import { CopyIconButton } from '../../components/CopyIconButton';
+import {
+  LABEL_OFFSET,
+  PROGRESS_ROW_STYLE,
+  ProgressMark,
+  type ProgressState,
+} from '../../components/ProgressMark';
 import { flowApi } from '../../api/electronApi';
 import { stepHasOutput } from './StepCard';
 import { buildFlowRunMarkdown, stepLogsById } from './flowRunExport';
 import { isCodeOutput } from './flowCapabilities';
 import { useFlowStore } from '../../store/useFlowStore';
-import type { SkillInstance } from '../../../../shared/types';
+import type { FlowStepStatus, SkillInstance } from '../../../../shared/types';
+
+const MARK_BY_STATUS: Record<FlowStepStatus, ProgressState> = {
+  completed: 'done',
+  error: 'failed',
+  running: 'active',
+  skipped: 'skipped',
+  pending: 'pending',
+};
+
+export function stepMark(status: FlowStepStatus, flowRunning: boolean): ProgressState {
+  if (status === 'running' && !flowRunning) return 'pending';
+  return MARK_BY_STATUS[status];
+}
 
 export interface ExecutionResultPanelProps {
   steps: SkillInstance[];
@@ -22,6 +41,7 @@ export const ExecutionResultPanel: React.FC<ExecutionResultPanelProps> = React.m
 }) => {
   const executionLogs = useFlowStore((s) => s.executionLogs);
   const executionResult = useFlowStore((s) => s.executionResult);
+  const flowRunning = useFlowStore((s) => s.selectedFlowId !== null && s.runningFlowIds.includes(s.selectedFlowId));
   const copyLabel = t('common.copy');
   const copiedLabel = t('common.copied');
   const buildMarkdown = useCallback(
@@ -70,22 +90,23 @@ export const ExecutionResultPanel: React.FC<ExecutionResultPanelProps> = React.m
             if (!log) return null;
             return (
               <Box key={step.id}>
-                <Group gap="xs" wrap="nowrap">
-                  {log.status === 'completed' && <CheckCircle2 size={14} color="var(--mantine-color-success)" />}
-                  {log.status === 'error' && <XCircle size={14} color="var(--mantine-color-error)" />}
-                  <Text fz="xs" fw={500}>{step.label}</Text>
-                  {stepHasOutput(step) && (
-                    <CopyButton value={`{{${step.outputKey}}}`}>
-                      {({ copied, copy }) => (
-                        <Tooltip label={copied ? copiedLabel : copyLabel} position="top">
-                          <Code fz="xs" style={{ cursor: 'pointer' }} onClick={copy}>{`{{${step.outputKey}}}`}</Code>
-                        </Tooltip>
-                      )}
-                    </CopyButton>
-                  )}
-                </Group>
+                <Box style={PROGRESS_ROW_STYLE}>
+                  <ProgressMark state={stepMark(log.status, flowRunning)} />
+                  <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
+                    <Text fz="xs" fw={500} c={log.status === 'skipped' ? 'dimmed' : undefined}>{step.label}</Text>
+                    {stepHasOutput(step) && (
+                      <CopyButton value={`{{${step.outputKey}}}`}>
+                        {({ copied, copy }) => (
+                          <Tooltip label={copied ? copiedLabel : copyLabel} position="top">
+                            <Code fz="xs" style={{ cursor: 'pointer' }} onClick={copy}>{`{{${step.outputKey}}}`}</Code>
+                          </Tooltip>
+                        )}
+                      </CopyButton>
+                    )}
+                  </Group>
+                </Box>
                 {log.output && (
-                  <Group gap={4} wrap="nowrap" align="flex-start" mt={2}>
+                  <Group gap={4} wrap="nowrap" align="flex-start" mt={2} pl={LABEL_OFFSET}>
                     <Box style={{ flex: 1, minWidth: 0 }}>
                       <Spoiler maxHeight={72} showLabel={t('common.showMore')} hideLabel={t('common.showLess')}>
                         <Text className="selectable" fz="xs" c="dimmed" ff={isCodeOutput(step.type, log.output) ? 'monospace' : undefined} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
@@ -97,10 +118,10 @@ export const ExecutionResultPanel: React.FC<ExecutionResultPanelProps> = React.m
                   </Group>
                 )}
                 {log.note && (
-                  <Text fz="xs" c="dimmed" mt={2}>{t(`flow.execution.note.${log.note}`)}</Text>
+                  <Text fz="xs" c="dimmed" mt={2} pl={LABEL_OFFSET}>{t(`flow.execution.note.${log.note}`)}</Text>
                 )}
                 {log.error && (
-                  <Group gap={4} wrap="nowrap" align="flex-start" mt={2}>
+                  <Group gap={4} wrap="nowrap" align="flex-start" mt={2} pl={LABEL_OFFSET}>
                     <Text className="selectable" fz="xs" c="var(--mantine-color-error)" style={{ flex: 1, minWidth: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                       {log.displayError ?? log.error}
                     </Text>

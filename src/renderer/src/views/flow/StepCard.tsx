@@ -113,7 +113,6 @@ export const StepCard: React.FC<StepCardProps> = ({
       p="sm"
       radius="md"
       bg={danger ? 'color-mix(in srgb, var(--mantine-color-red-light) 50%, transparent)' : undefined}
-      style={{ borderLeft: `3px solid var(--mantine-color-${hue}-filled)` }}
     >
       <Stack gap="xs">
         <Group justify="space-between" wrap="nowrap">

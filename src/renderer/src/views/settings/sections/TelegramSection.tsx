@@ -1,6 +1,6 @@
 import React from 'react';
-import { Badge, Box, Group, Stack, Text, Button as MButton } from '@mantine/core';
-import { Bot, KeyRound, Link, Megaphone, MessageSquare, Plug, Send, Users } from 'lucide-react';
+import { Box, Group, Stack, Text, Button as MButton } from '@mantine/core';
+import { Bot, KeyRound, Link, Megaphone, MessageSquare, Plug, Send, Users, UsersRound } from 'lucide-react';
 import dayjs from 'dayjs';
 import { AppPasswordInput } from '../../../components/AppPasswordInput';
 import { SectionCard, SettingRow, SettingField, SettingDivider, SelectDropdown, ToggleSwitch, SectionTitle } from '../components';
@@ -8,8 +8,10 @@ import { SecretHealthAlert } from '../../../components/SecretHealthAlert';
 import { BotDefaultModelSetting } from './BotDefaultModelSetting';
 import { BotReplyPreview } from './BotReplyPreview';
 import { TelegramChannels } from './TelegramChannels';
+import { BotAudienceSection } from './BotAudienceSection';
 import { TelegramPairingPanel } from './TelegramPairingPanel';
 import { TelegramPairedUsers } from './TelegramPairedUsers';
+import { TelegramLargeUploadSettings } from './TelegramLargeUploadSettings';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import type { useTelegramSettings } from '../hooks/useTelegramSettings';
 import type { BotAccessControls } from '../hooks/useBotAccessControls';
@@ -150,6 +152,14 @@ export const TelegramSection: React.FC<Props> = ({
 
             <SettingDivider my={16} />
 
+            <TelegramLargeUploadSettings
+              saved={settings?.largeUpload}
+              reload={telegram.loadTelegramSettings}
+              t={t}
+            />
+
+            <SettingDivider my={16} />
+
             <SectionTitle icon={<Users size={15} />} label={t('settings.telegram.section.access')} />
             <Stack gap={12}>
               <Group justify="space-between" align="center">
@@ -180,21 +190,9 @@ export const TelegramSection: React.FC<Props> = ({
                 t={t}
               />
 
-              <Group justify="space-between" align="center" gap={8} wrap="nowrap">
-                <Text fz="var(--font-size-sm)" fw={600} c="var(--mantine-color-default-color)">
-                  {t('settings.telegram.paired.title')}
-                </Text>
-                <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
-                  {pendingCodes.length > 0 && (
-                    <Badge size="xs" variant="light" color="gray">
-                      {t('settings.telegram.pairing.pending')} {pendingCodes.length}
-                    </Badge>
-                  )}
-                  <Badge size="xs" variant="light" color="gray">
-                    {t('settings.telegram.pairing.paired')} {pairedUsers.length}
-                  </Badge>
-                </Group>
-              </Group>
+              <Text fz="var(--font-size-sm)" fw={600} c="var(--mantine-color-default-color)">
+                {t('settings.telegram.paired.title')}
+              </Text>
 
               <Stack gap={4}>
                 <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>
@@ -270,12 +268,7 @@ export const TelegramSection: React.FC<Props> = ({
 
             <SettingDivider my={16} />
 
-            <Group justify="space-between" align="center" gap={8} wrap="nowrap" mb={10}>
-              <SectionTitle icon={<Megaphone size={15} />} label={t('settings.telegram.channels.title')} mb={0} />
-              {channels.length > 0 && (
-                <Badge size="sm" variant="light" style={{ flexShrink: 0 }}>{channels.length}</Badge>
-              )}
-            </Group>
+            <SectionTitle icon={<Megaphone size={15} />} label={t('settings.telegram.channels.title')} />
             <TelegramChannels
               channels={channels}
               contacts={settings?.contacts ?? []}
@@ -286,6 +279,9 @@ export const TelegramSection: React.FC<Props> = ({
               <SettingRow
                 icon={<Users size={13} />}
                 label={t('settings.telegram.allowGroup')}
+                hint={settings?.allowGroupCommands && settings.runtime.readsAllGroupMessages === false
+                  ? t('settings.telegram.groupPrivacyHint')
+                  : undefined}
                 control={
                   <ToggleSwitch
                     checked={settings?.allowGroupCommands ?? false}
@@ -294,6 +290,11 @@ export const TelegramSection: React.FC<Props> = ({
                 }
               />
             </Box>
+
+            <SettingDivider my={16} />
+
+            <SectionTitle icon={<UsersRound size={15} />} label={t('settings.bot.group.title')} />
+            <BotAudienceSection platform="telegram" connectors={access.connectors} refreshKey={settings} t={t} />
           </>
         )}
       </SectionCard>

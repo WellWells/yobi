@@ -1,4 +1,4 @@
-import type { TelegramChannel, TelegramKnownUser, TelegramPairingState } from '../../shared/types';
+import type { TelegramChannel, TelegramPairingState } from '../../shared/types';
 import type { BotContactInput } from '../botDirectory';
 
 export type DirectoryChatType = 'private' | 'group' | 'supergroup' | 'channel';
@@ -41,8 +41,9 @@ export interface DirectorySources {
 
 /**
  * Two sources count as proof of a prior pairing: the contact directory, which records the grant at
- * the moment it happens, and — for installs that predate it — bot-conversations.json, whose keys are
- * only written after handleDirectMessage has cleared isPairedUser. That is the line this module
+ * the moment it happens, and — for installs that predate it — the private-chat keys of
+ * bot-conversations.json (`collectPairedUserIdsFromKeys`): only a paired account gets a run in its
+ * private chat, while a group key may belong to any member the group's grants reach. That is the line this module
  * draws: an id seen in either may be re-authorized, an id merely sitting in a flow recipient list may
  * not — it only earns a display name.
  */
@@ -143,7 +144,6 @@ export function upsertResolvedChannel(
   channels: TelegramChannel[],
   identity: ResolvedIdentity,
   canPost: boolean,
-  now: string,
 ): TelegramChannel[] {
   if (identity.type === 'private') return channels;
   const index = channels.findIndex((item) => item.chatId === identity.chatId);
@@ -154,46 +154,30 @@ export function upsertResolvedChannel(
     ...(identity.username ? { username: identity.username } : {}),
     chatType: identity.type,
     canPost,
-    discoveredAt: existing?.discoveredAt ?? now,
-    ...(canPost ? {} : { lostAt: existing?.lostAt ?? now }),
   };
   const next = [...channels];
   if (existing) next[index] = entry; else next.push(entry);
   return next;
 }
 
-export function upsertKnownUser(
-  users: TelegramKnownUser[],
-  identity: ResolvedIdentity,
-  now: string,
-): TelegramKnownUser[] {
-  if (identity.type !== 'private') return users;
-  const index = users.findIndex((item) => item.userId === identity.chatId);
-  const entry: TelegramKnownUser = {
-    userId: identity.chatId,
-    ...(identity.username ? { username: identity.username } : {}),
-    ...(identity.firstName ? { firstName: identity.firstName } : {}),
-    ...(identity.lastName ? { lastName: identity.lastName } : {}),
-    resolvedAt: now,
-  };
-  const next = [...users];
-  if (index >= 0) next[index] = entry; else next.push(entry);
-  return next;
-}
-
+/**
+ * `resolved` holds only the users this start's getChat answered for. The contact directory is not a
+ * substitute: it also names people who were never paired (anyone who addressed the bot) and keeps
+ * revoked accounts' names, so reading it here would hand a grant to someone nobody vouched for.
+ */
 export function restorePairedUsers(
   pairing: TelegramPairingState,
-  known: TelegramKnownUser[],
+  resolved: ReadonlyMap<number, ResolvedIdentity>,
   userIds: number[],
   now: string,
-): { next: TelegramPairingState; restored: TelegramKnownUser[] } {
+): { next: TelegramPairingState; restored: ResolvedIdentity[] } {
   const alreadyPaired = new Set(pairing.pairedUsers.map((user) => user.userId));
-  const restored: TelegramKnownUser[] = [];
+  const restored: ResolvedIdentity[] = [];
   const pairedUsers = [...pairing.pairedUsers];
 
   for (const userId of userIds) {
     if (alreadyPaired.has(userId)) continue;
-    const profile = known.find((item) => item.userId === userId);
+    const profile = resolved.get(userId);
     if (!profile) continue;
     alreadyPaired.add(userId);
     restored.push(profile);
@@ -209,17 +193,15 @@ export function restorePairedUsers(
   return { next: { ...pairing, pairedUsers }, restored };
 }
 
-export function describeKnownUser(user: TelegramKnownUser): string {
+export function describeResolvedUser(user: ResolvedIdentity): string {
   const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ');
   if (fullName) return user.username ? `${fullName} (@${user.username})` : fullName;
-  return user.username ? `@${user.username}` : `ID ${user.userId}`;
+  return user.username ? `@${user.username}` : `ID ${user.chatId}`;
 }
 
 export interface DirectoryBackfillSinks {
   getChannels: () => TelegramChannel[];
   saveChannels: (next: TelegramChannel[]) => void;
-  getKnownUsers: () => TelegramKnownUser[];
-  saveKnownUsers: (next: TelegramKnownUser[]) => void;
   getPairing: () => TelegramPairingState;
   savePairing: (next: TelegramPairingState) => void;
   recordContact: (input: BotContactInput) => void;
@@ -245,6 +227,7 @@ export async function runDirectoryBackfill(
   const now = new Date().toISOString();
   let channelsResolved = 0;
   let usersResolved = 0;
+  const resolvedUsers = new Map<number, ResolvedIdentity>();
 
   for (const chatId of candidates.chatIds.slice(0, MAX_LOOKUPS)) {
     const identity = parseIdentity(chatId, await safeCall(() => api.getChat(chatId)));
@@ -256,7 +239,7 @@ export async function runDirectoryBackfill(
      */
     const existing = sinks.getChannels().find((item) => item.chatId === chatId);
     const canPost = member ? canPostFromMember(identity.type, member) : (existing?.canPost ?? false);
-    sinks.saveChannels(upsertResolvedChannel(sinks.getChannels(), identity, canPost, now));
+    sinks.saveChannels(upsertResolvedChannel(sinks.getChannels(), identity, canPost));
     sinks.recordContact({
       platform: 'telegram',
       kind: 'chat',
@@ -274,7 +257,7 @@ export async function runDirectoryBackfill(
   for (const userId of candidates.userIds.slice(0, MAX_LOOKUPS)) {
     const identity = parseIdentity(userId, await safeCall(() => api.getChat(userId)));
     if (!identity || identity.type !== 'private') continue;
-    sinks.saveKnownUsers(upsertKnownUser(sinks.getKnownUsers(), identity, now));
+    resolvedUsers.set(userId, identity);
     /*
      * Config is the authority on who holds a grant, so a pairing made before this ledger existed is
      * mirrored into it here. Without this an install that paired months ago carries names only, and
@@ -295,7 +278,7 @@ export async function runDirectoryBackfill(
 
   const { next, restored } = restorePairedUsers(
     sinks.getPairing(),
-    sinks.getKnownUsers(),
+    resolvedUsers,
     candidates.previouslyPairedUserIds,
     now,
   );
@@ -305,13 +288,13 @@ export async function runDirectoryBackfill(
       sinks.recordContact({
         platform: 'telegram',
         kind: 'user',
-        id: String(user.userId),
+        id: String(user.chatId),
         ...(user.username ? { username: user.username } : {}),
         ...(user.firstName ? { firstName: user.firstName } : {}),
         ...(user.lastName ? { lastName: user.lastName } : {}),
         pairedAt: now,
       });
-      sinks.onLog(`[telegram] restored pairing for ${describeKnownUser(user)} (${user.userId})`);
+      sinks.onLog(`[telegram] restored pairing for ${describeResolvedUser(user)} (${user.chatId})`);
     }
   }
 

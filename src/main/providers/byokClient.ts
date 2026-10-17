@@ -7,6 +7,7 @@ import { meterReported, meterText } from '../tokenMeter';
 import { meterLlmRequest, noteKeyCooldown, noteKeyResult } from '../llmMeter';
 import { classifyFailure } from '../metricsNormalize';
 import { estimateTokens } from '../../shared/tokenEstimate';
+import { compactPreview } from '../../shared/textBudget';
 import { Semaphore } from '../flow/lanes';
 
 export const BYOK_INSTANCE_MISSING_ERROR = 'BYOK provider not found — the instance may have been deleted';
@@ -235,8 +236,7 @@ function extractApiErrorDetail(bodyText: string): string {
     }
   } catch {
   }
-  const compact = bodyText.replace(/\s+/g, ' ').trim();
-  return compact.length > 200 ? `${compact.slice(0, 200)}…` : compact;
+  return compactPreview(bodyText, 200);
 }
 
 function extractCompletionContent(bodyText: string): string | null {

@@ -18,10 +18,10 @@ const TONE_LEVEL: Record<LogTone, LogLevel> = {
 
 const TONE_MARKERS: [LogTone, string[]][] = [
   ['error', ['❌', '🛑']],
-  ['warning', ['⚠️', '🔒', '👻', '🚫']],
+  ['warning', ['⚠️', '🔒', '👻', '🚫', '⛔']],
   ['success', ['✅', '💾', '📋', '🎉', '🚀']],
-  ['active', ['⏳', '📤', '🔥', '⌨️', '▶️', '🔄', '🤖', '🧵', '💬', '↪️', '⏹️', '📡', '🔐', '🧹', '✂️', '🔍']],
-  ['plain', ['ℹ️', '🧪', '📥']],
+  ['active', ['⏳', '📤', '🔥', '▶️', '🔄', '🤖', '🧵', '↪️', '⏹️', '🔐']],
+  ['plain', ['ℹ️', '🧪', '📥', '⌨️', '💬', '📡', '🧹', '✂️', '🔍']],
 ];
 
 export function classifyTone(msg: string): LogTone {
@@ -31,10 +31,6 @@ export function classifyTone(msg: string): LogTone {
   if (/\berrors?\b|\bfailed\b|\bfailure\b|\bexception\b/i.test(msg)) return 'error';
   if (/\bwarn(ing)?\b/i.test(msg)) return 'warning';
   return 'plain';
-}
-
-export function classifyLog(msg: string): LogLevel {
-  return TONE_LEVEL[classifyTone(msg)];
 }
 
 export function isAllLevels(levels: readonly LogLevel[]): boolean {
@@ -55,7 +51,7 @@ export function splitLogLine(log: string): SplitLogLine {
 
 const LEADING_GLYPH = /^((?![\x00-\x7F])[^\p{L}\p{N}\s\[]{1,6})\s*/u;
 const LEADING_SCOPE = /^\[([^\]]{1,64})\]\s*/;
-const RUN_START = /^(▶️|🚀)/u;
+const RUN_START = /^(?:▶️ \[.+\] Executing flow\b|🚀 Yobi\b)/u;
 
 export interface ParsedLogLine {
   time: string;
@@ -174,10 +170,6 @@ export function splitLogUrls(text: string): LogSegment[] {
   }
   if (cursor < text.length) segments.push({ text: text.slice(cursor) });
   return segments;
-}
-
-export function shortenUrls(text: string): string {
-  return splitLogUrls(text).map((segment) => segment.text).join('');
 }
 
 export interface LogFilter {

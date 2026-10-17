@@ -248,14 +248,3 @@ export function advanceWatermark(
   }
   return { lastTs, tailKeys: [...tailKeys], updatedAt: nowIso };
 }
-
-/** pickUnreported + advanceWatermark, for a caller that delivers everything it picks. */
-export function selectFresh(
-  messages: ParsedMessage[],
-  previous: LineWatermark | null,
-  nowIso: string,
-  options: { maxFresh?: number } = {},
-): { fresh: ParsedMessage[]; next: LineWatermark } {
-  const fresh = pickUnreported(messages, previous, options.maxFresh);
-  return { fresh, next: advanceWatermark(previous, fresh, nowIso) };
-}

@@ -5,14 +5,18 @@ import { isByokTargetUrl } from '../../shared/types';
 import { readMapPlaceRef } from '../../shared/conversationDoc';
 import { currentRecap } from '../../shared/recap';
 import type { ConversationDoc, MapPlaceRef, ThreadMeta, TurnMeta } from '../../shared/conversationDoc';
+import { unsentEditedTurns } from '../../shared/editedReplies';
 import {
   contextBudgetFor,
+  inlineBudgetFor,
   packReplayPrompt,
+  replayReplacesThread,
   resolveContextMode,
   turnsConsumedBySummary,
   type ContextMode,
 } from './conversationContext';
 import { commitConversationTurn, loadConversation } from './conversationStore';
+import { buildEditedRepliesNote } from './editedReplies';
 import { summarizeTurns } from './summarizer';
 
 export interface ConversationSendPlan {
@@ -26,6 +30,8 @@ export interface ConversationSendPlan {
   external?: true;
   /** Where the conversation stood before this send, for the recap rule; absent when nothing was recorded. */
   recap?: string;
+  /** How many answers the user edited since the last turn, carried ahead of a native follow-up. */
+  editedReplies?: number;
 }
 
 /** Builds the place data re-attached to a replay, fitted to `limit` under `measure`; '' when unavailable. */
@@ -64,23 +70,30 @@ export async function planTurn(args: {
   placeContext?: PlaceContextBuilder;
 }): Promise<ConversationSendPlan> {
   const { doc, targetUrl, userPrompt, timeoutMs, allowNative = true } = args;
-  const mode = allowNative
-    ? resolveContextMode(doc.thread, targetUrl, doc.turns.length)
-    : 'replay';
+  const nativeOk = allowNative && resolveContextMode(doc.thread, targetUrl, doc.turns.length) === 'native';
   // Both modes: a native plan whose thread turns out to be gone replays with the same recap.
   const recap = currentRecap(doc)?.text;
 
-  if (mode === 'native') {
-    return {
-      mode,
-      promptToSend: userPrompt,
-      expectThreadUrl: doc.thread.threadUrl,
-      turnMeta: { m: 'native' },
-      thread: doc.thread,
-      previousTurnCount: doc.turns.length,
-      ...(recap ? { recap } : {}),
-    };
+  if (nativeOk) {
+    // A replay re-sends the edited text from the file; the provider's thread still has the original.
+    const edited = unsentEditedTurns(doc.turns).map((index) => doc.turns[index]);
+    const editNote = buildEditedRepliesNote(edited);
+    const inline = inlineBudgetFor(targetUrl, config.byokContextBudgetChars);
+    // Edits too long to ride along with a question go out as a replay, which starts a new thread.
+    if (!editNote || inline.measure(editNote) <= inline.budget) {
+      return {
+        mode: 'native',
+        promptToSend: editNote ? `${editNote}\n\n${userPrompt}` : userPrompt,
+        expectThreadUrl: doc.thread.threadUrl,
+        turnMeta: { m: 'native' },
+        thread: doc.thread,
+        previousTurnCount: doc.turns.length,
+        ...(edited.length > 0 ? { editedReplies: edited.length } : {}),
+        ...(recap ? { recap } : {}),
+      };
+    }
   }
+  const mode: ContextMode = 'replay';
 
   const { budget, measure } = contextBudgetFor(targetUrl, config.byokContextBudgetChars);
   let summary = doc.thread.summary ?? '';
@@ -131,6 +144,7 @@ export async function planTurn(args: {
     ...(preamble ? { external: true as const } : {}),
     turnMeta: {
       m: 'replay',
+      ...(replayReplacesThread(doc.thread, targetUrl) ? { fb: 1 as const } : {}),
       ...(packed.droppedTurns > 0 ? { dropped: packed.droppedTurns } : {}),
       ...(summarizedTurns > 0 ? { summarized: summarizedTurns } : {}),
     },

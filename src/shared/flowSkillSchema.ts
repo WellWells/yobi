@@ -1,13 +1,11 @@
-export type { SkillConfigField, SkillSpec } from './flowSkillSpecs';
+export type { SkillSpec } from './flowSkillSpecs';
 export {
   BRIEF_MAX_CHARS,
   DEFAULT_SKILL_CONFIG,
-  LEGACY_SKILL_TYPES,
   SKILL_OUTPUT,
   SKILL_SPECS,
   SKILL_TYPES,
   SKILLS_WITHOUT_OUTPUT_KEY,
-  canonicalSkillType,
   isDeliverableSkill,
 } from './flowSkillSpecs';
 
@@ -18,14 +16,11 @@ export {
   EXAMPLE_FLOW_JSON,
   MAX_ASSESS_QUESTIONS,
   MAX_SELECTED_SKILLS,
-  TRIGGER_BRIEFS,
   buildFlowAssessPrompt,
   buildFlowAssessRepairPrompt,
   buildFlowGenerationPrompt,
   buildFlowRepairPrompt,
   buildSkillIndex,
-  flowCompilerRules,
-  renderSkillBrief,
   renderSkillLine,
   resolveSelectedSkills,
   withClarifications,

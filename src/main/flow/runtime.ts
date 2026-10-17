@@ -1,11 +1,15 @@
 import type { FlowExecutionLog, FlowStepNote, SkillInstance, SkillType } from '../../shared/types';
 import type { FlowExecutorDeps, LogCallback } from './types';
 import { FlowUserError } from './userError';
+import { findMatchingMarker } from '../../shared/flowBlockStructure';
+import { raceAbort } from '../promiseRace';
 
 const DEFAULT_STEP_TIMEOUT_MS = 60_000;
 export const BROWSER_STEP_TIMEOUT_MS = 300_000;
 const DEFAULT_LLM_TIMEOUT_MS = 120_000;
 const MAX_DELAY_MS = 3_600_000;
+/** A 4K video over a home connection: the download and its merge, not one HTTP request. */
+export const YTDL_STEP_TIMEOUT_MS = 1_800_000;
 
 function normalizeTimeoutMs(value: number | undefined, fallbackMs: number): number {
   if (typeof value !== 'number' || Number.isNaN(value) || value <= 0) return fallbackMs;
@@ -27,7 +31,12 @@ export function resolveStepTimeoutMs(
   if (type === 'delay') {
     return resolveDelayMs(config) + 10_000;
   }
-  if (type === 'browser' || type === 'rss' || type === 'scraper' || type === 'research' || type === 'gmap_reviews' || type === 'youtube' || type === 'youtube_subs' || type === 'x_posts' || type === 'x_thread' || type === 'x_trends' || type === 'browser_js' || type === 'file_download' || type === 'share') {
+  // Several videos of a post one after another, then Gemini watching one, can outlast five minutes.
+  if (type === 'youtube_download' || type === 'x_media') return YTDL_STEP_TIMEOUT_MS;
+  // A file goes up a home connection: a large upload (up to Telegram's 2000 MiB) can take as long
+  // as the download did, so it gets the download's time.
+  if (type === 'bot' && (config?.attachment ?? '').trim()) return YTDL_STEP_TIMEOUT_MS;
+  if (type === 'browser' || type === 'rss' || type === 'scraper' || type === 'research' || type === 'gmap_reviews' || type === 'youtube' || type === 'youtube_subs' || type === 'youtube_info' || type === 'x_posts' || type === 'x_thread' || type === 'x_trends' || type === 'browser_js' || type === 'file_download' || type === 'share') {
     return BROWSER_STEP_TIMEOUT_MS;
   }
   return DEFAULT_STEP_TIMEOUT_MS;
@@ -90,19 +99,7 @@ export function withStepTimeout<T>(
 }
 
 export function withAbort<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
-  if (!signal) return work;
-  if (signal.aborted) {
-    work.then(undefined, () => {});
-    return Promise.reject(new FlowAbortError());
-  }
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = (): void => reject(new FlowAbortError());
-    signal.addEventListener('abort', onAbort, { once: true });
-    work.then(
-      (value) => { signal.removeEventListener('abort', onAbort); resolve(value); },
-      (error) => { signal.removeEventListener('abort', onAbort); reject(error); },
-    );
-  });
+  return raceAbort(work, signal, () => new FlowAbortError());
 }
 
 export function emitLog(
@@ -182,32 +179,13 @@ export function execContinue(): string {
   throw new ContinueLoopSignal();
 }
 
-export function findLoopEndIndex(steps: SkillInstance[], startIdx: number): number {
-  let depth = 1;
-  for (let j = startIdx + 1; j < steps.length; j++) {
-    if (steps[j].type === 'loop') depth++;
-    if (steps[j].type === 'end_loop') {
-      depth--;
-      if (depth === 0) {
-        return j;
-      }
-    }
-  }
-  return steps.length;
-}
-
-export function findIfEndIndex(steps: SkillInstance[], startIdx: number): number {
-  let depth = 1;
-  for (let j = startIdx + 1; j < steps.length; j++) {
-    if (steps[j].type === 'if') depth++;
-    if (steps[j].type === 'end_if') {
-      depth--;
-      if (depth === 0) {
-        return j;
-      }
-    }
-  }
-  return steps.length;
+/**
+ * Where the loop/if block opened at `startIdx` ends. An unclosed block (hand-edited, imported or
+ * an old save) runs to the end of the flow, so a missing closer is `steps.length`, not -1.
+ */
+export function findBlockEndIndex(steps: SkillInstance[], startIdx: number): number {
+  const end = findMatchingMarker(steps, startIdx);
+  return end < 0 ? steps.length : end;
 }
 
 function isTruthyValue(value: string): boolean {

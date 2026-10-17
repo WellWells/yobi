@@ -1,7 +1,9 @@
 import { FileOutput, Sunrise, type LucideIcon } from 'lucide-react';
 import { buildFlowCronExpression } from '../../../../shared/flowSchedule';
 import { COMMON_CURRENCIES } from '../../../../shared/currencies';
+import { PROVIDER_URLS } from '../../../../shared/types';
 import type { FlowDefinition, FlowVariable, FlowVariableOption, SkillInstance, SkillType, TriggerConfig } from '../../../../shared/types';
+import { DEFAULT_SKILL_CONFIG } from '../../../../shared/flowSkillSchema';
 import {
   articleBriefingPrompt,
   askPrompt,
@@ -58,17 +60,7 @@ function step(type: SkillType, config: Record<string, string>, label: string, ou
 }
 
 function llmConfig(prompt: string, extra: Record<string, string> = {}): Record<string, string> {
-  return {
-    prompt,
-    provider: 'https://gemini.google.com/',
-    saveToHistory: 'false',
-    exportFormat: '',
-    exportTitle: '',
-    exportFileName: '',
-    exportShowProvider: 'false',
-    exportShowTimestamp: 'false',
-    ...extra,
-  };
+  return { ...DEFAULT_SKILL_CONFIG.llm, prompt, provider: PROVIDER_URLS.gemini, ...extra };
 }
 
 function weekdayCron(hour: number, minute = 0): TriggerConfig {
@@ -130,9 +122,21 @@ function singleWeekdayCron(weekday: number, hour: number, minute = 0): TriggerCo
   return { ...trigger, cronExpression: buildFlowCronExpression(trigger) };
 }
 
-function commandTriggers(command: string, descKey: string, t: Translate): { trigger: TriggerConfig; extraTriggers: TriggerConfig[] } {
+/** `botAccess` names who may run the bot command; absent = the default for a new command. */
+function commandTriggers(
+  command: string,
+  descKey: string,
+  t: Translate,
+  botAccess?: TriggerConfig['botAccess'],
+): { trigger: TriggerConfig; extraTriggers: TriggerConfig[] } {
   return {
-    trigger: { type: 'bot', botCommand: command, botCommandDescription: t(descKey), botInputVariable: 'input' },
+    trigger: {
+      type: 'bot',
+      botCommand: command,
+      botCommandDescription: t(descKey),
+      botInputVariable: 'input',
+      ...(botAccess ? { botAccess } : {}),
+    },
     extraTriggers: [{ type: 'chat', chatCommand: command, chatCommandDescription: t(descKey), chatInputVariable: 'input' }],
   };
 }
@@ -147,6 +151,7 @@ function replyStep(t: Translate): SkillInstance {
   }, t('flow.templates.step.reply'), 'bot_1');
 }
 
+/** A reply to whoever sent the command; an X post's media go along with it when given. */
 function chatVar(t: Translate): FlowVariable {
   return {
     key: 'chatId',
@@ -465,7 +470,8 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
     command: 'linetopics',
     setupCount: 0,
     build: (t, locale): FlowDefinition => {
-      const { trigger, extraTriggers } = commandTriggers('linetopics', 'flow.templates.lineTopics.desc', t);
+      // Reads the owner's LINE chats: the owner and admins only, in a private chat.
+      const { trigger, extraTriggers } = commandTriggers('linetopics', 'flow.templates.lineTopics.desc', t, 'admins');
       return {
         id: makeId(),
         name: t('flow.templates.lineTopics'),
@@ -494,7 +500,8 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
     command: 'lineday',
     setupCount: 0,
     build: (t, locale): FlowDefinition => {
-      const { trigger, extraTriggers } = commandTriggers('lineday', 'flow.templates.lineToday.desc', t);
+      // Reads the owner's LINE chats: the owner and admins only, in a private chat.
+      const { trigger, extraTriggers } = commandTriggers('lineday', 'flow.templates.lineToday.desc', t, 'admins');
       return {
         id: makeId(),
         name: t('flow.templates.lineToday'),
@@ -569,6 +576,40 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
         step('llm', llmConfig(youtubeSummaryPrompt(locale), { emitFailFlag: 'true' }), t('flow.templates.ytSubs.step.llm'), 'llm_1'),
         ...skipEmpty('flow.templates.rss.step.skipFailed', t, '{{llm_1.isFailed}}', 'equals', '1'),
         step('bot', { chatId: '{{var.chatId}}', message: '**[{{video.title}}]({{video.link}})**\n\n{{llm_1}}', attachment: '{{video.image}}', attachmentType: 'auto', emitFailFlag: 'true' }, t('flow.templates.step.bot'), 'bot_1'),
+        step('end_loop', {}, t('flow.skill.end_loop')),
+      ],
+      ...timestamps(),
+    }),
+  },
+  {
+    key: 'youtube_mp3',
+    category: 'push',
+    titleKey: 'flow.templates.ytMp3',
+    descKey: 'flow.templates.ytMp3.desc',
+    primarySkill: 'youtube_download',
+    hue: 'red',
+    setupCount: 2,
+    build: (t): FlowDefinition => ({
+      id: makeId(),
+      name: t('flow.templates.ytMp3'),
+      description: t('flow.templates.ytMp3.desc'),
+      enabled: false,
+      trigger: dailyCron(7),
+      variables: [textVar('channels', t, true, true), chatVar(t)],
+      steps: [
+        recipientGuard(t),
+        step('youtube_subs', { channels: '{{var.channels}}', perChannel: '3', skipShorts: 'true' }, t('flow.templates.ytSubs.step.subs'), 'ytsubs_1'),
+        step('stop', { value: '{{ytsubs_1}}' }, t('flow.templates.step.stop_noNew')),
+        step('loop', { input: '{{ytsubs_1}}', loopVar: 'video', limitIterations: 'true', maxIterations: '5' }, t('flow.templates.ytSubs.step.loop'), 'loop_1'),
+        // A schedule has no trigger platform, so `auto` would only save to this computer.
+        step('youtube_download', { url: '{{video.link}}', quality: 'mp3', destination: 'telegram', folder: '', emitFailFlag: 'true' }, t('flow.templates.ytMp3.step.download'), 'dl_1'),
+        ...skipEmpty('flow.templates.ytMp3.step.skipFailed', t, '{{dl_1.isFailed}}', 'equals', '1'),
+        // Too long for one Telegram album: the file stays on this computer and the chat is told so.
+        step('if', { left: '{{dl_1.savedLocally}}', operator: 'equals', right: '1' }, t('flow.templates.ytMp3.step.ifSaved')),
+        step('bot', { chatId: '{{var.chatId}}', message: '**[{{video.title}}]({{video.link}})**\n\n{{dl_1.summary}}', attachment: '', attachmentType: 'auto', emitFailFlag: 'true' }, t('flow.templates.ytMp3.step.sendSaved'), 'bot_saved'),
+        step('continue', {}, t('flow.skill.continue')),
+        step('end_if', {}, t('flow.skill.end_if')),
+        step('bot', { chatId: '{{var.chatId}}', message: '**[{{video.title}}]({{video.link}})**', attachment: '{{dl_1}}', attachmentType: 'audio', emitFailFlag: 'true' }, t('flow.templates.ytMp3.step.sendAudio'), 'bot_1'),
         step('end_loop', {}, t('flow.skill.end_loop')),
       ],
       ...timestamps(),

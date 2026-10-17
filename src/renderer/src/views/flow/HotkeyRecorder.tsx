@@ -34,17 +34,6 @@ export const HotkeyRecorder: React.FC<HotkeyRecorderProps> = ({ value, onChange,
           onBlur={stop}
           placeholder={recording ? t('settings.hotkey.recording') : t('flow.trigger.keys.placeholder')}
           size="sm"
-          rightSection={recording ? (
-            <Box
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: '50%',
-                background: 'var(--mantine-color-accent)',
-                animation: 'pulse 1.2s ease-in-out infinite',
-              }}
-            />
-          ) : undefined}
         />
       </Box>
       {recording && (

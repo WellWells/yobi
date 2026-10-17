@@ -1,37 +1,23 @@
 import { ipcMain } from 'electron';
-import { IPC, PROVIDER_URLS } from '../../shared/types';
+import { IPC } from '../../shared/types';
 import type { GeminiModelChoice, GeminiModelState } from '../../shared/geminiModels';
-import { isModelCatalogStale } from '../../shared/modelCatalogFreshness';
 import { config } from '../config';
-import { sendLog } from '../helpers';
 import { llmLane } from '../flow/lanes';
-import { ensureWorkerWindow, getWorkerWin, isWorkerRevealed } from '../windows';
+import { getWorkerWin } from '../windows';
 import {
   getGeminiModelState,
   refreshGeminiModels,
   setGeminiModelChoice,
   syncGeminiModelIfParked,
 } from '../providers/geminiModelSync';
+import { refreshModelList } from './modelListRefresh';
 
-/**
- * Reads Gemini's model list into the cache when it is missing or stale (or `force`). Someone who
- * hid Gemini has no menu to fill, and should not have it loaded behind their back.
- */
-export async function refreshGeminiModelList(force = false): Promise<void> {
-  if (config.hiddenProviders.includes('gemini')) return;
-  if (!force && !isModelCatalogStale(config.geminiModelCatalog)) return;
-  await llmLane.runExclusive(async () => {
-    if (!force && !isModelCatalogStale(config.geminiModelCatalog)) return;
-    // The worker is on screen for a sign-in or a challenge: navigating it would pull the page out
-    // from under the user. Only a read nobody asked for waits; the next check retries.
-    if (!force && isWorkerRevealed()) return;
-    try {
-      const worker = await ensureWorkerWindow(PROVIDER_URLS.gemini);
-      if (worker) await refreshGeminiModels(worker);
-    } catch (err) {
-      sendLog(`⚠️ Could not read Gemini's model list: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  });
+/** Reads Gemini's model list into the cache when it is missing or stale (or `force`). */
+export function refreshGeminiModelList(force = false): Promise<void> {
+  return refreshModelList(
+    { provider: 'gemini', catalog: () => config.geminiModelCatalog, refresh: refreshGeminiModels, requireSignIn: false },
+    force,
+  );
 }
 
 export function registerGeminiModelHandlers(): void {

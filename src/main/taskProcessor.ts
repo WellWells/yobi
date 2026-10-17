@@ -133,7 +133,9 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
     if (plan) {
       const { dropped, summarized } = plan.turnMeta;
       const detail = plan.mode === 'native'
-        ? 'resuming the provider thread, nothing resent'
+        ? (plan.editedReplies
+          ? `resuming the provider thread with ${plan.editedReplies} edited reply(ies) ahead of the question`
+          : 'resuming the provider thread, nothing resent')
         : [
           `${plan.previousTurnCount} prior turn(s)`,
           summarized ? `${summarized} summarized` : '',
@@ -341,7 +343,10 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
     // and bot tasks fire at arbitrary times — writing theirs would clobber whatever the user copied.
     if (task.source === 'hotkey' && task.clipboardFingerprint !== undefined) {
       answerOnClipboard = await handAnswerToClipboard(task.clipboardFingerprint, response, providerAnswer);
-      sendLog(`[${id}] 📋 ${answerOnClipboard ? 'Reply copied to the clipboard' : 'Clipboard changed since the hotkey press — reply not copied'}`);
+      // The marker sets the log colour: green only for a reply that really landed.
+      sendLog(answerOnClipboard
+        ? `[${id}] 📋 Reply copied to the clipboard`
+        : `[${id}] ℹ️ Clipboard changed since the hotkey press — reply not copied`);
     }
 
     // Claim-gated like the failure path: a task the queue gave up on still runs to completion.

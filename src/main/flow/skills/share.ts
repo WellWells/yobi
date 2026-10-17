@@ -12,6 +12,7 @@ import {
 import type { CaptureBackgroundStyle } from '../../../shared/capturePalettes';
 import { parseShareFormat, shareCaptureFormat } from '../../../shared/shareFormat';
 import { stripConversationMarkers } from '../../../shared/conversationDoc';
+import { resolveCardTitle } from '../../../shared/markdownTitle';
 import { getLangCache, t } from '../../i18n';
 import { sendLog } from '../../helpers';
 import type { FlowExecutorDeps } from '../types';
@@ -24,19 +25,6 @@ const HEIGHT_LIMIT_MARKER = 'height exceeds limits';
 export function isHeightLimitError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err ?? '');
   return message.toLowerCase().includes(HEIGHT_LIMIT_MARKER);
-}
-
-export function resolveDocTitle(rawTitle: string, content: string, fallback: string): string {
-  const explicit = rawTitle.trim();
-  if (explicit) return explicit;
-  for (const line of content.split(/\r?\n/)) {
-    const heading = /^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/.exec(line);
-    if (heading) {
-      const text = heading[1].replace(/[*_`~]/g, '').trim();
-      if (text) return text.length > 120 ? `${text.slice(0, 120)}…` : text;
-    }
-  }
-  return fallback;
 }
 
 export function resolveBackgroundStyle(raw: string | undefined): CaptureBackgroundStyle {
@@ -150,20 +138,19 @@ async function shareAsFile(
   const palette = (config.palette ?? '').trim() || DEFAULT_CAPTURE_PALETTE;
   const backgroundStyle = resolveBackgroundStyle(config.backgroundStyle);
   const width = resolveDocWidth(config.width);
-  const title = resolveDocTitle(
-    config.title ?? '',
-    content,
-    t(strings, 'flow.skill.share.defaultTitle'),
-  );
+  // The document's opening heading becomes the card title and leaves the body, so a /md card never
+  // prints it twice. No heading and no title typed in = no title, not a stock "Document".
+  const { title, body } = resolveCardTitle(config.title ?? '', content);
   const rawFileName = (config.filename ?? '').trim();
 
   const payload: MarkdownCapturePayload = {
     title,
     prompt: '',
-    content,
+    content: body,
     summary: '',
     provider: '',
     timestamp: new Date().toISOString(),
+    turns: [{ prompt: '', response: body, provider: '', timestamp: '' }],
   };
   const options = {
     fileName: rawFileName ? expandFilenameTokens(rawFileName) : '',

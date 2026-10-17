@@ -2,17 +2,17 @@
    No drag handle and no reserved gutter: the whole row is full-width, and a
    long press anywhere on it picks it up for reordering. */
 /* Same vocabulary as the chat rail (`Sidebar.module.css .fileItem`) and the command palette
-   (`SearchPalette.module.css .row`): flat, transparent, selected marked by a left accent bar.
+   (`SearchPalette.module.css .row`): flat, transparent, selected marked by the accent-dim fill
+   alone (the Settings nav's active item, `views/settings/components.tsx` NavItem).
    The vertical margin is larger than the chat rail's 2px: these rows are taller and have no border. */
 .row {
-  padding: 6px 10px;
+  padding: 6px 10px 6px 12px;
   margin: 4px 8px;
   border-radius: 8px;
   background: transparent;
-  border-left: 2px solid transparent;
   cursor: pointer;
   user-select: none;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: background 0.15s ease;
 }
 
 .row:hover {
@@ -22,7 +22,6 @@
 .row[data-selected='true'],
 .row[data-selected='true']:hover {
   background: var(--mantine-color-accent-dim);
-  border-left-color: var(--mantine-color-accent);
 }
 
 /* dnd-kit drags this row in place — there is no DragOverlay, the original just gets

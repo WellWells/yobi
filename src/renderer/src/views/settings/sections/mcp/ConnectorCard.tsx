@@ -7,6 +7,7 @@ import { useThemeStore } from '../../../../store/themeStore';
 import classes from './ConnectorCard.module.css';
 import { connectorCardDetail } from './connectorTiles';
 import { BotAccessCaption } from '../BotAccessCaption';
+import { CommandClashNotice } from './CommandClashNotice';
 import type { McpCatalogEntry } from '../../../../../../shared/mcpCatalog';
 import type { McpServerView } from '../../../../../../shared/types';
 
@@ -17,6 +18,8 @@ export interface ConnectorCardProps {
   description: string;
   /** Who may use this connector through the bots (read-only); omitted while no bot is on. */
   botAccess?: string;
+  /** Why this connector has no slash command, or which connector went without the name it kept. */
+  commandNotice?: readonly string[];
   busy: boolean;
   t: (key: string) => string;
   onAdd: () => void;
@@ -28,7 +31,7 @@ export interface ConnectorCardProps {
 }
 
 export const ConnectorCard: React.FC<ConnectorCardProps> = ({
-  entry, server, name, description, botAccess, busy, t,
+  entry, server, name, description, botAccess, commandNotice, busy, t,
   onAdd, onConnect, onDisconnect, onEdit, onRemove, onOpenTools,
 }) => {
   const status = server?.status;
@@ -86,6 +89,7 @@ export const ConnectorCard: React.FC<ConnectorCardProps> = ({
             <Text fz="var(--font-size-sm)" c="dimmed" lh={1.5} lineClamp={2}>
               {connectorCardDetail(server, description)}
             </Text>
+            {commandNotice && <CommandClashNotice lines={commandNotice} />}
             {botAccess && <BotAccessCaption text={botAccess} />}
           </Stack>
         </Group>

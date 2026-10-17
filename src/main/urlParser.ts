@@ -1,6 +1,7 @@
 import { load } from 'cheerio';
 import { PROVIDER_URLS } from '../shared/types';
 import type { FeedCandidate } from '../shared/types';
+import { isHttpUrl } from '../shared/webUrl';
 import { loadPageHtml, loadPageResult, fetchRawText, fetchRawResponse, ensureHttpScheme } from './pageLoader';
 import type { PageLoadResult } from './pageLoader';
 import { runParserBlocks, runCssSelector, parseRssFeed, extractFeedLinks } from './parserBlocks';
@@ -10,8 +11,9 @@ import { isMapsUrl } from './mapReviews';
 import { splitMapsQuestion } from './mapQuestion';
 import { resolveMapsPrompt } from './mapUrlPrompt';
 import type { MapPlaceRef } from '../shared/conversationDoc';
+import { withVideoSlots } from '../shared/youtubePrompt';
 
-export { fetchRawText, fetchRawResponse, ensureHttpScheme, runParserBlocks, runCssSelector, parseRssFeed, extractFeedLinks };
+export { fetchRawText, fetchRawResponse, ensureHttpScheme, runParserBlocks, runCssSelector, parseRssFeed, extractFeedLinks, withVideoSlots };
 export type { ParserBlock, ParserBlockType, RssFeedItem };
 
 const MAX_CONTENT_CHARS = 80_000;
@@ -34,13 +36,7 @@ export interface FetchAndParseOptions {
 
 export function isSingleUrl(text: string): boolean {
   const trimmed = text.trim();
-  if (!trimmed || /\s/.test(trimmed)) return false;
-  try {
-    const u = new URL(trimmed);
-    return u.protocol === 'http:' || u.protocol === 'https:';
-  } catch {
-    return false;
-  }
+  return !/\s/.test(trimmed) && isHttpUrl(trimmed);
 }
 
 function feedTitle(rawXml: string): string {
@@ -158,18 +154,6 @@ export function buildYoutubePrompt(
     .replace(/\{\{title\}\}/g, () => vars.title)
     .replace(/\{\{url\}\}/g, () => vars.url)
     .replace(/\{\{transcript\}\}/g, () => vars.transcript);
-}
-
-/**
- * A custom template without `{{url}}` or `{{transcript}}` would ask for a summary of nothing, so the
- * missing slots go after the user's text. The built-in templates carry both and pass through as is.
- */
-export function withVideoSlots(template: string): string {
-  const missing = [
-    template.includes('{{url}}') ? '' : '{{url}}',
-    template.includes('{{transcript}}') ? '' : '---\n{{transcript}}\n---',
-  ].filter(Boolean);
-  return missing.length ? [template.trimEnd(), ...missing].filter(Boolean).join('\n\n') : template;
 }
 
 function absoluteHttpUrl(raw: string | undefined, base: string): string {

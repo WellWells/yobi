@@ -40,6 +40,28 @@ export function parseTextEvents(body: webhook.CallbackRequest): LineTextEvent[] 
   return out;
 }
 
+/** The bot was added to, or removed from, a group or a multi-person chat. */
+export interface LineChatEvent {
+  type: 'join' | 'leave';
+  chatId: string;
+  chatKind: 'group' | 'room';
+}
+
+/**
+ * Joins and leaves, so the settings page can list the groups the bot is in and set what each one
+ * grants. (LINE sends no join for groups the bot was already in; their first message registers them.)
+ */
+export function parseChatEvents(body: webhook.CallbackRequest): LineChatEvent[] {
+  const out: LineChatEvent[] = [];
+  for (const event of body.events ?? []) {
+    if (event.type !== 'join' && event.type !== 'leave') continue;
+    const source = event.source;
+    if (source?.type === 'group' && source.groupId) out.push({ type: event.type, chatId: source.groupId, chatKind: 'group' });
+    else if (source?.type === 'room' && source.roomId) out.push({ type: event.type, chatId: source.roomId, chatKind: 'room' });
+  }
+  return out;
+}
+
 export function stripBotMentions(
   rawText: string,
   mention?: webhook.Mention,

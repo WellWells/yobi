@@ -1,13 +1,17 @@
 import React from 'react';
-import { Box, Loader, Stack, Text } from '@mantine/core';
-import { Check, X } from 'lucide-react';
+import { Box, Stack, Text } from '@mantine/core';
 import { useI18nStore } from '../store/i18nStore';
 import type { AgentTraceTurn } from '../store/useAgentRunStore';
 import { ResearchChecklist } from './ResearchChecklist';
+import {
+  NUMBERED_LABEL_OFFSET,
+  PROGRESS_ROW_STYLE,
+  ProgressMark,
+  StepNumber,
+  type ProgressState,
+} from './ProgressMark';
 
 const HIDDEN_CONFIG_KEYS = new Set(['provider']);
-
-const SUBLINE_INDENT = 30;
 
 const SUBLINE_STYLE = {
   fontSize: 'var(--font-size-xs)',
@@ -37,11 +41,7 @@ export function configText(config?: Record<string, string>): string {
 
 export function AgentTraceRow({ turn }: { turn: AgentTraceTurn }) {
   const t = useI18nStore((state) => state.t);
-  const icon = turn.status === 'ok'
-    ? <Check size={11} color="var(--mantine-color-success)" />
-    : turn.status === 'error'
-      ? <X size={11} color="var(--mantine-color-error)" />
-      : <Loader size={10} />;
+  const mark: ProgressState = turn.status === 'ok' ? 'done' : turn.status === 'error' ? 'failed' : 'active';
   const config = configText(turn.config);
   const lines = subLines(turn, t);
   const label = turn.tool
@@ -51,11 +51,9 @@ export function AgentTraceRow({ turn }: { turn: AgentTraceTurn }) {
 
   return (
     <Stack gap={1} style={{ minWidth: 0 }}>
-      <Box style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-        <Text component="span" style={{ fontSize: 'var(--font-size-xs)', color: 'var(--mantine-color-dimmed)', width: 12, textAlign: 'right', flexShrink: 0 }}>
-          {turn.turn}
-        </Text>
-        <Box component="span" style={{ flexShrink: 0, display: 'inline-flex' }}>{icon}</Box>
+      <Box style={PROGRESS_ROW_STYLE}>
+        <StepNumber value={turn.turn} />
+        <ProgressMark state={mark} />
         <Text component="span" style={{ fontSize: 'var(--font-size-xs)', fontWeight: 500, flexShrink: 0 }}>
           {label}
         </Text>
@@ -66,10 +64,10 @@ export function AgentTraceRow({ turn }: { turn: AgentTraceTurn }) {
         )}
       </Box>
       {lines.map((line) => (
-        <Text key={line} component="span" pl={SUBLINE_INDENT} style={SUBLINE_STYLE}>{line}</Text>
+        <Text key={line} component="span" pl={NUMBERED_LABEL_OFFSET} style={SUBLINE_STYLE}>{line}</Text>
       ))}
       {turn.research && (
-        <Box pl={SUBLINE_INDENT} style={{ minWidth: 0 }}>
+        <Box pl={NUMBERED_LABEL_OFFSET} style={{ minWidth: 0 }}>
           <ResearchChecklist progress={turn.research} ended={turn.status === 'ok' || turn.status === 'error'} t={t} />
         </Box>
       )}
@@ -78,7 +76,7 @@ export function AgentTraceRow({ turn }: { turn: AgentTraceTurn }) {
 }
 
 export const AgentTraceRows: React.FC<{ trace: AgentTraceTurn[] }> = ({ trace }) => (
-  <Box style={{ display: 'flex', flexDirection: 'column', gap: 3, paddingLeft: 2 }}>
+  <Box style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
     {trace.map((turn) => (
       <AgentTraceRow key={turn.turn} turn={turn} />
     ))}

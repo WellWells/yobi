@@ -1,5 +1,7 @@
 import type { ScheduleMode, TriggerConfig } from './types';
 
+export { toIsoDate } from './localTime';
+
 /**
  * Only steps that divide their unit evenly are offered. A non-divisor ("every 7 minutes") cannot be
  * written as a single cron expression that keeps an even spacing: a step of 7 restarts at the top of every hour,
@@ -85,7 +87,7 @@ export function daysInMonth(month: number, year?: number): number {
   return [4, 6, 9, 11].includes(month) ? 30 : 31;
 }
 
-export function isScheduleMode(value: unknown): value is ScheduleMode {
+function isScheduleMode(value: unknown): value is ScheduleMode {
   return typeof value === 'string' && (SCHEDULE_MODES as readonly string[]).includes(value);
 }
 
@@ -129,12 +131,6 @@ export function parseOnceDate(value: string | undefined): OnceDateParts | null {
   if (month < 1 || month > 12) return null;
   if (day < 1 || day > daysInMonth(month, year)) return null;
   return { year, month, day };
-}
-
-export function toIsoDate(date: Date): string {
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${date.getFullYear()}-${month}-${day}`;
 }
 
 /** The local moment a one-shot is set for; null when its date cannot be read. */

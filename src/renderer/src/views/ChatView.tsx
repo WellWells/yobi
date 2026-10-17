@@ -1,11 +1,14 @@
 import React, { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Flex, Stack } from '@mantine/core';
-import { Library, Paperclip, Quote, SearchCheck } from 'lucide-react';
+import { Paperclip } from 'lucide-react';
 import { Sidebar } from '../components/Sidebar';
 import { MarkdownView } from '../components/MarkdownView';
 import { ExportDialog } from '../components/ExportDialog';
 import { FileHeaderBar } from '../components/chat/FileHeaderBar';
+import { headerTitleFor } from '../components/chat/headerMenu/headerMenuModel';
+import { useHeaderTitleEdit } from '../components/chat/headerMenu/useHeaderTitleEdit';
 import { ConversationInfoDialog } from '../components/chat/ConversationInfoDialog';
+import { ConversationHistoryDialog } from '../components/chat/ConversationHistoryDialog';
 import { CENTERED_MAX_WIDTH, PromptInputArea, type PromptInputAreaHandle } from '../components/chat/PromptInputArea';
 import { WelcomeHints, WelcomeScreen } from '../components/chat/WelcomeScreen';
 import { IncognitoHints, IncognitoWelcome } from '../components/chat/IncognitoWelcome';
@@ -15,6 +18,8 @@ import { FileDragArea, FileDropZone } from '../components/chat/FileDropZone';
 import { LoginRequiredDialog } from '../components/chat/LoginRequiredDialog';
 import { ShareLinkDialog } from '../components/chat/ShareLinkDialog';
 import { buildShareMarkdown } from '../../../shared/conversationDoc';
+import { conversationPlainMarkdown } from '../../../shared/conversationPlain';
+import { isNotionDoc } from '../../../shared/notion/notionDoc';
 import { conversationAliases } from '../utils/parseMarkdownBlocks';
 import { loadAgentDefault, saveAgentDefault } from '../utils/composerDefaults';
 import { useShallow } from 'zustand/react/shallow';
@@ -33,25 +38,32 @@ import { hideAppNotices, showAppNotice } from '../hooks/useUiNotifications';
 import { useExportSettingsStore } from '../store/exportSettingsStore';
 import type { AgentRunSummary, CaptureFormat, CaptureTurn } from '../../../shared/types';
 import { useRewriteTask } from '../hooks/useRewriteTask';
-import { useChatCommands, type ChatCommand } from '../hooks/useChatCommands';
+import { builtinChatCommand, commandGroup, useChatCommands, type ChatCommand } from '../hooks/useChatCommands';
 import { useChatCommandRunner } from '../hooks/useChatCommandRunner';
 import { useAgentRunner } from '../hooks/useAgentRunner';
 import { useMcpCommands } from '../hooks/useMcpCommands';
 import { useConversationConnectors, webForRun } from '../hooks/useConversationConnectors';
-import { MCP_COMMAND_ID_PREFIX, parseMcpCommandFlowId } from '../../../shared/mcpCommand';
+import { CHAT_BUILTIN_COMMAND_NAMES, MCP_COMMAND_ID_PREFIX, parseMcpCommandFlowId } from '../../../shared/mcpCommand';
 import { useAgentRunStore } from '../store/useAgentRunStore';
 import { useConversationTurns } from '../hooks/useConversationTurns';
 import { ConversationView } from './chat/ConversationView';
+import { DocumentView } from './document/DocumentView';
+import { quoteIntoAssistant } from './document/docAssistantActions';
+import { plainNotionTitle } from '../../../shared/notion/notionDisplay';
 import { shouldShowConversationView } from './chat/conversationViewRouting';
 import { AgentResumeBanner } from '../components/chat/AgentResumeBanner';
 import { RecapLine } from '../components/chat/RecapLine';
 import { useConversationRecap } from '../hooks/useConversationRecap';
 import { useFormatTime } from '../hooks/useFormatTime';
-import { noteConversationRenamed } from '../store/recapStore';
 import { ConversationSearchOverlay } from '../components/chat/ConversationSearchOverlay';
-import { SelectionToolbar, type SelectionAction } from '../components/chat/SelectionToolbar';
-import { useChatSelection } from '../hooks/useChatSelection';
-import { parseCitationSources, resolveSelectionCitations } from '../../../shared/citations';
+import { ConversationFindBar } from '../components/chat/ConversationFindBar';
+import { useConversationFindStore } from '../store/conversationFindStore';
+import { useShortcutAction } from '../shortcuts/useShortcutAction';
+import { SelectionTools } from '../components/chat/SelectionTools';
+import { RewriteCardHost } from '../components/chat/RewriteCardHost';
+import { TranslateConversationMenu } from '../components/chat/translate/TranslateConversationMenu';
+import { ConversationTranslateStrip } from '../components/chat/translate/ConversationTranslateStrip';
+import { useTranslateStore } from '../store/translateStore';
 import { accountApi, agentApi, fileApi, settingsApi, clipboardApi } from '../api/electronApi';
 import { DEFAULT_MODEL_URL, visibleModels } from '../config/models';
 import { buildModelStops, nextModelStop, type ModelStop } from '../config/modelStops';
@@ -75,32 +87,33 @@ import {
 } from '../../../shared/types';
 import type { LoginRequiredProvider } from '../../../shared/types';
 import type { ConversationDoc } from '../../../shared/conversationDoc';
+import { desktopAnalyzeIdFor, isDesktopBuiltinFlowId, xAnalyzeInput } from '../../../shared/builtinFlows';
+
+/** A selection longer than this is a passage, not something to search for. */
+const FIND_PREFILL_MAX = 200;
 
 const EMPTY_CONVERSATION: ConversationDoc = {
   title: null, provider: null, time: null, thread: { v: 1 }, turns: [],
 };
 
 export const ChatView: React.FC = React.memo(() => {
-  const { selectedFile, fileContent, parsedBlocks, conversation, layoutMode, markdownZoom, tempChatMode, tempChatContent, tempChatBlocks, tempChatConversation } = useAppStore(
+  const { selectedFile, fileContent, parsedBlocks, conversation, layoutMode, tempChatMode, tempChatContent, tempChatBlocks, tempChatConversation } = useAppStore(
     useShallow((s) => ({
       selectedFile: s.selectedFile,
       fileContent: s.fileContent,
       parsedBlocks: s.parsedBlocks,
       conversation: s.conversation,
       layoutMode: s.layoutMode,
-      markdownZoom: s.markdownZoom,
       tempChatMode: s.tempChatMode,
       tempChatContent: s.tempChatContent,
       tempChatBlocks: s.tempChatBlocks,
       tempChatConversation: s.tempChatConversation,
     })),
   );
-  const { setFileContent, setFiles, selectFile, setLayoutMode, zoomInMarkdown, zoomOutMarkdown, resetMarkdownZoom, setAiUrl } = useAppStore(
+  const { setFileContent, selectFile, zoomInMarkdown, zoomOutMarkdown, resetMarkdownZoom, setAiUrl } = useAppStore(
     useShallow((s) => ({
       setFileContent: s.setFileContent,
-      setFiles: s.setFiles,
       selectFile: s.selectFile,
-      setLayoutMode: s.setLayoutMode,
       zoomInMarkdown: s.zoomInMarkdown,
       zoomOutMarkdown: s.zoomOutMarkdown,
       resetMarkdownZoom: s.resetMarkdownZoom,
@@ -152,8 +165,12 @@ export const ChatView: React.FC = React.memo(() => {
   const [searchOpen, setSearchOpen] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [infoDialogOpen, setInfoDialogOpen] = useState(false);
+  const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
+  const translatingConversation = useTranslateStore((s) => s.conversation !== null);
+  // A Notion document is shared as the page reads, not as questions and answers.
+  const sharingDocument = Boolean(fileContent && isNotionDoc(fileContent));
   const shareMarkdown = useMemo(
-    () => buildShareMarkdown(fileContent ?? '', conversationAliases(), {
+    () => (sharingDocument ? conversationPlainMarkdown(fileContent ?? '', { unsupported: t('notion.block.unsupported') }) : buildShareMarkdown(fileContent ?? '', conversationAliases(), {
       question: (index) => t('share.turnHeading').replace('{{n}}', String(index)),
       answer: (provider) => (provider
         ? t('share.answerBy').replace('{{provider}}', provider)
@@ -161,11 +178,9 @@ export const ChatView: React.FC = React.memo(() => {
       intro: (provider, turns) => (provider
         ? t('share.introWith').replace('{{provider}}', provider)
         : t('share.intro')).replace('{{count}}', String(turns)),
-    }),
-    [fileContent, t],
+    })),
+    [fileContent, sharingDocument, t],
   );
-  const [headerEditing, setHeaderEditing] = useState(false);
-  const [headerEditValue, setHeaderEditValue] = useState('');
 
   /* Everything this view has to say goes to the app's one notice surface, never a card of its own. */
   const setExportToast = useCallback((toast: ExportToast): void => {
@@ -190,26 +205,14 @@ export const ChatView: React.FC = React.memo(() => {
   const { sendTurn } = useConversationTurns(handleTurnError);
 
   const flowCommands = useChatCommands();
-  const builtinNames = useMemo(() => new Set([
-    BUILTIN_NEW_COMMAND, BUILTIN_NEW_ALIAS,
-    BUILTIN_MODEL_COMMAND,
-    BUILTIN_RECAP_COMMAND,
-    BUILTIN_CHAT_COMMAND,
-    BUILTIN_AGENT_COMMAND,
-  ]), []);
-  // Flow commands are reserved against connector commands as well as built-ins: a flow the user
-  // wrote wins its own name, matching how bot commands settle the same clash.
-  const reservedNames = useMemo(
-    () => new Set([...builtinNames, ...flowCommands.map((c) => c.command)]),
-    [builtinNames, flowCommands],
-  );
   const describeMcpCommand = useCallback(
     ({ connected }: { connected: boolean }) => (connected
       ? t('chat.command.mcp.description')
       : t('chat.command.mcp.disconnected')),
     [t],
   );
-  const mcpCommands = useMcpCommands(reservedNames, describeMcpCommand);
+  // Flow commands and built-ins are reserved against connector commands inside the hook.
+  const mcpCommands = useMcpCommands(describeMcpCommand);
   const chatCommands = useMemo<ChatCommand[]>(() => {
     return [
       {
@@ -242,9 +245,9 @@ export const ChatView: React.FC = React.memo(() => {
         description: t('agent.command.description'),
       },
       ...mcpCommands,
-      ...flowCommands.filter((c) => !builtinNames.has(c.command)),
+      ...flowCommands.filter((c) => !CHAT_BUILTIN_COMMAND_NAMES.has(c.command)),
     ];
-  }, [builtinNames, flowCommands, mcpCommands, hasRecapTarget, t]);
+  }, [flowCommands, mcpCommands, hasRecapTarget, t]);
   const { runCommand } = useChatCommandRunner(setExportToast);
   // Read through refs: a run reports back after it finishes, long after the callback was created.
   const webRef = useRef({ web, webOff });
@@ -302,6 +305,8 @@ export const ChatView: React.FC = React.memo(() => {
   const promptAreaRef = useRef<PromptInputAreaHandle>(null);
   const headerInputRef = useRef<HTMLInputElement>(null);
   const contentAreaRef = useRef<HTMLDivElement>(null);
+  /** The document view's scroll area, when a Notion document is open. */
+  const documentAreaRef = useRef<HTMLDivElement>(null);
   const viewMenuRef = useRef<HTMLDivElement>(null);
 
   const focusPromptInput = useCallback(() => {
@@ -429,12 +434,6 @@ export const ChatView: React.FC = React.memo(() => {
     hideAppNotices();
   }, [selectedFile?.path]);
 
-  useEffect(() => {
-    if (headerEditing) {
-      window.requestAnimationFrame(() => headerInputRef.current?.select());
-    }
-  }, [headerEditing]);
-
   const handleSendPrompt = useCallback((text: string): boolean => {
     const gated = loginRequiredProviderForUrl(activeModelUrl);
     if (gated && useAppStore.getState().accountStatuses[gated] === false) {
@@ -500,6 +499,35 @@ export const ChatView: React.FC = React.memo(() => {
     handleNewConversation, showRecapNow, runCommand, runAgentCommand, web, webOff, t,
   ]);
 
+  // "Analyze" under a forwarded post: the post's site's built-in analysis — the post and its
+  // replies read and summed up in one model call, no agent. The link was rebuilt from the post
+  // id, so a hand-edited file can at most analyze a different post.
+  const handleAnalyzeXPost = useCallback((link: string): void => {
+    const flowId = desktopAnalyzeIdFor(link);
+    if (flowId) void runCommand(builtinChatCommand(flowId), xAnalyzeInput(link));
+  }, [runCommand]);
+
+  // A flow's button carries its whole command line and runs that flow command again. Only a flow
+  // command or a pasted link's built-in (a YouTube menu's choice, an X post's download): the line
+  // comes from a file that may have been imported or edited, so it never starts the agent or a
+  // connector, and never picks up the composer's attachments.
+  const handleTurnButton = useCallback((commandLine: string): void => {
+    const match = /^\/(\S+)\s*([\s\S]*)$/.exec(commandLine.trim());
+    if (!match) return;
+    if (isDesktopBuiltinFlowId(match[1])) {
+      void runCommand(builtinChatCommand(match[1]), match[2].trim());
+      return;
+    }
+    const name = match[1].toLowerCase();
+    const command = chatCommands.find((c) => c.command.toLowerCase() === name || c.aliases?.some((a) => a.toLowerCase() === name));
+    if (!command) {
+      handleUnknownCommand(name);
+      return;
+    }
+    if (commandGroup(command) !== 'flow') return;
+    void runCommand(command, match[2].trim());
+  }, [chatCommands, runCommand, handleUnknownCommand]);
+
   const handleAiUrlChange = useCallback((nextUrl: string): void => {
     const provider = loginRequiredProviderForUrl(nextUrl);
     if (provider && useAppStore.getState().accountStatuses[provider] === false) {
@@ -524,32 +552,41 @@ export const ChatView: React.FC = React.memo(() => {
     void accountApi.openLogin(provider);
   }, [pendingLoginModel, selectModel]);
 
-  const handleCopyFullText = useCallback(async (): Promise<void> => {
-    if (!fileContent) return;
-    await clipboardApi.copyText(fileContent);
-  }, [fileContent]);
+  // The header shows the conversation's H1, the sidebar row's title (the row's own while the
+  // content loads), and its pencil edits that H1.
+  // A Notion document's H1 is Notion's rich-text title ("**…**"): the header shows its words.
+  const headerTitle = selectedFile
+    ? (selectedFile.notion ? plainNotionTitle(headerTitleFor(fileContent, selectedFile)) : headerTitleFor(fileContent, selectedFile))
+    : '';
 
-  const startHeaderRename = useCallback(() => {
-    const fileStem = selectedFile?.name.replace(/\.md$/i, '') ?? '';
-    setHeaderEditValue(fileStem);
-    setHeaderEditing(true);
-  }, [selectedFile?.name]);
-
-  const commitHeaderRename = useCallback(async () => {
-    setHeaderEditing(false);
-    const title = headerEditValue.trim();
-    if (!title || !selectedFile) return;
-    const result = await fileApi.updateTitle(selectedFile.path, title);
-    if (!result.ok) return;
-    noteConversationRenamed(selectedFile.path, result.updatedPath);
-    const latest = await fileApi.getList();
-    setFiles(latest);
-    const nextSelected = latest.find((item) => item.path === result.updatedPath) ?? null;
-    selectFile(nextSelected);
-    if (!nextSelected) { setFileContent(null); return; }
-    const updated = await fileApi.getContent(nextSelected.path);
+  const writeHeaderTitle = useCallback(async (path: string, title: string): Promise<void> => {
+    if (!await fileApi.updateH1(path, title)) return;
+    // Main broadcasts the new file list, which updates the sidebar row; the open conversation is
+    // re-read here, unless the user has moved to another one meanwhile.
+    if (useAppStore.getState().selectedFile?.path !== path) return;
+    const updated = await fileApi.getContent(path);
+    if (useAppStore.getState().selectedFile?.path !== path) return;
     startTransition(() => setFileContent(updated));
-  }, [headerEditValue, selectedFile, selectFile, setFileContent, setFiles]);
+  }, [setFileContent]);
+
+  // Unchanged is no edit (a file without an H1 would otherwise gain one named after the file), and
+  // the edit is dropped when another conversation opens: see useHeaderTitleEdit.
+  const headerEdit = useHeaderTitleEdit({
+    path: selectedFile?.path ?? null,
+    title: headerTitle,
+    writeTitle: writeHeaderTitle,
+  });
+
+  useEffect(() => {
+    if (headerEdit.editing) {
+      window.requestAnimationFrame(() => headerInputRef.current?.select());
+    }
+  }, [headerEdit.editing]);
+
+  // Closing the info dialog returns focus to the ⋮ it was opened from; the menu row it came from is gone.
+  const focusMoreButton = useCallback(() => {
+    viewMenuRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+  }, []);
 
   const showConversationView = shouldShowConversationView({
     layoutMode,
@@ -579,65 +616,47 @@ export const ChatView: React.FC = React.memo(() => {
     void startRewrite(url);
   }, [startRewrite]);
 
-  const activeConversation = showConversationView && conversation
+  // A Notion document (`notionConversation`) is shown by the document view, as one answer.
+  const documentConversation = selectedFile && fileContent && conversation?.thread.notion && conversation.provider === 'Notion'
     ? conversation
-    : (tempChatMode && (tempChatConversation?.turns.length ?? 0) > 0 ? tempChatConversation : null);
+    : null;
+  const activeConversation = documentConversation ?? (showConversationView && conversation
+    ? conversation
+    : (tempChatMode && (tempChatConversation?.turns.length ?? 0) > 0 ? tempChatConversation : null));
 
-  const { selection, clear: clearSelection } = useChatSelection(contentAreaRef);
-  const [sourcesOpen, setSourcesOpen] = useState(false);
-
+  // Ctrl+F finds in the conversation on screen; with none open there is nothing to search in, so
+  // it opens the conversation search instead.
+  // A selected file counts while it loads, or a search opened from Ctrl+K would close as it lands.
+  const hasConversationOnScreen = activeConversation !== null || Boolean(selectedFile);
+  useShortcutAction('nav.find', () => {
+    if (!hasConversationOnScreen) {
+      openSearch();
+      return;
+    }
+    const selected = window.getSelection();
+    const text = selected && contentAreaRef.current?.contains(selected.anchorNode) ? selected.toString().trim() : '';
+    useConversationFindStore.getState().show(text && text.length <= FIND_PREFILL_MAX && !text.includes('\n') ? text : undefined);
+  }, 'chat');
   useEffect(() => {
-    setSourcesOpen(false);
-  }, [selection?.text, selection?.turnIndex]);
-
-  useEffect(() => {
-    clearSelection();
-    setSourcesOpen(false);
-  }, [selectedFile?.path, clearSelection]);
-
-  const selectionSources = useMemo(() => {
-    if (!selection || selection.turnIndex === null || !activeConversation) return [];
-    const response = activeConversation.turns[selection.turnIndex]?.response ?? '';
-    if (!response) return [];
-    return resolveSelectionCitations(selection.text, selection.blockText, parseCitationSources(response));
-  }, [selection, activeConversation]);
+    if (!hasConversationOnScreen) useConversationFindStore.getState().close();
+  }, [hasConversationOnScreen]);
 
   // "Verify this" hands the claim to the agent, which decides whether to research it.
   const verifyChatCommand = useMemo(
     () => chatCommands.find((command) => command.flowId === BUILTIN_AGENT_FLOW_ID) ?? null,
     [chatCommands],
   );
-
-  const selectionActions = useMemo<SelectionAction[]>(() => {
-    if (!selection) return [];
-    const actions: SelectionAction[] = [{
-      id: 'quote',
-      label: t('chat.selection.quote'),
-      Icon: Quote,
-      run: () => {
-        promptAreaRef.current?.insertQuote(selection.text);
-        clearSelection();
-      },
-    }];
-    if (selectionSources.length > 0) {
-      actions.push({
-        id: 'sources',
-        label: t('chat.selection.sources'),
-        Icon: Library,
-        run: () => setSourcesOpen((open) => !open),
-      });
-    } else if (verifyChatCommand) {
-      actions.push({
-        id: 'verify',
-        label: t('chat.selection.verify'),
-        Icon: SearchCheck,
-        run: () => {
-          if (handleRunChatCommand(verifyChatCommand, selection.text)) clearSelection();
-        },
-      });
-    }
-    return actions;
-  }, [selection, selectionSources, verifyChatCommand, handleRunChatCommand, clearSelection, t]);
+  const handleVerifySelection = useMemo(
+    () => (verifyChatCommand ? (text: string) => handleRunChatCommand(verifyChatCommand, text) : null),
+    [verifyChatCommand, handleRunChatCommand],
+  );
+  const handleQuoteSelection = useCallback((text: string): void => {
+    promptAreaRef.current?.insertQuote(text);
+  }, []);
+  const selectedPath = selectedFile?.path ?? null;
+  const handleQuoteIntoAssistant = useCallback((text: string): void => {
+    if (selectedPath) quoteIntoAssistant(selectedPath, text);
+  }, [selectedPath]);
 
   const handleOpenSource = useCallback((url: string): void => {
     void clipboardApi.openExternalUrl(url);
@@ -647,6 +666,32 @@ export const ChatView: React.FC = React.memo(() => {
     <FileDragArea>
       <Sidebar onNewConversation={handleNewConversation} onOpenSearch={openSearch} />
 
+      {documentConversation && selectedFile && fileContent && (
+        <DocumentView
+          key={selectedFile.path}
+          path={selectedFile.path}
+          content={fileContent}
+          conversation={documentConversation}
+          contentAreaRef={documentAreaRef}
+          titleEdit={{
+            title: headerTitle,
+            titleEditing: headerEdit.editing,
+            titleEditValue: headerEdit.value,
+            setTitleEditValue: headerEdit.setValue,
+            onCommitTitleEdit: headerEdit.commit,
+            onCancelTitleEdit: headerEdit.cancel,
+            onStartTitleEdit: headerEdit.start,
+            titleInputRef: headerInputRef,
+          }}
+          onOpenHistory={() => setHistoryDialogOpen(true)}
+          captureBusy={captureExport.captureBusy}
+          onOpenCaptureDialog={() => captureExport.setCaptureDialogOpen(true)}
+          onOpenShareDialog={() => setShareDialogOpen(true)}
+          t={t}
+        />
+      )}
+      {/* Under a document the chat column stays mounted, only hidden: the composer keeps what was typed. */}
+      <Box display={documentConversation ? 'none' : 'flex'} flex={1} miw={0}>
       <FileDropZone
         grow
         onFiles={addFiles}
@@ -664,47 +709,60 @@ export const ChatView: React.FC = React.memo(() => {
         )}
         {selectedFile && (
           <FileHeaderBar
-            fileName={selectedFile.name}
-            fileContentExists={Boolean(fileContent)}
-            headerEditing={headerEditing}
-            headerEditValue={headerEditValue}
-            setHeaderEditValue={setHeaderEditValue}
-            onCommitHeaderRename={() => { void commitHeaderRename(); }}
-            onCancelHeaderRename={() => setHeaderEditing(false)}
-            onStartHeaderRename={startHeaderRename}
-            headerInputRef={headerInputRef}
+            title={headerTitle}
+            filePath={selectedFile.path}
+            fileContent={fileContent}
+            conversation={conversation}
+            titleEditing={headerEdit.editing}
+            titleEditValue={headerEdit.value}
+            setTitleEditValue={headerEdit.setValue}
+            onCommitTitleEdit={headerEdit.commit}
+            onCancelTitleEdit={headerEdit.cancel}
+            onStartTitleEdit={headerEdit.start}
+            titleInputRef={headerInputRef}
             viewMenuRef={viewMenuRef}
             viewMenuOpen={viewMenuOpen}
             onToggleViewMenu={() => setViewMenuOpen((prev) => !prev)}
             onCloseViewMenu={() => setViewMenuOpen(false)}
             t={t}
-            markdownZoom={markdownZoom}
-            onZoomIn={zoomInMarkdown}
-            onZoomOut={zoomOutMarkdown}
-            onZoomReset={resetMarkdownZoom}
-            layoutMode={layoutMode}
-            onSetLayoutMode={setLayoutMode}
-            onCopyFullText={() => { void handleCopyFullText(); }}
             onOpenCaptureDialog={() => captureExport.setCaptureDialogOpen(true)}
             onOpenShareDialog={() => setShareDialogOpen(true)}
             captureBusy={captureExport.captureBusy}
-            onShowInFolder={() => { void window.electronAPI.showInFolder(selectedFile.path); }}
             onStartRewrite={handleStartRewrite}
             {...(fileContent && conversation && conversation.turns.length > 0
               ? { onOpenInfo: () => setInfoDialogOpen(true) }
               : {})}
+            {...(fileContent ? { onOpenHistory: () => setHistoryDialogOpen(true) } : {})}
+            translateMenuLabel={t('chat.translate.conversation.menu')}
+            translateMenu={conversation && conversation.turns.length > 0 ? (
+              <TranslateConversationMenu
+                path={selectedFile.path}
+                conversation={conversation}
+                onClose={() => setViewMenuOpen(false)}
+                t={t}
+              />
+            ) : undefined}
           />
         )}
 
         {/* Always rendered, so the composer below keeps its place in the tree and never remounts. */}
         <Box flex={blankChat ? 1 : 0} />
         <Box ref={contentAreaRef} flex={blankChat ? '0 0 auto' : 1} style={{ overflowY: 'auto' }}>
-          {showConversationView && conversation ? (
+          <ConversationFindBar
+            containerRef={contentAreaRef}
+            resetKey={selectedFile?.path ?? NEW_CONVERSATION_KEY}
+            onClosed={focusPromptInput}
+            t={t}
+          />
+          {/* A document is drawn by DocumentView; drawing it here too would leave a second rewrite slot in the page. */}
+          {documentConversation ? null : showConversationView && conversation ? (
             <ConversationView
               conversation={conversation}
               conversationPath={selectedFile?.path ?? ''}
               onCaptureTurnAs={handleCaptureTurnAs}
               onChooseAnswer={answerAgentQuestion}
+              onTurnButton={handleTurnButton}
+              onAnalyzeXPost={handleAnalyzeXPost}
             />
           ) : fileContent && parsedBlocks ? (
             <MarkdownView content={fileContent} blocks={parsedBlocks} />
@@ -713,7 +771,7 @@ export const ChatView: React.FC = React.memo(() => {
               {t('main.loading')}
             </Flex>
           ) : tempChatMode && tempChatConversation && tempChatConversation.turns.length > 0 ? (
-            <ConversationView conversation={tempChatConversation} conversationPath={NEW_CONVERSATION_KEY} onChooseAnswer={answerAgentQuestion} />
+            <ConversationView conversation={tempChatConversation} conversationPath={NEW_CONVERSATION_KEY} onChooseAnswer={answerAgentQuestion} onTurnButton={handleTurnButton} onAnalyzeXPost={handleAnalyzeXPost} />
           ) : pendingNewTurns > 0 ? (
             <ConversationView conversation={EMPTY_CONVERSATION} conversationPath={NEW_CONVERSATION_KEY} />
           ) : tempChatMode && tempChatContent && tempChatBlocks ? (
@@ -723,6 +781,10 @@ export const ChatView: React.FC = React.memo(() => {
           ) : (
             <WelcomeScreen />
           )}
+        </Box>
+
+        <Box px="md" pb={translatingConversation ? 'xs' : 0}>
+          <ConversationTranslateStrip t={t} />
         </Box>
 
         {conversationRecap.display && (
@@ -790,18 +852,21 @@ export const ChatView: React.FC = React.memo(() => {
         </Box>
       </Stack>
       </FileDropZone>
+      </Box>
 
-      {selection && selectionActions.length > 0 && (
-        <SelectionToolbar
-          selection={selection}
-          actions={selectionActions}
-          sources={selectionSources}
-          sourcesOpen={sourcesOpen}
-          sourcesLabel={t('chat.selection.sourcesTitle')}
-          onOpenSource={handleOpenSource}
-          t={t}
-        />
-      )}
+      <SelectionTools
+        contentAreaRef={documentConversation ? documentAreaRef : contentAreaRef}
+        conversation={activeConversation}
+        path={selectedFile?.path ?? NEW_CONVERSATION_KEY}
+        canEdit={Boolean(selectedFile) && pendingSelectedTurns === 0}
+        notion={Boolean(documentConversation)}
+        // A document quotes into its assistant panel; it has no agent run to verify with.
+        onQuote={documentConversation ? handleQuoteIntoAssistant : handleQuoteSelection}
+        onVerify={documentConversation ? null : handleVerifySelection}
+        onOpenSource={handleOpenSource}
+        t={t}
+      />
+      <RewriteCardHost path={selectedFile?.path ?? NEW_CONVERSATION_KEY} t={t} />
 
       <ConversationSearchOverlay opened={searchOpen} onClose={() => setSearchOpen(false)} />
 
@@ -816,16 +881,25 @@ export const ChatView: React.FC = React.memo(() => {
         open={shareDialogOpen}
         onClose={() => setShareDialogOpen(false)}
         markdown={shareMarkdown}
-        turnCount={conversation?.turns.length ?? 0}
+        turnCount={sharingDocument ? 0 : conversation?.turns.length ?? 0}
         t={t}
       />
 
       <ConversationInfoDialog
         open={infoDialogOpen && Boolean(selectedFile)}
         onClose={() => setInfoDialogOpen(false)}
+        onClosed={focusMoreButton}
         conversation={conversation}
         content={fileContent ?? ''}
         filePath={selectedFile?.path ?? ''}
+      />
+
+      <ConversationHistoryDialog
+        open={historyDialogOpen && Boolean(selectedFile)}
+        onClose={() => setHistoryDialogOpen(false)}
+        filePath={selectedFile?.path ?? ''}
+        content={fileContent ?? ''}
+        conversation={conversation}
       />
 
       <ExportDialog

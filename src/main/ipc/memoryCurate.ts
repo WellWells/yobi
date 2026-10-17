@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import { IPC } from '../../shared/types';
 import { languageForLocale } from '../../shared/localeLanguage';
+import { toIsoDate } from '../../shared/localTime';
 import { MEMORY_CURATE_NOTE_MAX_CHARS } from '../../shared/memoryCurate';
 import type {
   MemoryCurateApplyResult,
@@ -13,6 +14,7 @@ import { config, saveConfig } from '../config';
 import { askJson } from '../flow/agent/structuredLlm';
 import type { FlowExecutorDeps } from '../flow/types';
 import { sendLog } from '../helpers';
+import { getLangCache, localizeUserFacingError, t } from '../i18n';
 import {
   applyCuration,
   buildCuratePrompt,
@@ -57,12 +59,6 @@ function clip(raw: unknown): string {
   return typeof raw === 'string' ? raw.trim().slice(0, MEMORY_CURATE_NOTE_MAX_CHARS) : '';
 }
 
-/** The user's calendar day: "next week" is judged against the date on their wall. */
-function localDate(now: Date): string {
-  const pad = (value: number): string => String(value).padStart(2, '0');
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-}
-
 function workerDeps(providerUrl: string): FlowExecutorDeps {
   return {
     getWorkerWin,
@@ -94,7 +90,8 @@ async function propose(request: MemoryCurateProposeRequest): Promise<MemoryCurat
   const feedback = clip(request?.feedback);
   const input: CuratePromptInput = {
     entries: state.entries,
-    today: localDate(new Date()),
+    // The user's calendar day: "next week" is judged against the date on their wall.
+    today: toIsoDate(new Date()),
     language: languageForLocale(config.locale),
     ...(instruction ? { instruction } : {}),
     ...(feedback ? { feedback, ...(latest ? { previous: latest.changes } : {}) } : {}),
@@ -112,7 +109,11 @@ async function propose(request: MemoryCurateProposeRequest): Promise<MemoryCurat
       signal: controller.signal,
     });
     if (controller.signal.aborted) return { ok: false, reason: 'cancelled' };
-    if (!result.ok || !result.value) return { ok: false, reason: 'failed', error: result.error };
+    if (!result.ok || !result.value) {
+      // The validator's text is the repair instruction written for the model; the log keeps it.
+      sendLog(`⚠️ [Memory] tidy failed: ${result.error ?? 'no usable proposal'}`);
+      return { ok: false, reason: 'failed', error: t(getLangCache(), 'settings.memory.curate.invalidOutput') };
+    }
     latest = { id: `curate-${Date.now().toString(36)}`, providerUrl, changes: result.value };
     sendLog(`🧠 [Memory] tidy proposal: ${latest.changes.map((change) => `${change.op} ${change.ids.join('+')}`).join(', ') || 'nothing to change'}`);
     return { ok: true, proposal: latest };
@@ -120,7 +121,7 @@ async function propose(request: MemoryCurateProposeRequest): Promise<MemoryCurat
     if (controller.signal.aborted) return { ok: false, reason: 'cancelled' };
     const error = err instanceof Error ? err.message : String(err);
     sendLog(`⚠️ [Memory] tidy failed: ${error}`);
-    return { ok: false, reason: 'failed', error };
+    return { ok: false, reason: 'failed', error: localizeUserFacingError(error, getLangCache()) };
   } finally {
     if (running === controller) running = null;
   }

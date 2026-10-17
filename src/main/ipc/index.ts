@@ -17,9 +17,13 @@ import { loadLanguageData } from '../i18n';
 import { titleFromPrompt } from '../output';
 import { resolveUrlPrompt } from '../urlParser';
 import { showWorkerWindow } from '../windows';
+import { openOfferedSiteVerification } from '../siteVerification';
 import type { IpcContext } from './context';
 import { showOpenDialogForWin } from './context';
 import { registerFileHandlers } from './files';
+import { registerConversationHistoryHandlers } from './conversationHistory';
+import { registerNotionHandlers } from './notion';
+import { registerYtdlHandlers } from './ytdl';
 import { registerBatchExportHandlers } from './batchExport';
 import { registerComposerEditorHandlers } from './composerEditor';
 import { registerTelegramHandlers } from './telegram';
@@ -42,6 +46,10 @@ import { registerClaudeModelHandlers } from './claudeModel';
 import { registerChatgptModelHandlers } from './chatgptModel';
 import { registerMemoryHandlers } from './memory';
 import { registerMemoryCurateHandlers } from './memoryCurate';
+import { registerWritingToolsHandlers } from './writingTools';
+import { registerDocAssistantHandlers } from './docAssistant';
+import { registerTranslateHandlers } from './translate';
+import { registerMarkdownExportHandlers } from './markdownExport';
 
 let _ipcInitialized = false;
 
@@ -102,6 +110,10 @@ export function setupIpcHandlers(deps: IpcContext): void {
   ipcMain.on(IPC.SHOW_WORKER, () => {
     void showWorkerWindow(config.targetUrl);
   });
+  // The in-app toast's button, when the OS could not show the notification that offers it.
+  ipcMain.on(IPC.SITE_VERIFICATION_OPEN, (_event, site: unknown) => {
+    if (typeof site === 'string') openOfferedSiteVerification(site);
+  });
   ipcMain.handle(IPC.UPDATE_CHECK, () => checkForUpdates());
 
   ipcMain.on(IPC.WINDOW_MINIMIZE, () => getMainWin()?.minimize());
@@ -156,10 +168,6 @@ export function setupIpcHandlers(deps: IpcContext): void {
     return true;
   });
 
-  ipcMain.on(IPC.TRIGGER_PROMPT, (_event, prompt: string) => {
-    void enqueuePromptFromUi(prompt, config.targetUrl);
-  });
-
   ipcMain.handle(IPC.TRIGGER_PROMPT_WITH_OPTIONS, (_event, options: PromptTriggerOptions) =>
     enqueuePromptFromUi(options?.prompt ?? '', options?.targetUrl, options?.attachments, {
       conversationPath: options?.conversationPath,
@@ -205,6 +213,9 @@ export function setupIpcHandlers(deps: IpcContext): void {
   });
 
   registerFileHandlers();
+  registerConversationHistoryHandlers();
+  registerNotionHandlers();
+  registerYtdlHandlers();
   registerBatchExportHandlers();
   registerComposerEditorHandlers();
   registerTelegramHandlers(ctx);
@@ -227,4 +238,8 @@ export function setupIpcHandlers(deps: IpcContext): void {
   registerChatgptModelHandlers();
   registerMemoryHandlers(() => announceBotPermissionsChanged(ctx, 'telegram'));
   registerMemoryCurateHandlers();
+  registerWritingToolsHandlers();
+  registerDocAssistantHandlers();
+  registerTranslateHandlers();
+  registerMarkdownExportHandlers();
 }

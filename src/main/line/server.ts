@@ -1,8 +1,8 @@
 import * as http from 'node:http';
 import type { webhook } from '@line/bot-sdk';
 import { verifyLineSignature } from './signature';
-import { parseTextEvents } from './events';
-import type { LineTextEvent } from './events';
+import { parseChatEvents, parseTextEvents } from './events';
+import type { LineChatEvent, LineTextEvent } from './events';
 
 export const LINE_WEBHOOK_PATH = '/line/webhook';
 
@@ -12,6 +12,8 @@ const CLOSE_TIMEOUT_MS = 2_000;
 export interface LineWebhookServerDeps {
   getChannelSecret: () => string;
   onEvents: (events: LineTextEvent[]) => void;
+  /** The bot joined or left a group or multi-person chat. */
+  onChatEvents?: (events: LineChatEvent[]) => void;
   onLog: (message: string) => void;
 }
 
@@ -106,6 +108,8 @@ export class LineWebhookServer {
       const body = JSON.parse(rawBody.toString('utf8')) as webhook.CallbackRequest;
       const events = parseTextEvents(body);
       if (events.length > 0) this.deps.onEvents(events);
+      const chatEvents = parseChatEvents(body);
+      if (chatEvents.length > 0) this.deps.onChatEvents?.(chatEvents);
     } catch (err: unknown) {
       this.deps.onLog(`[line] failed to parse webhook body: ${err instanceof Error ? err.message : String(err)}`);
     }

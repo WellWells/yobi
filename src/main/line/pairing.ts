@@ -74,7 +74,7 @@ export function consumeLinePairingCode(
   };
 }
 
-export interface LinePairingBridge {
+interface LinePairingBridge {
   isPairedUser: (userId: string) => boolean;
   consumePairingCode: (code: string, user: LinePairingUserProfile) => { ok: boolean; reason?: string };
 }

@@ -17,7 +17,7 @@ import type { ByokEndpoint, ByokUsage } from './byokClient';
 export const VIDEO_READ_TIMEOUT_MS = 180_000;
 
 export const NO_GEMINI_KEY_ERROR =
-  'No Gemini API key in this selection — only generativelanguage.googleapis.com reads YouTube videos';
+  'No Gemini API key in this selection — only generativelanguage.googleapis.com reads videos';
 
 const TRANSCRIBE_PROMPT = [
   'Transcribe everything that is said in this video.',
@@ -26,6 +26,15 @@ const TRANSCRIBE_PROMPT = [
   '- Write the words as they are spoken, in the language they are spoken. Do not translate, summarize or comment.',
   '- Plain text in paragraphs, no timestamps.',
   '- If the video has little or no speech, describe what happens on screen instead, in order.',
+].join('\n');
+
+const DESCRIBE_PROMPT = [
+  'Write down what this video says and shows.',
+  '',
+  'OUTPUT RULES (critical):',
+  '- First the words as they are spoken, in the language they are spoken. Do not translate, summarize or comment.',
+  '- Then a line "On screen:" and, in a few sentences, what happens and any text that appears.',
+  '- Plain text, no timestamps.',
 ].join('\n');
 
 export interface VideoReading {
@@ -39,11 +48,12 @@ export function interactionsUrl(baseUrl: string): string {
   return `${new URL(baseUrl.trim()).origin}/v1beta/interactions`;
 }
 
-export function buildVideoInteraction(model: string, videoUrl: string, prompt: string): Record<string, unknown> {
+/** A YouTube URL goes as it is; any other URL is a file Gemini fetches, and needs its type. */
+export function buildVideoInteraction(model: string, videoUrl: string, prompt: string, mimeType?: string): Record<string, unknown> {
   return {
     model: model.trim().replace(/^models\//, ''),
     input: [
-      { type: 'video', uri: videoUrl },
+      { type: 'video', uri: videoUrl, ...(mimeType ? { mime_type: mimeType } : {}) },
       { type: 'text', text: prompt },
     ],
   };
@@ -74,7 +84,13 @@ export function readInteraction(bodyText: string): { text: string; usage: ByokUs
   return { text, usage, status: typeof body.status === 'string' ? body.status : 'unknown' };
 }
 
-async function readVideoOnKey(endpoint: ByokEndpoint, videoUrl: string, signal?: AbortSignal): Promise<VideoReading> {
+interface VideoRequest {
+  url: string;
+  prompt: string;
+  mimeType?: string;
+}
+
+async function readVideoOnKey(endpoint: ByokEndpoint, video: VideoRequest, signal?: AbortSignal): Promise<VideoReading> {
   if (!endpoint.apiKey || !endpoint.model) {
     throw new Error(`${BYOK_CONFIG_INCOMPLETE_PREFIX}API key and model are required`);
   }
@@ -83,7 +99,7 @@ async function readVideoOnKey(endpoint: ByokEndpoint, videoUrl: string, signal?:
     {
       method: 'POST',
       headers: { 'x-goog-api-key': endpoint.apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildVideoInteraction(endpoint.model, videoUrl, TRANSCRIBE_PROMPT)),
+      body: JSON.stringify(buildVideoInteraction(endpoint.model, video.url, video.prompt, video.mimeType)),
     },
     VIDEO_READ_TIMEOUT_MS,
     signal,
@@ -99,7 +115,16 @@ async function readVideoOnKey(endpoint: ByokEndpoint, videoUrl: string, signal?:
  * itself, so this works on a video YouTube has not captioned yet.
  */
 export function transcribeYoutubeVideo(targetUrl: string, videoUrl: string, signal?: AbortSignal): Promise<VideoReading> {
-  return runOnByokKeys(targetUrl, (endpoint) => readVideoOnKey(endpoint, videoUrl, signal), {
+  return readVideo(targetUrl, { url: videoUrl, prompt: TRANSCRIBE_PROMPT }, signal);
+}
+
+/** Has Gemini fetch a public mp4 (up to 15 MB) and write down what it says and shows. */
+export function describeVideoFile(targetUrl: string, mp4Url: string, signal?: AbortSignal): Promise<VideoReading> {
+  return readVideo(targetUrl, { url: mp4Url, prompt: DESCRIBE_PROMPT, mimeType: 'video/mp4' }, signal);
+}
+
+function readVideo(targetUrl: string, video: VideoRequest, signal?: AbortSignal): Promise<VideoReading> {
+  return runOnByokKeys(targetUrl, (endpoint) => readVideoOnKey(endpoint, video, signal), {
     signal,
     accept: (endpoint) => isGeminiApiBaseUrl(endpoint.baseUrl),
     noneAccepted: NO_GEMINI_KEY_ERROR,

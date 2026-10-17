@@ -2,7 +2,7 @@ import type { FlowDefinition, SkillInstance, SkillType, TriggerConfig } from '..
 import { DEFAULT_SKILL_CONFIG } from '../../shared/flowSkillSchema';
 import { botStepTargets } from '../../shared/botRecipients';
 import { createEntityId } from './flowPersistence';
-import { botTriggerAccess, isBotCommandRestricted } from '../../shared/botCommandAccess';
+import { botTriggerAccess, isBotCommandAdminOnly, isBotCommandRestricted } from '../../shared/botCommandAccess';
 
 /**
  * Laying a model's revision over a saved flow, and saying what it changed. Pure, so the two
@@ -69,7 +69,8 @@ function hasAccess(trigger: TriggerConfig): boolean {
  * Who may run a bot command the saved flow did not have. One saved command gone and one new one
  * is a rename: it keeps that command's access. Anything else is limited to everyone the flow
  * already allowed (the union of its lists, in the explicit 'users' mode so that a union of empty
- * lists stays nobody), because the model never saw who may run them. A flow with a command open
+ * lists stays nobody; the admins when every command was the admins'), because the model never saw
+ * who may run them. A flow with a command open
  * to everyone already reached everyone, so the default widens nothing there; a flow with no bot
  * command gets the default any new command gets.
  */
@@ -80,6 +81,7 @@ function newCommandAccess(
 ): BotAccessFields | undefined {
   if (vanished.length === 1 && newCount === 1) return accessOf(vanished[0]!);
   if (previousBots.length === 0 || previousBots.some((trigger) => !isBotCommandRestricted(botTriggerAccess(trigger)))) return undefined;
+  if (previousBots.every((trigger) => isBotCommandAdminOnly(botTriggerAccess(trigger)))) return { botAccess: 'admins' };
   return { botAccess: 'users', botAllowedUserIds: [...new Set(previousBots.flatMap((trigger) => trigger.botAllowedUserIds ?? []))] };
 }
 
@@ -105,11 +107,37 @@ function keptTriggers(revised: readonly TriggerConfig[], previous: readonly Trig
   return revised.map((next) => {
     const same = previous.find((trigger) => triggerMeaning(trigger) === triggerMeaning(next));
     if (same) return same;
-    if (next.type !== 'bot' || hasAccess(next)) return next;
+    if (next.type !== 'bot') return next;
+    if (hasAccess(next)) return next;
     const sameCommand = previousBots.filter((trigger) => botCommandOf(trigger) === botCommandOf(next));
     const access = sameCommand.length ? sameCommandAccess(sameCommand) : newAccess;
     return access && (access.botAccess !== undefined || access.botAllowedUserIds?.length) ? { ...next, ...access } : next;
   });
+}
+
+function withoutAccess(trigger: TriggerConfig): TriggerConfig {
+  const { botAccess: _mode, botAllowedUserIds: _ids, ...rest } = trigger;
+  return rest;
+}
+
+/**
+ * An earlier version's triggers, put back over the current ones. Who may run a bot command is the
+ * current flow's decision and a restore must not undo a narrowing made since: a command the flow
+ * still has keeps today's access; a renamed one keeps the access of the one it replaced; any other
+ * is limited as `edit_flow` limits a new command. Only where nothing applies does the version's own
+ * access stand — the current flow then has no command, or one open to everyone, so it widens nothing.
+ */
+export function restoredTriggers(version: readonly TriggerConfig[], current: readonly TriggerConfig[]): TriggerConfig[] {
+  const currentBots = current.filter((trigger) => trigger.type === 'bot');
+  const currentCommands = new Set(currentBots.map(botCommandOf));
+  const versionCommands = new Set(version.filter((trigger) => trigger.type === 'bot').map(botCommandOf));
+  const vanished = currentBots.filter((trigger) => !versionCommands.has(botCommandOf(trigger)));
+  const newCount = version.filter((trigger) => trigger.type === 'bot' && !currentCommands.has(botCommandOf(trigger))).length;
+  const decided = newCommandAccess(currentBots, vanished, newCount) !== undefined;
+  const stripped = version.map((trigger) => (
+    trigger.type === 'bot' && (currentCommands.has(botCommandOf(trigger)) || decided) ? withoutAccess(trigger) : trigger
+  ));
+  return keptTriggers(stripped, current);
 }
 
 /**

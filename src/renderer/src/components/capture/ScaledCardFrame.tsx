@@ -1,5 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box } from '@mantine/core';
+import { exportReadingFont } from '../../../../shared/readingPrefs';
+import { useReadingStore } from '../../store/readingStore';
 import { DEFAULT_CAPTURE_WIDTH } from '../../../../shared/types';
 import type { MarkdownCaptureRequest } from '../../../../shared/types';
 import { CaptureCard } from './CaptureCard';
@@ -17,6 +19,12 @@ export const ScaledCardFrame: React.FC<ScaledCardFrameProps> = ({ request, onMea
   const [scale, setScale] = useState(1);
   const [scaledHeight, setScaledHeight] = useState(0);
   const width = request?.options.width ?? DEFAULT_CAPTURE_WIDTH;
+  // The preview is drawn in the app, where main has not filled the font in: use the app's own.
+  const appFont = useReadingStore((s) => s.prefs.font);
+  const previewRequest = useMemo(
+    () => (request ? { ...request, readingFont: request.readingFont ?? exportReadingFont(appFont) } : null),
+    [request, appFont],
+  );
 
   const onMeasureRef = useRef(onMeasure);
   onMeasureRef.current = onMeasure;
@@ -67,7 +75,7 @@ export const ScaledCardFrame: React.FC<ScaledCardFrameProps> = ({ request, onMea
             transformOrigin: 'top left',
           }}
         >
-          <CaptureCard request={request} />
+          <CaptureCard request={previewRequest ?? request} />
         </Box>
       )}
     </Box>

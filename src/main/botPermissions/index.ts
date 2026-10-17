@@ -3,22 +3,24 @@
  * the web, read this computer, use which connectors, and (Telegram) run the admin commands. One resolver decides;
  * the token rules live in `shared/botPermissions.ts` so the settings page derives the same view.
  */
-export { normalizeBotPermissions, telegramAdminMirror } from './normalize';
-export type { BotPermissionsSource, NormalizedBotPermissions } from './normalize';
+export { telegramAdminMirror } from './normalize';
 export {
   computeBotRights,
   getBotGrants,
   getBotRights,
+  isBotGroupPending,
+  isBotUserBlocked,
   isBotUserPaired,
   isTelegramAdminGrant,
-  pairedBotUserIds,
   pairedMenuAccess,
-  pairedPrivateRights,
   botBuiltinAllowed,
+  botChatAllowed,
+  botDownloadAllowed,
+  botFlowAdminAllowed,
+  botFlowAllowed,
+  computeBotFlowAdmin,
 } from './rights';
-export type { BotMenuAccess } from './rights';
-export { applyBotRunGrants, botChatPaired, botChatRights } from './runGrants';
-export type { BotRunGrants } from './runGrants';
+export { applyBotRunGrants, botChatRights } from './runGrants';
 export { botAccessDeniedText } from './denial';
-export type { BotDeniedCapability } from './denial';
-export { dropBotPermissions, setBotPermissions, setTelegramAdmins } from './mutate';
+export { notifyBotGroupJoined } from './groupApproval';
+export { dropBotPermissions, setBotGroupPermissions, setBotPermissions, setBotUserBlocked } from './mutate';

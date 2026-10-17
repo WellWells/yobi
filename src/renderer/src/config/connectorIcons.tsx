@@ -1,8 +1,8 @@
 import React from 'react';
-import { BookOpen, Briefcase, Code, CreditCard, Palette, Server } from 'lucide-react';
+import { BookOpen, Briefcase, Code, CreditCard, Palette, Server, TrainFront } from 'lucide-react';
 import {
-  AirtableIcon, AsanaIcon, AtlassianIcon, CloudflareIcon, DropboxIcon, FigmaIcon, GithubIcon,
-  HuggingFaceIcon, IntercomIcon, LinearIcon, LineIcon, NeonIcon, NetlifyIcon, NotionIcon, PayPalIcon,
+  AirtableIcon, AsanaIcon, AtlassianIcon, BilibiliIcon, CloudflareIcon, DropboxIcon, FacebookIcon, FigmaIcon, GithubIcon,
+  HuggingFaceIcon, InstagramIcon, IntercomIcon, LinearIcon, LineIcon, NeonIcon, NetlifyIcon, NotionIcon, PayPalIcon,
   SentryIcon, SquareIcon, StripeIcon, SupabaseIcon, ThunderbirdIcon, VercelIcon, WebflowIcon, WixIcon,
   XIcon, ZapierIcon,
 } from './brandIcons';
@@ -10,7 +10,9 @@ import type { BrandIcon } from './brandIcons';
 import { brandTint, readableTint, tileBackground } from './brandTints';
 import { findCatalogEntry } from '../../../shared/mcpCatalog';
 import type { McpCatalogCategory, McpCatalogEntry } from '../../../shared/mcpCatalog';
-import { BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID, findBuiltinConnectorByUrl } from '../../../shared/builtinConnectors';
+import { BUILTIN_RAIL_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID, findBuiltinConnectorByUrl } from '../../../shared/builtinConnectors';
+import { SITE_CONNECTOR_ROWS, siteConnectorServerId } from '../../../shared/siteConnectors';
+import type { SiteConnectorSite } from '../../../shared/siteConnectors';
 import { BUILTIN_LINE_SERVER_ID } from '../../../shared/types';
 import type { Theme } from '../../../shared/themes';
 
@@ -66,12 +68,24 @@ interface BuiltinMark {
   hex: string;
 }
 
+/** Each sign-in site connector's mark; its brand colour is in its row (`shared/siteConnectors.ts`). */
+export const SITE_CONNECTOR_ICONS: Record<SiteConnectorSite, BrandIcon> = {
+  instagram: InstagramIcon,
+  facebook: FacebookIcon,
+  bilibili: BilibiliIcon,
+};
+
 /** The built-in connectors have no catalog entry, so their marks live here. */
 export const BUILTIN_MARKS: Record<string, BuiltinMark> = {
   // LINE's green since its 2020 rebrand; simple-icons still ships the older #00C300.
   [BUILTIN_LINE_SERVER_ID]: { icon: LineIcon, hex: '#06C755' },
   [BUILTIN_THUNDERBIRD_SERVER_ID]: { icon: ThunderbirdIcon, hex: '#0A84FF' },
   [BUILTIN_X_SERVER_ID]: { icon: XIcon, hex: '#000000' },
+  // Two railways, no one brand: a plain train in THSR's orange.
+  [BUILTIN_RAIL_SERVER_ID]: { icon: TrainFront, hex: '#E3651D' },
+  ...Object.fromEntries(SITE_CONNECTOR_ROWS.map((row) => [
+    siteConnectorServerId(row.site), { icon: SITE_CONNECTOR_ICONS[row.site], hex: row.hex },
+  ])),
 };
 
 function builtinMark(url: string): BuiltinMark | undefined {

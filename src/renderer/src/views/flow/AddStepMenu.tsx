@@ -4,6 +4,7 @@ import { Plus, Search } from 'lucide-react';
 import { ShortcutHint } from '../../components/ShortcutHint';
 import { AppTextInput } from '../../components/AppTextInput';
 import { GroupHeader } from '../../components/GroupHeader';
+import { isComposingKey } from '../../utils/imeKeys';
 import { SKILL_ICON } from './skills';
 import { buildSkillGroups, filterSkillGroups, flattenSkillGroups } from './skillCatalog';
 import type { SkillType } from '../../../../shared/types';
@@ -45,6 +46,7 @@ export const AddStepMenu: React.FC<AddStepMenuProps> = ({ position = 'bottom', t
   };
 
   const onSearchKeyDown = (e: React.KeyboardEvent) => {
+    if (isComposingKey(e.nativeEvent)) return;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       moveActive(1);

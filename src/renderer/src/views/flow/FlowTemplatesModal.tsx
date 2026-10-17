@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Box, Code, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core';
-import { LayoutTemplate, Search } from 'lucide-react';
+import { Box, Center, Code, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core';
+import { Plus, Search } from 'lucide-react';
 import { AppModal } from '../../components/AppModal';
 import { AppTextInput } from '../../components/AppTextInput';
 import { GroupHeader } from '../../components/GroupHeader';
@@ -15,6 +15,8 @@ interface FlowTemplatesModalProps {
   t: (key: string) => string;
   onClose: () => void;
   onPick: (template: FlowTemplate) => void;
+  /** Creates an empty flow. The gallery is the "new flow" page, so starting blank lives here too. */
+  onBlank: () => void;
   /**
    * Mantine gives each Modal its own Escape listener, so with the setup wizard stacked on top
    * one keypress closes both and the gallery never gets to be the thing you come back to.
@@ -54,7 +56,7 @@ function haystack(tpl: FlowTemplate, t: (key: string) => string): string {
 }
 
 export const FlowTemplatesModal: React.FC<FlowTemplatesModalProps> = ({
-  open, t, onClose, onPick, escapeDisabled = false,
+  open, t, onClose, onPick, onBlank, escapeDisabled = false,
 }) => {
   const [query, setQuery] = useState('');
   // One instance for both rails: only one can be under the pointer at a time.
@@ -90,8 +92,8 @@ export const FlowTemplatesModal: React.FC<FlowTemplatesModalProps> = ({
     <AppModal
       opened={open}
       onClose={onClose}
-      title={t('flow.templates')}
-      icon={<LayoutTemplate size={16} />}
+      title={t('flow.newFlow')}
+      icon={<Plus size={16} />}
       size="min(54rem, 90vw)"
       yOffset="8dvh"
       zIndex={Z_MODAL}
@@ -106,6 +108,21 @@ export const FlowTemplatesModal: React.FC<FlowTemplatesModalProps> = ({
           leftSection={<Search size={14} />}
           tone="tertiary"
         />
+
+        {/* Not filtered by the search: it is the way out when nothing in the catalogue fits. */}
+        <Stack gap={10}>
+          <GroupHeader variant="plain" label={t('flow.templates.scratch')} />
+          <Box className={classes.rail}>
+            <UnstyledButton className={classes.tile} onClick={onBlank}>
+              <Center w={28} h={28} className={classes.blankChip}>
+                <Plus size={14} />
+              </Center>
+              <Text fz="sm" fw={600} className={classes.title}>
+                {t('flow.templates.blank')}
+              </Text>
+            </UnstyledButton>
+          </Box>
+        </Stack>
 
         {matches.length === 0 && (
           <Text fz="sm" c="dimmed" ta="center" py="lg">

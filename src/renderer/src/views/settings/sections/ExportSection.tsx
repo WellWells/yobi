@@ -102,7 +102,7 @@ export const ExportSection: React.FC<Props> = ({
         </SettingField>
         {preferences.backgroundStyle === 'gradient' && (
           <SettingField icon={<Palette size={13} />} label={t('capture.direction')}>
-            <DirectionGrid value={preferences.direction} onChange={preferences.setDirection} />
+            <DirectionGrid value={preferences.direction} onChange={preferences.setDirection} t={t} />
           </SettingField>
         )}
         <SettingRow

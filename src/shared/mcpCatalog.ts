@@ -1,3 +1,5 @@
+import { isSiteConnectorUrl } from './siteConnectors';
+
 export type McpAuthKind =
   | 'oauth'
   | 'token'
@@ -82,9 +84,10 @@ export function connectorHoldsUserData(url: string): boolean {
   // `?? ''` although the type requires it: a missing url must come out UNMARKED, never throw inside
   // a live agent run. The type is what keeps a production caller from omitting it.
   const trimmed = (url ?? '').trim().toLowerCase();
-  // X is read as the user but holds public posts, not the user's own data: "look in your own
-  // data first" would send a question about the news to a search of strangers' posts.
-  if (trimmed === 'builtin://x') return false;
+  // X and the sign-in site connectors are read as the user but hold public posts, not the user's
+  // own data: "look in your own data first" would send a question about the news to a search of
+  // strangers' posts.
+  if (trimmed === 'builtin://x' || isSiteConnectorUrl(trimmed)) return false;
   if (trimmed.startsWith('builtin://')) return true;
   const entry = findCatalogEntry(trimmed);
   return entry ? entry.category !== 'docs' : false;

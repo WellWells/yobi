@@ -6,6 +6,7 @@ import { useThemeStore } from '../../../../store/themeStore';
 import { findBuiltinConnector } from '../../../../../../shared/builtinConnectors';
 import classes from './ConnectorCard.module.css';
 import { BotAccessCaption } from '../BotAccessCaption';
+import { CommandClashNotice } from './CommandClashNotice';
 import type { useMcpServers } from '../../hooks/useMcpServers';
 
 interface Props {
@@ -24,12 +25,14 @@ interface Props {
   footer?: React.ReactNode;
   /** Who may use this connector through the bots (read-only); omitted while no bot is on. */
   botAccess?: string;
+  /** Why this connector has no slash command, or which connector went without the name it kept. */
+  commandNotice?: readonly string[];
 }
 
 // An opt-in connector hosted by the app. Once on it behaves like any other connector (its tools
 // drive chat and its slash command), but it is switched rather than added by URL.
 export const BuiltinConnectorCard: React.FC<Props> = ({
-  mcp, t, id, title, description, toggleLabel, onOpenTools, waitingError, setup, footer, botAccess,
+  mcp, t, id, title, description, toggleLabel, onOpenTools, waitingError, setup, footer, botAccess, commandNotice,
 }) => {
   const server = mcp.servers.find((s) => s.id === id);
   // The same mark and colour the chat menus show, from the one resolver both read.
@@ -89,6 +92,7 @@ export const BuiltinConnectorCard: React.FC<Props> = ({
               {/* Yobi's own messages arrive as i18n keys; `t()` returns anything else unchanged. */}
               {server?.error && !connected ? t(server.error) : description}
             </Text>
+            {commandNotice && <CommandClashNotice lines={commandNotice} />}
             {botAccess && <BotAccessCaption text={botAccess} />}
           </Stack>
         </Group>

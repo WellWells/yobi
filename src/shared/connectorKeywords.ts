@@ -1,11 +1,13 @@
 import { findBuiltinConnector } from './builtinConnectors';
 import { findCatalogEntry } from './mcpCatalog';
+import { escapeRegExp } from './regex';
 
 /**
  * What the composer needs to know about one connector to decide whether a sentence named it.
  * `connected` is part of the decision, not a filter applied afterwards: matching escalates an
  * ordinary chat turn into an agent run, and a run aimed at a server it cannot reach spends the
- * whole turn arriving at "connect this first".
+ * whole turn arriving at "connect this first". An open connector that the send itself would
+ * connect counts as connected (`reachableOnSend`).
  */
 export interface KeywordCandidate {
   id: string;
@@ -18,7 +20,6 @@ export interface KeywordCandidate {
 const MIN_KEYWORD_LENGTH = 2;
 
 const ASCII_ONLY = /^[\x20-\x7E]+$/;
-const REGEX_META = /[.*+?^${}()|[\]\\]/g;
 
 /**
  * Drop the regions of the message that are material rather than intent. Pasted code and a
@@ -43,7 +44,7 @@ const ALNUM_EDGE = /[a-z0-9]/i;
  * suffix cannot match inside `max` followed by the same suffix.
  */
 function keywordPattern(keyword: string): RegExp {
-  const escaped = keyword.replace(REGEX_META, '\\$&');
+  const escaped = escapeRegExp(keyword);
   if (!ASCII_ONLY.test(keyword) && !ALNUM_EDGE.test(keyword[0]) && !ALNUM_EDGE.test(keyword[keyword.length - 1])) {
     return new RegExp(escaped, 'i');
   }

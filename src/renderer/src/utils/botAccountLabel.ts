@@ -1,8 +1,8 @@
-import type { LinePairedUser, TelegramPairedUser } from '../../../shared/types';
+import type { LinePairedUser, TelegramPairedUser, TelegramSettingsSnapshot } from '../../../shared/types';
 
 type Translate = (key: string) => string;
 
-/** The name fields every Telegram account record carries (paired users and known users alike). */
+/** The name fields every Telegram account record carries (paired users and directory contacts alike). */
 type TelegramNamed = Pick<TelegramPairedUser, 'userId' | 'firstName' | 'lastName' | 'username'>;
 
 function telegramName(user: TelegramNamed): string {
@@ -41,4 +41,26 @@ export function telegramAccountChoiceLabel(user: TelegramNamed, t: Translate): s
 /** Whether a Telegram record carries any name at all (a bare id is not worth showing as a name). */
 export function telegramAccountHasName(user: TelegramNamed): boolean {
   return Boolean(telegramName(user) || user.username);
+}
+
+/**
+ * Recipient ids the picker cannot offer as chips, named from the contact directory. Unpairing and
+ * factory reset only take a contact's pairedAt, so a former account is still named here.
+ */
+export function namedTelegramRecipients(
+  ids: string[],
+  snapshot: Pick<TelegramSettingsSnapshot, 'contacts'>,
+  t: Translate,
+): Array<{ id: string; label: string }> {
+  return ids.flatMap((id) => {
+    const contact = snapshot.contacts.find((item) => item.kind === 'user' && item.id === id);
+    if (!contact) return [];
+    const user: TelegramNamed = {
+      userId: Number(contact.id),
+      firstName: contact.firstName,
+      lastName: contact.lastName,
+      username: contact.username,
+    };
+    return telegramAccountHasName(user) ? [{ id, label: telegramAccountChoiceLabel(user, t) }] : [];
+  });
 }

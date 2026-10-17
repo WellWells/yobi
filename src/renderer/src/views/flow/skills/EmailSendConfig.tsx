@@ -139,7 +139,6 @@ export const EmailSendConfig: React.FC<SkillConfigProps> = ({ step, onChange, t 
       {(step.config.attachments ?? '').trim() && (
         <Text fz="xs" c="dimmed">{t('flow.skill.email_send.attachments.hint')}</Text>
       )}
-      <Text fz="xs" c="dimmed">{t('flow.skill.email_send.hint')}</Text>
     </Stack>
   );
 };

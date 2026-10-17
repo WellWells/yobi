@@ -7,9 +7,11 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { config, saveConfig } from '../config';
 import type { Config } from '../configTypes';
 import { assertPublicHttpUrl, guardedFetch } from '../net/ssrfGuard';
+import { errorText } from '../../shared/errorText';
 import { slugifyCommandName } from '../../shared/mcpCommand';
+import { connectsOnUse } from '../../shared/mcpConnectOnUse';
 import { BUILTIN_CONNECTORS, findBuiltinConnector } from '../../shared/builtinConnectors';
-import type { McpConnectionStatus, McpServerActionResult, McpServerConfig, McpServerSaveRequest, McpServerView } from '../../shared/types';
+import type { McpConnectionStatus, McpServerActionResult, McpServerConfig, McpServerSaveRequest, McpServerView, McpToolInfo } from '../../shared/types';
 import type { McpTool, McpToolResult } from './mcpTypes';
 import { McpAuthProvider } from './mcpAuthProvider';
 import { startCallbackServer } from './mcpCallbackServer';
@@ -121,6 +123,15 @@ function flattenResult(result: CallToolResult): McpToolResult {
   return { text, isError: result.isError === true };
 }
 
+/**
+ * A tool as Settings lists it. MCP's display name is `title`, with `annotations.title` from older
+ * servers; `description` is a hint for the model and stays here.
+ */
+export function toolInfo(tool: McpTool): McpToolInfo {
+  const title = (tool.title ?? tool.annotations?.title)?.trim();
+  return title ? { name: tool.name, title } : { name: tool.name };
+}
+
 export class McpRegistry {
   private readonly runtimes = new Map<string, ServerRuntime>();
   /** Poll timers for built-ins waiting on the app they relay to. */
@@ -129,6 +140,8 @@ export class McpRegistry {
   private readonly failedAvailability = new Map<string, string | null>();
   /** One session renewal per server at a time; calls that fail or arrive meanwhile share it. */
   private readonly renewing = new Map<string, Promise<void>>();
+  /** The connection attempt in flight for each server. */
+  private readonly attempts = new Map<string, Promise<McpServerView>>();
 
   constructor(private readonly deps: McpRegistryDeps) {
     for (const server of config.mcpServers) {
@@ -156,8 +169,21 @@ export class McpRegistry {
       authorized: Boolean(record?.tokens),
       hasToken: Boolean(record?.manualToken),
       error: rt.error,
-      tools: rt.tools.map((tool) => ({ name: tool.name, description: tool.description ?? '' })),
+      tools: rt.tools.map(toolInfo),
+      ...(this.wouldConnectOnUse(rt, record) ? { connectOnUse: true } : {}),
     };
+  }
+
+  private wouldConnectOnUse(rt: ServerRuntime, record = getAuthRecord(rt.config.id)): boolean {
+    return connectsOnUse({
+      status: rt.status,
+      enabled: rt.config.enabled !== false,
+      builtin: rt.kind === 'builtin',
+      url: rt.config.url,
+      hasTokens: Boolean(record?.tokens),
+      hasManualToken: Boolean(record?.manualToken),
+      hasClient: Boolean(record?.client),
+    });
   }
 
   listServers(): McpServerView[] {
@@ -184,7 +210,16 @@ export class McpRegistry {
     return tools;
   }
 
-  private async connect(id: string, interactive: boolean): Promise<McpServerView> {
+  /** One attempt per server at a time: a second caller (a use, a click, a renewal) shares the first. */
+  private connect(id: string, interactive: boolean): Promise<McpServerView> {
+    const pending = this.attempts.get(id);
+    if (pending) return pending;
+    const attempt = this.attemptConnect(id, interactive).finally(() => this.attempts.delete(id));
+    this.attempts.set(id, attempt);
+    return attempt;
+  }
+
+  private async attemptConnect(id: string, interactive: boolean): Promise<McpServerView> {
     const rt = this.runtimes.get(id);
     if (!rt) throw new Error(MCP_UNKNOWN_SERVER);
     if (rt.status === 'connecting') return this.viewFor(rt);
@@ -192,7 +227,7 @@ export class McpRegistry {
     try {
       await assertPublicHttpUrl(rt.config.url);
     } catch (err) {
-      rt.error = `${MCP_INVALID_URL_PREFIX}${errText(err)}`;
+      rt.error = `${MCP_INVALID_URL_PREFIX}${errorText(err)}`;
       this.setStatus(rt, 'error');
       return this.viewFor(rt);
     }
@@ -220,7 +255,7 @@ export class McpRegistry {
         rt.client = null;
         rt.transport = null;
         rt.tools = [];
-        rt.error = errText(err);
+        rt.error = errorText(err);
         this.setStatus(rt, 'error');
         this.deps.log(`[mcp] connect failed ${rt.config.name}: ${rt.error}`);
       }
@@ -268,7 +303,7 @@ export class McpRegistry {
       rt.client = null;
       rt.transport = null;
       rt.tools = [];
-      rt.error = errText(err);
+      rt.error = errorText(err);
       this.setStatus(rt, rt.needsAuth ? 'needs_auth' : 'error');
       this.deps.log(`[mcp] connect failed ${rt.config.name}: ${rt.error}`);
     } finally {
@@ -316,7 +351,7 @@ export class McpRegistry {
       rt.client = null;
       rt.close = undefined;
       rt.tools = [];
-      rt.error = errText(err);
+      rt.error = errorText(err);
       this.setStatus(rt, 'error');
       this.deps.log(`[mcp] connect failed ${rt.config.name}: ${rt.error}`);
       if (runtime.availability) {
@@ -359,6 +394,34 @@ export class McpRegistry {
   async connectServer(id: string): Promise<McpServerActionResult> {
     const view = await this.connect(id, true);
     return { ok: view.status === 'connected', servers: this.listServers(), error: view.error };
+  }
+
+  /**
+   * Connects, never interactively, the servers a use is about to reach that are not connected yet:
+   * among `ids` (every server when undefined), those an agent run could be offered. `named` says
+   * the user named them; servers nobody named leave out one the user disconnected this session and
+   * one whose last attempt failed (every run would wait on it again). A use arriving while an
+   * attempt runs joins it. `names` is empty when there is nothing to wait for; `settled` never
+   * rejects, and what came of each attempt is read off the server's status afterwards.
+   */
+  connectForUse(ids: readonly string[] | undefined, named: boolean): { names: string[]; settled: Promise<void> } {
+    const wanted = ids ? new Set(ids) : null;
+    const targets = [...this.runtimes.values()].filter((rt) => {
+      if (wanted && !wanted.has(rt.config.id)) return false;
+      if (!named && (rt.status === 'error' || (rt.cuts > 0 && rt.status === 'disconnected'))) return false;
+      // A sign-in the user is going through in the browser is theirs to finish, not a use's to wait on.
+      if (rt.interactive) return false;
+      return (rt.kind === 'builtin' || rt.config.agentEnabled !== false) && this.wouldConnectOnUse(rt);
+    });
+    const settled = Promise.all(targets.map(async (rt) => {
+      if (rt.status !== 'connecting') this.deps.log(`[mcp] connecting ${rt.config.name} on use`);
+      try {
+        await this.connect(rt.config.id, false);
+      } catch (err) {
+        this.deps.log(`[mcp] connect on use failed ${rt.config.name}: ${errorText(err)}`);
+      }
+    })).then(() => undefined);
+    return { names: targets.map((rt) => rt.config.name), settled };
   }
 
   /** Switches a built-in connector on or off. Its opt-in is a config flag, not a `config.mcpServers` entry. */
@@ -413,7 +476,7 @@ export class McpRegistry {
       const parsed = await assertPublicHttpUrl(url);
       if (parsed.protocol !== 'https:') throw new Error(MCP_URL_NEEDS_HTTPS);
     } catch (err) {
-      return { ok: false, servers: this.listServers(), error: `${MCP_INVALID_URL_PREFIX}${errText(err)}` };
+      return { ok: false, servers: this.listServers(), error: `${MCP_INVALID_URL_PREFIX}${errorText(err)}` };
     }
     const name = (req.name ?? '').trim() || hostnameOf(url);
     const headerName = (req.headerName ?? '').trim() || undefined;
@@ -533,10 +596,6 @@ export class McpRegistry {
     return true;
   }
 
-  findTool(serverId: string, name: string): McpTool | undefined {
-    return this.runtimes.get(serverId)?.tools.find((tool) => tool.name === name);
-  }
-
   /**
    * Opens a new session for a server that dropped the one `failed` holds. Never interactive, so a
    * run never opens a browser. Does nothing when `failed` is no longer the server's client: another
@@ -553,7 +612,7 @@ export class McpRegistry {
       try {
         await this.connect(id, false);
       } catch (err) {
-        this.deps.log(`[mcp] session renewal failed ${rt.config.name}: ${errText(err)}`);
+        this.deps.log(`[mcp] session renewal failed ${rt.config.name}: ${errorText(err)}`);
       } finally {
         // connect() swaps its new client in without closing the one it replaces.
         void failed.close().catch(() => {});
@@ -647,10 +706,6 @@ function hostnameOf(url: string): string {
   } catch {
     return url;
   }
-}
-
-function errText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 let registry: McpRegistry | null = null;

@@ -4,8 +4,9 @@ import AdmZip from 'adm-zip';
 import { sendLog } from '../helpers';
 import { importConfigFromJson } from '../config';
 import type { Config } from '../config';
-import { getFlowDataDir } from '../flow';
-import type { BackupCategoryId, BackupInspectItem, BackupInspectResult } from '../../shared/types';
+import { saveFlowsToDisk } from '../flow/flowPersistence';
+import type { BackupCategoryId, BackupInspectItem, BackupInspectResult, FlowDefinition } from '../../shared/types';
+import { errorText } from '../../shared/errorText';
 import {
   CATEGORY_DEFS,
   MANIFEST_ENTRY,
@@ -16,18 +17,16 @@ import {
 import type { CategoryDef } from './manifest';
 import { countCategoryItems } from './fsUtils';
 import { readIncomingFiles, replaceDirFiles } from './restoreDir';
+import { resetFlowVersionCache } from '../flow/flowVersions';
+import { notionSyncRoot } from '../notion/notionSyncStore';
 
-export interface ApplyBackupDeps {
+interface ApplyBackupDeps {
   reloadFlows: () => Promise<void>;
 }
 
-export interface ApplyBackupResult {
+interface ApplyBackupResult {
   restored: BackupCategoryId[];
   importedConfig: Config | null;
-}
-
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 function countZipCategory(zip: AdmZip, def: CategoryDef): number {
@@ -102,9 +101,8 @@ async function restoreFlows(zip: AdmZip, deps: ApplyBackupDeps): Promise<boolean
     return false;
   }
   if (!Array.isArray(parsed)) return false;
-  const flowsPath = path.join(getFlowDataDir(), 'flows.json');
-  await fs.mkdir(path.dirname(flowsPath), { recursive: true });
-  await fs.writeFile(flowsPath, JSON.stringify(parsed, null, 2), 'utf-8');
+  // Elements are not validated here: reloadFlows() migrates and normalizes them, as it does on start.
+  await saveFlowsToDisk(parsed as FlowDefinition[]);
   await deps.reloadFlows();
   return true;
 }
@@ -138,10 +136,16 @@ export async function applyBackup(
       } else if (id === 'flows') {
         if (await restoreFlows(zip, deps)) restored.push('flows');
       } else if (await restoreDir(zip, CATEGORY_DEFS[id])) {
+        // Pruning keeps the checkpoints of steps a version still has: read the restored versions.
+        if (id === 'history') resetFlowVersionCache();
+        // Restored Notion documents no longer match what Yobi last knew of their pages: without a
+        // state, their next read shows every difference as a conflict to decide, never as a change
+        // of the user's to send (which would revert the page to the backup's text).
+        if (id === 'outputs') await fs.rm(notionSyncRoot(), { recursive: true, force: true }).catch(() => undefined);
         restored.push(id);
       }
     } catch (err: unknown) {
-      sendLog(`⚠️ Backup restore failed for "${id}": ${errMsg(err)}`);
+      sendLog(`⚠️ Backup restore failed for "${id}": ${errorText(err)}`);
     }
   }
 

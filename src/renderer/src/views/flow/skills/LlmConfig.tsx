@@ -4,11 +4,10 @@ import { AppTextarea } from '../../../components/AppTextarea';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { SelectDropdown } from '../../../components/SelectDropdown';
 import { ToggleSwitch } from '../../../components/ToggleSwitch';
-import { applyCapturePalette, buildCapturePaletteOptions } from './captureConfig';
+import { buildCapturePaletteOptions, withCapturePalette } from './captureConfig';
 import { PROVIDER_DROPDOWN_MAX_HEIGHT, providerSectionsToSelectData } from '../../../config/models';
 import { useProviderModels } from '../../../hooks/useProviderModels';
 import { UPLOAD_CAPABLE_PROVIDER_LABELS } from '../../../../../shared/types';
-import { DEFAULT_CAPTURE_PALETTE } from '../../../../../shared/capturePalettes';
 import type { SkillConfigProps } from './types';
 
 export const LlmConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
@@ -82,9 +81,12 @@ export const LlmConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
         />
         <SelectDropdown
           label={t('common.background')}
-          options={buildCapturePaletteOptions(t)}
-          value={step.config.palette || DEFAULT_CAPTURE_PALETTE}
-          onChange={(value) => onChange(applyCapturePalette(step.config, value))}
+          options={[
+            { value: '', label: t('flow.skill.llm.paletteCardStyle') },
+            ...buildCapturePaletteOptions(t),
+          ]}
+          value={(step.config.palette ?? '').trim()}
+          onChange={(value) => onChange(withCapturePalette(step.config, value))}
           size="sm"
         />
         <ToggleSwitch
@@ -133,7 +135,9 @@ export const LlmConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
       onChange={(e) => onChange({ ...step.config, emitFailFlag: e.currentTarget.checked ? 'true' : 'false' })}
     />
     {step.config.emitFailFlag === 'true' && (
-      <Text fz="xs" c="dimmed">{t('flow.skill.llm.emitFailFlag.hint')}</Text>
+      <Text fz="xs" c="dimmed">
+        {t('flow.skill.llm.emitFailFlag.hint').replace('{{flag}}', `{{${step.outputKey}.isFailed}}`)}
+      </Text>
     )}
   </Stack>
   );

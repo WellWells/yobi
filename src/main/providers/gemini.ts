@@ -1,7 +1,7 @@
 import type { BrowserWindow, WebContents } from 'electron';
 import { sleep, waitForPageLoad, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
-import { ensureOnPage, PAGE_REUSE } from './pageReuse';
-import { executeAutomationWithTimeout, countElements, settledElementCount } from './automationExecutor';
+import { ensureOnPage, landingMayStillRender, PAGE_REUSE } from './pageReuse';
+import { executeAutomationWithTimeout, countElements, anchorCounts } from './automationExecutor';
 import { PROVIDER_URLS } from '../../shared/types';
 import { WORKER_USER_AGENTS } from '../userAgent';
 import { applyWorkerUserAgent } from '../clientHints';
@@ -69,11 +69,14 @@ async function runGeminiAttempt(
     for (const line of uploadLog) sendLog(`[gemini-upload] ${line}`);
   }
 
-  // A kept page finished its last turn under this same lane, so its counts are already final.
-  // Waiting for them to settle again is pure hydration latency that no longer applies.
-  const countNow = reused ? countElements : settledElementCount;
-  const baseline = await countNow(wc, COPY_BTN_SELECTOR);
-  const responseBaseline = continuingThread ? await countNow(wc, 'model-response') : 0;
+  // Only a freshly loaded thread can still be rendering earlier answers in: a kept page finished
+  // its last turn under this same lane, and a new conversation's landing page has none. Both
+  // counts are sampled together, so a thread pays one settle rather than one per selector.
+  const [baseline = 0, responseBaseline = 0] = await anchorCounts(
+    wc,
+    continuingThread ? [COPY_BTN_SELECTOR, 'model-response'] : [COPY_BTN_SELECTOR],
+    landingMayStillRender(wc, landing, { continuingThread }),
+  );
 
   wc.focus();
 

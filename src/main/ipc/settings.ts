@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises';
 import { IPC, isByokTargetUrl } from '../../shared/types';
 import type { CaptureSettings, QuickExportSettings, HiddenSources, HotkeyBindResult, SecretScope, SecretTarget } from '../../shared/types';
 import { isThemePreference } from '../../shared/themes';
+import { mergeReadingPrefs, readingPrefsFromConfig, readingPrefsToConfig } from '../../shared/readingPrefs';
 import { getProviderLabel } from '../providers';
 import {
   config,
@@ -279,6 +280,12 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
     const clamped = Math.min(200, Math.max(70, Math.round(Number(zoom) / 10) * 10));
     saveConfig({ markdownZoom: clamped });
     return true;
+  });
+  ipcMain.handle(IPC.GET_READING_PREFS, () => readingPrefsFromConfig(config));
+  ipcMain.handle(IPC.UPDATE_READING_PREFS, (_event, patch: unknown) => {
+    const next = mergeReadingPrefs(readingPrefsFromConfig(config), patch);
+    saveConfig(readingPrefsToConfig(next));
+    return next;
   });
 
   ipcMain.handle(IPC.GET_CAPTURE_SETTINGS, () => config.captureSettings);

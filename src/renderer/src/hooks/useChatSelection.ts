@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
+import { ANSWER_SELECTOR } from '../utils/selectionSnapshot';
 
 export interface ChatSelectionState {
   text: string;
   blockText: string;
   turnIndex: number | null;
+  /** Wholly inside an answer's text, where it can be rewritten; a prompt or a title is not. */
+  inAnswer: boolean;
   rect: { top: number; bottom: number; left: number; width: number };
 }
 
@@ -39,6 +42,17 @@ export function useChatSelection(
       setSelection(null);
       return;
     }
+    // Text selected while typing (an answer being edited, the find field) is not something to quote.
+    const active = document.activeElement;
+    if ((active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement) && container.contains(active)) {
+      setSelection(null);
+      return;
+    }
+    // Nor is text inside the answer editor or a rewrite's result card: those have their own actions.
+    if (elementFor(range.commonAncestorContainer)?.closest('[data-selection-ignore]')) {
+      setSelection(null);
+      return;
+    }
     const text = current.toString().trim();
     const rect = range.getBoundingClientRect();
     if (!text || (rect.width === 0 && rect.height === 0)) {
@@ -50,6 +64,7 @@ export function useChatSelection(
       text: text.slice(0, MAX_SELECTION_CHARS),
       blockText: element?.closest(BLOCK_SELECTOR)?.textContent ?? '',
       turnIndex: turnIndexFor(element),
+      inAnswer: Boolean(element?.closest(ANSWER_SELECTOR)),
       rect: { top: rect.top, bottom: rect.bottom, left: rect.left, width: rect.width },
     });
   }, [containerRef]);

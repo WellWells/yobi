@@ -1,15 +1,16 @@
 import React, { useMemo, useState } from 'react';
 import { Group, Stack, Text } from '@mantine/core';
 import {
-  Bot, CalendarClock, Check, Coins, Copy, ExternalLink, FileText, History, Info, Layers, MessagesSquare, Paperclip, Timer,
+  Bot, CalendarClock, Check, Coins, ExternalLink, FileText, History, Info, Layers, Link2, MessagesSquare, Paperclip, Timer,
 } from 'lucide-react';
 import type { ConversationDoc } from '../../../../shared/conversationDoc';
 import { formatCardTime } from '../../../../shared/captureCard';
-import { formatTokenCount } from '../../../../shared/tokenEstimate';
 import { clipboardApi } from '../../api/electronApi';
 import { useI18nStore } from '../../store/i18nStore';
 import { formatByteSize } from '../../utils/byteSize';
-import { formatTurnDuration, summarizeConversation } from '../../utils/conversationInfo';
+import {
+  contextValueText, durationValueText, fillTemplate as fill, summarizeConversation, tokensValueText,
+} from '../../utils/conversationInfo';
 import { AppButton } from '../AppButton';
 import { AppModal } from '../AppModal';
 import { ProviderTag } from '../ProviderTag';
@@ -18,6 +19,8 @@ import { SettingRow } from '../SettingRow';
 interface ConversationInfoDialogProps {
   open: boolean;
   onClose: () => void;
+  /** After the closing transition: where focus goes, since the menu row that opened it is gone. */
+  onClosed?: () => void;
   conversation: ConversationDoc | null;
   content: string;
   filePath: string;
@@ -25,16 +28,12 @@ interface ConversationInfoDialogProps {
 
 const NUMERIC = { fontVariantNumeric: 'tabular-nums' } as const;
 
-function fill(template: string, vars: Record<string, string | number>): string {
-  return Object.entries(vars).reduce((text, [key, value]) => text.split(`{{${key}}}`).join(String(value)), template);
-}
-
 const Value: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <Text fz="var(--font-size-base)" c="var(--text-primary)" ta="right" style={NUMERIC}>{children}</Text>
 );
 
 export const ConversationInfoDialog: React.FC<ConversationInfoDialogProps> = ({
-  open, onClose, conversation, content, filePath,
+  open, onClose, onClosed, conversation, content, filePath,
 }) => {
   const { t, locale } = useI18nStore();
   const [pathCopied, setPathCopied] = useState(false);
@@ -67,7 +66,15 @@ export const ConversationInfoDialog: React.FC<ConversationInfoDialogProps> = ({
   };
 
   return (
-    <AppModal opened={open} onClose={onClose} icon={<Info size={16} />} title={t('chat.info.title')} size="md" zIndex={90}>
+    <AppModal
+      opened={open}
+      onClose={onClose}
+      onExitTransitionEnd={onClosed}
+      icon={<Info size={16} />}
+      title={t('chat.info.title')}
+      size="md"
+      zIndex={90}
+    >
       {info && (
         <Stack gap={14}>
           <SettingRow
@@ -110,14 +117,7 @@ export const ConversationInfoDialog: React.FC<ConversationInfoDialogProps> = ({
             hint={tokenHint() || undefined}
             alignStart
             control={(
-              <Value>
-                {info.tokens
-                  ? `${info.tokens.exact ? '' : '~'}${fill(t('chat.info.tokensValue'), {
-                    input: formatTokenCount(info.tokens.input),
-                    output: formatTokenCount(info.tokens.output),
-                  })}`
-                  : '—'}
-              </Value>
+              <Value>{tokensValueText(info, t) || '—'}</Value>
             )}
           />
           <SettingRow
@@ -126,15 +126,7 @@ export const ConversationInfoDialog: React.FC<ConversationInfoDialogProps> = ({
             hint={durationHint()}
             alignStart
             control={(
-              <Value>
-                {info.durations
-                  ? fill(t('chat.info.durationValue'), {
-                    total: formatTurnDuration(info.durations.totalMs),
-                    average: formatTurnDuration(info.durations.totalMs / info.durations.timedTurns),
-                    longest: formatTurnDuration(info.durations.longestMs),
-                  })
-                  : '—'}
-              </Value>
+              <Value>{durationValueText(info, t) || '—'}</Value>
             )}
           />
           {(info.context.summarized > 0 || info.context.dropped > 0) && (
@@ -145,12 +137,7 @@ export const ConversationInfoDialog: React.FC<ConversationInfoDialogProps> = ({
               alignStart
               control={(
                 <Stack gap={2} align="flex-end">
-                  {info.context.summarized > 0 && (
-                    <Value>{fill(t('chat.context.summarized'), { count: info.context.summarized })}</Value>
-                  )}
-                  {info.context.dropped > 0 && (
-                    <Value>{fill(t('chat.context.dropped'), { count: info.context.dropped })}</Value>
-                  )}
+                  {contextValueText(info, t).map((line) => <Value key={line}>{line}</Value>)}
                 </Stack>
               )}
             />
@@ -179,7 +166,7 @@ export const ConversationInfoDialog: React.FC<ConversationInfoDialogProps> = ({
           <Group justify="space-between" gap={8} mt={4}>
             <AppButton
               variant="subtle"
-              leftSection={pathCopied ? <Check size={14} /> : <Copy size={14} />}
+              leftSection={pathCopied ? <Check size={14} /> : <Link2 size={14} />}
               onClick={handleCopyPath}
             >
               {pathCopied ? t('common.copied') : t('chat.info.copyPath')}

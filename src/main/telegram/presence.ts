@@ -10,6 +10,15 @@ import {
 export interface PresenceEvent {
   contact: BotContactInput;
   reachability: BotReachability;
+  /** The bot was just added to a group (it was not a member before; channels excluded). */
+  joinedGroup: boolean;
+}
+
+const OUTSIDE_STATUSES: readonly string[] = ['left', 'kicked'];
+
+/** A membership change that took the bot from outside a group to inside it. */
+export function isGroupJoin(chatType: string, oldStatus: string, reachability: BotReachability): boolean {
+  return (chatType === 'group' || chatType === 'supergroup') && OUTSIDE_STATUSES.includes(oldStatus) && reachability === 'ok';
 }
 
 export interface PresenceOptions {
@@ -49,7 +58,7 @@ export function attachPresenceTracking(bot: Bot<TelegramContext>, options: Prese
         chatType: chat.type,
       };
 
-    options.onPresence({ contact, reachability });
+    options.onPresence({ contact, reachability, joinedGroup: isGroupJoin(chat.type, update.old_chat_member.status, reachability) });
     if (reachability !== 'ok') {
       const label = chat.type === 'private'
         ? `user ${chat.id}`

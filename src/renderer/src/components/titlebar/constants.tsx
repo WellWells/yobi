@@ -1,9 +1,8 @@
 import React from 'react';
 import { Minus, Plus, X } from 'lucide-react';
+import { isMac } from '../../utils/keyLabels';
 
 export const noDrag: React.CSSProperties = { WebkitAppRegion: 'no-drag' };
-const navigatorWithUserAgentData = navigator as Navigator & { userAgentData?: { platform?: string } };
-export const isMac = (navigatorWithUserAgentData.userAgentData?.platform ?? navigator.platform ?? '').toLowerCase().includes('mac');
 
 export const titleBarDynStyle: React.CSSProperties = {
   padding: isMac ? '0 10px' : '0 0 0 10px',

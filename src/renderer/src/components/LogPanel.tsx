@@ -7,7 +7,7 @@ import { useI18nStore } from '../store/i18nStore';
 import { clipboardApi, systemApi } from '../api/electronApi';
 import { PanelToolbar, ToolbarIconButton, ToolbarSearchInput } from './PanelToolbar';
 import { EmptyState } from './EmptyState';
-import { Download, FolderOpen, ScrollText, Trash2 } from 'lucide-react';
+import { FolderOpen, ScrollText, Trash2, Upload } from 'lucide-react';
 import {
   LOG_LEVELS,
   filterLogs,
@@ -59,7 +59,7 @@ interface LogEntryProps {
   scopeHint: string;
 }
 
-const LogEntry = React.memo<LogEntryProps>(({
+export const LogEntry = React.memo<LogEntryProps>(({
   log, index, onLevelClick, onScopeClick, levelHint, levelLabels, scopeHint,
 }) => {
   const { time, scope, depth, text, level, tone, startsRun } = parseLogLine(log);
@@ -70,7 +70,7 @@ const LogEntry = React.memo<LogEntryProps>(({
   ].filter(Boolean).join(' ');
 
   return (
-    <Flex className={rowClass} align="flex-start" gap={8} px={6} py={3}>
+    <Flex className={rowClass} align="baseline" gap={8} px={6} py={3}>
       <UnstyledButton
         className={`${styles.level} ${levelTagClass[level]}`}
         onClick={() => onLevelClick(level)}
@@ -83,7 +83,7 @@ const LogEntry = React.memo<LogEntryProps>(({
           {time}
         </Text>
       )}
-      <Flex gap={6} align="flex-start" style={{ flex: 1, minWidth: 0, paddingLeft: depth * 14 }}>
+      <Flex gap={6} align="baseline" style={{ flex: 1, minWidth: 0, paddingLeft: depth * 14 }}>
         {scope && (
           <UnstyledButton
             className={styles.scope}
@@ -102,7 +102,7 @@ const LogEntry = React.memo<LogEntryProps>(({
           className={styles.logText}
         >
           {splitLogUrls(text).map((segment, i) => (segment.href ? (
-            <Anchor key={i} href={segment.href} inherit c="var(--mantine-color-accent)" onClick={openLogLink}>
+            <Anchor key={i} href={segment.href} inherit c="var(--mantine-color-accent)" underline={tone === 'active' ? 'always' : 'hover'} onClick={openLogLink}>
               {segment.text}
             </Anchor>
           ) : (
@@ -279,7 +279,7 @@ export const LogPanel: React.FC = () => {
           </Text>
           <ToolbarIconButton icon={FolderOpen} label={t('log.openFolder')} onClick={handleOpenFolder} />
           <ToolbarIconButton
-            icon={Download}
+            icon={Upload}
             label={t('log.export')}
             onClick={handleExport}
             disabled={visibleLogs.length === 0}

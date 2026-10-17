@@ -1,6 +1,7 @@
 import type {
   DailyMetricCounts,
   DomainMetrics,
+  DownloadCounts,
   KeyMetrics,
   MetricCounts,
   MetricOutcome,
@@ -25,7 +26,7 @@ export function zeroKey(): KeyMetrics {
 }
 
 export function emptyDailyEntry(): DailyMetricCounts {
-  return { chat: zeroDomain(), agent: zeroDomain(), flow: zeroDomain(), tokens: zeroTokens(), keys: {} };
+  return { chat: zeroDomain(), agent: zeroDomain(), flow: zeroDomain(), tokens: zeroTokens(), keys: {}, downloads: {} };
 }
 
 export function emptyMetrics(): MetricsSnapshot {
@@ -35,6 +36,7 @@ export function emptyMetrics(): MetricsSnapshot {
     flow: zeroDomain(),
     tokens: zeroTokens(),
     keys: {},
+    downloads: {},
     daily: {},
     since: '',
   };
@@ -61,6 +63,16 @@ function normalizeCounts(raw: unknown): MetricCounts {
 function normalizeTokens(raw: unknown): TokenCounts {
   const obj = asObject(raw);
   return { input: toCount(obj.input), output: toCount(obj.output) };
+}
+
+/** A store without Downloader counts reads as no downloads. */
+function normalizeDownloads(raw: unknown): Record<string, DownloadCounts> {
+  const downloads: Record<string, DownloadCounts> = {};
+  for (const [site, entry] of Object.entries(asObject(raw))) {
+    const obj = asObject(entry);
+    if (site) downloads[site] = { success: toCount(obj.success), failure: toCount(obj.failure) };
+  }
+  return downloads;
 }
 
 function normalizeKeys(raw: unknown): Record<string, KeyMetrics> {
@@ -118,6 +130,7 @@ export function normalizeSnapshot(raw: unknown): MetricsSnapshot {
       flow: normalizeDomain(day.flow),
       tokens: normalizeTokens(day.tokens),
       keys: normalizeKeys(day.keys),
+      downloads: normalizeDownloads(day.downloads),
     };
   }
   return {
@@ -126,6 +139,7 @@ export function normalizeSnapshot(raw: unknown): MetricsSnapshot {
     flow: normalizeDomain(obj.flow),
     tokens: normalizeTokens(obj.tokens),
     keys: normalizeKeys(obj.keys),
+    downloads: normalizeDownloads(obj.downloads),
     daily,
     since: normalizeSince(obj.since, daily),
   };

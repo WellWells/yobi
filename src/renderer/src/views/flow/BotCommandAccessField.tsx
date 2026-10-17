@@ -11,16 +11,19 @@ interface BotCommandAccessFieldProps {
   value: TriggerConfig;
   patch: (p: Partial<TriggerConfig>) => void;
   t: (k: string) => string;
+  /** The flow reads the owner's own data: a trigger without a mode runs as admins-only. */
+  ownerData?: boolean;
 }
 
 /**
- * Who may run a flow's bot command. Every change writes the mode explicitly: a trigger saved
- * before the mode existed reads an empty list as everyone, so clearing a restricted command's
- * list without it would open the command up instead of closing it. The list stays on the trigger
- * under "everyone" (that mode ignores it), so switching back does not lose the selection.
+ * Who may run a flow's bot command. Every change writes the mode explicitly: a trigger without a
+ * mode reads an empty list as everyone (the admins over the owner's own data),
+ * so clearing a restricted command's list without it would open the command up instead of
+ * closing it. The list stays on the trigger under the other modes (they ignore it), so switching
+ * back does not lose the selection.
  */
-export const BotCommandAccessField: React.FC<BotCommandAccessFieldProps> = ({ value, patch, t }) => {
-  const mode = botCommandAccessMode(value.botAccess, value.botAllowedUserIds);
+export const BotCommandAccessField: React.FC<BotCommandAccessFieldProps> = ({ value, patch, t, ownerData = false }) => {
+  const mode = botCommandAccessMode(value.botAccess, value.botAllowedUserIds, ownerData);
 
   const setMode = (next: string): void => {
     if (!isBotCommandAccessMode(next) || next === mode) return;
@@ -34,6 +37,7 @@ export const BotCommandAccessField: React.FC<BotCommandAccessFieldProps> = ({ va
           value={mode}
           options={[
             { value: 'all', label: t('flow.trigger.bot.access.all') },
+            { value: 'admins', label: t('flow.trigger.bot.access.admins') },
             { value: 'users', label: t('flow.trigger.bot.access.users') },
           ]}
           onChange={setMode}
@@ -41,6 +45,7 @@ export const BotCommandAccessField: React.FC<BotCommandAccessFieldProps> = ({ va
         />
       </Input.Wrapper>
       {mode === 'all' && <Text fz="xs" c="dimmed">{t('flow.trigger.bot.access.all.hint')}</Text>}
+      {mode === 'admins' && <Text fz="xs" c="dimmed">{t('flow.trigger.bot.access.admins.hint')}</Text>}
       {mode === 'users' && (
         <BotUserAllowlist
           value={value.botAllowedUserIds}

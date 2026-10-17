@@ -3,6 +3,7 @@ import { createWriteStream } from 'node:fs';
 import { once } from 'node:events';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { recordDownloads, yobiDownloadsDir } from '../../downloadsCache';
 import { getOutputDir } from '../../files';
 import { sendLog } from '../../helpers';
 import { ensureHttpScheme } from '../../urlParser';
@@ -52,6 +53,17 @@ export function expandHome(p: string): string {
 export async function resolveUserPath(raw: string): Promise<string> {
   const expanded = expandHome(raw);
   return path.isAbsolute(expanded) ? expanded : path.join(await getOutputDir(), expanded);
+}
+
+export { yobiDownloadsDir };
+
+/**
+ * The folder a download step saves to (`youtube_download`, `x_media`, `file_download`): an absolute
+ * path as given, a relative one inside `Downloads/Yobi`, blank = `Downloads/Yobi` itself.
+ */
+export function downloadsFolder(raw: string | undefined): string {
+  const given = expandHome((raw ?? '').trim());
+  return path.isAbsolute(given) ? given : path.join(yobiDownloadsDir(), given);
 }
 
 /**
@@ -237,8 +249,7 @@ export async function execFileDownload(config: Record<string, string>, timeoutMs
     if (baseName && !path.extname(baseName)) baseName += deriveDownloadExt(finalUrl, contentType);
     if (!baseName) baseName = autoDownloadName(deriveDownloadExt(finalUrl, contentType));
 
-    const folderRaw = (config.folder ?? '').trim();
-    const dir = folderRaw ? await resolveUserPath(folderRaw) : await getOutputDir();
+    const dir = downloadsFolder(config.folder);
     await fs.mkdir(dir, { recursive: true });
     const resolved = path.join(dir, baseName);
     partPath = `${resolved}.part`;
@@ -259,6 +270,7 @@ export async function execFileDownload(config: Record<string, string>, timeoutMs
 
     await fs.rename(partPath, resolved);
     partPath = '';
+    await recordDownloads([resolved]).catch(() => {});
     sendLog(`⬇️ [Flow] Downloaded ${(bytes / 1024).toFixed(0)} KB → ${resolved}`);
     return resolved;
   } catch (err) {

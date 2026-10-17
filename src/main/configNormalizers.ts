@@ -1,5 +1,5 @@
 import { DEFAULT_CAPTURE_WIDTH, DEFAULT_SHARE_INSTANCE, MAX_CAPTURE_WIDTH, MIN_CAPTURE_WIDTH, SHARE_EXPIRE_VALUES, clampCaptureMargin, defaultQuickExportHotkey, normalizeShareExpireList } from '../shared/types';
-import type { BotBuiltinCommand, BotBuiltinCommands, BotByokCommands, BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureSettings, QuickExportFormat, QuickExportSettings, HiddenSources, LinePairedUser, LinePairingState, LinePendingCode, McpServerConfig, NotifyEventPrefs, Provider, PromptLength, PromptPreferences, PromptTone, ShareExpire, ShareExpireCache, ShareSettings, TelegramChannel, TelegramChatKind, TelegramKnownUser, TelegramPairedUser, TelegramPairingState, TelegramPendingCode } from '../shared/types';
+import type { BotBuiltinCommand, BotBuiltinCommands, BotByokCommands, BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureSettings, QuickExportFormat, QuickExportSettings, HiddenSources, LinePairedUser, LinePairingState, McpServerConfig, NotifyEventPrefs, PendingPairingCode, Provider, PromptLength, PromptPreferences, PromptTone, ShareExpire, ShareExpireCache, ShareSettings, TelegramChannel, TelegramChatKind, TelegramPairedUser, TelegramPairingState } from '../shared/types';
 import {
   AGENT_ASK_TTL_MAX_MINUTES,
   AGENT_ASK_TTL_MIN_MINUTES,
@@ -12,6 +12,9 @@ import {
   migrateRemovedTargetUrl,
 } from '../shared/types';
 import { isThemePreference } from '../shared/themes';
+import { bySiteFlag } from '../shared/siteConnectors';
+import { normalizeReadingFont } from '../shared/readingPrefs';
+import { normalizeDownloadsKeep } from '../shared/downloads';
 import type { GeminiModelCatalog, GeminiModelChoice, GeminiModelInfo } from '../shared/geminiModels';
 import type {
   ClaudeModelCatalog,
@@ -31,6 +34,7 @@ import {
 import { defaultStored } from './configTypes';
 // The module itself, not the façade: the façade reads config, which imports this file.
 import { normalizeBotPermissions } from './botPermissions/normalize';
+import { normalizeBlockedUsers, normalizeGroupPermissions } from '../shared/botPermissions';
 import { normalizeInstanceUrl } from './share/privatebin';
 import { normalizeEditorChoice } from './editorPresets';
 import type { ByokInstance, Config, LineConfig, SmtpConfig, TelegramConfig, WindowBounds } from './configTypes';
@@ -65,6 +69,7 @@ export function normalizeConfig(raw: unknown): Config {
     targetUrl: normalizeStoredTarget(obj.targetUrl) || defaultStored.targetUrl,
     flowGenerateUrl: normalizeStoredTarget(obj.flowGenerateUrl),
     memoryCurateUrl: normalizeStoredTarget(obj.memoryCurateUrl),
+    writingToolsUrl: normalizeStoredTarget(obj.writingToolsUrl),
     externalEditor: normalizeEditorChoice(obj.externalEditor),
     externalEditorCommand: typeof obj.externalEditorCommand === 'string' ? obj.externalEditorCommand.trim() : '',
     localeSetByUser: inferredLocaleSetByUser,
@@ -73,11 +78,15 @@ export function normalizeConfig(raw: unknown): Config {
     lineReaderEnabled: obj.lineReaderEnabled === true,
     thunderbirdEnabled: obj.thunderbirdEnabled === true,
     xConnectorEnabled: obj.xConnectorEnabled === true,
+    taiwanRailEnabled: typeof obj.taiwanRailEnabled === 'boolean' ? obj.taiwanRailEnabled : null,
+    ...bySiteFlag((row) => obj[row.flag] === true),
     notifyEvents: normalizeNotifyEvents(obj.notifyEvents),
     youtubePrompt: typeof obj.youtubePrompt === 'string' ? obj.youtubePrompt : defaultStored.youtubePrompt,
     theme: isThemePreference(obj.theme) ? obj.theme : defaultStored.theme,
     layoutMode: obj.layoutMode === 'side-by-side' ? 'side-by-side' : 'stacked',
     markdownZoom: clampedZoom,
+    readingFont: normalizeReadingFont(obj.readingFont),
+    readingFullWidth: obj.readingFullWidth === true,
     captureSettings: normalizeCaptureSettings(obj.captureSettings),
     quickExport: normalizeQuickExport(obj.quickExport),
     shortcuts: normalizeShortcuts(obj.shortcuts),
@@ -104,6 +113,7 @@ export function normalizeConfig(raw: unknown): Config {
     claudeModelCatalog: normalizeClaudeModelCatalog(obj.claudeModelCatalog),
     chatgptModel: normalizeChatgptModelChoice(obj.chatgptModel),
     chatgptModelCatalog: normalizeChatgptModelCatalog(obj.chatgptModelCatalog),
+    downloadsKeep: normalizeDownloadsKeep(obj.downloadsKeep),
   };
 }
 
@@ -141,13 +151,18 @@ export function normalizeGeminiModelCatalog(raw: unknown): GeminiModelCatalog | 
   };
 }
 
-export function normalizeClaudeModelChoice(raw: unknown): ClaudeModelChoice {
+/** Claude's and ChatGPT's choices share one shape: a model, its effort, and a thinking switch. */
+function normalizeEffortModelChoice(raw: unknown): ClaudeModelChoice & ChatgptModelChoice {
   const obj = (raw && typeof raw === 'object') ? (raw as Partial<ClaudeModelChoice>) : {};
   return {
     modelId: typeof obj.modelId === 'string' ? obj.modelId.trim() : '',
     effort: typeof obj.effort === 'string' ? obj.effort.trim() : '',
     thinking: typeof obj.thinking === 'boolean' ? obj.thinking : null,
   };
+}
+
+export function normalizeClaudeModelChoice(raw: unknown): ClaudeModelChoice {
+  return normalizeEffortModelChoice(raw);
 }
 
 /** An `{ id, label, sublabel }` row of a provider's picker (Claude's and ChatGPT's share the shape). */
@@ -191,12 +206,7 @@ export function normalizeClaudeModelCatalog(raw: unknown): ClaudeModelCatalog | 
 }
 
 export function normalizeChatgptModelChoice(raw: unknown): ChatgptModelChoice {
-  const obj = (raw && typeof raw === 'object') ? (raw as Partial<ChatgptModelChoice>) : {};
-  return {
-    modelId: typeof obj.modelId === 'string' ? obj.modelId.trim() : '',
-    effort: typeof obj.effort === 'string' ? obj.effort.trim() : '',
-    thinking: typeof obj.thinking === 'boolean' ? obj.thinking : null,
-  };
+  return normalizeEffortModelChoice(raw);
 }
 
 /** A cache, like Claude's: anything malformed is dropped and the next ChatGPT send reads the page again. */
@@ -341,9 +351,9 @@ export function normalizeNotifyEvents(raw: unknown): NotifyEventPrefs {
 }
 
 export function normalizeLine(raw: unknown, legacyAgentTarget = ''): LineConfig {
-  const obj = (raw && typeof raw === 'object') ? (raw as Partial<LineConfig> & { allowedUserIds?: unknown }) : {};
+  const obj = (raw && typeof raw === 'object') ? (raw as Partial<LineConfig>) : {};
   const port = Number(obj.port);
-  const pairing = deserializeLinePairingState(obj.pairing, obj.allowedUserIds);
+  const pairing = deserializeLinePairingState(obj.pairing);
   const { permissions, permissionsVersion } = normalizeBotPermissions({
     platform: 'line',
     raw: obj.permissions,
@@ -359,6 +369,8 @@ export function normalizeLine(raw: unknown, legacyAgentTarget = ''): LineConfig 
     pairing,
     permissions,
     permissionsVersion,
+    groupPermissions: normalizeGroupPermissions(obj.groupPermissions),
+    blockedUsers: normalizeBlockedUsers(obj.blockedUsers),
   };
 }
 
@@ -386,24 +398,22 @@ function normalizeStoredTarget(raw: unknown): string {
   return trimmed ? migrateRemovedTargetUrl(canonicalProviderUrl(trimmed)) : '';
 }
 
-function deserializeLinePairingState(raw: unknown, legacyAllowedUserIds: unknown): LinePairingState {
+function deserializeLinePairingState(raw: unknown): LinePairingState {
   const obj = (raw && typeof raw === 'object') ? (raw as Partial<LinePairingState>) : {};
-  const pairedUsers = normalizeLinePairedUsers(obj.pairedUsers);
-  const seen = new Set(pairedUsers.map((user) => user.userId));
-  for (const userId of normalizeLineUserIds(legacyAllowedUserIds)) {
-    if (seen.has(userId)) continue;
-    seen.add(userId);
-    pairedUsers.push({ userId, pairedAt: new Date().toISOString() });
-  }
-  return { pendingCodes: normalizeLinePendingCodes(obj.pendingCodes), pairedUsers };
+  return {
+    pendingCodes: normalizePendingCodes(obj.pendingCodes),
+    pairedUsers: normalizeLinePairedUsers(obj.pairedUsers),
+  };
 }
 
-function normalizeLinePendingCodes(raw: unknown): LinePendingCode[] {
+/** Telegram and LINE pending codes share one shape; an expired or incomplete code is dropped. */
+function normalizePendingCodes(raw: unknown): PendingPairingCode[] {
   if (!Array.isArray(raw)) return [];
   const now = Date.now();
   return raw
     .map((item) => {
-      const entry = item as Partial<LinePendingCode>;
+      if (!item || typeof item !== 'object') return null;
+      const entry = item as Partial<PendingPairingCode>;
       const code = typeof entry.code === 'string' ? entry.code.trim().toUpperCase() : '';
       const createdAt = typeof entry.createdAt === 'string' ? entry.createdAt : '';
       const expiresAt = typeof entry.expiresAt === 'string' ? entry.expiresAt : '';
@@ -411,7 +421,7 @@ function normalizeLinePendingCodes(raw: unknown): LinePendingCode[] {
       if (!code || !createdAt || !expiresAt || Number.isNaN(expiresMs) || expiresMs <= now) return null;
       return { code, createdAt, expiresAt };
     })
-    .filter((item): item is LinePendingCode => Boolean(item));
+    .filter((item): item is PendingPairingCode => Boolean(item));
 }
 
 function normalizeLinePairedUsers(raw: unknown): LinePairedUser[] {
@@ -432,24 +442,10 @@ function normalizeLinePairedUsers(raw: unknown): LinePairedUser[] {
   return users;
 }
 
-function normalizeLineUserIds(raw: unknown): string[] {
-  if (!Array.isArray(raw)) return [];
-  const seen = new Set<string>();
-  const ids: string[] = [];
-  for (const value of raw) {
-    const id = typeof value === 'string' ? value.trim() : '';
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    ids.push(id);
-  }
-  return ids;
-}
-
 export function normalizeSmtp(raw: unknown): SmtpConfig {
   const obj = (raw && typeof raw === 'object') ? (raw as Partial<SmtpConfig>) : {};
   const port = Number(obj.port);
   return {
-    enabled: Boolean(obj.enabled),
     host: typeof obj.host === 'string' ? obj.host.trim() : '',
     port: Number.isFinite(port) && port > 0 && port <= 65_535 ? Math.floor(port) : 587,
     user: typeof obj.user === 'string' ? obj.user.trim() : '',
@@ -574,6 +570,8 @@ export function deserializePairingConfig(raw: unknown, legacyAgentTarget = ''): 
   return {
     enabled: Boolean(obj.enabled),
     botToken: typeof obj.botToken === 'string' ? obj.botToken.trim() : '',
+    apiId: normalizeTelegramApiId(obj.apiId),
+    apiHash: typeof obj.apiHash === 'string' ? obj.apiHash.trim() : '',
     allowGroupCommands: Boolean(obj.allowGroupCommands),
     defaultReplyMode: obj.defaultReplyMode === 'png' || obj.defaultReplyMode === 'webp' || obj.defaultReplyMode === 'pdf'
       ? obj.defaultReplyMode
@@ -583,10 +581,17 @@ export function deserializePairingConfig(raw: unknown, legacyAgentTarget = ''): 
     llmDirect: normalizeLlmDirect(obj.llmDirect, legacyAgentTarget),
     pairing,
     channels: normalizeTelegramChannels(obj.channels),
-    knownUsers: normalizeTelegramKnownUsers(obj.knownUsers),
     permissions,
     permissionsVersion,
+    groupPermissions: normalizeGroupPermissions(obj.groupPermissions),
+    blockedUsers: normalizeBlockedUsers(obj.blockedUsers),
   };
+}
+
+/** my.telegram.org's api_id: a positive integer; anything else is "not set" (0). */
+export function normalizeTelegramApiId(raw: unknown): number {
+  const value = typeof raw === 'string' && /^\s*\d+\s*$/.test(raw) ? Number(raw) : raw;
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : 0;
 }
 
 export function normalizeTelegramChannels(raw: unknown): TelegramChannel[] {
@@ -599,7 +604,6 @@ export function normalizeTelegramChannels(raw: unknown): TelegramChannel[] {
     if (!Number.isFinite(chatId) || chatId === 0 || seen.has(chatId)) continue;
     seen.add(chatId);
     const username = typeof entry.username === 'string' ? entry.username.replace(/^@/, '').trim() : '';
-    const lostAt = typeof entry.lostAt === 'string' ? entry.lostAt.trim() : '';
     const chatType = normalizeTelegramChatKind(entry.chatType);
     channels.push({
       chatId,
@@ -607,8 +611,6 @@ export function normalizeTelegramChannels(raw: unknown): TelegramChannel[] {
       ...(username ? { username } : {}),
       ...(chatType ? { chatType } : {}),
       canPost: entry.canPost === true,
-      discoveredAt: typeof entry.discoveredAt === 'string' ? entry.discoveredAt : new Date().toISOString(),
-      ...(lostAt ? { lostAt } : {}),
     });
   }
   return channels;
@@ -617,29 +619,6 @@ export function normalizeTelegramChannels(raw: unknown): TelegramChannel[] {
 function normalizeTelegramChatKind(raw: unknown): TelegramChatKind | undefined {
   if (raw === 'group' || raw === 'supergroup' || raw === 'channel') return raw;
   return undefined;
-}
-
-export function normalizeTelegramKnownUsers(raw: unknown): TelegramKnownUser[] {
-  if (!Array.isArray(raw)) return [];
-  const seen = new Set<number>();
-  const users: TelegramKnownUser[] = [];
-  for (const item of raw) {
-    const entry = (item && typeof item === 'object') ? (item as Partial<TelegramKnownUser>) : {};
-    const userId = Number(entry.userId);
-    if (!Number.isFinite(userId) || userId <= 0 || seen.has(userId)) continue;
-    seen.add(userId);
-    const username = typeof entry.username === 'string' ? entry.username.replace(/^@/, '').trim() : '';
-    const firstName = typeof entry.firstName === 'string' ? entry.firstName.trim() : '';
-    const lastName = typeof entry.lastName === 'string' ? entry.lastName.trim() : '';
-    users.push({
-      userId,
-      ...(username ? { username } : {}),
-      ...(firstName ? { firstName } : {}),
-      ...(lastName ? { lastName } : {}),
-      resolvedAt: typeof entry.resolvedAt === 'string' ? entry.resolvedAt : new Date().toISOString(),
-    });
-  }
-  return users;
 }
 
 export function normalizeProviderCommands(raw: unknown): Record<Provider, BotProviderCommand> {
@@ -707,25 +686,6 @@ function deserializePairingState(raw: unknown): TelegramPairingState {
     pendingCodes: normalizePendingCodes(obj.pendingCodes),
     pairedUsers: normalizePairedUsers(obj.pairedUsers),
   };
-}
-
-function normalizePendingCodes(raw: unknown): TelegramPendingCode[] {
-  if (!Array.isArray(raw)) return [];
-  const now = Date.now();
-  return raw
-    .map((item) => {
-      const entry = item as Partial<TelegramPendingCode>;
-      const code = typeof entry.code === 'string' ? entry.code.trim().toUpperCase() : '';
-      const sessionId = typeof entry.sessionId === 'string' ? entry.sessionId.trim() : '';
-      const createdAt = typeof entry.createdAt === 'string' ? entry.createdAt : '';
-      const expiresAt = typeof entry.expiresAt === 'string' ? entry.expiresAt : '';
-      const expiresMs = Date.parse(expiresAt);
-      if (!code || !sessionId || !createdAt || !expiresAt || Number.isNaN(expiresMs) || expiresMs <= now) {
-        return null;
-      }
-      return { code, sessionId, createdAt, expiresAt };
-    })
-    .filter((item): item is TelegramPendingCode => Boolean(item));
 }
 
 function normalizePairedUsers(raw: unknown): TelegramPairedUser[] {

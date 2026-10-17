@@ -2,8 +2,8 @@ import type { FlowGenerationResult, SkillInstance, SkillType, TriggerConfig } fr
 import {
   DEFAULT_SKILL_CONFIG,
   SKILL_SPECS,
+  SKILL_TYPES,
   SKILLS_WITHOUT_OUTPUT_KEY,
-  canonicalSkillType,
 } from './flowSkillSchema';
 import { validateTrigger } from './flowTriggerValidation';
 import { checkVariableReferences } from './flowReferenceCheck';
@@ -13,7 +13,6 @@ import { unwrapMarkdownLink } from './markdownLinkUnwrap';
 
 export { extractJsonFromLlmResponse } from './llmJsonExtract';
 export { checkBlockStructure, describeBlockIssue } from './flowBlockStructure';
-export type { BlockIssue } from './flowBlockStructure';
 
 type StepValidationResult =
   | { ok: true; step: SkillInstance }
@@ -63,7 +62,7 @@ function validateStep(raw: unknown, index: number): StepValidationResult {
   }
   const s = raw as Record<string, unknown>;
   const type = s.type;
-  const skillType = typeof type === 'string' ? canonicalSkillType(type) : null;
+  const skillType = SKILL_TYPES.includes(type as SkillType) ? (type as SkillType) : null;
   if (!skillType) {
     return { ok: false, error: `Step ${index + 1} has unknown type "${String(type)}"` };
   }

@@ -28,7 +28,7 @@ export const UserBubble = React.memo<UserBubbleProps>(({ prompt, t, attachments 
       <Stack gap={8}>
         {chips.length > 0 && <AttachmentChips attachments={chips} />}
         <CollapsibleContent fadeColor="var(--bg-secondary)" t={t}>
-          <PromptBody prompt={prompt} />
+          <Box data-find-scope><PromptBody prompt={prompt} /></Box>
         </CollapsibleContent>
       </Stack>
     </Box>

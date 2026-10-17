@@ -1,8 +1,9 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID, THUNDERBIRD_UNAVAILABLE_ERROR } from '../../shared/builtinConnectors';
+import { BUILTIN_RAIL_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID, THUNDERBIRD_UNAVAILABLE_ERROR } from '../../shared/builtinConnectors';
 import { BUILTIN_LINE_SERVER_ID } from '../../shared/types';
 import { forgetStoredLineKey } from '../line/lineKeyStore';
 import { connectionFileFingerprint } from '../thunderbird/bridge';
+import { bySiteConnectorId } from '../siteConnector';
 
 export interface BuiltinConnection {
   client: Client;
@@ -45,4 +46,10 @@ export const BUILTIN_RUNTIMES: Readonly<Record<string, BuiltinRuntime>> = {
   [BUILTIN_X_SERVER_ID]: {
     connect: async (name, version) => (await import('../x/xConnection')).connectXMcp(name, version),
   },
+  [BUILTIN_RAIL_SERVER_ID]: {
+    connect: async (name, version) => (await import('../rail/railConnection')).connectRailMcp(name, version),
+  },
+  // The sign-in site connectors (Instagram, Facebook, …) come from their table. Switching one off
+  // never signs out: flows and pasted links read with the same sign-in.
+  ...bySiteConnectorId(({ connect }): BuiltinRuntime => ({ connect })),
 };

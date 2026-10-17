@@ -1,9 +1,22 @@
 const encoder = new TextEncoder();
 
-/** One-line preview for a notification, log row or queue entry: whitespace collapsed, ellipsis past `limit`. */
+/**
+ * One-line preview for a notification, log row or queue entry: whitespace collapsed, ellipsis past
+ * `limit`. The ellipsis goes on top, so a cut result is `limit + 1` characters; use `clipLine`
+ * where the whole line has to fit.
+ */
 export function compactPreview(text: string, limit: number): string {
   const compact = text.replace(/\s+/g, ' ').trim();
   return compact.length > limit ? `${compact.slice(0, limit)}…` : compact;
+}
+
+/**
+ * `compactPreview` whose result, ellipsis included, is never longer than `limit`: for lines a
+ * budget is counted against, such as the agent's tool catalog.
+ */
+export function clipLine(text: string, limit: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length > limit ? `${flat.slice(0, limit - 1)}…` : flat;
 }
 
 export function utf8Len(text: string): number {

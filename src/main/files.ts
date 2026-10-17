@@ -7,6 +7,8 @@ import dayjs from 'dayjs';
 import type { OutputFile } from '../shared/types';
 import { latestTurnProvider, parseConversationDoc, visibleConversationText } from '../shared/conversationDoc';
 import type { ConversationDoc, ConversationHeadingAliases, ConversationTurn } from '../shared/conversationDoc';
+import { notionDocParts } from '../shared/notion/notionDoc';
+import { plainNotionTitle } from '../shared/notion/notionDisplay';
 
 type MarkdownHeadingAliases = ConversationHeadingAliases;
 
@@ -207,6 +209,23 @@ function readOutputFile(
   const firstLine = content.split('\n')[0]?.trim() ?? '';
   const h1Match = firstLine.match(/^#\s+(.+)$/);
   const doc = content ? parseConversationDoc(content, headingAliases) : null;
+  // A Notion document has no turns: its time is when its text last changed, its tag is Notion.
+  const notion = doc?.thread.notion && notionDocParts(content) ? doc.thread.notion : null;
+  if (notion) {
+    return {
+      file: {
+        name,
+        path: filePath,
+        timestamp: toIsoTimestamp(notion.at) || extractTimestampFromFileName(name),
+        // Notion's title is rich text ("**…**"): the row shows its words.
+        preview: h1Match ? plainNotionTitle(h1Match[1] ?? '') || name : name,
+        provider: 'Notion',
+        turns: 1,
+        notion: true,
+      },
+      doc,
+    };
+  }
   const provider = latestTurnProvider(doc?.turns ?? [])
     ?? extractMetaByAliases(content, headingAliases.provider);
   const timestamp = latestTurnTimestamp(doc?.turns ?? [])
@@ -314,16 +333,5 @@ function toIsoTimestamp(raw: string): string {
 }
 
 export function buildSnapshotFileName(): string {
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return [
-    now.getFullYear(),
-    pad(now.getMonth() + 1),
-    pad(now.getDate()),
-    '-',
-    pad(now.getHours()),
-    pad(now.getMinutes()),
-    pad(now.getSeconds()),
-    '-snapshot',
-  ].join('');
+  return `${dayjs().format('YYYYMMDD-HHmmss')}-snapshot`;
 }

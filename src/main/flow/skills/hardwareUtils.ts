@@ -1,3 +1,5 @@
+import { withTimeout } from '../../promiseRace';
+
 export const PROBE_TIMEOUT_MS = 6_000;
 const BYTES_PER_GB = 1024 ** 3;
 
@@ -24,15 +26,8 @@ export function formatDiskSize(bytes: number): string {
   return gb >= 1000 ? `${(gb / 1024).toFixed(1)} TB` : `${gb.toFixed(0)} GB`;
 }
 
-function withTimeout(promise: Promise<string>): Promise<string> {
-  return Promise.race([
-    promise,
-    new Promise<string>((_, reject) => setTimeout(() => reject(new Error('probe timed out')), PROBE_TIMEOUT_MS)),
-  ]);
-}
-
 export function safe(fn: () => Promise<string>): Promise<string> {
-  return withTimeout(fn())
+  return withTimeout(fn(), PROBE_TIMEOUT_MS, () => new Error('probe timed out'))
     .then((value) => value.trim() || 'unknown')
     .catch(() => 'unknown');
 }

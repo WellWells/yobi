@@ -6,6 +6,8 @@ import { VariableField } from './VariableField';
 import { analyzeFlow } from './flowCapabilities';
 import { SKILL_ICON } from './skills';
 import { TemplateIcon } from './TemplateIcon';
+import { YtdlToolsSetup } from '../../components/ytdl/YtdlToolsSetup';
+import { GroupHeader } from '../../components/GroupHeader';
 import { useI18nStore } from '../../store/i18nStore';
 import { useAppStore } from '../../store/appStore';
 import { telegramApi, lineApi } from '../../api/electronApi';
@@ -37,6 +39,7 @@ export const FlowSetupWizard: React.FC<FlowSetupWizardProps> = ({ template, t, o
   }, [template, t, locale]);
 
   const needsBot = useMemo(() => (flow ? analyzeFlow(flow).setup.includes('bot') : false), [flow]);
+  const needsYtdlTools = useMemo(() => (flow ? flow.steps.some((s) => s.type === 'youtube_download') : false), [flow]);
 
   useEffect(() => {
     if (!needsBot) { setBotConfigured(true); return; }
@@ -95,6 +98,13 @@ export const FlowSetupWizard: React.FC<FlowSetupWizardProps> = ({ template, t, o
               </Button>
             </Stack>
           </Alert>
+        )}
+
+        {needsYtdlTools && (
+          <Stack gap={6}>
+            <GroupHeader label={t('ytdl.tools.title')} variant="plain" />
+            <YtdlToolsSetup />
+          </Stack>
         )}
 
         {variables.length === 0 ? (

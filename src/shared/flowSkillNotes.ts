@@ -49,7 +49,9 @@ export const SKILL_NOTES: Partial<Record<SkillType, string>> = {
 
   x_trends: 'Signed out it fails rather than returning "[]": X shows trends only to a signed-in account. The trends follow the region set in that X account, not the app language. One llm step over the whole array makes the digest — the posts are already in it, so do not loop over the trends or open their links in a browser step (X shows a sign-in wall there). Tell the llm to say so when a trend has no posts, rather than guess what it is about.',
 
-  x_thread: 'Inside a loop it needs emitFailFlag="true" (a deleted or protected post fails), followed by an if on {{<outputKey>.isFailed}} + continue. Signed out, X lists only about 3 top replies, so {{<outputKey>.shown}} is usually far below {{<outputKey>.replyCount}} — never tell the user a post has no other replies.',
+  x_media: 'A post without media still succeeds with "" output. Forward a bare link as is; add an llm step over .prompt, .text and .videoText only when .prompt is not empty.',
+
+  x_thread: 'Inside a loop it needs emitFailFlag="true" (a deleted or protected post fails), followed by an if on {{<outputKey>.isFailed}} + continue. Signed out, X lists only about 3 top replies (Threads its first 10, Instagram 15, Facebook and TikTok up to 40; PTT pushes sampled), so {{<outputKey>.shown}} is usually far below {{<outputKey>.replyCount}} — never tell the user a post has no other replies.',
 
   weather: 'The geocoder matches Latin-script place names only — "Kaohsiung" works, "高雄市" / "東京" / "서울" return nothing. Never throws: an unknown place sets {{<outputKey>.isFailed}}="1", so branch on that rather than expecting an error.',
 

@@ -16,6 +16,7 @@ import {
   applyAnswer,
   deleteRunState,
   dropUnansweredAsk,
+  isBotRun,
   listResumableRuns,
   loadRunState,
   pruneOldRuns,
@@ -110,6 +111,12 @@ export function registerAgentHandlers(ctx: IpcContext): void {
     const state = id ? await loadRunState(id) : null;
     if (!state) return { success: false, error: t(strings, 'agent.error.notResumable') };
     if (state.status === 'done') return { success: false, error: t(strings, 'agent.error.notResumable') };
+    // A Telegram/LINE run goes on only in its chat, where the account's rights are re-read; resumed
+    // here it would run a stranger's goal with the desktop's full kit and the owner's memory.
+    if (isBotRun(state)) {
+      sendLog(`[agent] run ${id} not resumed on the desktop: it came from a bot chat`);
+      return { success: false, error: t(strings, 'agent.error.notResumable') };
+    }
     // Re-validate the persisted disclosure: a week-old run can name a connector the user has
     // since deleted or switched off, and resuming it as if nothing were named would hand the
     // model a scope the user did not agree to.

@@ -7,6 +7,7 @@ import {
   zeroFlowRun,
   zeroFlowStep,
 } from '../shared/flowMetrics';
+import { compactPreview } from '../shared/textBudget';
 import { maskSecrets } from './flow/agent/secretMask';
 import type { FlowRunEvent, FlowStepEvent } from './flowMeter';
 
@@ -38,8 +39,7 @@ function flowEntries(data: FlowMetricsSnapshot, today: string, flowId: string): 
 
 /** Masked and flattened before it is stored, never at display time. */
 export function sampleMessage(raw: string): string {
-  const masked = maskSecrets(raw, true).replace(/\s+/g, ' ').trim();
-  return masked.length > MAX_SAMPLE_CHARS ? `${masked.slice(0, MAX_SAMPLE_CHARS)}…` : masked;
+  return compactPreview(maskSecrets(raw, true), MAX_SAMPLE_CHARS);
 }
 
 function pushSample(samples: FlowErrorSample[], sample: FlowErrorSample): void {

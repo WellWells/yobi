@@ -6,6 +6,7 @@
  */
 import type { CheckpointStore } from '../checkpoint';
 import { makeCheckpointStore } from '../checkpoint';
+import { fillTemplate as fill } from '../../../shared/fillTemplate';
 import { resolveLineRange, type ResolvedRange } from './lineRange';
 import { planTranscript, type ChatBatch } from './lineBudget';
 import {
@@ -69,13 +70,6 @@ const DEFAULT_LIMIT = 200;
  * matches the step reports the fragment as too broad instead of spending the budget on headings.
  */
 const MAX_MATCHED_CHATS = 20;
-
-function fill(template: string, vars: Record<string, string>): string {
-  return Object.entries(vars).reduce(
-    (text, [key, value]) => text.replaceAll(`{{${key}}}`, value),
-    template,
-  );
-}
 
 interface ResolvedChat {
   chatId: string;

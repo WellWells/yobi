@@ -14,7 +14,8 @@ export interface SignInWindowSpec {
   title: string;
   partition: string;
   url: string;
-  prepare: (contents: WebContents) => void;
+  /** Runs before the first load, which waits for it. */
+  prepare: (contents: WebContents) => void | Promise<void>;
   /** Runs once the first page has loaded, before the poll starts. */
   afterLoad?: (contents: WebContents) => Promise<void>;
   isSignedIn: () => Promise<boolean>;
@@ -86,7 +87,8 @@ export async function openSignInWindow(spec: SignInWindowSpec): Promise<boolean>
   });
 
   win.setMenuBarVisibility(false);
-  spec.prepare(win.webContents);
+  await spec.prepare(win.webContents);
+  if (win.isDestroyed()) return true;
   try {
     await loadURLFollowingIdentity(win.webContents, spec.url);
   } catch (err) {

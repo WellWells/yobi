@@ -10,6 +10,8 @@ export interface ToggleSwitchProps {
   /** Secondary line under the label. */
   description?: React.ReactNode;
   'aria-label'?: string;
+  /** -1 when the switch only shows a row's state (a menu row that toggles on click). */
+  tabIndex?: number;
 }
 
 export const ToggleSwitch: React.FC<ToggleSwitchProps> = ({
@@ -20,10 +22,12 @@ export const ToggleSwitch: React.FC<ToggleSwitchProps> = ({
   label,
   description,
   'aria-label': ariaLabel,
+  tabIndex,
 }) => (
   <Switch
     checked={checked}
     onChange={onChange}
+    tabIndex={tabIndex}
     color="var(--mantine-color-success)"
     size={size}
     withThumbIndicator={false}

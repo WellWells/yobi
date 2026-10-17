@@ -10,8 +10,6 @@ export interface NavigatorUAData {
   getHighEntropyValues(hints: string[]): Promise<Record<string, unknown>>;
 }
 
-export type NavigatorWithUAData = Navigator & { userAgentData?: NavigatorUAData };
-
 type AnyFunction = (...args: never[]) => unknown;
 
 const installed = new WeakSet<object>();

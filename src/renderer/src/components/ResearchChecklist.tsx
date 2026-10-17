@@ -2,12 +2,9 @@ import { Box, Loader, Progress, Stack, Text } from '@mantine/core';
 import { Check, Circle, X } from 'lucide-react';
 import { researchFailed, researchFraction, researchPhase } from '../../../shared/researchProgress';
 import type { ResearchPhase, ResearchProgress } from '../../../shared/researchProgress';
+import { fillTemplate as fill } from '../../../shared/fillTemplate';
 
 type Translate = (key: string) => string;
-
-function fill(template: string, vars: Record<string, string | number>): string {
-  return Object.entries(vars).reduce((text, [key, value]) => text.replaceAll(`{{${key}}}`, String(value)), template);
-}
 
 const LINE_STYLE = {
   fontSize: 'var(--font-size-xs)',

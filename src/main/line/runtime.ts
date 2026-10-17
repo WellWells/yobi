@@ -9,6 +9,7 @@ import { buildLineAddFriendLink } from './deepLink';
 import { LineDispatcher } from './dispatcher';
 import type { LineDispatcherDeps } from './dispatcher';
 import { safePush } from './messaging';
+import { pickCarouselMessage, type LineCarouselItem } from './pickCarousel';
 
 
 export interface LineRuntimeDeps extends Omit<LineDispatcherDeps, 'getClient'> {
@@ -41,7 +42,6 @@ export class LineRuntime {
   getSnapshot(): LineRuntimeSnapshot {
     return {
       status: this.status,
-      listenUrl: this.status === 'running' ? `http://127.0.0.1:${this.currentPort}` : undefined,
       webhookPath: LINE_WEBHOOK_PATH,
       errorMessage: this.errorMessage || undefined,
       account: this.account,
@@ -99,7 +99,6 @@ export class LineRuntime {
         chatModeOn: info.chatMode === 'chat',
         webhookActive,
         addFriendUrl: buildLineAddFriendLink(info.basicId),
-        checkedAt: new Date().toISOString(),
       };
       this.emitRuntime();
     } catch (err: unknown) {
@@ -129,6 +128,16 @@ export class LineRuntime {
     await client.pushImage(userId, imageUrl);
   }
 
+  async sendProactiveVideo(userId: string, videoUrl: string, previewUrl: string): Promise<void> {
+    const client = this.requireClient();
+    await client.pushVideo(userId, videoUrl, previewUrl);
+  }
+
+  async sendProactiveCarousel(userId: string, items: readonly LineCarouselItem[], altText: string): Promise<void> {
+    const client = this.requireClient();
+    await client.pushFlex(userId, pickCarouselMessage(items, altText));
+  }
+
   private requireClient(): LineClient {
     if (!this.client) throw new Error('LINE bot is not running');
     return this.client;
@@ -142,6 +151,7 @@ export class LineRuntime {
     const server = new LineWebhookServer({
       getChannelSecret: () => this.deps.getChannelSecret(),
       onEvents: (events) => { void this.dispatcher.dispatch(events); },
+      onChatEvents: (events) => { void this.dispatcher.dispatchChatEvents(events); },
       onLog: this.deps.onLog,
     });
 

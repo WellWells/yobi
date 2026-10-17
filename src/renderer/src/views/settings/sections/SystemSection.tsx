@@ -7,6 +7,7 @@ import { BackupExportModal } from '../backup/BackupExportModal';
 import { BackupImportModal } from '../backup/BackupImportModal';
 import type { BackupImportResult } from '../../../../../shared/types';
 import { TAG_SETS } from '../hooks/useSettingsNav';
+import { isMac } from '../../../utils/keyLabels';
 
 export type DangerAction = 'reset' | 'clear-history' | null;
 
@@ -27,7 +28,6 @@ export const SystemSection: React.FC<Props> = ({
   onOpenConfigDir, onBackupRestored,
   t, showSection, isSearching, sectionGap,
 }) => {
-  const isMac = navigator.userAgent.includes('Macintosh');
   const revealLabel = isMac ? t('settings.config.reveal.mac') : t('settings.config.reveal.win');
 
   const [exportOpen, setExportOpen] = useState(false);
@@ -60,14 +60,14 @@ export const SystemSection: React.FC<Props> = ({
                 <Group gap={8} wrap="nowrap">
                   <MButton
                     variant="default"
-                    leftSection={<Download size={13} />}
+                    leftSection={<Upload size={13} />}
                     onClick={() => setExportOpen(true)}
                   >
                     {t('settings.backup.export')}
                   </MButton>
                   <MButton
                     variant="default"
-                    leftSection={<Upload size={13} />}
+                    leftSection={<Download size={13} />}
                     onClick={() => setImportOpen(true)}
                   >
                     {t('settings.backup.restore')}

@@ -47,8 +47,7 @@ export type RecapEvent =
   | { kind: 'manual'; ctx: RecapContext }
   | { kind: 'sendStarted' }
   | { kind: 'dismiss' }
-  | { kind: 'switched'; path: string }
-  | { kind: 'renamed'; from: string; to: string };
+  | { kind: 'switched'; path: string };
 
 export function recapKey(path: string, at: string): string {
   return `${path}\n${at}`;
@@ -57,10 +56,6 @@ export function recapKey(path: string, at: string): string {
 function arm(state: RecapState, ctx: RecapContext): RecapState {
   if (!ctx.recap || ctx.pending) return state;
   return { ...state, armed: { path: ctx.path, at: ctx.recap.at, manual: false } };
-}
-
-function movePath(path: string, from: string, to: string): string {
-  return path === from ? to : path;
 }
 
 export function reduceRecap(state: RecapState, event: RecapEvent): RecapState {
@@ -87,17 +82,6 @@ export function reduceRecap(state: RecapState, event: RecapEvent): RecapState {
     }
     case 'switched':
       return state.armed && state.armed.path !== event.path ? { ...state, armed: null } : state;
-    case 'renamed': {
-      const { from, to } = event;
-      const dismissed = new Set([...state.dismissed].map((key) => (
-        key.startsWith(`${from}\n`) ? `${to}${key.slice(from.length)}` : key
-      )));
-      return {
-        armed: state.armed ? { ...state.armed, path: movePath(state.armed.path, from, to) } : null,
-        dismissed,
-        pendingOpen: state.pendingOpen === null ? null : movePath(state.pendingOpen, from, to),
-      };
-    }
     default:
       return state;
   }

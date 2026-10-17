@@ -9,6 +9,7 @@ import { SelectDropdown } from '../../components/SelectDropdown';
 import { ToggleSwitch } from '../../components/ToggleSwitch';
 import { VariableField } from './VariableField';
 import { FLOW_VAR_KEY_RE, FLOW_VAR_PREFIX } from '../../../../shared/flowVariables';
+import { escapeRegExp } from '../../../../shared/regex';
 import { FLOW_VARIABLE_TYPES } from '../../../../shared/types';
 import type {
   FlowDefinition, FlowVariable, FlowVariableType, SkillInstance,
@@ -25,10 +26,6 @@ function nextKey(existing: FlowVariable[]): string {
   let n = existing.length + 1;
   while (used.has(`var${n}`)) n++;
   return `var${n}`;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function countUsages(steps: SkillInstance[], key: string): number {
@@ -265,10 +262,6 @@ export const FlowVariablesPanel: React.FC<FlowVariablesPanelProps> = ({ flow, t,
           <Text fz="xs" c="dimmed" style={{ lineHeight: 1.6 }}>{t('flow.variables.empty')}</Text>
         ) : (
           <>
-            <Text fz="xs" c="dimmed" style={{ lineHeight: 1.6 }}>
-              {t('flow.variables.howto')}
-            </Text>
-
             <Collapse expanded={!editing}>
               <Stack gap="sm">
                 {variables.map((variable, index) => (

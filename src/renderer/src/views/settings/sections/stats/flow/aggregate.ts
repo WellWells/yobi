@@ -6,6 +6,7 @@ import type {
   FlowRunMetrics,
 } from '../../../../../../../shared/flowMetrics';
 import { topReason } from '../../../../../../../shared/flowMetrics';
+import { toIsoDate } from '../../../../../../../shared/localTime';
 
 export interface StepRow {
   flowId: string;
@@ -75,11 +76,6 @@ function mergeFlow(target: FlowRunMetrics, source: FlowRunMetrics): void {
     current.samples = [...current.samples, ...step.samples];
     target.steps[stepId] = current;
   }
-}
-
-function toIsoDate(date: Date): string {
-  const pad = (value: number): string => String(value).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 /**

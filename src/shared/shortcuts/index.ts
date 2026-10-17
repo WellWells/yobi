@@ -1,21 +1,13 @@
-export type {
-  KeyboardEventLike,
-  ElectronInputLike,
-  ShortcutDef,
-  ShortcutGroup,
-  ShortcutGuards,
-  ShortcutScope,
-  ShortcutStorage,
-  ShortcutView,
-} from './types';
+export type { KeyboardEventLike, ShortcutDef } from './types';
 
-export type { MatchOptions } from './combo';
 export {
   canonicalise,
   comboFromEvent,
+  comboLabel,
   comboOverlaps,
   fromElectronInput,
   isRegisterableAccelerator,
+  joinTokens,
   matchesCombo,
   modifiersFromEvent,
   toAccelerator,
@@ -24,22 +16,14 @@ export {
 
 export type { ShortcutId, ShortcutOverride } from './registry';
 export {
-  CHROMIUM_MENU_ACCELERATORS,
   SHORTCUTS,
   activeCombos,
   collisionCombos,
   digitPrefixOf,
   isDispatchable,
-  SHORTCUT_VIEWS,
   resolveDefaultCombo,
   shortcutById,
 } from './registry';
 
-export type {
-  CollisionInput,
-  CollisionLevel,
-  CollisionReason,
-  CollisionResult,
-  FlowHotkeyRef,
-} from './collision';
+export type { FlowHotkeyRef } from './collision';
 export { detectCollision } from './collision';

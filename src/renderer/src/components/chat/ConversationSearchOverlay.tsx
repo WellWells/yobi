@@ -6,6 +6,7 @@ import { SearchPalette } from '../SearchPalette';
 import { useAppStore } from '../../store/appStore';
 import { useI18nStore } from '../../store/i18nStore';
 import { noteConversationOpened } from '../../store/recapStore';
+import { useConversationFindStore } from '../../store/conversationFindStore';
 import { useFormatTime } from '../../hooks/useFormatTime';
 import { fileApi } from '../../api/electronApi';
 import sb from '../Sidebar.module.css';
@@ -44,13 +45,24 @@ export const ConversationSearchOverlay: React.FC<ConversationSearchOverlayProps>
     return () => clearTimeout(timer);
   }, [query]);
 
+  // Opened from a search: find the same words in it, so the match is on screen rather than
+  // "somewhere". Handed over once the palette has closed, or its focus return would pull focus
+  // out of the find field.
+  const findOnCloseRef = useRef('');
+  const handleClosed = useCallback((): void => {
+    const keyword = findOnCloseRef.current;
+    findOnCloseRef.current = '';
+    if (keyword) useConversationFindStore.getState().show(keyword);
+  }, []);
+
   const openFile = useCallback(async (file: OutputFile) => {
+    findOnCloseRef.current = query.trim();
     onClose();
     noteConversationOpened(file.path);
     selectFile(file);
     const content = await fileApi.getContent(file.path);
     startTransition(() => setFileContent(content));
-  }, [onClose, selectFile, setFileContent]);
+  }, [onClose, query, selectFile, setFileContent]);
 
   return (
     <SearchPalette
@@ -61,6 +73,7 @@ export const ConversationSearchOverlay: React.FC<ConversationSearchOverlayProps>
       items={visibleFiles}
       getKey={(file) => file.path}
       onSelect={(file) => { void openFile(file); }}
+      onClosed={handleClosed}
       placeholder={t('sidebar.searchPlaceholder')}
       emptyLabel={query.trim() ? t('sidebar.emptyFiltered') : t('sidebar.empty')}
       renderRow={(file, active) => (

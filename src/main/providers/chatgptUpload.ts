@@ -1,20 +1,23 @@
 import type { WebContents } from 'electron';
 import { uploadViaTiles } from './tileUpload';
-import { CHATGPT_ATTACHMENT_TILE_SELECTOR } from './chatgptSendScript';
+import { CHATGPT_ATTACHMENT_TILE_SELECTOR, CHATGPT_COMPOSER_FORM_SELECTOR } from './chatgptSendScript';
 
 const COMPOSER_SELECTORS = [
+  'form[data-chatgpt-composer]',
   'form[data-type="unified-composer"]',
   '#prompt-textarea',
 ];
 
 const FIND_COMPOSER_JS = `function chatgptComposer() {
-  var form = document.querySelector('form[data-type="unified-composer"]');
+  var form = document.querySelector(${JSON.stringify(CHATGPT_COMPOSER_FORM_SELECTOR)});
   if (form) return form;
   var box = document.querySelector('#prompt-textarea');
   return box ? box.closest('form') : null;
 }`;
 
+// A tile shows a progressbar until the upload lands, images and files alike.
 export const CHATGPT_TILE_PENDING_JS = `function chatgptTilePending(tile) {
+  if (tile.querySelector('[role="progressbar"]')) return true;
   if (tile.querySelector('[class*="cursor-wait"]')) return true;
   if (tile.querySelector('img[src^="blob:"]')) return true;
   var rings = tile.querySelectorAll('circle[stroke-dasharray]');

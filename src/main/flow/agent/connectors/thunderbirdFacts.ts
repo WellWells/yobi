@@ -1,3 +1,4 @@
+import { getLangCache, t } from '../../../i18n';
 import { asRecord, parseJsonValue } from '../toolContracts';
 import type { Args, Fact, LedgerView } from '../toolContracts';
 
@@ -179,5 +180,6 @@ export function messageLabel(fact: Fact): string {
   const when = Number.isNaN(date.getTime())
     ? ''
     : ` (${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')})`;
-  return `${authorName(fact.fields.author ?? '')} — ${fact.fields.subject || '(no subject)'}${when}`;
+  const subject = fact.fields.subject || t(getLangCache(), 'agent.mcp.message.noSubject');
+  return `${authorName(fact.fields.author ?? '')} — ${subject}${when}`;
 }

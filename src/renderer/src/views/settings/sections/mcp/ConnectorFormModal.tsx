@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Group, Stack, Text } from '@mantine/core';
 import { Bot, Server, ShieldCheck } from 'lucide-react';
 import { SettingRow, ToggleSwitch } from '../../components';
@@ -8,6 +8,8 @@ import { AppTextInput } from '../../../../components/AppTextInput';
 import { AppPasswordInput } from '../../../../components/AppPasswordInput';
 import type { useMcpServers } from '../../hooks/useMcpServers';
 import { defaultMcpCommandName, slugifyCommandName } from '../../../../../../shared/mcpCommand';
+import { useReservedCommandOwners } from '../../../../hooks/useMcpCommands';
+import { CommandClashNotice, commandClashLines, draftCommandAssignment } from './CommandClashNotice';
 
 type McpServers = ReturnType<typeof useMcpServers>;
 
@@ -27,6 +29,20 @@ export const ConnectorFormModal: React.FC<Props> = ({ mcp, t }) => {
   const commandHint = resolved && resolved !== typed
     ? `${t('settings.mcp.command.hint')} → /${resolved}`
     : t('settings.mcp.command.hint');
+
+  // Checked against what the form would save, so the warning sits under the field that fixes it.
+  const owners = useReservedCommandOwners();
+  const commandNotice = useMemo(() => {
+    if (!form?.url.trim()) return [];
+    const draft = {
+      id: form.id ?? '',
+      name: form.name.trim(),
+      url: form.url.trim(),
+      commandName: slugifyCommandName(form.commandName),
+      agentEnabled: form.agentEnabled,
+    };
+    return commandClashLines(draft.id, draftCommandAssignment(servers, owners, draft), t);
+  }, [form, servers, owners, t]);
 
   return (
     <AppModal
@@ -78,6 +94,7 @@ export const ConnectorFormModal: React.FC<Props> = ({ mcp, t }) => {
             mono
             size="sm"
           />
+          <CommandClashNotice lines={commandNotice} />
           <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>{t('settings.mcp.token.hint')}</Text>
           <SettingRow
             icon={<Bot size={13} />}

@@ -18,7 +18,8 @@ import {
   sortBotGrants,
 } from '../../../../../shared/botPermissions';
 import type { BotGrant } from '../../../../../shared/botPermissions';
-import { BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID } from '../../../../../shared/builtinConnectors';
+import { BUILTIN_RAIL_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID, PUBLIC_DATA_CONNECTOR_IDS } from '../../../../../shared/builtinConnectors';
+import { SITE_CONNECTOR_ROWS, siteConnectorServerId } from '../../../../../shared/siteConnectors';
 import { BUILTIN_LINE_SERVER_ID } from '../../../../../shared/types';
 import type {
   BotBuiltinCommandKey,
@@ -42,8 +43,13 @@ const BUILTIN_CONNECTOR_TITLES: Record<string, string> = {
   [BUILTIN_LINE_SERVER_ID]: 'settings.mcp.line.title',
   [BUILTIN_THUNDERBIRD_SERVER_ID]: 'settings.mcp.thunderbird.title',
   [BUILTIN_X_SERVER_ID]: 'settings.mcp.x.title',
+  [BUILTIN_RAIL_SERVER_ID]: 'settings.mcp.rail.title',
+  ...Object.fromEntries(SITE_CONNECTOR_ROWS.map((row) => [siteConnectorServerId(row.site), row.keys.title])),
 };
-const BUILTIN_ORDER = [BUILTIN_LINE_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID];
+const BUILTIN_ORDER: readonly string[] = [
+  BUILTIN_LINE_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID, BUILTIN_RAIL_SERVER_ID,
+  ...SITE_CONNECTOR_ROWS.map((row) => siteConnectorServerId(row.site)),
+];
 
 /**
  * The connectors that exist right now: the built-ins that are switched on (in the connector
@@ -62,7 +68,7 @@ export function botConnectorOptions(
   return [...builtins, ...external];
 }
 
-export type GrantGroupKey = 'commands' | 'agent' | 'connectors' | 'manage';
+export type GrantGroupKey = 'commands' | 'links' | 'agent' | 'connectors' | 'manage';
 
 /** A boundary main enforces on a grant, shown as a tag instead of a parenthetical. */
 export type GrantLimit = 'dmOnly' | 'readOnly';
@@ -98,6 +104,7 @@ export function grantLabel(grant: BotGrant, connectors: readonly BotConnectorOpt
   switch (grant) {
     case 'agent': return t('settings.bot.perm.grant.agent');
     case 'web': return t('settings.bot.perm.grant.web');
+    case 'download': return t('settings.bot.perm.grant.download');
     case 'local': return t('settings.bot.perm.grant.local');
     case 'shell': return t('settings.bot.perm.grant.shell');
     case 'admin': return t('settings.bot.perm.grant.admin');
@@ -115,6 +122,7 @@ export function grantDescription(grant: BotGrant, t: Translate): string {
   switch (grant) {
     case 'agent': return t('settings.bot.perm.grant.agent.desc');
     case 'web': return t('settings.bot.perm.grant.web.desc');
+    case 'download': return t('settings.bot.perm.grant.download.desc');
     case 'local': return t('settings.bot.perm.grant.local.desc');
     case 'shell': return t('settings.bot.perm.grant.shell.desc');
     case 'admin': return t('settings.bot.perm.grant.admin.desc');
@@ -123,9 +131,13 @@ export function grantDescription(grant: BotGrant, t: Translate): string {
   }
 }
 
-/** Local tools, shell and connectors only reach private chats; bots never write to a connector. */
+/**
+ * Local tools, shell and connectors only reach private chats — except a connector of public data
+ * alone, which groups get too; bots never write to a connector.
+ */
 export function grantLimits(grant: BotGrant): GrantLimit[] {
   if (grant === 'local' || grant === 'shell') return ['dmOnly'];
+  if (grant.startsWith(CONNECTOR_GRANT_PREFIX) && PUBLIC_DATA_CONNECTOR_IDS.includes(grant.slice(CONNECTOR_GRANT_PREFIX.length))) return ['readOnly'];
   if (grant.startsWith(CONNECTOR_GRANT_PREFIX)) return ['dmOnly', 'readOnly'];
   return [];
 }
@@ -182,6 +194,7 @@ export function grantMenuGroups(grants: readonly BotGrant[], input: GrantViewInp
   };
   if (!input.isOwner) {
     push('commands', 'settings.bot.perm.group.commands', ['web']);
+    push('links', 'settings.bot.perm.group.links', ['download']);
     // Agent is not a command: it widens what an account's ordinary messages may use.
     push('agent', 'settings.bot.perm.group.agent', ['agent', 'local', 'shell']);
     const singles = has.has(ALL_CONNECTORS_GRANT)
@@ -312,7 +325,7 @@ export function whoCanUseBuiltin(roster: BotRoster, key: BotBuiltinCommandKey): 
 /** Names listed before the rest is summarised as "and N more". */
 export const WHO_MAX_NAMES = 3;
 
-export type WhoCaptionKind = 'command' | 'connector';
+export type WhoCaptionKind = 'command' | 'connector' | 'downloader';
 
 const CAPTION_KEYS: Record<WhoCaptionKind, { list: string; ownerOnly: string; nobody: string }> = {
   command: {
@@ -324,6 +337,11 @@ const CAPTION_KEYS: Record<WhoCaptionKind, { list: string; ownerOnly: string; no
     list: 'settings.bot.perm.who.connector',
     ownerOnly: 'settings.bot.perm.who.connector.ownerOnly',
     nobody: 'settings.bot.perm.who.connector.nobody',
+  },
+  downloader: {
+    list: 'settings.bot.perm.who.downloader',
+    ownerOnly: 'settings.bot.perm.who.downloader.ownerOnly',
+    nobody: 'settings.bot.perm.who.downloader.nobody',
   },
 };
 

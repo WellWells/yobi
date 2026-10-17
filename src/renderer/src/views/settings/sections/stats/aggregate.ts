@@ -1,11 +1,13 @@
 import type {
   DomainMetrics,
+  DownloadCounts,
   KeyMetrics,
   MetricCounts,
   MetricDomain,
   MetricOutcome,
   MetricsSnapshot,
 } from '../../../../../../shared/types';
+import { toIsoDate } from '../../../../../../shared/localTime';
 
 export const RANGE_DAYS = [3, 7, 14, 30] as const;
 export const DEFAULT_RANGE_DAYS = 7;
@@ -41,6 +43,17 @@ function mergeKeys(target: Record<string, KeyMetrics>, source: Record<string, Ke
   }
 }
 
+function mergeDownloads(result: StatsAggregate, source: Record<string, DownloadCounts>): void {
+  for (const [site, entry] of Object.entries(source)) {
+    const current = result.downloads[site] ?? { success: 0, failure: 0 };
+    current.success += entry.success;
+    current.failure += entry.failure;
+    result.downloads[site] = current;
+    result.downloadTotals.success += entry.success;
+    result.downloadTotals.failure += entry.failure;
+  }
+}
+
 export interface DomainSplit {
   runs: number;
   requests: number;
@@ -58,6 +71,9 @@ export interface StatsAggregate {
   tokens: { input: number; output: number };
   split: Record<MetricDomain, DomainSplit>;
   keys: Record<string, KeyMetrics>;
+  /** Downloader uses by link-site id; not split by scope, every one runs as a flow step. */
+  downloads: Record<string, DownloadCounts>;
+  downloadTotals: DownloadCounts;
 }
 
 /**
@@ -87,6 +103,8 @@ export function aggregateStats(
       flow: { runs: 0, requests: 0 },
     },
     keys: {},
+    downloads: {},
+    downloadTotals: { success: 0, failure: 0 },
   };
 
   for (let offset = rangeDays - 1; offset >= 0; offset--) {
@@ -114,6 +132,7 @@ export function aggregateStats(
     result.tokens.output += dayTokens.output;
 
     mergeKeys(result.keys, scope === 'all' ? (entry?.keys ?? {}) : domains[0].keys);
+    mergeDownloads(result, entry?.downloads ?? {});
 
     for (const domain of DOMAINS) {
       const slice = entry?.[domain];
@@ -130,11 +149,6 @@ export function aggregateStats(
 
 function emptyDomain(): DomainMetrics {
   return { runs: zero(), requests: zero(), tokens: { input: 0, output: 0 }, keys: {} };
-}
-
-function toIsoDate(date: Date): string {
-  const pad = (value: number): string => String(value).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 export function formatShare(value: number, total: number): string {

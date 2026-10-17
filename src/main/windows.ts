@@ -65,7 +65,24 @@ export function setAppQuitting(value: boolean): void {
   isAppQuitting = value;
 }
 
-export function createMainWindow(): void {
+/**
+ * Launched at login straight into the tray. Windows only registers `--hidden` when closing to
+ * the tray is on, and without a tray a hidden window would have no way back.
+ */
+export function shouldStartHidden(argv: readonly string[] = process.argv): boolean {
+  return config.closeToTray && argv.includes('--hidden');
+}
+
+interface MainWindowOptions {
+  /**
+   * For the boot window only: a window re-created later (second instance, the macOS menu) is
+   * opened because the user asked for it.
+   */
+  startHidden?: boolean;
+}
+
+export function createMainWindow(options?: MainWindowOptions): void {
+  const startHidden = options?.startHidden === true;
   const isDev = !app.isPackaged;
   const preloadPath = path.join(__dirname, '../preload/index.js');
 
@@ -73,6 +90,8 @@ export function createMainWindow(): void {
     // Size and position come from the last session; without x/y Electron centres the window,
     // which is what a first run (or an unplugged monitor) should get.
     ...restoredWindowOptions(),
+    // A login start must never be mapped: hiding it afterwards still flashes it and takes focus.
+    show: !startHidden,
     minWidth: 700,
     minHeight: 500,
     title: 'Yobi',
@@ -97,8 +116,19 @@ export function createMainWindow(): void {
     mainWin.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
 
-  if (shouldStartMaximized()) mainWin.maximize();
-  trackWindowBounds(mainWin);
+  if (startHidden) {
+    // maximize() maps a hidden window, so it waits for the first show. So does tracking: quitting
+    // from the tray before that would store the never-maximized window over the saved state.
+    const win = mainWin;
+    win.once('show', () => {
+      if (win.isDestroyed()) return;
+      if (shouldStartMaximized()) win.maximize();
+      trackWindowBounds(win);
+    });
+  } else {
+    if (shouldStartMaximized()) mainWin.maximize();
+    trackWindowBounds(mainWin);
+  }
 
   // The title bar is ours, so the maximize button has to be told when the state changes —
   // otherwise it keeps the "maximize" glyph and tooltip while the window is already maximized.

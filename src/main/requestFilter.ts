@@ -1,5 +1,6 @@
 import type { OnBeforeRequestListenerDetails, Session } from 'electron';
 import { isBlockedHost } from './requestBlocklist';
+import { createPublicRequestCheck } from './net/publicWebScope';
 
 type ResourceType = OnBeforeRequestListenerDetails['resourceType'];
 
@@ -41,6 +42,35 @@ export function unmarkHeadless(webContentsId: number): void {
 
 export function isHeadless(webContentsId: number): boolean {
   return headlessContents.has(webContentsId);
+}
+
+interface PublicOnlyWindow {
+  allows: (url: string) => Promise<boolean>;
+  /** Told when the page itself (not one of its resources) was refused, so the load fails at once. */
+  onRefused: (url: string) => void;
+}
+
+const publicOnlyContents = new Map<number, PublicOnlyWindow>();
+
+/** A window loaded for a bot message: every request it makes must go to a public address. */
+export function guardPublicOnly(webContentsId: number, onRefused: (url: string) => void): void {
+  publicOnlyContents.set(webContentsId, { allows: createPublicRequestCheck(), onRefused });
+}
+
+export function unguardPublicOnly(webContentsId: number): void {
+  publicOnlyContents.delete(webContentsId);
+}
+
+/**
+ * Whether to cancel a request of a `guardPublicOnly` window (false for any other window). A
+ * request with no webContents (a service worker's) cannot be told apart and is not checked.
+ */
+export async function decidePublicOnly(facts: Omit<RequestFacts, 'topUrl'>): Promise<boolean> {
+  const guarded = facts.webContentsId === undefined ? undefined : publicOnlyContents.get(facts.webContentsId);
+  if (!guarded) return false;
+  if (await guarded.allows(facts.url)) return false;
+  if (facts.resourceType === 'mainFrame') guarded.onRefused(facts.url);
+  return true;
 }
 
 function parseHttp(url: string): { host: string; pathname: string } | null {
@@ -98,6 +128,12 @@ export function installRequestFilter(target: Session): void {
       webContentsId: details.webContentsId,
       topUrl: topLevelUrl(details),
     });
-    callback({ cancel: decision.block });
+    const id = details.webContentsId;
+    if (decision.block || id === undefined || !publicOnlyContents.has(id)) {
+      callback({ cancel: decision.block });
+      return;
+    }
+    void decidePublicOnly({ url: details.url, resourceType: details.resourceType, webContentsId: id })
+      .then((block) => callback({ cancel: block }), () => callback({ cancel: true }));
   });
 }

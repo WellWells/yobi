@@ -4,12 +4,14 @@
  */
 import type { WebContents } from 'electron';
 import { navigateAndWait, sleep } from './common';
+import { providerFromUrl } from '../../shared/types';
 import type { Provider } from '../../shared/types';
 import { GEMINI_INPUT_SELECTOR, GEMINI_STOP_SELECTOR } from './geminiReadScript';
 import { GEMINI_CHIP_SELECTOR } from './geminiUpload';
 import {
   CHATGPT_ASSISTANT_TURN_SELECTOR,
   CHATGPT_ATTACHMENT_TILE_SELECTOR,
+  CHATGPT_COMPOSER_FORM_SELECTOR,
   CHATGPT_INPUT_SELECTORS,
   CHATGPT_STOP_SELECTOR,
   CHATGPT_USER_TURN_SELECTOR,
@@ -70,6 +72,40 @@ export function isSamePage(a: string, b: string): boolean {
   return pageIdentity(left) === pageIdentity(right);
 }
 
+const THREAD_PATH_PATTERNS: Record<Provider, RegExp> = {
+  gemini: /^\/app\/[^/]+\/?$/,
+  chatgpt: /^\/c\/[^/]+\/?$/,
+  claude: /^\/chat\/[^/]+\/?$/,
+  perplexity: /^\/search\/[^/]+\/?$/,
+};
+
+export function extractThreadUrl(provider: Provider, url: string): string | null {
+  const pattern = THREAD_PATH_PATTERNS[provider];
+  const parsed = parseHttpUrl(url);
+  if (!parsed) return null;
+  if (providerFromUrl(parsed.href) !== provider) return null;
+  if (!pattern.test(parsed.pathname)) return null;
+  return pageIdentity(parsed);
+}
+
+/**
+ * Whether the page `ensureOnPage` landed on may still be rendering answers from before this send,
+ * so an answer count read now could grow by itself and has to hold still before it anchors the
+ * send. A kept page settled on its previous turn, and a freshly loaded page that is not a thread
+ * (a new conversation's landing page) has no answers to render.
+ */
+export function landingMayStillRender(
+  wc: WebContents,
+  landing: 'reused' | 'loaded',
+  target: PageTarget,
+): boolean {
+  if (landing === 'reused') return false;
+  if (target.continuingThread) return true;
+  // A one-shot send whose target is itself a conversation link loads that conversation's answers.
+  const url = wc.getURL();
+  return extractThreadUrl(providerFromUrl(url), url) !== null;
+}
+
 const GEMINI_READY = `(function () {
   var composer = document.querySelector(${JSON.stringify(GEMINI_INPUT_SELECTOR)});
   if (!composer) return false;
@@ -84,7 +120,7 @@ const CHATGPT_READY = `(function () {
   if (!composer) return false;
   if ((composer.innerText || composer.textContent || '').trim()) return false;
   if (document.querySelector(${JSON.stringify(CHATGPT_STOP_SELECTOR)})) return false;
-  var form = document.querySelector('form[data-type="unified-composer"]');
+  var form = document.querySelector(${JSON.stringify(CHATGPT_COMPOSER_FORM_SELECTOR)});
   if (form && form.querySelectorAll(${JSON.stringify(CHATGPT_ATTACHMENT_TILE_SELECTOR)}).length) return false;
   return true;
 })()`;

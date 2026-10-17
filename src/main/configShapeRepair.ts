@@ -2,10 +2,10 @@ import type { StoredConfig } from './configTypes';
 
 const OBJECT_FIELDS = ['telegram', 'line', 'smtp'] as const;
 
-// Ciphertext (and the legacy plaintext Telegram token) every container must hold as a string:
-// `decryptTokenChecked` calls `startsWith` on it during boot.
+// Ciphertext every container must hold as a string: `decryptTokenChecked` calls `startsWith` on
+// it during boot.
 const SECRET_FIELDS: Record<(typeof OBJECT_FIELDS)[number], readonly string[]> = {
-  telegram: ['botTokenEncrypted', 'botToken'],
+  telegram: ['botTokenEncrypted', 'apiHashEncrypted'],
   line: ['channelAccessTokenEncrypted', 'channelSecretEncrypted'],
   smtp: ['passwordEncrypted'],
 };
@@ -24,11 +24,7 @@ function repairSecrets(container: Record<string, unknown>, keys: readonly string
   const bad = keys.filter((key) => container[key] !== undefined && typeof container[key] !== 'string');
   if (bad.length === 0) return null;
   const fixed = { ...container };
-  for (const key of bad) {
-    // The legacy plaintext token only exists to be migrated; drop it rather than migrate ''.
-    if (key === 'botToken') delete fixed[key];
-    else fixed[key] = '';
-  }
+  for (const key of bad) fixed[key] = '';
   return fixed;
 }
 

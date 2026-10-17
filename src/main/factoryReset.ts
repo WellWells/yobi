@@ -10,9 +10,16 @@ import { resetMetrics } from './metrics';
 import { resetFlowMetrics } from './flowMetrics';
 import { getOutputDir } from './files';
 import { getFlowDataDir } from './flow';
+import { HISTORY_DIR_NAME } from './history/historyPaths';
+import { NOTION_SYNC_DIR_NAME } from './notion/notionSyncStore';
 import { deleteUserMemoryFiles } from './memory/memoryStore';
 import { SITE_PARTITIONS } from './siteAccounts';
+import { READER_PARTITIONS } from './sitePage';
 import { revokeAllBotPairings } from './botDirectory';
+import { reloadYtdlState, ytdlJobsRoot, ytdlToolsRoot } from './youtubeDownload';
+import { downloadsLedgerPath } from './downloadsCache';
+import { RAIL_CACHE_DIR_NAME } from './rail/railCache';
+import { telegramUploadSessionPath } from './telegram/mtproto/sessionPath';
 
 const FACTORY_RESET_PARTITIONS = [
   'persist:gemini',
@@ -20,7 +27,8 @@ const FACTORY_RESET_PARTITIONS = [
   'persist:browser-flow',
   'persist:youtube',
   'persist:gmaps',
-  ...SITE_PARTITIONS,
+  // The sign-ins' partitions and the signed-out readers' (bilibili has one of each), each once.
+  ...new Set([...SITE_PARTITIONS, ...READER_PARTITIONS]),
 ];
 
 function getMarkerPath(): string {
@@ -46,6 +54,8 @@ export async function applyPendingFactoryReset(): Promise<void> {
     // tokens and the data-source keys would stay on disk under ids nothing references.
     clearAllAuthRecords();
     clearAllDataKeys();
+    // The bot's MTProto sign-in for big uploads, also in its own file: an auth key for the bot.
+    await fs.rm(telegramUploadSessionPath(), { force: true }).catch(() => {});
     applyLaunchAtStartup(config.launchAtStartup, config.closeToTray);
     resetMetrics();
     resetFlowMetrics();
@@ -58,8 +68,22 @@ export async function applyPendingFactoryReset(): Promise<void> {
 
     await fs.rm(await getOutputDir(), { recursive: true, force: true }).catch(() => {});
     await fs.rm(path.join(getFlowDataDir(), 'flow-checkpoints'), { recursive: true, force: true }).catch(() => {});
+    // Versions of conversations and flows: the outputs and checkpoints above are gone, so must they be.
+    await fs.rm(path.join(getFlowDataDir(), HISTORY_DIR_NAME), { recursive: true, force: true }).catch(() => {});
+    // What Yobi knew of each Notion document's page; the pages in Notion are not touched.
+    await fs.rm(path.join(getFlowDataDir(), NOTION_SYNC_DIR_NAME), { recursive: true, force: true }).catch(() => {});
     await fs.rm(path.join(app.getPath('userData'), 'flow-memory'), { recursive: true, force: true }).catch(() => {});
     await fs.rm(path.join(app.getPath('userData'), 'agent-runs'), { recursive: true, force: true }).catch(() => {});
+    // The video download tools are programs Yobi fetched; "as installed" has none of them.
+    await fs.rm(ytdlToolsRoot(), { recursive: true, force: true }).catch(() => {});
+    await fs.rm(ytdlJobsRoot(), { recursive: true, force: true }).catch(() => {});
+    reloadYtdlState();
+    // Which downloads the Downloads/Yobi cleanup owns; the files there stay.
+    await fs.rm(downloadsLedgerPath(), { force: true }).catch(() => {});
+    // Pasted posts' media and videos' covers the chat showed; the conversations are gone too.
+    await fs.rm(path.join(app.getPath('userData'), 'chat-media'), { recursive: true, force: true }).catch(() => {});
+    // Railway timetables the rail connector downloaded; any of them can be fetched again.
+    await fs.rm(path.join(app.getPath('userData'), RAIL_CACHE_DIR_NAME), { recursive: true, force: true }).catch(() => {});
     // Pairing proof lives outside config (the directory's pairedAt, and conversation keys for
     // older installs); left alone, the start-up restore re-pairs every old account as soon as
     // the same token is entered. Names stay so the kept flows' recipients remain readable.

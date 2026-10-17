@@ -1,9 +1,9 @@
 import { clipboard } from 'electron';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { MarkdownCapturePayload } from '../../../shared/types';
-import { DEFAULT_CAPTURE_PALETTE, captureBackgroundCss, paletteCardTheme } from '../../../shared/capturePalettes';
-import { formatCardTime } from '../../../shared/captureCard';
+import type { CaptureFormat, FlowButton, MarkdownCapturePayload } from '../../../shared/types';
+import { cardStyleFromSettings, formatCardTime } from '../../../shared/captureCard';
+import { resolveCardTitle } from '../../../shared/markdownTitle';
 import { config as appConfig } from '../../config';
 import { getProviderLabel, preparePromptForProvider, runAutomation } from '../../providers';
 import { runByokCompletion } from '../../providers/byokClient';
@@ -17,11 +17,18 @@ import { parseAttachmentList, resolveSafeLocalAttachment } from '../../attachmen
 import { ensureHttpScheme, fetchAndParse } from '../../urlParser';
 import { isFetchableWebUrl } from '../../../shared/webUrl';
 import { parseWebUrlList } from './urlList';
+import { isHeightLimitError } from './share';
 import { sendLog, sendWebNotification } from '../../helpers';
 import { clipboardLane, llmLane, pageFetchLane } from '../lanes';
 import { FlowAbortError, resolveDelayMs, withAbort, withStepTimeout } from '../runtime';
-import type { FlowExecutorDeps } from '../types';
+import type { BotSendExtras, FlowExecutorDeps, TelegramSendAs } from '../types';
 import { FlowUserError } from '../userError';
+import * as fs from 'node:fs/promises';
+import { getLangCache, t } from '../../i18n';
+import { formatLimit, formatMegabytes, parseFlowButtons, withButtonImages } from '../../../shared/ytdl';
+import { telegramSendLimitBytes } from '../../telegram/largeUpload';
+import { LINE_ACTION_TEXT_MAX, LINE_CAROUSEL_MAX, type LineCarouselItem } from '../../line/pickCarousel';
+import { isBuiltinFlowId } from '../../../shared/builtinFlows';
 import { closePage, closeRunPages, openPage, runPageScript } from './browserPages';
 import { inferTelegramSendAs, isCaptureFormat } from '../interpolation';
 import { appendMemory, buildMemoryAugmentedPrompt, parseAndStripNewMemory, readMemory } from '../flowMemory';
@@ -231,6 +238,39 @@ async function resolveLlmAttachments(
   return resolved;
 }
 
+type CaptureMarkdown = NonNullable<FlowExecutorDeps['captureMarkdown']>;
+type CaptureMarkdownOptions = NonNullable<Parameters<CaptureMarkdown>[3]>;
+
+/**
+ * Renders the llm step's card without losing the already-fetched answer to the image height limit,
+ * which the card style's scale and width can push a flow past with no change to the flow: retry at
+ * 1x first (same format, same file type for the next step), then as a PDF, which has no height limit.
+ */
+async function captureCardWithinHeightLimit(
+  capture: CaptureMarkdown,
+  payload: MarkdownCapturePayload,
+  format: CaptureFormat,
+  background: string,
+  options: CaptureMarkdownOptions,
+): Promise<string> {
+  try {
+    return await capture(payload, format, background, options);
+  } catch (err) {
+    if (format === 'pdf' || !isHeightLimitError(err)) throw err;
+  }
+  const pixelRatio = options.pixelRatio ?? 1;
+  if (pixelRatio > 1) {
+    sendLog(`⚠️ [Flow] LLM export: ${format.toUpperCase()} at ${pixelRatio}x exceeds the image height limit — retrying at 1x`);
+    try {
+      return await capture(payload, format, background, { ...options, pixelRatio: 1 });
+    } catch (err) {
+      if (!isHeightLimitError(err)) throw err;
+    }
+  }
+  sendLog(`⚠️ [Flow] LLM export: ${format.toUpperCase()} exceeds the image height limit — re-rendering as PDF`);
+  return capture(payload, 'pdf', background, options);
+}
+
 export async function execLlm(
   config: Record<string, string>,
   deps: FlowExecutorDeps,
@@ -340,26 +380,37 @@ export async function execLlm(
   if (!deps.captureMarkdown) {
     throw new Error('LLM export requires captureMarkdown dependency');
   }
-  const title = config.exportTitle || 'Yobi LLM Export';
-  const palette = (config.palette ?? '').trim() || DEFAULT_CAPTURE_PALETTE;
-  const background = config.background || captureBackgroundCss(palette);
+  // Blank title = the heading the answer opens with (lifted out of the body), else none.
+  const { title, body } = resolveCardTitle(config.exportTitle ?? '', finalResponse);
+  // Settings › Card style, the same as a bot export; the step's own Background, when picked,
+  // replaces only the palette. `config.background` is deliberately not read: a gradient frozen
+  // there would override Solid forever.
+  const style = cardStyleFromSettings(appConfig.captureSettings, config.palette ?? '');
   const exportOptions = {
     fileName: (config.exportFileName ?? '').trim(),
     showProvider: config.exportShowProvider !== 'false',
     showTimestamp: config.exportShowTimestamp !== 'false',
     showTokens: false,
-    cardTheme: paletteCardTheme(palette),
+    cardTheme: style.cardTheme,
+    width: style.width,
+    margin: style.margin,
+    pixelRatio: style.pixelRatio,
   };
+  const provider = getProviderLabel(providerUrl);
+  // Printed on the card as is, so it is formatted here in local time, as a chat export reads.
+  const timestamp = formatCardTime(new Date().toISOString(), appConfig.locale);
+  // The card shows the answer only. The prompt is the flow's own instruction (memory blocks,
+  // fenced data) and never goes onto a card, so it is not handed to the capture window at all.
   const payload: MarkdownCapturePayload = {
     title,
-    prompt: promptForModel,
-    content: finalResponse,
-    summary: finalResponse.replace(/```[\s\S]*?```/g, ' ').replace(/[#>*_~\-`\[\]()]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 220),
-    provider: getProviderLabel(providerUrl),
-    // Printed on the card as is, so format it as local time like chat exports.
-    timestamp: formatCardTime(new Date().toISOString(), appConfig.locale),
+    prompt: '',
+    content: body,
+    summary: '',
+    provider,
+    timestamp,
+    turns: [{ prompt: '', response: body, provider, timestamp }],
   };
-  const filePath = await deps.captureMarkdown(payload, exportFormat, background, exportOptions);
+  const filePath = await captureCardWithinHeightLimit(deps.captureMarkdown, payload, exportFormat, style.background, exportOptions);
   sendLog(`🖼️ [Flow] LLM export generated: ${filePath}`);
   return filePath;
 }
@@ -403,10 +454,12 @@ export async function execCapture(config: Record<string, string>, deps: FlowExec
 function resolveAttachmentSendAs(
   attachmentType: string | undefined,
   attachment: string,
-): 'photo' | 'document' | 'auto' {
+): TelegramSendAs {
   const choice = (attachmentType ?? 'auto').toLowerCase();
   if (choice === 'photo') return 'photo';
   if (choice === 'document') return 'document';
+  if (choice === 'video') return 'video';
+  if (choice === 'audio') return 'audio';
   if (/^https?:\/\//i.test(attachment)) return 'auto';
   return inferTelegramSendAs(attachment);
 }
@@ -419,13 +472,111 @@ function resolveBotPlatform(config: Record<string, string>): BotPlatform {
 }
 
 const LINE_IMAGE_PATH_RE = /\.(?:jpe?g|png)$/i;
+const LINE_VIDEO_PATH_RE = /\.mp4$/i;
 
-function isLineSendableImage(attachment: string): boolean {
+function isHttpsPath(attachment: string, pattern: RegExp): boolean {
   if (!/^https:\/\//i.test(attachment)) return false;
   try {
-    return LINE_IMAGE_PATH_RE.test(new URL(attachment).pathname);
+    return pattern.test(new URL(attachment).pathname);
   } catch {
     return false;
+  }
+}
+
+function isLineSendableImage(attachment: string): boolean {
+  return isHttpsPath(attachment, LINE_IMAGE_PATH_RE);
+}
+
+/** LINE plays an https mp4 it fetches itself, but only with an https jpeg/png to show first. */
+function isLineSendableVideo(attachment: string, preview: string): boolean {
+  return isHttpsPath(attachment, LINE_VIDEO_PATH_RE) && isLineSendableImage(preview);
+}
+
+function lines(text: string): string[] {
+  return text.split(/\r?\n/).map((line) => line.trim());
+}
+
+/**
+ * The step's buttons, ready for the Telegram sender. Buttons run the flow's own bot command again,
+ * so a flow without one (a schedule) gets none.
+ */
+function stepButtons(config: Record<string, string>): BotSendExtras | undefined {
+  const items = parseFlowButtons(config.buttons ?? '');
+  if (items.length === 0) return undefined;
+  const flowId = (config.__flowId ?? '').trim();
+  if (!flowId || !(config.__botCommand ?? '').trim()) {
+    sendLog('⚠️ [Bot] Buttons skipped — they rerun the flow\'s bot command, and this flow has none');
+    return undefined;
+  }
+  const userId = Number(config.__triggerUserId);
+  return { buttons: { flowId, items, ...(Number.isSafeInteger(userId) && userId !== 0 ? { userId } : {}) } };
+}
+
+interface LineChoices {
+  /** Choices with a picture LINE can show (a person's stories): cards to tap. */
+  cards: LineCarouselItem[];
+  /** The message with a line for every other choice. */
+  message: string;
+  /** The message with a line for every choice: what goes out if the cards cannot. */
+  fallback: string;
+}
+
+/**
+ * LINE has no inline buttons: each choice becomes the line that does the same — the command, or
+ * for a built-in (which runs on a pasted link, not a command) the link and the choice alone. A
+ * choice with a picture (`buttonImages`) is a card instead, which sends that line when tapped.
+ */
+function lineChoices(message: string, config: Record<string, string>): LineChoices {
+  const items = withButtonImages(parseFlowButtons(config.buttons ?? ''), config.buttonImages);
+  const command = (config.__botCommand ?? '').trim();
+  if (items.length === 0 || !command) return { cards: [], message, fallback: message };
+  const builtin = isBuiltinFlowId((config.__flowId ?? '').trim());
+  const lineOf = (b: FlowButton): string => (builtin ? b.input : `/${command} ${b.input}`);
+  const carded = items
+    .filter((b) => b.image && isLineSendableImage(b.image) && lineOf(b).length <= LINE_ACTION_TEXT_MAX)
+    .slice(0, LINE_CAROUSEL_MAX);
+  const withHints = (choices: readonly FlowButton[]): string => {
+    if (choices.length === 0) return message;
+    const lines = choices.map((b) => t(getLangCache(), 'flow.bot.buttonHint', { label: b.label, command: lineOf(b) }));
+    return [message.trim(), lines.join('\n')].filter(Boolean).join('\n\n');
+  };
+  return {
+    cards: carded.map((b) => ({ label: b.label, image: b.image ?? '', text: lineOf(b) })),
+    message: withHints(items.filter((b) => !carded.includes(b))),
+    fallback: withHints(items),
+  };
+}
+
+/**
+ * A file over what the bot can send right now (`telegramSendLimitBytes`: the Bot API's 50 MB, or
+ * Telegram's 2000 MiB once large uploads are set up) would come back as an English 413 or never
+ * go up at all; say it first. Only for files this run produced: any other path is the attachment
+ * guard's to judge, and its size is nobody's business before that.
+ */
+async function requireTelegramSize(attachment: string, producedFiles: readonly string[]): Promise<void> {
+  if (!producedFiles.includes(attachment)) return;
+  let size: number;
+  try {
+    size = (await fs.stat(attachment)).size;
+  } catch {
+    return;
+  }
+  const limit = telegramSendLimitBytes();
+  if (size <= limit) return;
+  throw new FlowUserError(
+    'flow.error.botFileTooLarge',
+    { size: formatMegabytes(size), limit: formatLimit(limit) },
+    `The file is ${formatMegabytes(size)}; this Telegram bot can send up to ${formatLimit(limit)}`,
+  );
+}
+
+/** The files this run produced, the only local paths a bot step may send. */
+function attachmentAllowlist(config: Record<string, string>): string[] {
+  try {
+    const parsed: unknown = JSON.parse(config.__attachmentAllowlist ?? '[]');
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : [];
+  } catch {
+    return [];
   }
 }
 
@@ -443,9 +594,14 @@ export async function execBot(
   const originalChatIdsTemplate = (config.__originalChatIdsTemplate ?? '').trim();
 
   if (platform === 'line') {
+    const choices = lineChoices(message, config);
     return execBotLine(deps, {
-      message,
+      message: choices.message,
+      cards: choices.cards,
+      cardsFallback: choices.fallback,
+      cardsAltText: message,
       explicitAttachment,
+      preview: config.preview ?? '',
       legacyMagicPath,
       legacyMagicCaption,
       rawTargets,
@@ -488,7 +644,36 @@ export async function execBot(
     for (const user of pairedUsers) await onUser(user);
   }
 
+  const extras = stepButtons(config);
   const attachment = explicitAttachment || legacyMagicPath;
+  // One file per line (a post's photos and videos, its MP3s): all of them, as one album.
+  const album = attachment.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (album.length > 1) {
+    if (!deps.sendTelegramAlbum) throw new Error('sendTelegramAlbum not configured in FlowExecutorDeps');
+    const sendAlbum = deps.sendTelegramAlbum;
+    const authorizedPaths = attachmentAllowlist(config);
+    for (const file of album) await requireTelegramSize(file, authorizedPaths);
+    const caption = (explicitAttachment ? message : legacyMagicCaption).trim() || undefined;
+    // A Telegram album cannot carry buttons: they follow it in a short message of their own, which
+    // names a lone button ("analyze" under a forwarded post) and only points at several.
+    const sendButtons = extras ? deps.sendTelegramMessage : undefined;
+    const items = extras?.buttons?.items ?? [];
+    const buttonsLine = items.length === 1
+      ? t(getLangCache(), 'flow.bot.albumButton', { label: items[0].label })
+      : t(getLangCache(), 'flow.bot.albumButtons');
+    await broadcast(
+      async (chatId) => {
+        await sendAlbum(chatId, album, caption, authorizedPaths);
+        if (sendButtons) await sendButtons(chatId, buttonsLine, extras);
+      },
+      async (user) => {
+        await sendAlbum(user.userId, album, caption, authorizedPaths);
+        if (sendButtons) await sendButtons(user.userId, buttonsLine, extras);
+      },
+    );
+    sendLog(`📤 [Bot] Sent an album of ${album.length} files${sendButtons ? ', its buttons after it' : ''}`);
+    return attachment;
+  }
   if (attachment) {
     if (!deps.sendTelegramFile) throw new Error('sendTelegramFile not configured in FlowExecutorDeps');
     const sendFile = deps.sendTelegramFile;
@@ -497,21 +682,18 @@ export async function execBot(
     const text = (explicitAttachment ? message : legacyMagicCaption).trim();
     const caption = text || undefined;
     const isRemote = /^https?:\/\//i.test(attachment);
-    let authorizedPaths: string[] = [];
-    try {
-      const parsed: unknown = JSON.parse(config.__attachmentAllowlist ?? '[]');
-      if (Array.isArray(parsed)) authorizedPaths = parsed.filter((v): v is string => typeof v === 'string');
-    } catch {}
+    const authorizedPaths = attachmentAllowlist(config);
+    await requireTelegramSize(attachment, authorizedPaths);
 
     const sendToTarget = async (target: number, label: string): Promise<void> => {
       try {
-        await sendFile(target, attachment, sendAs, caption, authorizedPaths);
+        await sendFile(target, attachment, sendAs, caption, authorizedPaths, extras);
         sendLog(`📤 [Bot] Sent ${sendAs} to ${label}: ${attachment}`);
       } catch (err: unknown) {
         const reason = err instanceof Error ? err.message : String(err);
         if (isRemote && caption && sendMessageFallback) {
           sendLog(`⚠️ [Bot] ${sendAs} send failed (${reason}); resending as text without the image`);
-          await sendMessageFallback(target, caption);
+          await sendMessageFallback(target, caption, extras);
           sendLog(`📤 [Bot] Sent text (no image) to ${label}`);
           return;
         }
@@ -531,11 +713,11 @@ export async function execBot(
   const sendMessage = deps.sendTelegramMessage;
   await broadcast(
     async (chatId) => {
-      await sendMessage(chatId, message);
+      await sendMessage(chatId, message, extras);
       sendLog(`📤 [Bot] Sent to chat ${chatId}`);
     },
     async (user) => {
-      await sendMessage(user.userId, message);
+      await sendMessage(user.userId, message, extras);
       sendLog(`📤 [Bot] Sent to user ${user.userId} (${user.username ?? user.firstName ?? ''})`);
     },
   );
@@ -544,7 +726,15 @@ export async function execBot(
 
 interface BotSendParts {
   message: string;
+  /** LINE: choices sent first as cards to tap; `message` then names only the others. */
+  cards?: LineCarouselItem[];
+  /** LINE: the message naming every choice, for when the cards cannot be sent. */
+  cardsFallback?: string;
+  /** LINE: the step's message alone, which stands for the cards in a notification. */
+  cardsAltText?: string;
   explicitAttachment: string;
+  /** One preview image per attachment line, for LINE videos. */
+  preview: string;
   legacyMagicPath: string;
   legacyMagicCaption: string;
   rawTargets: string[];
@@ -593,15 +783,77 @@ async function sendLineTextToAll(
   }
 }
 
+/**
+ * Several attachments, or a video: each image and each video with its preview goes as itself,
+ * then the message. Links LINE cannot show go along under the message; a local file cannot reach
+ * LINE at all, and if nothing else did either the step fails rather than report success.
+ */
+async function sendLineMediaList(
+  deps: FlowExecutorDeps,
+  recipients: string[],
+  items: string[],
+  previews: string[],
+  caption: string,
+): Promise<string> {
+  const links: string[] = [];
+  let sent = 0;
+  for (const [index, item] of items.entries()) {
+    const preview = previews[index] ?? '';
+    if (isLineSendableImage(item)) {
+      if (!deps.sendLineImage) throw new Error('sendLineImage not configured in FlowExecutorDeps');
+      for (const userId of recipients) await deps.sendLineImage(userId, item);
+      sent++;
+    } else if (isLineSendableVideo(item, preview)) {
+      if (!deps.sendLineVideo) throw new Error('sendLineVideo not configured in FlowExecutorDeps');
+      for (const userId of recipients) await deps.sendLineVideo(userId, item, preview);
+      sent++;
+    } else if (/^https?:\/\//i.test(item)) {
+      links.push(item);
+    } else {
+      sendLog(`⚠️ [Bot] LINE cannot deliver the local file ${item} — skipped`);
+    }
+  }
+  if (sent > 0) sendLog(`📤 [Bot] Sent ${sent} image(s)/video(s) to ${recipients.length} LINE user(s)`);
+  const text = [caption, ...links].filter(Boolean).join('\n');
+  if (text) await sendLineTextToAll(deps, recipients, text);
+  if (sent === 0 && !text) {
+    throw new FlowUserError(
+      'flow.error.lineAttachmentUndeliverable',
+      { file: items[0].split(/[\\/]/).pop() || items[0] },
+      `LINE cannot send the local file ${items[0]} and the step has no message, so nothing was sent`,
+    );
+  }
+  return items.join('\n');
+}
+
+/**
+ * The step's choices as cards, before its text: true when they went out. Cards LINE refuses (a
+ * picture it will not take) leave every choice to the text's lines.
+ */
+async function sendLineCards(deps: FlowExecutorDeps, recipients: readonly string[], parts: BotSendParts): Promise<boolean> {
+  const cards = parts.cards ?? [];
+  if (cards.length === 0 || !deps.sendLineCarousel) return false;
+  // What a notification or the chat list shows for the cards: the step's own text, not its choices.
+  const altText = (parts.cardsAltText ?? '').split('\n').map((line) => line.trim()).filter(Boolean).join(' ');
+  try {
+    for (const userId of recipients) await deps.sendLineCarousel(userId, cards, altText);
+    sendLog(`📤 [Bot] Sent ${cards.length} choices as cards to ${recipients.length} LINE user(s)`);
+    return true;
+  } catch (err: unknown) {
+    sendLog(`⚠️ [Bot] LINE cards not sent (${err instanceof Error ? err.message : String(err)}) — every choice goes in the text`);
+    return false;
+  }
+}
+
 async function execBotLine(
   deps: FlowExecutorDeps,
   parts: BotSendParts,
 ): Promise<string> {
-  const { message, explicitAttachment, legacyMagicPath, legacyMagicCaption, rawTargets } = parts;
+  const { explicitAttachment, legacyMagicPath, legacyMagicCaption, rawTargets } = parts;
 
   if (parts.originalChatIdsTemplate !== '' && rawTargets.length === 0 && !parts.everyone) {
     sendLog('⚠️ [Bot] LINE recipients resolved to empty (no trigger context) — skipping send');
-    return explicitAttachment || message || legacyMagicPath;
+    return explicitAttachment || parts.message || legacyMagicPath;
   }
 
   const recipients = rawTargets.length > 0
@@ -611,8 +863,16 @@ async function execBotLine(
     throw new FlowUserError('flow.error.noPairedUsers', { bot: 'LINE' }, 'No paired LINE users found');
   }
 
+  const message = await sendLineCards(deps, recipients, parts) ? parts.message : parts.cardsFallback ?? parts.message;
+
   const attachment = explicitAttachment || legacyMagicPath;
   const caption = (explicitAttachment ? message : legacyMagicCaption).trim();
+  const items = lines(attachment).filter(Boolean);
+  const previews = lines(parts.preview);
+
+  if (items.length > 1 || (items.length === 1 && isLineSendableVideo(items[0], previews[0] ?? ''))) {
+    return sendLineMediaList(deps, recipients, items, previews, caption);
+  }
 
   if (attachment && isLineSendableImage(attachment)) {
     if (!deps.sendLineImage) throw new Error('sendLineImage not configured in FlowExecutorDeps');

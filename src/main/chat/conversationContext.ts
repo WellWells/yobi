@@ -33,6 +33,15 @@ export function resolveContextMode(
   return thread.threadTurns === turnCount ? 'native' : 'replay';
 }
 
+/**
+ * Whether a replay stands in for a provider thread this conversation already has: the model was
+ * switched, the thread fell behind the file, or it was gone. BYOK, temporary chat and a
+ * conversation that never had a thread replay as their normal path.
+ */
+export function replayReplacesThread(thread: ThreadMeta, targetUrl: string): boolean {
+  return !isByokTargetUrl(targetUrl) && Boolean(thread.threadUrl?.trim());
+}
+
 export function measureFor(targetUrl: string): (text: string) => number {
   if (isByokTargetUrl(targetUrl)) return (text: string) => text.length;
   const policy = PROVIDER_PROMPT_POLICIES[detectProvider(targetUrl)];

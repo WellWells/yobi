@@ -1,4 +1,18 @@
 /**
+ * An absolute http(s) URL. The guard trims, but the string parsed is the one given: a caller opens
+ * or returns exactly what was checked, so one that trims first (a form field) trims before calling.
+ */
+export function isHttpUrl(raw: string | undefined): boolean {
+  if (!raw?.trim()) return false;
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Only http(s) URLs (or bare hosts) may reach a page loader: `loadURL` has no scheme check and
  * `ensureHttpScheme` passes `file://` through, so a model-supplied URL could read a local file.
  * Shared by the `browser` skill, `research`'s `urls` field and the search harvest.

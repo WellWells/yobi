@@ -19,7 +19,7 @@ import { getProviderLabel } from './providers';
 import type { FlowManager } from './flow';
 import { botChatMemoryResolver } from './chat/agentMemory';
 import { withMemoryNotes } from './memory';
-import { applyBotRunGrants, botAccessDeniedText, botChatPaired, botChatRights } from './botPermissions';
+import { applyBotRunGrants, botAccessDeniedText, botChatRights } from './botPermissions';
 import { builtinCommandGrant, rightsAllowBuiltin } from '../shared/botPermissions';
 
 type Strings = Record<string, string>;
@@ -37,6 +37,11 @@ export interface BotBuiltinRunResult {
   providerLabel: string;
   elapsedSeconds: string;
   awaitingAnswer: boolean;
+  /**
+   * Send `text` exactly as written, as plain text whatever the reply mode, or not at all: it asks
+   * to approve a shell command, and what the user reads must be the whole string that runs.
+   */
+  verbatim?: boolean;
 }
 
 interface PendingAsk {
@@ -128,6 +133,7 @@ function toResult(
     providerLabel,
     elapsedSeconds,
     awaitingAnswer,
+    ...(awaitingAnswer && 'shellApproval' in outcome && outcome.shellApproval ? { verbatim: true } : {}),
   };
 }
 
@@ -190,12 +196,13 @@ export async function runBotBuiltinCommand(
   const startedAt = Date.now();
 
   // Decided here as well as in the chat handlers, which refuse before anything is queued: whoever
-  // calls this, an unpaired account gets no run and a typed command it was not granted never runs.
-  if (!botChatPaired(request.chatKey)) {
-    sendLog(`[bot] ${request.key} refused for ${request.chatKey}: not paired`);
+  // calls this, someone who may not talk to the bot in this chat (unpaired outside a group that
+  // grants it, or blocked) gets no run, and a typed command it was not granted never runs.
+  const rights = await botChatRights(request.chatKey);
+  if (!rights.chat) {
+    sendLog(`[bot] ${request.key} refused for ${request.chatKey}: may not use the bot here`);
     return deniedResult(targetUrl, t(strings, 'bot.builtin.failed'));
   }
-  const rights = await botChatRights(request.chatKey);
   if (request.key !== 'agent' && !rightsAllowBuiltin(rights, request.key)) {
     sendLog(`[bot] /${request.key} refused for ${request.chatKey}: not granted`);
     return deniedResult(targetUrl, botAccessDeniedText(strings, builtinCommandGrant(request.key)));
@@ -224,7 +231,7 @@ export async function runBotBuiltinCommand(
     goal: request.input,
     providerUrl: targetUrl,
     ...(conversationPath ? { conversationPath } : {}),
-    // Every paired account is answered; the agent grant decides how much the answer may use.
+    // Everyone allowed to talk here is answered; the agent grant decides how much the answer may use.
     botScope: rights.agent ? 'agent' : 'chat',
     status: 'running',
     turns: [],
@@ -263,14 +270,14 @@ export async function resumeBotAgentAsk(
     return null;
   }
 
-  // Re-read now: a grant taken away while the question was pending applies to the answer too. An
-  // account unpaired meanwhile gets nothing; one still paired is answered, on the chat kit if the
-  // agent grant is gone.
-  if (!botChatPaired(params.chatKey)) {
-    sendLog(`[bot] agent run ${params.runId} not resumed: ${params.chatKey} is no longer paired`);
+  // Re-read now: a grant taken away while the question was pending applies to the answer too.
+  // Someone who may no longer talk to the bot here (unpaired, blocked, the group's grant gone)
+  // gets nothing; otherwise the answer goes on, on the chat kit if the agent grant is gone.
+  const rights = await botChatRights(params.chatKey);
+  if (!rights.chat) {
+    sendLog(`[bot] agent run ${params.runId} not resumed: ${params.chatKey} may no longer use the bot here`);
     return deniedResult(state.providerUrl, t(strings, 'bot.builtin.failed'));
   }
-  const rights = await botChatRights(params.chatKey);
   if (state.botScope === 'agent' && !rights.agent) {
     sendLog(`[bot] agent run ${params.runId} resumes on the chat scope: the agent grant is gone`);
     state.botScope = 'chat';

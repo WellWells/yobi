@@ -19,7 +19,8 @@ import type { McpAction, McpRuntimeIndex } from './mcpTools';
 import type { AgentAction } from './agentTools';
 import type { EvidenceLedger } from './evidenceLedger';
 import type { GoalIntent } from './actionGate';
-import { SHELL_COMMAND_MAX } from './shellApproval';
+import { chatQuestionRefusal, shellTextDenyReason } from './shellApproval';
+import type { ShellApprovalText } from './shellApproval';
 
 export interface ShellConfirmRequest {
   kind: 'shell';
@@ -39,7 +40,7 @@ const CONFIRM_REQUIRED_TOOLS = new Set<SkillType>(['shell']);
 
 /**
  * Tools that change something outside this run, so `writesAllFailed` can tell the model to stop
- * claiming success. Counted the same fail-closed way `classifyMcpTool` counts an MCP write: a
+ * claiming success. Counted the same fail-closed way `genericRisk` counts an MCP write: a
  * shell command is assumed to have changed something, because nobody can tell from the outside.
  */
 const WRITE_TOOLS = new Set<SkillType>(['shell', 'file_write']);
@@ -57,6 +58,8 @@ const AGENT_STEP_ID = 'agent';
  * it), so `secretMask` remains the backstop.
  */
 async function shellDenyReason(config: Record<string, string>): Promise<string | null> {
+  const textReason = shellTextDenyReason(config, process.platform);
+  if (textReason) return textReason;
   if (await isElevated()) {
     return 'refused: this app is running with administrator rights, and a command started from here would inherit them. The agent will not run shell commands as administrator. Do not retry it — tell the user to restart the app normally if they want you to run commands.';
   }
@@ -117,10 +120,10 @@ export interface CallContext {
   unattended: boolean;
   askUser: (request: AgentConfirmRequest) => Promise<boolean>;
   /**
-   * A shell call is not confirmed here but handed back as `deferred`: the run pauses with a
+   * A shell call is not confirmed here but handed back as `deferred`: the run pauses with this
    * question in the chat and runs the stored command when the answer approves it (a bot run).
    */
-  deferShell?: boolean;
+  deferShell?: (request: ShellConfirmRequest) => ShellApprovalText;
   /** Shared by every call of the run: `build_flow` reads the assessment `assess_flow` left there. */
   builtins: BuiltinDeps;
   fileRoots: string[];
@@ -218,10 +221,11 @@ export async function runCall(
     };
     if (ctx.deferShell) {
       // Refused here, not after the user said yes: a command that is never going to run must not
-      // be put to them. The question shows the whole string, so the same bound as the dialog.
-      if (request.command.length > SHELL_COMMAND_MAX) {
-        sendLog(`🔒 [Agent] shell: refused a ${request.command.length}-character command`);
-        return outcome(`ERROR: refused: the command is longer than ${SHELL_COMMAND_MAX} characters. Split the work into shorter commands.`, 'error', isWrite);
+      // be put to them, and a question the chat cannot show whole must not be asked.
+      const tooLong = chatQuestionRefusal(request.command, ctx.deferShell(request));
+      if (tooLong) {
+        sendLog(`🔒 [Agent] shell: refused a ${request.command.length}-character command — the chat question could not show it whole`);
+        return outcome(`ERROR: ${tooLong}`, 'error', isWrite);
       }
       return { ...outcome('', 'ok'), deferred: request };
     }
@@ -233,8 +237,9 @@ export async function runCall(
   }
   // Injected after validation so the model cannot set them: shell runs in the workspace, and
   // `noClobber` keeps an unconfirmed file_write from replacing an existing user file.
+  // On macOS/Linux the shell is the interpreter the confirmation showed, resolved once, not re-read.
   const execConfig = tool === 'shell'
-    ? { ...recordConfig, cwd: ctx.workspaceDir }
+    ? { ...recordConfig, ...(process.platform === 'win32' ? {} : { shell: shellInterpreter(recordConfig) }), cwd: ctx.workspaceDir }
     : tool === 'file_write'
       ? { ...recordConfig, noClobber: 'true' }
       : recordConfig;

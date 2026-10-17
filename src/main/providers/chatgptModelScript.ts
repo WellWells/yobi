@@ -1,7 +1,14 @@
 import type { ChatgptPickerSnapshot, ChatgptPickerTarget } from '../../shared/chatgptModels';
 
-/* Model and reasoning-effort controls in chatgpt.com's composer (a toggle on Free, a menu on Plus). */
-export const CHATGPT_PICKER_PILL_SELECTOR = 'form button.__composer-pill[aria-haspopup="menu"], form button.__composer-pill[aria-pressed]';
+/*
+ * Model and reasoning-effort controls in chatgpt.com's composer (a toggle on Free, a menu on Plus):
+ * a `__composer-pill` button, or in the redesigned composer form the only button with `aria-pressed`.
+ */
+const PILL_SCOPES = ['form button.__composer-pill', 'form[data-chatgpt-composer] button'];
+function pillSelector(attr: string): string {
+  return PILL_SCOPES.map((scope) => `${scope}[${attr}]`).join(', ');
+}
+export const CHATGPT_PICKER_PILL_SELECTOR = `${pillSelector('aria-haspopup="menu"')}, ${pillSelector('aria-pressed')}`;
 
 export type ChatgptPickerResult =
   | { ok: true; changed: boolean; snapshot: ChatgptPickerSnapshot }
@@ -32,13 +39,10 @@ export function buildChatgptModelPickerScript(target: ChatgptPickerTarget | null
       .map(function(line) { return line.replace(/\\s+/g, ' ').trim(); })
       .filter(function(line) { return !!line; });
   }
-  function composer() {
-    var box = document.querySelector('#prompt-textarea');
-    return (box && box.closest('form')) || document.querySelector('form[data-type="unified-composer"]');
-  }
-  function pills(attr) {
-    var form = composer();
-    return form ? slice(form.querySelectorAll('button.__composer-pill[' + attr + ']')) : [];
+  var MENU_PILLS = ${JSON.stringify(pillSelector('aria-haspopup="menu"'))};
+  var TOGGLE_PILLS = ${JSON.stringify(pillSelector('aria-pressed'))};
+  function pills(selector) {
+    return slice(document.querySelectorAll(selector));
   }
 
   async function getJson(url, token) {
@@ -107,7 +111,7 @@ export function buildChatgptModelPickerScript(target: ChatgptPickerTarget | null
   }
   // A tool the user picked can add a menu pill of its own; only the one opening the picker counts.
   async function openPicker() {
-    var candidates = pills('aria-haspopup="menu"');
+    var candidates = pills(MENU_PILLS);
     for (var i = 0; i < candidates.length; i++) {
       if (await openMenu(candidates[i])) return true;
       await closeMenu();
@@ -225,7 +229,7 @@ export function buildChatgptModelPickerScript(target: ChatgptPickerTarget | null
   }
 
   // A page that showed no control once will not grow one; pay the wait once per document.
-  function found() { return pills('aria-haspopup="menu"').length > 0 || pills('aria-pressed').length > 0; }
+  function found() { return pills(MENU_PILLS).length > 0 || pills(TOGGLE_PILLS).length > 0; }
   if (!found() && window.__yobiChatgptNoPicker) return { ok: false, reason: 'no-picker' };
   if (!(await waitUntil(found, 2000))) {
     window.__yobiChatgptNoPicker = true;
@@ -233,8 +237,8 @@ export function buildChatgptModelPickerScript(target: ChatgptPickerTarget | null
   }
   // More than one toggle means the page grew something new; flipping the wrong one would change
   // an unrelated setting, so none is touched.
-  var toggles = pills('aria-pressed');
-  if (pills('aria-haspopup="menu"').length > 0) {
+  var toggles = pills(TOGGLE_PILLS);
+  if (pills(MENU_PILLS).length > 0) {
     var slid = await runSlider();
     // 'no-catalog' means the Plus menu opened but its model list could not be read: falling back
     // to a lone toggle would report a Free page and wipe the cached Plus list.

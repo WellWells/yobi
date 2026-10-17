@@ -4,6 +4,7 @@
  * Everything here is pure (no database handle); the encrypted-DB access stays behind
  * reader.ts.
  */
+import { localIsoString } from '../../shared/localTime';
 
 // Hard cap on any caller-supplied LIMIT. SQLite treats a negative LIMIT as "unlimited",
 // so an unchecked value would leak the whole table from a tool that returns private chats.
@@ -149,21 +150,6 @@ export function matchSenderMids(nameOrMid: string, contactMap: Map<string, strin
   return out;
 }
 
-function pad2(n: number): string {
-  return String(n).padStart(2, '0');
-}
-
-/**
- * The host's UTC offset at that instant, as `+08:00`. Read per-instant rather than from a
- * constant so a DST transition shifts the rendered time with the calendar instead of against it.
- */
-export function localOffsetLabel(at: Date): string {
-  const minutes = -at.getTimezoneOffset();
-  const sign = minutes < 0 ? '-' : '+';
-  const abs = Math.abs(minutes);
-  return `${sign}${pad2(Math.floor(abs / 60))}:${pad2(abs % 60)}`;
-}
-
 /**
  * LINE PC stores UTC epochs; render them in the host's local time so a `line_read` date filter
  * agrees with the user's own calendar.
@@ -171,10 +157,7 @@ export function localOffsetLabel(at: Date): string {
 export function tsToIso(ts: number | null | undefined): string | null {
   if (ts === null || ts === undefined) return null;
   // `_createdTime` is epoch milliseconds (13-digit); tolerate a 10-digit seconds value.
-  const at = new Date(ts > 1_000_000_000_000 ? ts : ts * 1000);
-  const date = `${at.getFullYear()}-${pad2(at.getMonth() + 1)}-${pad2(at.getDate())}`;
-  const time = `${pad2(at.getHours())}:${pad2(at.getMinutes())}:${pad2(at.getSeconds())}`;
-  return `${date}T${time}${localOffsetLabel(at)}`;
+  return localIsoString(new Date(ts > 1_000_000_000_000 ? ts : ts * 1000));
 }
 
 export function extractUrls(text: string | null | undefined): string[] {

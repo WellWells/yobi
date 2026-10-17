@@ -1,5 +1,22 @@
-import type { McpServerActionResult, McpServerView } from '../../shared/types';
-import { getLangCache, localizeUserFacingError } from '../i18n';
+import { findBuiltinConnector } from '../../shared/builtinConnectors';
+import type { McpServerActionResult, McpServerView, McpToolInfo } from '../../shared/types';
+import { getLangCache, localizeUserFacingError, t } from '../i18n';
+
+type Strings = Record<string, string>;
+
+/**
+ * Tools of a connector the app hosts itself carry the app's own name for them, in the user's
+ * language, where one exists. Only built-ins: a remote server's tool that happens to share an
+ * id keeps the title its server gave it.
+ */
+function localizeTools(server: McpServerView, strings: Strings): McpToolInfo[] {
+  if (!findBuiltinConnector(server.id)) return server.tools;
+  return server.tools.map((tool) => {
+    // The template stays inside t(): scripts/i18n-check.ts finds dynamic keys only there.
+    const title = t(strings, `settings.mcp.tool.${tool.name}`);
+    return title === `settings.mcp.tool.${tool.name}` ? tool : { ...tool, title };
+  });
+}
 
 /**
  * A connector card shows a server's `error` in place of its description, so every view that
@@ -9,9 +26,15 @@ import { getLangCache, localizeUserFacingError } from '../i18n';
  */
 export function localizeServerViews(servers: McpServerView[]): McpServerView[] {
   const strings = getLangCache();
-  return servers.map((server) => (
-    server.error ? { ...server, error: localizeUserFacingError(server.error, strings) } : server
-  ));
+  return servers.map((server) => {
+    const tools = localizeTools(server, strings);
+    if (!server.error && tools === server.tools) return server;
+    return {
+      ...server,
+      tools,
+      ...(server.error ? { error: localizeUserFacingError(server.error, strings) } : {}),
+    };
+  });
 }
 
 export function localizeActionResult(result: McpServerActionResult): McpServerActionResult {

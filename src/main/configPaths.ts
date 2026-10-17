@@ -9,8 +9,8 @@ let testConfigDir: string | null = null;
 
 /**
  * In dev the config directory is the repo root, so tests get a temp directory instead, or they
- * would overwrite the developer's own config.json. One per worker process, so the stores that
- * share it still agree with each other.
+ * would overwrite the developer's own config.json. One per module instance, so
+ * the stores that share it still agree with each other.
  */
 function getTestConfigDir(): string {
   testConfigDir ??= mkdtempSync(path.join(os.tmpdir(), 'yobi-test-config-'));

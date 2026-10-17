@@ -12,6 +12,7 @@ import {
   listContacts,
   listPairedContacts,
   normalizeContactMap,
+  recordUse,
   revokeAllPairings,
   revokePairing,
   setReachability,
@@ -66,6 +67,13 @@ export async function recordBotContact(input: BotContactInput): Promise<void> {
   const next = upsertContact(current, input, new Date().toISOString());
   if (next === current) return;
   cache = next;
+  await persist();
+}
+
+/** An unpaired person addressed the bot in `chatId`; recorded for the owner's "used the bot" list. */
+export async function recordBotUse(input: Omit<BotContactInput, 'kind'>, chatId: string): Promise<void> {
+  const current = await load();
+  cache = recordUse(current, { ...input, kind: 'user' }, chatId, new Date().toISOString());
   await persist();
 }
 

@@ -116,7 +116,7 @@
   flex: 1;
 }
 
-/* Single-row layout: title+id on the left, badge+button on the right */
+/* Single-row layout: title (and progress while running) on the left, badge+button on the right */
 .queueItem {
   border: 1px solid var(--mantine-color-default-border);
   border-radius: var(--mantine-radius-sm);
@@ -172,16 +172,6 @@
   font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--mantine-color-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.queueItemId {
-  font-size: 10px;
-  font-family: var(--font-mono);
-  font-weight: 500;
-  color: var(--mantine-color-dimmed);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

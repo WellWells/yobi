@@ -4,6 +4,7 @@ import { useAppStore } from '../../../store/appStore';
 import { DEFAULT_MODEL_URL, makeByokGroupModels, makeByokModelOption } from '../../../config/models';
 import { BYOK_DEFAULT_BASE_URLS, buildByokUrl } from '../../../../../shared/types';
 import type { ByokConnectionProbe, ByokInstanceSnapshot, ByokProviderType, ByokSettingsSnapshot } from '../../../../../shared/types';
+import { isHttpUrl } from '../../../../../shared/webUrl';
 
 export interface ByokFormState {
   id: string | null;
@@ -23,15 +24,6 @@ function emptyForm(): ByokFormState {
     model: '',
     apiKey: '',
   };
-}
-
-function isValidBaseUrl(raw: string): boolean {
-  try {
-    const parsed = new URL(raw.trim());
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
-  } catch {
-    return false;
-  }
 }
 
 export type ByokTestStatus = 'idle' | 'testing' | 'ok' | 'error';
@@ -118,7 +110,7 @@ export function useByokSettings() {
   }, []);
 
   const canProbe = form !== null
-    && isValidBaseUrl(form.baseUrl)
+    && isHttpUrl(form.baseUrl.trim())
     && (form.apiKey.trim().length > 0 || form.id !== null);
   const canTest = canProbe && form !== null && form.model.trim().length > 0;
 
@@ -170,7 +162,7 @@ export function useByokSettings() {
   const formValid = form !== null
     && form.name.trim().length > 0
     && form.model.trim().length > 0
-    && isValidBaseUrl(form.baseUrl)
+    && isHttpUrl(form.baseUrl.trim())
     && (form.id !== null || form.apiKey.trim().length > 0);
 
   const saveForm = useCallback(async () => {

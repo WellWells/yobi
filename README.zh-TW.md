@@ -18,13 +18,17 @@
 
 **Yobi** 是一套在桌面執行的流程引擎。把資料、AI 與動作串成自動化，再以排程、全域熱鍵、傳給 Telegram 或 LINE Bot 的指令、App 內的斜線指令觸發，或在 Yobi 啟動、電腦喚醒、螢幕鎖定或解鎖時執行。因為它執行在你的電腦上而非伺服器，流程能取用雲端工具接觸不到的對象：本機的 LINE（Windows）、你的檔案、shell，以及一個真正的瀏覽器。AI 步驟驅動的是服務商自家的網頁，因此不需要 API 金鑰，也沒有按 token 計費的帳單。
 
+<!-- demos:hero:start -->
+<p align="center"><img src="assets/demos/zh-TW/agent.webp" alt="由 Agent 完成多步驟任務" width="100%" /></p>
+<!-- demos:hero:end -->
+
 ---
 
 ## 為什麼用 Yobi
 
 | 功能 | 說明 |
 | ---- | ---- |
-| **無程式碼流程** | 50 種步驟，以 `{{變數}}` 串接。從選單加入、拖曳調整順序，也可以描述需求讓 AI 生成。 |
+| **無程式碼流程** | 53 種步驟，以 `{{變數}}` 串接。從選單加入、拖曳調整順序，也可以描述需求讓 AI 生成。 |
 | **在本機執行** | 流程可讀取本機的 LINE（Windows），並取用你的檔案、shell 與瀏覽器視窗；Agent 另可操作 Thunderbird。無須架設。 |
 | **不需 API 金鑰** | AI 步驟驅動服務商的網頁，而非付費 API。想用自己的金鑰再開 BYOK 即可。 |
 | **會執行動作的代理** | 把聊天切到 **Agent**（或輸入 `/agent`）並交給它一個目標：它自行挑選工具，變更任何東西之前會先徵詢你。傳給 Telegram 或 LINE Bot 的訊息也由 Agent 處理，可用的工具依你給每個帳號的權限而定。 |
@@ -33,6 +37,56 @@
 | **主流 AI 全都有** | Gemini、Claude、ChatGPT、Perplexity。Gemini、Claude、ChatGPT 可選模型與思考強度；Gemini 與 Perplexity 不登入也能用。 |
 | **沒有中間人** | Yobi 自己不執行任何伺服器。提示詞直接送往你選的 AI 網站；其他資料只在用到會連網的功能（網路搜尋、Bot、分享連結、連接器等）時才會離開這台電腦。 |
 | **多語系** | 內建英文、繁體中文、简体中文，另可放入語言包擴充（[說明](language/README.md)）。 |
+
+---
+
+<!-- demos:start -->
+## 實際操作
+
+<table>
+<tr>
+<td width="33%" valign="top">
+<a href="assets/demos/zh-TW/flow-build.webp"><img src="assets/demos/zh-TW/flow-build.webp" alt="以文字描述建立流程" width="100%" /></a>
+<br /><b>以文字描述建立流程</b>
+<br /><sub>以一句話描述自動化需求，產生可直接執行、也可逐步修改的流程。</sub>
+</td>
+<td width="33%" valign="top">
+<a href="assets/demos/zh-TW/writing.webp"><img src="assets/demos/zh-TW/writing.webp" alt="改寫選取的段落" width="100%" /></a>
+<br /><b>改寫選取的段落</b>
+<br /><sub>僅改寫回答中選取的段落，修改直接寫回 Markdown。</sub>
+</td>
+<td width="33%" valign="top">
+<a href="assets/demos/zh-TW/telegram.webp"><img src="assets/demos/zh-TW/telegram.webp" alt="透過 Telegram 分析地點評論" width="100%" /></a>
+<br /><b>透過 Telegram 分析地點評論</b>
+<br /><sub>傳送 Google 地圖連結給 Telegram Bot，由電腦端讀取評論並回傳分析。</sub>
+</td>
+</tr>
+<tr>
+<td width="33%" valign="top">
+<a href="assets/demos/zh-TW/downloader.webp"><img src="assets/demos/zh-TW/downloader.webp" alt="從貼文連結下載影片" width="100%" /></a>
+<br /><b>從貼文連結下載影片</b>
+<br /><sub>貼上貼文連結即可下載影片，也可針對貼文內容提問。</sub>
+</td>
+<td width="33%" valign="top">
+<a href="assets/demos/zh-TW/notion.webp"><img src="assets/demos/zh-TW/notion.webp" alt="匯入並編輯 Notion 頁面" width="100%" /></a>
+<br /><b>匯入並編輯 Notion 頁面</b>
+<br /><sub>匯入 Notion 頁面，以 AI 協助編輯後同步回 Notion。</sub>
+</td>
+<td width="33%" valign="top">
+<a href="assets/demos/zh-TW/line.webp"><img src="assets/demos/zh-TW/line.webp" alt="查詢本機 LINE 對話內容" width="100%" /></a>
+<br /><b>查詢本機 LINE 對話內容</b>
+<br /><sub>在本機 LINE 對話中搜尋指定內容，並整理成條列結果。</sub>
+</td>
+</tr>
+<tr>
+<td width="33%" valign="top">
+<a href="assets/demos/zh-TW/rail.webp"><img src="assets/demos/zh-TW/rail.webp" alt="查詢高鐵班次與票價" width="100%" /></a>
+<br /><b>查詢高鐵班次與票價</b>
+<br /><sub>查詢高鐵與台鐵的班次及票價，資料取自營運單位。</sub>
+</td>
+</tr>
+</table>
+<!-- demos:end -->
 
 ---
 
@@ -54,7 +108,7 @@ Telegram  送出 {{summary}}
 
 > *「每個平日早上 8 點，摘要我的 RSS 並送到 Telegram。」*
 
-上面那條也內建為範本，共有 18 條範本可以直接拿來改：一部分按排程執行，一部分用聊天或傳給 Bot 的指令觸發。
+上面那條也內建為範本，共有 19 條範本可以直接拿來改：一部分按排程執行，一部分用聊天或傳給 Bot 的指令觸發。
 
 **步驟依類型：**
 
@@ -117,7 +171,11 @@ Telegram  送出 {{summary}}
 
 **1. 安裝：**
 
-Windows 可從 [Microsoft Store](https://apps.microsoft.com/detail/9nnx8prfstc9) 安裝（自動安裝與更新）；也可以到 [GitHub Releases](https://github.com/WellWells/yobi/releases) 下載 Windows 安裝檔或 macOS DMG（Intel 與 Apple Silicon）。GitHub 版本未簽章：Windows 首次啟動會被攔截，請選**其他資訊 → 仍要執行**；macOS 的開啟方式見[發行說明](https://github.com/WellWells/yobi/releases)。
+```bash
+brew install --cask wellwells/tap/yobi   # macOS（Intel 與 Apple Silicon）
+```
+
+也可以從 [Microsoft Store](https://apps.microsoft.com/detail/9nnx8prfstc9)（Windows，自動安裝與更新）或 [GitHub Releases](https://github.com/WellWells/yobi/releases)（Windows 安裝檔、macOS DMG）下載。GitHub 版本未簽章：Windows 首次啟動會被攔截，請選**其他資訊 → 仍要執行**；macOS 的開啟方式見[發行說明](https://github.com/WellWells/yobi/releases)。
 
 **2. 30 秒內跑出第一個結果：**
 
@@ -233,7 +291,6 @@ npm run dev         # 開發模式：介面即時更新；改了主程序後按 
 npm run typecheck   # TypeScript 型別檢查
 npm run i18n:check  # 比對 language/*.json 與原始碼；會刪掉程式碼已不再使用的 key
 npm run build:win   # 建置 Windows（NSIS 安裝檔）
-npm run build:msix  # 建置 Windows（Microsoft Store 用的 MSIX）
 npm run build:mac   # 建置 macOS（DMG）
 ```
 

@@ -2,6 +2,7 @@ import { app } from 'electron';
 import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
+import { toIsoDate } from '../shared/localTime';
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const KEEP_ROTATIONS = 2;
@@ -16,8 +17,7 @@ function pad2(value: number): string {
 
 /** Local-time stamp used at the head of every line in the log file. */
 export function fileStamp(now: Date): string {
-  const date = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
-  return `${date} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
+  return `${toIsoDate(now)} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
 }
 
 const IS_TEST = Boolean(process.env.VITEST);

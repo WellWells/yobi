@@ -24,11 +24,15 @@ export function isCaptureFormat(value: string | undefined): value is CaptureForm
   return value === 'png' || value === 'webp' || value === 'pdf';
 }
 
-export function inferTelegramSendAs(filePath: string): 'photo' | 'document' | 'auto' {
+export function inferTelegramSendAs(filePath: string): 'photo' | 'video' | 'audio' | 'document' | 'auto' {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === '.png' || ext === '.jpg' || ext === '.jpeg' || ext === '.webp' || ext === '.gif') {
     return 'photo';
   }
+  // Played in the chat rather than handed over as a file.
+  if (ext === '.mp4') return 'video';
+  // In Telegram's music player, with its title and length.
+  if (ext === '.mp3' || ext === '.m4a') return 'audio';
   if (ext === '') return 'auto';
   return 'document';
 }
@@ -38,19 +42,22 @@ export function isFileOutputStep(type: SkillType, config: Record<string, string>
   if (type === 'share') return !isShareLinkFormat(config.format);
   if (type === 'file_write') return true;
   if (type === 'file_download') return true;
+  if (type === 'youtube_download') return true;
+  if (type === 'x_media') return true;
   if (type === 'llm') return isCaptureFormat(config.exportFormat);
   return false;
 }
 
 export const PRODUCED_FILES_KEY = '__producedFiles';
 
+/** One path per line: a post's several files are named each, and each is this run's file. */
 export function recordProducedFile(context: Map<string, string>, filePath: string): void {
-  if (!filePath) return;
+  const paths = filePath.split(/\r?\n/).map((p) => p.trim()).filter(Boolean);
+  if (paths.length === 0) return;
   const list = getProducedFiles(context);
-  if (!list.includes(filePath)) {
-    list.push(filePath);
-    context.set(PRODUCED_FILES_KEY, JSON.stringify(list));
-  }
+  const added = paths.filter((p) => !list.includes(p));
+  if (added.length === 0) return;
+  context.set(PRODUCED_FILES_KEY, JSON.stringify([...list, ...added]));
 }
 
 export function getProducedFiles(context: Map<string, string>): string[] {
@@ -62,10 +69,6 @@ export function getProducedFiles(context: Map<string, string>): string[] {
   } catch {
     return [];
   }
-}
-
-export function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export function extractTemplateVariables(template: string): string[] {

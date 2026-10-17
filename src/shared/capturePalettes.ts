@@ -146,11 +146,15 @@ export const DEFAULT_CAPTURE_BACKGROUND_STYLE: CaptureBackgroundStyle = 'gradien
 
 export type CaptureDirection = 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'nw' | 'c';
 
-export const CAPTURE_DIRECTIONS: readonly (readonly [CaptureDirection, string])[] = [
-  ['nw', '↖'], ['n', '↑'], ['ne', '↗'],
-  ['w', '←'], ['c', '●'], ['e', '→'],
-  ['sw', '↙'], ['s', '↓'], ['se', '↘'],
-] as const;
+/**
+ * The picker's 3x3 grid, in reading order: a cell's place in the grid is the direction it means.
+ * Keys only — the picker draws each one as an icon; this module stays free of React.
+ */
+export const CAPTURE_DIRECTIONS = [
+  'nw', 'n', 'ne',
+  'w', 'c', 'e',
+  'sw', 's', 'se',
+] as const satisfies readonly CaptureDirection[];
 
 const DIRECTION_ANGLES: Record<Exclude<CaptureDirection, 'c'>, number> = {
   n: 0, ne: 45, e: 90, se: 135, s: 180, sw: 225, w: 270, nw: 315,

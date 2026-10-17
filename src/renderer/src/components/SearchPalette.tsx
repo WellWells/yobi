@@ -4,6 +4,7 @@ import { Search } from 'lucide-react';
 import { AppTextInput } from './AppTextInput';
 import { ShortcutHint } from './ShortcutHint';
 import { useI18nStore } from '../store/i18nStore';
+import { isComposingKey } from '../utils/imeKeys';
 import styles from './SearchPalette.module.css';
 
 interface SearchPaletteProps<T> {
@@ -17,10 +18,12 @@ interface SearchPaletteProps<T> {
   onSelect: (item: T) => void;
   placeholder: string;
   emptyLabel: string;
+  /** After the close animation, once focus has gone back to where it was before the palette. */
+  onClosed?: () => void;
 }
 
 export function SearchPalette<T>({
-  opened, onClose, query, onQueryChange, items, getKey, renderRow, onSelect, placeholder, emptyLabel,
+  opened, onClose, query, onQueryChange, items, getKey, renderRow, onSelect, placeholder, emptyLabel, onClosed,
 }: SearchPaletteProps<T>): React.ReactElement {
   const { t } = useI18nStore();
   const [activeIndex, setActiveIndex] = useState(0);
@@ -42,6 +45,7 @@ export function SearchPalette<T>({
   }, [activeIndex]);
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (isComposingKey(event.nativeEvent)) return;
     if (event.key === 'ArrowDown') {
       event.preventDefault();
       setActiveIndex((i) => Math.min(i + 1, items.length - 1));
@@ -59,6 +63,7 @@ export function SearchPalette<T>({
     <Modal
       opened={opened}
       onClose={onClose}
+      onExitTransitionEnd={onClosed}
       withCloseButton={false}
       padding={0}
       size={560}

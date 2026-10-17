@@ -277,7 +277,7 @@ export const ExportSettingsPanel: React.FC<ExportSettingsPanelProps> = ({
           {backgroundStyle === 'gradient' && (
             <Box>
               <SectionLabel>{t('capture.direction')}</SectionLabel>
-              <DirectionGrid value={direction} onChange={setDirection} />
+              <DirectionGrid value={direction} onChange={setDirection} t={t} />
             </Box>
           )}
         </Stack>

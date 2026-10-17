@@ -6,6 +6,7 @@ import { useUpdateStore } from '../store/useUpdateStore';
 import { useSecretHealthStore } from '../store/secretHealthStore';
 import { useMcpStore } from '../store/useMcpStore';
 import { initThemeFromConfig } from '../store/themeStore';
+import { initReadingFromConfig } from '../store/readingStore';
 import type { LayoutMode } from '../store/appStore';
 import { accountApi, byokApi, chatgptModelApi, claudeModelApi, geminiModelApi, ipcEvents, mcpApi, settingsApi, tempChatApi } from '../api/electronApi';
 import { onIdle } from '../utils/idle';
@@ -38,6 +39,7 @@ export function useAppBootstrap() {
   useEffect(() => {
     void loadLocales();
     initThemeFromConfig();
+    initReadingFromConfig();
     useSecretHealthStore.getState().initialize();
     void useFlowStore.getState().loadFlows();
     void settingsApi.getHotkey().then(setHotkey);
@@ -101,7 +103,10 @@ export function useAppBootstrap() {
       ipcEvents.onStatus((s) => setStatus(s as 'idle' | 'processing')),
       ipcEvents.onQueueUpdate(setQueue),
       accountApi.onStatusChanged(setAccountStatus),
-      ipcEvents.onNavigateSettings(() => setView('settings')),
+      ipcEvents.onNavigateSettings((category) => {
+        if (category) useAppStore.getState().openSettingsCategory(category);
+        else setView('settings');
+      }),
       ipcEvents.onTempChatModeChanged((enabled) => {
         setTempChatMode(enabled);
         setView('chat');

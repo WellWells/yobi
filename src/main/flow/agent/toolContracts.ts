@@ -1,3 +1,4 @@
+import { clipLine } from '../../../shared/textBudget';
 import type { McpTool } from '../../mcp/mcpTypes';
 
 /**
@@ -122,7 +123,7 @@ function nameTokens(name: string): string[] {
 }
 
 /**
- * Same rule as `classifyMcpTool`: a write verb in the name beats a `readOnlyHint`, because a server
+ * A write verb in the name beats a `readOnlyHint`, because a server
  * that marks `delete_account` read-only is wrong, not reassuring.
  */
 function isReadTool(tool: McpTool): boolean {
@@ -213,22 +214,17 @@ export function embeddedError(text: string): string | null {
   return null;
 }
 
-function firstLine(text: string, limit = 200): string {
-  const line = text.replace(/\s+/g, ' ').trim();
-  return line.length > limit ? `${line.slice(0, limit - 1)}…` : line;
-}
-
 /**
  * `detail` is the server's own words, relayed to the user as received. When there are none — an
  * empty error, or a bare `success: false` — the user's line says only that it failed, in their
  * language, instead of splicing our English placeholder into it.
  */
 export function failedResult(detail: string, tool: string): InterpretedResult {
-  const said = detail === UNSTATED_FAILURE ? '' : firstLine(detail, 120);
+  const said = detail === UNSTATED_FAILURE ? '' : clipLine(detail, 120);
   return {
     outcome: 'failed',
     failure: classifyFailure(detail),
-    summary: said ? `the tool reported an error ("${firstLine(detail)}")` : 'the tool reported an error and gave no reason',
+    summary: said ? `the tool reported an error ("${clipLine(detail, 200)}")` : 'the tool reported an error and gave no reason',
     notice: said
       ? { key: 'agent.outcome.failed', vars: { tool, detail: said } }
       : { key: 'agent.outcome.failedNoReason', vars: { tool } },

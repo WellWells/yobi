@@ -38,7 +38,7 @@ const UNMEASURED_FIT: PromptFit = { budget: SCRATCH_TOTAL_BUDGET, measure: count
  * closing `</steps>` fence, so the observations yield instead. The baseline is measured with its
  * blank lines, so the budget errs small. Use `scratchFitFor` for a prompt that renders a scratch block.
  */
-export function observationFit(
+function observationFit(
   providerUrl: string,
   promptWithoutObservations: string,
   ceiling: number = SCRATCH_TOTAL_BUDGET,
@@ -380,24 +380,6 @@ function approachLean(webTools: boolean): string[] {
 }
 
 /**
- * The connector tier. approachFull and approachLean both name "research", "youtube" and
- * "assess_flow" — tools a connector-scoped run does not have — and an instruction to call a
- * tool that is not in the catalog costs a rejected action and a repair round-trip.
- */
-const APPROACH_CONNECTOR: readonly string[] = [
-  '- Treat the GOAL as a task to PERFORM with your TOOLS, not a question to answer from memory.',
-  '  Every tool you have belongs to one connected service — use them instead of describing them.',
-  '- Look before you change: find the exact item with a (read) tool first, so you act on the one',
-  '  the user meant and not on one that merely sounds like it.',
-  '- "I cannot do X" is only true AFTER you have looked through TOOLS and found nothing that fits.',
-  '  Never conclude it from memory.',
-  '- If the GOAL asks what you can DO here, answer from the tool list below, grouped by capability,',
-  '  no schemas — never call a tool to find out.',
-  '- If the GOAL needs something outside this service, say so plainly and name what you CAN do here.',
-  '  Never tell the user to go and do it by hand somewhere else.',
-];
-
-/**
  * Appended to the header of a server holding the user's own data. Short on purpose: it is charged
  * to the MCP catalog budget once per server, and `OWN_DATA_FIRST` explains it once for all of them.
  * Lives here, not in `mcpTools`, because that module already imports this one and the prompt text
@@ -406,7 +388,7 @@ const APPROACH_CONNECTOR: readonly string[] = [
 export const USER_DATA_MARKER = '(your data)';
 
 /**
- * Printed before all three approach tiers, followed by `IDENTITY_RULES`: which name the goal is about
+ * Printed before both approach tiers, followed by `IDENTITY_RULES`: which name the goal is about
  * and where that kind of thing lives come before how deeply to research it. The identity rule is in
  * every tier because a turn prompt can emit "finish" without `buildFinishPrompt` seeing the answer.
  */
@@ -439,12 +421,12 @@ const DELIVER_RULES: readonly string[] = [
 ];
 
 /**
- * The batch shape. Its item forms follow the grammars the run has, so a connector-only run is never
- * shown a `{"tool"}` item it could not send, nor a web run a `{"server"}` one.
+ * The batch shape. Its item forms follow the grammars the run has, so a run without connectors is
+ * never shown a `{"server"}` item it could not send.
  */
-function batchShape(toolGrammar: boolean, mcpGrammar: boolean): string {
+function batchShape(mcpGrammar: boolean): string {
   const items = [
-    ...(toolGrammar ? ['{"tool","config"}'] : []),
+    '{"tool","config"}',
     ...(mcpGrammar ? ['{"server","name","arguments"}'] : []),
   ].join(' or ');
   return `  {"thought": string, "action": "call_tools", "calls": [2-3 of ${items}]}`;
@@ -453,8 +435,8 @@ function batchShape(toolGrammar: boolean, mcpGrammar: boolean): string {
 /**
  * Independence is the whole condition: a call that needs another's result has to wait a turn to
  * read it. Reads only, because a change goes through the gate, its confirmation and its check one
- * at a time — several at once would put several dialogs up together. Names no tool: a connector-only
- * run has no "research", and an instruction to call a tool it lacks costs a rejected action.
+ * at a time — several at once would put several dialogs up together. Names no tool: a run with the web
+ * switched off has no "research", and an instruction to call a tool it lacks costs a rejected action.
  */
 const BATCH_RULES: readonly string[] = [
   '- "call_tools": 2-3 READ calls at once when none needs another\'s result (one lookup per subject',
@@ -651,10 +633,6 @@ export interface TurnPromptOptions {
   mustFinish: boolean;
   lean: boolean;
   mcpGrammar?: boolean;
-  /** False for a run whose only tools are MCP tools: the "call_tool" shape must disappear entirely. */
-  toolGrammar?: boolean;
-  /** Server handle to use in the connector worked example, so the example names a real server. */
-  mcpExampleServer?: string;
   scratchSlots?: number;
   /** Provider-derived room for the observations (`observationFit`); unmeasured when omitted. */
   scratchFit?: PromptFit;
@@ -695,39 +673,25 @@ export interface HeldFinish {
   connectorHelp?: boolean;
 }
 
-/**
- * The example must name a handle the validator will accept. A scoped run always has exactly one
- * server, so the engine passes its real handle; the fallback covers a caller that passes none.
- */
-const EXAMPLE_SERVER_FALLBACK = 'notes';
-const EXAMPLE_SERVER_MAX = 32;
-
-function exampleServer(handle: string): string {
-  const trimmed = handle.trim();
-  return trimmed ? trimmed.slice(0, EXAMPLE_SERVER_MAX) : EXAMPLE_SERVER_FALLBACK;
-}
-
-function shapeCount(toolGrammar: boolean, mcpGrammar: boolean, allowAsk: boolean, canDeliver: boolean, batch: boolean): string {
-  const count = 1 + (toolGrammar ? 1 : 0) + (mcpGrammar ? 1 : 0) + (allowAsk ? 1 : 0) + (canDeliver ? 1 : 0)
-    + (batch ? 1 : 0);
+function shapeCount(mcpGrammar: boolean, allowAsk: boolean, canDeliver: boolean, batch: boolean): string {
+  const count = 2 + (mcpGrammar ? 1 : 0) + (allowAsk ? 1 : 0) + (canDeliver ? 1 : 0) + (batch ? 1 : 0);
   return `these ${count} shapes`;
 }
 
 export function buildTurnPrompt(opts: TurnPromptOptions): string {
   const {
     goal, catalog, scratch, mustFinish, lean,
-    mcpGrammar = false, toolGrammar = true, mcpExampleServer = EXAMPLE_SERVER_FALLBACK,
+    mcpGrammar = false,
     scratchSlots = SCRATCH_IN_PROMPT, scratchFit = UNMEASURED_FIT, history = '',
     stalled = false, offload = false, allowAsk = false, changeRules = false, writesAllFailed = false,
     userDataSources = false, plan = emptyPlan(), deliverable = [], runtimeContext = '', earlierActions = '',
-    userMemory = '', batchGrammar = false, flowTools = true, webTools = true, held,
+    userMemory = '', batchGrammar: batch = false, flowTools = true, webTools = true, held,
   } = opts;
   const planned = plan.steps.length > 0;
   // A held finish outranks a fully checked plan: the model checked the items AND said the goal is
   // not done, and the nudge to "finish now" would send it straight back to the answer just held.
   const finished = planComplete(plan) && !held;
   const canDeliver = deliverable.length > 0;
-  const batch = batchGrammar && (toolGrammar || mcpGrammar);
   return [
     'You are Yobi\'s autonomous agent. You DO tasks yourself with the TOOLS listed below — you are',
     'NOT a chatbot that gives generic how-to advice. Read the GOAL, then ACT: call tools, observe,',
@@ -739,19 +703,17 @@ export function buildTurnPrompt(opts: TurnPromptOptions): string {
     APPROACH_HEADER,
     ...IDENTITY_RULES,
     ...(userDataSources ? OWN_DATA_FIRST : []),
-    ...(toolGrammar ? (lean ? approachLean(webTools) : approachFull(flowTools, webTools)) : APPROACH_CONNECTOR),
+    ...(lean ? approachLean(webTools) : approachFull(flowTools, webTools)),
     ...(changeRules ? ['', ...CHANGE_RULES] : []),
     '',
     'OUTPUT RULES (critical):',
     '- Output ONLY one JSON object — no prose, no markdown code fences.',
-    `- Use exactly one of ${shapeCount(toolGrammar, mcpGrammar, allowAsk, canDeliver, batch)}:`,
-    ...(toolGrammar
-      ? ['  {"thought": string, "action": "call_tool", "tool": <a tool name>, "config": { ...string values... }}']
-      : []),
+    `- Use exactly one of ${shapeCount(mcpGrammar, allowAsk, canDeliver, batch)}:`,
+    '  {"thought": string, "action": "call_tool", "tool": <a tool name>, "config": { ...string values... }}',
     ...(mcpGrammar
       ? ['  {"thought": string, "action": "call_mcp", "server": <a server handle from MCP TOOLS>, "name": <a tool name>, "arguments": { ...JSON... }}']
       : []),
-    ...(batch ? [batchShape(toolGrammar, mcpGrammar)] : []),
+    ...(batch ? [batchShape(mcpGrammar)] : []),
     ...(allowAsk
       ? ['  {"thought": string, "action": "ask_user", "question": string, "choices": [optional strings]}']
       : []),
@@ -760,20 +722,11 @@ export function buildTurnPrompt(opts: TurnPromptOptions): string {
       : []),
     '  {"thought": string, "action": "finish", "title": string, "content": string, "done": boolean}',
     ...(hasRecapSection(userMemory) ? [`  ${RECAP_HOOK}`] : []),
-    ...(toolGrammar
-      ? [
-          '- A real "call_tool" action looks exactly like this:',
-          '<example>',
-          callExample(webTools),
-          '</example>',
-          ...(lean && batch ? batchExample(webTools) : []),
-        ]
-      : [
-          '- A real "call_mcp" action looks exactly like this:',
-          '<example>',
-          `{"thought":"I have to locate the page before I can change it","action":"call_mcp","server":"${exampleServer(mcpExampleServer)}","name":"search","arguments":{"query":"Q3 roadmap"}}`,
-          '</example>',
-        ]),
+    '- A real "call_tool" action looks exactly like this:',
+    '<example>',
+    callExample(webTools),
+    '</example>',
+    ...(lean && batch ? batchExample(webTools) : []),
     ...(canDeliver ? DELIVER_RULES : []),
     // "In the GOAL's language" is repeated at the answer: a non-English locale or tool output can
     // outweigh the opening rule.
@@ -782,9 +735,7 @@ export function buildTurnPrompt(opts: TurnPromptOptions): string {
     '  sentences), and every web fact naming its source (page title or URL). Prose by default,',
     '  Markdown (list, table) when the answer has that shape; never raw data, bare links, or JSON.',
     DONE_RULE,
-    ...(toolGrammar
-      ? ['- Every value inside "config" MUST be a plain string. Provide every field marked REQUIRED.']
-      : []),
+    '- Every value inside "config" MUST be a plain string. Provide every field marked REQUIRED.',
     ...(mcpGrammar
       ? [
           '- For an MCP TOOLS entry use "call_mcp": "arguments" is a JSON object matching that tool —',

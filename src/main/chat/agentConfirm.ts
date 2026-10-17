@@ -6,7 +6,7 @@ import { sendLog } from '../helpers';
 import { t } from '../i18n';
 import { getMcpRegistry } from '../mcp';
 import type { AgentConfirmRequest, McpConfirmRequest, ShellConfirmRequest } from '../flow/agent/agentEngine';
-import { SHELL_COMMAND_MAX } from '../flow/agent/shellApproval';
+import { SHELL_COMMAND_MAX, fencedCommand } from '../flow/agent/shellApproval';
 import type { ShellApprovalText } from '../flow/agent/shellApproval';
 import type { FlowWriteConfirmRequest } from '../flow/agent/agentBuiltins';
 import { askRenderer } from './agentConfirmBridge';
@@ -113,11 +113,14 @@ async function confirmShell(
   return choice !== 'deny';
 }
 
+/**
+ * The shell as a user knows it. A path is shown whole: on macOS/Linux it is the program that will
+ * be started, and `/tmp/x/bash` is not the user's bash.
+ */
 function interpreterLabel(interpreter: string): string {
-  const name = interpreter.split(/[\\/]/).pop() ?? interpreter;
-  if (/^powershell(\.exe)?$/i.test(name)) return 'PowerShell';
-  if (/^cmd(\.exe)?$/i.test(name)) return 'cmd';
-  return name;
+  if (/^powershell(\.exe)?$/i.test(interpreter)) return 'PowerShell';
+  if (/^cmd(\.exe)?$/i.test(interpreter)) return 'cmd';
+  return interpreter;
 }
 
 /**
@@ -126,11 +129,9 @@ function interpreterLabel(interpreter: string): string {
  * and dress its tail up as prose.
  */
 export function shellApprovalText(req: ShellConfirmRequest, strings: Strings): ShellApprovalText {
-  const longestRun = Math.max(0, ...(req.command.match(/`+/g) ?? []).map((run) => run.length));
-  const fence = '`'.repeat(Math.max(3, longestRun + 1));
   const lead = t(strings, 'agent.shell.approve.question', { shell: interpreterLabel(req.interpreter) });
   return {
-    question: `${lead}\n\n${fence}\n${req.command}\n${fence}`,
+    question: `${lead}\n\n${fencedCommand(req.command)}`,
     choices: [t(strings, 'agent.shell.approve.run'), t(strings, 'agent.shell.approve.cancel')],
   };
 }

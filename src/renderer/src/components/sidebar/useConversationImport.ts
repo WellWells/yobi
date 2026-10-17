@@ -4,6 +4,9 @@ import { showAppNotice } from '../../hooks/useUiNotifications';
 import { useI18nStore } from '../../store/i18nStore';
 import type { ConversationImportResult, OutputFile } from '../../../../shared/types';
 
+/** What the "Import conversations…" file picker offers: the extensions main's import accepts. */
+export const IMPORT_ACCEPT = '.md,.markdown';
+
 /**
  * A row dragged out of the list carries itself — or, when it is one of the ticked rows in
  * select mode, every ticked row, in list order.
@@ -35,7 +38,7 @@ export function importNotices(
 }
 
 /**
- * Files dropped on the conversation list: Markdown is copied in as a conversation and the
+ * Files dropped on the conversation list, or picked with its import button: Markdown is copied in as a conversation and the
  * first one opens. A file that is already in the list (a row dragged out and straight back)
  * just opens.
  */

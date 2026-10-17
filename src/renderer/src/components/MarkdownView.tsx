@@ -6,6 +6,10 @@ import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import { ExtraBlock, PromptBlock, ResponseBlock, TimeBlock } from './MarkdownBlocks';
 import { MessageMarkdown as MD } from './chat/MessageMarkdown';
+import { readingMaxWidth, useReadingStore } from '../store/readingStore';
+import { READING_FACE, READING_TEXT_STYLE } from '../styles/readingText';
+
+const STACKED_MAX_WIDTH = 720;
 
 interface MarkdownViewProps {
   content: string;
@@ -21,8 +25,9 @@ function MarkdownViewInner({ content, blocks }: MarkdownViewProps) {
   const isStale = deferredBlocks !== blocks;
   const plainContent = useMemo(() => stripConversationMarkers(deferredContent), [deferredContent]);
   const isSideBySide = layoutMode === 'side-by-side';
+  const fullWidth = useReadingStore((state) => state.prefs.fullWidth);
   const zoomStyle = markdownZoom === 100 ? undefined : { zoom: markdownZoom / 100 };
-  const STACKED_MAX_WIDTH = 720;
+  const stackedMaxWidth = readingMaxWidth(fullWidth, STACKED_MAX_WIDTH);
 
   const hasMetaContent = Boolean(
     deferredBlocks.title ||
@@ -48,6 +53,7 @@ function MarkdownViewInner({ content, blocks }: MarkdownViewProps) {
     }}>
       {deferredBlocks.title && (
         <h1 style={{
+          fontFamily: READING_FACE,
           fontSize: 'var(--font-size-3xl)',
           fontWeight: 700,
           color: 'var(--text-primary)',
@@ -75,7 +81,6 @@ function MarkdownViewInner({ content, blocks }: MarkdownViewProps) {
           label={t('markdown.prompt.label')}
           expandText={t('markdown.prompt.expand')}
           collapseText={t('markdown.prompt.collapse')}
-          truncatedHint={t('markdown.prompt.truncated')}
         />
       )}
 
@@ -96,7 +101,7 @@ function MarkdownViewInner({ content, blocks }: MarkdownViewProps) {
       {deferredBlocks.response ? (
         <ResponseBlock response={deferredBlocks.response} MarkdownRenderer={MD} />
       ) : (
-        <Box className="md-content" style={{ fontSize: 'var(--font-size-md)', lineHeight: 1.75 }}>
+        <Box className="md-content" style={{ ...READING_TEXT_STYLE, lineHeight: 1.75 }}>
           <MD>{plainContent}</MD>
         </Box>
       )}
@@ -136,7 +141,7 @@ function MarkdownViewInner({ content, blocks }: MarkdownViewProps) {
       transition: 'opacity 0.15s ease',
     }}>
       <Box style={zoomStyle}>
-        <Box style={{ width: '100%', maxWidth: STACKED_MAX_WIDTH, margin: '0 auto' }}>
+        <Box style={{ width: '100%', maxWidth: stackedMaxWidth, margin: '0 auto' }}>
           {showMetaColumn && MetaColumn}
           {ResponseColumn}
         </Box>

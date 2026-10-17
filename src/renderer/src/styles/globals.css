@@ -20,28 +20,22 @@
   --warning: #d29922;
   --error: #f85149;
   --bg-hover: #3c4046;
-  --accent-hover: #79b8ff;
   --border-hover: #64686e;
   --code-bg: #161b22;
   --selection-bg: rgba(88, 166, 255, 0.25);
-  --on-accent: #1b1b1b;
 
   /* Mantine-namespaced aliases — keep in sync with cssVariablesResolver.ts */
   --mantine-color-bg-tertiary: var(--bg-tertiary);
   --mantine-color-accent: var(--accent);
   --mantine-color-accent-dim: var(--accent-dim);
-  --mantine-color-accent-hover: var(--accent-hover);
   --mantine-color-border-hover: var(--border-hover);
   --mantine-color-success: var(--success);
   --mantine-color-warning: var(--warning);
   --mantine-color-error: var(--error);
-  --mantine-color-code-bg: var(--code-bg);
-  --mantine-color-selection-bg: var(--selection-bg);
 
   --radius-sm: 4px;
   --radius: 8px;
   --radius-lg: 12px;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.16);
   --shadow-md: 0 6px 16px rgba(0, 0, 0, 0.2);
 
   /* Single font source — mantineTheme.ts points fontFamily at these vars. */
@@ -57,6 +51,31 @@
   --font-size-3xl:  17px;
   /* Empty-chat greetings only: they sit alone above the composer, like the providers' own home pages. */
   --font-size-display: 26px;
+
+  /* The reading column only (answers, prompts, the conversation title); see store/readingStore.ts.
+     Never the UI: Mantine's sizes stay put. */
+  --font-reading: var(--font-sans);
+  --reading-size: 14px;
+}
+
+/* System faces only (zero bytes, CSP allows nothing else unbundled). */
+:root[data-reading-font='serif'] {
+  --font-reading: Georgia, Cambria, 'Noto Serif TC', 'Songti TC', PMingLiU, serif;
+}
+
+:root[data-reading-font='serif']:lang(zh-CN) {
+  --font-reading: Georgia, Cambria, 'Noto Serif SC', 'Songti SC', SimSun, serif;
+}
+
+/* The code faces, then a CJK sans: without it Windows falls back to the bitmap-era MingLiU. */
+:root[data-reading-font='mono'] {
+  --font-reading: 'Cascadia Code', 'SFMono-Regular', 'Menlo', 'Consolas', 'Liberation Mono',
+    'Microsoft JhengHei UI', 'PingFang TC', 'Noto Sans CJK TC', monospace;
+}
+
+:root[data-reading-font='mono']:lang(zh-CN) {
+  --font-reading: 'Cascadia Code', 'SFMono-Regular', 'Menlo', 'Consolas', 'Liberation Mono',
+    'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans CJK SC', monospace;
 }
 
 html, body, #root {
@@ -174,6 +193,58 @@ textarea:focus-visible {
   color: inherit;
 }
 
+/* Find in conversation (utils/conversationFind.ts). Warm like every find highlight people know,
+   and unlike the selection colour, so a match and a selection never look the same. */
+::highlight(yobi-find) {
+  background-color: color-mix(in srgb, var(--mantine-color-warning) 30%, transparent);
+  color: inherit;
+}
+
+/* The passage the writing tools are working on, once focus has left it (writingToolsActions.ts). */
+::highlight(yobi-rewrite-source) {
+  background-color: var(--selection-bg);
+  color: inherit;
+}
+
+/* A writing assistant edit's place on the page, while the pointer is on its row or for a moment after a click. */
+::highlight(yobi-assistant-target) {
+  background-color: var(--selection-bg);
+  color: inherit;
+}
+
+/* An unsynced change of a Notion document, while the pointer is on it (views/document/DocumentChangeMarks.tsx). */
+::highlight(yobi-change-hover) {
+  background-color: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: inherit;
+}
+
+/* A writing assistant edit's row in the panel (AssistantReply.tsx). */
+.yobi-assistant-edit {
+  border: 1px solid var(--border);
+  border-radius: var(--mantine-radius-md);
+  background: var(--mantine-color-body);
+}
+
+.yobi-assistant-edit:hover {
+  background: var(--bg-hover);
+}
+
+::highlight(yobi-find-current) {
+  background-color: color-mix(in srgb, var(--mantine-color-warning) 75%, transparent);
+  color: var(--text-primary);
+}
+
+/* A change shown as it reads (utils/renderedDiff.ts): the same marks as the rewrite card's DiffLine. */
+::highlight(yobi-diff-removed) {
+  background-color: color-mix(in srgb, var(--mantine-color-error) 16%, transparent);
+  text-decoration: line-through;
+  text-decoration-color: var(--mantine-color-error);
+}
+
+::highlight(yobi-diff-added) {
+  background-color: color-mix(in srgb, var(--mantine-color-success) 22%, transparent);
+}
+
 /* ── Scrollbar ───────────────────────────────────────────────────────────── */
 /* Single source of truth: update --scrollbar-width to resize all native scrollbars */
 :root { --scrollbar-width: 6px; }
@@ -262,6 +333,11 @@ textarea:focus-visible {
 .md-content h3 { font-size: 1.1em; }
 
 .md-content p { margin: 0.75em 0; }
+
+/* A forwarded forum article's header is drawn as a card above the answer (`PostCardView`). Its
+   opening block says the same in words and stays in the DOM, so a selection still maps onto the
+   Markdown; find skips it (`conversationFind`'s OMIT). */
+.md-response[data-post-card] > p:first-child { display: none; }
 
 /* KaTeX sets a display formula `white-space: nowrap` and gives it no overflow of its own,
    so one wider than the chat column would drag the whole answer sideways. Scroll the
@@ -486,21 +562,17 @@ textarea:focus-visible {
   }
 }
 
-@keyframes pulse {
-  0%, 100% { opacity: 1; transform: translateY(-50%) scale(1); }
-  50% { opacity: 0.4; transform: translateY(-50%) scale(0.8); }
-}
-
-/* `respectReducedMotion` in the Mantine theme only reaches Mantine's own components, so
-   keyframes declared here keep running with Windows animation effects off. Redefining the
-   keyframe as a single resting frame — rather than `animation: none` on the consumer — keeps
-   the translateY(-50%) that centres the dot; dropping the animation would shift it 4px.
-   The <Loader> spin is deliberately NOT touched: freezing the only work-in-progress
-   affordance in the app reads as "hung", which is worse than the motion. */
-@media (prefers-reduced-motion: reduce) {
-  @keyframes pulse {
-    0%, 100% { opacity: 1; transform: translateY(-50%) scale(1); }
-  }
+/* The welcome screen's Yobi mark glows in its own gradient colours (not the theme accent, like the
+   mark itself), brighter as the pointer nears and leaning toward it; useYobiMarkGlow in
+   config/brandIcons.ts writes the three properties, a click spins the mark. */
+.yobi-mark {
+  --yobi-glow: 0;
+  --yobi-glow-x: 0px;
+  --yobi-glow-y: 0px;
+  filter:
+    drop-shadow(var(--yobi-glow-x) var(--yobi-glow-y) 3px rgb(142 237 236 / calc(0.75 * var(--yobi-glow))))
+    drop-shadow(calc(var(--yobi-glow-x) * 1.6) calc(var(--yobi-glow-y) * 1.6) 9px rgb(66 133 216 / calc(0.55 * var(--yobi-glow))));
+  transition: filter 160ms ease-out;
 }
 
 /* ── The window's one notice surface ─────────────────────────────────────── */
@@ -537,8 +609,12 @@ textarea:focus-visible {
   background-color: transparent !important;
 }
 
+/* The keyboard's highlight too: a menu's search box marks its row with [data-menu-active], and arrow
+   keys move focus between rows; the transparent rule above would otherwise hide both. */
 .mantine-Menu-item:hover,
 .mantine-Menu-item[data-hovered],
+.mantine-Menu-item[data-menu-active],
+.mantine-Menu-item:focus-visible,
 .mantine-Combobox-option:hover,
 .mantine-Combobox-option[data-hovered],
 .mantine-Select-option:hover,

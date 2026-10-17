@@ -1,6 +1,7 @@
 import React, { useContext } from 'react';
 import type { ExtraProps } from 'react-markdown';
 import type { MarkdownCaptureRequest } from '../../../../shared/types';
+import { cardTurns } from '../../../../shared/captureCard';
 import {
   BaseMarkdown,
   MarkdownImage,
@@ -8,7 +9,7 @@ import {
   SharedCodeBlock,
   SharedPreBlock,
 } from '../../utils/markdownConfig';
-import { captureCardCssVars } from '../../hooks/captureTheme';
+import { captureCardCssVars, cardReadingVars } from '../../hooks/captureTheme';
 import { CaptureContentThemeContext, captureContentTheme } from '../../utils/forcedCodeTheme';
 
 /** An image or PDF cannot be clicked open, so a collapsible section is exported expanded. */
@@ -39,7 +40,7 @@ const MetaRow: React.FC<{ provider?: string; time?: string; tokens?: string }> =
 
 const DocumentTurns: React.FC<{ request: MarkdownCaptureRequest }> = ({ request: { payload, options } }) => (
   <div className="capture-doc">
-    {(payload.turns ?? []).map((turn, index) => (
+    {cardTurns(payload).map((turn, index) => (
       <section className="capture-doc-turn" key={`turn-${index}`}>
         {options.showPrompt && turn.prompt && (
           <div className="capture-prompt">
@@ -52,46 +53,19 @@ const DocumentTurns: React.FC<{ request: MarkdownCaptureRequest }> = ({ request:
   </div>
 );
 
-const DocumentSingle: React.FC<{ request: MarkdownCaptureRequest }> = ({ request: { payload, options } }) => (
-  <>
-    {options.showPrompt && payload.prompt && (
-      <section className="capture-section">
-        <div className="capture-section-title">Prompt</div>
-        <div className="capture-prompt">
-          <MarkdownBlock>{payload.prompt}</MarkdownBlock>
-        </div>
-      </section>
-    )}
-
-    {options.showContent ? (
-      <section className="capture-section">
-        <div className="capture-section-title">Content</div>
-        <MarkdownBlock>{payload.content || payload.summary || '(empty)'}</MarkdownBlock>
-      </section>
-    ) : (
-      <section className="capture-section">
-        <div className="capture-section-title">Summary</div>
-        <p className="capture-summary">{payload.summary || '(content hidden)'}</p>
-      </section>
-    )}
-  </>
-);
-
 const DocumentBody: React.FC<{ request: MarkdownCaptureRequest }> = ({ request }) => (
   <>
     <MetaRow
       provider={request.options.showProvider ? request.payload.provider : ''}
       time={request.options.showTimestamp ? request.payload.timestamp : ''}
     />
-    {(request.payload.turns?.length ?? 0) > 0
-      ? <DocumentTurns request={request} />
-      : <DocumentSingle request={request} />}
+    <DocumentTurns request={request} />
   </>
 );
 
 const BubbleBody: React.FC<{ request: MarkdownCaptureRequest }> = ({ request: { payload, options } }) => (
   <div className="capture-thread">
-    {(payload.turns ?? []).map((turn, index) => (
+    {cardTurns(payload).map((turn, index) => (
       <div className="capture-turn" key={`turn-${index}`}>
         {turn.prompt && (
           <div className="capture-bubble-row">
@@ -134,6 +108,7 @@ export const CaptureCard: React.FC<CaptureCardProps> = ({ request, rootId }) => 
           className="capture-card-root"
           style={{
             ...captureCardCssVars(options.cardTheme),
+            ...cardReadingVars(request.readingFont),
             width: options.width,
             background: options.background,
           } as React.CSSProperties}

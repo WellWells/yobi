@@ -2,6 +2,17 @@ import { useCallback, useEffect, useRef, type RefObject } from 'react';
 
 const NEAR_BOTTOM_PX = 80;
 
+/**
+ * Dispatched (bubbling) from inside the conversation when something else takes over the scroll
+ * position: a find jumping to a match, an answer opening for editing. Late renders (math,
+ * diagrams) and a growing editor would otherwise pull the view back to the bottom.
+ */
+export const RELEASE_FOLLOW_EVENT = 'yobi:release-follow';
+
+export function releaseFollow(from: Element | null): void {
+  from?.dispatchEvent(new Event(RELEASE_FOLLOW_EVENT, { bubbles: true }));
+}
+
 export function isNearBottom(scrollTop: number, scrollHeight: number, clientHeight: number): boolean {
   return scrollHeight - scrollTop - clientHeight <= NEAR_BOTTOM_PX;
 }
@@ -74,6 +85,8 @@ export function useStickToBottom(
       else if (scrolledUp) following.current = false;
     };
     container.addEventListener('scroll', onScroll, { passive: true });
+    const release = (): void => { following.current = false; };
+    container.addEventListener(RELEASE_FOLLOW_EVENT, release);
 
     const observer = new ResizeObserver(() => {
       if (!following.current) return;
@@ -87,6 +100,7 @@ export function useStickToBottom(
 
     return () => {
       container.removeEventListener('scroll', onScroll);
+      container.removeEventListener(RELEASE_FOLLOW_EVENT, release);
       observer.disconnect();
       containerRef.current = null;
     };

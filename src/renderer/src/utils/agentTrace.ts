@@ -1,14 +1,10 @@
 import type { AgentRunState, AgentTurnRecord } from '../../../shared/types';
 import type { ResearchProgress } from '../../../shared/researchProgress';
+import { clipLine } from '../../../shared/textBudget';
 import type { AgentTraceTurn } from '../store/useAgentRunStore';
 
 /** Matches the live trace's preview budget, so a reopened run reads the same as it did running. */
 const PREVIEW_CHARS = 200;
-
-function clip(text: string, limit: number): string {
-  const flat = text.replace(/\s+/g, ' ').trim();
-  return flat.length > limit ? `${flat.slice(0, limit - 1)}…` : flat;
-}
 
 /**
  * A saved run rendered in the same shape the live trace uses, so one row component serves both.
@@ -24,8 +20,8 @@ export function traceFromRun(
     tool: turn.tool,
     config: turn.config,
     status: turn.status,
-    ...(turn.thought ? { thought: clip(turn.thought, previewLimit) } : {}),
-    ...(turn.observation ? { preview: clip(turn.observation, previewLimit) } : {}),
+    ...(turn.thought ? { thought: clipLine(turn.thought, previewLimit) } : {}),
+    ...(turn.observation ? { preview: clipLine(turn.observation, previewLimit) } : {}),
     ...(turn.research ? { research: turn.research } : {}),
   }));
 }

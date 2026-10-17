@@ -1,12 +1,28 @@
 import { IPC } from '../../shared/types';
-import { botBuiltinAllowed, pairedMenuAccess } from '../botPermissions';
+import type { FlowExecutionResult } from '../../shared/types';
+import { BOT_MODEL_VARIABLE } from '../../shared/builtinFlows';
+import {
+  botAccessDeniedText,
+  botBuiltinAllowed,
+  botChatAllowed,
+  botDownloadAllowed,
+  botFlowAdminAllowed,
+  botFlowAllowed,
+  isBotGroupPending,
+  isBotUserBlocked,
+  notifyBotGroupJoined,
+  pairedMenuAccess,
+} from '../botPermissions';
 import { config, getHiddenSources, saveConfig } from '../config';
 import { resolveLlmDirectTarget } from '../providerCommands';
 import { relaunchApp, sendLog, sendToRenderer, createTaskId } from '../helpers';
-import { getLangCache } from '../i18n';
+import { getLangCache, t } from '../i18n';
+import { isFlowAdminOnly } from '../../shared/botCommandAccess';
 import { resolveUrlPrompt } from '../urlParser';
+import { withPublicWebOnly } from '../net/publicWebScope';
 import { TelegramRuntime, normalizePairingState, parseRecipientIds } from '../telegram';
 import { sweepOrphanTempAttachments } from '../telegram/fileDownload';
+import { registerTelegramLargeUploader } from '../telegram/mtproto';
 import {
   clearBotConversation,
   collectPairedUserIdsFromKeys,
@@ -30,7 +46,7 @@ import {
   setTelegramRuntimeSnapshot,
   exportTelegramResultDocument,
 } from '../telegramBridge';
-import { listBotContacts, listBotPairedContacts } from '../botDirectory';
+import { listBotContacts, listBotPairedContacts, recordBotUse } from '../botDirectory';
 import { appQueueState, type QueueManager } from '../queueManager';
 import type { FlowManager } from '../flow';
 
@@ -42,6 +58,16 @@ export function createTelegramRuntime(deps: {
 
   void sweepOrphanTempAttachments().then((removed) => {
     if (removed > 0) sendLog(`[telegram] swept ${removed} orphaned media temp file(s)`);
+  });
+
+  // Files over the Bot API's 50 MB go up over MTProto as the same bot (Settings › Telegram).
+  registerTelegramLargeUploader({
+    getCredentials: () => ({
+      apiId: config.telegram.apiId,
+      apiHash: config.telegram.apiHash,
+      botToken: config.telegram.botToken,
+    }),
+    log: sendLog,
   });
 
   return new TelegramRuntime({
@@ -63,12 +89,6 @@ export function createTelegramRuntime(deps: {
       saveConfig({ telegram: config.telegram });
       sendToRenderer(IPC.TELEGRAM_RUNTIME, getTelegramRuntimeSnapshot());
     },
-    getKnownUsers: () => config.telegram.knownUsers,
-    saveKnownUsers: (next) => {
-      config.telegram.knownUsers = next;
-      saveConfig({ telegram: config.telegram });
-      sendToRenderer(IPC.TELEGRAM_RUNTIME, getTelegramRuntimeSnapshot());
-    },
     getDirectorySources: async () => {
       const contacts = await listBotContacts({ platform: 'telegram', kind: 'chat' });
       const paired = await listBotPairedContacts('telegram');
@@ -82,6 +102,23 @@ export function createTelegramRuntime(deps: {
     },
     isAdminUser: (userId) => isTelegramAdminUser(userId),
     canUseBuiltin: (key, userId, chatId) => botBuiltinAllowed('telegram', key, String(userId), String(chatId)),
+    canUseDownloader: (userId, chatId) => botDownloadAllowed('telegram', String(userId), String(chatId)),
+    canChat: (userId, chatId) => botChatAllowed('telegram', String(userId), String(chatId)),
+    isFlowAdmin: (userId, chatId) => botFlowAdminAllowed('telegram', String(userId), String(chatId)),
+    isBlocked: (userId) => isBotUserBlocked('telegram', String(userId)),
+    isGroupPending: (chatId) => isBotGroupPending('telegram', String(chatId)),
+    onGroupJoined: (group) => {
+      if (notifyBotGroupJoined('telegram', group)) sendLog(`[telegram] added to group ${group.id} — waiting for approval in settings`);
+    },
+    onUse: (user, chatId) => {
+      void recordBotUse({
+        platform: 'telegram',
+        id: String(user.userId),
+        ...(user.username ? { username: user.username } : {}),
+        ...(user.firstName ? { firstName: user.firstName } : {}),
+        ...(user.lastName ? { lastName: user.lastName } : {}),
+      }, String(chatId)).catch(() => undefined);
+    },
     getMenuAccess: async () => (await pairedMenuAccess('telegram')).map((entry) => ({ ...entry, userId: Number(entry.userId) })),
     getEffectiveTargetUrl: () => resolveLlmDirectTarget(
       config.telegram.llmDirect,
@@ -90,12 +127,13 @@ export function createTelegramRuntime(deps: {
     getByokContextBudgetChars: () => config.byokContextBudgetChars,
     onTaskRequest: async (request) => {
       const requestTarget = request.targetUrl || config.targetUrl;
-      const resolved = await resolveUrlPrompt(request.prompt, {
+      // A link sent with a photo or file is read for the chat: the public web only.
+      const resolved = await withPublicWebOnly(() => resolveUrlPrompt(request.prompt, {
         langData: getLangCache(),
         youtubePrompt: config.youtubePrompt,
         targetUrl: requestTarget,
         onLog: sendLog,
-      });
+      }));
       const id = createTaskId();
       const sessionKey = botChatKey(
         'telegram',
@@ -188,33 +226,47 @@ export function createTelegramRuntime(deps: {
       botChatKey('telegram', String(chatId), String(userId)),
     ),
     getFlowCommands: () => getFlowManager()?.getBotCommands() ?? [],
-    onFlowCommand: async (flowId, inputVariable, input, userId, chatId) => {
+    onFlowCommand: async (flowId, inputVariable, input, userId, chatId, onProgress) => {
       const extraContext: Record<string, string> = {
         [inputVariable]: input,
         'bot.triggerChatId': String(chatId),
         'bot.triggerUserId': String(userId),
         'bot.triggerPlatform': 'telegram',
+        [BOT_MODEL_VARIABLE]: resolveLlmDirectTarget(config.telegram.llmDirect, getHiddenSources()).targetUrl,
       };
       const flowManager = getFlowManager();
-      if (!flowManager) {
-        return {
-          taskId: createTaskId(),
-          result: Promise.resolve({
-            flowId,
-            success: false,
-            outputs: {},
-            error: 'FlowManager not available',
-            completedSteps: 0,
-            totalSteps: 0,
-            completedAt: new Date().toISOString(),
-          }),
-        };
+      if (!flowManager) return notRun(flowId, 'FlowManager not available');
+      if (isFlowAdminOnly(flowManager.getBotCommands(), flowId)
+        && !(await botFlowAdminAllowed('telegram', String(userId), String(chatId)))) {
+        sendLog(`[Flow] Bot flow ${flowId} refused for user ${userId} in chat ${chatId} — limited to admins in a private chat`);
+        return notRun(flowId, 'Flow command limited to admins', t(getLangCache(), 'telegram.cmd.flowNotAllowed'));
       }
-      const execution = flowManager.queueExecutionWithId(flowId, extraContext, 'bot');
+      if (!(await botFlowAllowed('telegram', flowId, String(userId), String(chatId)))) {
+        sendLog(`[Flow] Bot flow ${flowId} refused for user ${userId} — no download grant`);
+        return notRun(flowId, 'Downloader not granted', botAccessDeniedText(getLangCache(), 'download'));
+      }
+      const execution = flowManager.queueExecutionWithId(flowId, extraContext, 'bot', onProgress);
       sendLog(`[Flow] Bot command triggered flow ${flowId} for user ${userId} with input: ${input}`);
       return execution;
     },
   });
+}
+
+/** A flow command that was never queued, reported the way a failed run is. */
+function notRun(flowId: string, error: string, displayError?: string): { taskId: string; result: Promise<FlowExecutionResult> } {
+  return {
+    taskId: createTaskId(),
+    result: Promise.resolve({
+      flowId,
+      success: false,
+      outputs: {},
+      error,
+      ...(displayError ? { displayError } : {}),
+      completedSteps: 0,
+      totalSteps: 0,
+      completedAt: new Date().toISOString(),
+    }),
+  };
 }
 
 function collectFlowRecipientIds(flowManager: FlowManager | null): number[] {

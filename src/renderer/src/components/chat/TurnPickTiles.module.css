@@ -1,0 +1,39 @@
+/* A menu item drawn as its picture (one of a person's stories): portrait, the label over its foot. */
+
+.tile {
+  position: relative;
+  width: 96px;
+  aspect-ratio: 9 / 16;
+  border-radius: var(--mantine-radius-md);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.tile:hover {
+  border-color: var(--mantine-color-border-hover);
+}
+
+.tile:hover .picture {
+  filter: brightness(1.08);
+}
+
+.picture {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* The label sits on the picture, not the theme: a dark fade keeps white text readable on any photo. */
+.label {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 18px 6px 5px;
+  background: linear-gradient(to top, rgb(0 0 0 / 72%), transparent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}

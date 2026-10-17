@@ -10,6 +10,7 @@ import {
   parseOnceDate,
   resolveScheduleMode,
 } from './flowScheduleCore';
+import { fillTemplate } from './fillTemplate';
 
 export type TranslateFn = (key: string) => string;
 
@@ -18,14 +19,6 @@ const WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
-
-/** The renderer's `t` has no interpolation, so placeholders are filled here. */
-function fill(template: string, vars: Record<string, string | number>): string {
-  return template.replace(/\{\{(\w+)\}\}/g, (match, name: string) => {
-    const value = vars[name];
-    return value === undefined ? match : String(value);
-  });
-}
 
 export function formatTimeOfDay(hour: number, minute: number): string {
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
@@ -67,32 +60,32 @@ function joinList(t: TranslateFn, items: string[]): string {
 
 function repeatLabel(t: TranslateFn, value: number, unit: 'minutes' | 'hours'): string {
   const key = unit === 'hours' ? 'flow.trigger.schedule.repeatHours' : 'flow.trigger.schedule.repeatMinutes';
-  return fill(t(key), { value });
+  return fillTemplate(t(key), { value });
 }
 
 function monthDayLabel(t: TranslateFn, day: number): string {
   if (day === LAST_DAY_OF_MONTH) return t('flow.trigger.schedule.lastDay');
-  return fill(t('flow.trigger.schedule.dayOfMonth'), { value: day });
+  return fillTemplate(t('flow.trigger.schedule.dayOfMonth'), { value: day });
 }
 
 function describeInterval(trigger: TriggerConfig, t: TranslateFn): string {
   const value = trigger.intervalValue ?? SCHEDULE_DEFAULTS.intervalValue;
   if ((trigger.intervalUnit ?? SCHEDULE_DEFAULTS.intervalUnit) === 'minutes') {
-    return fill(t('flow.trigger.schedule.summary.intervalMinutes'), { value });
+    return fillTemplate(t('flow.trigger.schedule.summary.intervalMinutes'), { value });
   }
   const offset = clampInteger(trigger.intervalMinuteOffset, 0, 59, SCHEDULE_DEFAULTS.intervalMinuteOffset);
-  if (offset === 0) return fill(t('flow.trigger.schedule.summary.intervalHours'), { value });
-  return fill(t('flow.trigger.schedule.summary.intervalHoursAt'), { value, minute: offset });
+  if (offset === 0) return fillTemplate(t('flow.trigger.schedule.summary.intervalHours'), { value });
+  return fillTemplate(t('flow.trigger.schedule.summary.intervalHoursAt'), { value, minute: offset });
 }
 
 function describeWeekly(trigger: TriggerConfig, t: TranslateFn, time: string): string {
   const days = joinList(t, normalizeWeekdays(trigger.weekdays).map((day) => weekdayLabel(t, day)));
   if (!trigger.repeatWithinDay) {
-    return fill(t('flow.trigger.schedule.summary.weekly'), { days, time });
+    return fillTemplate(t('flow.trigger.schedule.summary.weekly'), { days, time });
   }
   const endHour = clampInteger(trigger.endHour, 0, 23, SCHEDULE_DEFAULTS.endHour);
   const endMinute = clampInteger(trigger.endMinute, 0, 59, SCHEDULE_DEFAULTS.endMinute);
-  return fill(t('flow.trigger.schedule.summary.weeklyWindow'), {
+  return fillTemplate(t('flow.trigger.schedule.summary.weeklyWindow'), {
     days,
     start: time,
     end: formatTimeOfDay(endHour, endMinute),
@@ -114,17 +107,17 @@ export function describeSchedule(trigger: TriggerConfig, t: TranslateFn): string
   const minute = clampInteger(trigger.scheduleMinute, 0, 59, SCHEDULE_DEFAULTS.minute);
   const time = formatTimeOfDay(hour, minute);
 
-  if (mode === 'daily') return fill(t('flow.trigger.schedule.summary.daily'), { time });
+  if (mode === 'daily') return fillTemplate(t('flow.trigger.schedule.summary.daily'), { time });
   if (mode === 'weekly') return describeWeekly(trigger, t, time);
 
   if (mode === 'monthly') {
     const days = joinList(t, normalizeMonthDays(trigger.monthDays).map((day) => monthDayLabel(t, day)));
-    return fill(t('flow.trigger.schedule.summary.monthly'), { days, time });
+    return fillTemplate(t('flow.trigger.schedule.summary.monthly'), { days, time });
   }
 
   if (mode === 'yearly') {
     const month = clampInteger(trigger.scheduleMonth, 1, 12, SCHEDULE_DEFAULTS.month);
-    return fill(t('flow.trigger.schedule.summary.yearly'), {
+    return fillTemplate(t('flow.trigger.schedule.summary.yearly'), {
       month: t(`flow.trigger.schedule.month.${month}`),
       day: monthDayLabel(t, clampInteger(trigger.scheduleDay, 1, 31, SCHEDULE_DEFAULTS.day)),
       time,
@@ -133,14 +126,14 @@ export function describeSchedule(trigger: TriggerConfig, t: TranslateFn): string
 
   const once = parseOnceDate(trigger.onceDate);
   if (!once) return t('flow.trigger.schedule.noRun');
-  return fill(t('flow.trigger.schedule.summary.once'), {
-    date: fill(t('flow.trigger.schedule.dateFull'), { year: once.year, month: once.month, day: once.day }),
+  return fillTemplate(t('flow.trigger.schedule.summary.once'), {
+    date: fillTemplate(t('flow.trigger.schedule.dateFull'), { year: once.year, month: once.month, day: once.day }),
     time,
   });
 }
 
 export function formatRunTime(t: TranslateFn, date: Date): string {
-  return fill(t('flow.trigger.schedule.nextRunItem'), {
+  return fillTemplate(t('flow.trigger.schedule.nextRunItem'), {
     month: date.getMonth() + 1,
     day: date.getDate(),
     weekday: weekdayLabel(t, date.getDay()),
@@ -152,12 +145,12 @@ export function formatRelativeTime(t: TranslateFn, date: Date, now: Date = new D
   const delta = date.getTime() - now.getTime();
   if (delta < MINUTE_MS) return t('flow.trigger.schedule.relative.now');
   if (delta < HOUR_MS) {
-    return fill(t('flow.trigger.schedule.relative.minutes'), { value: Math.round(delta / MINUTE_MS) });
+    return fillTemplate(t('flow.trigger.schedule.relative.minutes'), { value: Math.round(delta / MINUTE_MS) });
   }
   if (delta < DAY_MS) {
-    return fill(t('flow.trigger.schedule.relative.hours'), { value: Math.round(delta / HOUR_MS) });
+    return fillTemplate(t('flow.trigger.schedule.relative.hours'), { value: Math.round(delta / HOUR_MS) });
   }
-  return fill(t('flow.trigger.schedule.relative.days'), { value: Math.round(delta / DAY_MS) });
+  return fillTemplate(t('flow.trigger.schedule.relative.days'), { value: Math.round(delta / DAY_MS) });
 }
 
 export function scheduleWarningKey(trigger: TriggerConfig, now: Date = new Date()): string | null {

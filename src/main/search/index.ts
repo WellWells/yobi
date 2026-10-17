@@ -15,6 +15,7 @@ import { isLeanPromptProvider, quickSynthesisBudget, reserveForHistory, synthesi
 import type { SynthesisBudget } from './budgets';
 import { charsPlusBreaks, utf8Len } from '../../shared/textBudget';
 import { isFetchableWebUrl } from '../../shared/webUrl';
+import { citationHost } from '../../shared/citations';
 import { buildCitedPrompt, linkifyCitations, synthesize } from './synthesize';
 import type { QueryPlan, SearchOutcome, SerpHit, SourceDoc, TemporalFilter } from './types';
 import type { ResearchPhaseId } from '../../shared/researchProgress';
@@ -50,14 +51,6 @@ const QUICK_MAX_SOURCES = 2;
 
 function preview(text: string): string {
   return text.length > 80 ? `${text.slice(0, 80)}…` : text;
-}
-
-function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, '');
-  } catch {
-    return url;
-  }
 }
 
 function interleave<T>(lists: T[][]): T[] {
@@ -327,9 +320,9 @@ export async function runWebSearch(
   const docs = await harvest(
     targets,
     maxSources,
-    (url) => onProgress?.({ stage: 'read', host: hostOf(url) }),
+    (url) => onProgress?.({ stage: 'read', host: citationHost(url) }),
     mapper ? (doc) => mapper.enqueue(doc) : undefined,
-    (url) => onProgress?.({ stage: 'readFailed', host: hostOf(url) }),
+    (url) => onProgress?.({ stage: 'readFailed', host: citationHost(url) }),
   );
   if (docs.length === 0) {
     throw new SearchPipelineError('search.error.noSources', 'No source pages could be read');
@@ -393,9 +386,9 @@ async function runOverGivenUrls(
   const docs = await harvest(
     unique.map((url) => ({ title: url, url })),
     maxSources,
-    (url) => onProgress?.({ stage: 'read', host: hostOf(url) }),
+    (url) => onProgress?.({ stage: 'read', host: citationHost(url) }),
     undefined,
-    (url) => onProgress?.({ stage: 'readFailed', host: hostOf(url) }),
+    (url) => onProgress?.({ stage: 'readFailed', host: citationHost(url) }),
   );
   if (docs.length === 0) {
     throw new SearchPipelineError('search.error.noSources', 'No source pages could be read');

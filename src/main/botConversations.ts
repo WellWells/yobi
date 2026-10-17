@@ -74,8 +74,8 @@ export async function getBotConversation(chatKey: string, now = Date.now()): Pro
     return null;
   }
   if (now - lastAt < BOT_CONVERSATION_IDLE_MS) return conversationPath;
-  // The entry stays until the new file replaces it: the keys double as the record of who was once
-  // paired (listBotConversationKeys), and a reply that fails must not erase that.
+  // The entry stays until the new file replaces it: the private-chat keys double as the record of
+  // who was once paired (collectPairedUserIdsFromKeys), and a reply that fails must not erase that.
   sendLog(`[Bot] ${chatKey} idle since ${new Date(lastAt).toISOString()} — starting a new conversation`);
   return null;
 }
@@ -97,8 +97,9 @@ export async function clearBotConversation(chatKey: string): Promise<boolean> {
 }
 
 /**
- * A key only lands here after handleDirectMessage cleared isPairedUser, so the store is also the
- * only surviving record of which accounts once held a pairing.
+ * Every saved key: one per private chat and one per person per group. A group key is written for
+ * anyone the group's grants let talk to the bot, paired or not, so only the private-chat keys say
+ * anything about who once held a pairing (`collectPairedUserIdsFromKeys`).
  */
 export async function listBotConversationKeys(): Promise<string[]> {
   return Object.keys(await load());
@@ -114,11 +115,16 @@ export function parseBotChatKey(
   return { platform, chatId, userId };
 }
 
+/**
+ * The accounts a private-chat key (chat id = user id) shows were once paired: only a paired account
+ * gets a run in its private chat. A group key proves nothing — unpaired members get runs there
+ * through the group's grants — so reading it as a pairing would re-pair strangers on the next start.
+ */
 export function collectPairedUserIdsFromKeys(keys: string[], platform: BotPlatform): number[] {
   const ids = new Set<number>();
   for (const key of keys) {
     const parsed = parseBotChatKey(key);
-    if (!parsed || parsed.platform !== platform) continue;
+    if (!parsed || parsed.platform !== platform || parsed.chatId !== parsed.userId) continue;
     const userId = Number(parsed.userId);
     if (!Number.isFinite(userId) || userId <= 0) continue;
     ids.add(userId);

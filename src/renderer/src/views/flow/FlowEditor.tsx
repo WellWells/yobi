@@ -3,17 +3,20 @@ import {
   ActionIcon, Badge, Box, Button, Flex, Group, Loader, Menu, Stack, Text, Tooltip,
 } from '@mantine/core';
 import {
-  ArrowDown, ArrowUp, Copy, Download, MoreVertical, Play, RotateCcw, Save, Square, Trash2,
+  ArrowDown, ArrowUp, Copy, History, MoreVertical, Play, RotateCcw, Save, Square, Trash2, Upload,
 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useFlowStore } from '../../store/useFlowStore';
 import { AppTextarea } from '../../components/AppTextarea';
 import { AppTextInput } from '../../components/AppTextInput';
+import { PANEL_TOOLBAR_PY } from '../../components/PanelToolbar';
 import { SectionCard } from '../../components/SectionCard';
 import { ExecutionResultPanel } from './ExecutionResultPanel';
 import { FlowStepsCard } from './FlowStepsCard';
 import { FlowVariablesPanel } from './FlowVariablesPanel';
 import { TriggerEditor } from './TriggerEditor';
+import { FlowVersionsDialog } from './FlowVersionsDialog';
+import { runSkillAddHook } from './skillAddHooks';
 import type { FlowDefinition, FlowVariable, SkillType } from '../../../../shared/types';
 import { useShortcutAction } from '../../shortcuts/useShortcutAction';
 
@@ -53,6 +56,7 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const [isPinned, setIsPinned] = useState(false);
+  const [versionsOpen, setVersionsOpen] = useState(false);
   const savedFlow = savedFlows[flow.id];
   const savedFlowJson = useMemo(() => savedFlow ? JSON.stringify(savedFlow) : null, [savedFlow]);
   const isDirty = useMemo(() => {
@@ -98,7 +102,10 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
     if (isDirty) void handleSave();
   }, 'flow');
 
-  const handleAddStep = useCallback((type: SkillType) => { addStep(flow.id, type); }, [addStep, flow.id]);
+  const handleAddStep = useCallback((type: SkillType) => {
+    addStep(flow.id, type);
+    runSkillAddHook(type);
+  }, [addStep, flow.id]);
   const handleVariablesChange = useCallback((variables: FlowVariable[]) => {
     updateFlow({ ...flow, variables });
   }, [flow, updateFlow]);
@@ -115,7 +122,7 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
           borderBottom: isPinned ? '1px solid var(--mantine-color-default-border)' : '1px solid transparent',
         }}
       >
-        <Box maw={560} mx="auto" px="20px" py="12px">
+        <Box maw={560} mx="auto" px="20px" py={PANEL_TOOLBAR_PY}>
           <Group justify="flex-end" align="center" wrap="nowrap">
             {isDirty ? (
               <Badge color="var(--mantine-color-warning)" variant="light">{t('flow.unsaved')}</Badge>
@@ -165,7 +172,8 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Item leftSection={<Copy size={14} />} onClick={onDuplicate}>{t('flow.duplicateFlow')}</Menu.Item>
-                <Menu.Item leftSection={<Download size={14} />} onClick={onExport}>{t('flow.exportFlow')}</Menu.Item>
+                <Menu.Item leftSection={<Upload size={14} />} onClick={onExport}>{t('flow.exportFlow')}</Menu.Item>
+                <Menu.Item leftSection={<History size={14} />} onClick={() => setVersionsOpen(true)}>{t('flow.versions.open')}</Menu.Item>
                 <Menu.Item leftSection={<ArrowUp size={14} />} disabled={!canMoveUp} onClick={onMoveUp}>{t('flow.flow.moveUp')}</Menu.Item>
                 <Menu.Item leftSection={<ArrowDown size={14} />} disabled={!canMoveDown} onClick={onMoveDown}>{t('flow.flow.moveDown')}</Menu.Item>
                 <Menu.Divider />
@@ -224,6 +232,14 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
           </Box>
         </Box>
       </Box>
+      <FlowVersionsDialog
+        open={versionsOpen}
+        onClose={() => setVersionsOpen(false)}
+        flowId={flow.id}
+        flowName={flow.name}
+        dirty={isDirty}
+        t={t}
+      />
     </Flex>
   );
 };

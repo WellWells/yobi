@@ -17,9 +17,10 @@
  * delimiter.
  */
 
+import { MAX_FENCE_INDENT, closesFence, parseFenceOpen } from './markdownFences';
+import type { FenceOpen } from './markdownFences';
+
 const MASK = '\u0000';
-const MAX_FENCE_INDENT = 3;
-const MIN_FENCE_LENGTH = 3;
 
 const ALNUM = /[0-9A-Za-z]/;
 const DIGIT = /[0-9]/;
@@ -32,32 +33,6 @@ const SPACE = /\s/;
  * deliberately absent — `$\alpha \le \beta$` is exactly what this is for.
  */
 const BODY_VETO = /[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef\u0000\n]|\]\(/;
-
-interface Fence {
-  marker: string;
-  length: number;
-}
-
-function parseFenceOpen(line: string): Fence | null {
-  const indent = line.length - line.trimStart().length;
-  if (indent > MAX_FENCE_INDENT) return null;
-  const marker = line[indent];
-  if (marker !== '`' && marker !== '~') return null;
-  let length = 0;
-  while (line[indent + length] === marker) length += 1;
-  if (length < MIN_FENCE_LENGTH) return null;
-  if (marker === '`' && line.slice(indent + length).includes('`')) return null;
-  return { marker, length };
-}
-
-function closesFence(line: string, open: Fence): boolean {
-  const indent = line.length - line.trimStart().length;
-  if (indent > MAX_FENCE_INDENT) return false;
-  let length = 0;
-  while (line[indent + length] === open.marker) length += 1;
-  if (length < open.length) return false;
-  return line.slice(indent + length).trim() === '';
-}
 
 /** Finds the run of exactly `length` backticks that closes a code span. */
 function findCodeSpanEnd(line: string, from: number, length: number): number {
@@ -110,7 +85,7 @@ function maskInlineCode(line: string): string {
  * the same length, so positions found in it index straight back into the original.
  */
 function maskCode(markdown: string): string {
-  let fence: Fence | null = null;
+  let fence: FenceOpen | null = null;
   return markdown
     .split('\n')
     .map((line) => {
@@ -224,6 +199,62 @@ export function promoteDisplayMath(markdown: string): string {
   });
 
   return changed ? out.join('\n') : markdown;
+}
+
+export interface TextSpan {
+  start: number;
+  end: number;
+}
+
+/** Each run of code (a code span, or a fenced line) as a span of the source, in order. */
+export function codeSpans(markdown: string): TextSpan[] {
+  const masked = maskCode(markdown);
+  const spans: TextSpan[] = [];
+  let start = -1;
+  for (let i = 0; i <= masked.length; i++) {
+    const isCode = i < masked.length && masked[i] === MASK && markdown[i] !== MASK;
+    if (isCode && start < 0) start = i;
+    if (!isCode && start >= 0) {
+      spans.push({ start, end: i });
+      start = -1;
+    }
+  }
+  return spans;
+}
+
+/**
+ * Every formula the renderer would draw, as spans of the source: `$$…$$` (on one line or across
+ * lines) and the single-`$` spans `promoteInlineMath` would promote. Code is never math.
+ */
+export function mathSpans(markdown: string): TextSpan[] {
+  if (!markdown.includes('$')) return [];
+  const masked = maskCode(markdown);
+  const spans: TextSpan[] = [];
+  let index = 0;
+  while (index < masked.length) {
+    const open = nextDollar(masked, index);
+    if (open < 0) break;
+    if (masked[open + 1] === '$') {
+      const end = masked.indexOf('$$', open + 2);
+      if (end < 0) {
+        index = open + 2;
+        continue;
+      }
+      if (!masked.slice(open + 2, end).includes(MASK) && masked.slice(open + 2, end).trim()) {
+        spans.push({ start: open, end: end + 2 });
+      }
+      index = end + 2;
+      continue;
+    }
+    const close = closerFor(masked, open);
+    if (close < 0) {
+      index = open + 1;
+      continue;
+    }
+    spans.push({ start: open, end: close + 1 });
+    index = close + 1;
+  }
+  return spans;
 }
 
 export function promoteInlineMath(markdown: string): string {

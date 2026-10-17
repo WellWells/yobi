@@ -1,10 +1,11 @@
 import { session } from 'electron';
 import { IPC, SITE_ACCOUNTS, SITE_ACCOUNT_LABELS } from '../shared/types';
+import { bySite } from '../shared/siteConnectors';
 import type { SiteAccount, SiteAccountStatus } from '../shared/types';
 import { isExpiredCookie, sendLog, sendToRenderer, sendWebNotification } from './helpers';
 import { getLangCache, t } from './i18n';
 import { openSignInWindow } from './signInWindow';
-import { CLEAN_UA } from './userAgent';
+import { prepareSiteWindow } from './siteWindowIdentity';
 
 interface SiteSpec {
   partition: string;
@@ -14,6 +15,7 @@ interface SiteSpec {
   sessionCookie: string;
 }
 
+// X is hand-wired; every other sign-in site is a row of the connector table.
 const SITES: Record<SiteAccount, SiteSpec> = {
   x: {
     partition: 'persist:x',
@@ -21,6 +23,7 @@ const SITES: Record<SiteAccount, SiteSpec> = {
     cookieUrl: 'https://x.com/',
     sessionCookie: 'auth_token',
   },
+  ...bySite(({ partition, loginUrl, cookieUrl, sessionCookie }) => ({ partition, loginUrl, cookieUrl, sessionCookie })),
 };
 
 /** For factory reset and session setup; one partition per site, never shared with the AI worker. */
@@ -40,6 +43,12 @@ export async function getAllSiteAccountStatuses(): Promise<SiteAccountStatus[]> 
   return Promise.all(SITE_ACCOUNTS.map(async (site) => ({ site, loggedIn: await getSiteAccountStatus(site) })));
 }
 
+/*
+ * The sign-in window, and any hidden window Yobi reads the signed-in site in (an Instagram
+ * profile), get the Chrome identity first; it lives in `siteWindowIdentity.ts`.
+ */
+export { prepareSiteWindow };
+
 function broadcast(site: SiteAccount, loggedIn: boolean): void {
   const status: SiteAccountStatus = { site, loggedIn };
   sendToRenderer(IPC.SITE_ACCOUNT_STATUS_CHANGED, status);
@@ -54,7 +63,7 @@ export async function openSiteAccountLogin(site: SiteAccount): Promise<boolean> 
     title: t(strings, 'settings.accounts.loginWindow.title', { provider: label }),
     partition: SITES[site].partition,
     url: SITES[site].loginUrl,
-    prepare: (contents) => contents.setUserAgent(CLEAN_UA),
+    prepare: (contents) => prepareSiteWindow(contents, label),
     afterLoad: async () => {
       sendLog(t(strings, 'settings.accounts.login.opened', { provider: label }));
     },

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Group, Stack, Text, Button as MButton } from '@mantine/core';
-import { KeyRound, Lock, MessageSquare, Plug, RefreshCw, Server, Users } from 'lucide-react';
+import { KeyRound, Lock, MessageSquare, Plug, RefreshCw, Server, Users, UsersRound } from 'lucide-react';
 import { AppPasswordInput } from '../../../components/AppPasswordInput';
 import { AppButton } from '../../../components/AppButton';
 import { AppNumberInput } from '../../../components/AppNumberInput';
@@ -12,6 +12,7 @@ import { SecretHealthAlert } from '../../../components/SecretHealthAlert';
 import { LineAccountAlerts } from './LineAccountAlerts';
 import { LinePairingPanel } from './LinePairingPanel';
 import { LinePairedUsers } from './LinePairedUsers';
+import { BotAudienceSection } from './BotAudienceSection';
 import { LineWebhookGuide } from './LineWebhookGuide';
 import type { useLineSettings } from '../hooks/useLineSettings';
 import type { BotAccessControls } from '../hooks/useBotAccessControls';
@@ -236,6 +237,11 @@ export const LineSection: React.FC<Props> = ({ line, access, t, showSection, isS
                 t={t}
               />
             </Stack>
+
+            <SettingDivider my={16} />
+
+            <SectionTitle icon={<UsersRound size={15} />} label={t('settings.bot.group.title')} />
+            <BotAudienceSection platform="line" connectors={access.connectors} refreshKey={settings} t={t} />
 
             <SettingDivider my={16} />
 

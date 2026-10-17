@@ -238,6 +238,9 @@ async function runCapture(): Promise<string> {
           'powershell.exe',
           ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command',
             'Add-Type -A System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait("^c")'],
+          // -WindowStyle Hidden only applies after the console exists, so without
+          // windowsHide the console window flashes on screen at every hotkey press.
+          { windowsHide: true },
           () => void pollClipboard(finish),
         );
     }

@@ -1,11 +1,9 @@
 import { ipcMain } from 'electron';
-import { IPC, PROVIDER_URLS } from '../../shared/types';
+import { IPC } from '../../shared/types';
 import type { ChatgptModelChoice, ChatgptModelState } from '../../shared/chatgptModels';
-import { isModelCatalogStale } from '../../shared/modelCatalogFreshness';
 import { config } from '../config';
-import { sendLog } from '../helpers';
 import { llmLane } from '../flow/lanes';
-import { ensureWorkerWindow, getWorkerWin, isWorkerRevealed } from '../windows';
+import { getWorkerWin } from '../windows';
 import { getAccountStatus } from '../providers/authStatus';
 import {
   getChatgptModelState,
@@ -13,25 +11,14 @@ import {
   setChatgptModelChoice,
   syncChatgptModelIfParked,
 } from '../providers/chatgptModelSync';
+import { refreshModelList } from './modelListRefresh';
 
-/**
- * Reads the signed-in account's controls into the cache. Skipped for anyone who hid ChatGPT or is
- * not signed in: the signed-out page has controls of its own that belong to no plan.
- */
-export async function refreshChatgptModelList(force = false): Promise<void> {
-  if (config.hiddenProviders.includes('chatgpt')) return;
-  if (!force && !isModelCatalogStale(config.chatgptModelCatalog)) return;
-  if (!(await getAccountStatus('chatgpt'))) return;
-  await llmLane.runExclusive(async () => {
-    if (!force && !isModelCatalogStale(config.chatgptModelCatalog)) return;
-    if (!force && isWorkerRevealed()) return; // see refreshGeminiModelList
-    try {
-      const worker = await ensureWorkerWindow(PROVIDER_URLS.chatgpt);
-      if (worker) await refreshChatgptModels(worker);
-    } catch (err) {
-      sendLog(`⚠️ Could not read ChatGPT's model list: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  });
+/** Reads the signed-in account's controls into the cache when they are missing or stale (or `force`). */
+export function refreshChatgptModelList(force = false): Promise<void> {
+  return refreshModelList(
+    { provider: 'chatgpt', catalog: () => config.chatgptModelCatalog, refresh: refreshChatgptModels, requireSignIn: true },
+    force,
+  );
 }
 
 export function registerChatgptModelHandlers(): void {

@@ -4,9 +4,12 @@ import type { AccountStatus, AuthProvider, HiddenSources, OutputFile, Provider, 
 import type { GeminiModelState } from '../../../shared/geminiModels';
 import type { ClaudeModelState } from '../../../shared/claudeModels';
 import type { ChatgptModelState } from '../../../shared/chatgptModels';
+import type { StepProgress } from '../../../shared/stepProgress';
 import { parseMarkdownBlocks, conversationAliases } from '../utils/parseMarkdownBlocks';
 import type { MarkdownBlocks } from '../utils/parseMarkdownBlocks';
 import { parseConversationDoc } from '../../../shared/conversationDoc';
+import { rememberLastActivity } from '../utils/lastActivity';
+import { notionConversation } from '../../../shared/notion/notionDoc';
 import type { ConversationDoc } from '../../../shared/conversationDoc';
 import { DEFAULT_MODEL_URL } from '../config/models';
 import type { ModelOption } from '../config/models';
@@ -31,6 +34,10 @@ export interface PendingTurn {
   prompt: string;
   runId?: string;
   attachments?: string[];
+  /** A flow command: no model is thinking, so the bubble says it is running. */
+  command?: boolean;
+  /** Where a step of that flow is, as it last reported (a download's percentage). */
+  progress?: StepProgress;
 }
 
 export type View = 'chat' | 'settings' | 'about' | 'logs' | 'flow';
@@ -127,6 +134,7 @@ interface AppState {
   setFileContent: (content: string | null) => void;
   addPendingTurn: (conversationPath: string, turn: PendingTurn) => void;
   clearPendingTurn: (sendId: string) => void;
+  setPendingTurnProgress: (sendId: string, progress: StepProgress) => void;
   setTempChatMode: (enabled: boolean) => void;
   setTempChatResult: (content: string) => void;
   setView: (view: View) => void;
@@ -209,35 +217,38 @@ export const useAppStore = create<AppState>((set) => ({
       return { logs: logs.slice(LOG_BUFFER_TRIM) };
     }),
   clearLogs: () => set({ logs: [] }),
-  setFiles: (files, options) => set((state) => {
-    const existingPaths = new Set(state.files.map((file) => file.path));
-    const incomingPaths = new Set(files.map((file) => file.path));
-    const nextUnread: Record<string, true> = {};
+  setFiles: (files, options) => {
+    rememberLastActivity(files);
+    set((state) => {
+      const existingPaths = new Set(state.files.map((file) => file.path));
+      const incomingPaths = new Set(files.map((file) => file.path));
+      const nextUnread: Record<string, true> = {};
 
-    for (const filePath of Object.keys(state.unreadFilePaths)) {
-      if (incomingPaths.has(filePath)) nextUnread[filePath] = true;
-    }
+      for (const filePath of Object.keys(state.unreadFilePaths)) {
+        if (incomingPaths.has(filePath)) nextUnread[filePath] = true;
+      }
 
-    if (options?.markUnread) {
-      for (const file of files) {
-        const isNewPath = !existingPaths.has(file.path);
-        // A bot chat's file carries its chat ahead of the stamp (`tg-Alice-2026-…`).
-        const isGeneratedOutput = /(?:^|-)\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}\.md$/i.test(file.name);
-        if (isNewPath && isGeneratedOutput && file.path !== state.selectedFile?.path) {
-          nextUnread[file.path] = true;
+      if (options?.markUnread) {
+        for (const file of files) {
+          const isNewPath = !existingPaths.has(file.path);
+          // A bot chat's file carries its chat ahead of the stamp (`tg-Alice-2026-…`).
+          const isGeneratedOutput = /(?:^|-)\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}\.md$/i.test(file.name);
+          if (isNewPath && isGeneratedOutput && file.path !== state.selectedFile?.path) {
+            nextUnread[file.path] = true;
+          }
         }
       }
-    }
 
-    // A selected file no longer listed was deleted (e.g. the placeholder main unlinks when a first turn
-    // fails); drop it so rename, share and show-in-folder don't target a missing path.
-    const selectionGone = Boolean(state.selectedFile) && !incomingPaths.has(state.selectedFile!.path);
-    const cleared = selectionGone
-      ? { selectedFile: null, fileContent: null, parsedBlocks: null, conversation: null }
-      : {};
+      // A selected file no longer listed was deleted (e.g. the placeholder main unlinks when a first turn
+      // fails); drop it so rename, share and show-in-folder don't target a missing path.
+      const selectionGone = Boolean(state.selectedFile) && !incomingPaths.has(state.selectedFile!.path);
+      const cleared = selectionGone
+        ? { selectedFile: null, fileContent: null, parsedBlocks: null, conversation: null }
+        : {};
 
-    return { files, unreadFilePaths: nextUnread, ...cleared };
-  }),
+      return { files, unreadFilePaths: nextUnread, ...cleared };
+    });
+  },
   selectFile: (selectedFile) => set((state) => {
     const samePath = Boolean(selectedFile?.path) && selectedFile?.path === state.selectedFile?.path;
     const content = samePath
@@ -253,7 +264,9 @@ export const useAppStore = create<AppState>((set) => ({
   setFileContent: (fileContent) => set({
     fileContent,
     parsedBlocks: fileContent !== null ? parseMarkdownBlocks(fileContent) : null,
-    conversation: fileContent !== null ? parseConversationDoc(fileContent, conversationAliases()) : null,
+    conversation: fileContent !== null
+      ? notionConversation(fileContent) ?? parseConversationDoc(fileContent, conversationAliases())
+      : null,
   }),
   addPendingTurn: (conversationPath, turn) => set((state) => ({
     pendingTurns: {
@@ -268,6 +281,18 @@ export const useAppStore = create<AppState>((set) => ({
       if (remaining.length > 0) pendingTurns[key] = remaining;
     }
     return { pendingTurns };
+  }),
+  setPendingTurnProgress: (sendId, progress) => set((state) => {
+    let changed = false;
+    const pendingTurns: Record<string, PendingTurn[]> = {};
+    for (const [key, turns] of Object.entries(state.pendingTurns)) {
+      pendingTurns[key] = turns.map((turn) => {
+        if (turn.sendId !== sendId) return turn;
+        changed = true;
+        return { ...turn, progress };
+      });
+    }
+    return changed ? { pendingTurns } : state;
   }),
   setTempChatMode: (tempChatMode) => set(tempChatMode
     ? { tempChatMode }

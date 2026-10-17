@@ -76,9 +76,11 @@ export const llmLane = new Mutex();
 export const clipboardLane = new Mutex();
 export const pageFetchLane = new Mutex();
 /**
- * Serializes YouTube transcript fetches: they share the `persist:youtube` partition, and a retry
+ * Serializes YouTube transcript fetches and timed-caption reads: they share the `persist:youtube` partition, and a retry
  * calls `clearStorageData()` on it, which would wipe another fetch's cookies mid-flight.
  * A fetch caps at 135 s and the step at 300 s, so one queued fetch fits; three-way contention can
  * time out a step that was only waiting (the step is fail-soft).
  */
 export const youtubeLane = new Mutex();
+/** The session every YouTube page Yobi reads opens in (transcripts, timed captions); only under `youtubeLane`. */
+export const YOUTUBE_PARTITION = 'persist:youtube';

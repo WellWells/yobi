@@ -5,6 +5,7 @@ import type { ConversationImportResult } from '../shared/types';
 import { writeFileAtomic } from './atomicWrite';
 import { buildOutputFile, buildSafeFileNameFromTitle, getUniquePath } from './files';
 import type { ConversationHeadingAliases } from '../shared/conversationDoc';
+import { comparableConversationText, withoutConversationId } from '../shared/conversationHistory';
 
 export const IMPORTABLE_EXTENSIONS: ReadonlySet<string> = new Set(['.md', '.markdown']);
 /** A conversation this size is already thousands of turns; anything bigger is not one. */
@@ -19,23 +20,13 @@ function isInside(dir: string, target: string): boolean {
   return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
-const THREAD_MARKER_LINE = /^<!--\s*yobi:thread\b.*-->[ \t]*$/gm;
-
-/**
- * Opening a conversation stamps its thread marker, with a blank line, under the title (the
- * composer remembers the conversation's modes in it), so a copy that has been opened once no
- * longer matches its source byte for byte.
- */
-function withoutThreadMarker(content: string): string {
-  return content.replace(/\r\n/g, '\n').replace(THREAD_MARKER_LINE, '').replace(/\n{3,}/g, '\n\n');
-}
-
 /**
  * An earlier import of the same file, under any name this module could have given it:
- * `stem.md`, `stem-<stamp>.md`, or either with getUniquePath's ` (2)`.
+ * `stem.md`, `stem-<stamp>.md`, or either with getUniquePath's ` (2)`. Opening a copy stamps its
+ * thread marker (with a blank line) under the title, so copies are compared as a reader sees them.
  */
 async function findEarlierCopy(root: string, stem: string, content: string): Promise<string | null> {
-  const wanted = withoutThreadMarker(content);
+  const wanted = comparableConversationText(content);
   let names: string[];
   try {
     names = await fs.readdir(root);
@@ -47,7 +38,7 @@ async function findEarlierCopy(root: string, stem: string, content: string): Pro
   for (const name of candidates) {
     const candidate = path.join(root, name);
     try {
-      if (withoutThreadMarker(await fs.readFile(candidate, 'utf-8')) === wanted) return candidate;
+      if (comparableConversationText(await fs.readFile(candidate, 'utf-8')) === wanted) return candidate;
     } catch {
     }
   }
@@ -77,8 +68,8 @@ function targetFileName(
 /**
  * Copies dropped Markdown files into the outputs folder, where the conversation list reads
  * them. Files already in that folder (a row dragged out and straight back in) and a file an
- * earlier drop already copied in, byte for byte, are reported as `existing` and opened instead,
- * so a second drop of the same note does not grow a twin.
+ * earlier drop already copied in (the same text once the markers opening adds are ignored) are
+ * reported as `existing` and opened instead, so a second drop of the same note does not grow a twin.
  */
 export async function importConversationFiles(
   sourcePaths: unknown,
@@ -122,7 +113,8 @@ export async function importConversationFiles(
       }
       await fs.mkdir(root, { recursive: true });
       const target = await getUniquePath(path.join(root, targetFileName(source, content, root, aliases)), '');
-      await writeFileAtomic(target, content);
+      // A copy starts its own version history: sharing the source's id would mix the two.
+      await writeFileAtomic(target, withoutConversationId(content));
       outcome.imported.push(target);
     } catch {
       outcome.failed += 1;

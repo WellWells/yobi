@@ -3,8 +3,8 @@ import { config, normalizeGeminiModelChoice, saveConfig } from '../config';
 import { sendLog, sendToRenderer } from '../helpers';
 import { WORKER_USER_AGENTS } from '../userAgent';
 import { applyWorkerUserAgent } from '../clientHints';
-import { navigateAndWait, sleep } from './common';
-import { countElements } from './automationExecutor';
+import { isProviderHost, navigateAndWait, sleep } from './common';
+import { countElements, executeWithTimeout } from './automationExecutor';
 import { IPC, PROVIDER_URLS } from '../../shared/types';
 import { needsModelCatalogRestamp } from '../../shared/modelCatalogFreshness';
 import {
@@ -44,18 +44,7 @@ export function setGeminiModelChoice(patch: Partial<GeminiModelChoice>): GeminiM
 }
 
 async function runPicker(wc: WebContents, target: GeminiPickerTarget | null): Promise<GeminiPickerResult> {
-  let timer!: ReturnType<typeof setTimeout>;
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error(`timed out after ${PICKER_TIMEOUT_MS} ms`)), PICKER_TIMEOUT_MS);
-  });
-  try {
-    return (await Promise.race([
-      wc.executeJavaScript(buildGeminiModelPickerScript(target), true),
-      timeout,
-    ])) as GeminiPickerResult;
-  } finally {
-    clearTimeout(timer);
-  }
+  return executeWithTimeout<GeminiPickerResult>(wc, buildGeminiModelPickerScript(target), PICKER_TIMEOUT_MS);
 }
 
 /** Keeps the catalog and the setting in step with what the page just showed. */
@@ -132,14 +121,6 @@ export async function syncGeminiModel(wc: WebContents): Promise<void> {
   }
 }
 
-export function isGeminiPage(url: string): boolean {
-  try {
-    return new URL(url).hostname === new URL(PROVIDER_URLS.gemini).hostname;
-  } catch {
-    return false;
-  }
-}
-
 async function waitForPicker(wc: WebContents, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline && (await countElements(wc, GEMINI_MODE_BUTTON_SELECTOR)) === 0) {
@@ -153,7 +134,7 @@ async function waitForPicker(wc: WebContents, timeoutMs: number): Promise<void> 
  */
 export async function refreshGeminiModels(workerWin: BrowserWindow): Promise<void> {
   const wc = workerWin.webContents;
-  if (!isGeminiPage(wc.getURL()) || wc.isLoading()) {
+  if (!isProviderHost(wc.getURL(), 'gemini') || wc.isLoading()) {
     applyWorkerUserAgent(wc, WORKER_USER_AGENTS.gemini);
     await navigateAndWait(wc, PROVIDER_URLS.gemini);
   }
@@ -169,6 +150,6 @@ export async function refreshGeminiModels(workerWin: BrowserWindow): Promise<voi
 export async function syncGeminiModelIfParked(workerWin: BrowserWindow | null): Promise<void> {
   if (!workerWin || workerWin.isDestroyed()) return;
   const wc = workerWin.webContents;
-  if (wc.isLoading() || !isGeminiPage(wc.getURL())) return;
+  if (wc.isLoading() || !isProviderHost(wc.getURL(), 'gemini')) return;
   await syncGeminiModel(wc);
 }

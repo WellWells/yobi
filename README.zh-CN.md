@@ -18,13 +18,17 @@
 
 **Yobi** 是一套在桌面运行的流程引擎。把数据、AI 与动作串成自动化，再以定时、全局热键、发给 Telegram 或 LINE Bot 的指令、App 内的斜杠指令触发，或在 Yobi 启动、电脑唤醒、屏幕锁定或解锁时运行。因为它运行在你的电脑上而非服务器，流程能访问云端工具接触不到的对象：本机的 LINE（Windows）、你的文件、shell，以及一个真正的浏览器。AI 步骤驱动的是服务商自己的网页，因此无需 API Key，也没有按 token 计费的账单。
 
+<!-- demos:hero:start -->
+<p align="center"><img src="assets/demos/zh-CN/agent.webp" alt="由 Agent 完成多步骤任务" width="100%" /></p>
+<!-- demos:hero:end -->
+
 ---
 
 ## 为什么选 Yobi
 
 | 功能 | 说明 |
 | ---- | ---- |
-| **无代码流程** | 50 种步骤，以 `{{变量}}` 串接。从菜单加入、拖拽调整顺序，也可以描述需求让 AI 生成。 |
+| **无代码流程** | 53 种步骤，以 `{{变量}}` 串接。从菜单加入、拖拽调整顺序，也可以描述需求让 AI 生成。 |
 | **在本机运行** | 流程可读取本机的 LINE（Windows），并访问你的文件、shell 与浏览器窗口；代理另可操作 Thunderbird。无需部署。 |
 | **无需 API Key** | AI 步骤驱动服务商的网页，而非付费 API。想用自己的密钥再开 BYOK 即可。 |
 | **会执行动作的代理** | 把聊天切到 **Agent**（或输入 `/agent`）并交给它一个目标：它自行挑选工具，改动任何东西之前会先征询你。发给 Telegram 或 LINE Bot 的消息也由代理处理，可用的工具取决于你给每个账号的权限。 |
@@ -33,6 +37,49 @@
 | **主流 AI 全覆盖** | Gemini、Claude、ChatGPT、Perplexity。Gemini、Claude、ChatGPT 可选模型与思考强度；Gemini 与 Perplexity 不登录也能用。 |
 | **没有中间人** | Yobi 自己不运行任何服务器。提示词直接发往你选的 AI 网站；其他数据只有经过你开启的功能（网络搜索、Bot、分享链接、连接器等）才会离开这台电脑。 |
 | **多语言** | 内置 English、繁體中文、简体中文，另可放入语言包扩展（[说明](language/README.md)）。 |
+
+---
+
+<!-- demos:start -->
+## 实际操作
+
+<table>
+<tr>
+<td width="33%" valign="top">
+<a href="assets/demos/zh-CN/flow-build.webp"><img src="assets/demos/zh-CN/flow-build.webp" alt="用文字描述创建流程" width="100%" /></a>
+<br /><b>用文字描述创建流程</b>
+<br /><sub>用一句话描述自动化需求，生成可直接运行、也可逐步修改的流程。</sub>
+</td>
+<td width="33%" valign="top">
+<a href="assets/demos/zh-CN/writing.webp"><img src="assets/demos/zh-CN/writing.webp" alt="改写选中的段落" width="100%" /></a>
+<br /><b>改写选中的段落</b>
+<br /><sub>仅改写回答中选中的段落，修改直接写回 Markdown。</sub>
+</td>
+<td width="33%" valign="top">
+<a href="assets/demos/zh-CN/telegram.webp"><img src="assets/demos/zh-CN/telegram.webp" alt="通过 Telegram 分析地点评论" width="100%" /></a>
+<br /><b>通过 Telegram 分析地点评论</b>
+<br /><sub>向 Telegram Bot 发送 Google 地图链接，由电脑端读取评论并回传分析。</sub>
+</td>
+</tr>
+<tr>
+<td width="33%" valign="top">
+<a href="assets/demos/zh-CN/downloader.webp"><img src="assets/demos/zh-CN/downloader.webp" alt="下载 bilibili 视频" width="100%" /></a>
+<br /><b>下载 bilibili 视频</b>
+<br /><sub>粘贴 bilibili 链接，可下载视频、字幕文件或生成内容摘要。</sub>
+</td>
+<td width="33%" valign="top">
+<a href="assets/demos/zh-CN/notion.webp"><img src="assets/demos/zh-CN/notion.webp" alt="导入并编辑 Notion 页面" width="100%" /></a>
+<br /><b>导入并编辑 Notion 页面</b>
+<br /><sub>导入 Notion 页面，借助 AI 编辑后同步回 Notion。</sub>
+</td>
+<td width="33%" valign="top">
+<a href="assets/demos/zh-CN/files.webp"><img src="assets/demos/zh-CN/files.webp" alt="汇总本机文件" width="100%" /></a>
+<br /><b>汇总本机文件</b>
+<br /><sub>读取本机文件并整理成摘要。</sub>
+</td>
+</tr>
+</table>
+<!-- demos:end -->
 
 ---
 
@@ -54,7 +101,7 @@ Telegram  发送 {{summary}}
 
 > *“每个工作日早上 8 点，摘要我的 RSS 并发到 Telegram。”*
 
-上面那条也内置为模板，共有 18 条模板可以直接拿来改：一部分按定时运行，一部分用聊天或发给 Bot 的指令触发。
+上面那条也内置为模板，共有 19 条模板可以直接拿来改：一部分按定时运行，一部分用聊天或发给 Bot 的指令触发。
 
 **步骤按类型：**
 
@@ -117,7 +164,11 @@ Telegram  发送 {{summary}}
 
 **1. 安装：**
 
-Windows 可从 [Microsoft Store](https://apps.microsoft.com/detail/9nnx8prfstc9) 安装（自动安装与更新）；也可以到 [GitHub Releases](https://github.com/WellWells/yobi/releases) 下载 Windows 安装包或 macOS DMG（Intel 与 Apple Silicon）。GitHub 版本未签名：Windows 首次启动会被拦截，请选择**更多信息 → 仍要运行**；macOS 的打开方式见[发行说明](https://github.com/WellWells/yobi/releases)。
+```bash
+brew install --cask wellwells/tap/yobi   # macOS（Intel 与 Apple Silicon）
+```
+
+也可以从 [Microsoft Store](https://apps.microsoft.com/detail/9nnx8prfstc9)（Windows，自动安装与更新）或 [GitHub Releases](https://github.com/WellWells/yobi/releases)（Windows 安装包、macOS DMG）下载。GitHub 版本未签名：Windows 首次启动会被拦截，请选择**更多信息 → 仍要运行**；macOS 的打开方式见[发行说明](https://github.com/WellWells/yobi/releases)。
 
 **2. 30 秒跑出第一个结果：**
 
@@ -233,7 +284,6 @@ npm run dev         # 开发模式：界面实时更新；改了主进程后按 
 npm run typecheck   # TypeScript 类型检查
 npm run i18n:check  # 比对 language/*.json 与源代码；会删除代码已不再使用的 key
 npm run build:win   # 构建 Windows（NSIS 安装包）
-npm run build:msix  # 构建 Windows（Microsoft Store 用的 MSIX）
 npm run build:mac   # 构建 macOS（DMG）
 ```
 

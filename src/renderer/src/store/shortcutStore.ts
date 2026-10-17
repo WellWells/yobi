@@ -50,10 +50,6 @@ export function resolvedCombos(id: ShortcutId): string[] {
   return activeCombos(shortcutById(id), isMac, useShortcutStore.getState().overrides[id]);
 }
 
-export function resolvedCombo(id: ShortcutId): string {
-  return resolvedCombos(id)[0] ?? '';
-}
-
 export function matchesShortcut(event: KeyboardEventLike, id: ShortcutId): boolean {
   return resolvedCombos(id).some((combo) => matchesCombo(event, combo, [], { isMac }));
 }
@@ -61,11 +57,6 @@ export function matchesShortcut(event: KeyboardEventLike, id: ShortcutId): boole
 export function useResolvedCombo(id: ShortcutId): string {
   const override = useShortcutStore((s) => s.overrides[id]);
   return activeCombos(shortcutById(id), isMac, override)[0] ?? '';
-}
-
-export function useResolvedCombos(id: ShortcutId): string[] {
-  const override = useShortcutStore((s) => s.overrides[id]);
-  return activeCombos(shortcutById(id), isMac, override);
 }
 
 export function allResolvedBindings(): Record<string, string[]> {

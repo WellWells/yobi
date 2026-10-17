@@ -37,14 +37,13 @@ export const IncognitoWelcome: React.FC = () => {
   );
 };
 
-/** The exit hint that sits under the composer in an empty temporary chat. */
+/** The toggle hint that sits under the composer in an empty temporary chat. */
 export const IncognitoHints: React.FC = () => {
-  const t = useI18nStore((s) => s.t);
   const tempChatCombo = useResolvedCombo('app.tempChat');
 
   return (
     <Group justify="center" px={20} pt={10}>
-      <ShortcutRow combo={tempChatCombo} label={t('chat.tempMode.welcome.exit')} />
+      <ShortcutRow id="app.tempChat" combo={tempChatCombo} />
     </Group>
   );
 };

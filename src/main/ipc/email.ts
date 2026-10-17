@@ -6,20 +6,12 @@ import { maskToken, sendLog } from '../helpers';
 
 export function registerEmailHandlers(): void {
   ipcMain.handle(IPC.GET_EMAIL_SETTINGS, (): EmailSettingsSnapshot => ({
-    enabled: config.smtp.enabled,
     host: config.smtp.host,
     port: config.smtp.port,
     user: config.smtp.user,
     hasPassword: Boolean(config.smtp.password.trim()),
     passwordPreview: maskToken(config.smtp.password),
   }));
-
-  ipcMain.handle(IPC.UPDATE_EMAIL_ENABLED, (_event, enabled: boolean) => {
-    config.smtp.enabled = Boolean(enabled);
-    saveConfig({ smtp: config.smtp });
-    sendLog(`Email SMTP ${config.smtp.enabled ? 'enabled' : 'disabled'}`);
-    return { ok: true as const };
-  });
 
   ipcMain.handle(IPC.UPDATE_EMAIL_CREDENTIALS, (_event, creds: SmtpCredentials) => {
     config.smtp.host = (creds?.host ?? '').trim();

@@ -6,7 +6,7 @@ const LANG_DIR = path.join(ROOT, 'language');
 const EN_JSON_PATH = path.join(LANG_DIR, 'en-US.json');
 const SRC_DIR = path.join(ROOT, 'src');
 
-const EXCLUDED_SCRIPTS = new Set(['i18n-check.ts', 'strip-i18n-fallbacks.ts']);
+const EXCLUDED_SCRIPTS = new Set(['i18n-check.ts']);
 
 function walkDir(dir: string, exts: string[]): string[] {
   const results: string[] = [];

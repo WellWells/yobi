@@ -1,10 +1,5 @@
 import { randomInt } from 'node:crypto';
-
-export interface PendingPairingCode {
-  code: string;
-  createdAt: string;
-  expiresAt: string;
-}
+import type { PendingPairingCode } from '../shared/types';
 
 export const PAIRING_CODE_TTL_MS = 60 * 60 * 1_000;
 
@@ -35,18 +30,18 @@ export function issuePendingCode(existing: PendingPairingCode[]): PendingPairing
   };
 }
 
-export function prunePendingCodes<T extends PendingPairingCode>(codes: T[]): T[] {
+export function prunePendingCodes(codes: PendingPairingCode[]): PendingPairingCode[] {
   const now = Date.now();
   return codes.filter((item) => Date.parse(item.expiresAt) > now);
 }
 
-export function revokePendingCode<T extends PendingPairingCode>(codes: T[], raw: string): T[] {
+export function revokePendingCode(codes: PendingPairingCode[], raw: string): PendingPairingCode[] {
   const code = normalizePairingCodeInput(raw);
   if (!code) return codes;
   return codes.filter((item) => item.code !== code);
 }
 
-export function findPendingCode<T extends PendingPairingCode>(codes: T[], raw: string): T | undefined {
+export function findPendingCode(codes: PendingPairingCode[], raw: string): PendingPairingCode | undefined {
   const code = normalizePairingCodeInput(raw);
   if (!code) return undefined;
   return codes.find((item) => item.code === code);

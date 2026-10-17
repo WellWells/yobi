@@ -9,9 +9,13 @@ import type {
   ConversationImportResult,
   MarkdownCaptureRequest,
   MarkdownCaptureResult,
+  ResponseEditResult,
   StartedConversation,
   StashedAttachment,
 } from '../../shared/types';
+import { writeFileAtomic } from '../atomicWrite';
+import { editConversationResponse, parseResponseEditRequest, withConversationFile } from '../chat/conversationStore';
+import { deleteConversationFiles } from '../history/conversationHistory';
 import { attachmentFromClipboard, stashAttachmentBytes } from '../attachmentStash';
 import { getAssetPath, getMainWindow, sendLog, sendToRenderer } from '../helpers';
 import {
@@ -29,6 +33,7 @@ import { captureMarkdownDocument } from '../capture';
 import { writeCaptureToClipboard, writeFilesToClipboard, zipSingleFile } from '../captureClipboard';
 import { openWithChooser } from '../openWith';
 import { isAllowedFilePath, showSaveDialogForWin } from './context';
+import { cancelConversationTranslationFor } from './translate';
 import { isManagedPageWebContents } from '../flow/skills/browserPages';
 
 let appIconCache: NativeImage | null = null;
@@ -95,41 +100,46 @@ export function registerFileHandlers(): void {
     }
   });
 
-  ipcMain.handle(IPC.UPDATE_FILE_TITLE, async (_event, filePath: string, newTitle: string) => {
-    if (!await isAllowedFilePath(filePath)) return { ok: false, updatedPath: filePath };
-    const title = newTitle.trim();
-    if (!title) return { ok: false, updatedPath: filePath };
-    try {
-      const dir = path.dirname(filePath);
-      const ext = path.extname(filePath) || '.md';
-      const basename = buildSafeFileNameFromTitle(title);
-      const targetPath = await getUniquePath(path.join(dir, `${basename}${ext}`), filePath);
-      if (targetPath !== filePath) await fs.rename(filePath, targetPath);
-      sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
-      return { ok: true, updatedPath: targetPath };
-    } catch {
-      return { ok: false, updatedPath: filePath };
-    }
-  });
-
   ipcMain.handle(IPC.UPDATE_FILE_H1, async (_event, filePath: string, newTitle: string) => {
-    if (!await isAllowedFilePath(filePath)) return false;
-    const title = newTitle.trim();
+    if (typeof newTitle !== 'string' || !await isAllowedFilePath(filePath)) return false;
+    // One line: a title with a line break would put whatever follows on line 2, where a
+    // conversation's (or a Notion document's) marker lives.
+    const title = newTitle.replace(/\s+/g, ' ').trim();
     if (!title) return false;
     try {
-      const content = await fs.readFile(filePath, 'utf-8');
-      const lines = content.split('\n');
-      const firstLine = lines[0]?.trim() ?? '';
-      if (/^#\s+/.test(firstLine)) {
-        lines[0] = `# ${title}`;
-      } else {
-        lines.unshift(`# ${title}`, '');
-      }
-      await fs.writeFile(filePath, lines.join('\n'), 'utf-8');
-      sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
+      const written = await withConversationFile(filePath, async () => {
+        const content = await fs.readFile(filePath, 'utf-8');
+        const lines = content.split('\n');
+        const firstLine = lines[0]?.trim() ?? '';
+        const heading = `# ${title}`;
+        // The same title again is not an edit: no write, no watcher event, no list broadcast.
+        if (firstLine === heading) return false;
+        if (/^#\s+/.test(firstLine)) {
+          // Keep a CRLF file's line ending on the line that changes.
+          lines[0] = lines[0]?.endsWith('\r') ? `${heading}\r` : heading;
+        } else {
+          lines.unshift(heading, '');
+        }
+        await writeFileAtomic(filePath, lines.join('\n'));
+        return true;
+      });
+      if (written) sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
       return true;
     } catch {
       return false;
+    }
+  });
+
+  ipcMain.handle(IPC.EDIT_TURN_RESPONSE, async (_event, request: unknown): Promise<ResponseEditResult> => {
+    const parsed = parseResponseEditRequest(request);
+    if (!parsed || !await isAllowedFilePath(parsed.filePath)) return { ok: false, reason: 'failed' };
+    try {
+      const result = await editConversationResponse(parsed);
+      if (result.ok) sendLog(`✏️ Edited answer ${parsed.turnIndex + 1} in ${path.basename(parsed.filePath)}`);
+      return result;
+    } catch (err: unknown) {
+      sendLog(`⚠️ Could not edit the answer: ${err instanceof Error ? err.message : String(err)}`);
+      return { ok: false, reason: 'failed' };
     }
   });
 
@@ -153,7 +163,8 @@ export function registerFileHandlers(): void {
   ipcMain.handle(IPC.DELETE_FILE, async (_event, filePath: string) => {
     if (!await isAllowedFilePath(filePath)) return false;
     try {
-      await fs.unlink(filePath);
+      if (await deleteConversationFiles([filePath], await getOutputDir()) === 0) return false;
+      cancelConversationTranslationFor([filePath]);
       sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
       return true;
     } catch {
@@ -163,30 +174,24 @@ export function registerFileHandlers(): void {
 
   ipcMain.handle(IPC.DELETE_FILES, async (_event, filePaths: string[]) => {
     if (!Array.isArray(filePaths) || filePaths.length === 0) return 0;
-    let deleted = 0;
+    const allowed: string[] = [];
     for (const filePath of filePaths) {
-      if (!await isAllowedFilePath(filePath)) continue;
-      try {
-        await fs.unlink(filePath);
-        deleted += 1;
-      } catch {
-      }
+      if (await isAllowedFilePath(filePath)) allowed.push(filePath);
     }
-    if (deleted > 0) sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
+    const deleted = allowed.length === 0 ? 0 : await deleteConversationFiles(allowed, await getOutputDir()).catch(() => 0);
+    if (deleted > 0) {
+      cancelConversationTranslationFor(allowed.filter((filePath) => !existsSync(filePath)));
+      sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
+    }
     return deleted;
   });
 
   ipcMain.handle(IPC.DELETE_ALL_FILES, async () => {
     const files = await listOutputFiles();
     if (files.length === 0) return 0;
-    let deleted = 0;
-    for (const file of files) {
-      try {
-        await fs.unlink(file.path);
-        deleted += 1;
-      } catch {
-      }
-    }
+    const paths = files.map((file) => file.path);
+    const deleted = await deleteConversationFiles(paths, await getOutputDir()).catch(() => 0);
+    cancelConversationTranslationFor(paths.filter((filePath) => !existsSync(filePath)));
     sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
     return deleted;
   });
@@ -279,14 +284,17 @@ export function registerFileHandlers(): void {
     if (typeof filePath !== 'string' || !await isAllowedFilePath(filePath) || !existsSync(filePath)) return false;
     return openWithChooser(path.resolve(filePath));
   });
+  // Returns how many files landed on the clipboard: missing or outside files are skipped silently,
+  // so the renderer's "N files copied" counts this, not what it asked for.
   ipcMain.handle(IPC.COPY_FILES_TO_CLIPBOARD, async (_event, filePaths: unknown) => {
-    if (!Array.isArray(filePaths)) return false;
+    if (!Array.isArray(filePaths)) return 0;
     const files: string[] = [];
     for (const filePath of filePaths) {
       if (typeof filePath !== 'string' || !await isAllowedFilePath(filePath) || !existsSync(filePath)) continue;
       files.push(path.resolve(filePath));
     }
+    if (files.length === 0) return 0;
     await writeFilesToClipboard(files);
-    return files.length > 0;
+    return files.length;
   });
 }

@@ -4,9 +4,13 @@ import { Semaphore } from '../lanes';
 import { cacheWindowMs, readSeenEntries, reconcileSeenCache, type SeenCheckpoint } from '../seenCache';
 import { FlowUserError } from '../userError';
 import { BROWSER_STEP_TIMEOUT_MS } from '../runtime';
-import { parseXHandle, parseXPostUrl, splitXAccountLines } from '../../../shared/xHandles';
-import { formatPostTime, readAccountPosts, readPostThread, readTrendPosts, readXTrends, XSignInRequiredError, type XRead } from './xReader';
-import type { XPost, XTrend } from './xPosts';
+import { parseXHandle, splitXAccountLines } from '../../../shared/xHandles';
+import { parseXMediaInput } from '../../../shared/xMedia';
+import { readLinkedThread, siteName } from './postReader';
+import { readAccessOf } from './readAccess';
+import { buildPushThreadEnvelope } from './pushThread';
+import { formatPostTime, readAccountPosts, readTrendPosts, readXTrends, XSignInRequiredError, type XRead } from './xReader';
+import type { XPost, XThread, XTrend } from './xPosts';
 
 export { formatPostTime };
 
@@ -157,19 +161,29 @@ export async function execXPosts(config: Record<string, string>, stepId: string)
   return JSON.stringify(out.map(postItem));
 }
 
+/** "@handle"; "" for someone with only a display name — most Facebook commenters. */
+function handleOf(post: XPost): string {
+  return post.author ? `@${post.author}` : '';
+}
+
 function byline(post: XPost): string {
-  const who = post.name ? `**@${post.author}** (${post.name})` : `**@${post.author}**`;
-  const when = formatPostTime(post.createdAt);
-  return when ? `${who} · ${when}` : who;
+  const handle = handleOf(post);
+  const who = handle ? `**${handle}**${post.name ? ` (${post.name})` : ''}` : post.name ? `**${post.name}**` : '';
+  return [who, formatPostTime(post.createdAt)].filter(Boolean).join(' · ');
 }
 
 function postBlock(post: XPost): string {
   return [byline(post), post.text, post.link].filter(Boolean).join('\n');
 }
 
+/** A reply as the analysis reads it: who and what. Its own link says nothing about either. */
+function replyBlock(post: XPost): string {
+  return [byline(post), post.text].filter(Boolean).join('\n');
+}
+
 function postRecord(post: XPost): Record<string, string> {
   return {
-    author: `@${post.author}`,
+    author: handleOf(post),
     name: post.name,
     date: formatPostTime(post.createdAt),
     text: post.text,
@@ -178,12 +192,19 @@ function postRecord(post: XPost): Record<string, string> {
   };
 }
 
-export function buildXThreadEnvelope(focal: XPost, replies: XPost[]): string {
-  const replyText = replies.map(postBlock).join('\n\n---\n\n');
+/**
+ * The step's output. `subject` says what was read — `post` and its replies, or a whole `account`
+ * (an Instagram profile, `account` its summed-up text) — so the analysis picks its prompt.
+ */
+export function buildXThreadEnvelope(focal: XPost, replies: XPost[], platform = 'X', account?: XThread['account']): string {
+  const replyText = replies.map(replyBlock).join('\n\n---\n\n');
   return JSON.stringify({
-    output: [postBlock(focal), replyText].filter(Boolean).join('\n\n---\n\n'),
+    output: account ? account.text : [postBlock(focal), replyText].filter(Boolean).join('\n\n---\n\n'),
+    subject: account ? 'account' : 'post',
+    ...(account ? { posts: String(account.posts) } : {}),
+    platform,
     text: focal.text,
-    author: `@${focal.author}`,
+    author: handleOf(focal),
     name: focal.name,
     date: formatPostTime(focal.createdAt),
     link: focal.link,
@@ -195,31 +216,27 @@ export function buildXThreadEnvelope(focal: XPost, replies: XPost[]): string {
   });
 }
 
-export async function execXThread(config: Record<string, string>): Promise<string> {
-  const url = (config.url ?? '').trim();
-  const ref = parseXPostUrl(url);
-  if (!ref) {
-    throw new FlowUserError('flow.error.xPostUrl', { url }, `X Thread: not an x.com post URL: ${url}`);
+export async function execXThread(config: Record<string, string>, signal?: AbortSignal): Promise<string> {
+  // The link is the first word: the built-in "analyze" passes the button's line, `<link> analyze`.
+  const url = (config.url ?? '').trim().split(/\s+/)[0] ?? '';
+  const link = parseXMediaInput(url);
+  if (!link) {
+    throw new FlowUserError('flow.error.xPostUrl', { url }, `X Thread: not an X, Threads, Instagram, Facebook, TikTok, PTT, Dcard or Reddit post URL: ${url}`);
   }
   const parsedMax = parseInt(config.maxReplies ?? '', 10);
   const maxReplies = Number.isFinite(parsedMax) && parsedMax >= 0 ? parsedMax : DEFAULT_MAX_REPLIES;
 
-  sendLog(`🐦 [Flow] X Thread step — ${ref.id}`);
-  const page = await readPostThread(ref);
-  const thread = page.value;
-  if (!thread) {
-    if (page.status === 404) {
-      throw new FlowUserError('flow.error.xPostMissing', { url }, `X Thread: post not found (HTTP 404): ${url}`);
-    }
-    throw new FlowUserError(
-      'flow.error.xPageUnreadable',
-      { url },
-      `X Thread: the post page carried no readable post (HTTP ${page.status}; X may have changed the page): ${url}`,
-    );
+  const site = siteName(link.source);
+  sendLog(`🐦 [Flow] ${site} Thread step — ${link.id}`);
+  const thread = await readLinkedThread(link, 'Thread', signal, readAccessOf(config));
+  // An article's pushes (PTT) are read by a character budget, sampled past it.
+  if (thread.pushes) {
+    sendLog(`🐦 [Flow] ${site} Thread: ${thread.pushes.lines.length} push(es) read`);
+    return buildPushThreadEnvelope(thread.focal, thread.pushes, maxReplies, site);
   }
   const replies = thread.replies.slice(0, maxReplies);
-  sendLog(`🐦 [Flow] X Thread: @${thread.focal.author} — ${replies.length} of ${thread.focal.replyCount} repl(ies) readable`);
-  return buildXThreadEnvelope(thread.focal, replies);
+  sendLog(`🐦 [Flow] ${site} Thread: @${thread.focal.author} — ${replies.length} of ${thread.focal.replyCount} repl(ies) readable`);
+  return buildXThreadEnvelope(thread.focal, replies, site, thread.account);
 }
 
 const DEFAULT_MAX_TRENDS = 20;

@@ -1,5 +1,7 @@
 import type { ConversationDoc } from '../../../shared/conversationDoc';
-import { sumTurnUsage, type TokenUsage } from '../../../shared/tokenEstimate';
+import { providerOfThreadUrl } from '../../../shared/providerThread';
+import { formatTokenCount, sumTurnUsage, type TokenUsage } from '../../../shared/tokenEstimate';
+import { fillTemplate } from '../../../shared/fillTemplate';
 
 export interface ConversationModelUse {
   name: string;
@@ -21,9 +23,11 @@ export interface ConversationInfo {
   turns: number;
   /** In order of first use. */
   models: ConversationModelUse[];
+  /** Who wrote the latest reply; '' when no turn or heading names one. */
+  lastProvider: string;
   tokens: (TokenUsage & { countedTurns: number }) | null;
   durations: ConversationDurations | null;
-  /** The provider's own thread, when the conversation still continues one. */
+  /** The provider's own thread (https, on that provider's host), when the conversation still continues one. */
   threadUrl: string;
   /** How much of the conversation the latest reply could not see word for word. */
   context: { summarized: number; dropped: number };
@@ -71,20 +75,52 @@ export function summarizeConversation(doc: ConversationDoc, content: string): Co
 
   const attachments = [...new Set(doc.turns.flatMap((turn) => (Array.isArray(turn.meta.a) ? turn.meta.a : [])))];
   const latest = doc.turns[doc.turns.length - 1]?.meta;
-  const threadUrl = doc.thread.threadUrl ?? '';
+  const threadUrl = doc.thread.threadUrl?.trim() ?? '';
 
   return {
     startedAt,
     lastActiveAt,
     turns: doc.turns.length,
     models,
+    lastProvider: doc.turns.length > 0 ? current : '',
     tokens: sumTurnUsage(doc.turns),
     durations: timedTurns > 0 ? { totalMs, timedTurns, longestMs } : null,
-    threadUrl: /^https:\/\//i.test(threadUrl) ? threadUrl : '',
+    threadUrl: providerOfThreadUrl(threadUrl) ? threadUrl : '',
     context: { summarized: positiveCount(latest?.summarized), dropped: positiveCount(latest?.dropped) },
     attachments,
     sizeBytes: new TextEncoder().encode(content).length,
   };
+}
+
+type Translate = (key: string) => string;
+
+export { fillTemplate };
+
+/** "Input 1.2k · Output 3.4k", with a leading "~" when it is Yobi's estimate; '' without counts. */
+export function tokensValueText(info: Pick<ConversationInfo, 'tokens'>, t: Translate): string {
+  if (!info.tokens) return '';
+  return `${info.tokens.exact ? '' : '~'}${fillTemplate(t('chat.info.tokensValue'), {
+    input: formatTokenCount(info.tokens.input),
+    output: formatTokenCount(info.tokens.output),
+  })}`;
+}
+
+/** "Total · average · longest"; '' when no turn recorded how long it took. */
+export function durationValueText(info: Pick<ConversationInfo, 'durations'>, t: Translate): string {
+  if (!info.durations) return '';
+  return fillTemplate(t('chat.info.durationValue'), {
+    total: formatTurnDuration(info.durations.totalMs),
+    average: formatTurnDuration(info.durations.totalMs / info.durations.timedTurns),
+    longest: formatTurnDuration(info.durations.longestMs),
+  });
+}
+
+/** "Compressed the first N turns", "Left out the earliest N turns", or both; none when the model saw everything. */
+export function contextValueText(info: Pick<ConversationInfo, 'context'>, t: Translate): string[] {
+  return [
+    info.context.summarized > 0 ? fillTemplate(t('chat.context.summarized'), { count: info.context.summarized }) : '',
+    info.context.dropped > 0 ? fillTemplate(t('chat.context.dropped'), { count: info.context.dropped }) : '',
+  ].filter(Boolean);
 }
 
 /** Seconds below a minute, then minutes and seconds: an Agent run is often several minutes. */

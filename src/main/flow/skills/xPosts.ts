@@ -1,3 +1,9 @@
+import type { PhotoCopy } from '../../../shared/xMedia';
+import type { PostCard } from '../../../shared/postCard';
+import type { SegmentPlan } from '../../downloader/streamTypes';
+import { decodeHtmlEntities } from '../../htmlEntities';
+import { arr, obj, str, type Json } from './jsonPick';
+import { audienceFromFlag, combineAudience, type PostAudience } from './postAudience';
 import type { XGraphqlResult } from './xSsr';
 
 export interface XPost {
@@ -19,6 +25,102 @@ export interface XPost {
   inReplyTo: string;
   /** A repost of someone else's post. */
   isRepost: boolean;
+  /** The post's own photos, videos and GIFs, in order. */
+  media: XMedia[];
+  /** The media of the post it quotes; empty when it quotes none. */
+  quoteMedia: XMedia[];
+  /**
+   * The items a link offers to choose from instead of taking them all (a person's Facebook
+   * stories): a chat shows a menu of them, `media` holding them all for anything that cannot ask.
+   */
+  picks?: PostPicks;
+  /**
+   * A forum article's own opening block, Markdown with its words escaped (a PTT article's title,
+   * author, board, time, place and tally): a chat message opens with it instead of who wrote it.
+   */
+  heading?: string;
+  /** The same header as data, which the desktop chat draws as a card. */
+  card?: PostCard;
+  /**
+   * Who the site shows it to, where its reader reads a marker (`postAudience.ts`): X on every
+   * post, Facebook and Instagram on the post a link opens. A thread's is its `focal`'s. Absent:
+   * the reader marks none (a site Yobi never signs in to, a comment that follows its post's).
+   */
+  audience?: PostAudience;
+}
+
+/** One item of a menu: its own link, which takes that item alone. */
+export interface PostPick {
+  link: string;
+  /** Its place among them all, from 1, oldest first as the site shows them. */
+  number: number;
+  media: XMedia;
+  /** The item the pasted link opened at. */
+  linked: boolean;
+}
+
+export interface PostPicks {
+  items: PostPick[];
+  /** The link that takes every item. */
+  all: string;
+  /**
+   * An account's latest posts (an Instagram profile) rather than a person's stories: the menu
+   * says posts, shows the profile picture (`cover`), and "all" takes `allCount` of them.
+   */
+  account?: {
+    cover: string;
+    allCount: number;
+    /** The account's stories up now: a button of their own (`link` offers their menu). */
+    stories?: { count: number; link: string };
+    /** "Analyze the account": the line a chat's button sends; the desktop chat has its own button. */
+    analyze: string;
+  };
+}
+
+export interface XVideoVariant {
+  url: string;
+  /** Bits per second; 0 for a GIF, which has one version. */
+  bitrate: number;
+  width: number;
+  height: number;
+  /** The file's exact size, where the page says it (TikTok); otherwise measured with a HEAD. */
+  sizeBytes?: number;
+  /**
+   * What fetching it takes, when the URL alone is refused (TikTok's: the reading session's cookie
+   * and a TikTok `Referer`). Such a version only Yobi can fetch: LINE and Gemini, which fetch a
+   * URL themselves, never get it.
+   */
+  headers?: Record<string, string>;
+  /**
+   * The picture and the sound as separate streams (Reddit's v.redd.it DASH), which Yobi fetches
+   * and puts into one mp4 with FFmpeg (`postStream.ts`); `url` is then the picture's alone. Such a
+   * version has no single file to hand on: LINE and Gemini never get it.
+   */
+  stream?: PostStream;
+}
+
+/** A video version made of streams: what `postStream.ts` fetches and muxes. */
+export interface PostStream {
+  /** The site's name, for logs and the error the person reads. */
+  site: string;
+  video: SegmentPlan;
+  /** The separate sound; absent for a silent video. */
+  audio?: SegmentPlan;
+  /** The hosts every request may go to (`hostAllowlist`). */
+  hosts: readonly string[];
+}
+
+export interface XMedia {
+  kind: 'photo' | 'video' | 'gif';
+  /** The photo itself, or a video's poster frame. */
+  image: string;
+  width: number;
+  height: number;
+  durationMs: number;
+  /** The mp4 versions, highest bitrate first; empty for a photo. */
+  variants: XVideoVariant[];
+  /** Fixed-size copies of `image` (Threads), the original's shape only; absent where `?name=` resizes it (X). */
+  copies?: PhotoCopy[];
 }
 
 export interface TimelinePost {
@@ -29,25 +131,39 @@ export interface TimelinePost {
 export interface XThread {
   focal: XPost;
   replies: XPost[];
+  /**
+   * A whole account summed up (an Instagram profile): the analysis reads this text in place of
+   * the post and its replies; `posts` is how many of its posts it holds.
+   */
+  account?: { text: string; posts: number };
+  /**
+   * An article's pushes (PTT): every one, in order, with the article's own parts. The analysis
+   * reads these, sampled to a character budget, in place of `replies` (empty).
+   */
+  pushes?: PushThread;
 }
 
-type Json = Record<string, unknown>;
+/** One push under a PTT article: an upvote, a downvote, or a plain comment. */
+export interface PushLine {
+  tag: '推' | '噓' | '→';
+  user: string;
+  text: string;
+  /** Epoch ms, its year inferred from the article's; 0 when the page gave no date. */
+  at: number;
+}
+
+export interface PushThread {
+  board: string;
+  title: string;
+  /** The article's text, pictures and signature taken out. */
+  body: string;
+  lines: PushLine[];
+}
 
 const X_EPOCH_MS = 1_288_834_974_657;
 const SNOWFLAKE_TIME_SHIFT = 4_194_304;
 
-function obj(value: unknown): Json | undefined {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Json : undefined;
-}
-
-function arr(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-function str(value: unknown): string {
-  return typeof value === 'string' ? value : '';
-}
-
+/** Unlike `jsonPick`'s `num`, this one also reads a number sent as a numeric string. */
 function num(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string' && value.trim() !== '') {
@@ -63,13 +179,10 @@ export function snowflakeTime(id: string): number {
   return Math.floor(Number(id) / SNOWFLAKE_TIME_SHIFT) + X_EPOCH_MS;
 }
 
+export { formatPostTime } from '../../../shared/postCard';
+
 export function postLink(author: string, id: string): string {
   return `https://x.com/${author || 'i'}/status/${id}`;
-}
-
-/** Decodes the HTML entities that legacy-schema text carries. */
-function decodeLegacyEntities(text: string): string {
-  return text.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 }
 
 function expandLinks(text: string, entities: unknown): string {
@@ -102,7 +215,8 @@ function ownText(tweet: Json): string {
   const legacy = obj(tweet.legacy);
   const legacyText = str(legacy?.full_text);
   const sliced = sliceCodePoints(legacyText, legacy?.display_text_range);
-  return decodeLegacyEntities(expandLinks(sliced, obj(legacy?.entities)?.urls)).trim();
+  // Legacy-schema text carries HTML entities; the other two shapes do not.
+  return decodeHtmlEntities(expandLinks(sliced, obj(legacy?.entities)?.urls)).trim();
 }
 
 function firstImage(tweet: Json): string {
@@ -124,6 +238,69 @@ function firstImage(tweet: Json): string {
   return '';
 }
 
+const MEDIA_HOSTS: Record<XMedia['kind'] | 'variant', string> = {
+  photo: 'pbs.twimg.com',
+  video: 'pbs.twimg.com',
+  gif: 'pbs.twimg.com',
+  variant: 'video.twimg.com',
+};
+
+/** Only X's own media CDN over https: these URLs are handed to Telegram, LINE and Gemini as they are. */
+function mediaUrl(value: unknown, host: string): string {
+  const raw = str(value);
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'https:' && url.hostname === host && !url.username && !url.password && !url.port ? raw : '';
+  } catch {
+    return '';
+  }
+}
+
+function variantOf(raw: unknown, fallback: { width: number; height: number }): XVideoVariant | null {
+  const variant = obj(raw);
+  if (str(variant?.content_type) !== 'video/mp4') return null;
+  const url = mediaUrl(variant?.url, MEDIA_HOSTS.variant);
+  if (!url) return null;
+  // The size is only in the path: /vid/avc1/1080x1350/….mp4
+  const size = /\/(\d{2,5})x(\d{2,5})\//.exec(new URL(url).pathname);
+  return {
+    url,
+    bitrate: num(variant?.bitrate),
+    width: size ? Number(size[1]) : fallback.width,
+    height: size ? Number(size[2]) : fallback.height,
+  };
+}
+
+function mediaOf(raw: unknown): XMedia | null {
+  const entity = obj(raw);
+  const type = str(entity?.type);
+  const kind = type === 'photo' ? 'photo' : type === 'video' ? 'video' : type === 'animated_gif' ? 'gif' : null;
+  if (!kind) return null;
+  const image = mediaUrl(entity?.media_url_https, MEDIA_HOSTS[kind]);
+  const original = obj(entity?.original_info);
+  const width = num(original?.width);
+  const height = num(original?.height);
+  const info = obj(entity?.video_info);
+  const variants = arr(info?.variants)
+    .map((v) => variantOf(v, { width, height }))
+    .filter((v): v is XVideoVariant => v !== null)
+    .sort((a, b) => b.bitrate - a.bitrate);
+  if (kind === 'photo' ? !image : variants.length === 0) return null;
+  return { kind, image, width, height, durationMs: num(info?.duration_millis), variants };
+}
+
+/** A post's media under either schema; the new one keeps it in `media_entities2`, the legacy one in `extended_entities`. */
+function mediaList(tweet: Json): XMedia[] {
+  const fresh = arr(tweet.media_entities2);
+  const source = fresh.length > 0 ? fresh : arr(obj(obj(tweet.legacy)?.extended_entities)?.media);
+  return source.map(mediaOf).filter((m): m is XMedia => m !== null);
+}
+
+function quotedTweet(tweet: Json): Json | null {
+  // The quoted post's key differs between the two schemas.
+  return unwrapTweet(obj(tweet.quoted_tweet_results ?? tweet.quoted_status_result)?.result);
+}
+
 function authorOf(tweet: Json): { author: string; name: string } {
   const user = obj(obj(obj(tweet.core)?.user_results)?.result);
   const core = obj(user?.core);
@@ -132,6 +309,19 @@ function authorOf(tweet: Json): { author: string; name: string } {
     author: str(core?.screen_name) || str(legacy?.screen_name),
     name: str(core?.name) || str(legacy?.name),
   };
+}
+
+/**
+ * Who X shows a post to: its author's `protected` (new schema `privacy.protected`, legacy
+ * `legacy.protected`) — a protected account's posts
+ * only its followers see. A post for the author's subscribers alone (`exclusivityInfo`) is
+ * restricted whatever the account is.
+ */
+function tweetAudience(tweet: Json): PostAudience {
+  if (obj(tweet.exclusivityInfo) ?? obj(tweet.exclusivity_info)) return 'restricted';
+  const user = obj(obj(obj(tweet.core)?.user_results)?.result);
+  const isProtected = obj(user?.privacy)?.protected ?? obj(user?.legacy)?.protected;
+  return audienceFromFlag(typeof isProtected === 'boolean' ? !isProtected : undefined);
 }
 
 /** The Tweet object behind a `tweet_results.result`; a tombstone or an unavailable post is null. */
@@ -147,9 +337,7 @@ function unwrapTweet(result: unknown): Json | null {
   return node;
 }
 
-function quoteBlock(tweet: Json): string {
-  // The quoted post's key differs between the two schemas.
-  const quoted = unwrapTweet(obj(tweet.quoted_tweet_results ?? tweet.quoted_status_result)?.result);
+function quoteBlock(quoted: Json | null): string {
   if (!quoted) return '';
   const { author } = authorOf(quoted);
   const text = ownText(quoted);
@@ -170,7 +358,8 @@ export function readTweet(result: unknown): XPost | null {
   const createdAt = num(details?.created_at_ms)
     || (Number.isFinite(legacyTime) ? legacyTime : 0)
     || snowflakeTime(id);
-  const quote = quoteBlock(tweet);
+  const quoted = quotedTweet(tweet);
+  const quote = quoteBlock(quoted);
   const own = ownText(tweet);
   return {
     id,
@@ -184,6 +373,10 @@ export function readTweet(result: unknown): XPost | null {
     likeCount: num(counts?.favorite_count ?? legacy?.favorite_count),
     inReplyTo: str(obj(tweet.reply_to_results)?.rest_id) || str(legacy?.in_reply_to_status_id_str),
     isRepost: Boolean(obj(legacy?.retweeted_status_result) ?? obj(tweet.retweeted_tweet_results)),
+    media: mediaList(tweet),
+    quoteMedia: quoted ? mediaList(quoted) : [],
+    // A quoted post goes out with it (its text, its media): both must be public.
+    audience: combineAudience(quoted ? [tweetAudience(tweet), tweetAudience(quoted)] : [tweetAudience(tweet)]),
   };
 }
 

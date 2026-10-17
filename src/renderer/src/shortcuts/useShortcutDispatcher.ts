@@ -14,6 +14,16 @@ function modalIsOpen(): boolean {
   return Boolean(document.querySelector('[aria-modal="true"]'));
 }
 
+/**
+ * A text field inside an open menu (the chat ⋮ menu's search box, a language filter) owns every
+ * key typed into it. Shortcuts that deliberately fire while typing (Ctrl+K, Ctrl+F, Ctrl+N, the
+ * capture-phase Shift+Tab) were made for the composer and the page's own fields; from a menu's
+ * search box they would act on the page behind the menu while it is still open.
+ */
+export function isMenuTextField(target: EventTarget | null): boolean {
+  return isTypingTarget(target) && target instanceof HTMLElement && target.closest('[data-menu-dropdown]') !== null;
+}
+
 function digitCombos(def: ShortcutDef): string[] {
   const prefix = digitPrefixOf(def);
   if (!prefix) return [];
@@ -48,6 +58,7 @@ function pickHandler(
 }
 
 function dispatch(event: KeyboardEvent, phase: 'bubble' | 'capture'): void {
+  if (isMenuTextField(event.target)) return;
   const currentView = useAppStore.getState().currentView;
   const { overrides, handlers } = useShortcutStore.getState();
 

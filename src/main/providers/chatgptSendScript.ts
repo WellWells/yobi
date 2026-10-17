@@ -1,17 +1,39 @@
-export const CHATGPT_USER_TURN_SELECTOR = '[data-message-author-role="user"]';
-export const CHATGPT_ASSISTANT_TURN_SELECTOR = '[data-message-author-role="assistant"]';
-export const CHATGPT_ATTACHMENT_TILE_SELECTOR = '[role="group"][aria-label]';
+/*
+ * Two chatgpt.com page generations are matched: the one with data-testid hooks, and the redesign
+ * built on `form[data-chatgpt-composer]` and per-message search units. Neither repeats the other's
+ * markers, so every selector below lists both without double counting.
+ */
+export const CHATGPT_COMPOSER_FORM_SELECTOR = 'form[data-chatgpt-composer], form[data-type="unified-composer"]';
+export const CHATGPT_USER_TURN_SELECTOR = '[data-message-author-role="user"], [data-chatgpt-search-unit-key$=":user"]';
+export const CHATGPT_ASSISTANT_TURN_SELECTOR = '[data-message-author-role="assistant"], [data-chatgpt-search-unit-key$=":assistant"]';
+/** One per attached file. Redesigned page: the children of the composer's attachment strip. */
+export const CHATGPT_ATTACHMENT_TILE_SELECTOR = '[role="group"][aria-label], [data-composer-attachments] > div > *';
+/** Absent while the composer is empty (a voice button takes its place) and while answering. */
+export const CHATGPT_SEND_SELECTOR = 'button[data-testid="send-button"], form[data-chatgpt-composer] button[type="submit"]';
 
 /** Every shape the composer has taken. One source, shared with the page-reuse gate. */
 export const CHATGPT_INPUT_SELECTORS = [
+  'form[data-chatgpt-composer] [contenteditable="true"][role="textbox"]',
   '#prompt-textarea[contenteditable="true"]',
   'form[data-type="unified-composer"] #prompt-textarea',
   'div[contenteditable="true"]#prompt-textarea',
   'div[contenteditable="true"][role="textbox"][aria-multiline="true"]',
 ];
 
-/** Present only while ChatGPT is streaming an answer. */
-export const CHATGPT_STOP_SELECTOR = 'button[data-testid="stop-button"], [data-testid="stop-button"]';
+/**
+ * Present only while ChatGPT is answering. The redesigned stop button has no marker but its
+ * localized label, so the answer's own turn state stands in for it.
+ */
+export const CHATGPT_STOP_SELECTOR = 'button[data-testid="stop-button"], [data-testid="stop-button"], [data-talvt-turn-state="in_progress"]';
+
+/** A message's id in either page generation (page script: needs no helpers in scope). */
+export const CHATGPT_MESSAGE_ID_JS = `function chatgptMessageId(el) {
+  if (!el) return null;
+  var id = el.getAttribute('data-message-id');
+  if (id) return id;
+  var ids = (el.getAttribute('data-chatgpt-search-message-ids') || '').split(' ').filter(Boolean);
+  return ids.length ? ids[ids.length - 1] : null;
+}`;
 
 export const CHATGPT_SUBMIT_JS = `async function chatgptSubmit(promptText, opts) {
   opts = opts || {};
@@ -23,6 +45,7 @@ export const CHATGPT_SUBMIT_JS = `async function chatgptSubmit(promptText, opts)
   var SETTLE_MS = opts.settleMs === undefined ? 300 : opts.settleMs;
 
   var INPUT_SELECTORS = ${JSON.stringify(CHATGPT_INPUT_SELECTORS)};
+  ${CHATGPT_MESSAGE_ID_JS}
 
   function getComposer() {
     for (var i = 0; i < INPUT_SELECTORS.length; i++) {
@@ -42,7 +65,7 @@ export const CHATGPT_SUBMIT_JS = `async function chatgptSubmit(promptText, opts)
     return document.querySelectorAll(${JSON.stringify(CHATGPT_ASSISTANT_TURN_SELECTOR)}).length;
   }
   function readySendButton() {
-    var b = document.querySelector('button[data-testid="send-button"]');
+    var b = document.querySelector(${JSON.stringify(CHATGPT_SEND_SELECTOR)});
     if (!b || b.disabled) return null;
     if (b.getAttribute('aria-disabled') === 'true') return null;
     return b;
@@ -117,18 +140,18 @@ export const CHATGPT_SUBMIT_JS = `async function chatgptSubmit(promptText, opts)
 
   var userBaseline = countUserTurns();
   var previousUsers = Array.from(document.querySelectorAll(${JSON.stringify(CHATGPT_USER_TURN_SELECTOR)}));
-  var previousUserIds = previousUsers.map(function(turn) { return turn.getAttribute('data-message-id'); }).filter(Boolean);
+  var previousUserIds = previousUsers.map(chatgptMessageId).filter(Boolean);
   function hasAcceptedMessage() {
     var turns = document.querySelectorAll(${JSON.stringify(CHATGPT_USER_TURN_SELECTOR)});
     var latest = turns[turns.length - 1];
     if (!latest) return false;
-    var id = latest.getAttribute('data-message-id');
+    var id = chatgptMessageId(latest);
     if (id && previousUserIds.indexOf(id) >= 0) return false;
     if (!id && previousUsers.indexOf(latest) >= 0) return false;
     // A new message ID plus a consumed draft is independent of display formatting.
     if (id && !composerText()) return true;
     // Collapsible turns include localized show-more controls outside the actual body.
-    var body = latest.querySelector('[data-testid="collapsible-user-message-content"], .rich-text-user-turn, .whitespace-pre-wrap') || latest;
+    var body = latest.querySelector('[data-testid="collapsible-user-message-content"], .rich-text-user-turn, .whitespace-pre-wrap, [data-user-message-bubble] [dir="auto"]') || latest;
     var expected = promptText.replace(/\\s+/g, ' ').trim();
     return (body.innerText || '').replace(/\\s+/g, ' ').trim() === expected ||
       (body.textContent || '').replace(/\\s+/g, ' ').trim() === expected;
@@ -137,7 +160,7 @@ export const CHATGPT_SUBMIT_JS = `async function chatgptSubmit(promptText, opts)
   // Handed to the read loop, which tells a new answer by turn identity: the count alone may not grow.
   var assistantTurns = document.querySelectorAll(${JSON.stringify(CHATGPT_ASSISTANT_TURN_SELECTOR)});
   var lastAssistantTurn = assistantTurns[assistantTurns.length - 1] || null;
-  var lastAssistantId = lastAssistantTurn ? (lastAssistantTurn.getAttribute('data-message-id') || null) : null;
+  var lastAssistantId = chatgptMessageId(lastAssistantTurn);
 
   var sent = false;
   var clicked = false;

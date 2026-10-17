@@ -1,12 +1,15 @@
 import { SHARE_EXPIRE_VALUES } from './shareExpire';
 import { CAPTURE_PALETTES } from './capturePalettes';
+import { SITE_CONNECTOR_ROWS, bySite } from './siteConnectors';
+import type { SiteConnectorSite } from './siteConnectors';
 import type { ShareExpire, ShareExpireCache } from './shareExpire';
 import type { MapPlaceRef, TurnMeta } from './conversationDoc';
 import type { TokenUsage } from './tokenEstimate';
 import type { Theme } from './themes';
-import type { BotGrant } from './botPermissions';
+import type { BotGrant, BotGroupGrant } from './botPermissions';
 import type { ResearchProgress } from './researchProgress';
 import type { MarkdownLabels } from './markdownLabels';
+import type { TelegramLargeUploadSnapshot } from './telegramUpload';
 
 export const PROVIDER_URLS = {
   gemini: 'https://gemini.google.com/',
@@ -34,12 +37,14 @@ export type AuthProvider = (typeof AUTH_PROVIDERS)[number];
  * Sign-ins that are not model providers: sites a flow skill reads with the user's own account.
  * Each lives in its own session partition, never the AI worker's.
  */
-export const SITE_ACCOUNTS = ['x'] as const;
-export type SiteAccount = (typeof SITE_ACCOUNTS)[number];
+export type SiteAccount = 'x' | SiteConnectorSite;
+/** X, then the sign-in connectors (`siteConnectors.ts`) in row order. */
+export const SITE_ACCOUNTS: readonly SiteAccount[] = ['x', ...SITE_CONNECTOR_ROWS.map((row) => row.site)];
 
 export const SITE_ACCOUNT_LABELS: Record<SiteAccount, string> = {
   x: 'X',
-} as const;
+  ...bySite((row) => row.label),
+};
 
 export interface SiteAccountStatus {
   site: SiteAccount;
@@ -337,19 +342,27 @@ export interface McpServerConfig {
   commandName?: string;
 }
 
-/** The in-process LINE connector's descriptor. Single source shared by the registry (which
- * hosts it) and the agent IPC (which resolves a disclosed `/line` command against config). */
-export function builtinLineServerConfig(): McpServerConfig {
+/**
+ * The descriptor of a connector the app hosts itself: id `builtin-<slug>`, url `builtin://<slug>`,
+ * slash command `/<slug>`. Built-ins are never saved in `config.mcpServers`, so this is rebuilt on
+ * every read; `name` stays separate because it is not always the slug ('Taiwan Rail').
+ */
+export function builtinServerConfig(slug: string, name: string): McpServerConfig {
   return {
-    id: BUILTIN_LINE_SERVER_ID,
-    name: 'LINE',
-    url: 'builtin://line',
+    id: `builtin-${slug}`,
+    name,
+    url: `builtin://${slug}`,
     enabled: true,
     agentEnabled: true,
     autoApproveWrites: false,
     createdAt: new Date(0).toISOString(),
-    commandName: 'line',
+    commandName: slug,
   };
+}
+
+/** The in-process LINE connector's descriptor (its row in `BUILTIN_CONNECTORS`). */
+export function builtinLineServerConfig(): McpServerConfig {
+  return builtinServerConfig('line', 'LINE');
 }
 
 export type McpConnectionStatus = 'disconnected' | 'connecting' | 'needs_auth' | 'connected' | 'error';
@@ -361,11 +374,18 @@ export interface McpServerView extends McpServerConfig {
   hasToken: boolean;
   error?: string;
   tools: McpToolInfo[];
+  /** Not connected, but using it (a command, a send that names it) connects it without a sign-in. */
+  connectOnUse?: boolean;
 }
 
+/**
+ * A tool as Settings lists it. Only the name a person reads: `title` (MCP's display name, or the
+ * app's own wording for a built-in connector), else the tool id. The MCP `description` is written
+ * for the model and never leaves the main process.
+ */
 export interface McpToolInfo {
   name: string;
-  description: string;
+  title?: string;
 }
 
 export interface McpServerSaveRequest {
@@ -453,6 +473,7 @@ export const IPC = {
   WINDOW_IS_MAXIMIZED: 'window:is-maximized',
   WINDOW_MAXIMIZED_CHANGED: 'window:maximized-changed',
   SHOW_WORKER: 'show-worker',
+  SITE_VERIFICATION_OPEN: 'site-verification:open',
   GET_ACCOUNT_STATUSES: 'account:get-statuses',
   OPEN_ACCOUNT_LOGIN: 'account:open-login',
   ACCOUNT_LOGOUT: 'account:logout',
@@ -469,8 +490,33 @@ export const IPC = {
   DELETE_FILE: 'file:delete',
   DELETE_FILES: 'file:delete-many',
   DELETE_ALL_FILES: 'file:delete-all',
-  UPDATE_FILE_TITLE: 'file:update-title',
   UPDATE_FILE_H1: 'file:update-h1',
+  EDIT_TURN_RESPONSE: 'file:edit-turn-response',
+  SET_TURN_TRANSLATION: 'file:set-turn-translation',
+  CONVERSATION_HISTORY_LIST: 'conversation-history:list',
+  CONVERSATION_HISTORY_GET: 'conversation-history:get',
+  CONVERSATION_HISTORY_RESTORE: 'conversation-history:restore',
+  CONVERSATION_HISTORY_DELETE: 'conversation-history:delete',
+  CONVERSATION_HISTORY_DELETE_ALL: 'conversation-history:delete-all',
+  CONVERSATION_HISTORY_SNAPSHOT: 'conversation-history:snapshot',
+  NOTION_SEARCH: 'notion:search',
+  NOTION_BROWSE: 'notion:browse',
+  NOTION_IMPORT: 'notion:import',
+  NOTION_STATUS: 'notion:status',
+  NOTION_PULL: 'notion:pull',
+  NOTION_PUSH: 'notion:push',
+  NOTION_RESOLVE: 'notion:resolve',
+  NOTION_REVERT: 'notion:revert',
+  NOTION_CONNECTED: 'notion:connected',
+  YTDL_TOOLS_GET: 'ytdl-tools:get',
+  YTDL_TOOLS_STATE: 'ytdl-tools:state',
+  YTDL_TOOLS_INSTALL: 'ytdl-tools:install',
+  YTDL_TOOLS_CHECK_UPDATE: 'ytdl-tools:check-update',
+  YTDL_TOOLS_REMOVE: 'ytdl-tools:remove',
+  YTDL_TOOLS_SET_CUSTOM: 'ytdl-tools:set-custom',
+  YTDL_TOOLS_SET_NIGHTLY: 'ytdl-tools:set-nightly',
+  DOWNLOADS_KEEP_GET: 'downloads-keep:get',
+  DOWNLOADS_KEEP_SET: 'downloads-keep:set',
   START_CONVERSATION: 'file:start-conversation',
   IMPORT_CONVERSATIONS: 'file:import-conversations',
   START_FILE_DRAG: 'file:start-drag',
@@ -493,7 +539,6 @@ export const IPC = {
   SET_LOCALE_AUTO: 'language:set-auto',
   OPEN_THIRD_PARTY_LICENSES: 'license:open-third-party',
   OPEN_EXTERNAL_URL: 'url:open-external',
-  TRIGGER_PROMPT: 'prompt:trigger',
   TRIGGER_PROMPT_WITH_OPTIONS: 'prompt:trigger-with-options',
   CHAT_TURN: 'chat:turn',
   GET_SYNC_SYSTEM_LANGUAGE_TO_MODEL: 'prompt:get-sync-system-language-to-model',
@@ -502,6 +547,7 @@ export const IPC = {
   UPDATE_NOTIFY_ON_COMPLETE: 'notify:update-on-complete',
   RESET_SETTINGS: 'settings:reset',
   SHOW_IN_FOLDER: 'file:show-in-folder',
+  EXPORT_CONVERSATION_MARKDOWN: 'file:export-markdown',
   OPEN_PATH: 'file:open-path',
   OPEN_FILE_WITH: 'file:open-with',
   COPY_FILES_TO_CLIPBOARD: 'file:copy-to-clipboard',
@@ -527,12 +573,18 @@ export const IPC = {
   GET_TELEGRAM_SETTINGS: 'telegram:get-settings',
   UPDATE_TELEGRAM_ENABLED: 'telegram:update-enabled',
   UPDATE_TELEGRAM_BOT_TOKEN: 'telegram:update-bot-token',
+  /** Big-file uploads over MTProto: save / clear / test the my.telegram.org api_id and api_hash. */
+  UPDATE_TELEGRAM_LARGE_UPLOAD: 'telegram:update-large-upload',
+  CLEAR_TELEGRAM_LARGE_UPLOAD: 'telegram:clear-large-upload',
+  TEST_TELEGRAM_LARGE_UPLOAD: 'telegram:test-large-upload',
   UPDATE_TELEGRAM_ALLOW_GROUP_COMMANDS: 'telegram:update-allow-group-commands',
   UPDATE_TELEGRAM_DEFAULT_REPLY_MODE: 'telegram:update-default-reply-mode',
   UPDATE_TELEGRAM_COMPACT_REPLY: 'telegram:update-compact-reply',
-  UPDATE_TELEGRAM_ADMIN_USERS: 'telegram:update-admin-users',
   /** Replaces one paired Telegram / LINE account's grants (`BotSetPermissionsRequest`). */
   BOT_SET_PERMISSIONS: 'bot:set-permissions',
+  BOT_SET_GROUP_PERMISSIONS: 'bot:set-group-permissions',
+  BOT_SET_BLOCKED: 'bot:set-blocked',
+  BOT_GET_AUDIENCE: 'bot:get-audience',
   UPDATE_TELEGRAM_LLM_DIRECT: 'telegram:update-llm-direct',
   GET_BOT_PROVIDER_COMMANDS: 'bot:get-provider-commands',
   UPDATE_BOT_PROVIDER_COMMANDS: 'bot:update-provider-commands',
@@ -555,7 +607,6 @@ export const IPC = {
   LIST_LINE_CHATS: 'line:list-chats',
   REFRESH_LINE_ACCOUNT: 'line:refresh-account',
   GET_EMAIL_SETTINGS: 'email:get-settings',
-  UPDATE_EMAIL_ENABLED: 'email:update-enabled',
   UPDATE_EMAIL_CREDENTIALS: 'email:update-credentials',
   GET_DATA_KEY_STATUS: 'datakey:get-status',
   UPDATE_DATA_KEY: 'datakey:update',
@@ -587,6 +638,19 @@ export const IPC = {
   MEMORY_CURATE_CANCEL: 'memory:curate-cancel',
   MEMORY_CURATE_APPLY: 'memory:curate-apply',
   MEMORY_CURATE_UNDO: 'memory:curate-undo',
+  WRITING_TOOLS_GET_MODEL: 'writing:get-model',
+  WRITING_TOOLS_RUN: 'writing:run',
+  WRITING_TOOLS_CANCEL: 'writing:cancel',
+  WRITING_TOOLS_PROGRESS: 'writing:progress',
+  DOC_ASSISTANT_RUN: 'doc-assistant:run',
+  DOC_ASSISTANT_CANCEL: 'doc-assistant:cancel',
+  DOC_ASSISTANT_PROGRESS: 'doc-assistant:progress',
+  TRANSLATE_RUN: 'translate:run',
+  TRANSLATE_CANCEL: 'translate:cancel',
+  TRANSLATE_PROGRESS: 'translate:progress',
+  TRANSLATE_CONVERSATION: 'translate:conversation',
+  TRANSLATE_CONVERSATION_CANCEL: 'translate:conversation-cancel',
+  TRANSLATE_CONVERSATION_PROGRESS: 'translate:conversation-progress',
   GEMINI_MODEL_GET: 'gemini-model:get',
   GEMINI_MODEL_SET: 'gemini-model:set',
   GEMINI_MODEL_REFRESH: 'gemini-model:refresh',
@@ -632,6 +696,8 @@ export const IPC = {
   UPDATE_SHOW_TOKEN_USAGE: 'ui:update-show-token-usage',
   GET_MARKDOWN_ZOOM: 'ui:get-markdown-zoom',
   UPDATE_MARKDOWN_ZOOM: 'ui:update-markdown-zoom',
+  GET_READING_PREFS: 'ui:get-reading-prefs',
+  UPDATE_READING_PREFS: 'ui:update-reading-prefs',
   GET_CAPTURE_SETTINGS: 'capture:get-settings',
   UPDATE_CAPTURE_SETTINGS: 'capture:update-settings',
   GET_QUICK_EXPORT: 'capture:get-quick-export',
@@ -645,6 +711,10 @@ export const IPC = {
   SELECT_PATH: 'dialog:select-path',
   FLOW_GET_ALL: 'flow:get-all',
   FLOW_SAVE: 'flow:save',
+  FLOW_VERSIONS_LIST: 'flow-versions:list',
+  FLOW_VERSION_RESTORE: 'flow-versions:restore',
+  FLOW_VERSION_DELETE: 'flow-versions:delete',
+  FLOW_VERSIONS_CLEAR: 'flow-versions:clear',
   FLOW_DELETE: 'flow:delete',
   FLOW_DELETE_MANY: 'flow:delete-many',
   FLOW_SET_ENABLED_MANY: 'flow:set-enabled-many',
@@ -653,6 +723,8 @@ export const IPC = {
   FLOW_REORDER: 'flow:reorder',
   FLOW_EXECUTE: 'flow:execute',
   FLOW_RUN_CHAT_COMMAND: 'flow:run-chat-command',
+  /** `{ progressId, progress }`: where a long step of one chat command run is (a `StepProgress`). */
+  FLOW_CHAT_COMMAND_PROGRESS: 'flow:chat-command-progress',
   FLOW_ABORT: 'flow:abort',
   FLOW_GENERATE: 'flow:generate',
   FLOW_BUILD_PROGRESS: 'flow:build-progress',
@@ -745,6 +817,15 @@ export interface DomainMetrics {
   keys: Record<string, KeyMetrics>;
 }
 
+/**
+ * Uses of the Downloader for one site: a post forwarded or saved, a video downloaded, or a link of
+ * that site it could not read. A Stop is not a use.
+ */
+export interface DownloadCounts {
+  success: number;
+  failure: number;
+}
+
 export interface DailyMetricCounts {
   chat: DomainMetrics;
   agent: DomainMetrics;
@@ -752,6 +833,8 @@ export interface DailyMetricCounts {
   /** Every metered token, including calls made outside a run (e.g. flow authoring). */
   tokens: TokenCounts;
   keys: Record<string, KeyMetrics>;
+  /** By link-site id. */
+  downloads: Record<string, DownloadCounts>;
 }
 
 export interface MetricsSnapshot {
@@ -760,6 +843,7 @@ export interface MetricsSnapshot {
   flow: DomainMetrics;
   tokens: TokenCounts;
   keys: Record<string, KeyMetrics>;
+  downloads: Record<string, DownloadCounts>;
   daily: Record<string, DailyMetricCounts>;
   /** YYYY-MM-DD of the first recorded day; empty until something is recorded. */
   since: string;
@@ -799,7 +883,7 @@ export interface SelectPathResult {
   content?: string;
 }
 
-export type BackupCategoryId = 'config' | 'flows' | 'checkpoints' | 'memory' | 'userMemory' | 'outputs';
+export type BackupCategoryId = 'config' | 'flows' | 'checkpoints' | 'memory' | 'userMemory' | 'outputs' | 'history';
 
 export const BACKUP_CATEGORY_IDS: readonly BackupCategoryId[] = [
   'config',
@@ -808,6 +892,7 @@ export const BACKUP_CATEGORY_IDS: readonly BackupCategoryId[] = [
   'memory',
   'userMemory',
   'outputs',
+  'history',
 ] as const;
 
 export interface BackupCategoryInfo {
@@ -876,6 +961,8 @@ export interface OutputFile {
   preview: string;
   provider?: string;
   turns?: number;
+  /** A Notion page kept in sync (`ThreadMeta.notion`), shown in the document view. */
+  notion?: true;
 }
 
 export interface StartedConversation {
@@ -884,6 +971,21 @@ export interface StartedConversation {
   content: string;
   files: OutputFile[];
 }
+
+/** One answer the user edited in place. `expected` is the answer the editor started from. */
+export interface ResponseEditRequest {
+  filePath: string;
+  turnIndex: number;
+  expected: string;
+  response: string;
+  /** Omitted = now; undo passes the turn's previous value, `null` for a turn never edited. */
+  editedAt?: string | null;
+}
+
+/** `conflict`: the file no longer has the answer the editor started from. */
+export type ResponseEditResult =
+  | { ok: true; content: string }
+  | { ok: false; reason: 'conflict' | 'missing' | 'failed' };
 
 /** What a drop of Markdown files onto the conversation list did, file by file. */
 export interface ConversationImportResult {
@@ -980,8 +1082,10 @@ export interface UiNotificationPayload {
   body: string;
   level?: 'success' | 'info' | 'warning' | 'error';
   action?: {
-    id: 'open-worker-window' | 'open-secret-settings';
+    id: 'open-worker-window' | 'open-secret-settings' | 'open-site-verification' | 'open-bot-settings';
     label: string;
+    /** `open-site-verification`: which site's verification window it opens. */
+    site?: string;
   };
 }
 
@@ -996,12 +1100,14 @@ export type TelegramRuntimeStatus = 'idle' | 'starting' | 'running' | 'stopping'
 export type TelegramReplyMode = 'markdown' | 'png' | 'webp' | 'pdf';
 export type TelegramOutputChoice = TelegramReplyMode | 'compact';
 
-export interface TelegramPendingCode {
+/** A pending pairing code; Telegram and LINE share this one shape (`src/main/pairingCodes.ts`). */
+export interface PendingPairingCode {
   code: string;
-  sessionId: string;
   createdAt: string;
   expiresAt: string;
 }
+
+export type TelegramPendingCode = PendingPairingCode;
 
 export interface TelegramPairedUser {
   userId: number;
@@ -1024,8 +1130,6 @@ export interface TelegramChannel {
   username?: string;
   chatType?: TelegramChatKind;
   canPost: boolean;
-  discoveredAt: string;
-  lostAt?: string;
 }
 
 export type BotContactKind = 'user' | 'chat';
@@ -1047,14 +1151,39 @@ export interface BotContact {
   reachability: BotReachability;
   unreachableSince?: string;
   lastError?: string;
+  /** An unpaired person who addressed the bot: when last, how often, and in which chat (a group id, or their own id for a private chat). */
+  lastUsedAt?: string;
+  useCount?: number;
+  lastUsedChatId?: string;
 }
 
-export interface TelegramKnownUser {
-  userId: number;
+/** One group or multi-person chat the bot is in, with what it grants everyone in it. */
+export interface BotAudienceGroup {
+  id: string;
+  title?: string;
+  reachability: BotReachability;
+  /** Empty while pending. */
+  grants: BotGroupGrant[];
+  /** Not allowed by the owner yet: the bot does nothing in this group, for anyone. */
+  pending: boolean;
+}
+
+/** An unpaired person who addressed the bot. */
+export interface BotAudienceUser {
+  id: string;
+  name: string;
   username?: string;
-  firstName?: string;
-  lastName?: string;
-  resolvedAt: string;
+  lastUsedAt: string;
+  useCount: number;
+  /** A group's name, or '' for a private chat. */
+  where: string;
+  blocked: boolean;
+}
+
+/** The settings page's groups and "people who used the bot", for one platform. */
+export interface BotAudienceSnapshot {
+  groups: BotAudienceGroup[];
+  users: BotAudienceUser[];
 }
 
 export interface BotProviderCommand {
@@ -1099,6 +1228,11 @@ export interface TelegramReplyTarget {
 export interface TelegramRuntimeSnapshot {
   status: TelegramRuntimeStatus;
   botUsername?: string;
+  /**
+   * `getMe`'s `can_read_all_group_messages`: false while the bot's privacy mode is on, so a group
+   * only reaches it by a mention (or by making it an admin there). Absent while it is not running.
+   */
+  readsAllGroupMessages?: boolean;
   errorMessage?: string;
   updatedAt: string;
 }
@@ -1107,18 +1241,18 @@ export interface TelegramSettingsSnapshot {
   enabled: boolean;
   hasToken: boolean;
   tokenPreview: string;
+  /** The my.telegram.org values for files over 50 MB. */
+  largeUpload: TelegramLargeUploadSnapshot;
   allowGroupCommands: boolean;
   defaultReplyMode: TelegramReplyMode;
   compactReply: boolean;
-  /** Paired accounts holding the `admin` grant. */
-  adminUserIds: number[];
   /** Per-account grants keyed by the stringified user id; no entry means no grants. */
   permissions: Record<string, BotGrant[]>;
   llmDirect: BotLlmDirectConfig;
   runtime: TelegramRuntimeSnapshot;
   pairing: TelegramPairingState;
   channels: TelegramChannel[];
-  knownUsers: TelegramKnownUser[];
+  /** The contact directory: the one store of people's and chats' names (unpairing keeps them). */
   contacts: BotContact[];
 }
 
@@ -1130,23 +1264,17 @@ export interface LineAccountInfo {
   chatModeOn: boolean;
   webhookActive?: boolean;
   addFriendUrl: string;
-  checkedAt: string;
 }
 
 export interface LineRuntimeSnapshot {
   status: LineRuntimeStatus;
-  listenUrl?: string;
   webhookPath?: string;
   errorMessage?: string;
   account?: LineAccountInfo;
   updatedAt: string;
 }
 
-export interface LinePendingCode {
-  code: string;
-  createdAt: string;
-  expiresAt: string;
-}
+export type LinePendingCode = PendingPairingCode;
 
 export interface LinePairedUser {
   userId: string;
@@ -1209,7 +1337,6 @@ export interface LineCredentialsUpdate {
 }
 
 export interface EmailSettingsSnapshot {
-  enabled: boolean;
   host: string;
   port: number;
   user: string;
@@ -1223,6 +1350,10 @@ export interface DataKeyStatus {
 }
 
 export const DATA_KEY_MOENV = 'moenv';
+
+/** The user's own TDX key (Client ID + Secret) for the Taiwan rail connector; optional. */
+export const DATA_KEY_TDX_ID = 'tdx.clientId';
+export const DATA_KEY_TDX_SECRET = 'tdx.clientSecret';
 
 /**
  * The LINE PC database key. Recovering it is slow, so it is kept between launches, in the data-key
@@ -1380,8 +1511,8 @@ function widerCaptureWidth(width: number, encodedHeight: number, limit: number):
 }
 
 export {
-  SHARE_EXPIRE_VALUES, SHARE_EXPIRE_SECONDS, DEFAULT_SHARE_INSTANCE, DEFAULT_INSTANCE_EXPIRES,
-  PRIVATEBIN_DEFAULT_EXPIRES, clampShareExpire, isShareExpire, normalizeShareExpireList, resolveShareExpires,
+  SHARE_EXPIRE_VALUES, DEFAULT_SHARE_INSTANCE, DEFAULT_INSTANCE_EXPIRES,
+  clampShareExpire, isShareExpire, normalizeShareExpireList, resolveShareExpires,
 } from './shareExpire';
 export type { ShareExpire, ShareExpireCache } from './shareExpire';
 
@@ -1655,6 +1786,11 @@ export interface MarkdownCaptureRequest {
   options: MarkdownCaptureOptions;
   /** Filled in by main: the capture window has no language loaded. */
   markdownLabels?: MarkdownLabels;
+  /**
+   * The reading face the card uses, filled in by main from the reading preferences. Only serif
+   * carries over (code alone is monospace on a card); the in-app preview falls back to the app's own.
+   */
+  readingFont?: 'default' | 'serif';
 }
 
 export interface MarkdownCaptureResult {
@@ -1663,6 +1799,9 @@ export interface MarkdownCaptureResult {
   error?: string;
   canceled?: boolean;
 }
+
+/** A conversation saved as plain Markdown (no hidden markers) where the user picked. */
+export type MarkdownExportResult = MarkdownCaptureResult;
 
 /** Several conversations at once: one file each, into a folder the user picks. */
 export type BatchCaptureFormat = 'pdf' | 'png';
@@ -1703,7 +1842,7 @@ export interface ZipExportResult {
   error?: string;
 }
 
-export type SkillType = 'shell' | 'run' | 'js' | 'browser' | 'browser_open' | 'browser_js' | 'browser_close' | 'llm' | 'clipboard' | 'delay' | 'notify' | 'capture' | 'share' | 'bot' | 'rss' | 'stop' | 'comment' | 'scraper' | 'search' | 'research' | 'gmap_reviews' | 'line_read' | 'loop' | 'end_loop' | 'if' | 'end_if' | 'on_change' | 'sysinfo' | 'http' | 'youtube' | 'youtube_subs' | 'x_posts' | 'x_thread' | 'x_trends' | 'power' | 'restart_app' | 'file_write' | 'file_read' | 'file_list' | 'file_delete' | 'file_download' | 'email_send' | 'text' | 'stock' | 'forex' | 'weather' | 'air_quality' | 'random' | 'break' | 'continue';
+export type SkillType = 'shell' | 'run' | 'js' | 'browser' | 'browser_open' | 'browser_js' | 'browser_close' | 'llm' | 'clipboard' | 'delay' | 'notify' | 'capture' | 'share' | 'bot' | 'rss' | 'stop' | 'comment' | 'scraper' | 'search' | 'research' | 'gmap_reviews' | 'line_read' | 'loop' | 'end_loop' | 'if' | 'end_if' | 'on_change' | 'sysinfo' | 'http' | 'youtube' | 'youtube_subs' | 'youtube_info' | 'youtube_download' | 'x_posts' | 'x_thread' | 'x_trends' | 'x_media' | 'power' | 'restart_app' | 'file_write' | 'file_read' | 'file_list' | 'file_delete' | 'file_download' | 'email_send' | 'text' | 'stock' | 'forex' | 'weather' | 'air_quality' | 'random' | 'break' | 'continue';
 
 export interface SkillInstance {
   id: string;
@@ -1762,10 +1901,12 @@ export interface TriggerConfig {
   botInputVariable?: string;
   /**
    * Who may run this bot command: 'all' = every paired account, 'users' = only botAllowedUserIds
-   * (an empty list is nobody). Absent on flows saved before the field existed, which keep the
-   * legacy reading of the list: empty = every paired account, non-empty = only those ids.
+   * (an empty list is nobody), 'admins' = the owner and admin-grant holders in a private chat.
+   * Absent on flows saved before the field existed, which keep the legacy reading of the list:
+   * non-empty = only those ids, empty = every paired account (the admins when the flow reads the
+   * owner's own data; `shared/botCommandAccess.ts`).
    */
-  botAccess?: 'all' | 'users';
+  botAccess?: 'all' | 'users' | 'admins';
   /** Bot user ids allowed to run this command; see botAccess for what an empty list means. */
   botAllowedUserIds?: string[];
   chatCommand?: string;
@@ -1883,6 +2024,34 @@ export interface FlowExecutionResult {
   softFailures?: number;
   /** The first of those failures as a person reads it, like `displayError`. */
   softFailureError?: string;
+  /**
+   * Buttons of the last bot step that had any. When the run came from the chat (no bot to send
+   * to), the chat draws them under the answer; pressing one sends the command again with `input`.
+   */
+  buttons?: FlowButton[];
+  /** Files the run saved on this computer (a downloaded video); the chat offers their folder. */
+  savedFiles?: string[];
+  /**
+   * Photos and videos the desktop chat shows under the answer without their being kept (a pasted
+   * X post's media, a video's cover): they live in the chat's media cache, not a chosen folder.
+   */
+  chatMedia?: string[];
+  /**
+   * A forwarded forum article's header (a PTT article) as the step that answered wrote it: the
+   * desktop chat draws it as a card in place of the answer's opening block (`TurnPostCard` JSON).
+   */
+  postCard?: string;
+}
+
+export interface FlowButton {
+  label: string;
+  input: string;
+  /**
+   * A picture of what the button takes (one of a person's stories): a file in the chat's media
+   * cache for the desktop chat, an https URL for LINE. Rides beside `buttons` in a step's
+   * `buttonImages` (`formatButtonImages`); never part of the `label | input` text.
+   */
+  image?: string;
 }
 
 export interface ChatCommandResult {
@@ -2006,12 +2175,10 @@ export interface AgentRunState {
   attachments?: string[];
   /**
    * The MCP servers the user disclosed for this run. Persisted, so a resume discloses the same
-   * set. Read through `readRunConnectors` — runs written before this was plural hold a singular
-   * `mcpServerId`, and a resume that silently loses its scope widens what the agent may touch.
+   * set. Read through `readRunConnectors` — a resume that silently loses its scope widens what
+   * the agent may touch.
    */
   mcpServerIds?: readonly string[];
-  /** Legacy single-server scope. Migrated on read; never written. */
-  mcpServerId?: string;
   /** The slash command that started the run, for the conversation badge. */
   mcpCommandName?: string;
   /**
@@ -2154,7 +2321,7 @@ export const FLOW_BUILD_PHASES = ['understand', 'discover', 'plan', 'build', 've
 export type FlowBuildPhase = typeof FLOW_BUILD_PHASES[number];
 
 /** An integration a step needs before it can do anything, and that the user has to set up once. */
-export type FlowSetupNeed = 'bot' | 'email' | 'line';
+export type FlowSetupNeed = 'bot' | 'email' | 'line' | 'ytdl';
 
 export interface FlowBuildBlocker {
   skill: SkillType;

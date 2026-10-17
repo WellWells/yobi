@@ -1,9 +1,8 @@
 import type { CSSVariablesResolver } from '@mantine/core';
 import { THEME_DEFS, VALID_THEMES, themeDef } from '../../../shared/themes';
 import type { Theme, ThemeColors } from '../../../shared/themes';
-import { contrastRatio, lerpHex, hexToRgba, relativeLuminance } from './colorUtils';
+import { contrastRatio, lerpHex, hexToRgba } from './colorUtils';
 
-const ON_ACCENT_LUMINANCE_THRESHOLD = 0.3;
 /** Accent opacity of `--accent-dim`, the fill of selected rows. */
 const ACCENT_DIM_ALPHA = 0.15;
 /** How far `--bg-hover` (hovered rows and menu items) moves from the elevated colour: toward white in dark themes, black in light ones. */
@@ -32,11 +31,9 @@ interface ThemeCssVars {
   '--warning': string;
   '--error': string;
   '--bg-hover': string;
-  '--accent-hover': string;
   '--border-hover': string;
   '--code-bg': string;
   '--selection-bg': string;
-  '--on-accent': string;
 }
 
 function hoverColor(base: ThemeColors, isLight: boolean): string {
@@ -62,9 +59,7 @@ function expandTheme(base: ThemeColors, isLight: boolean): ThemeCssVars {
     '--selection-bg': hexToRgba(base.accent, isLight ? 0.18 : 0.25),
     '--bg-hover': hoverColor(base, isLight),
     '--border-hover': lerpHex(base.border, toward, 0.25),
-    '--accent-hover': lerpHex(base.accent, toward, 0.20),
     '--code-bg': base.bgSurface,
-    '--on-accent': relativeLuminance(base.accent) > ON_ACCENT_LUMINANCE_THRESHOLD ? '#1b1b1b' : '#ffffff',
   };
 }
 
@@ -152,11 +147,9 @@ export function buildCssVariablesResolver(yobiTheme: Theme): CSSVariablesResolve
     '--warning': colors['--warning'],
     '--error': colors['--error'],
     '--bg-hover': colors['--bg-hover'],
-    '--accent-hover': colors['--accent-hover'],
     '--border-hover': colors['--border-hover'],
     '--code-bg': colors['--code-bg'],
     '--selection-bg': colors['--selection-bg'],
-    '--on-accent': colors['--on-accent'],
 
     '--mantine-color-body': colors['--bg-primary'],
     '--mantine-color-text': colors['--text-primary'],
@@ -173,13 +166,10 @@ export function buildCssVariablesResolver(yobiTheme: Theme): CSSVariablesResolve
     '--mantine-color-bg-tertiary': colors['--bg-tertiary'],
     '--mantine-color-accent': colors['--accent'],
     '--mantine-color-accent-dim': colors['--accent-dim'],
-    '--mantine-color-accent-hover': colors['--accent-hover'],
     '--mantine-color-border-hover': colors['--border-hover'],
     '--mantine-color-success': colors['--success'],
     '--mantine-color-warning': colors['--warning'],
     '--mantine-color-error': colors['--error'],
-    '--mantine-color-code-bg': colors['--code-bg'],
-    '--mantine-color-selection-bg': colors['--selection-bg'],
   };
 
   const paletteHoverOverrides: Record<string, string> = isLight

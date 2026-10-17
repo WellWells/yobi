@@ -7,8 +7,8 @@ import { buildTelegramSettingsSnapshot } from '../telegramBridge';
 import { forgetChannel, issuePairingCode, revokePairingCode, unpairUser } from '../telegram';
 import { clearBotConversationsForUser } from '../botConversations';
 import { forgetBotChat, revokeBotPairing } from '../botDirectory';
-import { dropBotPermissions, setTelegramAdmins } from '../botPermissions';
-import { announceBotPermissionsChanged } from './botPermissions';
+import { dropBotPermissions } from '../botPermissions';
+import { registerTelegramLargeUploadHandlers } from './telegramLargeUpload';
 import type { IpcContext } from './context';
 
 function registerSyncSetting(
@@ -33,6 +33,7 @@ function registerSyncSetting(
 
 export function registerTelegramHandlers(ctx: IpcContext): void {
   ipcMain.handle(IPC.GET_TELEGRAM_SETTINGS, () => buildTelegramSettingsSnapshot());
+  registerTelegramLargeUploadHandlers();
 
   registerSyncSetting(
     ctx,
@@ -84,13 +85,6 @@ export function registerTelegramHandlers(ctx: IpcContext): void {
     return true;
   });
 
-  // Admin is the `admin` grant; a whole-list update only adds or removes that one grant.
-  ipcMain.handle(IPC.UPDATE_TELEGRAM_ADMIN_USERS, (_event, userIds: unknown) => {
-    setTelegramAdmins(userIds);
-    announceBotPermissionsChanged(ctx, 'telegram');
-    return true;
-  });
-
   ipcMain.handle(IPC.UPDATE_TELEGRAM_LLM_DIRECT, (_event, value: unknown) => {
     config.telegram.llmDirect = normalizeLlmDirect(value);
     saveConfig({ telegram: config.telegram });
@@ -98,7 +92,7 @@ export function registerTelegramHandlers(ctx: IpcContext): void {
   });
 
   ipcMain.handle(IPC.GENERATE_TELEGRAM_PAIRING_CODE, () => {
-    const issued = issuePairingCode(config.telegram.pairing, ctx.telegramSessionId);
+    const issued = issuePairingCode(config.telegram.pairing);
     config.telegram.pairing = issued.nextState;
     saveConfig({ telegram: config.telegram });
     sendLog(`Telegram pairing code generated (expires at ${issued.expiresAt})`);
@@ -116,7 +110,6 @@ export function registerTelegramHandlers(ctx: IpcContext): void {
     if (!Number.isFinite(numericUserId) || numericUserId <= 0) return false;
     config.telegram.pairing = unpairUser(config.telegram.pairing, numericUserId);
     dropBotPermissions('telegram', String(numericUserId));
-    config.telegram.knownUsers = config.telegram.knownUsers.filter((user) => user.userId !== numericUserId);
     saveConfig({ telegram: config.telegram });
     await clearBotConversationsForUser('telegram', numericUserId);
     await revokeBotPairing('telegram', String(numericUserId));

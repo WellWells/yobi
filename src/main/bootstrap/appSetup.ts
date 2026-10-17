@@ -15,6 +15,7 @@ import {
   getMainWin,
   getWorkerWin,
   revealWorkerWindow,
+  shouldStartHidden,
 } from '../windows';
 import { initializeUpdater } from '../updater';
 
@@ -39,7 +40,7 @@ export async function loadInitialLanguages(): Promise<void> {
 const WORKER_WARMUP_FALLBACK_MS = 5_000;
 
 export function setupWindows(): void {
-  createMainWindow();
+  createMainWindow({ startHidden: shouldStartHidden() });
   const mainWin = getMainWin();
   setMainWindow(mainWin);
   setWorkerReveal(() => {

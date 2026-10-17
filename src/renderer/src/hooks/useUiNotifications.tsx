@@ -51,6 +51,14 @@ function runPayloadAction(action: NonNullable<UiNotificationPayload['action']>):
     systemApi.showWorker();
     return;
   }
+  if (action.id === 'open-site-verification') {
+    if (action.site) systemApi.openSiteVerification(action.site);
+    return;
+  }
+  if (action.id === 'open-bot-settings') {
+    useAppStore.getState().openSettingsCategory('bots');
+    return;
+  }
   // The payload names the action, not which secret failed — the store knows that, and it is
   // the reason the notice exists at all.
   const [failure] = useSecretHealthStore.getState().failures;

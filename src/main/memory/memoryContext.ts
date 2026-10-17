@@ -40,14 +40,6 @@ export function parseBotChatKey(chatKey: string): { platform: BotPlatform; chatI
   return { platform, chatId, userId };
 }
 
-/** The memory context of a bot chat named by its chat key; an unreadable key reaches nothing. */
-export async function botChatMemoryContext(chatKey: string): Promise<MemoryAccessContext> {
-  const parsed = parseBotChatKey(chatKey);
-  const state = parsed ? await loadUserMemory().catch(() => null) : null;
-  if (!parsed || !state) return { surface: 'bot' };
-  return botMemoryContext(state, parsed.platform, parsed.chatId, parsed.userId);
-}
-
 export interface ResolvedMemory {
   access: MemoryAccess;
   /** What this surface may show the model: empty when access is none. */

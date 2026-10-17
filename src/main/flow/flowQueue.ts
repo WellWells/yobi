@@ -15,6 +15,21 @@ const MAX_CONCURRENT_FLOWS = 2;
  */
 const MAX_CONCURRENT_EXTERNAL = 1;
 
+/**
+ * Flows Yobi runs itself for a pasted YouTube or X link: someone in a chat is waiting on the
+ * reply, and the work is a download, not a model. They take neither shared slot, so a slow
+ * scheduled flow never holds a download back; anything they touch that cannot
+ * overlap is still behind its lane. Their own cap keeps a burst of pasted links from starting a
+ * download process each.
+ */
+const MAX_CONCURRENT_BUILTIN = 3;
+
+/** Which slots a task takes: the shared pool, the external lane and then the shared pool, or the built-ins' own. */
+export type QueuePool = 'shared' | 'external' | 'builtin';
+
+/** The error a task removed from the queue before it started resolves with. */
+export const QUEUE_CANCELLED = 'Cancelled by user';
+
 interface PendingEntry {
   id: string;
   name: string;
@@ -29,6 +44,7 @@ interface PendingEntry {
 export class FlowQueue {
   private readonly slots: Semaphore;
   private readonly externalSlots = new Semaphore(MAX_CONCURRENT_EXTERNAL);
+  private readonly builtinSlots = new Semaphore(MAX_CONCURRENT_BUILTIN);
   private pending: PendingEntry[] = [];
   private cancelled = new Set<string>();
   private onChange: (() => void) | null = null;
@@ -95,7 +111,7 @@ export class FlowQueue {
     flowId?: string,
     agentRunId?: string,
     clientToken?: string,
-    external = false,
+    pool: QueuePool = 'shared',
   ): Promise<T> {
     let resolveResult!: (result: T) => void;
     const resultPromise = new Promise<T>((res) => { resolveResult = res; });
@@ -107,20 +123,21 @@ export class FlowQueue {
       flowId,
       agentRunId,
       clientToken,
-      cancel: () => resolveResult(makeErrorResult(new Error('Cancelled by user'))),
+      cancel: () => resolveResult(makeErrorResult(new Error(QUEUE_CANCELLED))),
     });
     this.onChange?.();
 
     void (async () => {
       // The external slot is taken FIRST and released LAST, so a queued external task waits
       // outside the shared pool instead of sitting on a slot while it waits for its own lane.
-      if (external) await this.externalSlots.acquire();
-      await this.slots.acquire();
+      if (pool === 'external') await this.externalSlots.acquire();
+      const slots = pool === 'builtin' ? this.builtinSlots : this.slots;
+      await slots.acquire();
       try {
         if (this.cancelled.has(taskId)) {
           this.cancelled.delete(taskId);
           this.removeEntry(taskId);
-          resolveResult(makeErrorResult(new Error('Cancelled by user')));
+          resolveResult(makeErrorResult(new Error(QUEUE_CANCELLED)));
           return;
         }
         this.markRunning(taskId);
@@ -132,8 +149,8 @@ export class FlowQueue {
           this.removeEntry(taskId);
         }
       } finally {
-        this.slots.release();
-        if (external) this.externalSlots.release();
+        slots.release();
+        if (pool === 'external') this.externalSlots.release();
       }
     })();
 

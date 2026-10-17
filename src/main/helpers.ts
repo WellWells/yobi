@@ -6,10 +6,16 @@ import { canonicalProviderUrl, IPC, PROVIDER_URLS } from '../shared/types';
 import { appendLogLine, fileStamp } from './logFile';
 import { relaunchArgs } from './relaunchFlag';
 
+export { isHttpUrl } from '../shared/webUrl';
+
 let _mainWin: BrowserWindow | null = null;
 let _notifyEnabled = true;
 let _workerReveal: (() => void) | null = null;
 let _secretSettingsReveal: (() => void) | null = null;
+/** Shows the main window on one settings category (`appMenuSetup.ts`). */
+let _settingsCategoryReveal: ((category: string) => void) | null = null;
+/** Opens the verification window a site's notification offers (`siteVerification.ts`). */
+let _siteVerificationOpener: ((site: string) => void) | null = null;
 let _workerAttention: WorkerAttention = 'idle';
 
 export function setMainWindow(win: BrowserWindow | null): void {
@@ -22,6 +28,14 @@ export function setWorkerReveal(fn: () => void): void {
 
 export function setSecretSettingsReveal(fn: () => void): void {
   _secretSettingsReveal = fn;
+}
+
+export function setSettingsCategoryReveal(fn: (category: string) => void): void {
+  _settingsCategoryReveal = fn;
+}
+
+export function setSiteVerificationOpener(fn: (site: string) => void): void {
+  _siteVerificationOpener = fn;
 }
 
 export function setNotifyEnabled(enabled: boolean): void {
@@ -175,21 +189,20 @@ function emitNotification(
   if (action?.id === 'open-secret-settings' && _secretSettingsReveal) {
     notification.on('click', _secretSettingsReveal);
   }
+  if (action?.id === 'open-bot-settings' && _settingsCategoryReveal) {
+    const reveal = _settingsCategoryReveal;
+    notification.on('click', () => reveal('bots'));
+  }
+  if (action?.id === 'open-site-verification' && action.site && _siteVerificationOpener) {
+    const { site } = action;
+    const open = _siteVerificationOpener;
+    notification.on('click', () => open(site));
+  }
   watchNativeDelivery(notification, (reason) => {
     appendLogLine(`[${fileStamp(new Date())}] Native notification not shown (${reason}); falling back to the in-app toast`);
     showInApp();
   });
   notification.show();
-}
-
-export function isHttpUrl(rawUrl: string): boolean {
-  if (!rawUrl?.trim()) return false;
-  try {
-    const parsed = new URL(rawUrl);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch {
-    return false;
-  }
 }
 
 export function normalizeAiUrl(url: string): string {

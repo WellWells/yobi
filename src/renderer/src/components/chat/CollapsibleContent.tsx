@@ -1,4 +1,4 @@
-import React, { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Box, Text, UnstyledButton } from '@mantine/core';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 
@@ -8,6 +8,9 @@ interface CollapsibleContentProps {
   t: (key: string) => string;
   collapsedMaxHeight?: number;
 }
+
+/** Dispatched on a `[data-clamped]` element to expand it. */
+export const REVEAL_EVENT = 'yobi:reveal';
 
 const DEFAULT_MAX_HEIGHT = 300;
 const OVERFLOW_SLACK = 24;
@@ -31,10 +34,20 @@ export const CollapsibleContent = React.memo<CollapsibleContentProps>(({
 
   const toggle = useCallback((): void => setExpanded((prev) => !prev), []);
 
+  // Something outside (find in conversation) needs what the clamp hides.
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const reveal = (): void => setExpanded(true);
+    root.addEventListener(REVEAL_EVENT, reveal);
+    return () => root.removeEventListener(REVEAL_EVENT, reveal);
+  }, []);
+
   const clamped = overflowing && !expanded;
 
   return (
-    <Box>
+    <Box ref={rootRef} data-clamped={clamped || undefined}>
       <Box pos="relative">
         <Box
           ref={contentRef}

@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { Stack, Text } from '@mantine/core';
 import { splitQuotedPrompt } from '../../utils/composerQuotes';
+import { READING_TEXT_STYLE } from '../../styles/readingText';
 
 interface PromptBodyProps {
   prompt: string;
@@ -15,7 +16,8 @@ export const PromptBody = React.memo<PromptBodyProps>(({ prompt, fw }) => {
   const body = message ? (
     <Text
       className="selectable"
-      fz="var(--font-size-md)"
+      ff={READING_TEXT_STYLE.fontFamily}
+      fz={READING_TEXT_STYLE.fontSize}
       lh={1.7}
       fw={fw}
       c="var(--text-primary)"
@@ -34,6 +36,7 @@ export const PromptBody = React.memo<PromptBodyProps>(({ prompt, fw }) => {
           key={`${index}-${quote.slice(0, 24)}`}
           className="selectable"
           pl={10}
+          ff={READING_TEXT_STYLE.fontFamily}
           fz="var(--font-size-base)"
           lh={1.6}
           c="var(--text-muted)"

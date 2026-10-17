@@ -8,7 +8,7 @@ import { ToggleSwitch } from '../../../components/ToggleSwitch';
 import { SettingRow } from '../../../components/SettingRow';
 import { clipboardApi } from '../../../api/electronApi';
 import type { SkillConfigProps } from './types';
-import { toTokens } from '../../../../../shared/shortcuts';
+import { comboLabel } from '../../../../../shared/shortcuts';
 import { useResolvedCombo } from '../../../store/shortcutStore';
 import { isMac } from '../../../utils/keyLabels';
 
@@ -54,7 +54,7 @@ const BROWSER_JS_LLM_REFERENCE = [
 ].join('\n');
 
 export const BrowserJsConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
-  const formatKeys = toTokens(useResolvedCombo('editor.format'), isMac).join(' + ');
+  const formatKeys = comboLabel(useResolvedCombo('editor.format'), isMac);
   const formatHint = formatKeys
     ? t('flow.skill.browser_js.formatHint').replace('{{shortcut}}', formatKeys)
     : '';

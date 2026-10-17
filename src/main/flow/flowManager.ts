@@ -9,7 +9,8 @@ import type {
   QueueTaskItem,
 } from '../../shared/types';
 import { compactPreview } from '../../shared/textBudget';
-import { executeFlow } from './executor';
+import { INTERACTIVE_RUN_KEY, SIGNED_IN_RUN_KEY, executeFlow } from './executor';
+import { signInUseForRun } from '../botPermissions/signedInReads';
 import { closeRunPages } from './skills/browserPages';
 import { runFlowBuild } from './flowBuild';
 import { sendBuildEvent } from './flowBuildBroadcast';
@@ -23,27 +24,64 @@ import { pruneFlowMetrics } from '../flowMetrics';
 import { recordFlowRun } from '../flowMeter';
 import { runInMetricDomain } from '../llmMeter';
 import { IPC, BOT_COMMAND_RE } from '../../shared/types';
+import { builtinById, isBuiltinFlowId } from '../../shared/builtinFlows';
+import type { BuiltinBuildContext } from '../../shared/builtinFlows';
 import { normalizeCronTrigger, shouldNormalizeCronTrigger } from '../../shared/flowSchedule';
 import { cloneFlowVariables, missingRequiredVariables, sanitizeFlowVariables } from '../../shared/flowVariables';
 import { createEntityId, loadFlowsFromDisk, saveFlowsToDisk } from './flowPersistence';
 import { pruneOrphanCheckpoints } from './checkpoint';
 import { deleteFlowMemory } from './flowMemory';
+import {
+  deleteFlowVersions,
+  getFlowVersion,
+  listFlowVersionRecords,
+  recordFlowSave,
+  resetFlowVersionCache,
+  restoredFlowFrom,
+  versionedStepIds,
+  viewFlowVersions,
+} from './flowVersions';
+import type { FlowSaveOrigin, FlowVersionRestoreResult, FlowVersionView } from '../../shared/flowVersions';
 import { FlowTriggerRegistry } from './flowTriggers';
 import type { TriggerFire } from './flowTriggers';
 import { shouldDeleteAfterRun } from '../../shared/flowDeleteAfterRun';
 import { flushScheduleState, loadScheduleState, pruneScheduleState } from './scheduleState';
-import { FlowQueue } from './flowQueue';
+import { FlowQueue, QUEUE_CANCELLED } from './flowQueue';
 import { llmLane } from './lanes';
 import { launchedByRelaunch } from '../relaunchFlag';
-import { botCommandAccessMode, normalizeAllowedUserIds } from '../../shared/botCommandAccess';
+import { botCommandAccessMode, normalizeAllowedUserIds, readsOwnerData } from '../../shared/botCommandAccess';
 import type { BotCommandAccessMode } from '../../shared/botCommandAccess';
+import type { StepProgress } from '../../shared/stepProgress';
+
+/** A built-in is built on demand, in the app language and with the current settings. */
+function builtinBuildContext(): BuiltinBuildContext {
+  const strings = getLangCache();
+  return {
+    t: (key, vars) => t(strings, key, vars),
+    locale: config.locale,
+    // The summary uses the YouTube template from Settings, the app language's built-in one when empty.
+    summaryTemplate: () => config.youtubePrompt.trim() || strings['youtube.prompt.default'] || '',
+  };
+}
+
+/**
+ * The run's context with the sign-in mark — `full` or `others` — decided as it starts (a bot's
+ * from the memory file and grants as they are then); without one the steps read as a visitor.
+ */
+async function withSignedInMark(context: Record<string, string>, botRun: boolean): Promise<Record<string, string>> {
+  const signIn = await signInUseForRun(botRun, context);
+  return signIn === 'none' ? context : { ...context, [SIGNED_IN_RUN_KEY]: signIn };
+}
 
 export interface FlowBotCommandDef {
   flowId: string;
   command: string;
   description: string;
   inputVariable: string;
-  /** 'all' = every paired account; 'users' = only allowedUserIds, where an empty list is nobody. */
+  /**
+   * 'all' = every paired account; 'users' = only allowedUserIds, where an empty list is nobody;
+   * 'admins' = the owner and admin-grant holders in their own private chat. Already resolved.
+   */
   access: BotCommandAccessMode;
   allowedUserIds: string[];
 }
@@ -87,17 +125,25 @@ export class FlowManager {
     sendLog('🛑 [Flow] Shut down — all triggers unregistered');
   }
 
-  /** Anything keyed by a flow or step that no longer exists: checkpoints and counters alike. */
+  /**
+   * Anything keyed by a flow or step that no longer exists: checkpoints and counters alike. A step
+   * a kept version still has is not gone — restoring that version brings its read state back.
+   */
   private pruneFlowData(): void {
     const activeStepIds = new Set<string>();
     for (const flow of this.flows) {
       for (const step of flow.steps) activeStepIds.add(step.id);
     }
-    void pruneOrphanCheckpoints(activeStepIds);
-    pruneFlowMetrics(new Set(this.flows.map((flow) => flow.id)), activeStepIds);
+    const flowIds = new Set(this.flows.map((flow) => flow.id));
+    void versionedStepIds().then((kept) => {
+      for (const id of kept) activeStepIds.add(id);
+      void pruneOrphanCheckpoints(activeStepIds);
+      pruneFlowMetrics(flowIds, activeStepIds);
+    });
   }
 
   async reload(): Promise<void> {
+    resetFlowVersionCache();
     this.triggers.unregisterAll(this.flows);
     const loadedFlows = await loadFlowsFromDisk();
     this.flows = loadedFlows.map((flow) => this.normalizeFlow(flow));
@@ -140,7 +186,7 @@ export class FlowManager {
           command,
           description: trigger.botCommandDescription ?? '',
           inputVariable: trigger.botInputVariable?.trim() || 'input',
-          access: botCommandAccessMode(trigger.botAccess, trigger.botAllowedUserIds),
+          access: botCommandAccessMode(trigger.botAccess, trigger.botAllowedUserIds, readsOwnerData(f.steps)),
           allowedUserIds: normalizeAllowedUserIds(trigger.botAllowedUserIds),
         });
       }
@@ -174,10 +220,12 @@ export class FlowManager {
     return { ...flow, enabled: false };
   }
 
-  async save(flow: FlowDefinition): Promise<FlowDefinition> {
+  /** `origin` says who made the change, for the flow's version history. */
+  async save(flow: FlowDefinition, origin: FlowSaveOrigin = { source: 'user' }): Promise<FlowDefinition> {
     const normalizedFlow = this.gateEnabled(this.normalizeFlow(flow));
     const idx = this.flows.findIndex((f) => f.id === flow.id);
     normalizedFlow.updatedAt = new Date().toISOString();
+    const previous = idx >= 0 ? this.flows[idx] : undefined;
     const hadBotTrigger = idx >= 0 ? this.flowHasBotTrigger(this.flows[idx]) : false;
 
     if (idx >= 0) {
@@ -193,6 +241,7 @@ export class FlowManager {
     }
 
     await saveFlowsToDisk(this.flows);
+    await recordFlowSave(previous, normalizedFlow, origin);
 
     if (this.flowHasBotTrigger(normalizedFlow) || hadBotTrigger) {
       this._onBotCommandsChanged?.();
@@ -200,6 +249,28 @@ export class FlowManager {
 
     this.pruneFlowData();
     return normalizedFlow;
+  }
+
+  /** The flow's versions, newest first, each against the flow as it is now. */
+  async listVersions(flowId: string): Promise<FlowVersionView[] | null> {
+    const current = this.flows.find((f) => f.id === flowId);
+    if (!current) return null;
+    return viewFlowVersions(await listFlowVersionRecords(flowId), current);
+  }
+
+  /**
+   * Puts an earlier version back as a new save (the flow as it is now stays in the history). Its
+   * steps keep their ids; the flow keeps its own id, creation time and switch (see restoredFlowFrom).
+   */
+  async restoreVersion(flowId: string, vid: string): Promise<FlowVersionRestoreResult> {
+    const current = this.flows.find((f) => f.id === flowId);
+    const version = current ? await getFlowVersion(flowId, vid) : null;
+    if (!current || !version) return { ok: false, reason: 'missing' };
+    const { flow, paused } = restoredFlowFrom(current, version.flow);
+    const saved = await this.save(flow, { source: 'restore', restoredFrom: vid });
+    sendToRenderer(IPC.FLOW_UPDATED, saved);
+    sendLog(`🕘 [Flow] "${saved.name}" restored to an earlier version${paused ? ', switched off for review' : ''}`);
+    return { ok: true, flow: saved, paused };
   }
 
   async delete(flowId: string): Promise<boolean> {
@@ -210,6 +281,7 @@ export class FlowManager {
     this.flows.splice(idx, 1);
     await saveFlowsToDisk(this.flows);
     await deleteFlowMemory([flowId], this.flows.map((f) => f.id));
+    await deleteFlowVersions([flowId]);
     if (hadBotTrigger) {
       this._onBotCommandsChanged?.();
     }
@@ -229,6 +301,7 @@ export class FlowManager {
     this.flows = this.flows.filter((f) => !idSet.has(f.id));
     await saveFlowsToDisk(this.flows);
     await deleteFlowMemory(removed.map((f) => f.id), this.flows.map((f) => f.id));
+    await deleteFlowVersions(removed.map((f) => f.id));
     if (hadBotTrigger) {
       this._onBotCommandsChanged?.();
     }
@@ -335,7 +408,7 @@ export class FlowManager {
     clientToken?: string,
   ): Promise<T> {
     const taskId = createEntityId();
-    return this.queue.enqueue(taskId, name, () => run(taskId), makeErrorResult, undefined, agentRunId, clientToken, true);
+    return this.queue.enqueue(taskId, name, () => run(taskId), makeErrorResult, undefined, agentRunId, clientToken, 'external');
   }
 
   setQueueTaskProgress(taskId: string, progress: string): void {
@@ -364,6 +437,13 @@ export class FlowManager {
     };
   }
 
+  /** A saved flow, or one Yobi runs itself for a pasted link, named in the app language. */
+  flowById(flowId: string): FlowDefinition | undefined {
+    const saved = this.flows.find((f) => f.id === flowId);
+    if (saved) return saved;
+    return builtinById(flowId)?.build(builtinBuildContext());
+  }
+
   private notFoundResult(flowId: string): FlowExecutionResult {
     return this.failureResult(flowId, 'Flow not found', 0, t(getLangCache(), 'flow.error.notFound'));
   }
@@ -373,8 +453,9 @@ export class FlowManager {
     extraContext?: Record<string, string>,
     source: FlowExecutionSource = 'ui',
     fire?: TriggerFire,
+    onStepProgress?: (progress: StepProgress) => void,
   ): { taskId: string; result: Promise<FlowExecutionResult> } {
-    const flow = this.flows.find((f) => f.id === flowId);
+    const flow = this.flowById(flowId);
     const taskId = createEntityId();
     if (!flow) {
       return { taskId, result: Promise.resolve(this.notFoundResult(flowId)) };
@@ -387,7 +468,12 @@ export class FlowManager {
       return {
         taskId,
         result: Promise.resolve(
-          this.failureResult(flowId, 'Bot trigger flows must be invoked from Telegram or LINE', flow.steps.length),
+          this.failureResult(
+            flowId,
+            'Bot trigger flows must be invoked from Telegram or LINE',
+            flow.steps.length,
+            t(getLangCache(), 'flow.error.botTriggerOnly'),
+          ),
         ),
       };
     }
@@ -406,16 +492,28 @@ export class FlowManager {
       };
     }
 
+    // Only a run the person started in the desktop chat may show them a window (a site's
+    // verification), and only the owner's own may read with the site sign-ins; whatever a caller
+    // put under either key is dropped.
+    const { [INTERACTIVE_RUN_KEY]: _interactive, [SIGNED_IN_RUN_KEY]: _signedIn, ...callerContext } = extraContext ?? {};
+    const runContext = source === 'chat' ? { ...callerContext, [INTERACTIVE_RUN_KEY]: '1' } : callerContext;
     const result = this.queue.enqueue(
       taskId,
       `[Flow] ${flow.name || flowId}`,
-      () => this.execute(flowId, extraContext, fire),
-      (err) => this.failureResult(
-        flowId,
-        err instanceof Error ? err.message : String(err),
-        flow.steps.length,
-      ),
+      async () => this.execute(flowId, await withSignedInMark(runContext, source === 'bot'), fire, onStepProgress),
+      (err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message !== QUEUE_CANCELLED) return this.failureResult(flowId, message, flow.steps.length);
+        // Removed from the queue by the user: a stop, not a failure, for every caller that reports it.
+        return {
+          ...this.failureResult(flowId, message, flow.steps.length, localizeUserFacingError(message, getLangCache())),
+          aborted: true,
+        };
+      },
       flowId,
+      undefined,
+      undefined,
+      isBuiltinFlowId(flowId) ? 'builtin' : 'shared',
     );
     return { taskId, result };
   }
@@ -428,12 +526,14 @@ export class FlowManager {
     return this.createQueueExecution(flowId, extraContext, source).result;
   }
 
+  /** `onStepProgress` hears where a long step is (a download's percentage) for this run only. */
   queueExecutionWithId(
     flowId: string,
     extraContext?: Record<string, string>,
     source: FlowExecutionSource = 'ui',
+    onStepProgress?: (progress: StepProgress) => void,
   ): { taskId: string; result: Promise<FlowExecutionResult> } {
-    return this.createQueueExecution(flowId, extraContext, source);
+    return this.createQueueExecution(flowId, extraContext, source, undefined, onStepProgress);
   }
 
   async saveGeneratedFlow(candidate: FlowDefinition): Promise<FlowDefinition> {
@@ -445,7 +545,7 @@ export class FlowManager {
       steps: candidate.steps.map((step) => ({ ...step, id: createEntityId() })),
       createdAt: now,
       updatedAt: now,
-    });
+    }, { source: 'ai-build' });
     sendToRenderer(IPC.FLOW_CREATED, saved);
     return saved;
   }
@@ -458,7 +558,7 @@ export class FlowManager {
   async replaceFlowFromAgent(candidate: FlowDefinition): Promise<FlowDefinition> {
     const current = this.flows.find((flow) => flow.id === candidate.id);
     if (!current) throw new Error('That flow no longer exists, so the change was not saved');
-    const saved = await this.save({ ...candidate, enabled: current.enabled && candidate.enabled });
+    const saved = await this.save({ ...candidate, enabled: current.enabled && candidate.enabled }, { source: 'ai-edit' });
     sendToRenderer(IPC.FLOW_UPDATED, saved);
     return saved;
   }
@@ -537,13 +637,16 @@ export class FlowManager {
     flowId: string,
     extraContext?: Record<string, string>,
     fire?: TriggerFire,
+    onStepProgress?: (progress: StepProgress) => void,
   ): Promise<FlowExecutionResult> {
-    const flow = this.flows.find((f) => f.id === flowId);
+    const flow = this.flowById(flowId);
     if (!flow) {
       return this.notFoundResult(flowId);
     }
 
-    if (this._running.has(flowId)) {
+    // A built-in keeps no state between runs, so two pasted links run side by side.
+    const runKey = isBuiltinFlowId(flowId) ? `${flowId}#${createEntityId()}` : flowId;
+    if (this._running.has(runKey)) {
       return this.failureResult(
         flowId,
         'Flow is already running',
@@ -552,9 +655,9 @@ export class FlowManager {
       );
     }
 
-    this._running.add(flowId);
+    this._running.add(runKey);
     const controller = new AbortController();
-    this._abortControllers.set(flowId, controller);
+    this._abortControllers.set(runKey, controller);
     const event: FlowExecutionEvent = { flowId, name: flow.name };
     sendToRenderer(IPC.FLOW_EXECUTION_STARTED, event);
 
@@ -566,7 +669,13 @@ export class FlowManager {
       };
       const result = await runInMetricDomain(
         'flow',
-        () => executeFlow(flow, this.deps, onLog, extraContext, controller.signal),
+        () => executeFlow(
+          flow,
+          onStepProgress ? { ...this.deps, onStepProgress } : this.deps,
+          onLog,
+          extraContext,
+          controller.signal,
+        ),
       );
       this.recordRunMetrics(result);
       const deleted = fire?.oneTimeSchedule === true && await this.deleteAfterOneTimeRun(flowId, result);
@@ -574,8 +683,8 @@ export class FlowManager {
       return result;
     } finally {
       closeRunPages(flowId);
-      this._abortControllers.delete(flowId);
-      this._running.delete(flowId);
+      this._abortControllers.delete(runKey);
+      this._running.delete(runKey);
       sendToRenderer(IPC.FLOW_EXECUTION_ENDED, { flowId, name: flow.name } satisfies FlowExecutionEvent);
       this.blankWorkerWhenIdle();
     }
@@ -617,6 +726,8 @@ export class FlowManager {
     if (result.aborted) return;
     const outcome = result.success ? 'success' : classifyFailure(result.error);
     recordTaskOutcome('flow', outcome);
+    // Per-flow statistics are for the user's own flows; a built-in has no row to show them in.
+    if (isBuiltinFlowId(result.flowId)) return;
     recordFlowRun({ flowId: result.flowId, outcome, degraded: (result.softFailures ?? 0) > 0 });
   }
 

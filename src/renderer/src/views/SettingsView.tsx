@@ -11,6 +11,7 @@ import { useShortcutStore } from '../store/shortcutStore';
 import { useSecretHealthStore } from '../store/secretHealthStore';
 import { useFlowStore } from '../store/useFlowStore';
 import { useThemeStore, resolveThemePreference } from '../store/themeStore';
+import { initReadingFromConfig } from '../store/readingStore';
 import { settingsApi, fileApi, systemApi } from '../api/electronApi';
 import { SECRET_SCOPE_META } from '../../../shared/types';
 import type { BackupImportResult, SettingsSnapshot } from '../../../shared/types';
@@ -111,6 +112,8 @@ export const SettingsView: React.FC = () => {
     );
     metrics.applyMetricsReset(snapshot.metricsEnabled);
     setTheme(resolveThemePreference(snapshot.theme));
+    // Reading prefs are not in the snapshot: re-read them so the store, mirror and root attributes follow the restored config.
+    initReadingFromConfig();
     await setLocale(snapshot.locale);
     await telegram.loadTelegramSettings();
     await line.loadLineSettings();
@@ -224,6 +227,7 @@ export const SettingsView: React.FC = () => {
             <>
               <GeneralSection
                 system={system}
+                roster={botAccess.roster}
                 t={t}
                 locale={locale}
                 availableLocales={availableLocales}

@@ -1,13 +1,11 @@
+import { toIsoDate } from './localTime';
+
+export { toIsoDate as formatPromptDate } from './localTime';
+
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
 
-export function formatPromptDate(now: Date): string {
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${now.getFullYear()}-${month}-${day}`;
-}
-
 export function formatPromptDateWithWeekday(now: Date): string {
-  return `${formatPromptDate(now)} (${WEEKDAYS[now.getDay()]})`;
+  return `${toIsoDate(now)} (${WEEKDAYS[now.getDay()]})`;
 }
 
 export function relativeYearSentence(now: Date): string {

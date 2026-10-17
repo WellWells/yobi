@@ -3,6 +3,16 @@ import type { SkillType } from './types';
 export type { SkillType };
 import { PROVIDER_URLS, UPLOAD_CAPABLE_PROVIDER_LABELS } from './types';
 import { DEFAULT_CAPTURE_PALETTE } from './capturePalettes';
+import { LINK_SITE_ROWS } from './linkSites/rows';
+
+/**
+ * The sites the video skills take, by their row labels ("YouTube, bilibili, SoundCloud or Vimeo"). Named once
+ * per skill (its summary): every row added grows the AI flow builder's prompt, whose budget is tight.
+ */
+const VIDEO_SITE_LABELS = LINK_SITE_ROWS.filter((row) => row.shape === 'video').map((row) => row.label);
+const VIDEO_SITE_NAMES = VIDEO_SITE_LABELS.length > 1
+  ? `${VIDEO_SITE_LABELS.slice(0, -1).join(', ')} or ${VIDEO_SITE_LABELS.at(-1)}`
+  : VIDEO_SITE_LABELS.join('');
 
 export const DEFAULT_SKILL_CONFIG: Record<SkillType, Record<string, string>> = {
   shell: { command: '', shell: '' },
@@ -36,7 +46,7 @@ export const DEFAULT_SKILL_CONFIG: Record<SkillType, Record<string, string>> = {
     title: '', filename: '', palette: 'linen', backgroundStyle: 'gradient',
     expire: '1week', burnAfterReading: 'false', emitFailFlag: 'false',
   },
-  bot: { platform: 'auto', chatIds: '', message: '', attachment: '', attachmentType: 'auto', emitFailFlag: 'false' },
+  bot: { platform: 'auto', chatIds: '', message: '', attachment: '', attachmentType: 'auto', preview: '', buttons: '', emitFailFlag: 'false' },
   rss: { url: '' },
   stop: { value: '' },
   comment: { note: '' },
@@ -56,9 +66,12 @@ export const DEFAULT_SKILL_CONFIG: Record<SkillType, Record<string, string>> = {
   http: { method: 'GET', url: '', headers: '', body: '' },
   youtube: { url: '', fallbackProvider: '' },
   youtube_subs: { channels: '', perChannel: '3', skipShorts: 'true' },
+  youtube_info: { input: '', destination: 'auto', emitFailFlag: 'false' },
+  youtube_download: { url: '', quality: '', destination: 'auto', folder: '', emitFailFlag: 'false' },
   x_posts: { accounts: '', perAccount: '5' },
   x_thread: { url: '', maxReplies: '20', emitFailFlag: 'false' },
   x_trends: { maxItems: '20', postsPerTrend: '5' },
+  x_media: { input: '', destination: 'auto', folder: '', reader: '' },
   power: { action: '' },
   restart_app: {},
   file_write: { folder: '', filename: '', content: '' },
@@ -76,16 +89,6 @@ export const DEFAULT_SKILL_CONFIG: Record<SkillType, Record<string, string>> = {
 };
 
 export const SKILL_TYPES = Object.keys(DEFAULT_SKILL_CONFIG) as SkillType[];
-
-export const LEGACY_SKILL_TYPES: Record<string, SkillType> = {
-  doc_export: 'share',
-};
-
-export function canonicalSkillType(type: string): SkillType | null {
-  const migrated = LEGACY_SKILL_TYPES[type];
-  if (migrated) return migrated;
-  return SKILL_TYPES.includes(type as SkillType) ? (type as SkillType) : null;
-}
 
 export const SKILLS_WITHOUT_OUTPUT_KEY: SkillType[] = ['comment', 'if', 'end_if', 'end_loop', 'break', 'continue', 'stop', 'power', 'restart_app', 'browser_close', 'file_delete', 'file_write', 'file_download', 'capture', 'run', 'delay', 'notify', 'email_send'];
 
@@ -131,11 +134,11 @@ export const SKILL_SPECS: SkillSpec[] = [
       { key: 'useUserMemory', desc: '"true"|"false" — add what the user asked Yobi to remember about them (read-only); only when the result goes to the user themself' },
       { key: 'attachments', desc: `optional local file paths to upload with the prompt (comma or newline separated) — typically {{file}} from an earlier share/capture/file_write step. Only files produced by this run or living in the app output folder are allowed. Supported by ${UPLOAD_CAPABLE_PROVIDER_LABELS}; other providers send the prompt as text and log a note` },
       { key: 'exportFormat', desc: '""|"png"|"webp"|"pdf" — when set, render the answer to an image/pdf file' },
-      { key: 'exportTitle', desc: 'when exportFormat is set, the heading shown on the exported card; may embed {{variables}} (default "Yobi LLM Export")' },
+      { key: 'exportTitle', desc: 'when exportFormat is set, the heading shown on the exported card; may embed {{variables}}; blank = the heading the answer opens with' },
       { key: 'exportFileName', desc: 'when exportFormat is set, the output file name (blank auto-generates a unique name)' },
       { key: 'exportShowProvider', desc: '"true"|"false" — when exportFormat is set, show the AI provider name on the exported card (default "true")' },
       { key: 'exportShowTimestamp', desc: '"true"|"false" — when exportFormat is set, show a timestamp on the exported card (default "true")' },
-      { key: 'palette', desc: `when exportFormat is set, the card colour theme by key — dark: aurora|mint|rose|ocean|sunset|forest|violet|steel|ember; light: dawn|mist|sand|sage|sky|peach|lavender|linen (blank = ${DEFAULT_CAPTURE_PALETTE})` },
+      { key: 'palette', desc: `when exportFormat is set, the card colour theme by key — dark: aurora|mint|rose|ocean|sunset|forest|violet|steel|ember; light: dawn|mist|sand|sage|sky|peach|lavender|linen (blank = the user's Card style setting, which also sets background style and width)` },
     ],
   },
   {
@@ -277,6 +280,28 @@ export const SKILL_SPECS: SkillSpec[] = [
     ],
   },
   {
+    type: 'youtube_info',
+    brief: `Use to offer a quality menu before youtube_download: reads a video link plus an optional quality word and lists the video's qualities.`,
+    summary: `Parse what the user typed after a command (a ${VIDEO_SITE_NAMES} link, optionally followed by a quality such as 720 / 4k / best, "mp3" or "summary") and read its title, channel, length, cover and every quality with its size — no download tools needed. {{<outputKey>.quality}} is "" when the user gave no quality (show {{<outputKey>.buttons}} as a menu), "summary", "best", "mp3" or a number. Typical shape: youtube_info -> if quality is_empty (bot with buttons, stop on quality) -> if quality equals summary (youtube -> llm -> bot) -> stop on download -> youtube_download -> bot.`,
+    fields: [
+      { key: 'input', desc: 'the text to read, normally the command input, e.g. {{input}}', required: true },
+      { key: 'destination', desc: '"auto" (default — Telegram when a Telegram bot command started the flow, otherwise this computer) | "telegram" | "local" — decides which sizes count as over what the Telegram bot can send' },
+      { key: 'emitFailFlag', desc: `"true"|"false" — on failure (not a supported video link, live video, page unreadable) set {{<outputKey>.isFailed}}=1 and continue instead of aborting` },
+    ],
+  },
+  {
+    type: 'youtube_download',
+    brief: `Use to send a video through the bot or save it on this computer: downloads the video file at an exact quality.`,
+    summary: `Download one ${VIDEO_SITE_NAMES} video at an exact quality (needs the download tools the user installs once in Yobi; a missing quality fails and lists the available ones). Quality "mp3" = the sound alone ("title.mp3"; bot attachmentType "audio"); "srt" = the subtitles ("title.srt"; no tools; attachmentType "document"). A video is saved in the folder as "title (720p).mp4"; {{<outputKey>}} = its PATH, also the magic {{file}} for a later bot step (attachmentType "video"). With destination telegram a file over what the bot can send (50 MB, or 2 GB once the user set up large uploads) is only saved and {{<outputKey>.savedLocally}} = "1" — branch on it and send {{<outputKey>.summary}} as text. A bot user without the admin right may only download up to 100 MB (larger fails; "best" = the best that fits).`,
+    fields: [
+      { key: 'url', desc: `the video link, e.g. {{info.url}}`, required: true },
+      { key: 'quality', desc: 'a quality number such as "720", "best", "mp3" or "srt"; e.g. {{info.quality}}', required: true },
+      { key: 'destination', desc: '"auto" (default — Telegram when a Telegram bot command started the flow, otherwise this computer) | "telegram" (also hand the file to a bot step when it fits) | "local" (only save to the folder)' },
+      { key: 'folder', desc: 'where the video is saved; blank = Downloads/Yobi (files there are deleted after the time set in Settings), a relative path goes inside it' },
+      { key: 'emitFailFlag', desc: '"true"|"false" — on failure set {{<outputKey>.isFailed}}=1 and continue; "true" inside a loop' },
+    ],
+  },
+  {
     type: 'youtube_subs',
     brief: "Watch a list of YouTube channels and return only NEW videos. Use to build a subscription digest.",
     summary: "Monitor a LIST of YouTube channels (a subscription list) and return only NEW videos since the previous run (see OUTPUT for the per-item shape). Resolves each channel's RSS feed from a handle/URL/channelId and de-duplicates across runs; a newly-added channel is seeded with only its latest video so adding channels never floods. Follow with a loop over the array (loopVar e.g. \"video\"), then a youtube step on {{video.link}} to fetch each transcript.",
@@ -297,12 +322,23 @@ export const SKILL_SPECS: SkillSpec[] = [
   },
   {
     type: 'x_thread',
-    brief: 'Read one X (Twitter) post with the replies under it. Use to analyze a post and how people responded.',
-    summary: 'Read one X (Twitter) post and the replies X shows under it (author, time, text and link for each). Signed out, X shows only about 3 top replies per post. Usually placed inside a loop over x_posts output with url {{post.link}}, followed by an llm step that analyzes {{<outputKey>}}.',
+    brief: 'Read one X (Twitter), Threads, Instagram, Facebook, TikTok, PTT or Dcard post with its replies. Use to analyze a post and how people responded.',
+    summary: 'Read one X (Twitter), Threads, Instagram, Facebook, TikTok, PTT or Dcard post and the replies the site shows under it (author, time, text and link for each). Signed out, X shows only about 3 top replies per post, Threads its first 10, Instagram 15, Facebook and TikTok up to 40. Usually placed inside a loop over x_posts output with url {{post.link}}, followed by an llm step that analyzes {{<outputKey>}}.',
     fields: [
-      { key: 'url', desc: 'the post URL (https://x.com/<account>/status/<id>); may embed {{variables}}', required: true },
+      { key: 'url', desc: 'the post URL (https://x.com/<account>/status/<id>, https://www.threads.com/@<account>/post/<code>, or an Instagram, Facebook, TikTok, PTT or Dcard post, reel or video link); may embed {{variables}}', required: true },
       { key: 'maxReplies', desc: 'at most this many replies (default "20"; "0" = the post only)' },
       { key: 'emitFailFlag', desc: '"true"|"false" — when the post cannot be read, set {{<outputKey>}}="" and {{<outputKey>.isFailed}}=1 and continue instead of aborting; essential inside a loop' },
+    ],
+  },
+  {
+    type: 'x_media',
+    brief: 'Use to forward an X (Twitter), Threads, Instagram, Facebook, TikTok, PTT or Dcard post to a chat or save its media (text, videos, photos).',
+    summary: 'Read the X, Threads, Instagram, Facebook, TikTok, PTT or Dcard post (or Instagram story, signed in) linked in the text (other words become .prompt) and fetch its videos, GIFs and photos (else the quoted post\'s). telegram: files for a bot step (attachment {{<outputKey>}}; several = one album); line: the site\'s https URLs (bot preview {{<outputKey>.previews}}), but a TikTok video is saved to the folder and LINE gets its cover; local: saved to the folder. With a .prompt nothing is fetched; with a reader too, Gemini watches the first video into .videoText.',
+    fields: [
+      { key: 'input', desc: 'the text holding the post link, normally the command input {{input}}', required: true },
+      { key: 'destination', desc: '"auto" (default — the Telegram or LINE chat that started the flow, otherwise this computer) | "telegram" | "line" | "local"' },
+      { key: 'folder', desc: 'where downloaded files go; blank = Downloads/Yobi (files there are deleted after the time set in Settings), a relative path goes inside it' },
+      { key: 'reader', desc: 'a Gemini API key the user picks in the editor, or "auto" for the first one set up; blank = never watch the video. Leave ""' },
     ],
   },
   {
@@ -343,7 +379,9 @@ export const SKILL_SPECS: SkillSpec[] = [
       { key: 'platform', desc: '"telegram"|"line"|"auto" — which bot sends it; set it whenever the request names one. "auto" (default) answers on the bot that triggered the flow and uses Telegram otherwise' },
       { key: 'chatIds', desc: 'who receives it: "me" (the user themself), a recipient\'s name exactly as the request gives it (Yobi looks it up among the paired chats — never invent an ID), "all" (everyone paired), or {{bot.triggerChatId}} (whoever sent the bot command); comma-separate several; "" when the request does not say' },
       { key: 'attachment', desc: 'optional file to send — a local path inside the app output folder (e.g. {{file}}) or an http(s) URL (e.g. {{browser_1.image}}); empty = text only' },
-      { key: 'attachmentType', desc: '"auto"|"photo"|"document" — how to send the attachment; "auto" (default) sends image URLs (e.g. an og:image cover) as a photo and falls back to a document if it is not a renderable image, and judges local files by extension/content' },
+      { key: 'attachmentType', desc: '"auto"|"photo"|"document"|"video"|"audio" — how to send the attachment; "auto" (default) sends an image URL (e.g. an og:image cover) as a photo, else a document, and judges local files by extension/content; "video" plays an .mp4 in Telegram, "audio" an .mp3/.m4a in its player. Telegram takes local files up to 50 MB, or 2 GB once the user set up large uploads' },
+      { key: 'preview', desc: 'LINE video poster per attachment line, e.g. {{<x_media>.previews}}; else ""' },
+      { key: 'buttons', desc: 'optional tappable choices under the message, one per line as "label | input" (e.g. {{info.buttons}}). Tapping one runs THIS flow\'s bot command again with that input as its input variable — only for a flow started by a bot command; LINE shows them as text' },
       { key: 'emitFailFlag', desc: '"true"|"false" — on send failure set {{<outputKey>.isFailed}}=1 and continue instead of aborting the flow' },
     ],
   },
@@ -382,7 +420,7 @@ export const SKILL_SPECS: SkillSpec[] = [
       { key: 'format', desc: '"pdf"|"png"|"webp" to render a file, or "text" for a share link. "zippdf"|"zippng"|"zipwebp" also turn zip on. Blank or unrecognised = pdf' },
       { key: 'zip', desc: '"true"|"false" — file formats only: wrap the result in a .zip (chat apps re-encode a bare image but pass a .zip through)' },
       { key: 'width', desc: 'file formats only: render width in px — 720 (phone), 1000 (standard) or 1200 (wide); blank = 1000' },
-      { key: 'title', desc: 'file formats only: document heading; blank = the first markdown heading in content' },
+      { key: 'title', desc: 'file formats only: document heading; blank = the heading the content opens with' },
       { key: 'filename', desc: 'file formats only: file name stem; supports {date}/{time}/{datetime}/{rand}. Blank = auto-named' },
       { key: 'palette', desc: `file formats only: colour scheme key, e.g. "linen" (light document) or "aurora" (dark card); blank = ${DEFAULT_CAPTURE_PALETTE}` },
       { key: 'backgroundStyle', desc: 'file formats only: "solid"|"gradient"|"mesh"; blank = gradient' },
@@ -560,7 +598,7 @@ export const SKILL_SPECS: SkillSpec[] = [
     fields: [
       { key: 'url', desc: 'the https:// URL to download; may embed {{variables}} (e.g. {{item.link}})', required: true },
       { key: 'filename', desc: 'optional name; blank auto-generates. Tokens {date}/{time}/{datetime}/{rand}. Extension auto-added from Content-Type when omitted.' },
-      { key: 'folder', desc: 'destination folder; blank = the app output folder; a relative path resolves under it' },
+      { key: 'folder', desc: 'destination folder; blank = Downloads/Yobi (files there are deleted after the time set in Settings — give an absolute folder to keep them), a relative path goes inside it' },
       { key: 'maxSizeMb', desc: 'abort if the download exceeds this many MB (default "100", "0" = no limit)' },
     ],
   },
@@ -603,7 +641,7 @@ export const SKILL_OUTPUT: Record<SkillType, string> = {
   shell: '{{<outputKey>}} = the command stdout, trimmed (falls back to stderr when stdout is empty); no sub-variables.',
   run: '',
   js: '{{<outputKey>}} = your `return` value coerced to a string — objects/arrays are JSON-stringified (return an array to drive a following loop), numbers/booleans are stringified, and null/undefined/no-return give ""; no sub-variables.',
-  browser: '{{<outputKey>}} = the page\'s visible text (multiple URLs are joined with a "---" separator); with includeImage="true" on a SINGLE url, {{<outputKey>.image}} = the cover image URL ("" if none). With emitFailFlag="true", a fetch failure sets {{<outputKey>}}="" and {{<outputKey>.isFailed}}="1" instead of aborting the flow.',
+  browser: '{{<outputKey>}} = the page\'s visible text (multiple URLs are joined with a "---" separator); with includeImage="true" on a SINGLE url, {{<outputKey>.image}} = the cover image URL ("" if none). With emitFailFlag="true", {{<outputKey>.isFailed}} = "0"/"1" and a fetch failure sets {{<outputKey>}}="" instead of aborting the flow.',
   browser_open: '{{<outputKey>}} = the page handle id (pass it to browser_js / browser_close); {{<outputKey>.title}} = page title; {{<outputKey>.url}} = current URL.',
   browser_js: '{{<outputKey>}} = the value you `return` (objects JSON-stringified; undefined/null/empty give ""). A screenshot() path comes back via {{<outputKey>}} only — browser_js does NOT set {{file}}. With emitFailFlag="true", {{<outputKey>.isFailed}} = "0"/"1".',
   browser_close: '',
@@ -631,10 +669,13 @@ export const SKILL_OUTPUT: Record<SkillType, string> = {
   sysinfo: '{{<outputKey>}} = the selected fields as ONE string (key:value lines for format="text", or a JSON document for format="json"); each selected field is ALSO exposed individually as {{<outputKey>.<field>}} (e.g. {{<outputKey>.locale}}, {{<outputKey>.cpu}}, {{<outputKey>.publicIp}}).',
   http: '{{<outputKey>}} = the raw response body text (returned for ANY status code; "" for an empty url); NO sub-variables — if the body is JSON, parse it in a following js step before referencing fields.',
   youtube: '{{<outputKey>}} = the transcript ("" if no captions); {{<outputKey>.title}} = video title; {{<outputKey>.transcript}} = the transcript again (alias of the main output); {{<outputKey>.isFailed}} = "0"/"1"; {{<outputKey>.image}} = the thumbnail URL (usable as a bot attachment; still set when only captions fail, "" when the URL is not a valid YouTube link).',
+  youtube_info: '{{<outputKey>}} = a short readable description (title, channel, length, available qualities, and the notice when downloads are limited) to show the user; sub-vars {{<outputKey>.url}} (canonical link), .videoId, .title, .channel, .duration ("12:34"), .image (cover URL, usable as a bot photo attachment), .quality ("" / "summary" / "best" / "mp3" / "srt" / a number such as "720"), .download (the quality only when it asks for a download, else "" — a stop step on it ends the menu and summary branches), .buttons (for a bot step\'s buttons field: "summary", each quality, "MP3", subtitles; ones only saved to the computer marked), .available (comma-separated quality numbers), .downloadReady ("1" when downloads can run now, "0" when the tools are missing or paused), .notice (one localized sentence to append when something limits the menu, else ""). With emitFailFlag="true", {{<outputKey>.isFailed}} = "0"/"1".',
+  youtube_download: '{{<outputKey>}} = the downloaded file PATH, also set as the magic {{file}}; sub-vars {{<outputKey>.title}}, .kind ("video", "audio" for the MP3, "subtitles" for the .srt — branch the bot step on it), .quality (what was downloaded), .sizeMb, .fileName (the saved file\'s name), .savedLocally ("1" when it was only saved, not handed to a bot step — e.g. over what the Telegram bot can send), .summary (one localized sentence for the user, e.g. that it was saved; the folder only for an admin in a private chat or someone at the computer).',
   youtube_subs: '{{<outputKey>}} = a JSON array of {title, link, image} ("[]" if none); loop (e.g. loopVar "video") and use {{video.title}} / {{video.link}} / {{video.image}} (image = the thumbnail URL, usable as a bot attachment).',
   x_posts: '{{<outputKey>}} = a JSON array of NEW {title, link, author, name, date, text, image, replies, likes} ("[]" if none), newest first; loop (e.g. loopVar "post") and use {{post.link}} / {{post.text}} (the full post text) / {{post.author}} ("@handle") / {{post.name}} (display name) / {{post.date}} / {{post.image}} (first image, "" if none; usable as a bot attachment) / {{post.replies}} and {{post.likes}} (counts). title = the first line of the text.',
   x_trends: '{{<outputKey>}} = a JSON array of {title, link, context, volume, rank, posts} in X\'s order: title = the trend (phrase, #hashtag or name), link = the X search page for it, context = where or what it trends in ("" if X gives none), volume = X\'s count line such as "12.3K posts" ("" if none), rank = "1", "2", …, posts = the trend\'s top posts as {author, name, date, text, link, likes} ([] when none could be read); interpolate the whole array into one llm prompt.',
-  x_thread: '{{<outputKey>}} = the post and its replies as readable text (each with author, time, text and link), ready to hand to an llm step; {{<outputKey>.text}} / .author / .name / .date / .link / .image = the post itself; {{<outputKey>.replyText}} = the replies only, same layout; {{<outputKey>.replies}} = a JSON array of {author, name, date, text, link, likes} (loop over it to handle replies one by one); {{<outputKey>.shown}} = how many replies were read, {{<outputKey>.replyCount}} = how many the post has in total. With emitFailFlag="true", a failure sets {{<outputKey>}}="" and {{<outputKey>.isFailed}}="1" instead of aborting.',
+  x_thread: '{{<outputKey>}} = the post and its replies as readable text (each with author, time and text; only the post keeps its link), ready to hand to an llm step; {{<outputKey>.text}} / .author / .name / .date / .link / .image = the post itself; {{<outputKey>.replyText}} = the replies only, same layout; {{<outputKey>.replies}} = a JSON array of {author, name, date, text, link, likes} (loop over it to handle replies one by one); {{<outputKey>.shown}} = how many replies were read, {{<outputKey>.replyCount}} = how many the post has in total; {{<outputKey>.platform}} = "X", "Threads", "Instagram" or "Facebook". An Instagram profile link reads the account instead: {{<outputKey>}} = its bio, latest posts and comments under the top ones, {{<outputKey>.subject}} = "account" (else "post"). With emitFailFlag="true", a failure sets {{<outputKey>}}="" and {{<outputKey>.isFailed}}="1" instead of aborting.',
+  x_media: '{{<outputKey>}} = the media, one per line ("" if none): file paths (telegram/local; also {{file}}) or https URLs (line); .count, .kind, .previews, .message (who + text + link), .caption (.message, or who + link when over Telegram\'s caption limit), .overflow (the full .message when .caption dropped it — send it first), .text, .author, .name, .date, .link, .prompt, .videoText, .savedLocally, .summary (where it was saved), .notice (a no-media sentence).',
   power: '',
   restart_app: '',
   file_write: 'No {{<outputKey>}} — the written file PATH is set as the magic {{file}}; reference {{file}} in a later bot/email_send/file_delete step.',

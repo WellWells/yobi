@@ -37,10 +37,15 @@ import {
 } from './windows';
 import { CLEAN_UA, userAgentForUrl } from './userAgent';
 import { registerWorkerClientHints } from './clientHints';
+import { systemAcceptLanguages } from './chromeIdentity';
 import { SITE_PARTITIONS } from './siteAccounts';
+import { READER_PARTITIONS } from './sitePage';
+import { handleTurnMediaScheme, registerTurnMediaScheme } from './turnMediaProtocol';
 import { installRequestFilter } from './requestFilter';
 import { setupIpcHandlers } from './ipc';
 import { startModelCatalogRefresh } from './modelCatalogRefresh';
+import { startDownloadsSweep } from './downloadsCache';
+import { cleanupYtdlJobs, startYtdlUpdateSchedule, stopYtdlUpdateSchedule } from './youtubeDownload';
 import { startPerplexityVisitorWipe } from './providers/perplexityVisitor';
 import { startOutputFileWatch } from './outputWatcher';
 import { classifyFailure, flushMetrics, recordTaskOutcome } from './metrics';
@@ -92,8 +97,6 @@ if (!gotSingleInstanceLock) {
   });
 }
 
-const TELEGRAM_SESSION_ID = `${app.getName().toLowerCase()}-desktop`;
-
 let powerSaveBlockerId: number | null = null;
 
 let flowManager: FlowManager | null = null;
@@ -126,8 +129,12 @@ const lineRuntime = createLineRuntime({
   getFlowManager: () => flowManager,
 });
 
+// Has to be registered before the app is ready.
+registerTurnMediaScheme();
+
 app.whenReady().then(async () => {
   app.setAppUserModelId('com.wellstsai.yobi');
+  handleTurnMediaScheme();
   powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension');
 
   initLogFile();
@@ -140,7 +147,11 @@ app.whenReady().then(async () => {
   session.fromPartition('persist:browser-flow').setUserAgent(CLEAN_UA);
   session.fromPartition('persist:youtube').setUserAgent(userAgentForUrl('https://www.youtube.com/'));
   session.fromPartition('persist:gmaps').setUserAgent(userAgentForUrl('https://www.google.com/maps'));
-  for (const partition of SITE_PARTITIONS) session.fromPartition(partition).setUserAgent(CLEAN_UA);
+  // The sign-ins' partitions and the signed-out readers' (bilibili has one of each), each once.
+  // The sign-in sessions also send Chrome's whole Accept-Language, as their windows report it.
+  const siteLanguages = systemAcceptLanguages();
+  const sitePartitions = [...new Set([...SITE_PARTITIONS, ...READER_PARTITIONS])];
+  for (const partition of sitePartitions) session.fromPartition(partition).setUserAgent(CLEAN_UA, siteLanguages);
 
   // Page-fetching sessions only: the AI worker session keeps its provider pages untouched.
   installRequestFilter(session.fromPartition('persist:url-parser'));
@@ -153,7 +164,7 @@ app.whenReady().then(async () => {
   registerWorkerClientHints(session.fromPartition('persist:browser-flow'));
   registerWorkerClientHints(session.fromPartition('persist:youtube'));
   registerWorkerClientHints(session.fromPartition('persist:gmaps'));
-  for (const partition of SITE_PARTITIONS) registerWorkerClientHints(session.fromPartition(partition));
+  for (const partition of sitePartitions) registerWorkerClientHints(session.fromPartition(partition));
 
   initSecretHealthBridge();
   initSensitiveConfig();
@@ -170,7 +181,8 @@ app.whenReady().then(async () => {
   flowManager = initFlowManager({ queue, telegramRuntime, lineRuntime });
   initMcp();
 
-  if (process.platform === 'darwin') {
+  // focus() orders a hidden macOS window front, which would undo a tray start.
+  if (process.platform === 'darwin' && getMainWin()?.isVisible()) {
     getMainWin()?.focus();
   }
 
@@ -181,7 +193,6 @@ app.whenReady().then(async () => {
     queue,
     telegramRuntime,
     lineRuntime,
-    telegramSessionId: TELEGRAM_SESSION_ID,
     getMainWin,
     bindHotkey,
     bindQuickExportHotkey,
@@ -196,6 +207,11 @@ app.whenReady().then(async () => {
   void telegramRuntime.syncWithConfig();
   void lineRuntime.syncWithConfig();
   startModelCatalogRefresh();
+  startYtdlUpdateSchedule();
+  // Records of downloads already cleaned up, or scratch left by a run the app closed on.
+  void cleanupYtdlJobs().catch(() => {});
+  // Downloads/Yobi keeps each download as long as Settings › Downloader says (three days unless changed).
+  startDownloadsSweep();
   startPerplexityVisitorWipe();
   stopOutputFileWatch = startOutputFileWatch();
   sendLog(config.hotkeyEnabled
@@ -210,6 +226,7 @@ app.on('before-quit', () => {
   flushFlowMetrics();
   destroyTray();
   flowManager?.shutdown();
+  stopYtdlUpdateSchedule();
   stopOutputFileWatch?.();
   void telegramRuntime.shutdown();
   void lineRuntime.shutdown();

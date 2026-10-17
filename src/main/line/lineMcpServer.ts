@@ -4,14 +4,14 @@
  * Native-free: it imports only the LineServiceLike type and takes an injected service. The native
  * wiring that builds a real LineService lives in lineConnection.ts.
  */
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult, type Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { createToolServer } from '../mcp/inProcessServer';
 import { isLineError } from './errors';
 import type { LineServiceLike } from './lineService';
 import { CHAT_TYPE_FILTERS, CONTENT_TYPE_FILTERS, contentTypeCode, isChatTypeFilter, isLineMid } from './schema';
 
 export const SERVER_NAME = 'LINE';
-const SERVER_VERSION = '1.0.0';
 
 export const LINE_TOOLS: Tool[] = [
   {
@@ -240,21 +240,25 @@ async function dispatch(service: LineServiceLike, name: string, args: Record<str
   }
 }
 
+// The shared server reports a thrown error's `name` as the body's `error`. LINE callers read a
+// LineError's code there (UNSUPPORTED_PLATFORM, DB_LOCKED…) and 'ERROR' for anything else, so the
+// throw is re-raised as a fresh Error carrying that name; a LineError itself is never mutated.
+function lineToolError(err: unknown): Error {
+  const wrapped = new Error(err instanceof Error ? err.message : String(err));
+  wrapped.name = isLineError(err) ? err.code : 'ERROR';
+  return wrapped;
+}
+
 export function createLineMcpServer(service: LineServiceLike): Server {
-  const server = new Server({ name: SERVER_NAME, version: SERVER_VERSION }, { capabilities: { tools: {} } });
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: LINE_TOOLS }));
-  server.setRequestHandler(CallToolRequestSchema, async (req): Promise<CallToolResult> => {
-    const { name } = req.params;
-    const args = (req.params.arguments ?? {}) as Record<string, unknown>;
-    try {
-      const result = await dispatch(service, name, args);
-      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
-    } catch (err) {
-      const body = isLineError(err)
-        ? { error: err.code, message: err.message }
-        : { error: 'ERROR', message: err instanceof Error ? err.message : String(err) };
-      return { content: [{ type: 'text', text: JSON.stringify(body) }], isError: true };
-    }
+  return createToolServer({
+    name: SERVER_NAME,
+    tools: LINE_TOOLS,
+    dispatch: async (name, args) => {
+      try {
+        return await dispatch(service, name, args);
+      } catch (err) {
+        throw lineToolError(err);
+      }
+    },
   });
-  return server;
 }

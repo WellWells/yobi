@@ -13,38 +13,13 @@
  * (`| --- | ---`) are legal without trailing pipes and are left untouched.
  */
 
+import { closesFence, parseFenceOpen } from './markdownFences';
+import type { FenceOpen } from './markdownFences';
+
 const MAX_ROW_LOOKAHEAD = 20;
-const MAX_FENCE_INDENT = 3;
-const MIN_FENCE_LENGTH = 3;
 const HEADING_RE = /^ {0,3}#{1,6}(\s|$)/;
 const TRAILING_BR_RE = /<br\s*\/?>$/i;
 const LEADING_BR_RE = /^<br\s*\/?>/i;
-
-interface Fence {
-  marker: string;
-  length: number;
-}
-
-function parseFenceOpen(line: string): Fence | null {
-  const indent = line.length - line.trimStart().length;
-  if (indent > MAX_FENCE_INDENT) return null;
-  const marker = line[indent];
-  if (marker !== '`' && marker !== '~') return null;
-  let length = 0;
-  while (line[indent + length] === marker) length += 1;
-  if (length < MIN_FENCE_LENGTH) return null;
-  if (marker === '`' && line.slice(indent + length).includes('`')) return null;
-  return { marker, length };
-}
-
-function closesFence(line: string, open: Fence): boolean {
-  const indent = line.length - line.trimStart().length;
-  if (indent > MAX_FENCE_INDENT) return false;
-  let length = 0;
-  while (line[indent + length] === open.marker) length += 1;
-  if (length < open.length) return false;
-  return line.slice(indent + length).trim() === '';
-}
 
 /** Splits on pipes that are not escaped, so a `\|` inside a cell never ends it. */
 function splitCells(row: string): string[] {
@@ -178,7 +153,7 @@ export function repairSplitTableRows(markdown: string): string {
   if (!markdown.includes('|')) return markdown;
   const lines = markdown.split('\n');
   const out: string[] = [];
-  let fence: Fence | null = null;
+  let fence: FenceOpen | null = null;
   let index = 0;
 
   while (index < lines.length) {

@@ -1,3 +1,5 @@
+import { escapeRegExp } from '../shared/regex';
+import { decodeHtmlEntities } from './htmlEntities';
 import { userAgentForUrl } from './userAgent';
 
 const BOQ_ENDPOINT = 'https://www.google.com/httpservice/web/PrivateLocalSearchUiDataService/GetLocalBoqProxy';
@@ -119,7 +121,7 @@ export function extractPlaceIdFromHtml(html: string): string {
 
 export function extractPlaceNameFromHtml(html: string, placeId: string): string {
   if (!placeId) return '';
-  const escapedId = placeId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escapedId = escapeRegExp(placeId);
   const q = '\\\\?"';
   const re = new RegExp(`${q}${escapedId}${q},${q}((?:[^"\\\\]|\\\\.)*?)${q}`, 'i');
   const match = re.exec(html);
@@ -141,14 +143,9 @@ export function buildBoqUrl(placeId: string, sort: MapReviewSort, hl: string, pa
 }
 
 function stripHtml(value: string): string {
-  return value
+  return decodeHtmlEntities(value
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
+    .replace(/<[^>]+>/g, ''))
     .trim();
 }
 

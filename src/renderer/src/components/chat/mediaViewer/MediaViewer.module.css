@@ -1,0 +1,61 @@
+/* The viewer is dark in every theme, so its controls are white on a lift that brightens on hover. */
+.control {
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.control:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* Controls fade once the pointer rests and come back on the next move (Telegram's timing). */
+.chrome {
+  transition: opacity 200ms ease-out;
+}
+
+.root[data-idle] .chrome {
+  opacity: 0;
+  pointer-events: none;
+  transition-duration: 600ms;
+}
+
+.nav {
+  position: absolute;
+  top: calc(50% - 46px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.nav:hover {
+  color: #fff;
+  background: rgba(0, 0, 0, 0.36);
+}
+
+.counter {
+  color: rgba(255, 255, 255, 0.75);
+  font-variant-numeric: tabular-nums;
+}
+
+.stripRow {
+  transition: transform 150ms linear;
+}
+
+.thumb {
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: 4px;
+  opacity: 0.7;
+  transition: width 150ms linear, margin 150ms linear, opacity 150ms linear;
+}
+
+.thumb:hover,
+.thumb[data-current] {
+  opacity: 1;
+}

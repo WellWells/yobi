@@ -17,6 +17,8 @@ interface CommandTriggerFieldsProps {
   conflict?: FlowIssue;
   showBotCompoundHint?: boolean;
   cardStyle?: React.CSSProperties;
+  /** The flow reads the owner's own data (decides how a bot command without a mode reads). */
+  ownerData?: boolean;
 }
 
 const FIELDS = {
@@ -25,7 +27,7 @@ const FIELDS = {
 } as const;
 
 export const CommandTriggerFields: React.FC<CommandTriggerFieldsProps> = ({
-  kind, value, patch, t, conflict, showBotCompoundHint = false, cardStyle,
+  kind, value, patch, t, conflict, showBotCompoundHint = false, cardStyle, ownerData = false,
 }) => {
   const fields = FIELDS[kind];
   const Icon = kind === 'bot' ? Bot : MessageSquare;
@@ -75,7 +77,7 @@ export const CommandTriggerFields: React.FC<CommandTriggerFieldsProps> = ({
         size="sm"
       />
 
-      {kind === 'bot' && <BotCommandAccessField value={value} patch={patch} t={t} />}
+      {kind === 'bot' && <BotCommandAccessField value={value} patch={patch} t={t} ownerData={ownerData} />}
 
       {commandEmpty && (
         <Group gap={6} align="center">

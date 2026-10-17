@@ -9,7 +9,7 @@ export const ALWAYS_INCLUDED_SKILLS: readonly SkillType[] = [
 
 export const MAX_SELECTED_SKILLS = 8;
 
-export function renderSkillBrief(spec: SkillSpec): string {
+function renderSkillBrief(spec: SkillSpec): string {
   return `- "${spec.type}": ${spec.brief}`;
 }
 
@@ -54,7 +54,7 @@ function renderNotes(skills: readonly SkillType[]): string[] {
   ];
 }
 
-export const TRIGGER_BRIEFS: readonly string[] = [
+const TRIGGER_BRIEFS: readonly string[] = [
   '- "cron": run on a SCHEDULE — any repeating time, from every few seconds to specific days and times (e.g. every minute, every weekday at 08:00). Runs in the background while the app is open; no external scheduler needed.',
   '- "hotkey": run when the user presses a global keyboard shortcut, from anywhere on the desktop.',
   '- "bot": run when the user sends a /command to the Telegram or LINE bot; their message text becomes an input variable.',

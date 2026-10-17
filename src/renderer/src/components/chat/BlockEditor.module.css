@@ -1,0 +1,66 @@
+/* The answer editor's paragraph mode (BlockEditor.tsx): each block reads as it will be shown,
+   and says it can be edited only when the pointer is on it. */
+.block {
+  position: relative;
+  margin: 0 -10px;
+  padding: 2px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  cursor: text;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.block:hover {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--bg-hover) 35%, transparent);
+}
+
+.block[data-rewriting='true'] {
+  border-color: var(--accent);
+}
+
+.active {
+  margin: 4px -10px;
+}
+
+/* A Notion block edited in Notion (a table, a child page): shown, never opened. */
+.locked {
+  margin: 0 -10px;
+  padding: 2px 10px 6px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  cursor: default;
+}
+
+.tools {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 2;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.block:hover .tools,
+.tools[data-open='true'] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.definition {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 4px 0;
+}
+
+/* Touch input has no hover to reveal the tools with. */
+@media (hover: none) {
+  .tools {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}

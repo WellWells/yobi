@@ -4,7 +4,8 @@ import { useShallow } from 'zustand/react/shallow';
 import type { ConversationDoc } from '../../../../shared/conversationDoc';
 import type { CaptureFormat, CaptureTurn } from '../../../../shared/types';
 import { sumTurnUsage } from '../../../../shared/tokenEstimate';
-import { useAppStore, type PendingTurn } from '../../store/appStore';
+import { editedAt, unsentEditedTurns } from '../../../../shared/editedReplies';
+import { NEW_CONVERSATION_KEY, useAppStore, type PendingTurn } from '../../store/appStore';
 import type { AgentChoicePick } from '../../store/useAgentRunStore';
 import { useI18nStore } from '../../store/i18nStore';
 import { useFormatTime } from '../../hooks/useFormatTime';
@@ -14,6 +15,8 @@ import { PromptBody } from '../../components/chat/PromptBody';
 import { AssistantTurn } from '../../components/chat/AssistantTurn';
 import { PendingTurnBubble } from '../../components/chat/PendingTurnBubble';
 import { TokenUsageLabel } from '../../components/chat/TokenUsageLabel';
+import { readingMaxWidth, useReadingStore } from '../../store/readingStore';
+import { READING_FACE } from '../../styles/readingText';
 
 const MAX_WIDTH = 720;
 const SIDE_QUESTION_WIDTH = '34%';
@@ -26,14 +29,20 @@ interface ConversationViewProps {
   onCaptureTurnAs?: (format: CaptureFormat, turn: CaptureTurn) => Promise<boolean>;
   /** Answers the agent's waiting question with a choice it offered. */
   onChooseAnswer?: (pick: AgentChoicePick) => void;
+  /** Sends a flow button's command line, as if the user had typed it. */
+  onTurnButton?: (commandLine: string) => void;
+  /** "Analyze" under a forwarded X post: asks the agent about the post and its replies. */
+  onAnalyzeXPost?: (link: string) => void;
 }
 
-function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs, onChooseAnswer }: ConversationViewProps) {
+function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs, onChooseAnswer, onTurnButton, onAnalyzeXPost }: ConversationViewProps) {
   const { t } = useI18nStore();
   const formatTime = useFormatTime();
   const markdownZoom = useAppStore((state) => state.markdownZoom);
   const layoutMode = useAppStore((state) => state.layoutMode);
   const showTokenUsage = useAppStore((state) => state.showTokenUsage);
+  // Full width lifts the cap; the side padding stays so text never touches the edge.
+  const fullWidth = useReadingStore((state) => state.prefs.fullWidth);
   const pending = useAppStore(
     useShallow((state): PendingTurn[] => state.pendingTurns[conversationPath] ?? []),
   );
@@ -56,6 +65,21 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
     }),
     [conversation.turns, conversation.provider],
   );
+
+  // The temporary chat lives in memory only; there is no file to write an edit into.
+  const editPath = conversationPath && conversationPath !== NEW_CONVERSATION_KEY ? conversationPath : undefined;
+  const unsentEdits = useMemo(() => new Set(unsentEditedTurns(conversation.turns)), [conversation.turns]);
+  const editPropsFor = (index: number) => {
+    const edited = editedAt(conversation.turns[index]);
+    return {
+      editPath,
+      editLocked: pendingCount > 0,
+      turnCount,
+      editedLabel: edited ? formatTime(edited) || null : null,
+      editUnsent: unsentEdits.has(index),
+      translatePath: conversationPath,
+    };
+  };
 
   const contentRef = useRef<HTMLDivElement>(null);
   const { follow, jump } = useStickToBottom(contentRef, sideBySide ? 'side' : 'stacked');
@@ -99,6 +123,8 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
       <Stack gap={4} flex={1}>
         <Text
           component="h1"
+          data-find-scope
+          ff={READING_FACE}
           fz="var(--font-size-3xl)"
           fw={700}
           c="var(--text-primary)"
@@ -132,7 +158,7 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
   if (sideBySide) {
     return (
       <Box ref={contentRef} style={zoomStyle}>
-        <Stack gap={0} w="100%" maw={SIDE_MAX_WIDTH} mx="auto" px={24} py={20}>
+        <Stack gap={0} w="100%" maw={readingMaxWidth(fullWidth, SIDE_MAX_WIDTH)} mx="auto" px={24} py={20}>
           {title}
           {conversation.turns.map((turn, index) => (
             <Flex
@@ -156,7 +182,7 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
                   paddingBottom: 20,
                 }}
               >
-                <PromptBody prompt={turn.prompt} fw={500} />
+                <Box data-find-scope><PromptBody prompt={turn.prompt} fw={500} /></Box>
               </Box>
               <Box style={{ flex: 1, minWidth: 0, borderLeft: '1px solid var(--border)', padding: '20px 4px 20px 20px' }}>
                 {turn.response ? (
@@ -168,6 +194,9 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
                     turnIndex={index}
                     onCaptureAs={onCaptureTurnAs}
                     onChoose={onChooseAnswer}
+                    onTurnButton={onTurnButton}
+                    onAnalyzeXPost={onAnalyzeXPost}
+                    {...editPropsFor(index)}
                   />
                 ) : null}
               </Box>
@@ -182,7 +211,7 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
   return (
     <Box ref={contentRef} style={{ minHeight: '100%', overflow: 'hidden' }}>
       <Box style={zoomStyle}>
-        <Stack gap={28} w="100%" maw={MAX_WIDTH} mx="auto" px={28} py={20}>
+        <Stack gap={28} w="100%" maw={readingMaxWidth(fullWidth, MAX_WIDTH)} mx="auto" px={28} py={20}>
           {title}
 
           {conversation.turns.map((turn, index) => (
@@ -203,6 +232,9 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
                     turnIndex={index}
                     onCaptureAs={onCaptureTurnAs}
                     onChoose={onChooseAnswer}
+                    onTurnButton={onTurnButton}
+                    onAnalyzeXPost={onAnalyzeXPost}
+                    {...editPropsFor(index)}
                   />
                 )
                 : null}

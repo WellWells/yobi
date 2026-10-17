@@ -1,5 +1,6 @@
 import type { FlowDefinition, SkillInstance, SkillType } from '../../../shared/types';
 import { DEFAULT_SKILL_CONFIG, SKILLS_WITHOUT_OUTPUT_KEY } from '../../../shared/flowSkillSchema';
+import { findMatchingMarker } from '../../../shared/flowBlockStructure';
 
 export const DEFAULT_OUTPUT_BASE: Partial<Record<SkillType, string>> = {
   browser_open: 'tab',
@@ -49,9 +50,12 @@ export function createDefaultStep(type: SkillType = 'shell', outputKey?: string,
     http: t('flow.skill.http'),
     youtube: t('flow.skill.youtube'),
     youtube_subs: t('flow.skill.youtube_subs'),
+    youtube_info: t('flow.skill.youtube_info'),
+    youtube_download: t('flow.skill.youtube_download'),
     x_posts: t('flow.skill.x_posts'),
     x_thread: t('flow.skill.x_thread'),
     x_trends: t('flow.skill.x_trends'),
+    x_media: t('flow.skill.x_media'),
     power: t('flow.skill.power'),
     restart_app: t('flow.skill.restart_app'),
     file_write: t('flow.skill.file_write'),
@@ -81,7 +85,7 @@ export function createDefaultFlow(t: (key: string) => string = (k) => k): FlowDe
   return {
     id: createId(),
     name: t('flow.newFlow'),
-    description: t('flow.newFlow.desc'),
+    description: '',
     enabled: true,
     trigger: { type: 'manual' },
     steps: [],
@@ -94,26 +98,7 @@ export function cloneFlow(flow: FlowDefinition): FlowDefinition {
   return JSON.parse(JSON.stringify(flow)) as FlowDefinition;
 }
 
-export function findMatchingMarker(steps: SkillInstance[], index: number): number {
-  const type = steps[index]?.type;
-  const pair: Partial<Record<SkillType, { other: SkillType; dir: 1 | -1 }>> = {
-    loop: { other: 'end_loop', dir: 1 },
-    if: { other: 'end_if', dir: 1 },
-    end_loop: { other: 'loop', dir: -1 },
-    end_if: { other: 'if', dir: -1 },
-  };
-  const entry = type ? pair[type] : undefined;
-  if (!type || !entry) return -1;
-  let depth = 1;
-  for (let j = index + entry.dir; j >= 0 && j < steps.length; j += entry.dir) {
-    if (steps[j].type === type) depth++;
-    else if (steps[j].type === entry.other) {
-      depth--;
-      if (depth === 0) return j;
-    }
-  }
-  return -1;
-}
+export { findMatchingMarker };
 
 /** The first `${base}_${n}` (n counting up from `start`) that no step's outputKey already uses. */
 export function nextFreeOutputKey(base: string, steps: SkillInstance[], start: number): string {

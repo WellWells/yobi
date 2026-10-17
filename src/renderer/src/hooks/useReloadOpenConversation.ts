@@ -1,6 +1,7 @@
 import { startTransition, useEffect } from 'react';
 import { useAppStore } from '../store/appStore';
-import { fileApi, ipcEvents } from '../api/electronApi';
+import { conversationHistoryApi, fileApi, ipcEvents } from '../api/electronApi';
+import { shouldKeepBeforeReload } from '../../../shared/conversationHistory';
 
 /**
  * Re-reads the open conversation when its .md on disk no longer matches the screen. Skipped
@@ -19,6 +20,12 @@ export async function reloadOpenConversation(): Promise<void> {
   current.setFiles(files);
   const file = files.find((candidate) => candidate.path === path);
   if (!file || current.selectedFile?.path !== path) return;
+  // Another app's change is about to replace what the screen shows: keep that as a version first,
+  // unless the file only gained a turn (main checks again before keeping anything).
+  const previous = current.fileContent;
+  if (previous && shouldKeepBeforeReload(previous, latest)) {
+    void conversationHistoryApi.keepBeforeReload(path, previous).catch(() => false);
+  }
   current.selectFile(file);
   startTransition(() => useAppStore.getState().setFileContent(latest));
 }

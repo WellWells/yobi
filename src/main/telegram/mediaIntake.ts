@@ -119,14 +119,6 @@ export function mediaGate(ctx: TelegramContext, options: TelegramCommandOptions)
   return { allowed: true, addressed: match.mentioned, prompt: match.mentioned ? match.prompt.trim() : '' };
 }
 
-export function shouldHandleMedia(
-  ctx: TelegramContext,
-  options: TelegramCommandOptions,
-): { handle: boolean; prompt: string } {
-  const gate = mediaGate(ctx, options);
-  return { handle: gate.allowed && gate.addressed, prompt: gate.prompt };
-}
-
 export function captionLooksLikeCommand(caption: string): boolean {
   return /^\/[a-z0-9_]{1,32}(@\S+)?(\s|$)/i.test(caption.trim());
 }

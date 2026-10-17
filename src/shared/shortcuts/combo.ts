@@ -293,10 +293,19 @@ export function isRegisterableAccelerator(combo: string): boolean {
 }
 
 const MAC_GLYPHS: Record<string, string> = {
-  [MOD_COMMAND_OR_CONTROL]: '⌘',
-  [MOD_COMMAND]: '⌘',
+  [MOD_CONTROL]: '⌃',
   [MOD_ALT]: '⌥',
   [MOD_SHIFT]: '⇧',
+  [MOD_COMMAND]: '⌘',
+  [MOD_COMMAND_OR_CONTROL]: '⌘',
+};
+
+const MAC_DISPLAY_ORDER = [MOD_CONTROL, MOD_ALT, MOD_SHIFT, MOD_COMMAND, MOD_COMMAND_OR_CONTROL] as const;
+
+const OTHER_LABELS: Record<string, string> = {
+  [MOD_COMMAND_OR_CONTROL]: 'Ctrl',
+  [MOD_COMMAND]: '⌘',
+  [MOD_CONTROL]: 'Ctrl',
 };
 
 const DISPLAY_KEY_NAMES: Record<string, string> = {
@@ -322,14 +331,21 @@ const DISPLAY_KEY_NAMES: Record<string, string> = {
 export function toTokens(combo: string, isMac: boolean): string[] {
   const canonical = canonicalise(combo);
   if (!canonical) return [];
-  const parts = canonical.split('+');
-  return parts.map((part, index) => {
-    const isLast = index === parts.length - 1;
-    if (isLast) return DISPLAY_KEY_NAMES[part] ?? part;
-    if (part === MOD_CONTROL) return 'Ctrl';
-    if (part === MOD_COMMAND) return '⌘';
-    if (isMac) return MAC_GLYPHS[part] ?? part;
-    if (part === MOD_COMMAND_OR_CONTROL) return 'Ctrl';
-    return part;
-  });
+  const modifiers = canonical.split('+');
+  const key = modifiers.pop() ?? '';
+  const keyToken = DISPLAY_KEY_NAMES[key] ?? key;
+  if (isMac) {
+    const glyphs = MAC_DISPLAY_ORDER.filter((modifier) => modifiers.includes(modifier))
+      .map((modifier) => MAC_GLYPHS[modifier]);
+    return [...glyphs, keyToken];
+  }
+  return [...modifiers.map((modifier) => OTHER_LABELS[modifier] ?? modifier), keyToken];
+}
+
+export function joinTokens(tokens: readonly string[], isMac: boolean): string {
+  return tokens.join(isMac ? '' : ' + ');
+}
+
+export function comboLabel(combo: string, isMac: boolean): string {
+  return joinTokens(toTokens(combo, isMac), isMac);
 }

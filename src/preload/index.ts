@@ -10,6 +10,26 @@ import type {
   MemoryCurateProposeRequest,
   MemoryCurateProposeResult,
 } from '../shared/memoryCurate';
+import type { WritingToolsProgress, WritingToolsRequest, WritingToolsResult } from '../shared/writingTools';
+import type { DocAssistantProgress, DocAssistantRequest, DocAssistantResult } from '../shared/docAssistant';
+import type {
+  ConversationTranslateProgress, ConversationTranslateRequest, ConversationTranslateResult,
+  TranslateProgress, TranslateRequest, TranslateResult, TurnTranslationRequest, TurnTranslationResult,
+} from '../shared/translate';
+import type { ReadingPrefs } from '../shared/readingPrefs';
+import type { YtdlToolsState } from '../shared/ytdl';
+import type { DownloadsKeep } from '../shared/downloads';
+import type { TelegramLargeUploadInput, TelegramLargeUploadResult } from '../shared/telegramUpload';
+import type { ConversationHistoryList, ConversationRestoreResult } from '../shared/conversationHistory';
+import type {
+  NotionBrowseResult,
+  NotionDocStatus,
+  NotionImportResult,
+  NotionPullResult,
+  NotionPushResult,
+  NotionSearchResult,
+} from '../shared/notion/notionSyncTypes';
+import type { FlowSaveSource, FlowVersionList, FlowVersionRestoreResult } from '../shared/flowVersions';
 import type {
   AccountStatus, AttachmentStashRequest, AuthProvider, BackupCategoryId, BackupCategoryInfo, BackupExportResult,
   BackupImportResult, BackupInspectResult, BotBuiltinCommands, BotByokCommandInfo, BotLlmDirectConfig, ByokConnectionProbe, ByokGroupSaveRequest, ByokInstanceSaveRequest, ByokModelsResult,
@@ -17,12 +37,20 @@ import type {
   QuickExportSettings,
   FeedCandidate, FlowDefinition, FlowExecutionEvent, FlowExecutionLog, FlowExecutionResult, HiddenSources,
   ScraperPickRequest, ScraperPickResult,
-  FlowBuildOutcome, FlowBuildPayload, FlowBuildRequestPayload, MarkdownCaptureRequest, MarkdownCaptureResult, MetricsSnapshot, NotifyEventPrefs, OutputFile, PromptPreferences, StartedConversation, ConversationImportResult,
+  FlowBuildOutcome, FlowBuildPayload, FlowBuildRequestPayload, MarkdownCaptureRequest, MarkdownCaptureResult, MetricsSnapshot, NotifyEventPrefs, OutputFile, PromptPreferences, StartedConversation, ConversationImportResult, ResponseEditRequest, ResponseEditResult,
   SchedulePreview, ShareLinkRequest, ShareLinkResult, ShareSettings, StashedAttachment, TriggerConfig,
   SiteAccount, SiteAccountStatus,
 } from '../shared/types';
+import type { BotAudienceSnapshot, BotPlatform } from '../shared/types';
 import type { FlowMetricsSnapshot } from '../shared/flowMetrics';
-import type { BotSetPermissionsRequest, BotSetPermissionsResult } from '../shared/botPermissions';
+import type {
+  BotSetBlockedRequest,
+  BotSetBlockedResult,
+  BotSetGroupPermissionsRequest,
+  BotSetGroupPermissionsResult,
+  BotSetPermissionsRequest,
+  BotSetPermissionsResult,
+} from '../shared/botPermissions';
 import type { ConversationTokenStats } from '../shared/tokenEstimate';
 import type { ShortcutOverride } from '../shared/shortcuts';
 import type {
@@ -33,9 +61,11 @@ import type {
   UpdateAvailablePayload, UpdateSource, UiNotificationPayload, ComposerEditorEventPayload, ExternalEditorSettings,
   BatchCaptureFormat, BatchCaptureItem, BatchCaptureProgress, BatchCaptureResult, ZipExportResult,
 } from '../shared/types';
+import type { StepProgress } from '../shared/stepProgress';
 
 export type ElectronAPI = {
   showWorker: () => void;
+  openSiteVerification: (site: string) => void;
   minimizeWindow: () => void;
   maximizeWindow: () => void;
   closeWindow: () => void;
@@ -78,6 +108,20 @@ export type ElectronAPI = {
   cancelMemoryCuration: () => Promise<boolean>;
   applyMemoryCuration: (proposalId: string, picks: MemoryCuratePick[]) => Promise<MemoryCurateApplyResult>;
   undoMemoryCuration: () => Promise<{ ok: boolean }>;
+  getWritingToolsModel: () => Promise<string>;
+  runWritingTools: (request: WritingToolsRequest) => Promise<WritingToolsResult>;
+  cancelWritingTools: (id: string) => Promise<boolean>;
+  onWritingToolsProgress: (cb: (progress: WritingToolsProgress) => void) => () => void;
+  runDocAssistant: (request: DocAssistantRequest) => Promise<DocAssistantResult>;
+  cancelDocAssistant: (id: string) => Promise<boolean>;
+  onDocAssistantProgress: (cb: (progress: DocAssistantProgress) => void) => () => void;
+  runTranslate: (request: TranslateRequest) => Promise<TranslateResult>;
+  cancelTranslate: (id: string) => Promise<boolean>;
+  onTranslateProgress: (cb: (progress: TranslateProgress) => void) => () => void;
+  translateConversation: (request: ConversationTranslateRequest) => Promise<ConversationTranslateResult>;
+  cancelTranslateConversation: (id: string) => Promise<boolean>;
+  onTranslateConversationProgress: (cb: (progress: ConversationTranslateProgress) => void) => () => void;
+  setTurnTranslation: (request: TurnTranslationRequest) => Promise<TurnTranslationResult>;
   getGeminiModels: () => Promise<GeminiModelState>;
   setGeminiModel: (patch: Partial<GeminiModelChoice>) => Promise<GeminiModelState>;
   refreshGeminiModels: () => Promise<GeminiModelState>;
@@ -100,8 +144,32 @@ export type ElectronAPI = {
   deleteFile: (filePath: string) => Promise<boolean>;
   deleteFiles: (filePaths: string[]) => Promise<number>;
   deleteAllFiles: () => Promise<number>;
-  updateFileTitle: (filePath: string, title: string) => Promise<{ ok: boolean; updatedPath: string }>;
   updateFileH1: (filePath: string, title: string) => Promise<boolean>;
+  editTurnResponse: (request: ResponseEditRequest) => Promise<ResponseEditResult>;
+  listConversationVersions: (filePath: string) => Promise<ConversationHistoryList>;
+  getConversationVersion: (filePath: string, vid: string) => Promise<string | null>;
+  restoreConversationVersion: (filePath: string, vid: string) => Promise<ConversationRestoreResult>;
+  deleteConversationVersion: (filePath: string, vid: string) => Promise<boolean>;
+  deleteConversationVersions: (filePath: string) => Promise<boolean>;
+  keepConversationBeforeReload: (filePath: string, previous: string) => Promise<boolean>;
+  notionConnected: () => Promise<boolean>;
+  notionSearch: (query: string) => Promise<NotionSearchResult>;
+  notionBrowse: (cursor: string | null) => Promise<NotionBrowseResult>;
+  notionImport: (input: string) => Promise<NotionImportResult>;
+  notionStatus: (filePath: string) => Promise<NotionDocStatus | null>;
+  notionPull: (filePath: string) => Promise<NotionPullResult>;
+  notionPush: (filePath: string, ids: string[], title: string | null) => Promise<NotionPushResult>;
+  notionResolve: (filePath: string, key: string, choice: 'mine' | 'theirs') => Promise<boolean>;
+  notionRevert: (filePath: string, id: string) => Promise<boolean>;
+  ytdlToolsGet: () => Promise<YtdlToolsState>;
+  ytdlToolsInstall: () => Promise<YtdlToolsState>;
+  ytdlToolsCheckUpdate: () => Promise<YtdlToolsState>;
+  ytdlToolsRemove: () => Promise<YtdlToolsState>;
+  ytdlToolsSetCustom: (paths: { ytdlp: string; ffmpegDir: string } | null) => Promise<YtdlToolsState>;
+  ytdlToolsSetNightly: (on: boolean) => Promise<YtdlToolsState>;
+  onYtdlToolsState: (cb: (state: YtdlToolsState) => void) => () => void;
+  getDownloadsKeep: () => Promise<DownloadsKeep>;
+  setDownloadsKeep: (choice: DownloadsKeep) => Promise<DownloadsKeep>;
   startConversation: (prompt: string) => Promise<StartedConversation | null>;
   importConversations: (filePaths: string[]) => Promise<ConversationImportResult>;
   startFileDrag: (filePaths: string[]) => void;
@@ -147,7 +215,6 @@ export type ElectronAPI = {
   updateResponseTimeout: (ms: number) => Promise<boolean>;
   resetSettings: () => Promise<SettingsSnapshot | null>;
 
-  triggerPrompt: (prompt: string) => void;
   triggerPromptWithOptions: (options: PromptTriggerOptions) => Promise<string | null>;
   cancelQueueTask: (taskId: string) => Promise<boolean>;
   forceSkipActiveTask: () => Promise<boolean>;
@@ -158,9 +225,10 @@ export type ElectronAPI = {
   attachmentFromClipboard: () => Promise<StashedAttachment | null>;
   getPathForFile: (file: File) => string;
   showInFolder: (filePath: string) => Promise<void>;
+  exportConversationMarkdown: (filePath: string) => Promise<MarkdownCaptureResult>;
   openPath: (filePath: string) => Promise<boolean>;
   openFileWith: (filePath: string) => Promise<boolean>;
-  copyFilesToClipboard: (filePaths: string[]) => Promise<boolean>;
+  copyFilesToClipboard: (filePaths: string[]) => Promise<number>;
   openConfigDir: () => Promise<boolean>;
   openLogDir: () => Promise<boolean>;
   openThirdPartyLicenses: () => Promise<boolean>;
@@ -182,10 +250,12 @@ export type ElectronAPI = {
   getTelegramSettings: () => Promise<TelegramSettingsSnapshot>;
   updateTelegramEnabled: (enabled: boolean) => Promise<boolean>;
   updateTelegramBotToken: (token: string) => Promise<{ ok: boolean; message?: string }>;
+  updateTelegramLargeUpload: (input: TelegramLargeUploadInput) => Promise<TelegramLargeUploadResult>;
+  clearTelegramLargeUpload: () => Promise<TelegramLargeUploadResult>;
+  testTelegramLargeUpload: (input: TelegramLargeUploadInput) => Promise<TelegramLargeUploadResult>;
   updateTelegramAllowGroupCommands: (enabled: boolean) => Promise<boolean>;
   updateTelegramDefaultReplyMode: (mode: 'markdown' | 'png' | 'webp' | 'pdf') => Promise<boolean>;
   updateTelegramCompactReply: (enabled: boolean) => Promise<boolean>;
-  updateTelegramAdminUsers: (userIds: number[]) => Promise<boolean>;
   getBotProviderCommands: () => Promise<Record<Provider, BotProviderCommand>>;
   updateBotProviderCommands: (commands: Record<Provider, BotProviderCommand>) => Promise<boolean>;
   getBotBuiltinCommands: () => Promise<BotBuiltinCommands>;
@@ -209,11 +279,13 @@ export type ElectronAPI = {
   unpairLineUser: (userId: string) => Promise<{ ok: boolean; snapshot: LineSettingsSnapshot }>;
   refreshLineAccount: () => Promise<{ ok: boolean; message?: string }>;
   setBotPermissions: (request: BotSetPermissionsRequest) => Promise<BotSetPermissionsResult>;
+  setBotGroupPermissions: (request: BotSetGroupPermissionsRequest) => Promise<BotSetGroupPermissionsResult>;
+  setBotBlocked: (request: BotSetBlockedRequest) => Promise<BotSetBlockedResult>;
+  getBotAudience: (platform: BotPlatform) => Promise<BotAudienceSnapshot>;
 
   getDataKeyStatus: (name: string) => Promise<DataKeyStatus>;
   updateDataKey: (name: string, value: string) => Promise<{ ok: boolean }>;
   getEmailSettings: () => Promise<EmailSettingsSnapshot>;
-  updateEmailEnabled: (enabled: boolean) => Promise<{ ok: boolean }>;
   updateEmailCredentials: (creds: SmtpCredentials) => Promise<{ ok: boolean; message?: string }>;
 
   getByokSettings: () => Promise<ByokSettingsSnapshot>;
@@ -251,7 +323,8 @@ export type ElectronAPI = {
   getLaunchAtStartup: () => Promise<boolean>;
   updateLaunchAtStartup: (enabled: boolean) => Promise<boolean>;
 
-  onNavigateSettings: (cb: () => void) => () => void;
+  /** `category`: the settings page to open; absent opens settings where it was. */
+  onNavigateSettings: (cb: (category?: string) => void) => () => void;
 
   onNotifyOnCompleteChanged: (cb: (enabled: boolean) => void) => () => void;
   onLaunchAtStartupChanged: (cb: (enabled: boolean) => void) => () => void;
@@ -276,13 +349,19 @@ export type ElectronAPI = {
   updateShowTokenUsage: (show: boolean) => Promise<boolean>;
   getMarkdownZoom: () => Promise<number>;
   updateMarkdownZoom: (zoom: number) => Promise<boolean>;
+  getReadingPrefs: () => Promise<ReadingPrefs>;
+  updateReadingPrefs: (patch: Partial<ReadingPrefs>) => Promise<ReadingPrefs>;
   getCaptureSettings: () => Promise<CaptureSettings>;
   updateCaptureSettings: (settings: CaptureSettings) => Promise<boolean>;
   getQuickExport: () => Promise<QuickExportSettings>;
   updateQuickExport: (settings: QuickExportSettings) => Promise<HotkeyBindResult>;
 
   getFlows: () => Promise<FlowDefinition[]>;
-  saveFlow: (flow: FlowDefinition) => Promise<FlowDefinition | null>;
+  saveFlow: (flow: FlowDefinition, source?: FlowSaveSource) => Promise<FlowDefinition | null>;
+  listFlowVersions: (flowId: string) => Promise<FlowVersionList>;
+  restoreFlowVersion: (flowId: string, vid: string) => Promise<FlowVersionRestoreResult>;
+  deleteFlowVersion: (flowId: string, vid: string) => Promise<boolean>;
+  clearFlowVersions: (flowId: string) => Promise<boolean>;
   deleteFlow: (flowId: string) => Promise<boolean>;
   deleteFlows: (flowIds: string[]) => Promise<boolean>;
   setFlowsEnabled: (flowIds: string[], enabled: boolean) => Promise<FlowDefinition[]>;
@@ -290,7 +369,8 @@ export type ElectronAPI = {
   moveFlow: (flowId: string, direction: 'up' | 'down') => Promise<FlowDefinition[]>;
   reorderFlows: (orderedIds: string[]) => Promise<FlowDefinition[]>;
   executeFlow: (flowId: string) => Promise<FlowExecutionResult>;
-  runChatCommand: (flowId: string, command: string, input: string, conversationPath?: string) => Promise<ChatCommandResult>;
+  runChatCommand: (flowId: string, command: string, input: string, conversationPath?: string, progressId?: string, modelUrl?: string) => Promise<ChatCommandResult>;
+  onChatCommandProgress: (cb: (payload: { progressId: string; progress: StepProgress }) => void) => () => void;
   runAgentCommand: (goal: string, targetUrl: string, runId: string, conversationPath?: string, attachments?: string[], mcpServerIds?: string[], web?: boolean) => Promise<AgentCommandResult>;
   setConversationConnectors: (filePath: string, serverIds: string[], web?: boolean, agent?: boolean) => Promise<boolean>;
   resumeAgentRun: (runId: string, answer?: string) => Promise<AgentCommandResult>;
@@ -329,6 +409,7 @@ export type ElectronAPI = {
 
 const api: ElectronAPI = {
   showWorker: () => ipcRenderer.send(IPC.SHOW_WORKER),
+  openSiteVerification: (site) => ipcRenderer.send(IPC.SITE_VERIFICATION_OPEN, site),
   minimizeWindow: () => ipcRenderer.send(IPC.WINDOW_MINIMIZE),
   maximizeWindow: () => ipcRenderer.send(IPC.WINDOW_MAXIMIZE),
   closeWindow: () => ipcRenderer.send(IPC.WINDOW_CLOSE),
@@ -427,6 +508,36 @@ const api: ElectronAPI = {
   cancelMemoryCuration: () => ipcRenderer.invoke(IPC.MEMORY_CURATE_CANCEL),
   applyMemoryCuration: (proposalId, picks) => ipcRenderer.invoke(IPC.MEMORY_CURATE_APPLY, proposalId, picks),
   undoMemoryCuration: () => ipcRenderer.invoke(IPC.MEMORY_CURATE_UNDO),
+  getWritingToolsModel: () => ipcRenderer.invoke(IPC.WRITING_TOOLS_GET_MODEL),
+  runWritingTools: (request) => ipcRenderer.invoke(IPC.WRITING_TOOLS_RUN, request),
+  cancelWritingTools: (id) => ipcRenderer.invoke(IPC.WRITING_TOOLS_CANCEL, id),
+  onWritingToolsProgress: (cb) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: WritingToolsProgress) => cb(progress);
+    ipcRenderer.on(IPC.WRITING_TOOLS_PROGRESS, handler);
+    return () => ipcRenderer.removeListener(IPC.WRITING_TOOLS_PROGRESS, handler);
+  },
+  runDocAssistant: (request) => ipcRenderer.invoke(IPC.DOC_ASSISTANT_RUN, request),
+  cancelDocAssistant: (id) => ipcRenderer.invoke(IPC.DOC_ASSISTANT_CANCEL, id),
+  onDocAssistantProgress: (cb) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: DocAssistantProgress) => cb(progress);
+    ipcRenderer.on(IPC.DOC_ASSISTANT_PROGRESS, handler);
+    return () => ipcRenderer.removeListener(IPC.DOC_ASSISTANT_PROGRESS, handler);
+  },
+  runTranslate: (request) => ipcRenderer.invoke(IPC.TRANSLATE_RUN, request),
+  cancelTranslate: (id) => ipcRenderer.invoke(IPC.TRANSLATE_CANCEL, id),
+  onTranslateProgress: (cb) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: TranslateProgress) => cb(progress);
+    ipcRenderer.on(IPC.TRANSLATE_PROGRESS, handler);
+    return () => ipcRenderer.removeListener(IPC.TRANSLATE_PROGRESS, handler);
+  },
+  translateConversation: (request) => ipcRenderer.invoke(IPC.TRANSLATE_CONVERSATION, request),
+  cancelTranslateConversation: (id) => ipcRenderer.invoke(IPC.TRANSLATE_CONVERSATION_CANCEL, id),
+  onTranslateConversationProgress: (cb) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: ConversationTranslateProgress) => cb(progress);
+    ipcRenderer.on(IPC.TRANSLATE_CONVERSATION_PROGRESS, handler);
+    return () => ipcRenderer.removeListener(IPC.TRANSLATE_CONVERSATION_PROGRESS, handler);
+  },
+  setTurnTranslation: (request) => ipcRenderer.invoke(IPC.SET_TURN_TRANSLATION, request),
   getGeminiModels: () => ipcRenderer.invoke(IPC.GEMINI_MODEL_GET),
   setGeminiModel: (patch) => ipcRenderer.invoke(IPC.GEMINI_MODEL_SET, patch),
   refreshGeminiModels: () => ipcRenderer.invoke(IPC.GEMINI_MODEL_REFRESH),
@@ -466,8 +577,36 @@ const api: ElectronAPI = {
   deleteFile: (filePath) => ipcRenderer.invoke(IPC.DELETE_FILE, filePath),
   deleteFiles: (filePaths) => ipcRenderer.invoke(IPC.DELETE_FILES, filePaths),
   deleteAllFiles: () => ipcRenderer.invoke(IPC.DELETE_ALL_FILES),
-  updateFileTitle: (filePath, title) => ipcRenderer.invoke(IPC.UPDATE_FILE_TITLE, filePath, title),
   updateFileH1: (filePath, title) => ipcRenderer.invoke(IPC.UPDATE_FILE_H1, filePath, title),
+  editTurnResponse: (request) => ipcRenderer.invoke(IPC.EDIT_TURN_RESPONSE, request),
+  listConversationVersions: (filePath) => ipcRenderer.invoke(IPC.CONVERSATION_HISTORY_LIST, filePath),
+  getConversationVersion: (filePath, vid) => ipcRenderer.invoke(IPC.CONVERSATION_HISTORY_GET, filePath, vid),
+  restoreConversationVersion: (filePath, vid) => ipcRenderer.invoke(IPC.CONVERSATION_HISTORY_RESTORE, filePath, vid),
+  deleteConversationVersion: (filePath, vid) => ipcRenderer.invoke(IPC.CONVERSATION_HISTORY_DELETE, filePath, vid),
+  deleteConversationVersions: (filePath) => ipcRenderer.invoke(IPC.CONVERSATION_HISTORY_DELETE_ALL, filePath),
+  keepConversationBeforeReload: (filePath, previous) => ipcRenderer.invoke(IPC.CONVERSATION_HISTORY_SNAPSHOT, filePath, previous),
+  notionConnected: () => ipcRenderer.invoke(IPC.NOTION_CONNECTED),
+  notionSearch: (query) => ipcRenderer.invoke(IPC.NOTION_SEARCH, query),
+  notionBrowse: (cursor) => ipcRenderer.invoke(IPC.NOTION_BROWSE, cursor),
+  notionImport: (input) => ipcRenderer.invoke(IPC.NOTION_IMPORT, input),
+  notionStatus: (filePath) => ipcRenderer.invoke(IPC.NOTION_STATUS, filePath),
+  notionPull: (filePath) => ipcRenderer.invoke(IPC.NOTION_PULL, filePath),
+  notionPush: (filePath, ids, title) => ipcRenderer.invoke(IPC.NOTION_PUSH, filePath, ids, title),
+  notionResolve: (filePath, key, choice) => ipcRenderer.invoke(IPC.NOTION_RESOLVE, filePath, key, choice),
+  notionRevert: (filePath, id) => ipcRenderer.invoke(IPC.NOTION_REVERT, filePath, id),
+  ytdlToolsGet: () => ipcRenderer.invoke(IPC.YTDL_TOOLS_GET),
+  ytdlToolsInstall: () => ipcRenderer.invoke(IPC.YTDL_TOOLS_INSTALL),
+  ytdlToolsCheckUpdate: () => ipcRenderer.invoke(IPC.YTDL_TOOLS_CHECK_UPDATE),
+  ytdlToolsRemove: () => ipcRenderer.invoke(IPC.YTDL_TOOLS_REMOVE),
+  ytdlToolsSetCustom: (paths) => ipcRenderer.invoke(IPC.YTDL_TOOLS_SET_CUSTOM, paths),
+  ytdlToolsSetNightly: (on) => ipcRenderer.invoke(IPC.YTDL_TOOLS_SET_NIGHTLY, on),
+  onYtdlToolsState: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, state: YtdlToolsState) => cb(state);
+    ipcRenderer.on(IPC.YTDL_TOOLS_STATE, handler);
+    return () => ipcRenderer.removeListener(IPC.YTDL_TOOLS_STATE, handler);
+  },
+  getDownloadsKeep: () => ipcRenderer.invoke(IPC.DOWNLOADS_KEEP_GET),
+  setDownloadsKeep: (choice) => ipcRenderer.invoke(IPC.DOWNLOADS_KEEP_SET, choice),
   startConversation: (prompt) => ipcRenderer.invoke(IPC.START_CONVERSATION, prompt),
   importConversations: (filePaths) => ipcRenderer.invoke(IPC.IMPORT_CONVERSATIONS, filePaths),
   startFileDrag: (filePaths) => ipcRenderer.send(IPC.START_FILE_DRAG, filePaths),
@@ -525,7 +664,6 @@ const api: ElectronAPI = {
   updateResponseTimeout: (ms) => ipcRenderer.invoke(IPC.UPDATE_RESPONSE_TIMEOUT, ms),
   resetSettings: () => ipcRenderer.invoke(IPC.RESET_SETTINGS),
 
-  triggerPrompt: (prompt) => ipcRenderer.send(IPC.TRIGGER_PROMPT, prompt),
   triggerPromptWithOptions: (options) => ipcRenderer.invoke(IPC.TRIGGER_PROMPT_WITH_OPTIONS, options),
   cancelQueueTask: (taskId) => ipcRenderer.invoke(IPC.CANCEL_QUEUE_TASK, taskId),
   forceSkipActiveTask: () => ipcRenderer.invoke(IPC.FORCE_SKIP_ACTIVE_TASK),
@@ -536,6 +674,7 @@ const api: ElectronAPI = {
   attachmentFromClipboard: () => ipcRenderer.invoke(IPC.ATTACHMENT_FROM_CLIPBOARD),
   getPathForFile: (file) => webUtils.getPathForFile(file),
   showInFolder: (filePath) => ipcRenderer.invoke(IPC.SHOW_IN_FOLDER, filePath),
+  exportConversationMarkdown: (filePath) => ipcRenderer.invoke(IPC.EXPORT_CONVERSATION_MARKDOWN, filePath),
   openPath: (filePath) => ipcRenderer.invoke(IPC.OPEN_PATH, filePath),
   openFileWith: (filePath) => ipcRenderer.invoke(IPC.OPEN_FILE_WITH, filePath),
   copyFilesToClipboard: (filePaths) => ipcRenderer.invoke(IPC.COPY_FILES_TO_CLIPBOARD, filePaths),
@@ -564,10 +703,12 @@ const api: ElectronAPI = {
   getTelegramSettings: () => ipcRenderer.invoke(IPC.GET_TELEGRAM_SETTINGS),
   updateTelegramEnabled: (enabled) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_ENABLED, enabled),
   updateTelegramBotToken: (token) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_BOT_TOKEN, token),
+  updateTelegramLargeUpload: (input) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_LARGE_UPLOAD, input),
+  clearTelegramLargeUpload: () => ipcRenderer.invoke(IPC.CLEAR_TELEGRAM_LARGE_UPLOAD),
+  testTelegramLargeUpload: (input) => ipcRenderer.invoke(IPC.TEST_TELEGRAM_LARGE_UPLOAD, input),
   updateTelegramAllowGroupCommands: (enabled) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_ALLOW_GROUP_COMMANDS, enabled),
   updateTelegramDefaultReplyMode: (mode) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_DEFAULT_REPLY_MODE, mode),
   updateTelegramCompactReply: (enabled) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_COMPACT_REPLY, enabled),
-  updateTelegramAdminUsers: (userIds) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_ADMIN_USERS, userIds),
   getBotProviderCommands: () => ipcRenderer.invoke(IPC.GET_BOT_PROVIDER_COMMANDS),
   updateBotProviderCommands: (commands) => ipcRenderer.invoke(IPC.UPDATE_BOT_PROVIDER_COMMANDS, commands),
   getBotBuiltinCommands: () => ipcRenderer.invoke(IPC.GET_BOT_BUILTIN_COMMANDS),
@@ -591,11 +732,13 @@ const api: ElectronAPI = {
   unpairLineUser: (userId) => ipcRenderer.invoke(IPC.UNPAIR_LINE_USER, userId),
   refreshLineAccount: () => ipcRenderer.invoke(IPC.REFRESH_LINE_ACCOUNT),
   setBotPermissions: (request) => ipcRenderer.invoke(IPC.BOT_SET_PERMISSIONS, request),
+  setBotGroupPermissions: (request) => ipcRenderer.invoke(IPC.BOT_SET_GROUP_PERMISSIONS, request),
+  setBotBlocked: (request) => ipcRenderer.invoke(IPC.BOT_SET_BLOCKED, request),
+  getBotAudience: (platform) => ipcRenderer.invoke(IPC.BOT_GET_AUDIENCE, platform),
 
   getDataKeyStatus: (name) => ipcRenderer.invoke(IPC.GET_DATA_KEY_STATUS, name),
   updateDataKey: (name, value) => ipcRenderer.invoke(IPC.UPDATE_DATA_KEY, name, value),
   getEmailSettings: () => ipcRenderer.invoke(IPC.GET_EMAIL_SETTINGS),
-  updateEmailEnabled: (enabled) => ipcRenderer.invoke(IPC.UPDATE_EMAIL_ENABLED, enabled),
   updateEmailCredentials: (creds) => ipcRenderer.invoke(IPC.UPDATE_EMAIL_CREDENTIALS, creds),
 
   getByokSettings: () => ipcRenderer.invoke(IPC.BYOK_GET_SETTINGS),
@@ -654,7 +797,7 @@ const api: ElectronAPI = {
   updateLaunchAtStartup: (enabled) => ipcRenderer.invoke(IPC.UPDATE_LAUNCH_AT_STARTUP, enabled),
 
   onNavigateSettings: (cb) => {
-    const handler = () => cb();
+    const handler = (_event: unknown, category?: unknown) => cb(typeof category === 'string' ? category : undefined);
     ipcRenderer.on(IPC.NAVIGATE_SETTINGS, handler);
     return () => ipcRenderer.removeListener(IPC.NAVIGATE_SETTINGS, handler);
   },
@@ -713,6 +856,8 @@ const api: ElectronAPI = {
   updateShowTokenUsage: (show) => ipcRenderer.invoke(IPC.UPDATE_SHOW_TOKEN_USAGE, show),
   getMarkdownZoom: () => ipcRenderer.invoke(IPC.GET_MARKDOWN_ZOOM),
   updateMarkdownZoom: (zoom) => ipcRenderer.invoke(IPC.UPDATE_MARKDOWN_ZOOM, zoom),
+  getReadingPrefs: () => ipcRenderer.invoke(IPC.GET_READING_PREFS),
+  updateReadingPrefs: (patch) => ipcRenderer.invoke(IPC.UPDATE_READING_PREFS, patch),
 
   getCaptureSettings: () => ipcRenderer.invoke(IPC.GET_CAPTURE_SETTINGS),
   updateCaptureSettings: (settings) => ipcRenderer.invoke(IPC.UPDATE_CAPTURE_SETTINGS, settings),
@@ -720,7 +865,11 @@ const api: ElectronAPI = {
   updateQuickExport: (settings) => ipcRenderer.invoke(IPC.UPDATE_QUICK_EXPORT, settings),
 
   getFlows: () => ipcRenderer.invoke(IPC.FLOW_GET_ALL),
-  saveFlow: (flow) => ipcRenderer.invoke(IPC.FLOW_SAVE, flow),
+  saveFlow: (flow, source) => ipcRenderer.invoke(IPC.FLOW_SAVE, flow, source),
+  listFlowVersions: (flowId) => ipcRenderer.invoke(IPC.FLOW_VERSIONS_LIST, flowId),
+  restoreFlowVersion: (flowId, vid) => ipcRenderer.invoke(IPC.FLOW_VERSION_RESTORE, flowId, vid),
+  deleteFlowVersion: (flowId, vid) => ipcRenderer.invoke(IPC.FLOW_VERSION_DELETE, flowId, vid),
+  clearFlowVersions: (flowId) => ipcRenderer.invoke(IPC.FLOW_VERSIONS_CLEAR, flowId),
   deleteFlow: (flowId) => ipcRenderer.invoke(IPC.FLOW_DELETE, flowId),
   deleteFlows: (flowIds) => ipcRenderer.invoke(IPC.FLOW_DELETE_MANY, flowIds),
   setFlowsEnabled: (flowIds, enabled) => ipcRenderer.invoke(IPC.FLOW_SET_ENABLED_MANY, flowIds, enabled),
@@ -728,8 +877,13 @@ const api: ElectronAPI = {
   moveFlow: (flowId, direction) => ipcRenderer.invoke(IPC.FLOW_MOVE, flowId, direction),
   reorderFlows: (orderedIds) => ipcRenderer.invoke(IPC.FLOW_REORDER, orderedIds),
   executeFlow: (flowId) => ipcRenderer.invoke(IPC.FLOW_EXECUTE, flowId),
-  runChatCommand: (flowId, command, input, conversationPath) =>
-    ipcRenderer.invoke(IPC.FLOW_RUN_CHAT_COMMAND, flowId, command, input, conversationPath),
+  runChatCommand: (flowId, command, input, conversationPath, progressId, modelUrl) =>
+    ipcRenderer.invoke(IPC.FLOW_RUN_CHAT_COMMAND, flowId, command, input, conversationPath, progressId, modelUrl),
+  onChatCommandProgress: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, payload: { progressId: string; progress: StepProgress }) => cb(payload);
+    ipcRenderer.on(IPC.FLOW_CHAT_COMMAND_PROGRESS, handler);
+    return () => ipcRenderer.removeListener(IPC.FLOW_CHAT_COMMAND_PROGRESS, handler);
+  },
   runAgentCommand: (goal, targetUrl, runId, conversationPath, attachments, mcpServerIds, web) =>
     ipcRenderer.invoke(IPC.AGENT_RUN, goal, targetUrl, runId, conversationPath, attachments, mcpServerIds, web),
   setConversationConnectors: (filePath, serverIds, web, agent) =>

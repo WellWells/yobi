@@ -36,6 +36,46 @@ function stripTrailingCommas(text: string): string {
   return out;
 }
 
+const JSON_ESCAPE = /["\\/bfnrt]/;
+const UNICODE_ESCAPE = /^u[0-9a-fA-F]{4}/;
+
+/**
+ * Doubles every backslash inside a string that cannot start a valid JSON escape. Browser-UI models
+ * write Windows paths with single backslashes ("C:\Users\…"); JSON.parse rejects `\U`, and
+ * jsonrepair then drops the backslashes, turning the path into "C:Users…".
+ */
+export function escapeStrayBackslashes(text: string): string {
+  let out = '';
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (!inString) {
+      if (ch === '"') inString = true;
+      out += ch;
+      continue;
+    }
+    if (ch === '"') {
+      inString = false;
+      out += ch;
+      continue;
+    }
+    if (ch !== '\\') {
+      out += ch;
+      continue;
+    }
+    const next = text[i + 1] ?? '';
+    const valid = next === 'u' ? UNICODE_ESCAPE.test(text.slice(i + 1, i + 6)) : JSON_ESCAPE.test(next);
+    if (!valid) {
+      out += '\\\\';
+      continue;
+    }
+    // A valid escape: copy it whole so an escaped quote does not end the string.
+    out += ch + next;
+    i++;
+  }
+  return out;
+}
+
 function repairParse(text: string): unknown | undefined {
   const trimmed = text.trim();
   if (trimmed[0] !== '{' && trimmed[0] !== '[') return undefined;
@@ -57,7 +97,13 @@ function attemptParse(text: string): Parsed | undefined {
   if (direct !== undefined) return { value: direct, repaired: false };
   const noTrailing = tryParse(stripTrailingCommas(text));
   if (noTrailing !== undefined) return { value: noTrailing, repaired: false };
-  const repaired = repairParse(text);
+  // Literal backslashes restored before anything else touches the text (see escapeStrayBackslashes).
+  const escaped = escapeStrayBackslashes(text);
+  if (escaped !== text) {
+    const literal = tryParse(stripTrailingCommas(escaped));
+    if (literal !== undefined) return { value: literal, repaired: false };
+  }
+  const repaired = repairParse(escaped);
   return repaired === undefined ? undefined : { value: repaired, repaired: true };
 }
 

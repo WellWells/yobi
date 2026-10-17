@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Box, Chip, Group, SimpleGrid, Stack, Text } from '@mantine/core';
+import { Box, Chip, Group, Stack, Text } from '@mantine/core';
 import { Plug, Plus, Search } from 'lucide-react';
 import { SectionCard, SectionTitle } from '../../components';
 import { AppButton } from '../../../../components/AppButton';
@@ -7,15 +7,19 @@ import { AppTextInput } from '../../../../components/AppTextInput';
 import { WebDialog } from '../../../../components/WebDialog';
 import { BuiltinConnectorCard } from './BuiltinConnectorCard';
 import { ConnectorCard } from './ConnectorCard';
+import { commandClashLines } from './CommandClashNotice';
 import { ConnectorFormModal } from './ConnectorFormModal';
 import { ConnectorToolsModal } from './ConnectorToolsModal';
 import { ThunderbirdSetup } from './ThunderbirdSetup';
-import { XSignInRow } from './XSignInRow';
+import { SiteSignInRow } from './SiteSignInRow';
 import { builtinTile, buildTiles, matchesFilter, matchesQuery } from './connectorTiles';
 import { MCP_CATEGORIES } from '../../../../../../shared/mcpCatalog';
-import { BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID, THUNDERBIRD_UNAVAILABLE_ERROR } from '../../../../../../shared/builtinConnectors';
+import { BUILTIN_RAIL_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID, THUNDERBIRD_UNAVAILABLE_ERROR } from '../../../../../../shared/builtinConnectors';
+import { RailKeySetup } from './RailKeySetup';
+import { SITE_CONNECTOR_ROWS, siteConnectorServerId } from '../../../../../../shared/siteConnectors';
 import { BUILTIN_LINE_SERVER_ID } from '../../../../../../shared/types';
 import type { useMcpServers } from '../../hooks/useMcpServers';
+import { useMcpCommandAssignment } from '../../../../hooks/useMcpCommands';
 import type { McpServerView } from '../../../../../../shared/types';
 import { connectorGrant } from '../../../../../../shared/botPermissions';
 import { anyBotEnabled, whoCanUse, whoCanUseText } from '../botPermissionsView';
@@ -56,7 +60,16 @@ export const ConnectorGallery: React.FC<Props> = ({ mcp, roster, t, sectionGap }
   const showLine = builtinShown(BUILTIN_LINE_SERVER_ID, 'settings.mcp.line.title', 'settings.mcp.line.desc');
   const showThunderbird = builtinShown(BUILTIN_THUNDERBIRD_SERVER_ID, 'settings.mcp.thunderbird.title', 'settings.mcp.thunderbird.desc');
   const showX = builtinShown(BUILTIN_X_SERVER_ID, 'settings.mcp.x.title', 'settings.mcp.x.desc');
-  const anyBuiltinShown = showLine || showThunderbird || showX;
+  const showRail = builtinShown(BUILTIN_RAIL_SERVER_ID, 'settings.mcp.rail.title', 'settings.mcp.rail.desc');
+  const siteRows = SITE_CONNECTOR_ROWS.map((row) => ({
+    row,
+    id: siteConnectorServerId(row.site),
+    shown: builtinShown(siteConnectorServerId(row.site), row.keys.title, row.keys.desc),
+  }));
+  const anyBuiltinShown = showLine || showThunderbird || showX || showRail || siteRows.some((entry) => entry.shown);
+  // The same assignment the chat's slash menu is built from, so a card never contradicts the menu.
+  const commandAssignment = useMcpCommandAssignment();
+  const commandNoticeFor = (serverId: string): string[] => commandClashLines(serverId, commandAssignment, t);
   const toolsServer = mcp.servers.find((s) => s.id === toolsFor) ?? null;
   const connectedCount = mcp.servers.filter((s) => s.status === 'connected').length;
 
@@ -113,6 +126,7 @@ export const ConnectorGallery: React.FC<Props> = ({ mcp, roster, t, sectionGap }
               toggleLabel={t('settings.mcp.line.toggle')}
               onOpenTools={setToolsFor}
               botAccess={builtinBotAccess(BUILTIN_LINE_SERVER_ID)}
+              commandNotice={commandNoticeFor(BUILTIN_LINE_SERVER_ID)}
             />
           </Box>
           <Box display={showThunderbird ? 'block' : 'none'}>
@@ -125,6 +139,7 @@ export const ConnectorGallery: React.FC<Props> = ({ mcp, roster, t, sectionGap }
               toggleLabel={t('settings.mcp.thunderbird.toggle')}
               onOpenTools={setToolsFor}
               botAccess={builtinBotAccess(BUILTIN_THUNDERBIRD_SERVER_ID)}
+              commandNotice={commandNoticeFor(BUILTIN_THUNDERBIRD_SERVER_ID)}
               waitingError={THUNDERBIRD_UNAVAILABLE_ERROR}
               setup={<ThunderbirdSetup t={t} />}
             />
@@ -139,15 +154,46 @@ export const ConnectorGallery: React.FC<Props> = ({ mcp, roster, t, sectionGap }
               toggleLabel={t('settings.mcp.x.toggle')}
               onOpenTools={setToolsFor}
               botAccess={builtinBotAccess(BUILTIN_X_SERVER_ID)}
-              footer={<XSignInRow t={t} />}
+              commandNotice={commandNoticeFor(BUILTIN_X_SERVER_ID)}
+              footer={<SiteSignInRow site="x" t={t} />}
             />
           </Box>
+          <Box display={showRail ? 'block' : 'none'}>
+            <BuiltinConnectorCard
+              mcp={mcp}
+              t={t}
+              id={BUILTIN_RAIL_SERVER_ID}
+              title={t('settings.mcp.rail.title')}
+              description={t('settings.mcp.rail.desc')}
+              toggleLabel={t('settings.mcp.rail.toggle')}
+              onOpenTools={setToolsFor}
+              botAccess={builtinBotAccess(BUILTIN_RAIL_SERVER_ID)}
+              commandNotice={commandNoticeFor(BUILTIN_RAIL_SERVER_ID)}
+              footer={<RailKeySetup t={t} />}
+            />
+          </Box>
+          {siteRows.map(({ row, id, shown }) => (
+            <Box key={id} display={shown ? 'block' : 'none'}>
+              <BuiltinConnectorCard
+                mcp={mcp}
+                t={t}
+                id={id}
+                title={t(row.keys.title)}
+                description={t(row.keys.desc)}
+                toggleLabel={t(row.keys.toggle)}
+                onOpenTools={setToolsFor}
+                botAccess={builtinBotAccess(id)}
+                commandNotice={commandNoticeFor(id)}
+                footer={<SiteSignInRow site={row.site} t={t} />}
+              />
+            </Box>
+          ))}
         </Stack>
 
         {visible.length === 0 ? (!anyBuiltinShown && (
           <Text fz="var(--font-size-sm)" c="dimmed">{t('settings.mcp.empty')}</Text>
         )) : (
-          <SimpleGrid cols={{ base: 1, xl: 2 }} spacing={10} verticalSpacing={10}>
+          <Stack gap={10}>
             {visible.map((tile) => (
               <ConnectorCard
                 key={tile.key}
@@ -156,6 +202,7 @@ export const ConnectorGallery: React.FC<Props> = ({ mcp, roster, t, sectionGap }
                 name={tile.name}
                 description={tile.description}
                 botAccess={botAccessFor(tile.server?.id)}
+                commandNotice={tile.server ? commandNoticeFor(tile.server.id) : undefined}
                 busy={mcp.busyId === tile.key || (tile.server ? mcp.busyId === tile.server.id : false)}
                 t={t}
                 onAdd={() => { void mcp.addFromCatalog(tile.entry); }}
@@ -166,7 +213,7 @@ export const ConnectorGallery: React.FC<Props> = ({ mcp, roster, t, sectionGap }
                 onOpenTools={() => setToolsFor(tile.server?.id ?? null)}
               />
             ))}
-          </SimpleGrid>
+          </Stack>
         )}
       </SectionCard>
 

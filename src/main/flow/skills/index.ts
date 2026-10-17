@@ -15,6 +15,8 @@ import { execResearch } from './research';
 import { execGmapReviews } from './mapReviews';
 import { execLineRead } from './lineMessages';
 import { execXPosts, execXThread, execXTrends } from './x';
+import { execXMedia } from './xMedia';
+import { execYoutubeDownload, execYoutubeInfo } from './ytdl';
 import {
   execBot,
   execBrowser,
@@ -85,15 +87,21 @@ export async function executeSkill(
     case 'line_read':
       return execLineRead(config, stepId, deps);
     case 'youtube':
-      return execYoutube(config);
+      return execYoutube(config, signal);
     case 'youtube_subs':
       return execYoutubeSubs(config, stepId);
+    case 'youtube_info':
+      return execYoutubeInfo(config, signal, deps.onStepProgress);
+    case 'youtube_download':
+      return execYoutubeDownload(config, signal, deps.onStepProgress);
     case 'x_posts':
       return execXPosts(config, stepId);
     case 'x_thread':
-      return execXThread(config);
+      return execXThread(config, signal);
     case 'x_trends':
       return execXTrends(config);
+    case 'x_media':
+      return execXMedia(config, signal);
     case 'sysinfo':
       return execSysInfo(config);
     case 'http':

@@ -5,8 +5,8 @@ import { AppTextInput } from './AppTextInput';
 import { lineApi, telegramApi } from '../api/electronApi';
 import { useI18nStore } from '../store/i18nStore';
 import { useAppStore } from '../store/appStore';
-import { lineAccountLabel, telegramAccountChoiceLabel, telegramAccountHasName } from '../utils/botAccountLabel';
-import type { BotPlatform, LinePairedUser, TelegramChannel, TelegramKnownUser, TelegramPairedUser } from '../../../shared/types';
+import { lineAccountLabel, namedTelegramRecipients, telegramAccountChoiceLabel } from '../utils/botAccountLabel';
+import type { BotContact, BotPlatform, LinePairedUser, TelegramChannel, TelegramPairedUser } from '../../../shared/types';
 
 interface RecipientChoice {
   id: string;
@@ -49,7 +49,7 @@ export const ChatRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
   const currentView = useAppStore((s) => s.currentView);
   const [telegramUsers, setTelegramUsers] = useState<TelegramPairedUser[]>([]);
   const [telegramChannels, setTelegramChannels] = useState<TelegramChannel[]>([]);
-  const [telegramKnownUsers, setTelegramKnownUsers] = useState<TelegramKnownUser[]>([]);
+  const [telegramContacts, setTelegramContacts] = useState<BotContact[]>([]);
   const [lineUsers, setLineUsers] = useState<LinePairedUser[]>([]);
 
   useEffect(() => {
@@ -57,7 +57,7 @@ export const ChatRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
     void telegramApi.getSettings().then((s) => {
       setTelegramUsers(s.pairing.pairedUsers);
       setTelegramChannels(s.channels);
-      setTelegramKnownUsers(s.knownUsers);
+      setTelegramContacts(s.contacts);
     });
     void lineApi.getSettings().then((s) => setLineUsers(s.pairing.pairedUsers));
   }, [currentView]);
@@ -87,13 +87,8 @@ export const ChatRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
   /** Recipients the picker cannot offer as chips, named once the startup backfill has asked Telegram. */
   const namedUnknowns = useMemo(() => {
     if (isLine) return [];
-    return unknownIds.flatMap((id) => {
-      const numeric = Number(id);
-      const user = telegramKnownUsers.find((item) => item.userId === numeric);
-      if (user && telegramAccountHasName(user)) return [{ id, label: telegramAccountChoiceLabel(user, t) }];
-      return [];
-    });
-  }, [isLine, unknownIds, telegramKnownUsers, t]);
+    return namedTelegramRecipients(unknownIds, { contacts: telegramContacts }, t);
+  }, [isLine, unknownIds, telegramContacts, t]);
   const hasChoices = pairedUsers.length > 0 || channels.length > 0;
 
   const handleMultiple = (next: string[]) => {
@@ -148,9 +143,8 @@ export const ChatRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
 
   return (
     <Stack gap={4}>
-      {label && <Text fz="sm" fw={500}>{label}</Text>}
-      {hint && <Text fz="xs" c="dimmed">{hint}</Text>}
       <AppTextInput
+        label={label}
         value={value}
         onChange={(e) => onChange(e.currentTarget.value)}
         placeholder={placeholder}
@@ -189,6 +183,7 @@ export const ChatRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
           ))}
         </Stack>
       )}
+      {hint && <Text fz="xs" c="dimmed">{hint}</Text>}
       {raw.length === 0 && hasChoices && blankHint && (
         <Text fz="xs" c="dimmed" fs="italic">{blankHint}</Text>
       )}

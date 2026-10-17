@@ -3,7 +3,7 @@ import {
   Flex, Group, Menu, Stack,
 } from '@mantine/core';
 import {
-  ArrowDown, ArrowUp, Copy, Download, LayoutTemplate, ListChecks, Pencil, Play, Plus, Power, PowerOff, Search, Sparkles, Trash2, Upload, Workflow,
+  ArrowDown, ArrowUp, Copy, Download, ListChecks, Pencil, Play, Plus, Power, PowerOff, Search, Sparkles, Trash2, Upload, Workflow,
 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useI18nStore } from '../../store/i18nStore';
@@ -29,6 +29,7 @@ import { FlowPreviewConfirm } from './FlowPreviewConfirm';
 import type { FlowTemplate } from './examples';
 import { FlowGenerateModal } from './FlowGenerateModal';
 import { FlowRenameModal } from './FlowRenameModal';
+import { YtdlToolsDialog } from '../../components/ytdl/YtdlToolsDialog';
 import { Z_POPOVER } from '../../config/zLayers';
 import { useShortcutAction } from '../../shortcuts/useShortcutAction';
 import { useResolvedCombo } from '../../store/shortcutStore';
@@ -111,6 +112,12 @@ export const FlowView: React.FC = () => {
   const deleteCombo = useResolvedCombo('flow.delete');
 
   useShortcutAction('nav.quickSwitch', () => {
+    if (selection.selectMode) return;
+    setSearchOpen(true);
+  }, 'flow');
+
+  // The flow page has no text of its own to search, so finding means finding a flow.
+  useShortcutAction('nav.find', () => {
     if (selection.selectMode) return;
     setSearchOpen(true);
   }, 'flow');
@@ -270,20 +277,17 @@ export const FlowView: React.FC = () => {
                   icon={Plus}
                   label={t('flow.newFlow')}
                   withChevron
-                  onClick={() => { void createFlow(); }}
+                  onClick={() => setTemplatesOpen(true)}
                 />
               </Menu.Target>
               <Menu.Dropdown>
-                <Menu.Item leftSection={<Plus size={13} />} onClick={() => { void createFlow(); }}>
+                <Menu.Item leftSection={<Plus size={13} />} onClick={() => setTemplatesOpen(true)}>
                   {t('flow.newFlow')}
                 </Menu.Item>
                 <Menu.Item leftSection={<Sparkles size={13} />} onClick={() => setGenerateOpen(true)}>
                   {t('flow.generate')}
                 </Menu.Item>
-                <Menu.Item leftSection={<LayoutTemplate size={13} />} onClick={() => setTemplatesOpen(true)}>
-                  {t('flow.templates')}
-                </Menu.Item>
-                <Menu.Item leftSection={<Upload size={13} />} onClick={() => setImportOpen(true)}>
+                <Menu.Item leftSection={<Download size={13} />} onClick={() => setImportOpen(true)}>
                   {t('flow.import')}
                 </Menu.Item>
               </Menu.Dropdown>
@@ -356,7 +360,7 @@ export const FlowView: React.FC = () => {
           <Menu.Item leftSection={<Play size={13} />} onClick={() => { void handleRunFlow(contextMenu!.flowId); }}>{t('flow.runFlow')}</Menu.Item>
           <Menu.Item leftSection={<Pencil size={13} />} rightSection={<ShortcutHint combo={renameCombo} />} onClick={() => { setRenameId(contextMenu!.flowId); setContextMenu(null); }}>{t('flow.renameFlow')}</Menu.Item>
           <Menu.Item leftSection={<Copy size={13} />} rightSection={<ShortcutHint combo={duplicateCombo} />} onClick={() => { void handleDuplicateFlow(contextMenu!.flowId); }}>{t('flow.duplicateFlow')}</Menu.Item>
-          <Menu.Item leftSection={<Download size={13} />} onClick={() => { void handleExportFlow(contextMenu!.flowId); }}>{t('flow.exportFlow')}</Menu.Item>
+          <Menu.Item leftSection={<Upload size={13} />} onClick={() => { void handleExportFlow(contextMenu!.flowId); }}>{t('flow.exportFlow')}</Menu.Item>
           <Menu.Item leftSection={<ArrowUp size={13} />} disabled={contextFlowIndex <= 0} onClick={() => { void handleMoveFlow(contextMenu!.flowId, 'up'); }}>{t('flow.flow.moveUp')}</Menu.Item>
           <Menu.Item leftSection={<ArrowDown size={13} />} disabled={contextFlowIndex < 0 || contextFlowIndex >= flows.length - 1} onClick={() => { void handleMoveFlow(contextMenu!.flowId, 'down'); }}>{t('flow.flow.moveDown')}</Menu.Item>
           <Menu.Divider />
@@ -394,6 +398,10 @@ export const FlowView: React.FC = () => {
           t={t}
           onClose={() => setTemplatesOpen(false)}
           onPick={(tpl) => setWizardTemplate(tpl)}
+          onBlank={() => {
+            setTemplatesOpen(false);
+            void createFlow();
+          }}
           escapeDisabled={wizardTemplate !== null}
         />
 
@@ -408,6 +416,8 @@ export const FlowView: React.FC = () => {
             setTemplatesOpen(false);
           }}
         />
+
+        <YtdlToolsDialog />
 
         <FlowImportModal
           open={importOpen}

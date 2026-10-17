@@ -1,6 +1,18 @@
 import React from 'react';
-import { ActionIcon, Box, Flex, Group, Stack } from '@mantine/core';
-import { Check } from 'lucide-react';
+import { ActionIcon, Box, Flex, Group, Stack, Tooltip } from '@mantine/core';
+import {
+  ArrowDown,
+  ArrowDownLeft,
+  ArrowDownRight,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  ArrowUpLeft,
+  ArrowUpRight,
+  Check,
+  CircleDot,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { AppSegmentedControl } from '../AppSegmentedControl';
 import { GroupHeader } from '../GroupHeader';
 import {
@@ -130,30 +142,43 @@ export const PaletteSwatchGrid: React.FC<PaletteSwatchGridProps> = ({
   </Stack>
 );
 
+/**
+ * One lucide stroke per cell, so all nine share a size and weight (typed arrows mix fonts and
+ * widths, and the diagonals render as emoji). The centre is a ring with a dot
+ * ("from the centre"): plain Circle already means pending/unread elsewhere in the app.
+ */
+const DIRECTION_ICONS: Record<CaptureDirection, LucideIcon> = {
+  nw: ArrowUpLeft, n: ArrowUp, ne: ArrowUpRight,
+  w: ArrowLeft, c: CircleDot, e: ArrowRight,
+  sw: ArrowDownLeft, s: ArrowDown, se: ArrowDownRight,
+};
+
 export interface DirectionGridProps {
   value: string;
   onChange: (key: string) => void;
+  t: (key: string) => string;
 }
 
-export const DirectionGrid: React.FC<DirectionGridProps> = ({ value, onChange }) => (
+export const DirectionGrid: React.FC<DirectionGridProps> = ({ value, onChange, t }) => (
   <Box style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 32px)', gap: 4 }}>
-    {CAPTURE_DIRECTIONS.map(([key, icon]) => (
-      <ActionIcon
-        key={key}
-        onClick={() => onChange(key)}
-        aria-label={key}
-        aria-pressed={value === key}
-        variant={value === key ? 'light' : 'default'}
-        radius="sm"
-        size={32}
-        style={{
-          fontSize: 'var(--font-size-md)',
-          fontWeight: 700,
-          color: value === key ? 'var(--accent)' : 'var(--text-secondary)',
-        }}
-      >
-        {icon}
-      </ActionIcon>
-    ))}
+    {CAPTURE_DIRECTIONS.map((key) => {
+      const Icon = DIRECTION_ICONS[key];
+      const label = t(`capture.direction.${key}`);
+      return (
+        <Tooltip key={key} label={label}>
+          <ActionIcon
+            onClick={() => onChange(key)}
+            aria-label={label}
+            aria-pressed={value === key}
+            variant={value === key ? 'light' : 'default'}
+            radius="sm"
+            size={32}
+            style={{ color: value === key ? 'var(--accent)' : 'var(--text-secondary)' }}
+          >
+            <Icon size={14} />
+          </ActionIcon>
+        </Tooltip>
+      );
+    })}
   </Box>
 );

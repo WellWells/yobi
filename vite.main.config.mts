@@ -51,6 +51,9 @@ const EXTERNALIZED = [
 
 export default defineConfig({
   plugins: [copyLanguageFilesPlugin(), copyEntryStubPlugin()],
+  // mtcute's crypto is WebAssembly; `?inline` turns the .wasm into a data URL inside the bundle
+  // (src/main/telegram/mtproto/wasm.ts), since the packaged app ships no node_modules to read.
+  assetsInclude: ['**/*.wasm'],
   resolve: {
     conditions: ['node'],
   },

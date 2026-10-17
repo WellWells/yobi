@@ -1,7 +1,7 @@
 import { t } from '../i18n';
 
 /** The capabilities a bot reply can name when it refuses one, worded for the person asking. */
-export type BotDeniedCapability = 'agent' | 'web';
+type BotDeniedCapability = 'agent' | 'web' | 'download';
 
 /**
  * The one refusal wording both bots send when an account lacks a grant. Kept apart from the

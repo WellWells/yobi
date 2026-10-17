@@ -1,6 +1,8 @@
 import { stripConversationMarkers } from '../../../shared/conversationDoc';
 import type { ConversationDoc } from '../../../shared/conversationDoc';
 import { formatCardTime } from '../../../shared/captureCard';
+import { notionDocParts } from '../../../shared/notion/notionDoc';
+import { notionToDisplay, plainNotionTitle } from '../../../shared/notion/notionDisplay';
 import type {
   CaptureFormat,
   CaptureRange,
@@ -9,7 +11,6 @@ import type {
   MarkdownCaptureRequest,
 } from '../../../shared/types';
 import { DEFAULT_CAPTURE_WIDTH, clampCaptureMargin } from '../../../shared/types';
-import { getResponseAliases } from '../utils/parseMarkdownBlocks';
 import type { MarkdownBlocks } from '../utils/parseMarkdownBlocks';
 import { totalTokenLabel, turnTokenLabel } from '../utils/captureTokens';
 import { captureBackgroundCss, paletteCardTheme } from './captureTheme';
@@ -24,29 +25,6 @@ type Translate = (key: string) => string;
  * export both build their request here, so a conversation exported on its own and the same one
  * exported in a batch come out as the same card.
  */
-
-function stripAfterResponseHeading(raw: string): string {
-  const lines = raw.split('\n');
-  const responseAliases = getResponseAliases();
-  const responseIdx = lines.findIndex((line) => {
-    const m = line.trim().match(/^##\s+(.+)$/);
-    return m != null && responseAliases.has(m[1].trim());
-  });
-  if (responseIdx < 0) return raw;
-  return lines.slice(0, responseIdx).join('\n').trim();
-}
-
-function buildSummary(raw: string): string {
-  const plain = raw
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/\[(.*?)\]\((.*?)\)/g, '$1')
-    .replace(/[#>*_~\-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!plain) return '';
-  return plain.length > 220 ? `${plain.slice(0, 220)}…` : plain;
-}
 
 /** The card's look, straight from the saved Card style. */
 export function captureLookFrom(capture: CaptureSettings): CaptureLook {
@@ -112,14 +90,38 @@ export interface ConversationCaptureChoice {
   t: Translate;
 }
 
+/**
+ * A Notion document's card is the page as it reads in Yobi, not Notion's own Markdown: one answer
+ * with no question, from Notion, timed at the last sync. Anything else is left as it is.
+ */
+export function readableCaptureSource(source: ConversationCaptureSource, t: Translate): ConversationCaptureSource {
+  const doc = notionDocParts(source.content);
+  if (!doc) return source;
+  const body = notionToDisplay(doc.body, { unsupported: t('notion.block.unsupported') });
+  const at = doc.thread.notion.at;
+  return {
+    ...source,
+    content: body,
+    // A title left as the dialog filled it in is the page's own, whose bold runs Notion splits.
+    title: source.title === doc.title ? plainNotionTitle(doc.title) : source.title,
+    blocks: { ...source.blocks, title: plainNotionTitle(doc.title), prompt: '', response: body, provider: 'Notion', time: at },
+    conversation: {
+      title: plainNotionTitle(doc.title),
+      provider: 'Notion',
+      time: null,
+      thread: doc.thread,
+      turns: [{ prompt: '', response: body, meta: { p: 'Notion', t: at } }],
+    },
+  };
+}
+
 export function conversationCaptureRequest(
-  source: ConversationCaptureSource,
+  original: ConversationCaptureSource,
   choice: ConversationCaptureChoice,
 ): MarkdownCaptureRequest {
+  const source = readableCaptureSource(original, choice.t);
   const { blocks, conversation } = source;
-  const cleanFile = stripConversationMarkers(source.content);
   const contentToCapture = stripConversationMarkers(blocks.response || source.content);
-  const preResponse = stripAfterResponseHeading(cleanFile);
   const turnMetas = conversation?.turns ?? [];
   return buildCaptureRequest({
     ...choice.look,
@@ -130,7 +132,7 @@ export function conversationCaptureRequest(
     showPrompt: choice.showPrompt,
     prompt: stripConversationMarkers(blocks.prompt || ''),
     content: contentToCapture,
-    summary: buildSummary(preResponse || contentToCapture),
+    summary: '',
     provider: blocks.provider || '',
     timestamp: formatCardTime(blocks.time || '', choice.locale),
     turns: captureTurnsFor(conversation, blocks, choice.locale, choice.t),

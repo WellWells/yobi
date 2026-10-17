@@ -9,6 +9,11 @@ const SLOT_STARTS: ReadonlyArray<readonly [GreetingSlot, number]> = [
   ['morning', 5],
 ];
 
+const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
+
+/** A week without a conversation turns the greeting into "welcome back". */
+export const RETURNING_AFTER_MS = 7 * 24 * 60 * 60_000;
+
 const NAME_SEGMENT = /\[([^\]]*)\]/g;
 const NAME_PLACEHOLDER = /\{\{name\}\}/g;
 
@@ -24,15 +29,19 @@ export function applyNickname(line: string, name: string): string {
   return resolved.replace(NAME_PLACEHOLDER, () => name);
 }
 
+export function isReturning(now: Date, lastActiveAt: number | null): boolean {
+  return lastActiveAt !== null && now.getTime() - lastActiveAt >= RETURNING_AFTER_MS;
+}
+
 export interface GreetingSources {
   t: (key: string) => string;
   has: (key: string) => boolean;
   hasFallback: (key: string) => boolean;
 }
 
-function countLines(slot: GreetingSlot, has: (key: string) => boolean): number {
+function countLines(pool: string, has: (key: string) => boolean): number {
   let count = 0;
-  while (has(`welcome.greeting.${slot}.${count + 1}`)) count += 1;
+  while (has(`welcome.greeting.${pool}.${count + 1}`)) count += 1;
   return count;
 }
 
@@ -42,9 +51,26 @@ function lineIndex(now: Date, slot: GreetingSlot, count: number): number {
   return ((day + slotOffset) % count) + 1;
 }
 
-export function resolveGreeting(now: Date, name: string, sources: GreetingSources): string {
+/**
+ * Welcome back beats the weekday line, which beats the slot pool. The first two read the current
+ * locale only: an English "Happy Monday" must never surface in another language's UI.
+ */
+export function resolveGreeting(
+  now: Date,
+  name: string,
+  sources: GreetingSources,
+  lastActiveAt: number | null = null,
+): string {
   const { t, has, hasFallback } = sources;
   const slot = greetingSlotFor(now.getHours());
+  const special = [
+    ...(isReturning(now, lastActiveAt) ? ['back'] : []),
+    `${slot}.${WEEKDAYS[now.getDay()]}`,
+  ];
+  for (const pool of special) {
+    const count = countLines(pool, has);
+    if (count > 0) return applyNickname(t(`welcome.greeting.${pool}.${lineIndex(now, slot, count)}`), name);
+  }
   const count = countLines(slot, has) || countLines(slot, hasFallback);
   if (count === 0) return '';
   return applyNickname(t(`welcome.greeting.${slot}.${lineIndex(now, slot, count)}`), name);

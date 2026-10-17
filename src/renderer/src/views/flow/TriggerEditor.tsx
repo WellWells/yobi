@@ -10,6 +10,7 @@ import { GroupHeader } from '../../components/GroupHeader';
 import type { FlowDefinition, TriggerConfig, TriggerType } from '../../../../shared/types';
 import type { FlowIssue } from '../../../../shared/flowIssues';
 import { findTriggerConflict } from '../../../../shared/flowIssues';
+import { readsOwnerData } from '../../../../shared/botCommandAccess';
 import { useFlowIssues } from '../../hooks/useFlowIssues';
 import { HotkeyRecorder } from './HotkeyRecorder';
 import { CommandTriggerFields } from './CommandTriggerFields';
@@ -30,10 +31,12 @@ interface TriggerConfigFormProps {
   allowManual?: boolean;
   showBotCompoundHint?: boolean;
   soleTrigger?: boolean;
+  /** The flow reads the owner's own data (decides how a bot command without a mode reads). */
+  ownerData?: boolean;
 }
 
 const TriggerConfigForm: React.FC<TriggerConfigFormProps> = ({
-  value, onChange, t, conflict, allowManual = true, showBotCompoundHint = false, soleTrigger = false,
+  value, onChange, t, conflict, allowManual = true, showBotCompoundHint = false, soleTrigger = false, ownerData = false,
 }) => {
   const patch = useCallback((p: Partial<TriggerConfig>) => {
     const next = { ...value, ...p };
@@ -90,6 +93,7 @@ const TriggerConfigForm: React.FC<TriggerConfigFormProps> = ({
           conflict={conflict}
           showBotCompoundHint={showBotCompoundHint}
           cardStyle={INLINE_CARD}
+          ownerData={ownerData}
         />
       )}
 
@@ -125,6 +129,7 @@ export const TriggerEditor: React.FC<TriggerEditorProps> = ({ flow, t }) => {
   const hasNonBotTrigger = [flow.trigger, ...extraTriggers].some((tr) => tr.type !== 'bot');
   // Edits land in the store before they are saved, so this tracks the field live.
   const issues = useFlowIssues().get(flow.id) ?? [];
+  const ownerData = readsOwnerData(flow.steps);
 
   return (
     <Stack gap="md">
@@ -135,6 +140,7 @@ export const TriggerEditor: React.FC<TriggerEditorProps> = ({ flow, t }) => {
         conflict={findTriggerConflict(issues, flow.trigger)}
         showBotCompoundHint={hasNonBotTrigger}
         soleTrigger={extraTriggers.length === 0}
+        ownerData={ownerData}
       />
 
       <Box>
@@ -163,6 +169,7 @@ export const TriggerEditor: React.FC<TriggerEditorProps> = ({ flow, t }) => {
                 conflict={findTriggerConflict(issues, tr)}
                 allowManual={false}
                 showBotCompoundHint={hasNonBotTrigger}
+                ownerData={ownerData}
               />
             </Box>
           ))}

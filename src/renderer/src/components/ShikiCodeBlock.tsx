@@ -5,6 +5,7 @@ import { getHighlighterSync, loadShiki, shikiThemeFor, ensureShikiTheme } from '
 import { useThemeStore } from '../store/themeStore';
 import { useI18nStore } from '../store/i18nStore';
 import { CaptureContentThemeContext } from '../utils/forcedCodeTheme';
+import { CODE_CHROME } from './codeBlockChrome';
 
 interface ShikiCodeBlockProps {
   lang: string;
@@ -78,8 +79,9 @@ export const ShikiCodeBlock = React.memo<ShikiCodeBlockProps>(({ lang, code }) =
 
   const badgeStyle: React.CSSProperties = {
     position: 'absolute',
-    top: 8,
-    left: 14,
+    top: CODE_CHROME.top + CODE_CHROME.control / 2,
+    left: CODE_CHROME.side,
+    transform: 'translateY(-50%)',
     zIndex: 3,
     textTransform: 'lowercase',
     letterSpacing: '0.06em',
@@ -92,6 +94,7 @@ export const ShikiCodeBlock = React.memo<ShikiCodeBlockProps>(({ lang, code }) =
 
   const langBadge = staticRender ? (
     <span
+      data-find-omit
       style={{
         ...badgeStyle,
         display: 'inline-block',
@@ -105,6 +108,7 @@ export const ShikiCodeBlock = React.memo<ShikiCodeBlockProps>(({ lang, code }) =
     </span>
   ) : (
     <Badge
+      data-find-omit
       variant="filled"
       size="xs"
       aria-label={`Language: ${displayLang}`}
@@ -118,7 +122,7 @@ export const ShikiCodeBlock = React.memo<ShikiCodeBlockProps>(({ lang, code }) =
     <div
       style={{
         position: 'sticky',
-        top: 8,
+        top: 0,
         zIndex: 5,
         height: 0,
         overflow: 'visible',
@@ -129,12 +133,13 @@ export const ShikiCodeBlock = React.memo<ShikiCodeBlockProps>(({ lang, code }) =
     >
       <ActionIcon
         variant="default"
-        size={26}
+        size={CODE_CHROME.control}
         onClick={handleCopy}
         aria-label={copyLabel}
         title={copyLabel}
         style={{
-          marginRight: 10,
+          marginTop: CODE_CHROME.top,
+          marginRight: CODE_CHROME.side,
           color: copied ? 'var(--success)' : 'var(--text-muted)',
           pointerEvents: 'auto',
         }}

@@ -2,7 +2,7 @@ import type { FlowVariable, SkillInstance, TriggerConfig } from './types';
 import { FLOW_VAR_PREFIX } from './flowVariables';
 import { isShareLinkFormat } from './shareFormat';
 
-const FILE_PRODUCER_TYPES = new Set<string>(['capture', 'file_write', 'file_download']);
+const FILE_PRODUCER_TYPES = new Set<string>(['capture', 'file_write', 'file_download', 'youtube_download', 'x_media']);
 const LLM_EXPORT_FORMATS = new Set<string>(['png', 'webp', 'pdf']);
 const BOT_TRIGGER_VARS = new Set<string>(['bot.triggerChatId', 'bot.triggerUserId', 'bot.triggerPlatform']);
 /** Seeded by a hotkey press only, so a cron-only flow referencing it would always read "". */
@@ -69,7 +69,7 @@ export function checkVariableReferences(
 
           if (root === 'file') {
             if (fileAvailable) continue;
-            return `${at} references {{file}}, but no file-producing step (capture, file_write, file_download, share with a file format, or llm with exportFormat) runs before it in the same scope — a file produced inside a loop is not available after end_loop`;
+            return `${at} references {{file}}, but no file-producing step (capture, file_write, file_download, youtube_download, x_media, share with a file format, or llm with exportFormat) runs before it in the same scope — a file produced inside a loop is not available after end_loop`;
           }
           if (root === 'bot') {
             if (!hasBotTrigger) return `${at} references {{${name}}}, but the flow has no bot trigger`;

@@ -1,5 +1,6 @@
 import { isByokTargetUrl } from '../../../shared/types';
 import { extractJsonFromLlmResponse } from '../../../shared/llmJsonExtract';
+import { compactPreview } from '../../../shared/textBudget';
 import { preparePromptForProvider, runAutomation } from '../../providers';
 import { isByokRetryable, runByokCompletion } from '../../providers/byokClient';
 import { llmLane } from '../lanes';
@@ -157,8 +158,7 @@ const REJECTED_PREVIEW_CHARS = 500;
  * token straddling the cut is still seen whole. yobi.log is plaintext.
  */
 export function rejectedReplyPreview(raw: string): string {
-  const masked = maskSecrets(raw, true).replace(/\s+/g, ' ').trim();
-  return masked.length > REJECTED_PREVIEW_CHARS ? `${masked.slice(0, REJECTED_PREVIEW_CHARS)}…` : masked;
+  return compactPreview(maskSecrets(raw, true), REJECTED_PREVIEW_CHARS);
 }
 
 export interface AskJsonOptions<T> {

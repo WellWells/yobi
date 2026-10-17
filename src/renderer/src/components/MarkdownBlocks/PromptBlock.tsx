@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { Box, Text, UnstyledButton } from '@mantine/core';
-import { PencilLine } from 'lucide-react';
+import { Box, UnstyledButton } from '@mantine/core';
+import { ChevronDown, ChevronUp, PencilLine } from 'lucide-react';
 import { GroupHeader } from '../GroupHeader';
+import { READING_TEXT_STYLE } from '../../styles/readingText';
 
 interface PromptBlockProps {
   prompt: string;
@@ -9,7 +10,6 @@ interface PromptBlockProps {
   label: string;
   expandText: string;
   collapseText: string;
-  truncatedHint: string;
 }
 
 function buildPromptPreview(prompt: string, maxLines: number, maxChars: number): string {
@@ -26,20 +26,16 @@ export const PromptBlock = React.memo<PromptBlockProps>(({
   label,
   expandText,
   collapseText,
-  truncatedHint,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const normalizedPrompt = useMemo(() => prompt.replace(/\r\n?/g, '\n'), [prompt]);
-  const lineCount = useMemo(() => {
-    if (!normalizedPrompt) return 0;
-    return normalizedPrompt.split('\n').length;
-  }, [normalizedPrompt]);
   const previewPrompt = useMemo(
     () => buildPromptPreview(normalizedPrompt, 3, 1_200),
     [normalizedPrompt],
   );
 
-  const needsClamp = lineCount > 3 || normalizedPrompt.length > 180;
+  // Only a preview that actually cut text gets the toggle: one that fits shows in full.
+  const needsClamp = previewPrompt !== normalizedPrompt;
   const displayPrompt = needsClamp && !expanded ? previewPrompt : normalizedPrompt;
 
   return (
@@ -59,7 +55,7 @@ export const PromptBlock = React.memo<PromptBlockProps>(({
         className="md-content md-prompt"
         style={{
           overflow: 'hidden',
-          fontSize: 'var(--font-size-md)',
+          ...READING_TEXT_STYLE,
           lineHeight: 1.6,
           color: 'var(--text-secondary)',
           whiteSpace: 'pre-wrap',
@@ -70,21 +66,13 @@ export const PromptBlock = React.memo<PromptBlockProps>(({
         {displayPrompt}
       </Box>
 
-      {needsClamp && !expanded && (
-        <Text style={{
-          marginTop: 6,
-          fontSize: 'var(--font-size-sm)',
-          color: 'var(--text-muted)',
-          fontStyle: 'italic',
-        }}>
-          {truncatedHint}
-        </Text>
-      )}
-
       {needsClamp && (
         <UnstyledButton
           onClick={() => setExpanded((value) => !value)}
           style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
             marginTop: 6,
             fontSize: 'var(--font-size-sm)',
             color: 'var(--accent)',
@@ -92,6 +80,7 @@ export const PromptBlock = React.memo<PromptBlockProps>(({
             fontWeight: 600,
           }}
         >
+          {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
           {expanded ? collapseText : expandText}
         </UnstyledButton>
       )}

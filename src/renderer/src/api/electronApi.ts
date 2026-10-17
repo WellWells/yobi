@@ -2,14 +2,41 @@ import type { GeminiModelChoice, GeminiModelState } from '../../../shared/gemini
 import type { ClaudeModelChoice, ClaudeModelState } from '../../../shared/claudeModels';
 import type { ChatgptModelChoice, ChatgptModelState } from '../../../shared/chatgptModels';
 import type { MemoryEditResult, MemoryNote, BotSelfChange, UserMemorySnapshot } from '../../../shared/userMemory';
-import type { BotSetPermissionsRequest, BotSetPermissionsResult } from '../../../shared/botPermissions';
+import type {
+  BotSetBlockedRequest,
+  BotSetBlockedResult,
+  BotSetGroupPermissionsRequest,
+  BotSetGroupPermissionsResult,
+  BotSetPermissionsRequest,
+  BotSetPermissionsResult,
+} from '../../../shared/botPermissions';
 import type {
   MemoryCurateApplyResult,
   MemoryCuratePick,
   MemoryCurateProposeRequest,
   MemoryCurateProposeResult,
 } from '../../../shared/memoryCurate';
+import type { WritingToolsProgress, WritingToolsRequest, WritingToolsResult } from '../../../shared/writingTools';
+import type { DocAssistantProgress, DocAssistantRequest, DocAssistantResult } from '../../../shared/docAssistant';
 import type {
+  ConversationTranslateProgress, ConversationTranslateRequest, ConversationTranslateResult,
+  TranslateProgress, TranslateRequest, TranslateResult, TurnTranslationRequest, TurnTranslationResult,
+} from '../../../shared/translate';
+import type { YtdlToolsState } from '../../../shared/ytdl';
+import type { DownloadsKeep } from '../../../shared/downloads';
+import type { TelegramLargeUploadInput, TelegramLargeUploadResult } from '../../../shared/telegramUpload';
+import type { ConversationHistoryList, ConversationRestoreResult } from '../../../shared/conversationHistory';
+import type {
+  NotionBrowseResult,
+  NotionDocStatus,
+  NotionImportResult,
+  NotionPullResult,
+  NotionPushResult,
+  NotionSearchResult,
+} from '../../../shared/notion/notionSyncTypes';
+import type { FlowSaveSource, FlowVersionList, FlowVersionRestoreResult } from '../../../shared/flowVersions';
+import type {
+  MarkdownExportResult,
   AccountStatus,
   SiteAccount,
   SiteAccountStatus,
@@ -62,6 +89,8 @@ import type {
   MetricsSnapshot,
   NotifyEventPrefs,
   OutputFile,
+  ResponseEditRequest,
+  ResponseEditResult,
   StartedConversation,
   ConversationImportResult,
   StashedAttachment,
@@ -94,10 +123,59 @@ import type {
   UiNotificationPayload,
   HotkeyBindResult,
 } from '../../../shared/types';
+import type { BotAudienceSnapshot, BotPlatform } from '../../../shared/types';
+import type { StepProgress } from '../../../shared/stepProgress';
 import type { FlowMetricsSnapshot } from '../../../shared/flowMetrics';
 import type { ConversationTokenStats } from '../../../shared/tokenEstimate';
 
 import type { ShortcutOverride } from '../../../shared/shortcuts';
+
+/** A conversation's versions, named by its file and a version id. */
+export const conversationHistoryApi = {
+  list: (filePath: string): Promise<ConversationHistoryList> => window.electronAPI.listConversationVersions(filePath),
+  get: (filePath: string, vid: string): Promise<string | null> => window.electronAPI.getConversationVersion(filePath, vid),
+  restore: (filePath: string, vid: string): Promise<ConversationRestoreResult> =>
+    window.electronAPI.restoreConversationVersion(filePath, vid),
+  deleteVersion: (filePath: string, vid: string): Promise<boolean> =>
+    window.electronAPI.deleteConversationVersion(filePath, vid),
+  deleteAll: (filePath: string): Promise<boolean> => window.electronAPI.deleteConversationVersions(filePath),
+  /** The screen's text, before another app's change replaces it; main decides whether it is kept. */
+  keepBeforeReload: (filePath: string, previous: string): Promise<boolean> =>
+    window.electronAPI.keepConversationBeforeReload(filePath, previous),
+};
+
+/**
+ * Notion documents. A push names the changes by the ids `status` listed; main recomputes what they
+ * are, so nothing the renderer holds is ever sent to Notion as text.
+ */
+export const notionApi = {
+  connected: (): Promise<boolean> => window.electronAPI.notionConnected(),
+  search: (query: string): Promise<NotionSearchResult> => window.electronAPI.notionSearch(query),
+  /** Favorites and recently viewed pages; a cursor asks for more of the recent ones. */
+  browse: (cursor: string | null = null): Promise<NotionBrowseResult> => window.electronAPI.notionBrowse(cursor),
+  importPage: (input: string): Promise<NotionImportResult> => window.electronAPI.notionImport(input),
+  status: (filePath: string): Promise<NotionDocStatus | null> => window.electronAPI.notionStatus(filePath),
+  pull: (filePath: string): Promise<NotionPullResult> => window.electronAPI.notionPull(filePath),
+  /** `title`: the H1 the preview showed, to send as the page title; null leaves the title alone. */
+  push: (filePath: string, ids: string[], title: string | null): Promise<NotionPushResult> =>
+    window.electronAPI.notionPush(filePath, ids, title),
+  resolve: (filePath: string, key: string, choice: 'mine' | 'theirs'): Promise<boolean> =>
+    window.electronAPI.notionResolve(filePath, key, choice),
+  revert: (filePath: string, id: string): Promise<boolean> => window.electronAPI.notionRevert(filePath, id),
+};
+
+export const ytdlToolsApi = {
+  get: (): Promise<YtdlToolsState> => window.electronAPI.ytdlToolsGet(),
+  install: (): Promise<YtdlToolsState> => window.electronAPI.ytdlToolsInstall(),
+  checkUpdate: (): Promise<YtdlToolsState> => window.electronAPI.ytdlToolsCheckUpdate(),
+  remove: (): Promise<YtdlToolsState> => window.electronAPI.ytdlToolsRemove(),
+  setCustom: (paths: { ytdlp: string; ffmpegDir: string } | null): Promise<YtdlToolsState> =>
+    window.electronAPI.ytdlToolsSetCustom(paths),
+  setNightly: (on: boolean): Promise<YtdlToolsState> => window.electronAPI.ytdlToolsSetNightly(on),
+  onState: (cb: (state: YtdlToolsState) => void): (() => void) => window.electronAPI.onYtdlToolsState(cb),
+  getDownloadsKeep: (): Promise<DownloadsKeep> => window.electronAPI.getDownloadsKeep(),
+  setDownloadsKeep: (choice: DownloadsKeep): Promise<DownloadsKeep> => window.electronAPI.setDownloadsKeep(choice),
+};
 
 export const fileApi = {
   getList: (): Promise<OutputFile[]> => window.electronAPI.getFileList(),
@@ -106,8 +184,9 @@ export const fileApi = {
   deleteFile: (filePath: string): Promise<boolean> => window.electronAPI.deleteFile(filePath),
   deleteFiles: (filePaths: string[]): Promise<number> => window.electronAPI.deleteFiles(filePaths),
   deleteAll: (): Promise<number> => window.electronAPI.deleteAllFiles(),
-  updateTitle: (filePath: string, title: string) => window.electronAPI.updateFileTitle(filePath, title),
   updateH1: (filePath: string, title: string): Promise<boolean> => window.electronAPI.updateFileH1(filePath, title),
+  editTurnResponse: (request: ResponseEditRequest): Promise<ResponseEditResult> =>
+    window.electronAPI.editTurnResponse(request),
   startConversation: (prompt: string): Promise<StartedConversation | null> =>
     window.electronAPI.startConversation(prompt),
   importConversations: (filePaths: string[]): Promise<ConversationImportResult> =>
@@ -115,11 +194,15 @@ export const fileApi = {
   /** Hands the rows to the OS as a native file drag; call from `dragstart` after preventDefault. */
   startDrag: (filePaths: string[]): void => window.electronAPI.startFileDrag(filePaths),
   showInFolder: (filePath: string): Promise<void> => window.electronAPI.showInFolder(filePath),
+  /** Saves the conversation as plain Markdown, without hidden markers, where the user picks. */
+  exportMarkdown: (filePath: string): Promise<MarkdownExportResult> =>
+    window.electronAPI.exportConversationMarkdown(filePath),
   openPath: (filePath: string): Promise<boolean> => window.electronAPI.openPath(filePath),
   /** The OS "Open with" chooser (Windows) or the default text editor (macOS). */
   openWith: (filePath: string): Promise<boolean> => window.electronAPI.openFileWith(filePath),
   /** Puts the files themselves on the clipboard, ready to paste into a folder or a chat app. */
-  copyFiles: (filePaths: string[]): Promise<boolean> => window.electronAPI.copyFilesToClipboard(filePaths),
+  /** Resolves to how many of the files were put on the clipboard. */
+  copyFiles: (filePaths: string[]): Promise<number> => window.electronAPI.copyFilesToClipboard(filePaths),
   /** The conversation files as they are on disk, in one archive the user saves. */
   exportZip: (filePaths: string[]): Promise<ZipExportResult> => window.electronAPI.exportFilesZip(filePaths),
   /** Renders each conversation as a PDF/PNG card into a folder the user picks. */
@@ -169,14 +252,9 @@ export const settingsApi = {
   updateResponseTimeout: (ms: number): Promise<boolean> =>
     window.electronAPI.updateResponseTimeout(ms),
   resetSettings: () => window.electronAPI.resetSettings(),
-  getTheme: (): Promise<string> => window.electronAPI.getTheme(),
-  updateTheme: (theme: string): Promise<boolean> => window.electronAPI.updateTheme(theme),
   getLayoutMode: (): Promise<string> => window.electronAPI.getLayoutMode(),
-  updateLayoutMode: (mode: string): Promise<boolean> => window.electronAPI.updateLayoutMode(mode),
   getShowTokenUsage: (): Promise<boolean> => window.electronAPI.getShowTokenUsage(),
-  updateShowTokenUsage: (show: boolean): Promise<boolean> => window.electronAPI.updateShowTokenUsage(show),
   getMarkdownZoom: (): Promise<number> => window.electronAPI.getMarkdownZoom(),
-  updateMarkdownZoom: (zoom: number): Promise<boolean> => window.electronAPI.updateMarkdownZoom(zoom),
   getCaptureSettings: (): Promise<CaptureSettings> => window.electronAPI.getCaptureSettings(),
   updateCaptureSettings: (settings: CaptureSettings): Promise<boolean> => window.electronAPI.updateCaptureSettings(settings),
   getQuickExport: (): Promise<QuickExportSettings> => window.electronAPI.getQuickExport(),
@@ -204,6 +282,11 @@ export const telegramApi = {
   getSettings: (): Promise<TelegramSettingsSnapshot> => window.electronAPI.getTelegramSettings(),
   updateEnabled: (enabled: boolean): Promise<boolean> => window.electronAPI.updateTelegramEnabled(enabled),
   updateToken: (token: string) => window.electronAPI.updateTelegramBotToken(token),
+  updateLargeUpload: (input: TelegramLargeUploadInput): Promise<TelegramLargeUploadResult> =>
+    window.electronAPI.updateTelegramLargeUpload(input),
+  clearLargeUpload: (): Promise<TelegramLargeUploadResult> => window.electronAPI.clearTelegramLargeUpload(),
+  testLargeUpload: (input: TelegramLargeUploadInput): Promise<TelegramLargeUploadResult> =>
+    window.electronAPI.testTelegramLargeUpload(input),
   updateAllowGroupCommands: (enabled: boolean): Promise<boolean> =>
     window.electronAPI.updateTelegramAllowGroupCommands(enabled),
   updateDefaultReplyMode: (mode: 'markdown' | 'png' | 'webp' | 'pdf'): Promise<boolean> =>
@@ -237,6 +320,15 @@ export const botApi = {
   /** Replaces one paired Telegram / LINE account's grants. */
   setPermissions: (request: BotSetPermissionsRequest): Promise<BotSetPermissionsResult> =>
     window.electronAPI.setBotPermissions(request),
+  /** Replaces what one group grants everyone in it; `grants: null` puts it back on the default. */
+  setGroupPermissions: (request: BotSetGroupPermissionsRequest): Promise<BotSetGroupPermissionsResult> =>
+    window.electronAPI.setBotGroupPermissions(request),
+  /** Blocks or unblocks one unpaired person. */
+  setBlocked: (request: BotSetBlockedRequest): Promise<BotSetBlockedResult> =>
+    window.electronAPI.setBotBlocked(request),
+  /** The groups the bot is in and the unpaired people who used it, for one platform. */
+  getAudience: (platform: BotPlatform): Promise<BotAudienceSnapshot> =>
+    window.electronAPI.getBotAudience(platform),
 };
 
 export const lineApi = {
@@ -269,7 +361,6 @@ export const dataKeyApi = {
 
 export const emailApi = {
   getSettings: (): Promise<EmailSettingsSnapshot> => window.electronAPI.getEmailSettings(),
-  updateEnabled: (enabled: boolean): Promise<{ ok: boolean }> => window.electronAPI.updateEmailEnabled(enabled),
   updateCredentials: (creds: SmtpCredentials): Promise<{ ok: boolean; message?: string }> =>
     window.electronAPI.updateEmailCredentials(creds),
 };
@@ -333,6 +424,32 @@ export const userMemoryApi = {
   undoCuration: (): Promise<{ ok: boolean }> => window.electronAPI.undoMemoryCuration(),
 };
 
+export const writingToolsApi = {
+  getModel: (): Promise<string> => window.electronAPI.getWritingToolsModel(),
+  run: (request: WritingToolsRequest): Promise<WritingToolsResult> => window.electronAPI.runWritingTools(request),
+  cancel: (id: string): Promise<boolean> => window.electronAPI.cancelWritingTools(id),
+  onProgress: (cb: (progress: WritingToolsProgress) => void) => window.electronAPI.onWritingToolsProgress(cb),
+};
+
+export const docAssistantApi = {
+  run: (request: DocAssistantRequest): Promise<DocAssistantResult> => window.electronAPI.runDocAssistant(request),
+  cancel: (id: string): Promise<boolean> => window.electronAPI.cancelDocAssistant(id),
+  onProgress: (cb: (progress: DocAssistantProgress) => void) => window.electronAPI.onDocAssistantProgress(cb),
+};
+
+export const translateApi = {
+  run: (request: TranslateRequest): Promise<TranslateResult> => window.electronAPI.runTranslate(request),
+  cancel: (id: string): Promise<boolean> => window.electronAPI.cancelTranslate(id),
+  onProgress: (cb: (progress: TranslateProgress) => void) => window.electronAPI.onTranslateProgress(cb),
+  translateConversation: (request: ConversationTranslateRequest): Promise<ConversationTranslateResult> =>
+    window.electronAPI.translateConversation(request),
+  cancelConversation: (id: string): Promise<boolean> => window.electronAPI.cancelTranslateConversation(id),
+  onConversationProgress: (cb: (progress: ConversationTranslateProgress) => void) =>
+    window.electronAPI.onTranslateConversationProgress(cb),
+  setTurnTranslation: (request: TurnTranslationRequest): Promise<TurnTranslationResult> =>
+    window.electronAPI.setTurnTranslation(request),
+};
+
 export const geminiModelApi = {
   get: (): Promise<GeminiModelState> => window.electronAPI.getGeminiModels(),
   set: (patch: Partial<GeminiModelChoice>): Promise<GeminiModelState> => window.electronAPI.setGeminiModel(patch),
@@ -361,7 +478,6 @@ export const secretApi = {
 };
 
 export const promptApi = {
-  trigger: (prompt: string): void => window.electronAPI.triggerPrompt(prompt),
   triggerWithOptions: (options: PromptTriggerOptions): Promise<string | null> =>
     window.electronAPI.triggerPromptWithOptions(options),
 };
@@ -406,6 +522,7 @@ export const systemApi = {
   captureMarkdownDocument: (request: MarkdownCaptureRequest) =>
     window.electronAPI.captureMarkdownDocument(request),
   showWorker: (): void => window.electronAPI.showWorker(),
+  openSiteVerification: (site: string): void => window.electronAPI.openSiteVerification(site),
   openConfigDir: (): Promise<boolean> => window.electronAPI.openConfigDir(),
   openLogDir: (): Promise<boolean> => window.electronAPI.openLogDir(),
   selectPath: (request?: SelectPathRequest): Promise<SelectPathResult | null> =>
@@ -429,11 +546,8 @@ export const backupApi = {
 };
 
 export const windowApi = {
-  minimize: (): void => window.electronAPI.minimizeWindow(),
-  maximize: (): void => window.electronAPI.maximizeWindow(),
   isMaximized: (): Promise<boolean> => window.electronAPI.isWindowMaximized(),
   onMaximizedChanged: (cb: (maximized: boolean) => void) => window.electronAPI.onWindowMaximizedChanged(cb),
-  close: (): void => window.electronAPI.closeWindow(),
   respondCloseDialog: (action: 'quit' | 'hide', remember: boolean): void =>
     window.electronAPI.respondCloseDialog(action, remember),
   respondAgentConfirm: (id: string, choice: AgentConfirmChoice): void =>
@@ -444,12 +558,11 @@ export const ipcEvents = {
   onLog: (cb: (msg: string) => void) => window.electronAPI.onLog(cb),
   onStatus: (cb: (status: string) => void) => window.electronAPI.onStatus(cb),
   onQueueUpdate: (cb: (state: QueueState) => void) => window.electronAPI.onQueueUpdate(cb),
-  onFileListUpdate: (cb: (files: OutputFile[]) => void) => window.electronAPI.onFileListUpdate(cb),
   onOutputFilesChanged: (cb: () => void) => window.electronAPI.onOutputFilesChanged(cb),
   onChatTurn: (cb: (event: ChatTurnEvent) => void) => window.electronAPI.onChatTurn(cb),
   onUiNotification: (cb: (payload: UiNotificationPayload) => void) =>
     window.electronAPI.onUiNotification(cb),
-  onNavigateSettings: (cb: () => void) => window.electronAPI.onNavigateSettings(cb),
+  onNavigateSettings: (cb: (category?: string) => void) => window.electronAPI.onNavigateSettings(cb),
   onShowCloseDialog: (cb: () => void) => window.electronAPI.onShowCloseDialog(cb),
   onAgentConfirm: (cb: (payload: AgentConfirmPayload) => void) => window.electronAPI.onAgentConfirm(cb),
   onAgentConfirmDismiss: (cb: (id: string) => void) => window.electronAPI.onAgentConfirmDismiss(cb),
@@ -480,7 +593,14 @@ export const ipcEvents = {
 
 export const flowApi = {
   getAll: (): Promise<FlowDefinition[]> => window.electronAPI.getFlows(),
-  save: (flow: FlowDefinition): Promise<FlowDefinition | null> => window.electronAPI.saveFlow(flow),
+  /** `import` tags the flow's first version as imported (the import dialog and the template wizard). */
+  save: (flow: FlowDefinition, source?: FlowSaveSource): Promise<FlowDefinition | null> =>
+    window.electronAPI.saveFlow(flow, source),
+  listVersions: (flowId: string): Promise<FlowVersionList> => window.electronAPI.listFlowVersions(flowId),
+  restoreVersion: (flowId: string, vid: string): Promise<FlowVersionRestoreResult> =>
+    window.electronAPI.restoreFlowVersion(flowId, vid),
+  deleteVersion: (flowId: string, vid: string): Promise<boolean> => window.electronAPI.deleteFlowVersion(flowId, vid),
+  clearVersions: (flowId: string): Promise<boolean> => window.electronAPI.clearFlowVersions(flowId),
   deleteFlow: (flowId: string): Promise<boolean> => window.electronAPI.deleteFlow(flowId),
   deleteFlows: (flowIds: string[]): Promise<boolean> => window.electronAPI.deleteFlows(flowIds),
   setFlowsEnabled: (flowIds: string[], enabled: boolean): Promise<FlowDefinition[]> =>
@@ -491,8 +611,10 @@ export const flowApi = {
   reorderFlows: (orderedIds: string[]): Promise<FlowDefinition[]> =>
     window.electronAPI.reorderFlows(orderedIds),
   execute: (flowId: string): Promise<FlowExecutionResult> => window.electronAPI.executeFlow(flowId),
-  runChatCommand: (flowId: string, command: string, input: string, conversationPath?: string): Promise<ChatCommandResult> =>
-    window.electronAPI.runChatCommand(flowId, command, input, conversationPath),
+  runChatCommand: (flowId: string, command: string, input: string, conversationPath?: string, progressId?: string, modelUrl?: string): Promise<ChatCommandResult> =>
+    window.electronAPI.runChatCommand(flowId, command, input, conversationPath, progressId, modelUrl),
+  onChatCommandProgress: (cb: (payload: { progressId: string; progress: StepProgress }) => void) =>
+    window.electronAPI.onChatCommandProgress(cb),
   abort: (flowId: string): Promise<boolean> => window.electronAPI.abortFlow(flowId),
   build: (request: FlowBuildRequestPayload): Promise<FlowBuildOutcome> => window.electronAPI.generateFlow(request),
   onBuildProgress: (cb: (payload: FlowBuildPayload) => void): (() => void) =>

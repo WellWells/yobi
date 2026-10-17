@@ -11,6 +11,7 @@ import type {
   TriggerConfig,
 } from '../../../shared/types';
 import { flowApi } from '../api/electronApi';
+import type { FlowSaveSource } from '../../../shared/flowVersions';
 import { useFlowBuildStore } from './useFlowBuildStore';
 import {
   cloneFlow, createDefaultFlow, createDefaultStep, createId, findLoopSource, findMatchingMarker, mergeSaveReply,
@@ -31,7 +32,7 @@ interface ActionState {
   selectFlow: (flowId: string | null) => void;
   createFlow: () => Promise<void>;
   updateFlow: (flow: FlowDefinition) => void;
-  saveFlow: (flow: FlowDefinition) => Promise<void>;
+  saveFlow: (flow: FlowDefinition, source?: FlowSaveSource) => Promise<void>;
   deleteFlow: (flowId: string) => Promise<void>;
   deleteFlows: (flowIds: string[]) => Promise<void>;
   setFlowsEnabled: (flowIds: string[], enabled: boolean) => Promise<void>;
@@ -109,11 +110,11 @@ export const useFlowStore = create<ActionState>((set, get) => ({
     }));
   },
 
-  saveFlow: async (flow) => {
+  saveFlow: async (flow, source) => {
     const seq = ++saveRequestSeq;
     // The editor stays live while main writes flows.json: edits made meanwhile must survive the reply.
     const sent = cloneFlow(flow);
-    const saved = await flowApi.save(flow);
+    const saved = await (source ? flowApi.save(flow, source) : flowApi.save(flow));
     if (!saved) return;
     if ((appliedSaveSeq.get(saved.id) ?? 0) > seq) return;
     appliedSaveSeq.set(saved.id, seq);
@@ -498,6 +499,6 @@ export const useFlowStore = create<ActionState>((set, get) => ({
       executionResult: null,
     }));
 
-    await Promise.all(preparedFlows.map((flow) => get().saveFlow(flow)));
+    await Promise.all(preparedFlows.map((flow) => get().saveFlow(flow, 'import')));
   },
 }));

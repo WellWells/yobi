@@ -3,8 +3,8 @@ import { config, normalizeChatgptModelChoice, saveConfig } from '../config';
 import { sendLog, sendToRenderer } from '../helpers';
 import { WORKER_USER_AGENTS } from '../userAgent';
 import { applyWorkerUserAgent } from '../clientHints';
-import { navigateAndWait, sleep } from './common';
-import { countElements } from './automationExecutor';
+import { isProviderHost, navigateAndWait, sleep } from './common';
+import { countElements, executeWithTimeout } from './automationExecutor';
 import { IPC, PROVIDER_URLS } from '../../shared/types';
 import { needsModelCatalogRestamp } from '../../shared/modelCatalogFreshness';
 import {
@@ -57,18 +57,7 @@ export function clearChatgptModels(): void {
 }
 
 async function runPicker(wc: WebContents, target: ChatgptPickerTarget | null): Promise<ChatgptPickerResult> {
-  let timer!: ReturnType<typeof setTimeout>;
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error(`timed out after ${PICKER_TIMEOUT_MS} ms`)), PICKER_TIMEOUT_MS);
-  });
-  try {
-    return (await Promise.race([
-      wc.executeJavaScript(buildChatgptModelPickerScript(target), true),
-      timeout,
-    ])) as ChatgptPickerResult;
-  } finally {
-    clearTimeout(timer);
-  }
+  return executeWithTimeout<ChatgptPickerResult>(wc, buildChatgptModelPickerScript(target), PICKER_TIMEOUT_MS);
 }
 
 function remember(snapshot: ChatgptPickerSnapshot, choice: ChatgptModelChoice): void {
@@ -161,18 +150,10 @@ export async function syncChatgptModel(wc: WebContents): Promise<void> {
   }
 }
 
-export function isChatgptPage(url: string): boolean {
-  try {
-    return new URL(url).hostname === new URL(PROVIDER_URLS.chatgpt).hostname;
-  } catch {
-    return false;
-  }
-}
-
 async function waitForPicker(wc: WebContents, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline && (await countElements(wc, CHATGPT_PICKER_PILL_SELECTOR)) === 0) {
-    if (!isChatgptPage(wc.getURL())) return;
+    if (!isProviderHost(wc.getURL(), 'chatgpt')) return;
     await sleep(200);
   }
 }
@@ -183,12 +164,12 @@ async function waitForPicker(wc: WebContents, timeoutMs: number): Promise<void> 
  */
 export async function refreshChatgptModels(workerWin: BrowserWindow): Promise<void> {
   const wc = workerWin.webContents;
-  if (!isChatgptPage(wc.getURL()) || wc.isLoading()) {
+  if (!isProviderHost(wc.getURL(), 'chatgpt') || wc.isLoading()) {
     applyWorkerUserAgent(wc, WORKER_USER_AGENTS.chatgpt);
     await navigateAndWait(wc, PROVIDER_URLS.chatgpt);
   }
   await waitForPicker(wc, 15_000);
-  if (!isChatgptPage(wc.getURL())) return;
+  if (!isProviderHost(wc.getURL(), 'chatgpt')) return;
   await syncChatgptModel(wc);
 }
 
@@ -196,6 +177,6 @@ export async function refreshChatgptModels(workerWin: BrowserWindow): Promise<vo
 export async function syncChatgptModelIfParked(workerWin: BrowserWindow | null): Promise<void> {
   if (!workerWin || workerWin.isDestroyed()) return;
   const wc = workerWin.webContents;
-  if (wc.isLoading() || !isChatgptPage(wc.getURL())) return;
+  if (wc.isLoading() || !isProviderHost(wc.getURL(), 'chatgpt')) return;
   await syncChatgptModel(wc);
 }

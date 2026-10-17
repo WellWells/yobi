@@ -30,7 +30,18 @@ export function toSummary(state: AgentRunState): AgentRunSummary {
   };
 }
 
+/**
+ * Whether a Telegram/LINE message started this run. `botScope` and `botGrants` are written on every
+ * bot run, and `connectors: 'none'` only ever by the bot grants; any one of them is enough. Such a
+ * run continues only through the bot, which re-reads the account's rights: the desktop resumes with
+ * its own full tool kit and the owner's memory, so it must neither offer nor resume one.
+ */
+export function isBotRun(state: AgentRunState): boolean {
+  return state.botScope !== undefined || state.botGrants !== undefined || state.connectors === 'none';
+}
+
 export function shouldOfferOnRestart(state: AgentRunState): boolean {
+  if (isBotRun(state)) return false;
   return state.status === 'running' || state.status === 'failed';
 }
 
@@ -79,24 +90,15 @@ function isRunState(value: unknown): value is AgentRunState {
   );
 }
 
-/**
- * The connectors a run disclosed, whichever shape it was written in.
- *
- * SECURITY: this migration is not cosmetic. Runs saved by the version that only knew
- * `mcpServerId` stay on disk for a week, and a resume that read only `mcpServerIds` would find
- * nothing, disclose nothing, and quietly continue as an unscoped run — the model would be handed
- * a set of servers the user never named for it.
- */
+/** The connectors a run disclosed, trimmed and without blanks or duplicates. */
 export function readRunConnectors(state: AgentRunState): string[] {
-  const plural = state.mcpServerIds ?? [];
-  const ids = plural.length > 0 ? plural : (state.mcpServerId ? [state.mcpServerId] : []);
-  return [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+  return [...new Set((state.mcpServerIds ?? []).map((id) => id.trim()).filter(Boolean))];
 }
 
-/** Normalises a loaded run onto the plural shape so nothing downstream reads the legacy field. */
-function migrateRunState(state: AgentRunState): AgentRunState {
+/** Normalises a loaded run's connector list so nothing downstream sees blanks or duplicates. */
+function normalizeRunState(state: AgentRunState): AgentRunState {
   const ids = readRunConnectors(state);
-  const { mcpServerId: _legacy, ...rest } = state;
+  const { mcpServerIds: _stored, ...rest } = state;
   return { ...rest, ...(ids.length > 0 ? { mcpServerIds: ids } : {}) };
 }
 
@@ -114,7 +116,7 @@ export async function saveRunState(state: AgentRunState): Promise<void> {
 export async function loadRunState(runId: string): Promise<AgentRunState | null> {
   try {
     const parsed = JSON.parse(await fs.readFile(runFile(runId), 'utf-8'));
-    return isRunState(parsed) ? migrateRunState(parsed) : null;
+    return isRunState(parsed) ? normalizeRunState(parsed) : null;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw err;
@@ -138,7 +140,7 @@ async function readAllStates(): Promise<AgentRunState[]> {
     if (!file.endsWith('.json')) continue;
     try {
       const parsed = JSON.parse(await fs.readFile(path.join(runsDir(), file), 'utf-8'));
-      if (isRunState(parsed)) states.push(migrateRunState(parsed));
+      if (isRunState(parsed)) states.push(normalizeRunState(parsed));
     } catch {
     }
   }

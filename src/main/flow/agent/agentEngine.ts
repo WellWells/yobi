@@ -13,7 +13,7 @@ import { askJson, createProviderSession, rejectedReplyPreview } from './structur
 import type { AskJsonResult, ProviderSession, Validation } from './structuredLlm';
 import {
   AGENT_FIELD_DEFAULTS, AGENT_HELP_TOOL, AgentRunError, AgentScopeError, buildToolCatalog, describeToolSpec, FULL_TOOL_SCOPE,
-  isHelpTool, OPTS_MARKER, readOnlyScope, scopeHasFlowTools, scopeHasTools, validateAgentAction, validateFinalAnswer,
+  isHelpTool, OPTS_MARKER, readOnlyScope, scopeHasFlowTools, validateAgentAction, validateFinalAnswer,
 } from './agentTools';
 import type { AgentAction, AgentToolScope, FinalAnswer } from './agentTools';
 import {
@@ -38,6 +38,7 @@ import {
   validateMcpAction,
 } from './mcpTools';
 import type { McpAction } from './mcpTools';
+import { connectServersForRun } from './mcpConnectOnUse';
 import { NO_WRITES, writesAllFailed } from './writeOutcome';
 import type { AgentWriteOutcome } from './writeOutcome';
 import type { BuiltinDeps, BuiltinOutcome } from './agentBuiltins';
@@ -59,13 +60,13 @@ import { connectorNotes, renderRuntimeContext, resolveToolContract } from './con
 
 export {
   buildActionRepair, buildDeltaPrompt, buildFinishPrompt, buildTurnPrompt, historyThatFits,
-  observationFit, renderScratch, scratchFitFor, SCRATCH_IN_PROMPT, SCRATCH_IN_PROMPT_MCP,
+  renderScratch, scratchFitFor, SCRATCH_IN_PROMPT, SCRATCH_IN_PROMPT_MCP,
   SCRATCH_TOTAL_BUDGET,
 } from './agentPrompts';
 export type { AgentPlan, PromptFit, ScratchEntry, TurnPromptOptions } from './agentPrompts';
-export { AgentRunError, AgentScopeError, FULL_TOOL_SCOPE, MCP_ONLY_TOOL_SCOPE } from './agentTools';
+export { AgentRunError, AgentScopeError, FULL_TOOL_SCOPE } from './agentTools';
 export type { AgentWriteOutcome } from './writeOutcome';
-export type { AgentRunFailure, AgentToolScope } from './agentTools';
+export type { AgentToolScope } from './agentTools';
 export type { McpConfirmRequest } from './mcpAction';
 export type { AgentConfirmRequest, ShellConfirmRequest } from './agentCall';
 
@@ -161,7 +162,9 @@ export function planTurnCeiling(steps: number): number {
  */
 export type AgentProgress =
   | { stage: 'thinking' }
-  | { stage: 'tool'; tool: string; server?: string };
+  | { stage: 'tool'; tool: string; server?: string }
+  /** Connecting the connectors this run uses before its first turn; `server` is their names. */
+  | { stage: 'connecting'; server: string };
 
 export interface AgentRunOptions {
   onProgress?: (progress: AgentProgress) => void;
@@ -175,6 +178,12 @@ export interface AgentRunOptions {
   resumeFrom?: AgentTurnRecord[];
   resumePlan?: AgentPlan;
   conversationPath?: string;
+  /**
+   * This run is the desktop's temporary chat, so its history is read from there. Set only by the
+   * desktop composer while the mode is on; a Telegram/LINE message or a helper running meanwhile
+   * reads its own `conversationPath` (if any) and never the user's private temporary turns.
+   */
+  temporaryChat?: boolean;
   attachments?: string[];
   signal?: AbortSignal;
   maxTurns?: number;
@@ -275,7 +284,11 @@ export type AgentRunResult =
     /** Whether the answer covers the whole goal — decided by the model's own claim and how the run ended. */
     completion: AgentCompletion;
   } & RunEvidence)
-  | ({ kind: 'question'; question: string; choices?: string[]; toolCalls: number; turns: number } & RunEvidence);
+  | ({
+    kind: 'question'; question: string; choices?: string[]; toolCalls: number; turns: number;
+    /** The program's question approving a shell command (not the model's own); shown word for word. */
+    shellApproval?: boolean;
+  } & RunEvidence);
 
 function truncate(text: string, limit: number): string {
   if (text.length <= limit) return text;
@@ -442,7 +455,16 @@ export async function runAgent(
   // afterwards can leave a `notion-2` with no `notion` and a validator error listing a phantom set.
   const noConnectors = options.noConnectors === true;
   const allowedIds = options.allowedMcpServerIds;
-  const mcpServers = (noConnectors ? [] : mcpRegistry?.getAgentTools() ?? [])
+  // A helper's servers were connected by the run that delegated to it.
+  if (mcpRegistry && !noConnectors && !readOnly) {
+    await connectServersForRun(mcpRegistry, {
+      ...(scopedIds?.length ? { declared: scopedIds } : {}),
+      ...(allowedIds ? { allowed: allowedIds } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
+      onConnecting: (server) => options.onProgress?.({ stage: 'connecting', server }),
+    });
+  }
+  const mcpServers =(noConnectors ? [] : mcpRegistry?.getAgentTools() ?? [])
     .filter((server) => !allowedIds || allowedIds.includes(server.serverId))
     .filter((server) => !scopedIds || scopedIds.includes(server.serverId))
     // A helper is shown the reads only, so a change is not even a shape it can propose.
@@ -451,7 +473,6 @@ export async function runAgent(
       : server));
   const mcpIndex = buildMcpIndex(mcpServers);
   const mcpCandidate = mcpRegistry !== null && hasMcpTools(mcpIndex);
-  const toolsOnly = scopeHasTools(toolScope);
   // Declared = the user named these connectors themselves (a `/notion`-style disclosure that then
   // sticks to the conversation), as opposed to plain `/agent` sweeping up everything connected.
   const declared = (scopedIds?.length ?? 0) > 0;
@@ -461,7 +482,7 @@ export async function runAgent(
   // A declared connector that cannot answer is an error even though the run has other tools to
   // fall back on. Falling back silently would let the user watch the agent solve their Notion
   // question by searching the web, with nothing anywhere saying Notion was never reachable.
-  if (!mcpCandidate && (!toolsOnly || declared)) {
+  if (!mcpCandidate && declared) {
     throw new AgentScopeError('not-connected');
   }
   const mcpScratchSlots = lean ? SCRATCH_IN_PROMPT_MCP : SCRATCH_IN_PROMPT_MCP_CAPPED;
@@ -491,14 +512,11 @@ export async function runAgent(
     + (recapHook ? RECAP_HOOK.length + 4 : 0);
 
   const { buildAgentHistory, historyPromptCost, MCP_CATALOG_RESERVE } = await import('./agentContext');
-  // A scoped run drops the built-in catalog to buy connector room, so history is charged the
-  // UNSCOPED length: both budgets subtract catalogLen, and handing history the zero would let it
-  // spend the reclaimed chars before the MCP budget could.
-  const historyCatalogLen = toolsOnly ? catalog.length : buildToolCatalog(FULL_TOOL_SCOPE).length;
   const history = await buildAgentHistory({
     ...(options.conversationPath ? { conversationPath: options.conversationPath } : {}),
+    ...(options.temporaryChat ? { temporaryChat: true } : {}),
     providerUrl,
-    catalogLen: historyCatalogLen,
+    catalogLen: catalog.length,
     goalLen: promptGoal.length + evidenceReserve,
     // The reserve, not the window: `renderScratch` prints the last `mcpScratchSlots`
     // observations, but a browser run sends the full prompt only on turn 1 (empty scratchpad)
@@ -520,21 +538,10 @@ export async function runAgent(
   // the table and leaving the judgement of whether to use one to the model.
   const mcpHeading = declared
     ? 'MCP TOOLS — the user connected these servers for this conversation, so prefer one of them when it fits the request; if none fits, use your other tools. Call with "call_mcp":'
-    : mcpIndex.handles.length === 1 && !toolsOnly
-      ? 'MCP TOOLS (every tool below belongs to your connected server; call with "call_mcp"):'
-      : 'MCP TOOLS (external tools from your connected servers; call with "call_mcp"):';
-  // Every string that tells the model to call `tool_help` has to know whether this run has it:
-  // MCP_ONLY_TOOL_SCOPE — what a connector slash-command gets — sets `help: false`, and an
-  // instruction to call a tool it was never offered reads as a working escape hatch right up
-  // until the validator rejects it.
-  const canHelp = toolScope.help;
-  const mcpBriefFooter = canHelp
-    ? `A line marked ${OPTS_MARKER} lists only its REQUIRED arguments; call "${AGENT_HELP_TOOL}" with "<server>:<tool>" for that tool's full entry and input schema.`
-    : `A line marked ${OPTS_MARKER} lists only its REQUIRED arguments.`;
+    : 'MCP TOOLS (external tools from your connected servers; call with "call_mcp"):';
+  const mcpBriefFooter = `A line marked ${OPTS_MARKER} lists only its REQUIRED arguments; call "${AGENT_HELP_TOOL}" with "<server>:<tool>" for that tool's full entry and input schema.`;
   const mcpToolTotal = mcpIndex.handles.reduce((sum, server) => sum + server.tools.length, 0);
-  // `canHelp` is not a preference here, it is the way back: a handle only becomes a tool list
-  // through `tool_help`, so without it a summary shows the model doors and no keys.
-  const summarise = mcpCandidate && !declared && canHelp && mcpToolTotal > MCP_SUMMARY_THRESHOLD;
+  const summarise = mcpCandidate && !declared && mcpToolTotal > MCP_SUMMARY_THRESHOLD;
   const mcpSectionHeading = summarise
     ? `MCP TOOLS (your connected servers — open one with "${AGENT_HELP_TOOL}", then call with "call_mcp"):`
     : mcpHeading;
@@ -542,7 +549,7 @@ export async function runAgent(
   // The heading and footer are charged here, not left to SAFETY_MARGIN: the heading is long
   // enough to matter.
   const mcpOverhead = mcpSectionHeading.length + mcpSectionFooter.length + 2 + (notes ? notes.length + 1 : 0);
-  const summaryText = summarise ? buildMcpSummary(mcpIndex, canHelp) : '';
+  const summaryText = summarise ? buildMcpSummary(mcpIndex) : '';
   // A summary is not an omission: every tool behind these handles stays reachable through
   // `tool_help`, and `resolveMcpTool` matches the runtime index rather than the rendered text.
   const mcpSection = summarise
@@ -550,7 +557,7 @@ export async function runAgent(
       ? { text: summaryText, includedCount: mcpToolTotal, omitted: 0, brief: false }
       : { text: '', includedCount: 0, omitted: 0, brief: false }
     : mcpBudget > mcpOverhead
-      ? buildMcpCatalog(mcpIndex, mcpBudget - mcpOverhead, canHelp)
+      ? buildMcpCatalog(mcpIndex, mcpBudget - mcpOverhead)
       : { text: '', includedCount: 0, omitted: 0, brief: false };
   const mcpEnabled = mcpSection.includedCount > 0;
   if (summarise && mcpEnabled) {
@@ -562,10 +569,11 @@ export async function runAgent(
   } else if (mcpEnabled && mcpSection.omitted > 0) {
     sendLog(`⚠️ [Agent] ${mcpSection.omitted} MCP tool(s) omitted — ${providerLabel}'s input limit fits only ${mcpSection.includedCount}`);
   }
-  if (!mcpEnabled && (!toolsOnly || declared)) throw new AgentScopeError('no-room');
+  if (!mcpEnabled && declared) throw new AgentScopeError('no-room');
   const catalogForPrompt = mcpEnabled
     ? [
-        ...(toolsOnly ? [catalog, ''] : []),
+        catalog,
+        '',
         mcpSectionHeading,
         mcpSection.text,
         ...(mcpSection.brief ? [mcpSectionFooter] : []),
@@ -575,7 +583,7 @@ export async function runAgent(
   const scratchSlots = mcpEnabled ? mcpScratchSlots : SCRATCH_IN_PROMPT;
   // Offered to the run the user is watching, never to a helper: fan-out below fan-out multiplies
   // every rate limit, and a helper exists to do one reading job.
-  const batchGrammar = !readOnly && (toolsOnly || mcpEnabled);
+  const batchGrammar = !readOnly;
   const validateDecision = (allowAsk: boolean) => (json: unknown): Validation<AgentDecision> => {
     const obj = json && typeof json === 'object' && !Array.isArray(json) ? json as Record<string, unknown> : null;
     if (batchGrammar && obj?.action === 'call_tools') {
@@ -725,7 +733,7 @@ export async function runAgent(
     gate,
     unattended: options.unattended === true,
     askUser,
-    ...(options.shellApproval ? { deferShell: true } : {}),
+    ...(options.shellApproval ? { deferShell: options.shellApproval } : {}),
     builtins: builtinCtx,
     fileRoots,
     workspaceDir,
@@ -819,7 +827,7 @@ export async function runAgent(
       // The answer was the approval, so nothing is asked again. A run resumed on the desktop has
       // no chat question behind it in this sense: it gets the dialog, as any shell call there does.
       const approvedCtx: CallContext = options.shellApproval
-        ? { ...callCtx, deferShell: false, askUser: async () => true }
+        ? { ...callCtx, deferShell: undefined, askUser: async () => true }
         : callCtx;
       const result = await runCall(approvedCtx, { thought: '', action: 'call_tool', tool: 'shell', config }, config, step, signature);
       if (result.write) {
@@ -866,8 +874,6 @@ export async function runAgent(
       mustFinish,
       lean,
       mcpGrammar: mcpEnabled,
-      toolGrammar: toolsOnly,
-      ...(mcpIndex.handles[0] ? { mcpExampleServer: mcpIndex.handles[0].handle } : {}),
       scratchSlots,
       stalled: consecutiveErrors >= STALL_THRESHOLD,
       // Only worth saying when there is somewhere to put the work: pointing at `delegate` in a
@@ -1170,7 +1176,9 @@ export async function runAgent(
         modelMs,
       });
       options.onTrace?.({ kind: 'question', question: text.question, choices: [...text.choices] });
-      return { kind: 'question', question: text.question, choices: [...text.choices], toolCalls, turns: turn, ...evidenceOut() };
+      return {
+        kind: 'question', question: text.question, choices: [...text.choices], shellApproval: true, toolCalls, turns: turn, ...evidenceOut(),
+      };
     }
 
     // Committed in the order the model wrote the calls, whatever order they finished in: the step

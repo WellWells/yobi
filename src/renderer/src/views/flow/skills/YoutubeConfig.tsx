@@ -1,13 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { Stack, Text } from '@mantine/core';
-import { useShallow } from 'zustand/react/shallow';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { SelectDropdown } from '../../../components/SelectDropdown';
-import { byokApi } from '../../../api/electronApi';
-import { selectHiddenSources, useAppStore } from '../../../store/appStore';
-import { geminiFallbackChoices } from './youtubeFallback';
+import { useGeminiChoices } from './useGeminiChoices';
 import { isValidYoutubeUrlOrVar } from './validation';
-import type { ByokSettingsSnapshot } from '../../../../../shared/types';
 import type { SkillConfigProps } from './types';
 
 export const YoutubeConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
@@ -15,23 +11,8 @@ export const YoutubeConfig: React.FC<SkillConfigProps> = ({ step, onChange, t })
   const urlError = !isValidYoutubeUrlOrVar(url);
   const fallback = step.config.fallbackProvider ?? '';
 
-  const hidden = useAppStore(useShallow(selectHiddenSources));
-  // Both lists are replaced whenever BYOK settings are saved, so they double as a change signal.
-  const byokModels = useAppStore((s) => s.byokModels);
-  const byokGroupModels = useAppStore((s) => s.byokGroupModels);
-  const [snapshot, setSnapshot] = useState<ByokSettingsSnapshot | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void byokApi.getSettings().then((next) => { if (!cancelled) setSnapshot(next); });
-    return () => { cancelled = true; };
-  }, [byokModels, byokGroupModels]);
-
-  const { groups, keys } = snapshot
-    ? geminiFallbackChoices(snapshot, hidden, fallback)
-    : { groups: [], keys: [] };
-  const hasChoice = groups.length > 0 || keys.length > 0;
-  const noKey = snapshot !== null && !hasChoice;
+  const { groups, keys, loaded } = useGeminiChoices(fallback);
+  const noKey = loaded && groups.length === 0 && keys.length === 0;
 
   const fallbackOptions = [
     { value: '', label: t('flow.skill.youtube.fallback.none') },

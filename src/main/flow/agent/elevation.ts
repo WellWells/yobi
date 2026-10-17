@@ -27,7 +27,3 @@ export function isElevated(): Promise<boolean> {
   cached ??= probe();
   return cached;
 }
-
-export function resetElevationCache(): void {
-  cached = undefined;
-}

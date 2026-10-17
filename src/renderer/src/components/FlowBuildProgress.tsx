@@ -1,13 +1,11 @@
-import { Box, Loader, Stack, Text } from '@mantine/core';
-import { Check, Circle, X } from 'lucide-react';
+import { Box, Stack, Text } from '@mantine/core';
 import { FLOW_BUILD_PHASES } from '../../../shared/types';
 import type { FlowBuildPhase, SkillType } from '../../../shared/types';
 import { useI18nStore } from '../store/i18nStore';
-import type { FlowBuildState, PhaseStatus } from '../store/useFlowBuildStore';
+import type { FlowBuildState } from '../store/useFlowBuildStore';
+import { LABEL_OFFSET, PROGRESS_ROW_STYLE, ProgressMark } from './ProgressMark';
 
 /** The five phases of a build, drawn the same way in the Flow Builder and in a chat turn. */
-
-const ROW_STYLE = { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 } as const;
 
 const SUB_STYLE = {
   fontSize: 'var(--font-size-xs)',
@@ -18,13 +16,6 @@ const SUB_STYLE = {
 };
 
 const MAX_OUTLINE_ROWS = 6;
-
-function PhaseIcon({ status }: { status: PhaseStatus | undefined }) {
-  if (status === 'done') return <Check size={11} color="var(--mantine-color-success)" />;
-  if (status === 'failed') return <X size={11} color="var(--mantine-color-error)" />;
-  if (status === 'active') return <Loader size={10} />;
-  return <Circle size={9} color="var(--mantine-color-dimmed)" />;
-}
 
 /** The skills the request resolved to, named the way the step list names them. */
 export function toolNames(skills: readonly SkillType[], t: (key: string) => string): string[] {
@@ -44,10 +35,8 @@ export function FlowBuildProgressView({ state }: { state: FlowBuildState }) {
           : '';
         return (
           <Stack key={phase} gap={1} style={{ minWidth: 0 }}>
-            <Box style={ROW_STYLE}>
-              <Box component="span" style={{ flexShrink: 0, display: 'inline-flex', width: 12, justifyContent: 'center' }}>
-                <PhaseIcon status={status} />
-              </Box>
+            <Box style={PROGRESS_ROW_STYLE}>
+              <ProgressMark state={status ?? 'pending'} />
               <Text
                 component="span"
                 style={{
@@ -64,17 +53,17 @@ export function FlowBuildProgressView({ state }: { state: FlowBuildState }) {
 
             {phase === 'understand' && state.provider && (
               // Named because a large prompt may go to a different provider than the one picked.
-              <Text component="span" pl={18} style={SUB_STYLE}>
+              <Text component="span" pl={LABEL_OFFSET} style={SUB_STYLE}>
                 {t('flow.build.provider').replace('{{name}}', state.provider)}
               </Text>
             )}
             {phase === 'discover' && status === 'done' && state.skills.length > 0 && (
-              <Text component="span" pl={18} style={SUB_STYLE}>
+              <Text component="span" pl={LABEL_OFFSET} style={SUB_STYLE}>
                 {t('flow.build.tools.found').replace('{{names}}', toolNames(state.skills, t).join('、'))}
               </Text>
             )}
             {phase === 'discover' && state.blocked.length > 0 && (
-              <Text component="span" pl={18} style={{ ...SUB_STYLE, color: 'var(--mantine-color-warning)' }}>
+              <Text component="span" pl={LABEL_OFFSET} style={{ ...SUB_STYLE, color: 'var(--mantine-color-warning)' }}>
                 {t('flow.build.tools.blocked').replace(
                   '{{names}}',
                   state.blocked.map((entry) => t(`flow.build.need.${entry.need}`)).join('、'),
@@ -83,7 +72,7 @@ export function FlowBuildProgressView({ state }: { state: FlowBuildState }) {
             )}
             {phase === 'plan' && outline.length > 0 && outline.map((line, index) => (
               // Keyed by position: an outline may legitimately repeat a line.
-              <Text key={`${index}-${line}`} component="span" pl={18} style={SUB_STYLE}>
+              <Text key={`${index}-${line}`} component="span" pl={LABEL_OFFSET} style={SUB_STYLE}>
                 {`${index + 1}. ${line}`}
               </Text>
             ))}

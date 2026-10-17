@@ -2,10 +2,11 @@ import React from 'react';
 import { Stack } from '@mantine/core';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { SelectDropdown } from '../../../components/SelectDropdown';
+import { hostPlatform } from '../../../utils/hostPlatform';
 import type { SkillConfigProps } from './types';
 
-const IS_WINDOWS = navigator.platform.toLowerCase().includes('win');
-const IS_MAC = navigator.platform.toLowerCase().includes('mac');
+const IS_WINDOWS = hostPlatform === 'win32';
+const IS_MAC = hostPlatform === 'darwin';
 
 const SHELL_OPTIONS = IS_WINDOWS
   ? [

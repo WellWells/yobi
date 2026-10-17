@@ -9,10 +9,6 @@
 import { isLineRangePreset, LINE_RANGE_PRESETS } from '../../../shared/lineRange';
 import { FlowUserError } from '../userError';
 
-// Façade: the vocabulary lives in shared/ so the step editor offers exactly what this resolves.
-export { isLineRangePreset, LINE_RANGE_PRESETS };
-export type { LineRangePreset } from '../../../shared/lineRange';
-
 export interface ResolvedRange {
   /** Inclusive lower bound, epoch ms; null = no floor. */
   sinceMs: number | null;

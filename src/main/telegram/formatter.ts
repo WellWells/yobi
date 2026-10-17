@@ -1,6 +1,7 @@
 import { Marked, Renderer } from 'marked';
 import { t } from '../i18n';
 import { promoteDisplayMath, promoteInlineMath } from '../../shared/inlineMathDelimiters';
+import { expandableQuoteBody } from '../../shared/expandableQuote';
 import { flattenFootnotes } from '../../shared/markdownFootnotes';
 import { htmlAsPlainText } from '../../shared/markdownHtmlWhitelist';
 import { mathTokenExtensions } from '../markdownMathTokens';
@@ -69,6 +70,34 @@ export function splitMarkdownIntoChunks(
   return chunks.filter(Boolean);
 }
 
+/** A `pre` span of a plain-text message, in UTF-16 code units as Telegram counts them. */
+export interface TelegramPreEntity {
+  type: 'pre';
+  offset: number;
+  length: number;
+}
+
+const FENCE_LINE = /^`{3,}$/;
+
+/**
+ * A message sent exactly as written (a shell approval): plain text with no parse mode, so nothing
+ * is escaped, linkified, flattened or cut. Its one fenced block — opened by a line of three or
+ * more backticks, closed by the same line — becomes a `pre` entity in place of the two fence lines.
+ */
+export function telegramVerbatimMessage(text: string): { text: string; entities: TelegramPreEntity[] } {
+  const lines = text.split('\n');
+  const open = lines.findIndex((line) => FENCE_LINE.test(line));
+  const close = open < 0 ? -1 : lines.indexOf(lines[open], open + 1);
+  if (close < 0) return { text, entities: [] };
+  const prefix = open > 0 ? `${lines.slice(0, open).join('\n')}\n` : '';
+  const body = lines.slice(open + 1, close).join('\n');
+  const suffix = close < lines.length - 1 ? `\n${lines.slice(close + 1).join('\n')}` : '';
+  return {
+    text: `${prefix}${body}${suffix}`,
+    entities: body ? [{ type: 'pre', offset: prefix.length, length: body.length }] : [],
+  };
+}
+
 export function telegramVisibleLength(html: string): number {
   return html
     .replace(/<[^>]+>/g, '')
@@ -126,7 +155,21 @@ export function formatResponseForTelegramHtml(input: string): string {
       : text;
     return `<a href="${escapeTelegramAttribute(safeHref)}">${anchorText}</a>`;
   };
-  renderer.blockquote = ({ tokens }) => `<blockquote>${renderBlock(tokens).trim()}</blockquote>\n`;
+  // A forwarded post's text folds (`expandableQuote`). Telegram quotes do not nest: a quote
+  // inside the folded one (a post it shares) keeps only its words.
+  let folding = false;
+  renderer.blockquote = ({ tokens, text }) => {
+    if (folding) return renderBlock(tokens);
+    const body = expandableQuoteBody(text);
+    if (body === null) return `<blockquote>${renderBlock(tokens).trim()}</blockquote>\n`;
+    folding = true;
+    try {
+      const inner = renderBlock(telegramMarked.lexer(body, { gfm: true, breaks: true })).trim();
+      return inner ? `<blockquote expandable>${inner}</blockquote>\n` : '';
+    } finally {
+      folding = false;
+    }
+  };
   renderer.paragraph = ({ tokens }) => `${renderInline(tokens)}\n\n`;
   renderer.list = ({ items }) => `${items.map((item) => renderer.listitem(item)).join('')}\n`;
   // Telegram has no checkbox: marked's default renders `<input type="checkbox">`, which is not
@@ -184,7 +227,7 @@ export function formatResponseForTelegramHtml(input: string): string {
  * anything else appearing in the output did not come from here.
  */
 const SUPPORTED_TAG =
-  /^<\/(?:a|b|i|code|pre|blockquote)>$|^<(?:b|i|code|pre|blockquote)>$|^<a href="[^"<>]*">$|^<code class="language-[^"<>]*">$/;
+  /^<\/(?:a|b|i|code|pre|blockquote)>$|^<(?:b|i|code|pre|blockquote|blockquote expandable)>$|^<a href="[^"<>]*">$|^<code class="language-[^"<>]*">$/;
 
 /**
  * Last line of defence before parse_mode='HTML': Telegram rejects the whole message on one unknown

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box, Text } from '@mantine/core';
+import { READING_TEXT_STYLE } from '../../styles/readingText';
 
 interface ExtraBlockProps {
   heading: string;
@@ -19,7 +20,7 @@ export const ExtraBlock = React.memo<ExtraBlockProps>(({ heading, content, Markd
     }}>
       {heading}
     </Text>
-    <Box className="md-content" style={{ fontSize: 'var(--font-size-md)' }}>
+    <Box className="md-content" style={READING_TEXT_STYLE}>
       <MarkdownRenderer>{content}</MarkdownRenderer>
     </Box>
   </Box>

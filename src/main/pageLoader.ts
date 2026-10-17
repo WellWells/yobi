@@ -3,12 +3,25 @@ import { TextDecoder } from 'node:util';
 import { userAgentForUrl } from './userAgent';
 import { loadURLFollowingIdentity } from './navigationIdentity';
 import { SILENT_WEB_PREFERENCES, muteWindow } from './silentWindow';
-import { markHeadless, unmarkHeadless } from './requestFilter';
+import { guardPublicOnly, markHeadless, unguardPublicOnly, unmarkHeadless } from './requestFilter';
 import { appendLogLine, fileStamp } from './logFile';
+import { withTimeout } from './promiseRace';
+import {
+  assertPublicHostLiteral, assertPublicWebUrl, followPublicRedirects, isPublicWebOnly,
+  PrivateAddressRefusedError,
+} from './net/publicWebScope';
+import type { RawHop } from './net/publicWebScope';
 
 const LOAD_TIMEOUT_MS = 25_000;
 
 const RAW_FETCH_TIMEOUT_MS = 15_000;
+
+/**
+ * The largest body a raw fetch keeps. The biggest honest answers it reads are long podcast feeds
+ * and video pages of a few MB; past this the body is a server streaming at us, and every byte
+ * would sit in memory (then be decoded and parsed) until the 15 s ceiling.
+ */
+const RAW_FETCH_MAX_BYTES = 10 * 1_048_576;
 
 const JS_SETTLE_MS = 1_500;
 
@@ -25,74 +38,176 @@ export function ensureHttpScheme(url: string): string {
 export interface RawFetchOptions {
   headers?: Record<string, string>;
   validateRedirectHost?: (host: string) => void;
+  /**
+   * Sends the cookies this session holds for the URL, as a page open in it would: a site the
+   * user signed in to in its own partition. Without it no cookie goes out.
+   */
+  cookiesFrom?: Electron.Session;
+  /**
+   * The page origin the request comes from, for an API that wants a same-origin call. Chromium
+   * refuses (`net::ERR_INVALID_ARGUMENT`) a cookie-carrying request that sets
+   * `Sec-Fetch-Site: same-origin` without one.
+   */
+  origin?: string;
+  /** A form POST, for an API the site's own pages call that way; GET when unset. */
+  post?: { contentType: string; body: string };
+  /** Aborts the request and rejects with the signal's reason: a flow's Stop ends the read. */
+  signal?: AbortSignal;
+}
+
+/** What a stopped read rejects with: the signal's own reason, or a plain error when it has none. */
+function abortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : new Error('Raw fetch aborted');
 }
 
 export interface RawFetchResponse {
   status: number;
   text: string;
+  /**
+   * Where the answer came from after the redirects `validateRedirectHost` let through (the URL
+   * asked for without that option): a share link names its post only there.
+   */
+  finalUrl: string;
 }
 
 export async function fetchRawText(url: string, options?: RawFetchOptions): Promise<string> {
   return (await fetchRawResponse(url, options)).text;
 }
 
-/** Resolves for every HTTP status; the caller decides what an error status means. */
-export function fetchRawResponse(url: string, options?: RawFetchOptions): Promise<RawFetchResponse> {
+/**
+ * Resolves for every HTTP status; the caller decides what an error status means. Under a bot
+ * message (`isPublicWebOnly`) every hop is resolved and refused when private before it is sent.
+ */
+export async function fetchRawResponse(url: string, options?: RawFetchOptions): Promise<RawFetchResponse> {
+  const start = ensureHttpScheme(url);
+  if (!isPublicWebOnly()) return responseOf(await requestRaw(start, options, false));
+  const { response, finalUrl } = await followPublicRedirects(
+    start,
+    options?.validateRedirectHost,
+    // A redirect that turns the request into a GET (301/302/303) drops the form body.
+    (hopUrl, method) => requestRaw(hopUrl, method === 'GET' ? { ...options, post: undefined } : options, true),
+  );
+  return { ...response, finalUrl };
+}
+
+function responseOf(hop: RawHop<RawFetchResponse>): RawFetchResponse {
+  if ('response' in hop) return hop.response;
+  throw new Error(`Unexpected redirect to ${hop.redirectTo}`);
+}
+
+/**
+ * One request. With `stopAtRedirect` a redirect ends it with the target instead of being followed,
+ * for `followPublicRedirects` to check before the next hop.
+ */
+function requestRaw(
+  url: string,
+  options: RawFetchOptions | undefined,
+  stopAtRedirect: boolean,
+): Promise<RawHop<RawFetchResponse>> {
   return new Promise((resolve, reject) => {
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     const guard = options?.validateRedirectHost;
+    const cookiesFrom = options?.cookiesFrom;
+    const post = options?.post;
+    const signal = options?.signal;
+    if (signal?.aborted) {
+      reject(abortReason(signal));
+      return;
+    }
+    let finalUrl = url;
     const request = net.request({
-      url: ensureHttpScheme(url),
-      method: 'GET',
-      redirect: guard ? 'manual' : 'follow',
+      url: finalUrl,
+      method: post ? 'POST' : 'GET',
+      redirect: guard || stopAtRedirect ? 'manual' : 'follow',
+      ...(cookiesFrom ? { session: cookiesFrom, useSessionCookies: true } : {}),
+      ...(options?.origin ? { origin: options.origin } : {}),
     });
     for (const [name, value] of Object.entries(options?.headers ?? {})) request.setHeader(name, value);
+    if (post) request.setHeader('Content-Type', post.contentType);
     const chunks: Buffer[] = [];
 
-    if (guard) {
+    // Every way the request settles goes through here: the timer and the Stop listener both go.
+    const settle = (): void => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const onAbort = (): void => {
+      settle();
+      request.abort();
+      if (signal) reject(abortReason(signal));
+    };
+
+    if (stopAtRedirect) {
+      request.on('redirect', (_status, method, redirectUrl) => {
+        settle();
+        request.abort();
+        resolve({ redirectTo: redirectUrl, method });
+      });
+    } else if (guard) {
       request.on('redirect', (_status, _method, redirectUrl) => {
         let host = '';
         try {
           host = new URL(redirectUrl).hostname.toLowerCase();
           guard(host);
         } catch (err) {
-          clearTimeout(timer);
+          settle();
           request.abort();
           reject(err instanceof Error ? err : new Error(String(err)));
           return;
         }
+        // Tracked only here: a request that follows redirects on its own never reports them.
+        finalUrl = redirectUrl;
         request.followRedirect();
       });
     }
 
     request.on('response', (response) => {
-      response.on('data', (chunk: Buffer) => chunks.push(chunk));
+      let received = 0;
+      let overflowed = false;
+      response.on('data', (chunk: Buffer) => {
+        if (overflowed) return;
+        received += chunk.length;
+        if (received > RAW_FETCH_MAX_BYTES) {
+          overflowed = true;
+          settle();
+          request.abort();
+          reject(new Error(`Raw fetch body exceeded ${RAW_FETCH_MAX_BYTES / 1_048_576} MB`));
+          return;
+        }
+        chunks.push(chunk);
+      });
       response.on('end', () => {
-        clearTimeout(timer);
+        if (overflowed) return;
+        settle();
         resolve({
-          status: response.statusCode,
-          text: decodeBody(Buffer.concat(chunks), headerValue(response.headers['content-type'])),
+          response: {
+            status: response.statusCode,
+            text: decodeBody(Buffer.concat(chunks), headerValue(response.headers['content-type'])),
+            finalUrl,
+          },
         });
       });
       response.on('error', (err: Error) => {
-        clearTimeout(timer);
+        settle();
         reject(err);
       });
     });
 
     request.on('error', (err: Error) => {
-      clearTimeout(timer);
+      settle();
       reject(err);
     });
 
     // Armed only once `request` exists: a throwing net.request must leave no timer behind.
     timer = setTimeout(() => {
+      settle();
       request.abort();
       reject(new Error(`Raw fetch timed out after ${RAW_FETCH_TIMEOUT_MS / 1_000}s`));
     }, RAW_FETCH_TIMEOUT_MS);
+    signal?.addEventListener('abort', onAbort, { once: true });
 
-    request.end();
+    request.end(post?.body);
   });
 }
 
@@ -133,21 +248,36 @@ export async function loadPageHtml(url: string, validateRedirectHost?: (host: st
 }
 
 async function snapshotDom(win: BrowserWindow): Promise<PageLoadResult> {
-  let execTimer: ReturnType<typeof setTimeout> | undefined;
-  const execTimeout = new Promise<never>((_, rej) => {
-    execTimer = setTimeout(
-      () => rej(new Error(`DOM serialization timed out after ${JS_EXEC_TIMEOUT_MS / 1_000}s`)),
-      JS_EXEC_TIMEOUT_MS,
-    );
-  });
-  const html = (await Promise.race([
+  const html = (await withTimeout(
     win.webContents.executeJavaScript('document.documentElement.innerHTML'),
-    execTimeout,
-  ]).finally(() => clearTimeout(execTimer))) as string;
+    JS_EXEC_TIMEOUT_MS,
+    () => new Error(`DOM serialization timed out after ${JS_EXEC_TIMEOUT_MS / 1_000}s`),
+  )) as string;
   return { html, finalUrl: win.webContents.getURL() };
 }
 
+/**
+ * Under a bot message (`isPublicWebOnly`) the window reads the public web only: the address is
+ * resolved and checked before the window exists; the request filter then checks every request the
+ * window makes (each redirect hop of the page included, since Electron runs `onBeforeRequest`
+ * again per hop) and a refused page fails the load; `will-redirect` refuses private literals
+ * synchronously as a second line; popups are denied; and the address the page ended on is checked
+ * again before its DOM is read.
+ *
+ * Residual: Chromium resolves names itself, after our lookup. A name that answers public to us and
+ * private to Chromium a moment later (DNS rebinding) passes; the final-URL check narrows it but
+ * cannot see the address Chromium connected to.
+ */
 export function loadPageResult(url: string, validateRedirectHost?: (host: string) => void): Promise<PageLoadResult> {
+  if (!isPublicWebOnly()) return openPageWindow(url, validateRedirectHost, false);
+  return assertPublicWebUrl(url).then(() => openPageWindow(url, validateRedirectHost, true));
+}
+
+function openPageWindow(
+  url: string,
+  validateRedirectHost: ((host: string) => void) | undefined,
+  publicOnly: boolean,
+): Promise<PageLoadResult> {
   return new Promise((resolve, reject) => {
     let settled = false;
     let domReady = false;
@@ -174,6 +304,8 @@ export function loadPageResult(url: string, validateRedirectHost?: (host: string
 
     win.webContents.setUserAgent(userAgentForUrl(url));
     muteWindow(win);
+    // Electron has no popup blocker: a window.open() from the page would show a real window.
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
     // Nobody looks at this window, so the request filter may drop frames, images and fonts.
     const contentsId = win.webContents.id;
@@ -181,11 +313,23 @@ export function loadPageResult(url: string, validateRedirectHost?: (host: string
 
     const teardown = (): void => {
       unmarkHeadless(contentsId);
+      unguardPublicOnly(contentsId);
       safeDestroy(win);
+    };
+
+    const fail = (err: unknown): void => {
+      if (settled) return;
+      settled = true;
+      if (settleTimer) clearTimeout(settleTimer);
+      clearTimeout(timeout);
+      teardown();
+      reject(err instanceof Error ? err : new Error(String(err)));
     };
 
     const finish = async (): Promise<void> => {
       try {
+        // The page may have moved itself somewhere else since it was checked.
+        if (publicOnly) await assertPublicWebUrl(win.webContents.getURL());
         const result = await snapshotDom(win);
         teardown();
         resolve(result);
@@ -195,20 +339,19 @@ export function loadPageResult(url: string, validateRedirectHost?: (host: string
       }
     };
 
-    if (validateRedirectHost) {
+    if (publicOnly) {
+      guardPublicOnly(contentsId, (refusedUrl) => fail(new PrivateAddressRefusedError(refusedUrl)));
+    }
+
+    if (validateRedirectHost || publicOnly) {
       const guardNavigation = (event: Electron.Event, targetUrl: string): void => {
-        let host = '';
         try {
-          host = new URL(targetUrl).hostname.toLowerCase();
-          validateRedirectHost(host);
+          const host = new URL(targetUrl).hostname.toLowerCase();
+          if (publicOnly) assertPublicHostLiteral(host, targetUrl);
+          validateRedirectHost?.(host);
         } catch (err) {
           event.preventDefault();
-          if (settled) return;
-          settled = true;
-          if (settleTimer) clearTimeout(settleTimer);
-          clearTimeout(timeout);
-          teardown();
-          reject(err instanceof Error ? err : new Error(String(err)));
+          fail(err);
         }
       };
       win.webContents.on('will-redirect', guardNavigation);

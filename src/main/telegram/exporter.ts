@@ -1,4 +1,5 @@
 import type { TelegramReplyTarget } from '../../shared/types';
+import { escapeRegExp } from '../../shared/regex';
 
 const TELEGRAM_EXPORT_TTL_MS = 30 * 60 * 1000;
 export const TELEGRAM_EXPORT_CB_PREFIX = 'expdl';
@@ -90,7 +91,7 @@ export function buildExportCallbackData(token: string, format: TelegramExportFor
 }
 
 export function parseExportCallbackData(data: string): { token: string; format: TelegramExportFormat } | null {
-  const escapedPrefix = TELEGRAM_EXPORT_CB_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escapedPrefix = escapeRegExp(TELEGRAM_EXPORT_CB_PREFIX);
   const match = data.match(new RegExp(`^${escapedPrefix}:([A-Z0-9]+):(png|webp|pdf)$`, 'i'));
   if (!match) return null;
   const token = match[1].toUpperCase();

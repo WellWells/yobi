@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Stack, Group, Text, Checkbox } from '@mantine/core';
-import { Download } from 'lucide-react';
+import { Upload } from 'lucide-react';
 import { AppButton } from '../../../components/AppButton';
 import { AppModal } from '../../../components/AppModal';
 import { backupApi } from '../../../api/electronApi';
@@ -64,7 +64,7 @@ export const BackupExportModal: React.FC<Props> = ({ open, t, onClose }) => {
       opened={open}
       onClose={onClose}
       title={t('settings.backup.export.title')}
-      icon={<Download size={16} />}
+      icon={<Upload size={16} />}
       size="md"
       zIndex={Z_MODAL}
     >
@@ -109,7 +109,7 @@ export const BackupExportModal: React.FC<Props> = ({ open, t, onClose }) => {
         <Group justify="flex-end">
           <AppButton
             variant="filled"
-            leftSection={<Download size={14} />}
+            leftSection={<Upload size={14} />}
             loading={busy}
             disabled={selected.size === 0 || !anyAvailable}
             onClick={() => { void handleExport(); }}

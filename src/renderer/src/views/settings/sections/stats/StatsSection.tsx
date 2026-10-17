@@ -16,6 +16,7 @@ import { RequestsCard } from './RequestsCard';
 import { TokensCard } from './TokensCard';
 import { KeysCard } from './KeysCard';
 import { ConversationCard } from './ConversationCard';
+import { DownloadsCard } from './DownloadsCard';
 import { FlowHealthCard, StepIssuesCard, aggregateFlowStats } from './flow';
 
 type Metrics = ReturnType<typeof useMetrics>;
@@ -55,7 +56,8 @@ export const StatsSection: React.FC<Props> = ({ metrics, t, showSection, section
   }, [metrics]);
 
   const hasData = stats.runTotal > 0 || stats.requestTotal > 0
-    || stats.tokens.input > 0 || stats.tokens.output > 0 || flowStats.totalRuns > 0;
+    || stats.tokens.input > 0 || stats.tokens.output > 0 || flowStats.totalRuns > 0
+    || stats.downloadTotals.success + stats.downloadTotals.failure > 0;
 
   return (
     <Box display={showSection(TAG_SETS.stats, 'stats') ? 'block' : 'none'}>
@@ -113,6 +115,7 @@ export const StatsSection: React.FC<Props> = ({ metrics, t, showSection, section
                 <>
                   <StepIssuesCard stats={flowStats} t={t} onInspect={inspectFailures} />
                   <FlowHealthCard stats={flowStats} t={t} onInspect={inspectFailures} />
+                  <DownloadsCard stats={stats} t={t} onInspectFailures={inspectFailures} />
                 </>
               )}
               <RequestsCard stats={stats} scope={scope} t={t} onInspectFailures={inspectFailures} />

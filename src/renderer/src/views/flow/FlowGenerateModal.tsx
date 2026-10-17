@@ -181,11 +181,15 @@ export const FlowGenerateModal: React.FC<FlowGenerateModalProps> = ({
                     <Text fz="xs">{`${index + 1}. ${question}`}</Text>
                     <AppTextInput
                       value={answers[index] ?? ''}
-                      onChange={(e) => setAnswers((prev) => {
-                        const next = [...prev];
-                        next[index] = e.currentTarget.value;
-                        return next;
-                      })}
+                      onChange={(e) => {
+                        // Read before the updater: React may run it after currentTarget is cleared.
+                        const value = e.currentTarget.value;
+                        setAnswers((prev) => {
+                          const next = [...prev];
+                          next[index] = value;
+                          return next;
+                        });
+                      }}
                       placeholder={t('flow.build.questions.placeholder')}
                     />
                   </Stack>

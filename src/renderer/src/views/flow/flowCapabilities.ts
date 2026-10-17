@@ -34,6 +34,8 @@ const ACCESS_BY_SKILL: Partial<Record<SkillType, FlowAccess>> = {
   file_list: 'readFiles',
   file_write: 'writeFiles',
   file_download: 'writeFiles',
+  youtube_download: 'writeFiles',
+  x_media: 'writeFiles',
   capture: 'screen',
   clipboard: 'clipboard',
   http: 'sendData',
@@ -115,10 +117,6 @@ export function analyzeFlow(flow: FlowDefinition): FlowCapabilities {
   };
 }
 
-export function analyzeFlows(flows: FlowDefinition[]): boolean {
-  return flows.some((flow) => analyzeFlow(flow).hasRisk);
-}
-
 const SUMMARY_KEYS: Partial<Record<SkillType, string[]>> = {
   shell: ['command'],
   run: ['path', 'args'],
@@ -135,9 +133,12 @@ const SUMMARY_KEYS: Partial<Record<SkillType, string[]>> = {
   line_read: ['chat', 'query'],
   youtube: ['url'],
   youtube_subs: ['channels'],
+  youtube_info: ['input'],
+  youtube_download: ['url', 'quality'],
   x_posts: ['accounts'],
   x_thread: ['url'],
   x_trends: ['maxItems'],
+  x_media: ['input'],
   llm: ['prompt'],
   bot: ['message'],
   email_send: ['to', 'subject'],
@@ -167,7 +168,7 @@ const CODE_SKILLS: ReadonlySet<SkillType> = new Set<SkillType>(['shell', 'run', 
 /** Summaries that are a target — URL or path — where I/l and 0/O lookalikes must stay apart. */
 const TARGET_SUMMARY_SKILLS: ReadonlySet<SkillType> = new Set<SkillType>([
   'browser', 'browser_open', 'http', 'rss', 'scraper', 'gmap_reviews', 'youtube', 'x_thread',
-  'file_download', 'file_read', 'file_delete', 'file_list', 'file_write',
+  'youtube_download', 'file_download', 'file_read', 'file_delete', 'file_list', 'file_write',
 ]);
 
 // A bracket followed by what JSON can hold there, so "[Note] … [1][2]" stays prose.

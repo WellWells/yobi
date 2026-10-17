@@ -62,11 +62,6 @@ export class LineService implements LineServiceLike {
     return scanned;
   }
 
-  /** Warms the key cache in the background so the first tool call does not wait for the key scan. */
-  async warmUp(): Promise<void> {
-    await this.getReader();
-  }
-
   reset(): void {
     this.handle?.close();
     this.handle = null;

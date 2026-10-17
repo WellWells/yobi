@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type React from 'react';
-import { comboFromEvent, modifiersFromEvent, toTokens } from '../../../shared/shortcuts';
+import { comboFromEvent, comboLabel, joinTokens, modifiersFromEvent, toTokens } from '../../../shared/shortcuts';
 import { settingsApi } from '../api/electronApi';
 import { isMac } from '../utils/keyLabels';
 
@@ -77,14 +77,14 @@ export function useComboRecorder({
     if (MODIFIER_KEYS.has(event.key)) {
       setRejected(false);
       const partial = modifiersFromEvent(event, isMac);
-      setDraft(partial.length ? toTokens(`${partial.join('+')}+X`, isMac).slice(0, -1).join(' + ') : '');
+      setDraft(partial.length ? joinTokens(toTokens(`${partial.join('+')}+X`, isMac).slice(0, -1), isMac) : '');
       return;
     }
 
     const combo = comboFromEvent(event, isMac);
     if (!combo || !isCommittable(combo, allowBareKeys)) {
       setRejected(true);
-      setDraft(combo ? toTokens(combo, isMac).join(' + ') : '');
+      setDraft(combo ? comboLabel(combo, isMac) : '');
       return;
     }
 

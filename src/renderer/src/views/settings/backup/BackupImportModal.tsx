@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Box, Flex, Group, Stack, Text, Checkbox } from '@mantine/core';
-import { FileArchive, Upload } from 'lucide-react';
+import { Download, FileArchive } from 'lucide-react';
 import { AppButton } from '../../../components/AppButton';
 import { AppModal } from '../../../components/AppModal';
 import { backupApi, systemApi } from '../../../api/electronApi';
@@ -12,24 +12,13 @@ import type {
   BackupInspectResult,
 } from '../../../../../shared/types';
 import { Z_MODAL } from '../../../config/zLayers';
+import { backupImpactLabel } from './backupLabels';
 
 interface Props {
   open: boolean;
   t: (key: string) => string;
   onClose: () => void;
   onImported: (result: BackupImportResult) => Promise<void> | void;
-}
-
-function impactText(
-  t: (key: string) => string,
-  id: BackupCategoryId,
-  incoming: number,
-  current: number,
-): string {
-  const suffix = id === 'config' ? 'config' : id === 'outputs' ? 'outputs' : 'replace';
-  return t(`settings.backup.impact.${suffix}`)
-    .replace('{{incoming}}', String(incoming))
-    .replace('{{current}}', String(current));
 }
 
 export const BackupImportModal: React.FC<Props> = ({ open, t, onClose, onImported }) => {
@@ -130,7 +119,7 @@ export const BackupImportModal: React.FC<Props> = ({ open, t, onClose, onImporte
       opened={open}
       onClose={onClose}
       title={inspect ? t('settings.backup.import.warningTitle') : t('settings.backup.import.title')}
-      icon={<Upload size={16} />}
+      icon={<Download size={16} />}
       size="md"
       zIndex={Z_MODAL}
     >
@@ -158,7 +147,7 @@ export const BackupImportModal: React.FC<Props> = ({ open, t, onClose, onImporte
           <Group justify="center">
             <AppButton
               variant="default"
-              leftSection={<Upload size={14} />}
+              leftSection={<Download size={14} />}
               onClick={() => { void handleChoose(); }}
             >
               {t('settings.backup.import.choose')}
@@ -181,7 +170,7 @@ export const BackupImportModal: React.FC<Props> = ({ open, t, onClose, onImporte
                   <Stack gap={0}>
                     <Text fz="sm">{t(`settings.backup.category.${item.id}`)}</Text>
                     <Text fz="xs" c={item.id === 'outputs' ? 'var(--mantine-color-error)' : 'dimmed'}>
-                      {impactText(t, item.id, item.incomingCount, item.currentCount)}
+                      {backupImpactLabel(t, item.id, item.incomingCount, item.currentCount)}
                     </Text>
                   </Stack>
                 }
@@ -198,7 +187,7 @@ export const BackupImportModal: React.FC<Props> = ({ open, t, onClose, onImporte
             <AppButton
               variant="filled"
               color="red"
-              leftSection={<Upload size={14} />}
+              leftSection={<Download size={14} />}
               loading={busy}
               disabled={selected.size === 0}
               onClick={() => { void handleRestore(); }}
