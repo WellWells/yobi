@@ -22,6 +22,11 @@ export interface RailTrain {
   typeEn: string;
   stops: RailStop[];
   note?: string;
+  /**
+   * Set on a train of an earlier service day whose stops were moved onto the day asked (still
+   * running after midnight): the day it started, which is the run TRA's train page reports on.
+   */
+  serviceDay?: string;
 }
 
 /** One train ridden from one station to another. */

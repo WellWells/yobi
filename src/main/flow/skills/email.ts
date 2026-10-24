@@ -1,11 +1,11 @@
 import * as fs from 'node:fs/promises';
-import { createTransport } from 'nodemailer';
 import { config } from '../../config';
 import { parseAttachmentList, resolveSafeLocalAttachment } from '../../attachmentGuard';
 import { sendLog } from '../../helpers';
-import { isSmtpAccountComplete } from '../../smtpAccount';
+import { findMailAccount } from '../../mail/mailAccount';
 import { FlowUserError } from '../userError';
-import { renderEmailHtml } from './emailHtml';
+import { mailOptions } from '../../mail/mailCompose';
+import { openMailSmtp } from '../../mail/mailSignIn';
 
 /**
  * Resolves the step's attachments to local paths this run may send, using the same
@@ -60,40 +60,36 @@ export async function execEmailSend(skillConfig: Record<string, string>): Promis
     throw new FlowUserError('flow.error.emailFields', {}, 'email_send: requires "to" and "subject"');
   }
 
-  // The SMTP form lives on the email step itself (shared by every email step); Settings has none.
-  const smtp = config.smtp;
-  if (!isSmtpAccountComplete(smtp)) {
+  // The mail accounts are entered on the Mail connector card (Settings › Connectors › Mail); the
+  // step names one by address or id, blank = the default. A named account that is gone is an
+  // error — never a silent switch to another sender.
+  const wanted = (skillConfig.account ?? '').trim();
+  const account = findMailAccount({ mailAccounts: config.mailAccounts ?? [], mailDefaultId: config.mailDefaultId ?? '' }, wanted);
+  if (!account) {
+    if (wanted) {
+      throw new FlowUserError('flow.error.mailAccountUnknown', { account: wanted }, `email_send: no mail account "${wanted}" in Settings › Connectors › Mail`);
+    }
     throw new FlowUserError(
       'flow.error.smtpMissing',
       {},
-      'email_send: SMTP not configured — fill in the SMTP account on the email step',
+      'email_send: no mail account — set one in Settings › Connectors › Mail',
     );
   }
+  const smtp = account.smtp;
 
   const attachments = await resolveMailAttachments(skillConfig.attachments, skillConfig.__attachmentAllowlist);
-  // The body is markdown (usually an llm step's answer). The formatted HTML is what a mail client
-  // shows; the markdown itself stays as the plain-text part for clients that do not render HTML.
-  const html = body.trim() ? renderEmailHtml(body) : '';
-
-  const transporter = createTransport({
-    host: smtp.host,
-    port: smtp.port,
-    secure: smtp.port === 465,
-    auth: { user: smtp.user, pass: smtp.password },
-    // Forced onto every message: even if an interpolated {{variable}} lands something
-    // URL-shaped in a content field, nodemailer must not go and fetch it from here.
-    disableUrlAccess: true,
-  });
+  // The body is markdown (usually an llm step's answer): the Mail connector builds its drafts
+  // and sends through the same composer, so both look the same in the recipient's client.
+  let transporter: Awaited<ReturnType<typeof openMailSmtp>>;
+  try {
+    transporter = await openMailSmtp(account);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new FlowUserError('flow.error.emailSendFailed', { error: detail }, `email_send: ${detail}`);
+  }
 
   try {
-    await transporter.sendMail({
-      from: fromName ? `${fromName} <${smtp.user}>` : smtp.user,
-      to,
-      subject,
-      text: body,
-      ...(html ? { html } : {}),
-      ...(attachments.length > 0 ? { attachments } : {}),
-    });
+    await transporter.sendMail(mailOptions({ from: smtp.user, fromName, to, subject, body, attachments }));
     const withFiles = attachments.length > 0 ? ` (${attachments.length} attachment(s))` : '';
     sendLog(`✉️ [Flow] Email sent to: ${to}${withFiles}`);
     return '';

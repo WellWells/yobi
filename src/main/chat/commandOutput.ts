@@ -1,5 +1,5 @@
-import * as fs from 'node:fs/promises';
 import { buildOutputMarkdown, saveOutput } from '../output';
+import { resolveConversationPath } from '../conversationIndex';
 import type { MarkdownOptions } from '../output';
 import { getOutputDir } from '../files';
 import { sendLog } from '../helpers';
@@ -92,10 +92,12 @@ export async function saveCommandOutput(args: CommandResult): Promise<string> {
 
   if (conversationPath) {
     try {
-      await fs.access(conversationPath);
+      // Moved into a folder while the command ran: found again by its id, not started over.
+      const target = await resolveConversationPath({ path: conversationPath });
+      if (!target) throw new Error(`${conversationPath} no longer exists`);
       // Same meta builder as the temporary-chat path, so both write identical fields.
-      await appendConversationTurn(conversationPath, { prompt, response, meta: turnMetaFor(args) });
-      return conversationPath;
+      await appendConversationTurn(target, { prompt, response, meta: turnMetaFor(args) });
+      return target;
     } catch (err: unknown) {
       const detail = err instanceof Error ? err.message : String(err);
       sendLog(`⚠️ Could not append the command result to its conversation (${detail}) — saving as a new file`);

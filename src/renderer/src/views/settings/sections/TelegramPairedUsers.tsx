@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
-import { ActionIcon, Badge, Box, Group, Stack, Text, Tooltip } from '@mantine/core';
-import { Unlink } from 'lucide-react';
+import { Badge, Box, Group, Stack, Text } from '@mantine/core';
 import { WebDialog } from '../../../components/WebDialog';
 import { telegramAccountHandle, telegramAccountLabel } from '../../../utils/botAccountLabel';
-import { BotUserPermissions } from './BotUserPermissions';
+import { BotUserPermissions, UnpairButton } from './BotUserPermissions';
 import type { BotAccessControls } from '../hooks/useBotAccessControls';
 import type { BotContact, TelegramPairedUser } from '../../../../../shared/types';
 
@@ -57,16 +56,7 @@ export const TelegramPairedUsers: React.FC<Props> = ({
                   </Badge>
                 )}
               </Group>
-              <Tooltip label={t('settings.telegram.pairing.unpair')} position="top">
-                <ActionIcon
-                  variant="subtle"
-                  size={26}
-                  onClick={() => setPending(user)}
-                  aria-label={t('settings.telegram.pairing.unpair')}
-                >
-                  <Unlink size={13} />
-                </ActionIcon>
-              </Tooltip>
+              <UnpairButton label={t('settings.telegram.pairing.unpair')} onClick={() => setPending(user)} />
             </Group>
             <Box mt={6}>
               <BotUserPermissions access={access} userId={String(user.userId)} t={t} />

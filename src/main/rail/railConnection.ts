@@ -12,6 +12,10 @@ import { connectInProcess, type InProcessConnection } from '../mcp/inProcessServ
 import { RAIL_CACHE_DIR_NAME } from './railCache';
 import { createRailMcpServer } from './railMcpServer';
 import { createRailService, type RailService } from './railService';
+import { METRO_CATALOG } from '../metro/metroCatalog';
+import { saveMapPicture } from '../metro/metroMapPicture';
+import { createMetroMemo } from '../metro/metroMemo';
+import { createMetroService, type MetroService } from '../metro/metroService';
 
 let shared: RailService | null = null;
 
@@ -34,6 +38,21 @@ function railService(): RailService {
   return shared;
 }
 
+let sharedMetro: MetroService | null = null;
+
+/** The metro tools' service: one cache for every question, kept across reconnects like the rail one. */
+function metroService(): MetroService {
+  if (sharedMetro) return sharedMetro;
+  sharedMetro = createMetroService({
+    fetchFn: (input, init) => fetch(input, init),
+    memo: createMetroMemo(),
+    now: () => new Date(),
+    catalog: METRO_CATALOG,
+    mapPicture: saveMapPicture,
+  });
+  return sharedMetro;
+}
+
 export async function connectRailMcp(clientName: string, clientVersion: string): Promise<InProcessConnection> {
-  return connectInProcess(createRailMcpServer(railService()), clientName, clientVersion);
+  return connectInProcess(createRailMcpServer(railService(), metroService()), clientName, clientVersion);
 }

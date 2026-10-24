@@ -36,7 +36,7 @@ const PROVIDER_DESCRIPTION_KEYS: Record<Provider, string> = {
 };
 
 const BOT_RESERVED_STATIC_COMMANDS = [
-  'start', 'init', 'output', 'status', 'restart', 'pair', 'help', BUILTIN_NEW_COMMAND,
+  'start', 'init', 'output', 'status', 'restart', 'groups', 'users', 'invite', 'pair', 'help', BUILTIN_NEW_COMMAND,
 ];
 
 export const BOT_STATIC_COMMANDS = [

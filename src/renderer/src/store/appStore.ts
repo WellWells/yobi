@@ -105,7 +105,8 @@ interface AppState {
   showTokenUsage: boolean;
 
   hotkey: string;
-  hotkeyEnabled: boolean;
+  /** The screen-region hotkey; empty = off. */
+  regionHotkey: string;
   userNickname: string;
   aiUrl: string;
   aiUrlLoaded: boolean;
@@ -148,7 +149,7 @@ interface AppState {
   resetMarkdownZoom: () => void;
   setShowTokenUsage: (show: boolean) => void;
   setHotkey: (hotkey: string) => void;
-  setHotkeyEnabled: (enabled: boolean) => void;
+  setRegionHotkey: (hotkey: string) => void;
   setUserNickname: (nickname: string) => void;
   setAiUrl: (url: string) => void;
   hydrateAiUrl: (url: string) => void;
@@ -179,8 +180,9 @@ export const useAppStore = create<AppState>((set) => ({
   currentView: 'chat',
   logLevelRequest: null,
   settingsCategoryRequest: null,
-  hotkey: 'Alt+G',
-  hotkeyEnabled: true,
+  // Empty until bootstrap reads it: empty also means "off", so nothing advertises a combo early.
+  hotkey: '',
+  regionHotkey: '',
   userNickname: '',
   aiUrl: DEFAULT_MODEL_URL,
   aiUrlLoaded: false,
@@ -323,7 +325,7 @@ export const useAppStore = create<AppState>((set) => ({
     set({ showTokenUsage });
   },
   setHotkey: (hotkey) => set({ hotkey }),
-  setHotkeyEnabled: (hotkeyEnabled) => set({ hotkeyEnabled }),
+  setRegionHotkey: (regionHotkey) => set({ regionHotkey }),
   setUserNickname: (userNickname) => set({ userNickname }),
   setAiUrl: (aiUrl) => set({ aiUrl, aiUrlLoaded: true }),
   hydrateAiUrl: (aiUrl) => set((s) => (s.aiUrlLoaded ? s : { aiUrl, aiUrlLoaded: true })),

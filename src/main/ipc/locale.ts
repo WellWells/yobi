@@ -4,6 +4,8 @@ import { IPC } from '../../shared/types';
 import { config, saveConfig } from '../config';
 import { isValidLocaleTag, loadLanguageData, setLangCache } from '../i18n';
 import { getLanguageDir, getUserLanguageDir } from '../files';
+import { broadcastLinkRecognition } from '../linkRecognition';
+import { rebroadcastFlowMetrics } from '../flowMetrics';
 import type { IpcContext } from './context';
 
 async function listPacksIn(dir: string): Promise<string[]> {
@@ -24,9 +26,12 @@ function applyLocaleChange(ctx: IpcContext, lang: string, markUserSet: boolean):
   config.locale = nextLocale;
   if (markUserSet) config.localeSetByUser = true;
   saveConfig(markUserSet ? { locale: nextLocale, localeSetByUser: true } : { locale: nextLocale });
+  // Yobi's language is half of where the user is: the link switches' defaults and the Taiwan row follow it.
+  broadcastLinkRecognition();
   void loadLanguageData(nextLocale).then((data) => {
     if (!data) return;
     setLangCache(data);
+    rebroadcastFlowMetrics();
     ctx.onTrayMenuRebuild?.();
     void ctx.telegramRuntime.syncWithConfig();
   });

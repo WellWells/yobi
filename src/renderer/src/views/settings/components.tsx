@@ -5,12 +5,14 @@ export { ToggleSwitch } from '../../components/ToggleSwitch';
 export { SectionCard } from '../../components/SectionCard';
 export { GroupHeader } from '../../components/GroupHeader';
 export { SelectDropdown } from '../../components/SelectDropdown';
+export { FitSelectDropdown } from './FitSelectDropdown';
 export { SettingRow } from '../../components/SettingRow';
 export { AppTextInput } from '../../components/AppTextInput';
 export { SettingField } from '../../components/SettingField';
 export { SettingDivider } from '../../components/SettingDivider';
 export { SectionTitle } from '../../components/SectionTitle';
 export { VisibilityToggle } from '../../components/VisibilityToggle';
+export { StatusLine } from '../../components/StatusLine';
 
 export { AppSegmentedControl as SegmentedControl } from '../../components/AppSegmentedControl';
 

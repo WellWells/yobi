@@ -11,6 +11,10 @@ import { useThemeStore } from './store/themeStore';
 // localStorage mirror, so the first paint is already in the chosen face.
 import './store/readingStore';
 import './styles/globals.css';
+import { startConversationMoveSync } from './store/conversationMoves';
+
+// Before anything renders: a move re-keys every store that holds a conversation by its path.
+startConversationMoveSync();
 
 const PERF_FLUSH_INTERVAL_MS = 30_000;
 const perfFlushTimer = window.setInterval(() => {

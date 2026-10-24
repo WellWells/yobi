@@ -13,6 +13,7 @@ import { draftKey, useAnswerEditStore } from '../../store/answerEditStore';
 import { matchesShortcut, useResolvedCombo } from '../../store/shortcutStore';
 import { comboLabel } from '../../../../shared/shortcuts';
 import { isMac } from '../../utils/keyLabels';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 interface AnswerEditorProps {
   path: string;
@@ -135,7 +136,7 @@ export const AnswerEditor: React.FC<AnswerEditorProps> = ({
         {t('chat.edit.cancel')}
       </AppButton>
       <Tooltip
-        label={locked ? t('chat.edit.lockedSending') : t('chat.edit.saveTooltip').replace('{{shortcut}}', saveKeys)}
+        label={locked ? t('chat.edit.lockedSending') : fillTemplate(t('chat.edit.saveTooltip'), { shortcut: saveKeys })}
         position="bottom"
       >
         <AppButton

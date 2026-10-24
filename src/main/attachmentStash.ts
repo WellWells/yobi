@@ -136,7 +136,7 @@ async function clipboardImagePng(): Promise<Uint8Array<ArrayBuffer> | null> {
   return null;
 }
 
-function thumbnail(filePath: string, mimeType: string): string | undefined {
+export function thumbnail(filePath: string, mimeType: string): string | undefined {
   if (!mimeType.startsWith('image/')) return undefined;
   try {
     const image = nativeImage.createFromPath(filePath);

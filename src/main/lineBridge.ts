@@ -1,5 +1,6 @@
 import type { LinePairingSnapshot, LineRuntimeSnapshot, LineSettingsSnapshot } from '../shared/types';
 import { config, saveConfig } from './config';
+import { grantPairingDefaults } from './botPermissions';
 import { maskToken } from './helpers';
 import {
   buildLinePairingLink,
@@ -21,6 +22,7 @@ const pairingBridge = createLinePairingBridge(
     config.line.pairing = next;
     saveConfig({ line: config.line });
   },
+  (userId) => grantPairingDefaults('line', userId),
 );
 
 export function setLineRuntimeSnapshot(snapshot: LineRuntimeSnapshot): void {
@@ -42,6 +44,11 @@ export function consumeLinePairingCode(
   user: LinePairingUserProfile,
 ): { ok: boolean; reason?: string } {
   return pairingBridge.consumePairingCode(code, user);
+}
+
+/** Pairs without a code, as `/pair <code>` would; false = already paired, nothing changed. */
+export function pairLineUserWithoutCode(user: LinePairingUserProfile): boolean {
+  return pairingBridge.pairWithoutCode(user);
 }
 
 function buildLinePairingSnapshot(): LinePairingSnapshot {
@@ -66,6 +73,7 @@ export function buildLineSettingsSnapshot(): LineSettingsSnapshot {
     port: config.line.port,
     pairing: buildLinePairingSnapshot(),
     permissions: config.line.permissions,
+    defaultGrants: config.line.defaultGrants,
     webhookPath: LINE_WEBHOOK_PATH,
     llmDirect: config.line.llmDirect,
     runtime: _lineRuntimeSnapshot,

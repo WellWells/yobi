@@ -18,6 +18,8 @@ export interface MultiSelect {
   allSelected: (ids: string[]) => boolean;
   setAnchor: (id: string | null) => void;
   selectClick: (id: string, mods: ClickModifiers) => 'open' | 'multi';
+  /** Renames ids in place (an item that moved), keeping the selection and the anchor. */
+  rename: (to: (id: string) => string) => void;
 }
 
 export interface SelectClickState {
@@ -106,11 +108,19 @@ export function useMultiSelect(): MultiSelect {
     return next.result;
   }, [anchorId, selectMode, selectedIds]);
 
+  const rename = useCallback((to: (id: string) => string) => {
+    setSelectedIds((prev) => {
+      const next = new Set([...prev].map(to));
+      return [...prev].every((id) => next.has(id)) ? prev : next;
+    });
+    setAnchorId((prev) => (prev === null ? prev : to(prev)));
+  }, []);
+
   return useMemo(
     () => ({
       selectMode, selectedIds, count: selectedIds.size,
-      enter, exit, toggle, isSelected, toggleAll, allSelected, setAnchor, selectClick,
+      enter, exit, toggle, isSelected, toggleAll, allSelected, setAnchor, selectClick, rename,
     }),
-    [selectMode, selectedIds, enter, exit, toggle, isSelected, toggleAll, allSelected, setAnchor, selectClick],
+    [selectMode, selectedIds, enter, exit, toggle, isSelected, toggleAll, allSelected, setAnchor, selectClick, rename],
   );
 }

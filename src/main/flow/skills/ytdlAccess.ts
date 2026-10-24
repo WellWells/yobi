@@ -9,11 +9,13 @@ import { isBotPlatform } from '../../../shared/types';
  * What the person who started the run may get from a download. Someone at the computer (the app,
  * a schedule) gets everything. A bot user without the admin grant is capped (`BOT_USER_CAP_BYTES`)
  * and never told where a file sits on this computer; an admin is told only in their own private
- * chat, since a group would read the path too.
+ * chat, since a group would read the path too. A bot user with the preview grant gets a short
+ * video at a low quality before its menu (`preview`).
  */
 export interface YtdlAccess {
   capped: boolean;
   showPath: boolean;
+  preview: boolean;
 }
 
 /**
@@ -22,7 +24,7 @@ export interface YtdlAccess {
  */
 export const BOT_USER_CAP_BYTES = 100_000_000;
 
-const AT_THE_COMPUTER: YtdlAccess = { capped: false, showPath: true };
+const AT_THE_COMPUTER: YtdlAccess = { capped: false, showPath: true, preview: false };
 
 /** Read live from the config, like every other bot right: a grant taken back applies at once. */
 export async function ytdlAccessFor(config: Record<string, string>): Promise<YtdlAccess> {
@@ -31,8 +33,10 @@ export async function ytdlAccessFor(config: Record<string, string>): Promise<Ytd
   const userId = (config.__triggerUserId ?? '').trim();
   const chatId = (config.__triggerChatId ?? '').trim();
   const rights = await getBotRights(platform, userId, chatId).catch(() => NO_BOT_RIGHTS);
-  if (!rights.admin) return { capped: true, showPath: false };
-  return { capped: false, showPath: Boolean(chatId) && chatId === userId };
+  // The preview grant is the account's own; the downloader it needs may be its group's.
+  const preview = rights.preview && rights.download;
+  if (!rights.admin) return { capped: true, showPath: false, preview };
+  return { capped: false, showPath: Boolean(chatId) && chatId === userId, preview };
 }
 
 /** The largest file this person gets in a Telegram chat: their cap, and never more than the bot can send right now. */

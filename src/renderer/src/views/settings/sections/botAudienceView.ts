@@ -7,10 +7,105 @@ import { GROUP_CAPABILITIES } from '../../../../../shared/botCapabilities';
 import { PUBLIC_DATA_CONNECTOR_IDS } from '../../../../../shared/builtinConnectors';
 import { CONNECTOR_GRANT_PREFIX, PRESELECTED_GROUP_GRANTS, connectorGrant, normalizeGroupGrantList } from '../../../../../shared/botPermissions';
 import type { BotGroupGrant } from '../../../../../shared/botPermissions';
-import type { BotAudienceUser } from '../../../../../shared/types';
+import type { BotAudienceGroup, BotAudienceUser, BotContact, BotReachability, TelegramChannel } from '../../../../../shared/types';
 import type { BotConnectorOption } from './botPermissionsView';
 
 type Translate = (key: string) => string;
+
+/**
+ * One channel or group the bot is in, listed once: the Telegram recipient entry (forgettable)
+ * and the group's approval with its grants are the same chat, so they share a row.
+ */
+export interface BotChatRow {
+  id: string;
+  /** Unset for an old recipient entry saved before the chat type was recorded. */
+  kind?: 'channel' | 'group';
+  title: string;
+  username?: string;
+  /** The flow-recipient entry (Telegram only); its row can be removed from the list. */
+  channel?: TelegramChannel;
+  /** The group's approval and grants; absent for a channel. */
+  group?: BotAudienceGroup;
+  /** Set when Telegram refused the last send or the bot was removed. */
+  unreachable?: Exclude<BotReachability, 'ok'>;
+}
+
+/**
+ * Channels first (they have no permissions, only a recipient entry), then the groups in the
+ * order main lists them, then recipient groups the directory no longer lists as a group.
+ */
+export function mergeBotChats(
+  groups: readonly BotAudienceGroup[],
+  channels: readonly TelegramChannel[],
+  contacts: readonly BotContact[] = [],
+): BotChatRow[] {
+  const byId = new Map(channels.map((channel) => [String(channel.chatId), channel]));
+  const reachOf = (id: string, fallback?: BotReachability): BotChatRow['unreachable'] => {
+    const reach = contacts.find((entry) => entry.kind === 'chat' && entry.id === id)?.reachability ?? fallback;
+    return reach && reach !== 'ok' ? reach : undefined;
+  };
+  const kindOf = (channel: TelegramChannel | undefined, group: BotAudienceGroup | undefined): BotChatRow['kind'] => {
+    if (channel?.chatType === 'channel') return 'channel';
+    return group || channel?.chatType ? 'group' : undefined;
+  };
+  const row = (id: string, channel: TelegramChannel | undefined, group: BotAudienceGroup | undefined): BotChatRow => {
+    const unreachable = reachOf(id, group?.reachability);
+    const kind = kindOf(channel, group);
+    return {
+      id,
+      ...(kind ? { kind } : {}),
+      title: group?.title || channel?.title || '',
+      ...(channel?.username ? { username: channel.username } : {}),
+      ...(channel ? { channel } : {}),
+      ...(group ? { group } : {}),
+      ...(unreachable ? { unreachable } : {}),
+    };
+  };
+  const seen = new Set<string>();
+  const rows: BotChatRow[] = [];
+  for (const channel of channels) {
+    if (channel.chatType !== 'channel') continue;
+    const id = String(channel.chatId);
+    seen.add(id);
+    rows.push(row(id, channel, undefined));
+  }
+  for (const group of groups) {
+    if (seen.has(group.id)) continue;
+    seen.add(group.id);
+    rows.push(row(group.id, byId.get(group.id), group));
+  }
+  for (const channel of channels) {
+    const id = String(channel.chatId);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    rows.push(row(id, channel, undefined));
+  }
+  return rows;
+}
+
+/**
+ * Two hint sentences as one paragraph. English needs a space between them; a sentence that ends in
+ * full-width punctuation (zh) already separates itself, and a space there shows as a stray gap.
+ */
+export function joinSentences(first: string, second: string): string {
+  if (!second) return first;
+  return /[。！？」）]$/.test(first) ? `${first}${second}` : `${first} ${second}`;
+}
+
+/** A chat's name; the numeric id is an implementation detail and never shown. */
+export function chatName(row: BotChatRow, t: Translate): string {
+  if (row.title) return row.title;
+  if (row.username) return `@${row.username}`;
+  return t('settings.bot.chat.untitled');
+}
+
+/** The line under a chat's name: its @username (when the name is not already it) and whether flows can post there. */
+export function chatDetail(row: BotChatRow, t: Translate): string {
+  const parts: string[] = [];
+  if (row.username && row.title) parts.push(`@${row.username}`);
+  if (row.channel) parts.push(t(row.channel.canPost ? 'settings.telegram.channels.active' : 'settings.telegram.channels.lost'));
+  return parts.join(' · ');
+}
 
 export interface GroupGrantItem {
   grant: BotGroupGrant;
@@ -64,6 +159,15 @@ export function addGroupGrant(grants: readonly BotGroupGrant[], grant: BotGroupG
 
 export function removeGroupGrant(grants: readonly BotGroupGrant[], grant: BotGroupGrant): BotGroupGrant[] {
   return normalizeGroupGrantList(grants.filter((g) => g !== grant));
+}
+
+/**
+ * The account id under someone asking to use the bot: their name is whatever they typed, so the
+ * id is what tells two people with one name apart. Not repeated when the name already is the id.
+ */
+export function requestId(user: BotAudienceUser): string {
+  if (!user.requested || user.name === `ID ${user.id}`) return '';
+  return `ID ${user.id}`;
 }
 
 /** Where someone last used the bot: the group's name, or "private chat". */

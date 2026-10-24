@@ -12,8 +12,9 @@ interface Props {
   t: (key: string) => string;
 }
 
-// The rail connector works without a key; the user's own TDX key only raises how often live data
-// (delays, seats) can refresh. One row says whether a key is set; the form opens under it.
+// The rail connector works without a key (timetables, fares and one train's position come from the
+// operators' own sites); TDX is asked only with the user's own key — never as a visitor — and adds
+// delays across a whole plan, THSR seats and notices. One row says whether a key is set; the form opens under it.
 export const RailKeySetup: React.FC<Props> = ({ t }) => {
   const [hasKey, setHasKey] = useState(false);
   const [editing, setEditing] = useState(false);

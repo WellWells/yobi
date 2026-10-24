@@ -8,6 +8,8 @@ import { editedAt, unsentEditedTurns } from '../../../../shared/editedReplies';
 import { NEW_CONVERSATION_KEY, useAppStore, type PendingTurn } from '../../store/appStore';
 import type { AgentChoicePick } from '../../store/useAgentRunStore';
 import { useI18nStore } from '../../store/i18nStore';
+import { useConversationMoves } from '../../store/conversationMoves';
+import { movedPathFor } from '../../../../shared/conversationMove';
 import { useFormatTime } from '../../hooks/useFormatTime';
 import { scrollMoveFor, useStickToBottom, type ScrollSnapshot } from '../../hooks/useStickToBottom';
 import { UserBubble } from '../../components/chat/UserBubble';
@@ -17,6 +19,7 @@ import { PendingTurnBubble } from '../../components/chat/PendingTurnBubble';
 import { TokenUsageLabel } from '../../components/chat/TokenUsageLabel';
 import { readingMaxWidth, useReadingStore } from '../../store/readingStore';
 import { READING_FACE } from '../../styles/readingText';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 const MAX_WIDTH = 720;
 const SIDE_QUESTION_WIDTH = '34%';
@@ -101,6 +104,15 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
    */
   const [seenTurns, setSeenTurns] = useState({ path: conversationPath, count: turnCount });
   const [arrivedIndex, setArrivedIndex] = useState(-1);
+  // Moved into a folder is the same conversation: no jump to the end, no re-entrance of the last turn.
+  useConversationMoves((moves) => {
+    const scrolledTo = movedPathFor(moves, seenRef.current?.path);
+    if (seenRef.current && scrolledTo) seenRef.current = { ...seenRef.current, path: scrolledTo };
+    setSeenTurns((prev) => {
+      const to = movedPathFor(moves, prev.path);
+      return to ? { ...prev, path: to } : prev;
+    });
+  });
   if (seenTurns.path !== conversationPath) {
     setSeenTurns({ path: conversationPath, count: turnCount });
     setArrivedIndex(-1);
@@ -140,9 +152,7 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
               labelKey="chat.tokens.conversationTotal"
               t={t}
               detail={totalUsage.countedTurns < turnCount
-                ? t('chat.tokens.partialTurns')
-                  .replace('{{counted}}', String(totalUsage.countedTurns))
-                  .replace('{{total}}', String(turnCount))
+                ? fillTemplate(t('chat.tokens.partialTurns'), { counted: String(totalUsage.countedTurns), total: String(turnCount) })
                 : undefined}
             />
           </Group>

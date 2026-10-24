@@ -6,12 +6,25 @@
  */
 import { sendWebNotification } from '../helpers';
 import { getLangCache, t } from '../i18n';
+import { BOT_PLATFORM_NAMES } from '../../shared/types';
 import type { BotPlatform } from '../../shared/types';
 import { isBotGroupPending } from './rights';
+import { dailyAllowance } from './dailyAllowance';
 
-const PLATFORM_NAMES: Readonly<Record<BotPlatform, string>> = { telegram: 'Telegram', line: 'LINE' } as const;
+/**
+ * How many joined groups' cards LINE pushes to the owner per local day, across all groups: each
+ * push costs the owner's monthly quota, and being added to many groups is cheap for anyone.
+ * Past it the desktop notification still goes out; the card waits for `/groups`.
+ */
+export const LINE_JOIN_CARDS_DAILY = 3;
 
 const noticed = new Set<string>();
+const lineJoinCards = dailyAllowance(LINE_JOIN_CARDS_DAILY);
+
+/** Takes one LINE join card from today's allowance; false when it is used up. */
+export function takeLineJoinCard(now: Date = new Date()): boolean {
+  return lineJoinCards.take(now);
+}
 
 /**
  * The bot was just added to this group. Notifies the owner once, and only while the group is
@@ -26,7 +39,7 @@ export function notifyBotGroupJoined(platform: BotPlatform, group: { id: string;
   const strings = getLangCache();
   sendWebNotification(
     t(strings, 'bot.group.notify.title'),
-    t(strings, 'bot.group.notify.body', { platform: PLATFORM_NAMES[platform], name: group.title?.trim() || id }),
+    t(strings, 'bot.group.notify.body', { platform: BOT_PLATFORM_NAMES[platform], name: group.title?.trim() || id }),
     'info',
     { id: 'open-bot-settings', label: t(strings, 'bot.group.notify.action') },
   );
@@ -35,4 +48,5 @@ export function notifyBotGroupJoined(platform: BotPlatform, group: { id: string;
 
 export function __resetGroupJoinNotices(): void {
   noticed.clear();
+  lineJoinCards.reset();
 }

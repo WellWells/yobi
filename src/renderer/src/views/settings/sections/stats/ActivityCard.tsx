@@ -1,8 +1,9 @@
 import React from 'react';
 import { Group, Stack, Text } from '@mantine/core';
-import { SectionCard } from '../../components';
+import { Activity } from 'lucide-react';
+import { SectionCard, SectionTitle } from '../../components';
 import { TrendBarChart } from '../../../../components/TrendBarChart';
-import { Figure, InlineStat, LegendItem } from './parts';
+import { Figure, HelpDot, InlineStat, LegendItem } from './parts';
 import { DOMAINS, OUTCOME_KEYS, formatShare } from './aggregate';
 import type { StatsAggregate, StatsScope } from './aggregate';
 import { OUTCOME_COLORS } from './colors';
@@ -18,6 +19,11 @@ export const ActivityCard: React.FC<Props> = ({ stats, scope, t, onInspectFailur
   const failed = stats.runs.failure + stats.runs.timeout;
   return (
     <SectionCard>
+      {/* Titled like every other card on the page, so the first figure is not the one unnamed number. */}
+      <Group gap={7} align="center" mb={10} wrap="nowrap">
+        <SectionTitle icon={<Activity size={15} />} label={t('settings.stats.runs.title')} mb={0} />
+        <HelpDot hint={t('settings.stats.runs.hint')} />
+      </Group>
       <Stack gap={16}>
         <Group justify="space-between" align="flex-start" wrap="nowrap" gap={16}>
           <Figure

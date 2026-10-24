@@ -1,14 +1,12 @@
 import type { webhook } from '@line/bot-sdk';
+import type { BotChatEvent, BotChatKind } from '../botChat/types';
 
-export type LineChatKind = 'user' | 'group' | 'room';
+export type LineChatKind = BotChatKind;
 
-export interface LineTextEvent {
-  userId: string;
-  chatId: string;
-  chatKind: LineChatKind;
+/** A typed line (`sentAt` = LINE's `timestamp`; `redelivered` = LINE's `isRedelivery`). */
+export interface LineTextEvent extends BotChatEvent {
+  /** Answering with it is free; it lapses soon after the message (`messaging.ts` then pushes). */
   replyToken?: string;
-  text: string;
-  mentionsBot: boolean;
 }
 
 export function parseTextEvents(body: webhook.CallbackRequest): LineTextEvent[] {
@@ -17,25 +15,51 @@ export function parseTextEvents(body: webhook.CallbackRequest): LineTextEvent[] 
     if (event.type !== 'message') continue;
     const message = event.message;
     if (message.type !== 'text') continue;
-    const source = event.source;
-    const userId = source?.userId?.trim();
-    if (!source || !userId) continue;
-
-    let chatId = '';
-    if (source.type === 'user') chatId = userId;
-    else if (source.type === 'group') chatId = source.groupId;
-    else if (source.type === 'room') chatId = source.roomId;
-    if (!chatId) continue;
+    const where = senderOf(event.source);
+    if (!where) continue;
 
     const { text, mentionsBot } = stripBotMentions(message.text, message.mention);
     out.push({
-      userId,
-      chatId,
-      chatKind: source.type,
+      ...where,
       replyToken: event.replyToken,
       text,
       mentionsBot,
+      ...(Number.isFinite(event.timestamp) && event.timestamp > 0 ? { sentAt: event.timestamp } : {}),
+      ...(event.deliveryContext?.isRedelivery === true ? { redelivered: true as const } : {}),
     });
+  }
+  return out;
+}
+
+/** Who sent an event and in which chat; null without a user id (LINE omits it for some group events). */
+function senderOf(source: webhook.Source | undefined): { userId: string; chatId: string; chatKind: LineChatKind } | null {
+  const userId = source?.userId?.trim();
+  if (!source || !userId) return null;
+  let chatId = '';
+  if (source.type === 'user') chatId = userId;
+  else if (source.type === 'group') chatId = source.groupId;
+  else if (source.type === 'room') chatId = source.roomId;
+  return chatId ? { userId, chatId, chatKind: source.type } : null;
+}
+
+/** A tap on a postback button: who, where, the reply token (a reply is free) and the data as sent. */
+export interface LinePostbackEvent {
+  userId: string;
+  chatId: string;
+  chatKind: LineChatKind;
+  replyToken?: string;
+  /** Whatever the tapping client sent back; checked by the handler of its prefix. */
+  data: string;
+}
+
+export function parsePostbackEvents(body: webhook.CallbackRequest): LinePostbackEvent[] {
+  const out: LinePostbackEvent[] = [];
+  for (const event of body.events ?? []) {
+    if (event.type !== 'postback') continue;
+    const data = event.postback?.data;
+    const where = senderOf(event.source);
+    if (typeof data !== 'string' || !data || !where) continue;
+    out.push({ ...where, ...(event.replyToken ? { replyToken: event.replyToken } : {}), data });
   }
   return out;
 }

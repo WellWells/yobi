@@ -36,7 +36,7 @@ export function readIncomingFiles(zip: AdmZip, def: CategoryDef, targetDir: stri
     if (entry.isDirectory) continue;
     const name = entry.entryName.replace(/\\/g, '/');
     if (!name.startsWith(prefix)) continue;
-    if (def.fileFilter && !def.fileFilter(path.basename(name))) continue;
+    if (def.fileFilter && !def.fileFilter(name.slice(prefix.length))) continue;
     const dest = safeResolveWithin(root, name.slice(prefix.length));
     if (!dest || dest === root) continue;
     files.push({ dest, data: entry.getData() });
@@ -105,6 +105,7 @@ export async function replaceDirFiles(targetDir: string, def: CategoryDef, incom
   const written: string[] = [];
 
   try {
+    // A by-filter category moves aside only its own files: a dot-folder's Markdown is not a conversation.
     await moveAside(root, holding, wholeDir ? undefined : def.fileFilter, moved);
     await fs.mkdir(root, { recursive: true });
     await writeIncoming(incoming, written);

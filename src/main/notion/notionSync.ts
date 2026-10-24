@@ -18,6 +18,7 @@ import type {
 } from '../../shared/notion/notionSyncTypes';
 import { writeFileAtomic } from '../atomicWrite';
 import { withConversationFile } from '../chat/conversationStore';
+import { whileConversationBusy } from '../conversationBusy';
 import { Mutex } from '../flow/lanes';
 import { newConversationId, recordConversationVersion } from '../history/conversationHistory';
 import type { NotionApi } from './notionClient';
@@ -111,7 +112,8 @@ function exclusive<T>(filePath: string, task: () => Promise<T>): Promise<T> {
     lock = new Mutex();
     docLocks.set(key, lock);
   }
-  return lock.runExclusive(task);
+  // Busy while queued too: the document is read here and written back after Notion answers.
+  return whileConversationBusy(filePath, 'notion', () => lock.runExclusive(task));
 }
 
 export async function notionDocStatus(filePath: string): Promise<NotionDocStatus | null> {

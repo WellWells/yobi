@@ -12,7 +12,7 @@ import { sensitiveCommandReason } from './sensitivePaths';
 import { isElevated } from './elevation';
 import { maskSecrets } from './secretMask';
 import { isBuiltinTool, runBuiltinTool } from './agentBuiltins';
-import type { AgentBuiltinTool, BuiltinDeps, FlowWriteConfirmRequest } from './agentBuiltins';
+import type { AgentBuiltinTool, BuiltinDeps, FlowSaveRequest, FlowWriteConfirmRequest } from './agentBuiltins';
 import { executeMcpProposal } from './mcpAction';
 import type { McpConfirmRequest } from './mcpAction';
 import type { McpAction, McpRuntimeIndex } from './mcpTools';
@@ -124,12 +124,16 @@ export interface CallContext {
    * question in the chat and runs the stored command when the answer approves it (a bot run).
    */
   deferShell?: (request: ShellConfirmRequest) => ShellApprovalText;
+  /** Likewise for a connector change that needs confirming (the owner's own bot chat). */
+  deferChanges?: boolean;
   /** Shared by every call of the run: `build_flow` reads the assessment `assess_flow` left there. */
   builtins: BuiltinDeps;
   fileRoots: string[];
   /** Resolved once per run: where a shell command runs and what its confirmation shows. */
   workspaceDir: string;
   remainingMs: () => number;
+  /** Keeps pictures a built-in connector saved (the metro map) for the answer. */
+  keepPictures?: (files: readonly string[]) => Promise<void>;
   onTrace?: (event: AgentTraceEvent) => void;
   signal?: AbortSignal;
 }
@@ -145,8 +149,8 @@ export interface CallOutcome {
   transientBlock: boolean;
   /** A research call's checklist as it ended, kept on the record so a reopened run shows it. */
   research?: ResearchProgress;
-  /** Nothing ran: this shell command waits for the user's answer to a question (`deferShell`). */
-  deferred?: ShellConfirmRequest;
+  /** Nothing ran: this shell command, change or held flow waits for the user's answer to a question. */
+  deferred?: ShellConfirmRequest | McpConfirmRequest | FlowSaveRequest;
 }
 
 function outcome(observation: string, status: 'ok' | 'error', write = false, landed = false): CallOutcome {
@@ -179,10 +183,13 @@ export async function runCall(
       gate: ctx.gate,
       unattended: ctx.unattended,
       confirm: (request: McpConfirmRequest) => ctx.askUser(request),
+      ...(ctx.deferChanges ? { deferChanges: true } : {}),
       onStage: (label) => stage(label),
+      ...(ctx.keepPictures ? { keepPictures: ctx.keepPictures } : {}),
       log: sendLog,
       ...(ctx.signal ? { signal: ctx.signal } : {}),
     }, action, step, signature);
+    if (result.deferred) return { ...outcome('', 'ok'), deferred: result.deferred };
     if (result.status === 'error') sendLog(`⚠️ [Agent] mcp:${action.name}: ${result.observation.slice(0, 160)}`);
     return {
       observation: result.observation,
@@ -196,6 +203,7 @@ export async function runCall(
   const toolName = action.tool ?? '';
   if (isBuiltinTool(toolName)) {
     const result = await runBuiltinTool(toolName as AgentBuiltinTool, recordConfig, ctx.builtins, step);
+    if (result.deferred) return { ...outcome('', 'ok'), deferred: result.deferred };
     if (result.status === 'error') sendLog(`⚠️ [Agent] ${toolName}: ${result.observation.slice(0, 160)}`);
     return outcome(result.observation, result.status);
   }

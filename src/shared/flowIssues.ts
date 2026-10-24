@@ -2,18 +2,24 @@ import { BOT_COMMAND_RE } from './types';
 import type { FlowDefinition, TriggerConfig } from './types';
 import { missingRequiredVariables } from './flowVariables';
 import { botTriggerAccess, isBotCommandClosed } from './botCommandAccess';
+import type { McpCommandOwner } from './mcpCommand';
+import { isUsableWatchFolder } from './flowFileTrigger';
 
 /**
- * Flow states that silently break a flow at runtime, named in one place so the UI can surface them.
- * Detection mirrors `FlowManager.getBotCommands()` (main) and `useChatCommands()` (renderer); keep
- * them in sync or the UI reports something the app does not do.
+ * Flow states that silently break a flow at runtime, or silently change what one of its commands
+ * reaches, named in one place so the UI can surface them. Detection mirrors
+ * `FlowManager.getBotCommands()` (main) and `useChatCommands()` (renderer); keep them in sync or
+ * the UI reports something the app does not do.
  */
 export type FlowIssueKind =
   | 'commandMissing'
   | 'commandInvalid'
   | 'commandDuplicate'
   | 'commandClosed'
-  | 'missingRequiredVars';
+  | 'missingRequiredVars'
+  | 'commandShadowsConnector'
+  | 'watchFolderUnset'
+  | 'watchFolderMissing';
 
 export type FlowIssueScope = 'bot' | 'chat';
 
@@ -23,12 +29,14 @@ export interface FlowIssue {
   scope?: FlowIssueScope;
   /** Normalised command without the leading slash. */
   command?: string;
-  /** Names of the other flows claiming the same command. */
+  /** Names of the other flows claiming the same command, or of the connectors this flow beat to it. */
   otherNames?: string[];
   /** Duplicate only: true for the flow that actually answers the command. */
   wins?: boolean;
   /** missingRequiredVars only: labels of the unfilled required variables. */
   varNames?: string[];
+  /** watchFolderMissing only: the folder as the trigger names it. */
+  folder?: string;
 }
 
 /** Most actionable first, so a row with several issues leads with the one to fix. */
@@ -37,12 +45,23 @@ const KIND_RANK: Record<FlowIssueKind, number> = {
   commandInvalid: 1,
   commandMissing: 2,
   commandClosed: 3,
-  missingRequiredVars: 4,
+  watchFolderUnset: 4,
+  watchFolderMissing: 5,
+  missingRequiredVars: 6,
+  // Last: the flow still answers its command; only the connector went without one.
+  commandShadowsConnector: 7,
 };
 
 interface Claim {
   flowId: string;
   flowName: string;
+}
+
+/** A connector left without a slash command, as `assignMcpCommandNames` reports it in `clashes`. */
+export interface ConnectorCommandClash {
+  command: string;
+  owner: McpCommandOwner;
+  server: { name: string };
 }
 
 /** Normalised command a trigger claims; null for trigger types that claim none. */
@@ -66,10 +85,62 @@ function push(issues: Map<string, FlowIssue[]>, flowId: string, issue: FlowIssue
 }
 
 /**
+ * Connectors that lost their slash command to a flow's chat command, one issue per flow and
+ * command. Who won is taken from the assignment, not decided again here: it already ranks the
+ * chat's built-ins over flows, and only the first flow claiming a chat command holds it.
+ */
+function pushShadowedConnectors(
+  issues: Map<string, FlowIssue[]>,
+  flows: FlowDefinition[],
+  clashes: readonly ConnectorCommandClash[],
+): void {
+  const enabled = new Set(flows.filter((flow) => flow.enabled).map((flow) => flow.id));
+  const lost = new Map<string, { flowId: string; command: string; names: string[] }>();
+  for (const { command, owner, server } of clashes) {
+    if (owner.kind !== 'flow' || !enabled.has(owner.flowId)) continue;
+    const key = `${owner.flowId} ${command}`;
+    const entry = lost.get(key) ?? { flowId: owner.flowId, command, names: [] };
+    entry.names.push(server.name);
+    lost.set(key, entry);
+  }
+  for (const { flowId, command, names } of lost.values()) {
+    push(issues, flowId, { kind: 'commandShadowsConnector', scope: 'chat', command, otherNames: names });
+  }
+}
+
+/**
+ * An enabled flow's folder triggers: one with no usable folder never fires; one whose folder the
+ * main process cannot find (`watchMissing`, its broadcast) waits for the folder to come back.
+ */
+function pushWatchFolderIssues(
+  issues: Map<string, FlowIssue[]>,
+  flows: FlowDefinition[],
+  watchMissing: ReadonlySet<string>,
+): void {
+  for (const flow of flows) {
+    if (!flow.enabled) continue;
+    const fileTriggers = triggersOf(flow).filter((trigger) => trigger.type === 'file');
+    if (fileTriggers.length === 0) continue;
+    if (fileTriggers.some((trigger) => !isUsableWatchFolder(trigger.watchFolder))) {
+      push(issues, flow.id, { kind: 'watchFolderUnset' });
+    } else if (watchMissing.has(flow.id)) {
+      const folder = fileTriggers.map((trigger) => (trigger.watchFolder ?? '').trim()).join(', ');
+      push(issues, flow.id, { kind: 'watchFolderMissing', folder });
+    }
+  }
+}
+
+/**
  * `flows` must be in the same order the app registers them: for a duplicated
  * command the first claimant wins, exactly as `getBotCommands()` decides it.
+ * `connectorClashes` is the `clashes` list of the chat's connector command assignment;
+ * `watchMissing` the flows whose watched folder the main process cannot find.
  */
-export function collectFlowIssues(flows: FlowDefinition[]): Map<string, FlowIssue[]> {
+export function collectFlowIssues(
+  flows: FlowDefinition[],
+  connectorClashes: readonly ConnectorCommandClash[] = [],
+  watchMissing: readonly string[] = [],
+): Map<string, FlowIssue[]> {
   const issues = new Map<string, FlowIssue[]>();
   // Keyed by `${scope} ${command}` so a bot /gmr never collides with a chat /gmr.
   const claims = new Map<string, Claim[]>();
@@ -130,6 +201,9 @@ export function collectFlowIssues(flows: FlowDefinition[]): Map<string, FlowIssu
     });
   }
 
+  pushShadowedConnectors(issues, flows, connectorClashes);
+  pushWatchFolderIssues(issues, flows, new Set(watchMissing));
+
   for (const list of issues.values()) {
     list.sort((a, b) => KIND_RANK[a.kind] - KIND_RANK[b.kind]);
   }
@@ -146,11 +220,14 @@ export function isTriggerClosed(trigger: TriggerConfig): boolean {
   return trigger.type === 'bot' && isBotCommandClosed(botTriggerAccess(trigger));
 }
 
-/** The duplicate issue a single trigger is responsible for, for the inline editor warning. */
-export function findTriggerConflict(issues: FlowIssue[], trigger: TriggerConfig): FlowIssue | undefined {
+/**
+ * The clashes a single trigger's command is part of — another flow claiming it, or a connector
+ * that lost it to this flow — for the inline editor warning under that command field.
+ */
+export function findTriggerConflicts(issues: FlowIssue[], trigger: TriggerConfig): FlowIssue[] {
   const claim = triggerCommand(trigger);
-  if (!claim?.command) return undefined;
-  return issues.find((issue) => issue.kind === 'commandDuplicate'
+  if (!claim?.command) return [];
+  return issues.filter((issue) => (issue.kind === 'commandDuplicate' || issue.kind === 'commandShadowsConnector')
     && issue.scope === claim.scope
     && issue.command === claim.command);
 }

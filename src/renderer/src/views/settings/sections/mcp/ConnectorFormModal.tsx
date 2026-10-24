@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { Group, Stack, Text } from '@mantine/core';
-import { Bot, Server, ShieldCheck } from 'lucide-react';
+import { Server } from 'lucide-react';
 import { SettingRow, ToggleSwitch } from '../../components';
 import { AppButton } from '../../../../components/AppButton';
 import { AppModal } from '../../../../components/AppModal';
@@ -97,7 +97,6 @@ export const ConnectorFormModal: React.FC<Props> = ({ mcp, t }) => {
           <CommandClashNotice lines={commandNotice} />
           <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>{t('settings.mcp.token.hint')}</Text>
           <SettingRow
-            icon={<Bot size={13} />}
             label={t('settings.mcp.agentEnabled')}
             hint={t('settings.mcp.agentEnabled.hint')}
             control={
@@ -108,7 +107,6 @@ export const ConnectorFormModal: React.FC<Props> = ({ mcp, t }) => {
             }
           />
           <SettingRow
-            icon={<ShieldCheck size={13} />}
             label={t('settings.mcp.autoApprove')}
             hint={t('settings.mcp.autoApprove.hint')}
             control={

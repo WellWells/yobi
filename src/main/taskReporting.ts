@@ -68,12 +68,20 @@ export function handleDiscardedTask(task: Task): void {
   }
 }
 
+/**
+ * Every failure a bot hears about passes here. A picture or file read by a stand-in model is
+ * answered with one fixed line, "could not process this file": the cause (often that model's
+ * sign-in) is the owner's to fix, and the callers have logged it.
+ */
 export async function replyRemoteError(
   task: Task,
   deps: TaskReportDeps,
-  payload: { providerLabel: string; message: string },
+  reported: { providerLabel: string; message: string },
 ): Promise<void> {
   if (!claimRemoteReply(task)) return;
+  const payload = task.uploadFallback
+    ? { ...reported, message: t(getLangCache(), 'telegram.media.fallbackFailed') }
+    : reported;
   if (task.replyTarget) await deps.telegramRuntime.sendTaskError(task.replyTarget, payload);
   if (task.lineReplyTarget) await deps.lineRuntime.sendTaskError(task.lineReplyTarget.chatId, payload);
 }

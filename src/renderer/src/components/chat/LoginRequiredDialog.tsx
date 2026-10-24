@@ -6,6 +6,7 @@ import { AppButton } from '../AppButton';
 import { PROVIDER_LABELS } from '../../../../shared/types';
 import type { LoginRequiredProvider } from '../../../../shared/types';
 import { Z_MODAL } from '../../config/zLayers';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 interface LoginRequiredDialogProps {
   provider: LoginRequiredProvider | null;
@@ -23,14 +24,14 @@ export const LoginRequiredDialog: React.FC<LoginRequiredDialogProps> = ({
     <AppModal
       opened={provider !== null}
       onClose={onCancel}
-      title={t('chat.model.loginRequired.title').replace('{{provider}}', label)}
+      title={fillTemplate(t('chat.model.loginRequired.title'), { provider: label })}
       icon={<KeyRound size={16} />}
       size="sm"
       zIndex={Z_MODAL}
     >
       <Stack gap="md">
         <Text fz="var(--font-size-md)" c="var(--text-secondary)" lh={1.6}>
-          {t('chat.model.loginRequired.body').replace('{{provider}}', label)}
+          {fillTemplate(t('chat.model.loginRequired.body'), { provider: label })}
         </Text>
         <Group justify="flex-end" gap="xs">
           <Button variant="default" size="xs" onClick={onCancel}>

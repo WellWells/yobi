@@ -18,9 +18,28 @@ export {
   botDownloadAllowed,
   botFlowAdminAllowed,
   botFlowAllowed,
+  computeBotConnectorChanges,
   computeBotFlowAdmin,
 } from './rights';
-export { applyBotRunGrants, botChatRights } from './runGrants';
+export { applyBotRunGrants, botChatApprovesConnectorChanges, botChatFlowBuilder, botChatRights } from './runGrants';
 export { botAccessDeniedText } from './denial';
 export { notifyBotGroupJoined } from './groupApproval';
-export { dropBotPermissions, setBotGroupPermissions, setBotPermissions, setBotUserBlocked } from './mutate';
+export {
+  PAIRING_REQUEST_DAILY_CARDS,
+  PAIRING_REQUEST_RENEW_MS,
+  approveBotPairingRequest,
+  isPairingRequestWaiting,
+  noteBotPairingRequest,
+  registerBotPairer,
+  setBotUserBlockedAnsweringRequest,
+  waitingBotPairingRequest,
+} from './pairingRequests';
+export type { BotPairer, BotPairingOutcome, BotPairingProfile } from './pairingRequests';
+export {
+  dropBotPermissions,
+  grantPairingDefaults,
+  setBotDefaultGrants,
+  setBotGroupPermissions,
+  setBotPermissions,
+  setBotUserBlocked,
+} from './mutate';

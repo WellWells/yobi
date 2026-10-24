@@ -3,7 +3,9 @@ import { Box, Group, Stack, Text, Tooltip } from '@mantine/core';
 import { KeyRound, Snowflake, TriangleAlert } from 'lucide-react';
 import { SectionCard, SectionTitle } from '../../components';
 import { formatTokenCount } from '../../../../../../shared/tokenEstimate';
+import { fillTemplate } from '../../../../../../shared/fillTemplate';
 import type { ByokInstanceSnapshot } from '../../../../../../shared/types';
+import { byokModelLabel } from '../../../../../../shared/byokModelLabel';
 import { HelpDot } from './parts';
 import { OUTCOME_COLORS } from './colors';
 import { sumCounts } from './aggregate';
@@ -87,7 +89,7 @@ export const KeysCard: React.FC<Props> = ({ stats, instances, t }) => {
                 <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-text)" truncate>
                   {row.name}
                 </Text>
-                <Text fz="var(--font-size-sm)" c="dimmed" truncate>{row.model}</Text>
+                <Text fz="var(--font-size-sm)" c="dimmed" truncate>{byokModelLabel(row.model)}</Text>
               </Group>
               <Group gap={14} wrap="nowrap" style={{ flexShrink: 0 }}>
                 {row.cooldowns > 0 && (
@@ -107,16 +109,19 @@ export const KeysCard: React.FC<Props> = ({ stats, instances, t }) => {
                   />
                 )}
                 <Text fz="var(--font-size-sm)" c="dimmed" style={{ fontVariantNumeric: 'tabular-nums' }}>
-                  {formatTokenCount(row.tokens)}
+                  {fillTemplate(t('settings.stats.keys.tokens'), { count: formatTokenCount(row.tokens) })}
                 </Text>
-                <Text
-                  fz="var(--font-size-md)"
-                  fw={600}
-                  c="var(--mantine-color-accent)"
-                  style={{ fontVariantNumeric: 'tabular-nums', minWidth: 52, textAlign: 'right' }}
-                >
-                  {row.requests.toLocaleString()}
-                </Text>
+                <Group gap={4} wrap="nowrap" align="baseline" justify="flex-end" style={{ minWidth: 72 }}>
+                  <Text
+                    fz="var(--font-size-md)"
+                    fw={600}
+                    c="var(--mantine-color-accent)"
+                    style={{ fontVariantNumeric: 'tabular-nums' }}
+                  >
+                    {row.requests.toLocaleString()}
+                  </Text>
+                  <Text fz="var(--font-size-sm)" c="dimmed">{t('settings.stats.requests.caption')}</Text>
+                </Group>
               </Group>
             </Group>
             <Box h={4} bg="var(--mantine-color-bg-tertiary)" style={{ borderRadius: 2 }}>

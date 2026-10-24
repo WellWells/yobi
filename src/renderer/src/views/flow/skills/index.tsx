@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  Terminal, Globe, MessageSquare, Clipboard, Timer, Bell, Camera, Bot, Rss, OctagonX, StickyNote, ListTree, Repeat, IterationCcw, Split, Merge, Cpu, Webhook, MonitorPlay, ListVideo, Film, MonitorDown, Rocket, Braces, Power, RotateCcw, AppWindow, SquareCode, SquareX, FilePen, FileText, Share2, FolderOpen, Mail, Trash2, Type, TrendingUp, ArrowRightLeft, Cloud, Wind, Download, Dices, CircleStop, SkipForward, Search, MapPin, Microscope, GitCompare, MessagesSquare, MessageSquareQuote, Flame, SquarePlay,
+  MoonStar, ReceiptText, Terminal, Globe, MessageSquare, Clipboard, Timer, Bell, Camera, Bot, Rss, OctagonX, StickyNote, ListTree, Repeat, IterationCcw, Split, Merge, Cpu, Webhook, MonitorPlay, ListVideo, Film, MonitorDown, Rocket, Braces, Power, RotateCcw, AppWindow, SquareCode, SquareX, FilePen, FileText, Share2, FolderOpen, Inbox, Mail, Trash2, Type, TrendingUp, ArrowRightLeft, Cloud, Wind, CalendarDays, Download, Dices, CircleStop, SkipForward, Search, MapPin, Microscope, GitCompare, MessagesSquare, MessageSquareQuote, MessageSquareText, Flame, SquarePlay, Plug, Newspaper,
 } from 'lucide-react';
 import { XIcon } from '../../../config/brandIcons';
 import type { SkillType } from '../../../../../shared/types';
@@ -26,6 +26,8 @@ import { SearchConfig } from './SearchConfig';
 import { ResearchConfig } from './ResearchConfig';
 import { GmapReviewsConfig } from './GmapReviewsConfig';
 import { LineReadConfig } from './LineReadConfig';
+import { TelegramReadConfig } from './TelegramReadConfig';
+import { McpConfig } from './McpConfig';
 import { LoopConfig } from './LoopConfig';
 import { IfConfig } from './IfConfig';
 import { SysInfoConfig } from './SysInfoConfig';
@@ -38,6 +40,7 @@ import { XPostsConfig } from './XPostsConfig';
 import { XThreadConfig } from './XThreadConfig';
 import { XMediaConfig } from './XMediaConfig';
 import { XTrendsConfig } from './XTrendsConfig';
+import { PttBoardConfig } from './PttBoardConfig';
 import { JsConfig } from './JsConfig';
 import { PowerConfig } from './PowerConfig';
 import { FileWriteConfig } from './FileWriteConfig';
@@ -50,6 +53,10 @@ import { StockConfig } from './StockConfig';
 import { ForexConfig } from './ForexConfig';
 import { WeatherConfig } from './WeatherConfig';
 import { AirQualityConfig } from './AirQualityConfig';
+import { CalendarConfig } from './CalendarConfig';
+import { MailFetchConfig } from './MailFetchConfig';
+import { AlmanacConfig } from './AlmanacConfig';
+import { TwInvoiceConfig } from './TwInvoiceConfig';
 import { FileDownloadConfig } from './FileDownloadConfig';
 import { RandomConfig } from './RandomConfig';
 import { OnChangeConfig } from './OnChangeConfig';
@@ -80,6 +87,8 @@ export const STEP_CONFIG_EDITOR: SkillConfigEditorMap = {
   research: ResearchConfig,
   gmap_reviews: GmapReviewsConfig,
   line_read: LineReadConfig,
+  telegram_read: TelegramReadConfig,
+  mcp: McpConfig,
   loop: LoopConfig,
   end_loop: NoConfig,
   if: IfConfig,
@@ -97,6 +106,7 @@ export const STEP_CONFIG_EDITOR: SkillConfigEditorMap = {
   x_thread: XThreadConfig,
   x_trends: XTrendsConfig,
   x_media: XMediaConfig,
+  ptt_board: PttBoardConfig,
   power: PowerConfig,
   restart_app: NoConfig,
   file_write: FileWriteConfig,
@@ -110,6 +120,10 @@ export const STEP_CONFIG_EDITOR: SkillConfigEditorMap = {
   forex: ForexConfig,
   weather: WeatherConfig,
   air_quality: AirQualityConfig,
+  calendar: CalendarConfig,
+  mail_fetch: MailFetchConfig,
+  almanac: AlmanacConfig,
+  tw_invoice: TwInvoiceConfig,
   random: RandomConfig,
 };
 
@@ -136,6 +150,8 @@ export const SKILL_ICON: Record<SkillType, React.ReactNode> = {
   research: <Microscope size={14} />,
   gmap_reviews: <MapPin size={14} />,
   line_read: <MessagesSquare size={14} />,
+  telegram_read: <MessageSquareText size={14} />,
+  mcp: <Plug size={14} />,
   loop: <Repeat size={14} />,
   end_loop: <IterationCcw size={14} />,
   if: <Split size={14} />,
@@ -153,6 +169,7 @@ export const SKILL_ICON: Record<SkillType, React.ReactNode> = {
   x_thread: <MessageSquareQuote size={14} />,
   x_trends: <Flame size={14} />,
   x_media: <SquarePlay size={14} />,
+  ptt_board: <Newspaper size={14} />,
   power: <Power size={14} />,
   restart_app: <RotateCcw size={14} />,
   file_write: <FilePen size={14} />,
@@ -166,6 +183,10 @@ export const SKILL_ICON: Record<SkillType, React.ReactNode> = {
   forex: <ArrowRightLeft size={14} />,
   weather: <Cloud size={14} />,
   air_quality: <Wind size={14} />,
+  calendar: <CalendarDays size={14} />,
+  mail_fetch: <Inbox size={14} />,
+  almanac: <MoonStar size={14} />,
+  tw_invoice: <ReceiptText size={14} />,
   random: <Dices size={14} />,
 };
 

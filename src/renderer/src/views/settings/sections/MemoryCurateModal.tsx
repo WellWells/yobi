@@ -13,6 +13,7 @@ import type { CardPick } from './MemoryCurateCard';
 import { MEMORY_CURATE_PRESETS } from '../../../../../shared/memoryCurate';
 import type { MemoryCurateApplyResult, MemoryCurateDirection, MemoryCurateProposal } from '../../../../../shared/memoryCurate';
 import type { UserMemorySnapshot } from '../../../../../shared/userMemory';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 type Screen = 'start' | 'running' | 'review' | 'done' | 'failed';
 
@@ -163,7 +164,7 @@ export const MemoryCurateModal: React.FC<Props> = ({ open, focus, snapshot, onCl
     }
   }, []);
 
-  const count = (key: string, value: number): string => t(key).replace('{{count}}', value.toLocaleString(locale));
+  const count = (key: string, value: number): string => fillTemplate(t(key), { count: value.toLocaleString(locale) });
 
   return (
     <AppModal
@@ -238,9 +239,7 @@ export const MemoryCurateModal: React.FC<Props> = ({ open, focus, snapshot, onCl
                   <Group justify="space-between" gap={8}>
                     <Text fz="var(--font-size-sm)" c="dimmed">{count('settings.memory.curate.count', changes.length)}</Text>
                     <Text fz="var(--font-size-sm)" c="dimmed">
-                      {t('settings.memory.curate.usage')
-                        .replace('{{before}}', snapshot.usedChars.toLocaleString(locale))
-                        .replace('{{after}}', Math.max(0, usedAfter).toLocaleString(locale))}
+                      {fillTemplate(t('settings.memory.curate.usage'), { before: snapshot.usedChars.toLocaleString(locale), after: Math.max(0, usedAfter).toLocaleString(locale) })}
                     </Text>
                   </Group>
                   {changes.map((change) => (

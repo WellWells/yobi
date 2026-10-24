@@ -113,12 +113,6 @@ export const THEME_SWATCHES: readonly ThemeSwatch[] = VALID_THEMES.map((theme) =
   border: THEME_DEFS[theme].colors.border,
 }));
 
-export const AUTO_THEME_SWATCH = {
-  background: `linear-gradient(135deg, ${THEME_DEFS.dark.colors.bgPrimary} 50%, ${THEME_DEFS.light.colors.bgPrimary} 50%)`,
-  accent: `linear-gradient(135deg, ${THEME_DEFS.dark.colors.accent} 50%, ${THEME_DEFS.light.colors.accent} 50%)`,
-  border: 'var(--border)',
-} as const;
-
 export function applyRootThemeVars(theme: Theme): void {
   const def = themeDef(theme);
   const colors = expandTheme(def.colors, def.light === true);

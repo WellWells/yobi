@@ -37,7 +37,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 /**
  * A config written before per-account grants: every paired account could run /agent (with the
  * local tools) and reach the web, so each keeps exactly that, plus admin where it was an admin.
- * Accounts paired from here on start with nothing.
+ * Accounts paired from here on start with the platform's `defaultGrants` (none unless set).
  */
 function migrateLegacy(source: BotPermissionsSource): Record<string, BotGrant[]> {
   const admins = new Set(source.legacyAdminIds ?? []);

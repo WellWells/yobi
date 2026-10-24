@@ -1,0 +1,42 @@
+/* Registered so an edge eases in and out instead of snapping when the list reaches it. */
+@property --scroll-fade-top {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --scroll-fade-bottom {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+/* An edge with more list beyond it fades the rows out into the panel; a reached edge stays sharp,
+   so the last row is never left half transparent. The second mask layer keeps the scrollbar's
+   strip (its width written by the hook) fully drawn. */
+.fade {
+  --scroll-fade-top: 0px;
+  --scroll-fade-bottom: 0px;
+  --scroll-fade-bar: 0px;
+  mask-image:
+    linear-gradient(to bottom, transparent, #000 var(--scroll-fade-top), #000 calc(100% - var(--scroll-fade-bottom)), transparent),
+    linear-gradient(#000, #000);
+  mask-size: calc(100% - var(--scroll-fade-bar)) 100%, var(--scroll-fade-bar) 100%;
+  mask-position: left top, right top;
+  mask-repeat: no-repeat;
+  transition: --scroll-fade-top 150ms ease, --scroll-fade-bottom 150ms ease;
+}
+
+.fade[data-fade-top] {
+  --scroll-fade-top: 24px;
+}
+
+.fade[data-fade-bottom] {
+  --scroll-fade-bottom: 24px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade {
+    transition: none;
+  }
+}

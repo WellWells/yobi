@@ -1,6 +1,5 @@
 import React from 'react';
 import { Stack, Text } from '@mantine/core';
-import { ShieldAlert } from 'lucide-react';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { SelectDropdown } from '../../../components/SelectDropdown';
 import { SettingRow } from '../../../components/SettingRow';
@@ -29,7 +28,6 @@ export const YoutubeInfoConfig: React.FC<SkillConfigProps> = ({ step, onChange, 
       size="sm"
     />
     <SettingRow
-      icon={<ShieldAlert size={13} />}
       label={t('flow.skill.browser.emitFailFlag')}
       hint={t('flow.skill.browser.emitFailFlag.hint')}
       control={

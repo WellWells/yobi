@@ -1,10 +1,14 @@
 import type { McpTool } from '../../mcp/mcpTypes';
-import { BUILTIN_RAIL_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID } from '../../../shared/builtinConnectors';
+import {
+  BUILTIN_MAIL_SERVER_ID, BUILTIN_PTT_SERVER_ID, BUILTIN_RAIL_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID,
+} from '../../../shared/builtinConnectors';
+import { MAIL_CONTRACTS, MAIL_NOTES } from './connectors/mailContract';
 import { genericContract } from './toolContracts';
 import type { LedgerView, ToolContract } from './toolContracts';
 import { THUNDERBIRD_CONTRACTS, THUNDERBIRD_NOTES } from './connectors/thunderbirdContract';
 import { X_NOTES } from './connectors/xContract';
 import { RAIL_NOTES } from './connectors/railContract';
+import { PTT_NOTES } from './connectors/pttContract';
 import { NOTION_CONTRACTS, NOTION_NOTES } from './connectors/notionContract';
 import { renderIdentityContext } from './connectors/thunderbirdFacts';
 import { bySiteConnectorId } from '../../siteConnector';
@@ -24,6 +28,8 @@ const CONNECTORS: Readonly<Record<string, ConnectorContracts>> = {
   [BUILTIN_THUNDERBIRD_SERVER_ID]: { tools: THUNDERBIRD_CONTRACTS, notes: THUNDERBIRD_NOTES },
   [BUILTIN_X_SERVER_ID]: { tools: {}, notes: X_NOTES },
   [BUILTIN_RAIL_SERVER_ID]: { tools: {}, notes: RAIL_NOTES },
+  [BUILTIN_PTT_SERVER_ID]: { tools: {}, notes: PTT_NOTES },
+  [BUILTIN_MAIL_SERVER_ID]: { tools: MAIL_CONTRACTS, notes: MAIL_NOTES },
   // The sign-in site connectors' tools are read-only and say so in their annotations: notes only.
   ...bySiteConnectorId(({ notes }): ConnectorContracts => ({ tools: {}, notes })),
 };

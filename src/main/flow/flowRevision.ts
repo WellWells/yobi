@@ -40,6 +40,7 @@ function botCommandOf(trigger: TriggerConfig): string {
 const MEANING_FIELDS = [
   'type', 'keys', 'cronExpression', 'botCommand', 'botCommandDescription', 'botInputVariable',
   'chatCommand', 'chatCommandDescription', 'chatInputVariable', 'systemEvent',
+  'watchFolder', 'watchPattern', 'watchSubfolders',
 ] as const;
 
 /**

@@ -4,6 +4,7 @@ import { buildShareTurns } from './shareTurns';
 import type { ShareTurnLabels } from './shareTurns';
 import type { MemoryNote } from './userMemory';
 import type { TurnPostCard } from './postCard';
+import type { TurnProviderSwitch } from './providerFallback';
 import { turnButtonCommands } from './builtinFlows';
 import { isStoryLink, parseXMediaInput } from './xMedia';
 import { turnMediaKind } from './turnMedia';
@@ -49,6 +50,11 @@ export interface ThreadMeta {
    * is the page's content. See `shared/notion/notionDoc.ts`.
    */
   notion?: NotionLink;
+  /**
+   * Pinned to the top of the sidebar. Only `true` is written; absent means not pinned. It belongs
+   * to the file, not to a send: a turn written from an older read keeps what the file says now.
+   */
+  pinned?: boolean;
 }
 
 export interface NotionLink {
@@ -83,6 +89,11 @@ export interface TurnMeta {
   m?: 'native' | 'replay';
   /** Set on a replay that stood in for the provider's own thread (model switched, thread lost or behind). */
   fb?: 1;
+  /**
+   * The provider the user picked could not take the message, so `p` answered instead. Read through
+   * `readTurnSwitch`, which checks the shape.
+   */
+  sw?: TurnProviderSwitch;
   c?: string;
   a?: string[];
   dropped?: number;
@@ -317,6 +328,25 @@ function splitLines(raw: string): string[] {
   return raw.split(/\r?\n/);
 }
 
+const BOM = '\uFEFF';
+
+/**
+ * A file saved as "UTF-8 with BOM" (Notepad, PowerShell 5) starts with U+FEFF, which `readFile`
+ * keeps: its first line `\uFEFF# Title` is no H1 and `\uFEFF## Prompt` no turn. Every function that
+ * finds lines by what they are reads the text after it, so they all count the same turns; the
+ * ones that write put it back in front, so the BOM stays the file's first character.
+ */
+function withoutBom(raw: string): string {
+  return raw.startsWith(BOM) ? raw.slice(BOM.length) : raw;
+}
+
+/** `edit` applied to the text after a leading BOM, with the BOM put back in front of the result. */
+export function withLeadingBom<T extends string | null>(raw: string, edit: (body: string) => T): T {
+  if (!raw.startsWith(BOM)) return edit(raw);
+  const edited = edit(withoutBom(raw));
+  return (edited === null ? edited : `${BOM}${edited}`) as T;
+}
+
 function classify(heading: string, aliases: ConversationHeadingAliases): HeadingKind | null {
   if (aliases.provider.has(heading)) return 'provider';
   if (aliases.time.has(heading)) return 'time';
@@ -357,7 +387,7 @@ function scan(lines: string[], aliases: ConversationHeadingAliases): ScannedLine
 }
 
 export function extractTurnMetas(raw: string): TurnMeta[] {
-  const lines = splitLines(raw);
+  const lines = splitLines(withoutBom(raw));
   const fenced = fencedLines(lines);
   const metas: TurnMeta[] = [];
   for (let i = 0; i < lines.length; i++) {
@@ -437,7 +467,7 @@ export function parseConversationDoc(
   raw: string,
   aliases: ConversationHeadingAliases,
 ): ConversationDoc {
-  const lines = splitLines(raw);
+  const lines = splitLines(withoutBom(raw));
   const scanned = scan(lines, aliases);
 
   let title: string | null = null;
@@ -514,7 +544,7 @@ export function visibleConversationText(
       ...doc.turns.flatMap((turn) => [turn.prompt, ...attachments(turn.meta), turn.response]),
     ].join('\n');
   }
-  const lines = splitLines(raw);
+  const lines = splitLines(withoutBom(raw));
   const scanned = scan(lines, aliases);
   const kept: string[] = [];
   let inMetaSection = false;
@@ -607,6 +637,16 @@ export function replaceTurnResponse(
   response: string,
   meta: TurnMeta,
 ): string | null {
+  return withLeadingBom(raw, (body) => withTurnResponse(body, aliases, index, response, meta));
+}
+
+function withTurnResponse(
+  raw: string,
+  aliases: ConversationHeadingAliases,
+  index: number,
+  response: string,
+  meta: TurnMeta,
+): string | null {
   const lines = splitLines(raw);
   const scanned = scan(lines, aliases);
   const spans = locateTurns(lines, scanned);
@@ -655,6 +695,15 @@ export function replaceTurnMeta(
   index: number,
   meta: TurnMeta,
 ): string | null {
+  return withLeadingBom(raw, (body) => withTurnMeta(body, aliases, index, meta));
+}
+
+function withTurnMeta(
+  raw: string,
+  aliases: ConversationHeadingAliases,
+  index: number,
+  meta: TurnMeta,
+): string | null {
   const lines = splitLines(raw);
   const scanned = scan(lines, aliases);
   const spans = locateTurns(lines, scanned);
@@ -674,12 +723,13 @@ export function replaceTurnMeta(
   }).join('\n');
 }
 
+/** The text a reader sees: no `yobi:` marker lines and no leading BOM (it is no text either). */
 export function stripConversationMarkers(raw: string): string {
-  return splitLines(raw).filter((line) => !MARKER_RE.test(line.trim())).join('\n');
+  return splitLines(withoutBom(raw)).filter((line) => !MARKER_RE.test(line.trim())).join('\n');
 }
 
 function withoutMetaSections(raw: string, aliases: ConversationHeadingAliases): string {
-  const lines = splitLines(raw);
+  const lines = splitLines(withoutBom(raw));
   const scanned = scan(lines, aliases);
   const kept: string[] = [];
   let dropping = false;
@@ -731,24 +781,44 @@ const NO_HEADING_ALIASES: ConversationHeadingAliases = {
  * replace or a title to follow. Lines inside code fences are neither, as they are there.
  */
 export function hasThreadMetaAnchor(raw: string): boolean {
-  const lines = splitLines(raw);
+  const lines = splitLines(withoutBom(raw));
   const scanned = scan(lines, NO_HEADING_ALIASES);
   return scanned.some((info, index) => info.marker === 'thread' || (!info.fenced && H1_RE.test(lines[index])));
 }
 
 export function writeThreadMeta(raw: string, meta: ThreadMeta): string {
   const line = `<!-- yobi:thread ${stringifyMarker({ ...meta, v: 1 })} -->`;
-  const lines = splitLines(raw);
-  const scanned = scan(lines, NO_HEADING_ALIASES);
+  return withLeadingBom(raw, (body) => {
+    const lines = splitLines(body);
+    const scanned = scan(lines, NO_HEADING_ALIASES);
 
-  const existing = scanned.findIndex((info) => info.marker === 'thread');
-  if (existing >= 0) {
-    lines[existing] = line;
+    const existing = scanned.findIndex((info) => info.marker === 'thread');
+    if (existing >= 0) {
+      lines[existing] = line;
+      return lines.join('\n');
+    }
+
+    const h1 = lines.findIndex((candidate, index) => !scanned[index].fenced && H1_RE.test(candidate));
+    if (h1 < 0) return [line, '', body].join('\n');
+    lines.splice(h1 + 1, 0, '', line);
     return lines.join('\n');
-  }
+  });
+}
 
-  const h1 = lines.findIndex((candidate, index) => !scanned[index].fenced && H1_RE.test(candidate));
-  if (h1 < 0) return [line, '', raw].join('\n');
-  lines.splice(h1 + 1, 0, '', line);
-  return lines.join('\n');
+/**
+ * The inverse of a first `writeThreadMeta`: the thread marker taken out together with the blank
+ * line written beside it (the one above it under a title, else the one below it). Unchanged when
+ * there is no marker outside a code fence.
+ */
+export function removeThreadMeta(raw: string): string {
+  return withLeadingBom(raw, (body) => {
+    const lines = splitLines(body);
+    const scanned = scan(lines, NO_HEADING_ALIASES);
+    const index = scanned.findIndex((info) => info.marker === 'thread');
+    if (index < 0) return body;
+    if (index > 0 && lines[index - 1].trim() === '') lines.splice(index - 1, 2);
+    else if (lines[index + 1]?.trim() === '') lines.splice(index, 2);
+    else lines.splice(index, 1);
+    return lines.join('\n');
+  });
 }

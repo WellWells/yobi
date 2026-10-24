@@ -16,11 +16,18 @@ export const THUNDERBIRD_UNAVAILABLE_ERROR = 'settings.mcp.thunderbird.unavailab
 /** Stable id/command of the in-process connector that reads X (Twitter) as the user. */
 export const BUILTIN_X_SERVER_ID = 'builtin-x';
 
-/** Stable id/command of the in-process connector for Taiwan's railways (THSR + TRA timetables and live status). */
+/** Stable id/command of the in-process connector for Taiwan's railways (THSR + TRA timetables and live status) and metros. */
 export const BUILTIN_RAIL_SERVER_ID = 'builtin-rail';
 
+/** Stable id/command of the in-process connector that reads PTT (www.ptt.cc) boards and posts. */
+export const BUILTIN_PTT_SERVER_ID = 'builtin-ptt';
+
+/** Stable id/command of the in-process connector for the user's own mailbox (IMAP + the shared SMTP account). */
+export const BUILTIN_MAIL_SERVER_ID = 'builtin-mail';
+
 /** The config flag that records the user's opt-in for each built-in connector. */
-export type BuiltinConnectorFlag = 'lineReaderEnabled' | 'thunderbirdEnabled' | 'xConnectorEnabled' | 'taiwanRailEnabled' | SiteConnectorFlag;
+export type BuiltinConnectorFlag =
+  | 'lineReaderEnabled' | 'thunderbirdEnabled' | 'xConnectorEnabled' | 'taiwanRailEnabled' | 'pttConnectorEnabled' | 'mailEnabled' | SiteConnectorFlag;
 
 export interface BuiltinConnector {
   id: string;
@@ -66,11 +73,34 @@ export const BUILTIN_CONNECTORS: readonly BuiltinConnector[] = [
     id: BUILTIN_RAIL_SERVER_ID,
     flag: 'taiwanRailEnabled',
     descriptor: () => builtinServerConfig('rail', 'Taiwan Rail'),
-    // Words a rider uses about these two railways. "Train" is in (in Taiwan it means TRA); "service
-    // run" is not — buses and flights have them too, and a match turns the message into an agent run.
-    keywords: ['高鐵', '高铁', '台鐵', '臺鐵', '台铁', '火車', '火车', '車次', '自強號', '莒光號', '區間車', '普悠瑪', '太魯閣號', 'THSR'],
+    // Words a rider uses about these railways and metros. "Train" is in (in Taiwan it means TRA);
+    // "service run" is not — buses and flights have them too, and a match turns the message into
+    // an agent run. Bare "metro" and "路線圖" are out for the same reason (Paris Métro, bus routes).
+    keywords: [
+      '高鐵', '高铁', '台鐵', '臺鐵', '台铁', '火車', '火车', '車次', '自強號', '莒光號', '區間車', '普悠瑪', '太魯閣號', 'THSR',
+      '捷運', '捷运', '輕軌', '轻轨', '機捷', '北捷', '高捷', '中捷', '桃捷', '環狀線', '三鶯線', 'MRT',
+    ],
     // Public timetables and train status only.
     publicData: true,
+  },
+  {
+    id: BUILTIN_PTT_SERVER_ID,
+    flag: 'pttConnectorEnabled',
+    descriptor: () => builtinServerConfig('ptt', 'PTT'),
+    // The display name already matches "PTT" in any case as a whole word ("ptt.cc" too, not
+    // "HTTPTTL"); only the Chinese name needs saying. No board names (user, 2026-10-24).
+    keywords: ['批踢踢'],
+    // Public boards and posts, read signed out.
+    publicData: true,
+  },
+  {
+    id: BUILTIN_MAIL_SERVER_ID,
+    flag: 'mailEnabled',
+    descriptor: () => builtinServerConfig('mail', 'Mail'),
+    // Words for the user's own mailbox only. "email", "mail", "信件" and "郵件" are out: "write an
+    // email to the client" is a writing request, and a match turns the message into an agent run
+    // with the mailbox open.
+    keywords: ['信箱', '收件匣', '收件箱', '邮箱', 'Gmail', 'inbox'],
   },
   ...SITE_CONNECTOR_ROWS.map((row): BuiltinConnector => ({
     id: siteConnectorServerId(row.site),
@@ -80,6 +110,17 @@ export const BUILTIN_CONNECTORS: readonly BuiltinConnector[] = [
     site: row.site,
   })),
 ];
+
+/** Built-in connectors carry Yobi's own translated titles (i18n keys); their stored names are English ids. */
+export const BUILTIN_CONNECTOR_TITLES: Readonly<Record<string, string>> = {
+  [BUILTIN_LINE_SERVER_ID]: 'settings.mcp.line.title',
+  [BUILTIN_THUNDERBIRD_SERVER_ID]: 'settings.mcp.thunderbird.title',
+  [BUILTIN_X_SERVER_ID]: 'settings.mcp.x.title',
+  [BUILTIN_RAIL_SERVER_ID]: 'settings.mcp.rail.title',
+  [BUILTIN_PTT_SERVER_ID]: 'settings.mcp.ptt.title',
+  [BUILTIN_MAIL_SERVER_ID]: 'settings.mcp.mail.title',
+  ...Object.fromEntries(SITE_CONNECTOR_ROWS.map((row) => [siteConnectorServerId(row.site), row.keys.title])),
+};
 
 /** The connectors a bot may use outside a private chat (see `publicData`). */
 export const PUBLIC_DATA_CONNECTOR_IDS: readonly string[] = BUILTIN_CONNECTORS.filter((c) => c.publicData).map((c) => c.id);

@@ -8,6 +8,7 @@ interface ExportSettingsState {
   capture: CaptureSettings;
   quick: QuickExportSettings;
   load: () => Promise<void>;
+  reload: () => Promise<void>;
   patchCapture: (changes: Partial<CaptureSettings>) => void;
   patchQuick: (changes: Partial<QuickExportSettings>) => void;
   setQuickHotkey: (hotkey: string) => Promise<HotkeyBindResult>;
@@ -31,7 +32,6 @@ const CAPTURE_FALLBACK: CaptureSettings = {
 };
 
 const QUICK_FALLBACK: QuickExportSettings = {
-  enabled: true,
   hotkey: '',
   format: 'png',
   zip: false,
@@ -55,6 +55,12 @@ export const useExportSettingsStore = create<ExportSettingsState>((set, get) => 
       // A failed read keeps the fallbacks; callers that await load() must not see a rejection.
       .catch(() => {});
     return loadPromise;
+  },
+
+  // A restored backup rewrites both halves in main; load() alone would keep serving the first read.
+  reload: () => {
+    loadPromise = null;
+    return get().load();
   },
 
   patchCapture: (changes) => {

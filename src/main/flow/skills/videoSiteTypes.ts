@@ -41,6 +41,12 @@ export interface VideoInfo {
    */
   summaryNeedsSignIn?: boolean;
   /**
+   * This video is one part of several under one id (a bilibili video in parts — episodes, or the
+   * same video in several languages): which one, of how many. Only that part is downloaded, and
+   * the menu says so. Absent for a video in one part.
+   */
+  part?: { index: number; total: number };
+  /**
    * Reads this video's subtitles with their timing, for an .srt file; present exactly when the
    * video has subtitles to read now (the menu draws its "subtitles" button only then). Never on a
    * row without `subtitles`; bilibili leaves it out while signed out. Needs no download tools.

@@ -1,6 +1,7 @@
 import React from 'react';
 import { ActionIcon, Checkbox, Group, Stack, Text, Tooltip } from '@mantine/core';
 import { Trash2, X } from 'lucide-react';
+import { fillTemplate } from '../../../shared/fillTemplate';
 
 interface SelectionActionBarProps {
   count: number;
@@ -10,14 +11,16 @@ interface SelectionActionBarProps {
   onCancel: () => void;
   t: (key: string) => string;
   extraActions?: React.ReactNode;
+  /** Labelled buttons share the row's width (default); icon buttons keep their size, left-aligned. */
+  actionsGrow?: boolean;
 }
 
 export const SelectionActionBar: React.FC<SelectionActionBarProps> = ({
-  count, allSelected, onToggleAll, onDelete, onCancel, t, extraActions,
+  count, allSelected, onToggleAll, onDelete, onCancel, t, extraActions, actionsGrow = true,
 }) => {
   const hasSelection = count > 0;
   const countLabel = hasSelection
-    ? t('selection.count').replace('{{count}}', String(count))
+    ? fillTemplate(t('selection.count'), { count: String(count) })
     : t('selection.selectAll');
 
   return (
@@ -61,7 +64,7 @@ export const SelectionActionBar: React.FC<SelectionActionBarProps> = ({
       {/* Delete sits beside the actions as an icon, never as the widest button on the bar:
           the most destructive choice should not also be the easiest one to hit. */}
       <Group gap={6} wrap="nowrap">
-        <Group gap={6} grow wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
+        <Group gap={6} grow={actionsGrow} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
           {extraActions}
         </Group>
         <Tooltip label={t('common.delete')} position="top">

@@ -2,6 +2,7 @@ import { loadUserMemory } from '../memory/memoryStore';
 import type { UserMemoryState } from '../memory/memoryState';
 import type { SignInUse } from '../flow/skills/readAccess';
 import { computeBotFlowAdmin } from './rights';
+import { isBotPlatform } from '../../shared/types';
 
 /*
  * How far a run may read a pasted link with the site sign-ins in Settings (X, Instagram,
@@ -44,7 +45,7 @@ export function botTriggerOf(context: Readonly<Record<string, string>>): BotTrig
  */
 export function botSignInUse(state: UserMemoryState | null, trigger: BotTrigger): SignInUse {
   const { platform, userId, chatId } = trigger;
-  if ((platform !== 'telegram' && platform !== 'line') || !userId || !chatId) return 'none';
+  if (!isBotPlatform(platform) || !userId || !chatId) return 'none';
   return computeBotFlowAdmin(state, platform, userId, chatId) ? 'full' : 'others';
 }
 

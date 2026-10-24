@@ -7,6 +7,8 @@ import { useSecretHealthStore } from '../store/secretHealthStore';
 import { useMcpStore } from '../store/useMcpStore';
 import { initThemeFromConfig } from '../store/themeStore';
 import { initReadingFromConfig } from '../store/readingStore';
+import { initSidebarViewFromConfig } from '../store/sidebarViewStore';
+import { initLinkRecognitionFromConfig, useLinkRecognitionStore } from '../store/linkRecognitionStore';
 import type { LayoutMode } from '../store/appStore';
 import { accountApi, byokApi, chatgptModelApi, claudeModelApi, geminiModelApi, ipcEvents, mcpApi, settingsApi, tempChatApi } from '../api/electronApi';
 import { onIdle } from '../utils/idle';
@@ -21,7 +23,6 @@ export function useAppBootstrap() {
   const setAccountStatuses = useAppStore((s) => s.setAccountStatuses);
   const setAccountStatus = useAppStore((s) => s.setAccountStatus);
   const setHotkey = useAppStore((s) => s.setHotkey);
-  const setHotkeyEnabled = useAppStore((s) => s.setHotkeyEnabled);
   const setUserNickname = useAppStore((s) => s.setUserNickname);
   const setView = useAppStore((s) => s.setView);
   const hydrateAiUrl = useAppStore((s) => s.hydrateAiUrl);
@@ -40,10 +41,11 @@ export function useAppBootstrap() {
     void loadLocales();
     initThemeFromConfig();
     initReadingFromConfig();
+    initSidebarViewFromConfig();
     useSecretHealthStore.getState().initialize();
     void useFlowStore.getState().loadFlows();
     void settingsApi.getHotkey().then(setHotkey);
-    void settingsApi.getHotkeyEnabled().then(setHotkeyEnabled);
+    void settingsApi.getRegionHotkey().then(useAppStore.getState().setRegionHotkey);
     void settingsApi.getShortcuts().then(useShortcutStore.getState().setOverrides);
     void settingsApi.getPromptPreferences().then((prefs) => setUserNickname(prefs.nickname ?? ''));
     void settingsApi.getAiUrl().then(hydrateAiUrl);
@@ -62,8 +64,9 @@ export function useAppBootstrap() {
     void settingsApi.getShowTokenUsage().then((show) => {
       if (typeof show === 'boolean') useAppStore.setState({ showTokenUsage: show });
     });
+    initLinkRecognitionFromConfig();
     void byokApi.getSettings().then((snapshot) => {
-      setByokGroupModels(makeByokGroupModels(snapshot.groups));
+      setByokGroupModels(makeByokGroupModels(snapshot.groups, snapshot.instances));
       setByokModels(snapshot.instances.map(makeByokModelOption));
     });
     void settingsApi.getHiddenSources().then(setHiddenSources);
@@ -95,7 +98,7 @@ export function useAppBootstrap() {
         void chatgptModelApi.refresh().then(setChatgptModels);
       });
     });
-  }, [initializeListeners, loadLocales, setHotkey, setHotkeyEnabled, setUserNickname, hydrateAiUrl, setByokModels, setByokGroupModels, setHiddenSources, setTempChatMode, setAccountStatuses, setGeminiModels, setClaudeModels, setChatgptModels]);
+  }, [initializeListeners, loadLocales, setHotkey, setUserNickname, hydrateAiUrl, setByokModels, setByokGroupModels, setHiddenSources, setTempChatMode, setAccountStatuses, setGeminiModels, setClaudeModels, setChatgptModels]);
 
   useEffect(() => {
     const unsubs = [
@@ -116,6 +119,7 @@ export function useAppBootstrap() {
       geminiModelApi.onChanged(setGeminiModels),
       claudeModelApi.onChanged(setClaudeModels),
       chatgptModelApi.onChanged(setChatgptModels),
+      settingsApi.onLinkRecognitionChanged(useLinkRecognitionStore.getState().apply),
     ];
     return () => unsubs.forEach((fn) => fn());
   }, [appendLog, setStatus, setQueue, setAccountStatus, setView, setTempChatMode, setTempChatResult, setGeminiModels, setClaudeModels, setChatgptModels]);

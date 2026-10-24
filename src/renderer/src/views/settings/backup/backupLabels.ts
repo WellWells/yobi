@@ -1,4 +1,5 @@
 import type { BackupCategoryId, BackupCategoryInfo } from '../../../../../shared/types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 /**
  * Categories that show no count. Settings and personal memory are each a single file, so a
@@ -18,7 +19,7 @@ export function backupCountLabel(
 ): string {
   if (!info?.available) return t('settings.backup.unavailable');
   if (UNCOUNTED_BACKUP_CATEGORIES.has(id)) return '';
-  return t(`settings.backup.count.${id}`).replace('{{count}}', String(info.count));
+  return fillTemplate(t(`settings.backup.count.${id}`), { count: String(info.count) });
 }
 
 /**
@@ -32,7 +33,5 @@ export function backupImpactLabel(
   current: number,
 ): string {
   if (UNCOUNTED_BACKUP_CATEGORIES.has(id)) return t(`settings.backup.impact.${id}`);
-  return t(id === 'outputs' ? 'settings.backup.impact.outputs' : 'settings.backup.impact.replace')
-    .replace('{{incoming}}', String(incoming))
-    .replace('{{current}}', String(current));
+  return fillTemplate(t(id === 'outputs' ? 'settings.backup.impact.outputs' : 'settings.backup.impact.replace'), { incoming: String(incoming), current: String(current) });
 }

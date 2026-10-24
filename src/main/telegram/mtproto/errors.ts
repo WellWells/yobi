@@ -89,7 +89,7 @@ export function mtprotoErrorKey(raw: string): { key: string; vars?: Record<strin
   if (!raw.startsWith(MTPROTO_ERROR_PREFIX)) return null;
   const match = /^([A-Z_]+)(?::(\d+))?/.exec(raw.slice(MTPROTO_ERROR_PREFIX.length));
   const code = match?.[1] as MtprotoErrorCode | undefined;
-  if (!code || !(code in ERROR_KEYS)) return null;
+  if (!code || !Object.hasOwn(ERROR_KEYS, code)) return null;
   if (code === 'FLOOD_WAIT') return { key: ERROR_KEYS[code], vars: { seconds: match?.[2] ?? '60' } };
   return { key: ERROR_KEYS[code] };
 }

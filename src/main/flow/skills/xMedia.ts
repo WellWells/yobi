@@ -254,7 +254,7 @@ async function pickMenu(post: XPost, picks: PostPicks, destination: XMediaDestin
 export async function execXMedia(config: Record<string, string>, signal?: AbortSignal): Promise<string> {
   const raw = (config.input ?? '').trim();
   const input = parseXMediaInput(raw);
-  if (!input) throw new FlowUserError('flow.error.xPostUrl', { url: raw }, `X media: no X, Threads, Instagram, Facebook, TikTok, PTT, Dcard or Reddit post link in: ${raw}`);
+  if (!input) throw new FlowUserError('flow.error.xPostUrl', { url: raw }, `X media: no X, Threads, Instagram, Facebook, TikTok, PTT, Dcard, Reddit or Weibo post link in: ${raw}`);
   // The "MP3" built-ins: the post's videos as MP3s, one Downloader use as a video's MP3 is.
   if (config.audio === 'mp3') return countDownload(input.source, signal, () => postAudio(input, config, signal));
   // A question about the post is answered, not downloaded: no Downloader use. Nor is a menu of a

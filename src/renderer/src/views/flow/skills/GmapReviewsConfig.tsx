@@ -4,6 +4,7 @@ import { AppTextInput } from '../../../components/AppTextInput';
 import { AppNumberInput } from '../../../components/AppNumberInput';
 import { SelectDropdown } from '../../../components/SelectDropdown';
 import type { SkillConfigProps } from './types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 const SORT_OPTIONS = ['mixed', 'relevant', 'newest', 'highest', 'lowest'] as const;
 
@@ -43,7 +44,7 @@ export const GmapReviewsConfig: React.FC<SkillConfigProps> = ({ step, onChange, 
       />
 
       <Text fz="xs" c="dimmed">
-        {t('flow.skill.gmap_reviews.outputHint').replaceAll('{{outputKey}}', `{{${step.outputKey}}}`)}
+        {fillTemplate(t('flow.skill.gmap_reviews.outputHint'), { outputKey: `{{${step.outputKey}}}` })}
       </Text>
     </Stack>
   );

@@ -3,6 +3,7 @@ import { fileApi, systemApi } from '../../api/electronApi';
 import { showAppNotice } from '../../hooks/useUiNotifications';
 import { useI18nStore } from '../../store/i18nStore';
 import type { ConversationImportResult, OutputFile } from '../../../../shared/types';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 /** What the "Import conversations…" file picker offers: the extensions main's import accepts. */
 export const IMPORT_ACCEPT = '.md,.markdown';
@@ -28,11 +29,11 @@ export function importNotices(
 ): Array<{ title: string; level: 'success' | 'warning' | 'error' }> {
   const notices: Array<{ title: string; level: 'success' | 'warning' | 'error' }> = [];
   if (result.imported.length > 0) {
-    notices.push({ title: t('sidebar.import.done').replace('{{count}}', String(result.imported.length)), level: 'success' });
+    notices.push({ title: fillTemplate(t('sidebar.import.done'), { count: String(result.imported.length) }), level: 'success' });
   }
   if (result.skipped > 0) notices.push({ title: t('sidebar.import.notMarkdown'), level: 'warning' });
   if (result.failed > 0) {
-    notices.push({ title: t('sidebar.import.failed').replace('{{count}}', String(result.failed)), level: 'error' });
+    notices.push({ title: fillTemplate(t('sidebar.import.failed'), { count: String(result.failed) }), level: 'error' });
   }
   return notices;
 }

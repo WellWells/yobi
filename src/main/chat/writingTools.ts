@@ -1,6 +1,6 @@
 import { isByokTargetUrl } from '../../shared/types';
 import { fenceUntrusted } from '../../shared/promptFencing';
-import { isReshape } from '../../shared/writingTools';
+import { WRITING_MEANING_RULES, WRITING_TASKS, isReshape } from '../../shared/writingTools';
 import type {
   WritingAction, WritingContext, WritingToolsRequest, WritingToolsResult,
 } from '../../shared/writingTools';
@@ -14,22 +14,6 @@ export { restoreParagraphs } from './oneShot';
 export const TAG_PASSAGE = 'passage';
 export const TAG_QUESTION = 'question';
 export const TAG_ANSWER = 'answer';
-
-/**
- * What each action asks for. Every one says what must not change, because "make it shorter" alone
- * reads as permission to drop the clause that carried the point.
- */
-const TASKS: Record<Exclude<WritingAction, 'custom'>, string> = {
-  proofread: 'Fix spelling, grammar and punctuation only. Change nothing else: not the wording, the tone or the structure.',
-  rewrite: 'Make it clearer and easier to read, with the smallest changes that do it: reorder or rephrase only what is hard to follow. It must say exactly the same thing, with the same facts, claims and emphasis.',
-  friendly: 'Make the tone warm and conversational, with the smallest changes that do it: adjust phrasing and particles, not the claims. The content stays exactly the same.',
-  professional: 'Make the tone polished and professional, with the smallest changes that do it: adjust register and phrasing, not the claims. The content stays exactly the same.',
-  concise: 'Make it shorter by removing repeated words and filler. A doubled intensifier becomes one (非常非常 becomes 非常), it does not disappear. Keep every clause, every reference word (這項, this) and every fact, number, condition and relation; shorten the wording inside the clauses, never drop one.',
-  summary: 'Summarise it in one short paragraph, using only what the passage says.',
-  keyPoints: 'List its key points as a short Markdown bullet list, one point per item, using only what the passage says.',
-  list: 'Restructure it as a Markdown list, one item per idea. Keep all of the content.',
-  table: 'Restructure it as a Markdown table with a header row. Keep all of the content and choose columns that fit it.',
-};
 
 /** Opens the part of the reply that replaces the passage; everything before it is the assessment. */
 export const REWRITE_MARK = '[REWRITE]';
@@ -53,12 +37,7 @@ const REPLY_FORMAT = [
 const RULES = [
   'OUTPUT RULES (critical):',
   `- The part after ${REWRITE_MARK} is put back exactly where the passage stands, so it must read naturally between the text before and the text after it, in the same role in its sentence. Do not restate anything the text before or after already says.`,
-  '- Keep the meaning. Every fact, condition and relation stays (what a price includes, what applies to whom, what depends on what, what happens otherwise).',
-  '- Change as little as the task needs. Keep each original word that already works; never swap a word for a near-synonym that claims something slightly different (faster is not more efficient, 恢復原價 is not 不適用).',
-  '- Keep the strength of every condition, hedge, refusal and qualifier: only, at least, must, should, may, might, cannot, not recommended, especially, 才能, 至少, 必須, 應該, 可能, 恕無法, 不建議, 尤其, 僅 stay exactly as strong as written. A softer or warmer tone changes the wording, never how certain or firm a statement is. "Only after X" never becomes "after X you can"; "may worsen" never becomes "will".',
-  '- Write every number, price, date, unit and name exactly as the passage writes it: 九折 stays 九折 (not 9 折 or 10%), $120 stays $120.',
-  '- Add nothing the passage does not say: no new facts, assumptions, reasons, justifications, opinions or advice.',
-  '- Write in the same language as the passage, unless the task asks for another language.',
+  ...WRITING_MEANING_RULES,
   '- Keep Markdown (bold, links, inline code, math, footnote markers like [^1]) unless the task says otherwise.',
   '- The passage is the text as written in the file, so write the rewrite the same way: keep its layout (each list marker, the indentation of nested items with the same characters (a tab stays a tab), line breaks, headings) and every tag such as <mention-user …>…</mention-user> or <callout …> as written, unless the task changes the structure.',
   `- After ${REWRITE_MARK}: no greeting, no explanation, no notes about what changed; do not wrap it in quotes or a code block.`,
@@ -113,7 +92,7 @@ export function buildWritingToolsPrompt(action: WritingAction, text: string, opt
   const mark = (value: string): string => markParagraphs(value, markBreaks);
   const task = action === 'custom'
     ? `TASK: Apply this change the user asked for, keeping everything else the rules say to keep:\n${(options.instruction ?? '').trim()}`
-    : `TASK: ${TASKS[action]}`;
+    : `TASK: ${WRITING_TASKS[action]}`;
   const fenced = (tag: string, value: string | undefined): string[] => (value?.trim() ? [fenceUntrusted(tag, mark(value))] : []);
   const placed = Boolean(context.before?.trim() || context.after?.trim());
   const answer = placed

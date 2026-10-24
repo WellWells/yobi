@@ -4,7 +4,7 @@
  * | data                | from        | kept                          | TDX calls          |
  * |---------------------|-------------|-------------------------------|--------------------|
  * | TRA timetable       | TRA ODS     | disk, per date, 6 h           | none               |
- * | THSR timetable      | TDX         | disk, per date, 2 h then 304  | one per date       |
+ * | THSR timetable      | TDX (key); else THSR site | disk, per date, 2 h then 304 | one per date |
  * | THSR fares, offers  | THSR site   | memory, per OD + date, 6 h    | none               |
  * | TRA fares           | TRA site    | memory, per OD + date, 6 h    | none               |
  * | TRA train offers    | TRA site    | memory, per OD + date, 30 min | none               |
@@ -12,6 +12,9 @@
  * | THSR seats          | TDX         | memory, per station, ≥ 5 min  | per refresh        |
  * | notices             | TDX         | memory, 30 min                | two per refresh    |
  * | one TRA train live  | TRA site    | memory, per train, 1 min      | none               |
+ *
+ * TDX rows run only with the user's own key (`tdxClient.ts`); without one, delays, seats and
+ * notices say they need a key, and the THSR timetable comes from THSR's own search.
  */
 import { errorText } from '../../shared/errorText';
 import { RailCache } from './railCache';
@@ -19,7 +22,7 @@ import type { Cached } from './railCache';
 import type { FetchFn } from './railHttp';
 import { fetchOdsFile, fetchOdsList, findOdsFileLink } from './odsSource';
 import { TdxQuota } from './quota';
-import { TdxClient, TdxQuotaError } from './tdxClient';
+import { TdxClient, TdxNoKeyError, TdxQuotaError } from './tdxClient';
 import type { TdxCredentials } from './tdxClient';
 import { TDX_PATHS, parseAlerts, parseThsrDaily, parseThsrSeats, parseTraDelays } from './tdxSources';
 import type { SeatInfo, TraDelay } from './tdxSources';
@@ -33,6 +36,7 @@ import { fetchTraTrainLive } from './traWebSource';
 import type { TraTrainLive } from './traWebSource';
 import { nodeId } from './railTypes';
 import type { RailNode, RailTrain } from './railTypes';
+import { addDays } from './railTime';
 import { stationName, thsrWebCode } from './stations';
 
 const HOUR = 3_600_000;
@@ -77,6 +81,7 @@ export class RailData {
 
   thsrTimetable(date: string, signal?: AbortSignal): Promise<Cached<RailTrain[]>> {
     return this.cache.stored<RailTrain[]>(`thsr-${date}`, 2 * HOUR, async (previous) => {
+      if (!this.tdx.hasKey()) throw new TdxNoKeyError();
       if (!this.quota.canSpendTimetable()) throw new TdxQuotaError();
       const result = await this.tdx.get(TDX_PATHS.thsrDaily(date), { ifModifiedSince: previous?.meta, signal });
       if (result.status === 304) return 'unchanged';
@@ -122,7 +127,13 @@ export class RailData {
       : "the rest of today's TDX allowance is kept for timetables";
   }
 
+  /** Whether the user set a TDX key: without one, TDX is never asked. */
+  hasTdxKey(): boolean {
+    return this.tdx.hasKey();
+  }
+
   private async live<T>(key: string, floorMs: number, load: () => Promise<T>): Promise<Live<T>> {
+    if (!this.tdx.hasKey()) return { unavailable: new TdxNoKeyError().message };
     if (!this.quota.canSpendLive()) {
       const held = this.cache.peek<T>(key);
       return held ? { value: held.value, at: held.at, unavailable: this.unavailableReason() } : { unavailable: this.unavailableReason() };
@@ -164,7 +175,11 @@ export class RailData {
     });
   }
 
+  /**
+   * Drops the days before yesterday. Yesterday stays: its trains still run after midnight, and the
+   * ODS list offers today onward only, so the copy kept here is the only one left.
+   */
   sweep(today: string): Promise<void> {
-    return this.cache.sweep(today);
+    return this.cache.sweep(addDays(today, -1));
   }
 }

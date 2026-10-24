@@ -42,7 +42,8 @@ export function oneShotIo(signal: AbortSignal, onProgress: (phase: OneShotPhase)
       if (!worker || worker.isDestroyed()) throw workerWindowUnavailable();
       // Opening the window takes a while; a cancel in that time must still stop it before it types.
       if (signal.aborted) throw new FlowAbortError();
-      const prepared = preparePromptForProvider(prompt, providerUrl);
+      // Sized when it was queued; a cut now would drop the user's own text, so it is refused instead.
+      const prepared = preparePromptForProvider(prompt, providerUrl, { refuseCut: true });
       const automated = await runAutomation(worker, prepared.prompt, config.responseTimeout, providerUrl);
       return automated.response;
     }),

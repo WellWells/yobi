@@ -1,6 +1,7 @@
 import type { FlowVariable, SkillInstance, TriggerConfig } from './types';
 import { FLOW_VAR_PREFIX } from './flowVariables';
 import { isShareLinkFormat } from './shareFormat';
+import { FILE_TRIGGER_NAME_VAR, hasFileTrigger } from './flowFileTrigger';
 
 const FILE_PRODUCER_TYPES = new Set<string>(['capture', 'file_write', 'file_download', 'youtube_download', 'x_media']);
 const LLM_EXPORT_FORMATS = new Set<string>(['png', 'webp', 'pdf']);
@@ -51,7 +52,9 @@ export function checkVariableReferences(
 
   const availableKeys = new Set<string>();
   const frames: LoopFrame[] = [];
-  let fileAvailable = false;
+  // A file trigger seeds {{file}} and {{file.name}} before the first step.
+  const fileTrigger = hasFileTrigger(triggers);
+  let fileAvailable = fileTrigger;
 
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
@@ -68,8 +71,11 @@ export function checkVariableReferences(
           if (availableKeys.has(root) || frames.some((f) => f.loopVar === root)) continue;
 
           if (root === 'file') {
+            if (name === FILE_TRIGGER_NAME_VAR && !fileTrigger) {
+              return `${at} references {{${name}}}, which only a file trigger sets — use {{file}} for the path of a file a step produced`;
+            }
             if (fileAvailable) continue;
-            return `${at} references {{file}}, but no file-producing step (capture, file_write, file_download, youtube_download, x_media, share with a file format, or llm with exportFormat) runs before it in the same scope — a file produced inside a loop is not available after end_loop`;
+            return `${at} references {{file}}, but neither a file trigger nor a file-producing step (capture, file_write, file_download, youtube_download, x_media, share with a file format, or llm with exportFormat) comes before it in the same scope — a file produced inside a loop is not available after end_loop`;
           }
           if (root === 'bot') {
             if (!hasBotTrigger) return `${at} references {{${name}}}, but the flow has no bot trigger`;

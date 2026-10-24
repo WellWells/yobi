@@ -8,6 +8,7 @@ import { SelectDropdown } from '../../../components/SelectDropdown';
 import type { BotPlatform } from '../../../../../shared/types';
 import { botStepTargets } from '../../../../../shared/botRecipients';
 import type { SkillConfigProps } from './types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 const TEMPLATE_RE = /\{\{[^}]+\}\}/;
 
@@ -24,11 +25,13 @@ export const BotConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
         label={t('flow.skill.bot.platform')}
         options={[
           ...(variablePlatform
-            ? [{ value: variablePlatform, label: t('flow.skill.bot.platform.variable').replace('{{name}}', variablePlatform) }]
+            ? [{ value: variablePlatform, label: fillTemplate(t('flow.skill.bot.platform.variable'), { name: variablePlatform }) }]
             : []),
           { value: 'auto', label: t('flow.skill.bot.platform.auto') },
           { value: 'telegram', label: t('flow.skill.bot.platform.telegram') },
           { value: 'line', label: t('flow.skill.bot.platform.line') },
+          { value: 'discord', label: t('flow.skill.bot.platform.discord') },
+          { value: 'slack', label: t('flow.skill.bot.platform.slack') },
         ]}
         value={variablePlatform || platform}
         onChange={(value) => onChange({ ...step.config, platform: value })}
@@ -69,7 +72,7 @@ export const BotConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
         mono
       />
       <Text fz="xs" c="dimmed">{t('flow.skill.bot.attachment.hint')}</Text>
-      {platform !== 'line' && (step.config.attachment ?? '').trim() !== '' && (
+      {(platform === 'telegram' || platform === 'auto') && (step.config.attachment ?? '').trim() !== '' && (
         <SelectDropdown
           label={t('flow.skill.bot.attachmentType')}
           options={[
@@ -84,7 +87,7 @@ export const BotConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
           size="sm"
         />
       )}
-      {platform !== 'telegram' && (step.config.attachment ?? '').trim() !== '' && (
+      {(platform === 'line' || platform === 'auto') && (step.config.attachment ?? '').trim() !== '' && (
         <AppTextInput
           label={t('flow.skill.bot.preview')}
           description={t('flow.skill.bot.preview.desc')}
@@ -115,7 +118,7 @@ export const BotConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
       />
       {step.config.emitFailFlag === 'true' && (
         <Text fz="xs" c="dimmed">
-          {t('flow.skill.bot.emitFailFlag.hint').replace('{{flag}}', `{{${step.outputKey}.isFailed}}`)}
+          {fillTemplate(t('flow.skill.bot.emitFailFlag.hint'), { flag: `{{${step.outputKey}.isFailed}}` })}
         </Text>
       )}
     </Stack>

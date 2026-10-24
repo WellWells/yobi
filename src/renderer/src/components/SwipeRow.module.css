@@ -1,0 +1,97 @@
+/* Two-finger swipe on a list row (macOS). Nothing here applies until the row is revealed, so an
+   idle row looks exactly like the row without the swipe layer (its focus ring is not clipped). */
+.root {
+  position: relative;
+}
+
+.root[data-revealed='true'] {
+  overflow: hidden;
+  border-radius: var(--radius);
+}
+
+/* The row slides over the actions; its own fill may be translucent (selected = accent-dim), so it
+   gets the list's background underneath while revealed. */
+.content {
+  position: relative;
+  z-index: 1;
+}
+
+.root[data-revealed='true'] > .content {
+  background: var(--mantine-color-default);
+  border-radius: var(--radius);
+}
+
+.actions {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+}
+
+.actions[data-side='trailing'] {
+  right: 0;
+}
+
+.actions[data-side='leading'] {
+  left: 0;
+  flex-direction: row-reverse;
+}
+
+/* Past the open width the cells share the revealed space, like Mail. */
+.cell {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  overflow: hidden;
+}
+
+/* Armed full swipe: the full-swipe action takes the whole space and its icon rides the row's edge. */
+.actions[data-armed='true'] .cell:not([data-full='true']) {
+  flex: 0 0 0;
+}
+
+.actions[data-armed='true'][data-side='trailing'] .cell[data-full='true'] {
+  align-items: flex-start;
+  padding-left: 18px;
+}
+
+.actions[data-armed='true'][data-side='leading'] .cell[data-full='true'] {
+  align-items: flex-end;
+  padding-right: 18px;
+}
+
+.circle {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.circle[data-tone='destructive'] {
+  background: var(--mantine-color-error);
+  color: var(--mantine-color-white);
+}
+
+.circle[data-tone='accent'] {
+  background: var(--mantine-color-accent);
+  color: var(--mantine-color-white);
+}
+
+.circle[data-tone='neutral'] {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.label {
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+}

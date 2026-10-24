@@ -14,14 +14,18 @@ import type { QueueManager } from '../queueManager';
 import type { TelegramRuntime } from '../telegram';
 import type { LineRuntime } from '../line';
 import type { FlowManager } from '../flow';
+import type { SocketBotRuntimes } from '../bootstrap/socketBotSetup';
 
 export interface IpcContext {
   queue: QueueManager;
   telegramRuntime: TelegramRuntime;
   lineRuntime: LineRuntime;
+  /** Discord's and Slack's runtimes. */
+  socketBots: SocketBotRuntimes;
   getMainWin: () => BrowserWindow | null;
   bindHotkey: () => boolean;
   bindQuickExportHotkey: () => boolean;
+  bindRegionHotkey: () => boolean;
   checkForUpdates: () => Promise<boolean>;
   onTraySettingsChanged?: () => void;
   onTrayMenuRebuild?: () => void;
@@ -33,7 +37,7 @@ export interface IpcContext {
 export function buildSettingsSnapshot(): SettingsSnapshot {
   return {
     hotkey: config.hotkey,
-    hotkeyEnabled: config.hotkeyEnabled,
+    regionHotkey: config.regionHotkey,
     shortcuts: config.shortcuts,
     locale: config.locale,
     theme: config.theme,
@@ -41,6 +45,8 @@ export function buildSettingsSnapshot(): SettingsSnapshot {
     notifyOnComplete: config.notifyOnComplete,
     notifyEvents: config.notifyEvents,
     metricsEnabled: config.metricsEnabled,
+    oneShotTemporaryChat: config.oneShotTemporaryChat,
+    providerFallback: config.providerFallback,
     promptPreferences: config.promptPreferences,
     youtubePrompt: config.youtubePrompt,
     responseTimeout: config.responseTimeout,

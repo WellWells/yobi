@@ -10,6 +10,7 @@ import { AgentTraceRows } from '../AgentTraceRows';
 import { FlowBuildProgressView } from '../FlowBuildProgress';
 import { NUMBERED_MARK_OFFSET, PROGRESS_ROW_STYLE, ProgressMark, StepNumber } from '../ProgressMark';
 import { useFlowBuildStore } from '../../store/useFlowBuildStore';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 const HEADER_LOADER = 18;
 const HEADER_GAP = 8;
@@ -57,7 +58,7 @@ function PendingTurnBubbleInner({ turn, t }: PendingTurnBubbleProps) {
   const header = turn.command
     ? t('chat.command.running')
     : waitAhead >= 0
-    ? t('agent.queue.waiting').replace('{{count}}', String(waitAhead))
+    ? fillTemplate(t('agent.queue.waiting'), { count: String(waitAhead) })
     : synthesizing
       ? t('agent.stage.answering')
       : latestStage === 'confirming'

@@ -20,6 +20,7 @@ import { buildSafeFileNameFromTitle, getUniquePath, listOutputFiles } from '../f
 import { sendLog, sendToRenderer } from '../helpers';
 import { getLangCache, t } from '../i18n';
 import { isAllowedFilePath } from './context';
+import { busyUntilSettled, markConversationBusy } from '../conversationBusy';
 
 /**
  * Translation's own slots, apart from the writing tools': translating never cancels a rewrite.
@@ -47,6 +48,7 @@ export async function handleTranslateRun(raw: unknown): Promise<TranslateResult>
   if (typeof rawText === 'string' && rawText.length > TRANSLATE_TEXT_MAX_CHARS) return { ok: false, reason: 'tooLong' };
   const request = parseTranslateRequest(raw);
   if (!request) return { ok: false, reason: 'invalid' };
+  if (request.filePath && !await isAllowedFilePath(request.filePath)) return { ok: false, reason: 'invalid' };
   rememberQuickActionModel(request.providerUrl);
 
   running?.controller.abort();
@@ -57,7 +59,8 @@ export async function handleTranslateRun(raw: unknown): Promise<TranslateResult>
     const io = oneShotIo(controller.signal, (phase) => {
       sendToRenderer(IPC.TRANSLATE_PROGRESS, { id: request.id, phase } satisfies TranslateProgress);
     });
-    const result = await runTranslate(request, io);
+    // An answer's translation is written back into its conversation: not moved or deleted meanwhile.
+    const result = await busyUntilSettled(request.filePath, 'translating', runTranslate(request, io));
     if (!result.ok && result.reason === 'failed') sendLog(`⚠️ [Translate] failed: ${result.error ?? ''}`);
     if (result.ok && result.unmatched) sendLog('⚠️ [Translate] code, formulas or links did not come back exactly once');
     return result;
@@ -83,6 +86,8 @@ export async function handleTranslateConversation(raw: unknown): Promise<Convers
 
   const controller = new AbortController();
   conversationRun = { id: request.id, path: request.filePath, controller };
+  // The copy is named after the source and saved beside it, so the source stays where it is meanwhile.
+  const releaseBusy = markConversationBusy(request.filePath, 'translating');
   sendLog(`🌐 [Translate] ${turns.length} turn(s) of ${path.basename(request.filePath)} into ${request.to}`);
   let done = 0;
   const progress = (phase: ConversationTranslateProgress['phase']): void => {
@@ -120,6 +125,7 @@ export async function handleTranslateConversation(raw: unknown): Promise<Convers
     sendLog(`🌐 [Translate] saved ${path.basename(target)}`);
     return { ok: true, filePath: target, keptOriginal: result.kept };
   } finally {
+    releaseBusy();
     if (conversationRun?.controller === controller) conversationRun = null;
   }
 }
@@ -141,7 +147,7 @@ export function registerTranslateHandlers(): void {
     const request = parseTurnTranslationRequest(raw);
     if (!request || !await isAllowedFilePath(request.filePath)) return { ok: false, reason: 'failed' };
     try {
-      return await setTurnTranslation(request);
+      return await busyUntilSettled(request.filePath, 'translating', setTurnTranslation(request));
     } catch (err: unknown) {
       sendLog(`⚠️ Could not save the translation: ${err instanceof Error ? err.message : String(err)}`);
       return { ok: false, reason: 'failed' };

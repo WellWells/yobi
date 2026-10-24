@@ -1,4 +1,5 @@
 .fileItem {
+  position: relative;
   padding: 6px 10px 6px 12px;
   border-radius: 8px;
   margin: 0;
@@ -23,6 +24,98 @@
 
 .fileItem[data-editing='true'] {
   cursor: text;
+}
+
+/* The row's "⋯" sits over the right end of the metadata line, so showing it moves nothing: the
+   provider, time and title keep their places. It is a pointer affordance, so it shows only while
+   the mouse is over the row or its menu is open — not for the open row or a focused one (the
+   keyboard has the context-menu key and the shortcuts) — plus when Tab lands on the button itself,
+   so focus is never on something invisible. Otherwise it is invisible and takes no clicks. */
+.rowMore {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s ease;
+}
+
+.fileItem:hover .rowMore,
+.fileItem[data-menu-open='true'] .rowMore,
+.rowMore:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* The unread dot lives where the "⋯" appears; the button covers it rather than sharing the spot. */
+.fileItem:hover .unreadDot,
+.fileItem[data-menu-open='true'] .unreadDot,
+.fileItem:has(.rowMore:focus-visible) .unreadDot {
+  visibility: hidden;
+}
+
+/* A folder row: one line, the same hover and focus as a conversation row. Its "⋯" sits over the
+   count at the right end, so showing it moves nothing. */
+.folderItem {
+  position: relative;
+  padding: 5px 10px 5px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+  transition: background 0.15s ease;
+}
+
+.folderItem:hover {
+  background: var(--mantine-color-default-hover);
+}
+
+.folderItem:focus-visible {
+  box-shadow: 0 0 0 2px var(--mantine-color-accent-dim);
+}
+
+/* Conversations dragged over it would be filed here. */
+.folderItem[data-drop-target='true'] {
+  background: var(--mantine-color-accent-dim);
+}
+
+.folderItem[data-editing='true'] {
+  cursor: text;
+}
+
+.folderChevron {
+  transition: transform 0.15s ease;
+}
+
+.folderChevron[data-expanded='true'] {
+  transform: rotate(90deg);
+}
+
+/* Centred without `transform`: Mantine's pressed ActionIcon sets its own transform (a 1px nudge),
+   which replaced a translateY(-50%) here and dropped the button half its height on every click. */
+.folderMore {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 6px;
+  margin-block: auto;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s ease;
+}
+
+/* Same as a conversation row's "⋯": the mouse over the row, its menu open, or Tab on the button. */
+.folderItem:hover .folderMore,
+.folderItem[data-menu-open='true'] .folderMore,
+.folderMore:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.folderItem:hover .folderCount,
+.folderItem[data-menu-open='true'] .folderCount,
+.folderItem:has(.folderMore:focus-visible) .folderCount {
+  visibility: hidden;
 }
 
 /* Metadata (provider, time) is dimmed by color alone; an extra opacity layer makes it illegible.

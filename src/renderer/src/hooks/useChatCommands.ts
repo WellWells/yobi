@@ -12,6 +12,7 @@ import {
   BUILTIN_RECAP_FLOW_ID,
   BUILTIN_SEARCH_FLOW_ID,
 } from '../../../shared/types';
+import type { FlowDefinition } from '../../../shared/types';
 
 export interface ChatCommand {
   flowId: string;
@@ -95,21 +96,24 @@ export function modelMenuQuery(text: string): string | null {
   return match ? match[1] : null;
 }
 
+/** Each enabled flow's chat command, in list order; the first flow to claim a name keeps it. */
+export function flowChatCommands(flows: readonly FlowDefinition[]): ChatCommand[] {
+  const seen = new Set<string>();
+  const commands: ChatCommand[] = [];
+  for (const flow of flows) {
+    if (!flow.enabled) continue;
+    for (const trigger of [flow.trigger, ...(flow.extraTriggers ?? [])]) {
+      if (trigger.type !== 'chat') continue;
+      const command = (trigger.chatCommand ?? '').toLowerCase().trim();
+      if (!command || !BOT_COMMAND_RE.test(command) || seen.has(command)) continue;
+      seen.add(command);
+      commands.push({ flowId: flow.id, command, description: trigger.chatCommandDescription?.trim() ?? '' });
+    }
+  }
+  return commands;
+}
+
 export function useChatCommands(): ChatCommand[] {
   const flows = useFlowStore((s) => s.flows);
-  return useMemo(() => {
-    const seen = new Set<string>();
-    const commands: ChatCommand[] = [];
-    for (const flow of flows) {
-      if (!flow.enabled) continue;
-      for (const trigger of [flow.trigger, ...(flow.extraTriggers ?? [])]) {
-        if (trigger.type !== 'chat') continue;
-        const command = (trigger.chatCommand ?? '').toLowerCase().trim();
-        if (!command || !BOT_COMMAND_RE.test(command) || seen.has(command)) continue;
-        seen.add(command);
-        commands.push({ flowId: flow.id, command, description: trigger.chatCommandDescription?.trim() ?? '' });
-      }
-    }
-    return commands;
-  }, [flows]);
+  return useMemo(() => flowChatCommands(flows), [flows]);
 }

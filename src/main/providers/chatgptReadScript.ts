@@ -1,4 +1,10 @@
-import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_MESSAGE_ID_JS, CHATGPT_STOP_SELECTOR } from './chatgptSendScript';
+import {
+  CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_IMAGE_GALLERY_SELECTOR, CHATGPT_MESSAGE_ID_JS, CHATGPT_STOP_SELECTOR,
+} from './chatgptSendScript';
+import { INJECTED_READ_IMAGES_JS, readImagesCall } from './generatedImages';
+
+/** A drawn picture can still be loading after the turn says it is done. */
+const IMAGE_LOAD_MS = 60_000;
 
 /**
  * Waits for ChatGPT's answer and reads it back. Runs in the page via `executeJavaScript`, so
@@ -19,7 +25,39 @@ export const CHATGPT_READ_JS = `async function chatgptWaitAndRead(submitted, opt
   var STABLE_POLLS = opts.stablePolls === undefined ? 3 : opts.stablePolls;
   var WAIT_MS = opts.waitMs === undefined ? 350 : opts.waitMs;
   var EMPTY_SETTLE_MS = opts.emptySettleMs === undefined ? 2500 : opts.emptySettleMs;
+  var IMAGE_LOAD_MS = opts.imageLoadMs === undefined ? ${IMAGE_LOAD_MS} : opts.imageLoadMs;
+  var GALLERY_SEL = ${JSON.stringify(CHATGPT_IMAGE_GALLERY_SELECTOR)};
   ${CHATGPT_MESSAGE_ID_JS}
+  ${INJECTED_READ_IMAGES_JS}
+
+  function isPictureTurn(turn) {
+    return !!turn && turn.matches(GALLERY_SEL);
+  }
+  function exchangeOf(turn) {
+    return (turn && (turn.closest('[data-turn-key]') || turn.closest('article'))) || turn;
+  }
+  // The text message of a picture's exchange, or null when the pictures came without words.
+  function textTurnOf(turn) {
+    if (!isPictureTurn(turn)) return turn;
+    var exchange = exchangeOf(turn);
+    var texts = exchange ? exchange.querySelectorAll('[data-chatgpt-search-unit-key$=":assistant"], [data-message-author-role="assistant"]') : [];
+    return texts.length ? texts[texts.length - 1] : null;
+  }
+  function turnPictures(turn) {
+    var exchange = exchangeOf(turn);
+    return exchange ? exchange.querySelectorAll(GALLERY_SEL + ' img') : [];
+  }
+  // Drawn and final: ChatGPT shows blurred previews while it is still drawing.
+  function picturesDone(turn) {
+    var imgs = turnPictures(turn);
+    if (!imgs.length || isGenerating()) return false;
+    var exchange = exchangeOf(turn);
+    if (exchange && exchange.querySelector('[data-talvt-turn-state="in_progress"]')) return false;
+    for (var i = 0; i < imgs.length; i++) {
+      if (!imgs[i].complete || !imgs[i].naturalWidth) return false;
+    }
+    return true;
+  }
 
   function getAssistantTurns() {
     return document.querySelectorAll(${JSON.stringify(CHATGPT_ASSISTANT_TURN_SELECTOR)});
@@ -33,6 +71,7 @@ export const CHATGPT_READ_JS = `async function chatgptWaitAndRead(submitted, opt
   // A turn can also hold a localized "ChatGPT said:" heading, so the body is read from the
   // message's own copy region, never from the whole turn.
   function getTurnText(turn) {
+    turn = textTurnOf(turn);
     if (!turn) return '';
     var bodies = turn.querySelectorAll('[data-markdown-copy="contents"]');
     var markdown = bodies.length
@@ -56,6 +95,8 @@ export const CHATGPT_READ_JS = `async function chatgptWaitAndRead(submitted, opt
       var b = btns[i];
       if (turn.contains(b)) continue;
       if (!(turn.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+      // A drawn picture's own buttons open or edit it; none of them copies the answer.
+      if (b.closest(GALLERY_SEL)) continue;
       if (b.hasAttribute('aria-haspopup') || b.hasAttribute('aria-pressed')) return null;
       return b;
     }
@@ -63,6 +104,7 @@ export const CHATGPT_READ_JS = `async function chatgptWaitAndRead(submitted, opt
   }
 
   function findCopyButtonForTurn(turn) {
+    turn = textTurnOf(turn);
     if (!turn) return null;
     if (turn.hasAttribute('data-chatgpt-search-unit-key')) return redesignedCopyButton(turn);
 
@@ -105,6 +147,7 @@ export const CHATGPT_READ_JS = `async function chatgptWaitAndRead(submitted, opt
 
   // The copy control inside THIS turn only: one found elsewhere would copy the previous answer.
   function ownCopyButton(turn) {
+    turn = textTurnOf(turn);
     if (!turn) return null;
     if (turn.hasAttribute('data-chatgpt-search-unit-key')) return redesignedCopyButton(turn);
     var container = turn.closest('.agent-turn') || turn.closest('.group\\\\/turn-messages') || turn;
@@ -126,7 +169,8 @@ export const CHATGPT_READ_JS = `async function chatgptWaitAndRead(submitted, opt
   await waitFor(hasNewResponse, 'new ChatGPT response', TIMEOUT, WAIT_MS);
 
   await waitFor(function() {
-    return !!getTurnText(getLatestAssistantTurn()) || finishedEmpty();
+    var latest = getLatestAssistantTurn();
+    return !!getTurnText(latest) || finishedEmpty() || picturesDone(latest);
   }, 'ChatGPT response text', TIMEOUT, WAIT_MS);
 
   var stableText = '';
@@ -140,6 +184,8 @@ export const CHATGPT_READ_JS = `async function chatgptWaitAndRead(submitted, opt
     if (copyBtn && text) break;
     // Same escape as the wait above: without it this loop spins out the timeout instead.
     if (!text && finishedEmpty()) { copyBtn = ownCopyButton(turn); break; }
+    // Pictures with no words: nothing to copy.
+    if (!text && picturesDone(turn)) break;
     if (text !== stableText) {
       stableText = text;
       stableCount = 0;
@@ -162,12 +208,20 @@ export const CHATGPT_READ_JS = `async function chatgptWaitAndRead(submitted, opt
   if (!copyBtn) copyBtn = findCopyButtonForTurn(latestTurn);
 
   var answerText = getTurnText(latestTurn);
-  var copiedText = copyBtn ? ((await interceptCopy(copyBtn)) || '').trim() : '';
+  var copiedText = copyBtn && textTurnOf(latestTurn) ? ((await interceptCopy(copyBtn)) || '').trim() : '';
+
+  // Words may finish before the pictures do; read those once they are final.
+  var images = [];
+  if (turnPictures(latestTurn).length) {
+    var loadDeadline = Date.now() + IMAGE_LOAD_MS;
+    while (!picturesDone(latestTurn) && Date.now() < loadDeadline) await sleep(POLL_MS);
+    images = await ${readImagesCall('turnPictures(latestTurn)')};
+  }
 
   var finalAnswer = copiedText || answerText;
-  if (!finalAnswer) throw new Error('ChatGPT response is empty');
+  if (!finalAnswer && images.length === 0) throw new Error('ChatGPT response is empty');
 
-  return { response: finalAnswer, title: (document.title || '').trim() };
+  return { response: finalAnswer, title: (document.title || '').trim(), images: images };
 }`;
 
 const CHATGPT_TITLE_SUFFIX_RE = /\s*[-–—]\s*ChatGPT\s*$/i;

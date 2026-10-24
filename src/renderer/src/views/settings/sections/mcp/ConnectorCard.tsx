@@ -1,6 +1,7 @@
 import React from 'react';
 import { ActionIcon, Badge, Box, Group, Loader, Menu, Stack, Text, Tooltip } from '@mantine/core';
-import { KeyRound, LogIn, MoreVertical, Pencil, Plus, Trash2, Unplug } from 'lucide-react';
+import { KeyRound, LogIn, MoreVertical, Pencil, Plug, Trash2, Unplug } from 'lucide-react';
+import { AppButton } from '../../../../components/AppButton';
 import { connectorTint, renderConnectorIcon } from '../../../../config/connectorIcons';
 import { Z_POPOVER } from '../../../../config/zLayers';
 import { useThemeStore } from '../../../../store/themeStore';
@@ -10,6 +11,7 @@ import { BotAccessCaption } from '../BotAccessCaption';
 import { CommandClashNotice } from './CommandClashNotice';
 import type { McpCatalogEntry } from '../../../../../../shared/mcpCatalog';
 import type { McpServerView } from '../../../../../../shared/types';
+import { fillTemplate } from '../../../../../../shared/fillTemplate';
 
 export interface ConnectorCardProps {
   entry?: McpCatalogEntry;
@@ -30,6 +32,27 @@ export interface ConnectorCardProps {
   onOpenTools: () => void;
 }
 
+export type ConnectorCardAction = 'connect' | 'token' | 'signIn';
+
+/**
+ * The card's one labelled button, or none once connected. An entry that needs a pasted token
+ * opens the form; a saved server that lost its sign-in signs in again; anything else connects.
+ */
+export function connectorCardAction(
+  entry: McpCatalogEntry | undefined,
+  server: McpServerView | undefined,
+): ConnectorCardAction | null {
+  if (!server) return entry?.auth === 'token' ? 'token' : 'connect';
+  if (server.status === 'connected') return null;
+  return server.status === 'needs_auth' ? 'signIn' : 'connect';
+}
+
+const ACTION_LOOK: Record<ConnectorCardAction, { icon: React.ReactNode; labelKey: string }> = {
+  connect: { icon: <Plug size={12} />, labelKey: 'settings.mcp.connect' },
+  token: { icon: <KeyRound size={12} />, labelKey: 'settings.mcp.enterToken' },
+  signIn: { icon: <LogIn size={12} />, labelKey: 'settings.mcp.signIn' },
+};
+
 export const ConnectorCard: React.FC<ConnectorCardProps> = ({
   entry, server, name, description, botAccess, commandNotice, busy, t,
   onAdd, onConnect, onDisconnect, onEdit, onRemove, onOpenTools,
@@ -42,10 +65,13 @@ export const ConnectorCard: React.FC<ConnectorCardProps> = ({
   const interactive = connected && toolCount > 0;
   const theme = useThemeStore((state) => state.theme);
   const tint = connectorTint(entry, theme);
+  const kind = connectorCardAction(entry, server);
+  const action = kind ? ACTION_LOOK[kind] : null;
 
   return (
     <Box
       p={12}
+      h="100%"
       className={classes.card}
       data-interactive={interactive || undefined}
       style={{
@@ -73,7 +99,7 @@ export const ConnectorCard: React.FC<ConnectorCardProps> = ({
               <Text fz="var(--font-size-base)" fw={600} c="var(--text-primary)" truncate>{name}</Text>
               {connected && (
                 <Badge variant="light" color="var(--mantine-color-success)" size="sm">
-                  {t('settings.mcp.toolCount').replace('{{count}}', String(toolCount))}
+                  {fillTemplate(t('settings.mcp.toolCount'), { count: String(toolCount) })}
                 </Badge>
               )}
               {needsAuth && (
@@ -94,21 +120,18 @@ export const ConnectorCard: React.FC<ConnectorCardProps> = ({
           </Stack>
         </Group>
 
-        <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+        <Group gap={4} wrap="nowrap" align="center" style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
           {pending && <Loader size={16} />}
-          {!pending && !server && (
-            <Tooltip label={entry?.auth === 'token' ? t('settings.mcp.auth.token') : t('settings.mcp.connect')} position="top">
-              <ActionIcon variant="default" size={30} aria-label={t('settings.mcp.connect')} onClick={onAdd}>
-                {entry?.auth === 'token' ? <KeyRound size={14} /> : <Plus size={15} />}
-              </ActionIcon>
-            </Tooltip>
-          )}
-          {!pending && server && !connected && (
-            <Tooltip label={t('settings.mcp.signIn')} position="top">
-              <ActionIcon variant="default" size={30} aria-label={t('settings.mcp.signIn')} onClick={onConnect}>
-                <LogIn size={14} />
-              </ActionIcon>
-            </Tooltip>
+          {!pending && action && (
+            <AppButton
+              variant="default"
+              size="compact-xs"
+              leftSection={action.icon}
+              onClick={server ? onConnect : onAdd}
+              style={{ flexShrink: 0 }}
+            >
+              {t(action.labelKey)}
+            </AppButton>
           )}
           {server && (
             <Menu position="bottom-end" withinPortal zIndex={Z_POPOVER}>

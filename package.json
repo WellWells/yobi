@@ -1,6 +1,6 @@
 {
   "name": "yobi",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "Desktop AI automation: scheduled flows, chat, global hotkeys and Telegram/LINE bots that drive the Gemini, Claude, ChatGPT and Perplexity web apps without an API key (or with your own).",
   "author": "WellsTsai",
   "repository": {
@@ -73,9 +73,12 @@
     "electron-updater": "^6.8.9",
     "fdir": "^6.5.0",
     "grammy": "^1.46.0",
+    "ical.js": "^2.2.1",
+    "imapflow": "^2.9.1",
     "jsonrepair": "^3.15.0",
     "katex": "^0.18.7",
     "lucide-react": "^1.47.0",
+    "mailparser": "^3.12.4",
     "marked": "^18.0.13",
     "mermaid": "^12.0.0",
     "node-cron": "^4.6.0",
@@ -97,7 +100,9 @@
     "systeminformation": "^5.33.13",
     "thunderbird-mcp": "github:TKasperczyk/thunderbird-mcp#v0.7.4",
     "tokenx": "^2.1.0",
+    "tyme4ts": "^1.5.3",
     "unified": "^11.0.5",
+    "unpdf": "^1.9.1",
     "zustand": "^5.0.15"
   },
   "devDependencies": {

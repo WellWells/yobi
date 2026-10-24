@@ -1,15 +1,17 @@
 import { connectorHoldsUserData } from '../../../shared/mcpCatalog';
 import { isByokTargetUrl } from '../../../shared/types';
 import { clipLine } from '../../../shared/textBudget';
-import { detectProvider, PROVIDER_PROMPT_POLICIES } from '../../providers';
+import { promptCapFor } from '../../chat/conversationContext';
 import { INSTRUCTION_EST, readPlanFields, readStepBudget, USER_DATA_MARKER } from './agentPrompts';
 import { AGENT_HELP_TOOL, OPTS_MARKER } from './agentTools';
 import { readIntent } from './actionGate';
 import type { GoalIntent } from './actionGate';
 import { resolveToolContract } from './contractRegistry';
 import { toolNouns } from './mcpToolNouns';
-import { riskLabel } from './toolContracts';
+import { withoutUnseen } from './shellApproval';
+import { nameTokens, riskLabel } from './toolContracts';
 import type { Validation } from './structuredLlm';
+import { ALSO_NAMED, ENUM_ALIASES, lookupAlias } from '../../mcp/schemaAliases';
 import type { McpTool, McpToolResult } from '../../mcp/mcpTypes';
 import type { ConnectedServerTools } from '../../mcp/mcpRegistry';
 
@@ -71,6 +73,12 @@ export function findMcpServer(index: McpRuntimeIndex, written: string): McpServe
   return matches.length === 1 ? matches[0] : undefined;
 }
 
+/** Some of an index's servers, with the handles that index gave them. */
+export function subIndex(index: McpRuntimeIndex, keep: (serverId: string) => boolean): McpRuntimeIndex {
+  const handles = index.handles.filter((server) => keep(server.serverId));
+  return { handles, byHandle: new Map(handles.map((h) => [h.handle, h])) };
+}
+
 export function hasMcpTools(index: McpRuntimeIndex): boolean {
   return index.handles.length > 0;
 }
@@ -120,8 +128,7 @@ export function mcpCatalogBudgetChars(
   historyLen = 0,
 ): number {
   if (isByokTargetUrl(providerUrl)) return BYOK_CATALOG_BUDGET;
-  const policy = PROVIDER_PROMPT_POLICIES[detectProvider(providerUrl)];
-  const cap = policy.maxCharsPlusBreaks ?? policy.maxBytes ?? 0;
+  const cap = promptCapFor(providerUrl);
   const scratchCost = mcpScratchReserveChars(scratchSlots, observationLimit);
   const budget = cap - INSTRUCTION_EST - builtinCatalogLen - goalLen - historyLen - scratchCost - SAFETY_MARGIN;
   return budget < MCP_MIN_BUDGET ? 0 : budget;
@@ -546,6 +553,104 @@ export function validateMcpArguments(tool: McpTool, args: Record<string, unknown
   return { ok: true };
 }
 
+/** Does `outer` hold every word of `inner`, in a row (from_station holds from; tomorrow does not hold to)? */
+function holdsWords(outer: readonly string[], inner: readonly string[]): boolean {
+  if (inner.length === 0) return false;
+  for (let i = 0; i + inner.length <= outer.length; i++) {
+    if (inner.every((word, j) => outer[i + j] === word)) return true;
+  }
+  return false;
+}
+
+function isAbsent(value: unknown): boolean {
+  return value === undefined || value === null;
+}
+
+function nameKey(name: string): string {
+  return nameTokens(name).join('_');
+}
+
+/** Each absent argument filled from the one other name its schema declares for it, if exactly one was sent. */
+function declaredNames(props: JsonSchema, args: Record<string, unknown>): Record<string, unknown> {
+  let out: Record<string, unknown> | null = null;
+  for (const [prop, spec] of Object.entries(props)) {
+    const names = asSchema(spec)?.[ALSO_NAMED];
+    if (!Array.isArray(names) || !isAbsent((out ?? args)[prop])) continue;
+    const wanted = new Set(names.filter((name): name is string => typeof name === 'string').map(nameKey));
+    const sent = Object.keys(out ?? args).filter((key) => !(key in props) && !isAbsent((out ?? args)[key]) && wanted.has(nameKey(key)));
+    if (sent.length !== 1) continue;
+    out ??= { ...args };
+    out[prop] = out[sent[0]];
+    delete out[sent[0]];
+  }
+  return out ?? args;
+}
+
+/**
+ * The arguments with other names put right: first the names the schema declares (`ALSO_NAMED`, any
+ * argument), then an unknown name that holds a missing required argument as a whole word
+ * (`from_station` → `from`, `toStation` → `to`), when the pairing is one-to-one both ways. The guess
+ * only touches a call the schema would refuse anyway, so a server that takes extra arguments of its
+ * own keeps them; an optional argument is never filled from a guess. The same object comes back
+ * when nothing changed.
+ */
+export function canonicalArgumentNames(tool: McpTool, sent: Record<string, unknown>): Record<string, unknown> {
+  if (!sent) return sent;
+  const props = asSchema(tool.inputSchema?.properties) ?? {};
+  const args = declaredNames(props, sent);
+  const raw = tool.inputSchema?.required;
+  if (!Array.isArray(raw)) return args;
+  const missing = raw.filter((key): key is string => typeof key === 'string' && isAbsent(args[key]));
+  if (missing.length === 0) return args;
+  const unknown = Object.keys(args).filter((key) => !(key in props) && !isAbsent(args[key]));
+  const held = (key: string) => missing.filter((want) => holdsWords(nameTokens(key), nameTokens(want)));
+  let out: Record<string, unknown> | null = null;
+  for (const want of missing) {
+    const candidates = unknown.filter((key) => held(key).includes(want));
+    if (candidates.length !== 1 || held(candidates[0]).length !== 1) continue;
+    out ??= { ...args };
+    out[want] = out[candidates[0]];
+    delete out[candidates[0]];
+  }
+  return out ?? args;
+}
+
+function enumKey(value: string): string {
+  return value.normalize('NFKC').toLowerCase();
+}
+
+/** The option an `ENUM_ALIASES` word stands for, when the server declared one and it is a real option. */
+function enumAlias(spec: JsonSchema | null, value: string, allowed: readonly unknown[]): string | null {
+  const aliases = asSchema(spec?.[ENUM_ALIASES]);
+  const hit = aliases ? lookupAlias(aliases, value) : null;
+  return hit !== null && allowed.includes(hit) ? hit : null;
+}
+
+/**
+ * The arguments with each string that matches exactly one enum option apart from case or width
+ * replaced by that option (same rule as `findMcpServer` for handles), or else by the option its
+ * schema lists it as an alias of (`ENUM_ALIASES`). Models write "Kaohsiung" for `kaohsiung`, and the
+ * refusal alone does not get them there: the repeat guard ignores case, so the corrected call looks
+ * like the refused one. The same object comes back when nothing changed.
+ */
+export function canonicalEnumArguments(tool: McpTool, args: Record<string, unknown>): Record<string, unknown> {
+  const props = asSchema(tool.inputSchema?.properties);
+  if (!props || !args) return args;
+  let out: Record<string, unknown> | null = null;
+  for (const [key, value] of Object.entries(args)) {
+    const spec = asSchema(props[key]);
+    const allowed = spec?.enum;
+    if (typeof value !== 'string' || !Array.isArray(allowed)) continue;
+    if (allowed.some((option) => option === value)) continue;
+    const matches = allowed.filter((option) => typeof option === 'string' && enumKey(option) === enumKey(value));
+    const option = matches.length === 1 ? matches[0] : enumAlias(spec, value, allowed);
+    if (option === null || matches.length > 1) continue;
+    out ??= { ...args };
+    out[key] = option;
+  }
+  return out ?? args;
+}
+
 /**
  * A value outside an argument's enum, caught before the action gate so the model gets the real
  * values from the schema instead of a gate verdict on a call the server would refuse anyway.
@@ -579,6 +684,46 @@ export interface McpAction {
   /** Same field as on `AgentAction`: the validator is chosen per RESPONSE, so both shapes read it. */
   stepsNeeded?: number;
   intent?: GoalIntent;
+  /**
+   * The model's one-sentence description of a change, in the user's language, for the confirmation
+   * the user approves from. The model's words, not a check: the confirmation also shows what the
+   * program read off the call itself.
+   */
+  confirm?: string;
+}
+
+/** Long enough for "move KAN-10 from In progress to Done"; a paragraph is not a confirmation. */
+export const MCP_CONFIRM_MAX = 300;
+
+/**
+ * The sentence as one plain line: unseen characters (direction overrides, zero-width) taken out, so
+ * it reads as it is, and no leading `>`, so it cannot pass for the start of the folded details.
+ */
+function readConfirm(obj: Record<string, unknown>): { confirm?: string } {
+  if (typeof obj.confirm !== 'string') return {};
+  const line = withoutUnseen(obj.confirm).replace(/\s+/g, ' ').trim().replace(/^(?:>\s*)+/, '');
+  if (!line) return {};
+  return { confirm: line.length > MCP_CONFIRM_MAX ? `${line.slice(0, MCP_CONFIRM_MAX - 1)}…` : line };
+}
+
+/** Room the real tool names get in a rejection; a long server ends on a pointer to `tool_help`. */
+const TOOL_NAMES_IN_ERROR_MAX = 1_200;
+
+/**
+ * The names a guessed tool should have been. Without them a model that saw only a server summary
+ * guesses again — "getResources", "resources", "guide" — and spends every repair on the same miss.
+ */
+function realToolNames(handle: McpRuntimeIndex['handles'][number]): string {
+  const shown: string[] = [];
+  let length = 0;
+  for (const tool of handle.tools) {
+    if (length + tool.name.length + 2 > TOOL_NAMES_IN_ERROR_MAX) break;
+    shown.push(tool.name);
+    length += tool.name.length + 2;
+  }
+  const hidden = handle.tools.length - shown.length;
+  const more = hidden > 0 ? ` …and ${hidden} more — call "${AGENT_HELP_TOOL}" with "${handle.handle}" for the full list` : '';
+  return ` Its tools: ${shown.join(', ')}${more}.`;
 }
 
 export function validateMcpAction(obj: Record<string, unknown>, index: McpRuntimeIndex): Validation<McpAction> {
@@ -591,7 +736,7 @@ export function validateMcpAction(obj: Record<string, unknown>, index: McpRuntim
     return { ok: false, error: `"server" must be one of: ${index.handles.map((h) => `"${h.handle}"`).join(', ')}. Got "${server}".` };
   }
   if (!handle.tools.some((tool) => tool.name === name)) {
-    return { ok: false, error: `"name" must be a tool on server "${handle.handle}". Got "${name}".` };
+    return { ok: false, error: `"name" must be a tool on server "${handle.handle}". Got "${name}".${realToolNames(handle)}` };
   }
   const rawArgs = obj.arguments;
   const args = rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? (rawArgs as Record<string, unknown>) : {};
@@ -599,7 +744,7 @@ export function validateMcpAction(obj: Record<string, unknown>, index: McpRuntim
     ok: true,
     value: {
       thought, action: 'call_mcp', server: handle.handle, name, arguments: args,
-      ...readPlanFields(obj), ...readStepBudget(obj), ...readIntent(obj),
+      ...readPlanFields(obj), ...readStepBudget(obj), ...readIntent(obj), ...readConfirm(obj),
     },
   };
 }

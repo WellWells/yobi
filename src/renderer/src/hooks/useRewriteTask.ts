@@ -6,6 +6,7 @@ import { fileApi, promptApi } from '../api/electronApi';
 import { findModelOption } from '../config/models';
 import { useProviderModels } from './useProviderModels';
 import type { ExportToast } from './useCaptureExport';
+import { fillTemplate } from '../../../shared/fillTemplate';
 
 function parseOutputTimestamp(name: string): number {
   const matched = name.match(/^(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{2})/);
@@ -93,7 +94,7 @@ export function useRewriteTask(setExportToast: (toast: ExportToast) => void) {
     setRewriteSourcePath(selectedFile.path);
     setRewriteStartedAt(Date.now());
     setExportToast({
-      message: t('rewrite.queued').replace('{{model}}', modelLabel),
+      message: fillTemplate(t('rewrite.queued'), { model: modelLabel }),
       level: 'info',
     });
   }, [selectedFile, fileContent, parsedBlocks, t, setExportToast, extraModels]);

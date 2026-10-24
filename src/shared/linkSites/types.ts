@@ -1,5 +1,5 @@
 /** The sites whose links Yobi reads as a post: text, media and replies. */
-export type PostSiteId = 'x' | 'threads' | 'instagram' | 'facebook' | 'tiktok' | 'ptt' | 'dcard' | 'reddit';
+export type PostSiteId = 'x' | 'threads' | 'instagram' | 'facebook' | 'tiktok' | 'ptt' | 'dcard' | 'reddit' | 'weibo';
 /**
  * The sites whose links Yobi reads as a video with a quality menu (SoundCloud's: its MP3 alone),
  * and a bare HLS playlist link on any host (`m3u8`).
@@ -33,7 +33,18 @@ export interface VideoRef extends RefBase {
    * of the download's reuse key. Absent for a site with one file per id (YouTube).
    */
   variant?: string;
+  /**
+   * The link opens this video inside a list (YouTube's `&list=`: a playlist, a mix, Watch later):
+   * only this one video is downloaded, and the menu says so.
+   */
+  inList?: true;
 }
+
+/**
+ * A `VideoRef.kind` for a link to a whole list (a YouTube playlist, a bilibili collection, a Vimeo
+ * showcase): taken only to answer that downloads go one video at a time.
+ */
+export const PLAYLIST_KIND = 'playlist';
 
 export type LinkRef = PostRef | VideoRef;
 
@@ -65,7 +76,12 @@ export interface PostRow {
    * 100 most-liked comments and the replies under the top three). Only this site's prompt grows.
    */
   analysisReplies?: number;
+  /** Only read in this region (`tw`: Taiwan): its switch in Settings is shown, and on, there alone. */
+  region?: LinkSiteRegion;
 }
+
+/** Where a site is read: `tw` is Taiwan. A row without one is read everywhere. */
+export type LinkSiteRegion = 'tw';
 
 export interface VideoRow {
   id: VideoSiteId;
@@ -95,6 +111,7 @@ export interface VideoRow {
    * this row takes, it is read as part of that link, not as words beside it.
    */
   shareTitle?: RegExp;
+  region?: LinkSiteRegion;
 }
 
 export type LinkSiteRow = PostRow | VideoRow;

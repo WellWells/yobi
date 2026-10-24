@@ -4,7 +4,7 @@ import type { McpTool } from '../../mcp/mcpTypes';
 import { errorText } from '../../../shared/errorText';
 import { FlowAbortError } from '../runtime';
 import { maskSecrets } from './secretMask';
-import { formatMcpObservation, isArgumentError, resolveMcpTool, schemaHint, validateMcpArguments } from './mcpTools';
+import { canonicalArgumentNames, canonicalEnumArguments, formatMcpObservation, isArgumentError, resolveMcpTool, schemaHint, validateMcpArguments } from './mcpTools';
 import type { McpAction, McpRuntimeIndex } from './mcpTools';
 import { resolveToolContract } from './contractRegistry';
 import { decideAction, formatBlocked } from './actionGate';
@@ -22,6 +22,10 @@ export interface McpConfirmRequest {
   serverId: string;
   serverName: string;
   toolName: string;
+  /** The server's own display name for the tool, if it gave one. */
+  toolTitle?: string;
+  /** The model's plain description of the change (`McpAction.confirm`), shown above what the program read. */
+  summary?: string;
   args: Record<string, unknown>;
   risk?: ToolRisk;
   rows?: DescribedRow[];
@@ -43,7 +47,14 @@ export interface McpStepContext {
   /** No one can review a window this run opens, so nothing that changes things skips confirmation. */
   unattended?: boolean;
   confirm: (request: McpConfirmRequest) => Promise<boolean>;
+  /**
+   * A change that needs confirming is not confirmed here but handed back as `deferred`: the run
+   * pauses with it as a question in the chat, and the approved answer runs it (the owner's bot chat).
+   */
+  deferChanges?: boolean;
   onStage?: (stage: McpStage) => void;
+  /** Keeps the pictures a built-in connector's read saved (the metro map) for the answer. */
+  keepPictures?: (files: readonly string[]) => Promise<void>;
   log: (line: string) => void;
   signal?: AbortSignal;
 }
@@ -57,6 +68,8 @@ export interface McpStepResult {
   /** Held back only until something is looked at — the identical call may pass afterwards. */
   transientBlock: boolean;
   record?: ActionRecord;
+  /** Nothing was sent: this change waits for the user's answer to a question (`deferChanges`). */
+  deferred?: McpConfirmRequest;
 }
 
 const MAX_AUTO_CONTEXT = 2;
@@ -127,6 +140,7 @@ async function runRead(ctx: McpStepContext, serverId: string, tool: McpTool, con
       ctx.ledger.add(contract.extractFacts?.(args, result.text) ?? []);
       // The arguments go in too: an id a read accepted is an id the server itself vouched for.
       ctx.ledger.addObservation(`${JSON.stringify(args)}\n${result.text}`);
+      if (result.pictures?.length) await ctx.keepPictures?.(result.pictures);
     }
     return { observation: observationOf(result.text, result.isError, interpreted, tool), status: failed ? 'error' : 'ok', write: false, landed: false, transientBlock: false };
   } catch (err) {
@@ -162,7 +176,7 @@ export async function executeMcpProposal(
     return { observation: `ERROR: Unknown MCP tool ${action.server}/${action.name}`, status: 'error', write: false, landed: false, transientBlock: false };
   }
   const { serverId, tool } = resolved;
-  const args = action.arguments;
+  const args = canonicalEnumArguments(tool, canonicalArgumentNames(tool, action.arguments));
   const contract = resolveToolContract(serverId, tool);
   const risk = contract.risk(args);
   const write = risk !== 'read';
@@ -239,12 +253,17 @@ export async function executeMcpProposal(
   let confirmed: ActionRecord['confirmed'] = 'auto';
   if (policy !== 'never') {
     const serverName = ctx.index.byHandle.get(action.server)?.serverName ?? action.server;
-    const approved = await ctx.confirm({
-      kind: 'mcp', serverId, serverName, toolName: tool.name, args, risk,
+    const request: McpConfirmRequest = {
+      kind: 'mcp', serverId, serverName, toolName: tool.name, ...(serverTitle ? { toolTitle: serverTitle } : {}),
+      ...(action.confirm ? { summary: action.confirm } : {}), args, risk,
       rows: contract.describe?.(args, ctx.ledger) ?? [],
       forceAsk: policy === 'always',
-    });
-    confirmed = approved ? 'approved' : 'denied';
+    };
+    // Recorded nowhere: nothing happened yet, and approving it later runs it through this gate again.
+    if (ctx.deferChanges) {
+      return { observation: '', status: 'ok', write: true, landed: false, transientBlock: false, deferred: request };
+    }
+    confirmed = await ctx.confirm(request) ? 'approved' : 'denied';
   }
   if (confirmed === 'denied') {
     const record: ActionRecord = { ...base, confirmed };

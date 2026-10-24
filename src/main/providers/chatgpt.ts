@@ -12,6 +12,8 @@ import { CHATGPT_READ_JS, cleanChatgptTitle } from './chatgptReadScript';
 import { uploadFilesToChatgpt } from './chatgptUpload';
 import { syncChatgptModel } from './chatgptModelSync';
 import { CHATGPT_SIGN_IN_START_URL, startChatgptSignIn } from './chatgptSignIn';
+import { decodePageImages } from './generatedImages';
+import type { ProviderRunResult } from './generatedImages';
 
 const CHATGPT_HOME = PROVIDER_URLS.chatgpt;
 const CHATGPT_AUTH_URL = 'https://auth.openai.com/';
@@ -116,12 +118,13 @@ export async function runChatgptAutomation(
   attachments?: string[],
   _wantTitle = false,
   continuingThread = false,
-): Promise<{ response: string; title: string }> {
+  temporary = false,
+): Promise<ProviderRunResult> {
   const wc = workerWin.webContents;
 
   applyWorkerUserAgent(wc, WORKER_USER_AGENTS.chatgpt);
 
-  const landing = await ensureOnPage(wc, targetUrl, PAGE_REUSE.chatgpt, { continuingThread });
+  const landing = await ensureOnPage(wc, targetUrl, PAGE_REUSE.chatgpt, { continuingThread, temporary });
   const reused = landing === 'reused';
   if (reused) sendLog('♻️ ChatGPT page kept open — typing straight into it, no reload');
 
@@ -153,20 +156,24 @@ export async function runChatgptAutomation(
   }
 
   const autoScript = buildChatgptAutomationScript(prompt, timeoutMs);
-  const result = await executeAutomationWithTimeout<{ response: string; title: string }>(
+  const result = await executeAutomationWithTimeout<{ response: string; title: string; images?: unknown }>(
     wc,
     autoScript,
     timeoutMs,
     'ChatGPT',
   );
 
-  if (!result || !result.response || result.response.trim() === '') {
+  const images = decodePageImages(result?.images);
+  if (images.length > 0) sendLog(`🖼️ ChatGPT drew ${images.length} picture(s) for this answer`);
+  // A picture with no words is an answer; nothing at all is not.
+  if (!result || ((!result.response || result.response.trim() === '') && images.length === 0)) {
     throw new Error('ChatGPT returned empty response');
   }
 
   return {
-    response: result.response.trim(),
+    response: (result.response || '').trim(),
     title: cleanChatgptTitle(result.title || ''),
+    ...(images.length > 0 ? { images } : {}),
   };
 }
 

@@ -6,6 +6,7 @@ import { EmptyState } from '../../../../../components/EmptyState';
 import { HelpDot } from '../parts';
 import { OUTCOME_COLORS } from '../colors';
 import { formatDuration } from './aggregate';
+import { useStepLabelParts } from './stepLabel';
 import type { FlowStatsAggregate, StepRow } from './aggregate';
 import classes from '../stats.module.css';
 
@@ -25,8 +26,7 @@ interface Props {
 const IssueRow: React.FC<{ row: StepRow; t: (key: string) => string; onInspect: () => void }> = ({
   row, t, onInspect,
 }) => {
-  // A step keeps its skill's name until renamed; print the skill only when the two differ.
-  const skill = t(`flow.skill.${row.type}`);
+  const { title, skill } = useStepLabelParts(row.label, row.type, t);
   return (
   <UnstyledButton
     onClick={onInspect}
@@ -40,9 +40,9 @@ const IssueRow: React.FC<{ row: StepRow; t: (key: string) => string; onInspect: 
       <Group justify="space-between" gap={12} wrap="nowrap">
         <Group gap={7} wrap="nowrap" style={{ minWidth: 0 }}>
           <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-text)" truncate>
-            {row.label}
+            {title}
           </Text>
-          {skill !== row.label && (
+          {skill && (
             <Text fz="var(--font-size-sm)" c="dimmed" truncate>{skill}</Text>
           )}
         </Group>
@@ -70,7 +70,7 @@ const IssueRow: React.FC<{ row: StepRow; t: (key: string) => string; onInspect: 
             {`${t('settings.stats.flow.avg')} ${formatDuration(row.avgMs)}`}
           </Text>
         )}
-        {row.latest && (
+        {row.latest?.message && (
           <Text fz="var(--font-size-sm)" c="dimmed" truncate style={{ opacity: 0.75 }}>
             {row.latest.message}
           </Text>

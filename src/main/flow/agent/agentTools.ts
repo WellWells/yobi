@@ -4,7 +4,9 @@ import type { SkillType } from '../../../shared/types';
 import { SKILL_SPECS, SKILLS_WITHOUT_OUTPUT_KEY } from '../../../shared/flowSkillSchema';
 import type { SkillSpec } from '../../../shared/flowSkillSchema';
 import { unwrapMarkdownLink } from '../../../shared/markdownLinkUnwrap';
-import { AGENT_BUILTIN_TOOLS, buildBuiltinCatalog, builtinConfigKeys, builtinRequiredFields, isBuiltinTool } from './agentBuiltins';
+import {
+  AGENT_BUILTIN_TOOLS, buildBuiltinCatalog, builtinConfigKeys, builtinRequiredFields, builtinToolEntry, isBuiltinTool,
+} from './agentBuiltins';
 import type { AgentBuiltinTool } from './agentBuiltins';
 import { readPlanFields, readStepBudget } from './agentPrompts';
 import { readIntent } from './actionGate';
@@ -28,6 +30,8 @@ export const AGENT_ALLOWED_SKILLS: readonly SkillType[] = [
   'air_quality',
   'stock',
   'forex',
+  'almanac',
+  'tw_invoice',
   'random',
   'notify',
 ];
@@ -53,6 +57,18 @@ export interface AgentToolScope {
   flows?: boolean;
   /** Offer `delegate`. Set by the engine per run, never by a scope constant: it depends on depth and provider. */
   delegate?: boolean;
+  /**
+   * Offer `draw_image`, with or without `builtins`. Never set by a scope constant: the caller sets it
+   * for a run whose request asks for a picture and whose answer can carry one (`withPictureCapability`).
+   */
+  pictures?: boolean;
+}
+
+/** `draw_image` in or out of a scope; a helper never gets it (`readOnlyScope`). */
+export function withPictureCapability(scope: AgentToolScope, enabled: boolean): AgentToolScope {
+  if (enabled === (scope.pictures === true)) return scope;
+  const { pictures: _pictures, ...rest } = scope;
+  return enabled ? { ...rest, pictures: true } : rest;
 }
 
 /**
@@ -123,6 +139,16 @@ export function withLocalCapability(scope: AgentToolScope, enabled: boolean): Ag
 }
 
 /**
+ * A bot admin in their own private chat: puts the flow builders back into the bot agent kit. Only
+ * applied by a caller that also makes the run hold each flow for an answer in the chat
+ * (`flowsInChat`) — a bot run has no window to show the save dialog in.
+ */
+export function withFlowCapability(scope: AgentToolScope, enabled: boolean): AgentToolScope {
+  if (enabled === scopeHasFlowTools(scope) || !scope.builtins) return scope;
+  return { ...scope, flows: enabled };
+}
+
+/**
  * A bot account's shell grant: adds `shell` to a scope that lacks it, or takes it out. Only ever
  * applied to the bot agent kit by a caller that also makes the run ask in the chat
  * (`shellInChat`) — a scope holding `shell` without that would offer a tool every call refuses.
@@ -143,7 +169,7 @@ export function withShellCapability(scope: AgentToolScope, enabled: boolean): Ag
  * turn every paired contact's small talk into something that can read local files.
  */
 export const BOT_CHAT_TOOL_SCOPE: AgentToolScope = {
-  skills: ['search', 'research', 'browser', 'youtube', 'gmap_reviews', 'weather', 'air_quality', 'stock', 'forex', 'random'],
+  skills: ['search', 'research', 'browser', 'youtube', 'gmap_reviews', 'weather', 'air_quality', 'stock', 'forex', 'almanac', 'tw_invoice', 'random'],
   builtins: false,
 };
 
@@ -195,7 +221,7 @@ export function isHelpTool(name: string): name is AgentHelpTool {
 // `shell` and `file_write` are tier 1 because their full entries can push a tight provider's repair
 // prompt past its cap, cutting off the closing fence and the action instruction.
 export const AGENT_BRIEF_ONLY_TOOLS: readonly SkillType[] = [
-  'sysinfo', 'air_quality', 'gmap_reviews', 'forex', 'random', 'stock', 'weather',
+  'sysinfo', 'air_quality', 'almanac', 'tw_invoice', 'gmap_reviews', 'youtube', 'llm', 'forex', 'random', 'stock', 'weather',
   'file_read', 'file_list', 'file_write', 'shell', 'clipboard', 'notify',
 ];
 
@@ -204,7 +230,7 @@ const BRIEF_ONLY_SET = new Set<SkillType>(AGENT_BRIEF_ONLY_TOOLS);
 // SECURITY: the workspace/sandbox wording must survive into these tier-1 briefs. A model
 // that guesses a path has to be refused rather than corrected, and only the brief tells it so.
 const AGENT_TOOL_BRIEFS: Partial<Record<SkillType, string>> = {
-  file_read: 'Read a local text file. Only your workspace is allowed (app output folder, Documents, Downloads, Desktop); a guessed path is refused, so call file_list first.',
+  file_read: 'Read a local text or PDF file in your workspace only (app output folder, Documents, Downloads, Desktop); a guessed path is refused, so call file_list first.',
   file_list: 'List the files in a local folder (non-recursive). Only your workspace is allowed (app output folder, Documents, Downloads, Desktop). Use it to learn a file name before reading it.',
   stock: 'Get stock / equity / index quotes, several comma-separated symbols at once. The suffix picks the market: US as-is (AAPL), Taiwan .TW (2330.TW) or .TWO, indices ^ (^TWII).',
   // Optional fields are opt-in by key and unknown keys are dropped, so the brief names them as
@@ -213,6 +239,12 @@ const AGENT_TOOL_BRIEFS: Partial<Record<SkillType, string>> = {
   // Overrides the flow brief, which mentions the `{{file}}` flow variable; `sanitizeFieldDesc`
   // cleans field descriptions only.
   file_write: 'Save text to a local file and get back the path. Only the app output folder is allowed; anywhere else is refused, not corrected. Leave "folder" blank to use it.',
+  // Every optional field opens something a user asks for, so each is named in the spelling the config takes.
+  almanac: '農民曆 of ANY "date", month or year ("lunar"/"leap": lunar → Gregorian): 宜忌, clash, lucky hours. "time" HH:MM: 時辰 + 八字 (birth time → their 八字). Good days for an "activity" over "days" (a year, ONE call), no "zodiac" clash, "weekends":"true" Sat/Sun. Never guess.',
+  // Both optional fields open something a user asks for (checking a receipt, an older period).
+  tw_invoice: 'Taiwan receipt lottery (統一發票) winning numbers, or check "numbers" (8 digits or last 3) in code; "period" blank = every claimable one. Never match digits yourself.',
+  // Every other llm field is hidden from the agent, so tier 1 drops only wording; the misuse warning stays.
+  llm: 'Ask a language model a sub-question about text you put in the prompt (summarize, extract). Do NOT use it for reasoning you can do yourself: it costs a whole step.',
   shell: "Run ONE system command; returns its output. The user approves each one; a refusal is final. Never as admin; credential stores and system folders are refused. For what no other tool reads: ports, processes, services.",
 };
 
@@ -259,8 +291,8 @@ const AGENT_TOOL_DOCS: Partial<Record<SkillType, { summary: string; output?: str
     output: "the model's answer text.",
   },
   file_read: {
-    summary: "Read a local text file and return its contents as text. Only files inside your workspace are allowed — the app output folder and your Documents, Downloads, and Desktop folders; any other path (home dotfiles like ~/.ssh, system folders) is refused. Use / as the separator (e.g. Documents/notes.txt). If you are not certain of the exact name, call file_list first — a guessed path is refused, not corrected.",
-    output: "the file's text content (empty if the path is blank).",
+    summary: "Read a local text or PDF file. Only files inside your workspace are allowed — the app output folder and your Documents, Downloads, and Desktop folders; any other path (home dotfiles like ~/.ssh, system folders) is refused. Use / as the separator (e.g. Documents/notes.txt). If unsure of the name, call file_list first — a guessed path is refused, not corrected.",
+    output: "the file's text (empty if the path is blank); each PDF page follows a '--- page N ---' line.",
   },
   file_list: {
     summary: "List the files in a local directory (non-recursive, files only). Only directories inside your workspace are allowed — the app output folder and your Documents, Downloads, and Desktop folders; any other path is refused. Use / as the separator (e.g. Documents).",
@@ -275,11 +307,11 @@ const AGENT_TOOL_DOCS: Partial<Record<SkillType, { summary: string; output?: str
     output: "one string (key:value lines for format='text', or a JSON document for format='json'); each collected field is also provided as an individual sub-field (e.g. locale, cpu, publicIp). cpuCores counts logical processors (threads), not physical cores.",
   },
   weather: {
-    summary: 'Get the current weather for a place NAME (Open-Meteo, no API key); returns current conditions plus today\'s high/low and rain chance. Use the place\'s English / Latin-script name (e.g. "Kaohsiung", not "高雄").',
+    summary: 'Get the current weather for a place NAME (Open-Meteo, no API key); returns current conditions plus today\'s high/low and rain chance. Keep a Taiwan place in Chinese as given (e.g. "高雄鳳山"); name other places in English.',
     output: 'a JSON object {location, temp, feelsLike, condition, humidity, windSpeed, unit, isDay, high, low, rainChance}; the same values are also provided as individual fields. rainChance is the DAILY MAX precipitation %, not the chance for a given part of the day; condition is English — translate it.',
   },
   air_quality: {
-    summary: 'Get the current air quality (AQI) for a place NAME (Open-Meteo, no API key); a location in Taiwan reads the nearest Ministry of Environment ground station instead when the user has saved a MOENV key. Use the place\'s English / Latin-script name (e.g. "Kaohsiung", not "高雄").',
+    summary: 'Get the current air quality (AQI) for a place NAME (Open-Meteo, no API key); a location in Taiwan reads the nearest Ministry of Environment ground station instead when the user has saved a MOENV key. Keep a Taiwan place in Chinese as given (e.g. "高雄鳳山"); name other places in English.',
     output: 'a JSON object {location, station, aqi, level, status, statusLocal, pollutant, pm2_5, pm10, ozone, no2, so2, co, gasUnits, europeanAqi, source, observedAt}; level is 1-6 (1 Good … 6 Hazardous, 0 = no reading) and status is the English band name. Gas units differ by source — read gasUnits before quoting ozone/no2/so2/co. Most values are also provided as individual fields.',
   },
   stock: {
@@ -289,6 +321,14 @@ const AGENT_TOOL_DOCS: Partial<Record<SkillType, { summary: string; output?: str
   forex: {
     summary: 'Get a near-live foreign-exchange rate, and an optional converted amount (Yahoo Finance, falling back to a once-daily rate table; no API key).',
     output: 'a JSON object {base, target, rate, amount, converted, asOf, previousClose, changePct, session}; the values are also provided as individual fields. asOf carries its UTC offset. previousClose and changePct are empty when only the daily fallback source answered.',
+  },
+  almanac: {
+    summary: "The Chinese farmer's almanac (農民曆) for a date, computed locally: lunar date, stems and branches, zodiac, 黃道/黑道 and duty god, 宜/忌, lucky hours, clash and evil direction, 建除 officer, lunar mansion, god directions, Na Yin, spirits, Peng Zu taboos, fetus god, solar term, lunar festival. Use it for any lunar date or almanac question instead of recalling one; with a lunar date it gives the Gregorian day (中秋 = lunar \"YYYY-08-15\").",
+    output: 'one day → a JSON object {date, weekday, lunar, lunarYear, zodiac, monthPillar, dayPillar, dayType, dutyGod, yi, ji, goodHours, clash, evilDirection, officer, mansion, joyGod, wealthGod, nayin, luckyGods, unluckyGods, pengzu, fetusGod, solarTerm, solarTermDay, festival}, plus hour {time, name, pillar, luck, dutyGod, yi, ji, eightChar} when "time" is set; several days → a JSON array of {date, weekday, lunar, dayType, dutyGod, yi, ji, clash, solarTerm, solarTermDay, festival}; with activity / zodiac / weekends → only the matching days as {date, weekday, lunar, dayType, clash, festival} ("[]" = none in that span), plus filters (what was already applied). clash is the sign the day is bad FOR (沖): a person of that sign avoids it; other signs are fine. Values are Chinese almanac terms; quote them as given. One call covers a year: put the whole span in "days", never split it.',
+  },
+  tw_invoice: {
+    summary: "Taiwan's receipt lottery (統一發票) from the Ministry of Finance's official list: each period's 特別獎 (NT$10,000,000), 特獎 (NT$2,000,000) and 頭獎 (NT$200,000; its last 7 to 3 digits win 二獎 NT$40,000 down to 六獎 NT$200), the draw date and the claim window. With \"numbers\" it checks each receipt number for every prize in code — use it instead of comparing digits yourself. A receipt photo: read the 8 digits off it and pass them. Cloud-invoice exclusive prizes (雲端發票專屬獎) are not covered; the e-invoice platform notifies those.",
+    output: 'no numbers → a JSON object {period, label, months, drawnAt, claimFrom, claimUntil, claimable, special, grand, first, extraSixth, link} (an array for "all"); with numbers → {checked, results: [{number, partial, matches: [{period, label, status, prize, name, amount, matched, atLeast, checkFullNumberFor, claimFrom, claimUntil, claimable}]}], notes}. matches [] = no prize in the checked periods. status "won" with atLeast = a last-3 match that wins at least that prize; "maybe" = only the full number can tell. A number matching two periods wins only if the receipt is from that period: say which. Also .text, ready lines in the user\'s language.',
   },
   random: {
     summary: 'Generate random WHOLE numbers within an inclusive range (both min and max can occur) — for dice, lottery numbers, picking an index, or jitter.',
@@ -390,9 +430,16 @@ export function scopeHasFlowTools(scope: AgentToolScope): boolean {
 }
 
 function builtinNames(scope: AgentToolScope): AgentBuiltinTool[] {
-  if (!scope.builtins) return [];
   const flows = scopeHasFlowTools(scope);
-  return AGENT_BUILTIN_TOOLS.filter((tool) => (tool === 'delegate' ? scope.delegate === true : flows));
+  return AGENT_BUILTIN_TOOLS.filter((tool) => {
+    if (tool === 'draw_image') return scope.pictures === true;
+    if (!scope.builtins) return false;
+    return tool === 'delegate' ? scope.delegate === true : flows;
+  });
+}
+
+function builtinCatalogFor(scope: AgentToolScope): string {
+  return buildBuiltinCatalog(scope.builtins && scope.delegate === true, scopeHasFlowTools(scope), scope.pictures === true);
 }
 
 function toolNames(scope: AgentToolScope): string[] {
@@ -416,7 +463,7 @@ export function buildToolCatalog(scope: AgentToolScope = FULL_TOOL_SCOPE, allBri
         : renderAgentToolLine(spec)))
       .join('\n'));
   }
-  const builtinCatalog = scope.builtins ? buildBuiltinCatalog(scope.delegate === true, scopeHasFlowTools(scope)) : '';
+  const builtinCatalog = builtinCatalogFor(scope);
   if (builtinCatalog) blocks.push(builtinCatalog);
   blocks.push(helpToolLine(), optsFooter());
   return blocks.join('\n');
@@ -427,7 +474,7 @@ export function describeToolSpec(name: string, scope: AgentToolScope = FULL_TOOL
   if (!wanted) return 'ERROR: "tool" is required — name the tool you want the full entry for.';
   if (isHelpTool(wanted)) return helpToolLine();
   if (builtinNames(scope).includes(wanted as AgentBuiltinTool)) {
-    const line = buildBuiltinCatalog(scope.delegate === true, scopeHasFlowTools(scope)).split('\n').find((entry) => entry.startsWith(`- "${wanted}"`));
+    const line = builtinToolEntry(wanted as AgentBuiltinTool);
     if (line) return line;
   }
   const spec = specsForAgent(scope).find((entry) => entry.type === wanted);
@@ -567,9 +614,19 @@ function coerceConfigValue(value: unknown, key: string): string {
 
 const MIN_QUESTION_CHARS = 4;
 
+/**
+ * `true` offers "ask_user". `false` refuses it for the step budget: no turn left to act on a reply.
+ * `'no_request'` refuses it for a goal with nothing in it to ask about, and says so — "no budget
+ * left" would be false there.
+ */
+export type AskGate = boolean | 'no_request';
+
+const ASK_REFUSED_NO_BUDGET = 'You cannot ask the user anything now — there is no budget left to act on a reply. Output a "finish" action with your best answer from the observations.';
+const ASK_REFUSED_NO_REQUEST = 'You cannot ask the user anything about this GOAL — it holds no request of its own (a greeting, a lone number or word). If it answers something in the conversation above, do what that answer asks; otherwise output a brief "finish" action with "done": true.';
+
 export function validateAgentAction(
   json: unknown,
-  allowAsk = false,
+  allowAsk: AskGate = false,
   scope: AgentToolScope = FULL_TOOL_SCOPE,
   deliverable: readonly number[] = [],
   batch = false,
@@ -581,11 +638,8 @@ export function validateAgentAction(
   const thought = typeof obj.thought === 'string' ? obj.thought : '';
   const action = obj.action;
 
-  if (action === 'ask_user' && !allowAsk) {
-    return {
-      ok: false,
-      error: 'You cannot ask the user anything now — there is no budget left to act on a reply. Output a "finish" action with your best answer from the observations.',
-    };
+  if (action === 'ask_user' && allowAsk !== true) {
+    return { ok: false, error: allowAsk === 'no_request' ? ASK_REFUSED_NO_REQUEST : ASK_REFUSED_NO_BUDGET };
   }
 
   if (action === 'deliver') {
@@ -613,7 +667,7 @@ export function validateAgentAction(
     const shapes = [
       '"call_tool"',
       ...(batch ? ['"call_tools"'] : []),
-      ...(allowAsk ? ['"ask_user"'] : []),
+      ...(allowAsk === true ? ['"ask_user"'] : []),
       ...(deliverable.length > 0 ? ['"deliver"'] : []),
       '"finish"',
     ];

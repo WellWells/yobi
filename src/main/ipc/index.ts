@@ -15,12 +15,16 @@ import {
 } from '../helpers';
 import { loadLanguageData } from '../i18n';
 import { titleFromPrompt } from '../output';
+import { whileConversationBusy } from '../conversationBusy';
 import { resolveUrlPrompt } from '../urlParser';
 import { showWorkerWindow } from '../windows';
 import { openOfferedSiteVerification } from '../siteVerification';
 import type { IpcContext } from './context';
 import { showOpenDialogForWin } from './context';
 import { registerFileHandlers } from './files';
+import { registerConversationMoveHandlers } from './conversationMove';
+import { registerConversationTrashHandlers } from './conversationTrash';
+import { registerConversationFolderHandlers } from './conversationFolders';
 import { registerConversationHistoryHandlers } from './conversationHistory';
 import { registerNotionHandlers } from './notion';
 import { registerYtdlHandlers } from './ytdl';
@@ -28,16 +32,20 @@ import { registerBatchExportHandlers } from './batchExport';
 import { registerComposerEditorHandlers } from './composerEditor';
 import { registerTelegramHandlers } from './telegram';
 import { registerLineHandlers } from './line';
+import { registerSocketBotHandlers } from './socketBots';
 import { announceBotPermissionsChanged, registerBotPermissionsHandlers } from './botPermissions';
 import { registerBotHandlers } from './bot';
 import { registerLocaleHandlers } from './locale';
 import { registerSettingsHandlers } from './settings';
 import { registerBackupHandlers } from './backup';
 import { registerFlowHandlers } from './flow';
+import { registerFeedPreviewHandlers } from './feedPreview';
+import { registerPttBoardHandlers } from './pttBoard';
 import { registerAgentHandlers } from './agent';
 import { registerAccountHandlers } from './account';
 import { registerEmailHandlers } from './email';
 import { registerDataKeyHandlers } from './dataKeys';
+import { registerCalendarHandlers } from './calendars';
 import { registerByokHandlers } from './byok';
 import { registerMcpHandlers } from './mcp';
 import { registerShareHandlers } from './share';
@@ -50,6 +58,9 @@ import { registerWritingToolsHandlers } from './writingTools';
 import { registerDocAssistantHandlers } from './docAssistant';
 import { registerTranslateHandlers } from './translate';
 import { registerMarkdownExportHandlers } from './markdownExport';
+import { registerConversationPinHandlers } from './conversationPin';
+import { registerConversationMenuHandlers } from './conversationMenu';
+import { registerRegionCaptureHandlers } from '../regionCapture';
 
 let _ipcInitialized = false;
 
@@ -74,7 +85,17 @@ export function setupIpcHandlers(deps: IpcContext): void {
       sendLog('⚠️ Empty UI prompt ignored');
       return null;
     }
+    // Busy from the moment the send arrives: reading a pasted link can take seconds before the
+    // task is queued, and the queue holds the mark from then on.
+    return whileConversationBusy(conversation?.conversationPath, 'sending', () => queuePromptFromUi(text, targetUrl, attachments, conversation));
+  }
 
+  async function queuePromptFromUi(
+    text: string,
+    targetUrl?: string,
+    attachments?: string[],
+    conversation?: { conversationPath?: string; sendId?: string },
+  ): Promise<string | null> {
     const resolvedTargetUrl = targetUrl?.trim()
       ? normalizeAiUrl(targetUrl)
       : config.targetUrl;
@@ -102,6 +123,7 @@ export function setupIpcHandlers(deps: IpcContext): void {
       sendId: conversation?.sendId,
       ...(resolved.prompt !== text ? { external: true } : {}),
       ...(resolved.map ? { mapPlace: resolved.map } : {}),
+      ...(resolved.forceProviderUrl ? { providerPinned: true as const } : {}),
     });
     sendLog(`[${id}] 🎯 UI prompt queued for ${getProviderLabel(finalTargetUrl)}`);
     return id;
@@ -213,6 +235,9 @@ export function setupIpcHandlers(deps: IpcContext): void {
   });
 
   registerFileHandlers();
+  registerConversationMoveHandlers();
+  registerConversationTrashHandlers();
+  registerConversationFolderHandlers();
   registerConversationHistoryHandlers();
   registerNotionHandlers();
   registerYtdlHandlers();
@@ -220,16 +245,20 @@ export function setupIpcHandlers(deps: IpcContext): void {
   registerComposerEditorHandlers();
   registerTelegramHandlers(ctx);
   registerLineHandlers(ctx);
+  registerSocketBotHandlers(ctx);
   registerBotPermissionsHandlers(ctx);
   registerBotHandlers(ctx);
   registerLocaleHandlers(ctx);
   registerSettingsHandlers(ctx);
   registerBackupHandlers(ctx);
   registerFlowHandlers(ctx);
+  registerFeedPreviewHandlers();
+  registerPttBoardHandlers();
   registerAgentHandlers(ctx);
   registerAccountHandlers();
   registerEmailHandlers();
   registerDataKeyHandlers();
+  registerCalendarHandlers();
   registerByokHandlers(ctx);
   registerMcpHandlers();
   registerShareHandlers();
@@ -242,4 +271,7 @@ export function setupIpcHandlers(deps: IpcContext): void {
   registerDocAssistantHandlers();
   registerTranslateHandlers();
   registerMarkdownExportHandlers();
+  registerConversationPinHandlers();
+  registerConversationMenuHandlers();
+  registerRegionCaptureHandlers();
 }

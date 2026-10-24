@@ -99,12 +99,13 @@ export async function runClaudeAutomation(
   attachments?: string[],
   _wantTitle = false,
   continuingThread = false,
+  temporary = false,
 ): Promise<{ response: string; title: string }> {
   const wc = workerWin.webContents;
 
   applyWorkerUserAgent(wc, WORKER_USER_AGENTS.claude);
 
-  const landing = await ensureOnPage(wc, targetUrl, PAGE_REUSE.claude, { continuingThread });
+  const landing = await ensureOnPage(wc, targetUrl, PAGE_REUSE.claude, { continuingThread, temporary });
   const reused = landing === 'reused';
   if (reused) sendLog('♻️ Claude page kept open — typing straight into it, no reload');
   else await waitForComposer(wc);

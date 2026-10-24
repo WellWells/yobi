@@ -4,6 +4,7 @@ import { IPC, isByokTargetUrl } from '../../shared/types';
 import type { CaptureSettings, QuickExportSettings, HiddenSources, HotkeyBindResult, SecretScope, SecretTarget } from '../../shared/types';
 import { isThemePreference } from '../../shared/themes';
 import { mergeReadingPrefs, readingPrefsFromConfig, readingPrefsToConfig } from '../../shared/readingPrefs';
+import { mergeSidebarView, normalizeSidebarView } from '../../shared/sidebarView';
 import { getProviderLabel } from '../providers';
 import {
   config,
@@ -20,7 +21,7 @@ import type { Config } from '../config';
 import { sendLog, normalizeAiUrl, applyLaunchAtStartup, relaunchApp } from '../helpers';
 import { getLogDir } from '../logFile';
 import { getMetricsSnapshot, resetMetrics } from '../metrics';
-import { getFlowMetricsSnapshot, resetFlowMetrics } from '../flowMetrics';
+import { getFlowMetricsView, resetFlowMetrics } from '../flowMetrics';
 import { getConversationTokenStats } from '../conversationTokenStats';
 import { loadLanguageData, setLangCache, setEnCache } from '../i18n';
 import { requestFactoryReset } from '../factoryReset';
@@ -28,20 +29,26 @@ import { getSecretHealth, isSecretEncryptionAvailable } from '../secretHealth';
 import { clearAuthRecord } from '../mcp/mcpTokenStore';
 import { getMcpRegistry } from '../mcp';
 import { setDataKey } from '../dataKeyStore';
+import { clearCalendarUrl } from '../calendar/calendarStore';
 import { flushPendingTempChatResult, isTempChatMode, setTempChatMode } from '../tempChat';
 import { getWorkerWin } from '../windows';
 import { llmLane } from '../flow/lanes';
-import { setHotkeyPaused, wouldCollide } from '../hotkey';
+import { releaseHotkeySlots, setHotkeyPaused, wouldCollide } from '../hotkey';
 import { normalizeShortcuts } from '../configNormalizers';
 import { isRegisterableAccelerator } from '../../shared/shortcuts';
 import type { ShortcutOverride } from '../../shared/shortcuts';
-import { quickExportAccelerator } from '../hotkeyBinding';
+import { isLinkRecognitionTarget, withLinkRecognition } from '../../shared/linkRecognition';
+import type { LinkRecognitionState } from '../../shared/linkRecognition';
+import { broadcastLinkRecognition, currentLinkRecognition } from '../linkRecognition';
 import { buildSettingsSnapshot } from './context';
 import type { IpcContext } from './context';
 
 export function applyImportedConfigLiveEffects(importedConfig: Config, ctx: IpcContext): void {
+  // All three let go first: a backup may move a combo from a slot bound later to one bound earlier.
+  releaseHotkeySlots();
   ctx.bindHotkey();
   ctx.bindQuickExportHotkey();
+  ctx.bindRegionHotkey();
   applyLaunchAtStartup(importedConfig.launchAtStartup, importedConfig.closeToTray);
   ctx.onTraySettingsChanged?.();
   ctx.onTrayMenuRebuild?.();
@@ -68,9 +75,10 @@ export function applyImportedConfigLiveEffects(importedConfig: Config, ctx: IpcC
 
   void ctx.telegramRuntime.syncWithConfig();
   void ctx.lineRuntime.syncWithConfig();
+  for (const runtime of Object.values(ctx.socketBots)) void runtime.syncWithConfig();
 }
 
-const SECRET_SCOPES = new Set<SecretScope>(['telegram', 'line', 'smtp', 'byok', 'mcp', 'dataKey']);
+const SECRET_SCOPES = new Set<SecretScope>(['telegram', 'line', 'discord', 'slack', 'smtp', 'byok', 'mcp', 'dataKey', 'calendar']);
 
 function parseSecretTarget(raw: unknown): SecretTarget | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -92,6 +100,7 @@ function clearBrokenSecret(raw: unknown): { ok: boolean } {
 
   if (target.scope === 'mcp') clearAuthRecord(target.id);
   else if (target.scope === 'dataKey') setDataKey(target.id, '');
+  else if (target.scope === 'calendar') clearCalendarUrl(target.id);
   else clearStoredSecret(target.scope, target.id, target.field);
 
   sendLog(`🗑️ Removed an unreadable stored secret: ${target.scope}.${target.field}`);
@@ -105,7 +114,7 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
   ipcMain.handle(IPC.GET_HOTKEY, () => config.hotkey);
   ipcMain.handle(IPC.UPDATE_HOTKEY, (_event, newHotkey: string): HotkeyBindResult => {
     if (!isRegisterableAccelerator(newHotkey)) return 'taken';
-    if (wouldCollide(newHotkey, config.hotkey, config.quickExport.hotkey)) return 'conflict';
+    if (wouldCollide(newHotkey, config.hotkey, config.quickExport.hotkey, config.regionHotkey)) return 'conflict';
 
     // Bind BEFORE persisting: registerHotkey releases the current accelerator to try the new
     // one, so a combo the OS refuses leaves no hotkey at all, and persisting it first would
@@ -119,7 +128,27 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
       return 'taken';
     }
     saveConfig({ hotkey: newHotkey });
-    sendLog(`⌨️  Hotkey updated to: ${newHotkey}`);
+    if (newHotkey) sendLog(`⌨️  Hotkey updated to: ${newHotkey}`);
+    return 'ok';
+  });
+
+  ipcMain.handle(IPC.GET_REGION_HOTKEY, () => config.regionHotkey);
+  ipcMain.handle(IPC.UPDATE_REGION_HOTKEY, (_event, raw: unknown): HotkeyBindResult => {
+    const next = typeof raw === 'string' ? raw.trim() : '';
+    if (!isRegisterableAccelerator(next)) return 'taken';
+    if (wouldCollide(next, config.regionHotkey, config.hotkey, config.quickExport.hotkey)) return 'conflict';
+
+    // Bound before it is saved, for the same reason as the ask hotkey above.
+    const previous = config.regionHotkey;
+    config.regionHotkey = next;
+    if (!ctx.bindRegionHotkey()) {
+      config.regionHotkey = previous;
+      ctx.bindRegionHotkey();
+      sendLog(`⌨️  ${next} was refused by the system — keeping ${previous}`);
+      return 'taken';
+    }
+    saveConfig({ regionHotkey: next });
+    if (next) sendLog(`⌨️  Screen region hotkey updated to: ${next}`);
     return 'ok';
   });
 
@@ -134,15 +163,6 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
     config.shortcuts = shortcuts;
     saveConfig({ shortcuts });
     return shortcuts;
-  });
-
-  ipcMain.handle(IPC.GET_HOTKEY_ENABLED, () => config.hotkeyEnabled);
-  ipcMain.handle(IPC.SET_HOTKEY_ENABLED, (_event, enabled: boolean): HotkeyBindResult => {
-    config.hotkeyEnabled = Boolean(enabled);
-    saveConfig({ hotkeyEnabled: config.hotkeyEnabled });
-    const ok = ctx.bindHotkey();
-    sendLog(`⌨️  Ask hotkey ${config.hotkeyEnabled ? 'enabled' : 'disabled'}`);
-    return ok ? 'ok' : 'taken';
   });
 
   ipcMain.handle(IPC.GET_AI_URL, () => config.targetUrl);
@@ -204,6 +224,20 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
   ipcMain.handle(IPC.UPDATE_SYNC_SYSTEM_LANGUAGE_TO_MODEL, (_event, enabled: boolean) => {
     config.syncSystemLanguageToModel = Boolean(enabled);
     saveConfig({ syncSystemLanguageToModel: config.syncSystemLanguageToModel });
+    return true;
+  });
+
+  ipcMain.handle(IPC.GET_ONE_SHOT_TEMPORARY_CHAT, () => config.oneShotTemporaryChat);
+  ipcMain.handle(IPC.UPDATE_ONE_SHOT_TEMPORARY_CHAT, (_event, enabled: boolean) => {
+    config.oneShotTemporaryChat = Boolean(enabled);
+    saveConfig({ oneShotTemporaryChat: config.oneShotTemporaryChat });
+    return true;
+  });
+
+  ipcMain.handle(IPC.GET_PROVIDER_FALLBACK, () => config.providerFallback);
+  ipcMain.handle(IPC.UPDATE_PROVIDER_FALLBACK, (_event, enabled: boolean) => {
+    config.providerFallback = Boolean(enabled);
+    saveConfig({ providerFallback: config.providerFallback });
     return true;
   });
 
@@ -275,6 +309,17 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
     saveConfig({ showTokenUsage: config.showTokenUsage });
     return true;
   });
+  ipcMain.handle(IPC.GET_LINK_RECOGNITION, (): LinkRecognitionState => currentLinkRecognition());
+  ipcMain.handle(IPC.SET_LINK_RECOGNITION, (_event, target: unknown, on: unknown): LinkRecognitionState => {
+    const current = currentLinkRecognition();
+    // A site not shown here (a Taiwan-only site outside Taiwan) has no switch, so nothing may set it.
+    const shown = target === 'maps' || current.sites.some((entry) => entry.site === target);
+    if (!isLinkRecognitionTarget(target) || typeof on !== 'boolean' || !shown) return current;
+    config.linkRecognition = withLinkRecognition(config.linkRecognition ?? {}, target, on);
+    saveConfig({ linkRecognition: config.linkRecognition });
+    broadcastLinkRecognition();
+    return currentLinkRecognition();
+  });
   ipcMain.handle(IPC.GET_MARKDOWN_ZOOM, () => config.markdownZoom);
   ipcMain.handle(IPC.UPDATE_MARKDOWN_ZOOM, (_event, zoom: number) => {
     const clamped = Math.min(200, Math.max(70, Math.round(Number(zoom) / 10) * 10));
@@ -285,6 +330,12 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
   ipcMain.handle(IPC.UPDATE_READING_PREFS, (_event, patch: unknown) => {
     const next = mergeReadingPrefs(readingPrefsFromConfig(config), patch);
     saveConfig(readingPrefsToConfig(next));
+    return next;
+  });
+  ipcMain.handle(IPC.GET_SIDEBAR_VIEW, () => normalizeSidebarView(config.sidebarView));
+  ipcMain.handle(IPC.UPDATE_SIDEBAR_VIEW, (_event, patch: unknown) => {
+    const next = mergeSidebarView(normalizeSidebarView(config.sidebarView), patch);
+    saveConfig({ sidebarView: next });
     return next;
   });
 
@@ -298,12 +349,11 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
   ipcMain.handle(IPC.GET_QUICK_EXPORT, () => config.quickExport);
   ipcMain.handle(IPC.UPDATE_QUICK_EXPORT, (_event, settings: QuickExportSettings): HotkeyBindResult => {
     const next = normalizeQuickExport(settings);
-    if (wouldCollide(next.hotkey, config.quickExport.hotkey, config.hotkey)) return 'conflict';
+    if (wouldCollide(next.hotkey, config.quickExport.hotkey, config.hotkey, config.regionHotkey)) return 'conflict';
 
     const previousHotkey = config.quickExport.hotkey;
-    const previousAccelerator = quickExportAccelerator(config.quickExport);
     config.quickExport = next;
-    if (quickExportAccelerator(next) === previousAccelerator) {
+    if (next.hotkey === previousHotkey) {
       saveConfig({ quickExport: config.quickExport });
       return 'ok';
     }
@@ -320,7 +370,7 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
   });
 
   ipcMain.handle(IPC.METRICS_GET, () => getMetricsSnapshot());
-  ipcMain.handle(IPC.FLOW_METRICS_GET, () => getFlowMetricsSnapshot());
+  ipcMain.handle(IPC.FLOW_METRICS_GET, () => getFlowMetricsView());
   ipcMain.handle(IPC.METRICS_CONVERSATION_TOKENS, () => getConversationTokenStats());
   // "Clear statistics" empties both stores.
   ipcMain.handle(IPC.METRICS_RESET, () => {

@@ -1,5 +1,6 @@
 import { PROVIDER_LABELS, PROVIDER_URLS } from '../../../../shared/types';
 import { isShareLinkFormat } from '../../../../shared/shareFormat';
+import { storedMcpAccess } from '../../../../shared/mcpFlowStep';
 import type { FlowDefinition, Provider, SkillInstance, SkillType } from '../../../../shared/types';
 
 export type FlowRisk =
@@ -15,7 +16,13 @@ export type FlowAccess =
   | 'sendData'
   | 'thirdPartyAi'
   /** Reading the user's own LINE conversations. Not 'readFiles': "reads files" understates it. */
-  | 'lineMessages';
+  | 'lineMessages'
+  /** Reading the Telegram group talk the bot kept: other people's words, not the user's files. */
+  | 'telegramMessages'
+  /** Reading one of the user's own calendars (its subscribed .ics address stays in Settings). */
+  | 'calendar'
+  /** Reading the user's own mailbox (the account stays on the Mail connector). */
+  | 'mail';
 
 export type FlowSetup = 'bot' | 'email' | 'line';
 
@@ -29,6 +36,17 @@ const RISK_BY_SKILL: Partial<Record<SkillType, FlowRisk>> = {
   file_delete: 'delete',
 };
 
+/**
+ * A connector step is only as risky as its tool: one picked as deleting is `delete`, which locks
+ * the import button like a file delete. The access is stored with the step at pick time, so this
+ * works on a flow from another computer; a run re-checks the live tool and refuses a delete the
+ * step was not saved as (`mcpStepRefusal`).
+ */
+function riskFor(step: SkillInstance): FlowRisk | undefined {
+  if (step.type === 'mcp') return storedMcpAccess(step.config.access) === 'delete' ? 'delete' : undefined;
+  return RISK_BY_SKILL[step.type];
+}
+
 const ACCESS_BY_SKILL: Partial<Record<SkillType, FlowAccess>> = {
   file_read: 'readFiles',
   file_list: 'readFiles',
@@ -41,9 +59,14 @@ const ACCESS_BY_SKILL: Partial<Record<SkillType, FlowAccess>> = {
   http: 'sendData',
   bot: 'sendData',
   email_send: 'sendData',
+  // Its arguments go to the connector's server, whatever the tool does with them.
+  mcp: 'sendData',
   llm: 'thirdPartyAi',
   research: 'thirdPartyAi',
   line_read: 'lineMessages',
+  telegram_read: 'telegramMessages',
+  calendar: 'calendar',
+  mail_fetch: 'mail',
 };
 
 function accessKindsFor(step: SkillInstance): FlowAccess[] {
@@ -58,7 +81,7 @@ function accessKindsFor(step: SkillInstance): FlowAccess[] {
 
 export const FLOW_RISKS: readonly FlowRisk[] = ['execute', 'system', 'delete'] as const;
 export const FLOW_ACCESS: readonly FlowAccess[] = [
-  'readFiles', 'writeFiles', 'screen', 'clipboard', 'sendData', 'thirdPartyAi', 'lineMessages',
+  'readFiles', 'writeFiles', 'screen', 'clipboard', 'sendData', 'thirdPartyAi', 'lineMessages', 'telegramMessages', 'calendar', 'mail',
 ] as const;
 
 export function llmProviderLabel(providerUrl: string | undefined): string {
@@ -84,6 +107,8 @@ export interface FlowCapabilities {
   access: FlowAccess[];
   setup: FlowSetup[];
   hasRisk: boolean;
+  /** Folders whose new files start the flow by themselves (file triggers). */
+  watchFolders: string[];
 }
 
 export function analyzeFlow(flow: FlowDefinition): FlowCapabilities {
@@ -92,20 +117,27 @@ export function analyzeFlow(flow: FlowDefinition): FlowCapabilities {
   const setup = new Set<FlowSetup>();
 
   flow.steps.forEach((step, index) => {
-    const risk = RISK_BY_SKILL[step.type];
+    const risk = riskFor(step);
     if (risk) {
       const list = riskSteps.get(risk) ?? [];
       list.push(index + 1);
       riskSteps.set(risk, list);
     }
     for (const kind of accessKindsFor(step)) access.add(kind);
-    if (step.type === 'bot') setup.add('bot');
-    if (step.type === 'email_send') setup.add('email');
+    if (step.type === 'bot' || step.type === 'telegram_read') setup.add('bot');
+    if (step.type === 'email_send' || step.type === 'mail_fetch') setup.add('email');
     if (step.type === 'line_read') setup.add('line');
   });
 
+  const watchFolders: string[] = [];
   for (const trigger of [flow.trigger, ...(flow.extraTriggers ?? [])]) {
     if (trigger.type === 'bot') setup.add('bot');
+    // A folder trigger hands every new file in it to the steps, without anyone pressing Run.
+    if (trigger.type === 'file') {
+      access.add('readFiles');
+      const folder = (trigger.watchFolder ?? '').trim();
+      if (folder && !watchFolders.includes(folder)) watchFolders.push(folder);
+    }
   }
 
   return {
@@ -114,6 +146,7 @@ export function analyzeFlow(flow: FlowDefinition): FlowCapabilities {
     access: FLOW_ACCESS.filter((kind) => access.has(kind)),
     setup: [...setup],
     hasRisk: riskSteps.size > 0,
+    watchFolders,
   };
 }
 
@@ -131,6 +164,8 @@ const SUMMARY_KEYS: Partial<Record<SkillType, string[]>> = {
   research: ['query'],
   gmap_reviews: ['url'],
   line_read: ['chat', 'query'],
+  telegram_read: ['chat', 'range'],
+  mcp: ['tool', 'arguments'],
   youtube: ['url'],
   youtube_subs: ['channels'],
   youtube_info: ['input'],
@@ -139,6 +174,7 @@ const SUMMARY_KEYS: Partial<Record<SkillType, string[]>> = {
   x_thread: ['url'],
   x_trends: ['maxItems'],
   x_media: ['input'],
+  ptt_board: ['board', 'keyword'],
   llm: ['prompt'],
   bot: ['message'],
   email_send: ['to', 'subject'],
@@ -155,6 +191,10 @@ const SUMMARY_KEYS: Partial<Record<SkillType, string[]>> = {
   stock: ['symbol'],
   weather: ['location'],
   air_quality: ['location'],
+  calendar: ['range'],
+  mail_fetch: ['from', 'keywords'],
+  almanac: ['date', 'activity'],
+  tw_invoice: ['numbers', 'period'],
   loop: ['input'],
   if: ['left', 'operator', 'right'],
   on_change: ['value'],

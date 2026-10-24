@@ -1,5 +1,8 @@
 import { IPC } from '../../shared/types';
+import type { ConversationMenuCommandEvent } from '../../shared/conversationMenu';
 import { installAppMenu } from '../appMenu';
+import type { AppMenuDeps } from '../appMenu';
+import { onConversationMenuChange } from '../conversationMenu';
 import { sendToRenderer, setMainWindow, setSettingsCategoryReveal } from '../helpers';
 import { createMainWindow, getMainWin } from '../windows';
 
@@ -28,7 +31,31 @@ function openSettings(category?: string): void {
   win.focus();
 }
 
+/**
+ * A Conversation menu click: the window comes forward (it may be hidden to the tray) and its
+ * renderer runs the command. The items are disabled while no renderer has reported, so there is a
+ * window to send to.
+ */
+function runConversationCommand(event: ConversationMenuCommandEvent): void {
+  const win = getMainWin();
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+  sendToRenderer(IPC.CONVERSATION_MENU_COMMAND, event);
+}
+
+const deps: AppMenuDeps = {
+  onOpenSettings: () => openSettings(),
+  onConversationCommand: runConversationCommand,
+};
+let rebuildOnConversationChange = false;
+
 export function setupAppMenu(): void {
-  installAppMenu({ onOpenSettings: () => openSettings() });
+  installAppMenu(deps);
   setSettingsCategoryReveal((category) => openSettings(category));
+  if (rebuildOnConversationChange) return;
+  rebuildOnConversationChange = true;
+  // The Conversation menu's items follow the open conversation (enabled, Pin or Unpin).
+  onConversationMenuChange(() => installAppMenu(deps));
 }

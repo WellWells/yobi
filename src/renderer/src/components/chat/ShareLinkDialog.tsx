@@ -1,8 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, Box, Group, Stack, Text, Tooltip } from '@mantine/core';
-import {
-  Check, Clock, Copy, ExternalLink, Flame, Link2, Server, Trash2, TriangleAlert,
-} from 'lucide-react';
+import { Check, Copy, ExternalLink, Link2, Trash2, TriangleAlert } from 'lucide-react';
 import { SHARE_CONSENT_KEYS, clampShareExpire, resolveShareExpires } from '../../../../shared/types';
 import type { ShareErrorCode, ShareExpire, ShareSettings } from '../../../../shared/types';
 import { clipboardApi, shareApi } from '../../api/electronApi';
@@ -14,6 +12,7 @@ import { SettingRow } from '../SettingRow';
 import { ToggleSwitch } from '../ToggleSwitch';
 import { ShareConsentPoints } from '../ShareConsentPoints';
 import { selectAllOnClick } from '../../utils/selectAllOnClick';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 type Stage = 'consent' | 'options' | 'result';
 
@@ -120,7 +119,7 @@ export const ShareLinkDialog: React.FC<ShareLinkDialogProps> = ({ open, onClose,
         {stage === 'consent' && (
           <Stack gap={14}>
             <Text fz="var(--font-size-base)" c="var(--text-primary)" lh={1.7}>
-              {t('share.consent.intro').replace('{{instance}}', settings?.instanceUrl ?? '')}
+              {fillTemplate(t('share.consent.intro'), { instance: settings?.instanceUrl ?? '' })}
             </Text>
 
             <ShareConsentPoints points={SHARE_CONSENT_KEYS.map((key) => ({ key, text: t(key) }))} />
@@ -138,11 +137,10 @@ export const ShareLinkDialog: React.FC<ShareLinkDialogProps> = ({ open, onClose,
           <Stack gap={14}>
             {turnCount > 0 && (
               <Text fz="var(--font-size-sm)" c="var(--text-secondary)" lh={1.65}>
-                {t('share.dialog.scope').replace('{{count}}', String(turnCount))}
+                {fillTemplate(t('share.dialog.scope'), { count: String(turnCount) })}
               </Text>
             )}
             <SettingRow
-              icon={<Server size={13} />}
               label={t('share.settings.instance')}
               hint={t('share.settings.instanceHint')}
               control={
@@ -153,7 +151,6 @@ export const ShareLinkDialog: React.FC<ShareLinkDialogProps> = ({ open, onClose,
               alignStart
             />
             <SettingRow
-              icon={<Clock size={13} />}
               label={t('share.settings.expire')}
               hint={t('share.settings.expireHint')}
               control={
@@ -168,7 +165,6 @@ export const ShareLinkDialog: React.FC<ShareLinkDialogProps> = ({ open, onClose,
               alignStart
             />
             <SettingRow
-              icon={<Flame size={13} />}
               label={t('share.settings.burn')}
               hint={t('share.settings.burnHint')}
               control={

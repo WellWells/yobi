@@ -7,6 +7,8 @@ import { normalizeFlowSnapshot } from './flowMetricsNormalize';
 import { applyRunEvent, applyStepEvent, pruneDailyBefore, pruneDeadEntries } from './flowMetricsApply';
 import { config, getConfigDir } from './config';
 import { sendToRenderer } from './helpers';
+import { getLangCache } from './i18n';
+import { localizeFlowSnapshot } from './flowMetricsDisplay';
 import { setFlowMeterSinks } from './flowMeter';
 import type { FlowRunEvent, FlowStepEvent } from './flowMeter';
 
@@ -32,6 +34,23 @@ export function getFlowMetricsSnapshot(): FlowMetricsSnapshot {
   return pending ?? normalizeFlowSnapshot(store.store);
 }
 
+/** What the statistics page reads: error samples in the user's language (`flowMetricsDisplay`). */
+export function getFlowMetricsView(): FlowMetricsSnapshot {
+  return localizeFlowSnapshot(getFlowMetricsSnapshot(), getLangCache());
+}
+
+function broadcast(data: FlowMetricsSnapshot): void {
+  sendToRenderer(IPC.FLOW_METRICS_CHANGED, localizeFlowSnapshot(data, getLangCache()));
+}
+
+/**
+ * Re-sends the page's copy after the language pack changed: Settings stays open across a language
+ * switch, and the page only re-reads on open or on a flush, so the samples would keep the old language.
+ */
+export function rebroadcastFlowMetrics(): void {
+  broadcast(getFlowMetricsSnapshot());
+}
+
 export function flushFlowMetrics(): void {
   if (flushTimer) {
     clearTimeout(flushTimer);
@@ -45,7 +64,7 @@ export function flushFlowMetrics(): void {
   } catch (err: unknown) {
     console.warn(`[flow-metrics] failed to persist: ${err instanceof Error ? err.message : String(err)}`);
   }
-  sendToRenderer(IPC.FLOW_METRICS_CHANGED, data);
+  broadcast(data);
 }
 
 function scheduleFlush(data: FlowMetricsSnapshot): void {
@@ -99,7 +118,7 @@ export function resetFlowMetrics(): FlowMetricsSnapshot {
     console.warn(`[flow-metrics] failed to reset: ${err instanceof Error ? err.message : String(err)}`);
     return getFlowMetricsSnapshot();
   }
-  sendToRenderer(IPC.FLOW_METRICS_CHANGED, data);
+  broadcast(data);
   return data;
 }
 

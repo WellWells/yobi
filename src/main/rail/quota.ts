@@ -1,7 +1,7 @@
 /**
- * TDX's daily allowance, as TDX itself reports it. A visitor without a key gets 20 calls a day per
- * IP, one counter across every endpoint (`X-RateLimit-Remaining-Day`); a key's allowance depends on
- * its plan, so nothing here hard-codes a number — it only reads the header.
+ * The user's TDX key's daily allowance, as TDX itself reports it (`X-RateLimit-Remaining-Day`, one
+ * counter across every endpoint); it depends on the key's plan, so nothing here hard-codes a
+ * number — it only reads the header. (No key = no TDX call at all, see `tdxClient.ts`.)
  *
  * Timetables are the calls an answer cannot do without, so `TIMETABLE_RESERVE` calls are kept for
  * them; live data (delays, seats, notices) refreshes no more often than the rest of the day's

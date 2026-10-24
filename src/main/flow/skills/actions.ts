@@ -6,10 +6,21 @@ import { cardStyleFromSettings, formatCardTime } from '../../../shared/captureCa
 import { resolveCardTitle } from '../../../shared/markdownTitle';
 import { config as appConfig } from '../../config';
 import { getProviderLabel, preparePromptForProvider, runAutomation } from '../../providers';
-import { runByokCompletion } from '../../providers/byokClient';
+import { byokTargetTakesImages, runByokCompletion } from '../../providers/byokClient';
+import { loadByokImages, withByokImages } from '../../providers/byokImages';
+import { resendIfGeminiCapFell } from '../../providers/geminiPromptTooLong';
+import { isByokImageFile } from '../../../shared/attachmentFormats';
 import { repairSplitTableRows } from '../../../shared/markdownTableRepair';
-import { PROVIDER_ATTACHMENT_POLICIES, isBotPlatform, isByokTargetUrl, providerFromUrl } from '../../../shared/types';
-import type { BotPlatform } from '../../../shared/types';
+import {
+  BOT_PLATFORM_NAMES,
+  BYOK_IMAGE_MAX_FILES,
+  PROVIDER_ATTACHMENT_POLICIES,
+  isBotPlatform,
+  isByokTargetUrl,
+  isSocketBotPlatform,
+  providerFromUrl,
+} from '../../../shared/types';
+import type { BotPlatform, SocketBotPlatform } from '../../../shared/types';
 import {
   EMPTY_RECIPIENT_DIRECTORY, botStepTargets, isRecipientId, resolveTargetsForSend, splitTargets,
 } from '../../../shared/botRecipients';
@@ -28,6 +39,7 @@ import { getLangCache, t } from '../../i18n';
 import { formatLimit, formatMegabytes, parseFlowButtons, withButtonImages } from '../../../shared/ytdl';
 import { telegramSendLimitBytes } from '../../telegram/largeUpload';
 import { LINE_ACTION_TEXT_MAX, LINE_CAROUSEL_MAX, type LineCarouselItem } from '../../line/pickCarousel';
+import { lineMenuFits, type LineMenuButton } from '../../line/flowMenu';
 import { isBuiltinFlowId } from '../../../shared/builtinFlows';
 import { closePage, closeRunPages, openPage, runPageScript } from './browserPages';
 import { inferTelegramSendAs, isCaptureFormat } from '../interpolation';
@@ -206,11 +218,12 @@ async function resolveLlmAttachments(
   if (!raw) return [];
 
   const providerLabel = getProviderLabel(providerUrl);
-  if (isByokTargetUrl(providerUrl)) {
+  const byok = isByokTargetUrl(providerUrl);
+  if (byok && !byokTargetTakesImages(providerUrl)) {
     sendLog(`⚠️ [Flow] ${providerLabel} cannot take file attachments — sending the prompt as text only`);
     return [];
   }
-  const maxFiles = PROVIDER_ATTACHMENT_POLICIES[providerFromUrl(providerUrl)].maxFiles;
+  const maxFiles = byok ? BYOK_IMAGE_MAX_FILES : PROVIDER_ATTACHMENT_POLICIES[providerFromUrl(providerUrl)].maxFiles;
   if (maxFiles <= 0) {
     sendLog(`⚠️ [Flow] ${providerLabel} cannot take file attachments — sending the prompt as text only`);
     return [];
@@ -225,6 +238,10 @@ async function resolveLlmAttachments(
   const candidates = parseAttachmentList(raw);
   const resolved: string[] = [];
   for (const candidate of candidates) {
+    if (byok && !isByokImageFile(undefined, candidate)) {
+      sendLog(`⚠️ [Flow] Attachment skipped (${candidate}): ${providerLabel} takes only PNG, JPEG or WebP images`);
+      continue;
+    }
     try {
       resolved.push(await resolveSafeLocalAttachment(candidate, authorizedPaths));
     } catch (err) {
@@ -304,24 +321,15 @@ export async function execLlm(
   }
 
   let promptForModel = effectivePrompt;
-  if (!isByokTarget) {
-    const preparedPrompt = preparePromptForProvider(effectivePrompt, providerUrl);
-    if (preparedPrompt.removedBlankLines) {
-      sendLog(`✂️ [Flow] Removed blank lines for ${getProviderLabel(providerUrl)} input`);
-    }
-    if (preparedPrompt.truncated) {
-      sendLog(`✂️ [Flow] Truncated ${getProviderLabel(providerUrl)} input to ${preparedPrompt.capLabel}`);
-    }
-    promptForModel = preparedPrompt.prompt;
-  }
 
   const attachments = await resolveLlmAttachments(config, providerUrl);
 
   let response: string;
   if (isByokTarget) {
     const byokAbort = new AbortController();
+    const images = attachments.length > 0 ? await loadByokImages(attachments) : undefined;
     const result = await withStepTimeout(
-      runByokCompletion(providerUrl, promptForModel, timeoutMs, byokAbort.signal),
+      runByokCompletion(providerUrl, withByokImages(promptForModel, images), timeoutMs, byokAbort.signal),
       timeoutMs,
       'llm',
       () => byokAbort.abort(),
@@ -332,15 +340,28 @@ export async function execLlm(
     const result = await withAbort(
       llmLane.runExclusive(async () => {
         if (signal?.aborted) throw new FlowAbortError();
-        const workerWin = deps.ensureWorkerWin ? await deps.ensureWorkerWin() : deps.getWorkerWin();
-        if (!workerWin || workerWin.isDestroyed()) throw workerWindowUnavailable();
-        return withStepTimeout(
-          runAutomation(workerWin, promptForModel, timeoutMs, providerUrl, attachments),
-          timeoutMs,
-          'llm',
-          () => { workerWin.webContents.loadURL('about:blank').catch(() => {}); },
-          signal,
-        );
+        // Prepared once the lane is ours, and again when the Gemini page refused it unsent because
+        // its cap fell on the way: the step is then cut to the cap that holds, as it would have been
+        // had that cap been known up front.
+        return resendIfGeminiCapFell(async () => {
+          const preparedPrompt = preparePromptForProvider(effectivePrompt, providerUrl);
+          if (preparedPrompt.removedBlankLines) {
+            sendLog(`✂️ [Flow] Removed blank lines for ${getProviderLabel(providerUrl)} input`);
+          }
+          if (preparedPrompt.truncated) {
+            sendLog(`✂️ [Flow] Truncated ${getProviderLabel(providerUrl)} input to ${preparedPrompt.capLabel}`);
+          }
+          promptForModel = preparedPrompt.prompt;
+          const workerWin = deps.ensureWorkerWin ? await deps.ensureWorkerWin() : deps.getWorkerWin();
+          if (!workerWin || workerWin.isDestroyed()) throw workerWindowUnavailable();
+          return withStepTimeout(
+            runAutomation(workerWin, promptForModel, timeoutMs, providerUrl, attachments),
+            timeoutMs,
+            'llm',
+            () => { workerWin.webContents.loadURL('about:blank').catch(() => {}); },
+            signal,
+          );
+        }, (cap) => sendLog(`✂️ [Flow] ${getProviderLabel(providerUrl)} takes only ${cap} characters now — sending the step again`));
       }),
       signal,
     );
@@ -512,6 +533,50 @@ function stepButtons(config: Record<string, string>): BotSendExtras | undefined 
   return { buttons: { flowId, items, ...(Number.isSafeInteger(userId) && userId !== 0 ? { userId } : {}) } };
 }
 
+/**
+ * The Telegram message that started this run, when `chatId` is the chat it was sent in: what a
+ * send there quotes. Any other recipient (a channel, everyone paired) gets the message unquoted.
+ */
+function triggerMessageIn(config: Record<string, string>, chatId: number): number | undefined {
+  const messageId = Number(config.__triggerMessageId);
+  if (!Number.isSafeInteger(messageId) || messageId <= 0) return undefined;
+  return (config.__triggerChatId ?? '').trim() === String(chatId) ? messageId : undefined;
+}
+
+/** The step's extras for one recipient: its buttons, and the quote when it is the asking chat. */
+function extrasFor(config: Record<string, string>, extras: BotSendExtras | undefined, chatId: number): BotSendExtras | undefined {
+  const replyTo = replacesTrigger(config) ? undefined : triggerMessageIn(config, chatId);
+  return replyTo ? { ...extras, replyTo } : extras;
+}
+
+/**
+ * The step takes the place of the Telegram message that started the run (`replaceTrigger`; a
+ * pasted link answered with its video and the link in the caption, user 2026-10-23): sent
+ * unquoted, and once it is out in that chat the message is deleted. Only a message that said
+ * nothing but the input (`TRIGGER_IS_INPUT_VARIABLE`): a link among someone's words stays where
+ * it is, quoted as usual.
+ */
+function replacesTrigger(config: Record<string, string>): boolean {
+  const value = (config.replaceTrigger ?? '').trim().toLowerCase();
+  return (value === 'true' || value === '1') && config.__triggerIsInput === '1';
+}
+
+/**
+ * Deletes the message that started the run once the step reached its chat. Telegram lets a bot
+ * delete another's message only in a private chat or as a group admin with that right: a refusal
+ * leaves it there and is only logged.
+ */
+async function deleteReplacedTrigger(config: Record<string, string>, deps: FlowExecutorDeps, sentTo: readonly number[]): Promise<void> {
+  if (!replacesTrigger(config) || !deps.deleteTelegramMessage) return;
+  const chatId = Number(config.__triggerChatId);
+  const messageId = sentTo.includes(chatId) ? triggerMessageIn(config, chatId) : undefined;
+  if (messageId === undefined) return;
+  const deleted = await deps.deleteTelegramMessage(chatId, messageId).catch(() => false);
+  sendLog(deleted
+    ? `🧹 [Bot] Deleted message ${messageId} in chat ${chatId}: the answer took its place`
+    : `⚠️ [Bot] Could not delete message ${messageId} in chat ${chatId} (no right to here, or too old) — left as it is`);
+}
+
 interface LineChoices {
   /** Choices with a picture LINE can show (a person's stories): cards to tap. */
   cards: LineCarouselItem[];
@@ -519,17 +584,20 @@ interface LineChoices {
   message: string;
   /** The message with a line for every choice: what goes out if the cards cannot. */
   fallback: string;
+  /** The choices that are not cards, as the buttons of a menu card (`sendLineMenu`). */
+  menu: LineMenuButton[];
 }
 
 /**
  * LINE has no inline buttons: each choice becomes the line that does the same — the command, or
  * for a built-in (which runs on a pasted link, not a command) the link and the choice alone. A
- * choice with a picture (`buttonImages`) is a card instead, which sends that line when tapped.
+ * choice with a picture (`buttonImages`) is a card instead, which sends that line when tapped; a
+ * picture step's other choices can be a menu card's buttons, which stand for their lines.
  */
 function lineChoices(message: string, config: Record<string, string>): LineChoices {
   const items = withButtonImages(parseFlowButtons(config.buttons ?? ''), config.buttonImages);
   const command = (config.__botCommand ?? '').trim();
-  if (items.length === 0 || !command) return { cards: [], message, fallback: message };
+  if (items.length === 0 || !command) return { cards: [], message, fallback: message, menu: [] };
   const builtin = isBuiltinFlowId((config.__flowId ?? '').trim());
   const lineOf = (b: FlowButton): string => (builtin ? b.input : `/${command} ${b.input}`);
   const carded = items
@@ -540,10 +608,12 @@ function lineChoices(message: string, config: Record<string, string>): LineChoic
     const lines = choices.map((b) => t(getLangCache(), 'flow.bot.buttonHint', { label: b.label, command: lineOf(b) }));
     return [message.trim(), lines.join('\n')].filter(Boolean).join('\n\n');
   };
+  const rest = items.filter((b) => !carded.includes(b));
   return {
     cards: carded.map((b) => ({ label: b.label, image: b.image ?? '', text: lineOf(b) })),
-    message: withHints(items.filter((b) => !carded.includes(b))),
+    message: withHints(rest),
     fallback: withHints(items),
+    menu: rest.map((b) => ({ label: b.label, line: lineOf(b), ...(b.rowStart ? { rowStart: true } : {}) })),
   };
 }
 
@@ -600,6 +670,9 @@ export async function execBot(
       cards: choices.cards,
       cardsFallback: choices.fallback,
       cardsAltText: message,
+      menu: choices.menu,
+      menuText: message,
+      attachmentType: (config.attachmentType ?? '').trim(),
       explicitAttachment,
       preview: config.preview ?? '',
       legacyMagicPath,
@@ -607,6 +680,12 @@ export async function execBot(
       rawTargets,
       originalChatIdsTemplate,
       everyone,
+    });
+  }
+
+  if (isSocketBotPlatform(platform)) {
+    return execBotSocket(platform, config, deps, {
+      message, explicitAttachment, legacyMagicPath, legacyMagicCaption, rawTargets, originalChatIdsTemplate, everyone,
     });
   }
 
@@ -661,13 +740,18 @@ export async function execBot(
     const buttonsLine = items.length === 1
       ? t(getLangCache(), 'flow.bot.albumButton', { label: items[0].label })
       : t(getLangCache(), 'flow.bot.albumButtons');
+    // The album quotes the asking message; the buttons line under it does not quote it again.
+    const albumTo = (target: number): Promise<void> => {
+      const replyTo = triggerMessageIn(config, target);
+      return replyTo ? sendAlbum(target, album, caption, authorizedPaths, replyTo) : sendAlbum(target, album, caption, authorizedPaths);
+    };
     await broadcast(
       async (chatId) => {
-        await sendAlbum(chatId, album, caption, authorizedPaths);
+        await albumTo(chatId);
         if (sendButtons) await sendButtons(chatId, buttonsLine, extras);
       },
       async (user) => {
-        await sendAlbum(user.userId, album, caption, authorizedPaths);
+        await albumTo(user.userId);
         if (sendButtons) await sendButtons(user.userId, buttonsLine, extras);
       },
     );
@@ -686,14 +770,15 @@ export async function execBot(
     await requireTelegramSize(attachment, authorizedPaths);
 
     const sendToTarget = async (target: number, label: string): Promise<void> => {
+      const targetExtras = extrasFor(config, extras, target);
       try {
-        await sendFile(target, attachment, sendAs, caption, authorizedPaths, extras);
+        await sendFile(target, attachment, sendAs, caption, authorizedPaths, targetExtras);
         sendLog(`📤 [Bot] Sent ${sendAs} to ${label}: ${attachment}`);
       } catch (err: unknown) {
         const reason = err instanceof Error ? err.message : String(err);
         if (isRemote && caption && sendMessageFallback) {
           sendLog(`⚠️ [Bot] ${sendAs} send failed (${reason}); resending as text without the image`);
-          await sendMessageFallback(target, caption, extras);
+          await sendMessageFallback(target, caption, targetExtras);
           sendLog(`📤 [Bot] Sent text (no image) to ${label}`);
           return;
         }
@@ -705,6 +790,7 @@ export async function execBot(
       (chatId) => sendToTarget(chatId, `chat ${chatId}`),
       (user) => sendToTarget(user.userId, `user ${user.userId}`),
     );
+    await deleteReplacedTrigger(config, deps, explicitIds);
     return attachment;
   }
 
@@ -713,14 +799,15 @@ export async function execBot(
   const sendMessage = deps.sendTelegramMessage;
   await broadcast(
     async (chatId) => {
-      await sendMessage(chatId, message, extras);
+      await sendMessage(chatId, message, extrasFor(config, extras, chatId));
       sendLog(`📤 [Bot] Sent to chat ${chatId}`);
     },
     async (user) => {
-      await sendMessage(user.userId, message, extras);
+      await sendMessage(user.userId, message, extrasFor(config, extras, user.userId));
       sendLog(`📤 [Bot] Sent to user ${user.userId} (${user.username ?? user.firstName ?? ''})`);
     },
   );
+  await deleteReplacedTrigger(config, deps, explicitIds);
   return message;
 }
 
@@ -732,6 +819,12 @@ interface BotSendParts {
   cardsFallback?: string;
   /** LINE: the step's message alone, which stands for the cards in a notification. */
   cardsAltText?: string;
+  /** LINE: the choices that are not cards, for a picture step's menu card. */
+  menu?: LineMenuButton[];
+  /** LINE: the step's message without the choices' lines: the menu card's text. */
+  menuText?: string;
+  /** The step's `attachmentType`: a menu card only for a `photo`. */
+  attachmentType?: string;
   explicitAttachment: string;
   /** One preview image per attachment line, for LINE videos. */
   preview: string;
@@ -760,7 +853,7 @@ async function resolveNamedRecipients(
     : EMPTY_RECIPIENT_DIRECTORY;
   const named = resolveTargetsForSend(tokens, platform, directory);
   if (named.missing.length > 0) {
-    const bot = platform === 'line' ? 'LINE' : 'Telegram';
+    const bot = BOT_PLATFORM_NAMES[platform];
     const names = named.missing.join(', ');
     if (named.targets.length === 0 && !named.everyone) {
       throw new FlowUserError('flow.error.botRecipientUnknown', { names, bot }, `No paired ${bot} chat matches: ${names}`);
@@ -768,6 +861,78 @@ async function resolveNamedRecipients(
     sendLog(`⚠️ [Bot] No paired ${bot} chat matches ${names} — sending to the others`);
   }
   return { targets: named.targets, everyone: named.everyone };
+}
+
+interface SocketSendParts {
+  message: string;
+  explicitAttachment: string;
+  legacyMagicPath: string;
+  legacyMagicCaption: string;
+  rawTargets: string[];
+  originalChatIdsTemplate: string;
+  everyone: boolean;
+}
+
+/**
+ * Discord and Slack: one message per recipient carrying the text, the run's own files (each
+ * through the attachment guard; a link goes in the text, where the chat app previews it) and the
+ * step's buttons, each standing for the line it runs — a built-in's link and choice, else the
+ * flow's command with the button's input. The asking message is quoted in the chat it came from.
+ */
+async function execBotSocket(
+  platform: SocketBotPlatform,
+  config: Record<string, string>,
+  deps: FlowExecutorDeps,
+  parts: SocketSendParts,
+): Promise<string> {
+  const name = BOT_PLATFORM_NAMES[platform];
+  const { message, explicitAttachment, legacyMagicPath, legacyMagicCaption, rawTargets } = parts;
+  const attachment = explicitAttachment || legacyMagicPath;
+  if (parts.originalChatIdsTemplate !== '' && rawTargets.length === 0 && !parts.everyone) {
+    sendLog(`⚠️ [Bot] ${name} recipients resolved to empty (no trigger context) — skipping send`);
+    return attachment || message;
+  }
+  if (!deps.sendSocketBot) throw new Error(`${name} bot is not configured in FlowExecutorDeps`);
+  const recipients = rawTargets.length > 0
+    ? rawTargets
+    : (deps.getSocketBotPairedUsers?.(platform) ?? []).map((user) => user.userId);
+  if (recipients.length === 0) {
+    throw new FlowUserError('flow.error.noPairedUsers', { bot: name }, `No paired ${name} users found`);
+  }
+
+  const caption = attachment ? (explicitAttachment ? message : legacyMagicCaption).trim() : message;
+  const allowlist = attachmentAllowlist(config);
+  const files: string[] = [];
+  const links: string[] = [];
+  for (const item of lines(attachment).filter(Boolean)) {
+    if (/^https?:\/\//i.test(item)) links.push(item);
+    else files.push(await resolveSafeLocalAttachment(item, allowlist));
+  }
+  const text = [caption.trim(), ...links].filter(Boolean).join('\n');
+  const buttons = socketButtons(config);
+  if (!text && files.length === 0) return '';
+
+  const askingChat = (config.__triggerChatId ?? '').trim();
+  const askingMessage = (config.__triggerMessageId ?? '').trim();
+  for (const chatId of recipients) {
+    await deps.sendSocketBot(platform, chatId, {
+      text,
+      ...(files.length > 0 ? { files } : {}),
+      ...(buttons.length > 0 ? { buttons } : {}),
+      ...(askingMessage && chatId === askingChat ? { replyTo: askingMessage } : {}),
+    });
+    sendLog(`📤 [Bot] Sent to ${name} chat ${chatId}${files.length > 0 ? ` with ${files.length} file(s)` : ''}`);
+  }
+  return attachment || message;
+}
+
+/** The step's buttons as the lines they run; none without the flow's bot command (a schedule has nothing to rerun). */
+function socketButtons(config: Record<string, string>): Array<{ label: string; line: string; rowStart?: boolean }> {
+  const items = parseFlowButtons(config.buttons ?? '');
+  const command = (config.__botCommand ?? '').trim();
+  if (items.length === 0 || !command) return [];
+  const builtin = isBuiltinFlowId((config.__flowId ?? '').trim());
+  return items.map((b) => ({ label: b.label, line: builtin ? b.input : `/${command} ${b.input}`, ...(b.rowStart ? { rowStart: true } : {}) }));
 }
 
 async function sendLineTextToAll(
@@ -845,6 +1010,30 @@ async function sendLineCards(deps: FlowExecutorDeps, recipients: readonly string
   }
 }
 
+/**
+ * A picture step with choices (a video's menu: the cover, the title and sizes) as one card with a
+ * button per choice, each standing for its line (`line/flowMenu.ts`): true when it went out. A
+ * picture LINE cannot show leaves the card without it; text too long for a card, a line too long
+ * for a button, or a card LINE refuses leaves the step to the picture and the lines.
+ */
+async function sendLineMenu(deps: FlowExecutorDeps, recipients: readonly string[], parts: BotSendParts): Promise<boolean> {
+  const buttons = parts.menu ?? [];
+  const text = (parts.menuText ?? '').trim();
+  const image = parts.explicitAttachment;
+  if (!deps.sendLineMenu || parts.attachmentType !== 'photo' || (parts.cards?.length ?? 0) > 0) return false;
+  if (image.includes('\n') || !lineMenuFits(text, buttons)) return false;
+  const altText = text.split('\n').map((line) => line.trim()).filter(Boolean).join(' ');
+  const menu = { ...(isLineSendableImage(image) ? { image } : {}), text, buttons, altText };
+  try {
+    for (const userId of recipients) await deps.sendLineMenu(userId, menu);
+    sendLog(`📤 [Bot] Sent ${buttons.length} choices as a menu card to ${recipients.length} LINE user(s)`);
+    return true;
+  } catch (err: unknown) {
+    sendLog(`⚠️ [Bot] LINE menu card not sent (${err instanceof Error ? err.message : String(err)}) — the choices go in the text`);
+    return false;
+  }
+}
+
 async function execBotLine(
   deps: FlowExecutorDeps,
   parts: BotSendParts,
@@ -862,6 +1051,8 @@ async function execBotLine(
   if (recipients.length === 0) {
     throw new FlowUserError('flow.error.noPairedUsers', { bot: 'LINE' }, 'No paired LINE users found');
   }
+
+  if (await sendLineMenu(deps, recipients, parts)) return explicitAttachment || (parts.menuText ?? '');
 
   const message = await sendLineCards(deps, recipients, parts) ? parts.message : parts.cardsFallback ?? parts.message;
 

@@ -1,11 +1,12 @@
 import React from 'react';
-import { Box, Group, List, Stack, Text } from '@mantine/core';
-import { CheckCircle2, Eraser, ExternalLink, FileUp, Hash, KeyRound, XCircle, Zap } from 'lucide-react';
+import { Group, List, Stack, Text } from '@mantine/core';
+import { Eraser, ExternalLink, FileUp, KeyRound, Zap } from 'lucide-react';
 import { AppButton } from '../../../components/AppButton';
 import { AppPasswordInput } from '../../../components/AppPasswordInput';
-import { AppTextInput, SectionTitle, SettingField } from '../components';
+import { AppTextInput, SectionTitle, SettingField, StatusLine } from '../components';
 import { useTelegramLargeUpload } from '../hooks/useTelegramLargeUpload';
 import type { TelegramLargeUploadSnapshot } from '../../../../../shared/telegramUpload';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 interface Props {
   saved: TelegramLargeUploadSnapshot | undefined;
@@ -22,7 +23,7 @@ const STEP_TEXT = { fz: 'var(--font-size-sm)', c: 'var(--text-muted)', lh: 1.6 }
 export const TelegramLargeUploadSettings: React.FC<Props> = ({ saved, reload, t }) => {
   const upload = useTelegramLargeUpload(saved, reload);
   const current = upload.isSet && saved
-    ? t('settings.telegram.largeUpload.set').replace('{{id}}', String(saved.apiId)).replace('{{hash}}', saved.apiHashPreview)
+    ? fillTemplate(t('settings.telegram.largeUpload.set'), { id: saved.apiId, hash: saved.apiHashPreview })
     : t('settings.telegram.largeUpload.notSet');
 
   return (
@@ -53,25 +54,27 @@ export const TelegramLargeUploadSettings: React.FC<Props> = ({ saved, reload, t 
         </List.Item>
       </List>
 
-      <SettingField icon={<Hash size={13} />} label={t('settings.telegram.largeUpload.apiIdLabel')}>
+      <SettingField label={t('settings.telegram.largeUpload.apiIdLabel')}>
         <AppTextInput
           tone="body"
           mono
           inputMode="numeric"
           value={upload.apiIdInput}
           onChange={(e) => upload.changeApiId(e.target.value)}
-          placeholder={t('settings.telegram.largeUpload.apiIdPlaceholder')}
+          placeholder={saved?.apiId
+            ? t('settings.telegram.largeUpload.keepSaved')
+            : t('settings.telegram.largeUpload.apiIdPlaceholder')}
           error={upload.apiIdInvalid ? t('settings.telegram.largeUpload.apiIdInvalid') : undefined}
         />
       </SettingField>
-      <SettingField icon={<KeyRound size={13} />} label={t('settings.telegram.largeUpload.apiHashLabel')}>
+      <SettingField label={t('settings.telegram.largeUpload.apiHashLabel')}>
         <AppPasswordInput
           tone="body"
           mono
           value={upload.apiHashInput}
           onChange={(e) => upload.changeApiHash(e.target.value)}
           placeholder={saved?.hasApiHash
-            ? t('settings.telegram.largeUpload.apiHashKeep')
+            ? t('settings.telegram.largeUpload.keepSaved')
             : t('settings.telegram.largeUpload.apiHashPlaceholder')}
           error={upload.apiHashInvalid ? t('settings.telegram.largeUpload.apiHashInvalid') : undefined}
         />
@@ -115,25 +118,17 @@ export const TelegramLargeUploadSettings: React.FC<Props> = ({ saved, reload, t 
         <Text fz="var(--font-size-sm)" c="var(--mantine-color-error)">{upload.message}</Text>
       )}
       {upload.testStatus === 'ok' && (
-        <Group gap={6} align="flex-start" wrap="nowrap">
-          <Box c="var(--mantine-color-success)" mt={2} style={{ flexShrink: 0 }}><CheckCircle2 size={14} /></Box>
-          <Text fz="var(--font-size-sm)" c="var(--text-muted)">
-            {t('settings.telegram.largeUpload.testOk')}
-            {upload.testMessage ? ` — ${upload.testMessage}` : ''}
-          </Text>
-        </Group>
+        <StatusLine tone="success">
+          {t('settings.telegram.largeUpload.testOk')}
+          {upload.testMessage ? ` — ${upload.testMessage}` : ''}
+        </StatusLine>
       )}
       {upload.testStatus === 'error' && (
-        <Group gap={6} align="flex-start" wrap="nowrap">
-          <Box c="var(--mantine-color-error)" mt={2} style={{ flexShrink: 0 }}><XCircle size={14} /></Box>
-          <Text fz="var(--font-size-sm)" c="var(--mantine-color-error)">
-            {upload.testMessage || t('settings.telegram.largeUpload.testFailed')}
-          </Text>
-        </Group>
+        <StatusLine tone="error">{upload.testMessage || t('settings.telegram.largeUpload.testFailed')}</StatusLine>
       )}
 
       <Text fz="var(--font-size-sm)" c="var(--text-muted)">
-        {t('settings.telegram.largeUpload.current')}: {current}
+        {fillTemplate(t('settings.telegram.largeUpload.current'), { value: current })}
       </Text>
     </Stack>
   );

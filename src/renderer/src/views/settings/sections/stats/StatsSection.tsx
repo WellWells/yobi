@@ -1,7 +1,8 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { Box, Group, Stack, Text, Button as MButton } from '@mantine/core';
-import { Activity, ChartLine, Trash2 } from 'lucide-react';
-import { SectionCard, SectionTitle, SettingRow, SettingDivider, ToggleSwitch } from '../../components';
+import { Box, Group, Stack, Text } from '@mantine/core';
+import { ChartLine, Trash2 } from 'lucide-react';
+import { SectionCard, SettingRow, ToggleSwitch } from '../../components';
+import { AppButton } from '../../../../components/AppButton';
 import { AppSegmentedControl } from '../../../../components/AppSegmentedControl';
 import { EmptyState } from '../../../../components/EmptyState';
 import { WebDialog } from '../../../../components/WebDialog';
@@ -9,7 +10,7 @@ import { useAppStore } from '../../../../store/appStore';
 import { useFlowStore } from '../../../../store/useFlowStore';
 import { TAG_SETS } from '../../hooks/useSettingsNav';
 import type { useMetrics } from '../../hooks/useMetrics';
-import { DEFAULT_RANGE_DAYS, RANGE_DAYS, SCOPES, aggregateStats } from './aggregate';
+import { DEFAULT_RANGE_DAYS, RANGE_DAYS, SCOPES, aggregateStats, hasStoredStats } from './aggregate';
 import type { StatsScope } from './aggregate';
 import { ActivityCard } from './ActivityCard';
 import { RequestsCard } from './RequestsCard';
@@ -46,9 +47,17 @@ export const StatsSection: React.FC<Props> = ({ metrics, t, showSection, section
     () => aggregateFlowStats(flowSnapshot, flows, rangeDays),
     [flowSnapshot, flows, rangeDays],
   );
-  const showFlowCards = scope === 'all' || scope === 'flow';
 
   const inspectFailures = useCallback(() => openLogsFiltered(['error']), [openLogsFiltered]);
+
+  // Per-flow cards: shown under All and Flows only, and they are never split by scope.
+  const flowCards = (
+    <>
+      <FlowHealthCard stats={flowStats} t={t} onInspect={inspectFailures} />
+      <StepIssuesCard stats={flowStats} t={t} onInspect={inspectFailures} />
+      <DownloadsCard stats={stats} t={t} onInspectFailures={inspectFailures} />
+    </>
+  );
 
   const handleReset = useCallback(() => {
     setConfirmReset(false);
@@ -58,34 +67,33 @@ export const StatsSection: React.FC<Props> = ({ metrics, t, showSection, section
   const hasData = stats.runTotal > 0 || stats.requestTotal > 0
     || stats.tokens.input > 0 || stats.tokens.output > 0 || flowStats.totalRuns > 0
     || stats.downloadTotals.success + stats.downloadTotals.failure > 0;
+  // The range only picks which figures are drawn; clearing is offered while anything is stored.
+  const canClear = hasStoredStats(snapshot, flowSnapshot);
+
+  // Below everything it would erase, the way the memory page puts "Clear all" after its list.
+  const clearButton = (
+    <Group justify="flex-end" gap={8}>
+      <AppButton
+        variant="outline"
+        color="red"
+        size="xs"
+        leftSection={<Trash2 size={13} />}
+        onClick={() => setConfirmReset(true)}
+      >
+        {t('settings.stats.reset')}
+      </AppButton>
+    </Group>
+  );
 
   return (
     <Box display={showSection(TAG_SETS.stats, 'stats') ? 'block' : 'none'}>
+      {/* A one-setting card is that row, with no title above it; the page title says Statistics. */}
       <SectionCard style={{ marginBottom: sectionGap }}>
-        <SectionTitle icon={<ChartLine size={15} />} label={t('settings.stats.title')} />
-        <Stack gap={14}>
-          <SettingRow
-            icon={<Activity size={13} />}
-            label={t('settings.stats.enable')}
-            hint={t('settings.stats.hint')}
-            control={<ToggleSwitch checked={metrics.enabled} onChange={() => { void metrics.handleToggleEnabled(); }} />}
-          />
-          <SettingDivider />
-          <SettingRow
-            icon={<Trash2 size={13} />}
-            label={t('settings.stats.reset')}
-            hint={t('settings.stats.reset.hint')}
-            control={
-              <MButton
-                variant="default"
-                leftSection={<Trash2 size={13} />}
-                onClick={() => setConfirmReset(true)}
-              >
-                {t('settings.stats.reset')}
-              </MButton>
-            }
-          />
-        </Stack>
+        <SettingRow
+          label={t('settings.stats.enable')}
+          hint={t('settings.stats.hint')}
+          control={<ToggleSwitch checked={metrics.enabled} onChange={() => { void metrics.handleToggleEnabled(); }} />}
+        />
       </SectionCard>
 
       {metrics.enabled && (
@@ -111,17 +119,14 @@ export const StatsSection: React.FC<Props> = ({ metrics, t, showSection, section
           {hasData ? (
             <Stack gap={sectionGap}>
               <ActivityCard stats={stats} scope={scope} t={t} onInspectFailures={inspectFailures} />
-              {showFlowCards && (
-                <>
-                  <StepIssuesCard stats={flowStats} t={t} onInspect={inspectFailures} />
-                  <FlowHealthCard stats={flowStats} t={t} onInspect={inspectFailures} />
-                  <DownloadsCard stats={stats} t={t} onInspectFailures={inspectFailures} />
-                </>
-              )}
+              {/* Under Flows the diagnosis is the point and leads; under All the overview comes
+                  first and the flow-only cards follow it. */}
+              {scope === 'flow' && flowCards}
               <RequestsCard stats={stats} scope={scope} t={t} onInspectFailures={inspectFailures} />
               <TokensCard stats={stats} t={t} />
               <KeysCard stats={stats} instances={metrics.byokInstances} t={t} />
               <ConversationCard stats={metrics.conversationTokens} t={t} />
+              {scope === 'all' && flowCards}
               {snapshot?.since && (
                 <Group gap={5} justify="center">
                   <Text fz="var(--font-size-sm)" c="dimmed">{t('settings.stats.since')}</Text>
@@ -130,14 +135,20 @@ export const StatsSection: React.FC<Props> = ({ metrics, t, showSection, section
                   </Text>
                 </Group>
               )}
+              {clearButton}
             </Stack>
           ) : (
-            <SectionCard>
-              <EmptyState icon={ChartLine} label={t('settings.stats.empty')} busy={snapshot === null} />
-            </SectionCard>
+            <Stack gap={sectionGap}>
+              <SectionCard>
+                <EmptyState icon={ChartLine} label={t('settings.stats.empty')} busy={snapshot === null} />
+              </SectionCard>
+              {canClear && clearButton}
+            </Stack>
           )}
         </>
       )}
+      {/* Recording off hides the figures, but what was already counted can still be cleared. */}
+      {!metrics.enabled && canClear && clearButton}
 
       <WebDialog
         open={confirmReset}

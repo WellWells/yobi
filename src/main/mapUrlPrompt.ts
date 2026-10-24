@@ -9,6 +9,7 @@ import { getLangCache } from './i18n';
 import { loadPlaceData, type PlaceData } from './mapPlaceCache';
 import { localizedVerdict } from './mapPlaceStats';
 import { fitReviews } from './mapReviewsFit';
+import { fillTemplate } from '../shared/fillTemplate';
 
 /** Rule lines, tone/length/nickname, reply-language and title lines around the memory entries. */
 const INSTRUCTION_SLACK = 2_000;
@@ -93,17 +94,13 @@ export async function resolveMapsPrompt(url: string, question: string, ctx: Maps
     if (kept < data.reviews.length) {
       ctx.onLog(`🗺️ ${kept} of ${data.reviews.length} reviews fit this model's input limit`);
     }
-    ctx.onLog((langData['mapReviews.log.done'] ?? '🗺️ {{count}} reviews fetched — wrapping analysis prompt...')
-      .replace('{{count}}', String(kept)));
+    ctx.onLog(fillTemplate(langData['mapReviews.log.done'] ?? '🗺️ {{count}} reviews fetched — wrapping analysis prompt...', { count: String(kept) }));
 
     const displayPrompt = question
-      ? (langData['mapReviews.displayQuestion'] ?? '{{place}}: {{question}}')
-        .replace('{{place}}', () => place)
-        .replace('{{question}}', () => question)
-      : (langData['mapReviews.displayPrompt'] ?? 'Google Maps review analysis: {{place}}')
-        .replace('{{place}}', () => place);
+      ? fillTemplate(langData['mapReviews.displayQuestion'] ?? '{{place}}: {{question}}', { place, question })
+      : fillTemplate(langData['mapReviews.displayPrompt'] ?? 'Google Maps review analysis: {{place}}', { place });
     const title = data.place
-      ? (langData['mapReviews.title'] ?? 'Reviews: {{place}}').replace('{{place}}', () => data.place)
+      ? fillTemplate(langData['mapReviews.title'] ?? 'Reviews: {{place}}', { place: data.place })
       : undefined;
     return { prompt, displayPrompt, title, map: { url: data.placeUrl, place: data.place } };
   } catch (err) {

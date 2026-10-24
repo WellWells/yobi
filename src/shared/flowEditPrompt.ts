@@ -1,6 +1,6 @@
 import { stripTriggerUserIds } from './flowExport';
 import { DEFAULT_SKILL_CONFIG } from './flowSkillSpecs';
-import { flowCompilerRules } from './flowSkillPrompt';
+import { REPAIR_EXCERPT_MAX_CHARS, flowCompilerRules, repairExcerpt } from './flowSkillPrompt';
 import { botStepTargets } from './botRecipients';
 import { fenceUntrusted } from './promptFencing';
 import type { FlowDefinition, TriggerConfig } from './types';
@@ -72,13 +72,14 @@ export function buildFlowEditRepairPrompt(
   skills: readonly string[],
   previousResponse: string,
   error: string,
+  excerptMax: number = REPAIR_EXCERPT_MAX_CHARS,
 ): string {
   return [
     'Your previous attempt to produce the revised Yobi flow JSON was REJECTED.',
     `Validation error: ${error}`,
     '',
     'Your previous output (for reference — do not repeat its mistake):',
-    previousResponse.trim().slice(0, 2_000),
+    repairExcerpt(previousResponse, excerptMax),
     '',
     'Produce a corrected flow that fixes the error above and obeys ALL of these rules:',
     '',

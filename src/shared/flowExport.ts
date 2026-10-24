@@ -74,6 +74,11 @@ const TRIGGER_FIELD_IS_USER_DATA: Record<keyof TriggerConfig, boolean> = {
   chatCommandDescription: false,
   chatInputVariable: false,
   systemEvent: false,
+  // A local path names the person too ("C:\Users\<name>\Downloads"), the same as a folder
+  // variable's value: the recipient picks their own folder.
+  watchFolder: true,
+  watchPattern: false,
+  watchSubfolders: false,
 };
 
 const USER_DATA_TRIGGER_FIELDS = (Object.keys(TRIGGER_FIELD_IS_USER_DATA) as (keyof TriggerConfig)[])

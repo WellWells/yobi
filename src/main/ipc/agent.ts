@@ -128,7 +128,9 @@ export function registerAgentHandlers(ctx: IpcContext): void {
       state.mcpCommandName = still.command;
     }
     const answer = (rawAnswer ?? '').trim();
-    const resumeFrom = answer ? applyAnswer(state.turns, answer) : dropUnansweredAsk(state.turns);
+    // The question's turn lists its choices numbered (`numberedQuestion`) above the chips, so a
+    // typed "2" is the second; a chip sends its choice's own text.
+    const resumeFrom = answer ? applyAnswer(state.turns, answer, { numbered: true }) : dropUnansweredAsk(state.turns);
     state.turns = resumeFrom;
     state.status = 'running';
     state.error = undefined;

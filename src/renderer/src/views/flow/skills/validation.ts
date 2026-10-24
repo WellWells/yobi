@@ -4,6 +4,7 @@ import { parsePttUrl } from '../../../../../shared/linkSites/pttLinks';
 import { parseTikTokUrl } from '../../../../../shared/linkSites/tiktokLinks';
 import { parseDcardUrl } from '../../../../../shared/linkSites/dcardLinks';
 import { parseRedditUrl } from '../../../../../shared/linkSites/redditLinks';
+import { parseWeiboUrl } from '../../../../../shared/linkSites/weiboLinks';
 import { parseInstagramUrl } from '../../../../../shared/instagramLinks';
 import { parseThreadsPostUrl } from '../../../../../shared/threadsLinks';
 import { parseXHandle, parseXPostUrl, splitXAccountLines } from '../../../../../shared/xHandles';
@@ -47,13 +48,13 @@ export function isValidXAccountListOrVar(text: string): boolean {
   return splitXAccountLines(text).every((line) => VAR_ONLY.test(line) || parseXHandle(line) !== null);
 }
 
-/** An X, Threads, Instagram, Facebook, TikTok, PTT, Dcard or Reddit post URL, which `x_thread` reads alike. */
+/** An X, Threads, Instagram, Facebook, TikTok, PTT, Dcard, Reddit or Weibo post URL, which `x_thread` reads alike. */
 export function isValidXPostUrlOrVar(url: string): boolean {
   const trimmed = url.trim();
   if (!trimmed || VAR_ONLY.test(trimmed)) return true;
   return parseXPostUrl(trimmed) !== null || parseThreadsPostUrl(trimmed) !== null || parseInstagramUrl(trimmed) !== null
     || parseFacebookUrl(trimmed) !== null || parseTikTokUrl(trimmed) !== null || parsePttUrl(trimmed) !== null
-    || parseDcardUrl(trimmed) !== null || parseRedditUrl(trimmed) !== null;
+    || parseDcardUrl(trimmed) !== null || parseRedditUrl(trimmed) !== null || parseWeiboUrl(trimmed) !== null;
 }
 
 export function isValidJsonOrEmpty(text: string): boolean {

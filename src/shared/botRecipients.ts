@@ -1,6 +1,7 @@
 import type {
   AgentFlowRecipient, BotPlatform, FlowDefinition, LinePairedUser, TelegramChannel, TelegramPairedUser, TriggerType,
 } from './types';
+import { BOT_PLATFORMS, isBotPlatform } from './types';
 import { escapeRegExp } from './regex';
 
 /**
@@ -31,19 +32,32 @@ export interface RecipientDirectory {
   entries: RecipientEntry[];
 }
 
+function noneConnected(): Record<BotPlatform, boolean> {
+  return Object.fromEntries(BOT_PLATFORMS.map((platform) => [platform, false])) as Record<BotPlatform, boolean>;
+}
+
 export const EMPTY_RECIPIENT_DIRECTORY: RecipientDirectory = {
-  connected: { telegram: false, line: false },
+  connected: noneConnected(),
   entries: [],
 };
 
-export interface RecipientSources {
-  telegram: { connected: boolean; pairedUsers: readonly TelegramPairedUser[]; channels: readonly TelegramChannel[] };
-  line: { connected: boolean; pairedUsers: readonly LinePairedUser[] };
-  /** The ids ticked as "this is me" in Settings, per platform. */
-  self: Record<BotPlatform, readonly string[]>;
+/** A bot whose accounts pair by string id (LINE, Discord, Slack): its paired people are its recipients. */
+interface PairedPeopleSource {
+  connected: boolean;
+  pairedUsers: readonly LinePairedUser[];
 }
 
-export const PLATFORM_ORDER: readonly BotPlatform[] = ['telegram', 'line'];
+type StringIdPlatform = Exclude<BotPlatform, 'telegram'>;
+const STRING_ID_PLATFORMS: readonly StringIdPlatform[] = ['line', 'discord', 'slack'];
+
+export interface RecipientSources extends Partial<Record<Exclude<StringIdPlatform, 'line'>, PairedPeopleSource>> {
+  telegram: { connected: boolean; pairedUsers: readonly TelegramPairedUser[]; channels: readonly TelegramChannel[] };
+  line: PairedPeopleSource;
+  /** The ids ticked as "this is me" in Settings, per platform. */
+  self: Partial<Record<BotPlatform, readonly string[]>>;
+}
+
+export const PLATFORM_ORDER: readonly BotPlatform[] = BOT_PLATFORMS;
 
 /** NFKC folds the styled letters people put in display names ("Alice 𝕏" is typed "Alice X"). */
 export function normalizeRecipientName(value: string): string {
@@ -64,7 +78,7 @@ export function buildRecipientDirectory(src: RecipientSources): RecipientDirecto
       entries.push({
         platform: 'telegram', id, label, kind: 'person',
         keys: keysOf(fullName, user.firstName, user.username),
-        self: src.self.telegram.includes(id),
+        self: (src.self.telegram ?? []).includes(id),
       });
     }
     for (const channel of src.telegram.channels) {
@@ -77,16 +91,31 @@ export function buildRecipientDirectory(src: RecipientSources): RecipientDirecto
       });
     }
   }
-  if (src.line.connected) {
-    for (const user of src.line.pairedUsers) {
+  const connected = { ...noneConnected(), telegram: src.telegram.connected };
+  for (const platform of STRING_ID_PLATFORMS) {
+    const source = src[platform];
+    if (!source?.connected) continue;
+    connected[platform] = true;
+    for (const user of source.pairedUsers) {
       entries.push({
-        platform: 'line', id: user.userId, label: user.displayName || user.userId, kind: 'person',
+        platform, id: user.userId, label: user.displayName || user.userId, kind: 'person',
         keys: keysOf(user.displayName),
-        self: src.self.line.includes(user.userId),
+        self: (src.self[platform] ?? []).includes(user.userId),
       });
     }
   }
-  return { connected: { telegram: src.telegram.connected, line: src.line.connected }, entries };
+  return { connected, entries };
+}
+
+/**
+ * The directory as one bot account sees it: "me" is that account, not whoever is marked as the user
+ * in Settings. An admin asking the bot for a flow 「推送到我這個帳號」 means their own chat.
+ */
+export function directorySeenBy(dir: RecipientDirectory, platform: BotPlatform, id: string): RecipientDirectory {
+  return {
+    ...dir,
+    entries: dir.entries.map((entry) => ({ ...entry, self: entry.kind === 'person' && entry.platform === platform && entry.id === id })),
+  };
 }
 
 /** The step's recipients as written: `chatIds`, or the older `chatId` it replaced. */
@@ -101,13 +130,19 @@ export function splitTargets(raw: string): string[] {
 const TEMPLATE_RE = /\{\{[^}]+\}\}/;
 const TELEGRAM_ID_RE = /^-?\d+$/;
 const LINE_ID_RE = /^[UCR][0-9a-f]{32}$/i;
+/** A Discord snowflake: a user (their DM) or a channel. */
+const DISCORD_ID_RE = /^\d{17,20}$/;
+/** A Slack user (their DM) or a channel: an uppercase letter and 8–12 more. */
+const SLACK_ID_RE = /^[UWCGD][A-Z0-9]{8,12}$/;
+
+const RECIPIENT_ID_PATTERNS: Readonly<Record<StringIdPlatform, RegExp>> = { line: LINE_ID_RE, discord: DISCORD_ID_RE, slack: SLACK_ID_RE };
 const SELF_TOKENS = new Set(['me', 'myself', 'self', '我', '我自己', '自己', '本人', '我本人']);
 const ALL_TOKENS = new Set(['all', 'everyone', '*', '所有人', '全部', '大家']);
 
 export function isRecipientId(token: string, platform: BotPlatform): boolean {
   const value = token.trim();
   if (platform === 'telegram') return TELEGRAM_ID_RE.test(value) && Number(value) !== 0;
-  return LINE_ID_RE.test(value);
+  return RECIPIENT_ID_PATTERNS[platform].test(value);
 }
 
 export type RecipientMatch =
@@ -215,7 +250,7 @@ export interface RecipientIssue {
 
 function platformChoice(config: Record<string, string>): BotPlatform | 'auto' {
   const value = (config.platform ?? '').trim().toLowerCase();
-  return value === 'telegram' || value === 'line' ? value : 'auto';
+  return isBotPlatform(value) ? value : 'auto';
 }
 
 function withTargets(config: Record<string, string>, platform: BotPlatform | 'auto', ids: string): Record<string, string> {
@@ -228,9 +263,9 @@ interface StepResult {
   issue?: Omit<RecipientIssue, 'index'>;
 }
 
-/** "auto" outside a bot command falls back to Telegram at run time, which is wrong when LINE is the only bot. */
+/** "auto" outside a bot command falls back to Telegram at run time, which is wrong when another bot is the only one. */
 function defaultPlatform(dir: RecipientDirectory): BotPlatform {
-  return dir.connected.telegram || !dir.connected.line ? 'telegram' : 'line';
+  return connectedPlatforms(dir)[0] ?? 'telegram';
 }
 
 function resolveBlank(

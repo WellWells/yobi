@@ -7,6 +7,8 @@ import { OUTCOME_COLORS } from '../colors';
 import { formatShare } from '../aggregate';
 import { flowSuccessRate, formatDuration } from './aggregate';
 import type { FlowRow, FlowStatsAggregate, StepRow } from './aggregate';
+import { useStepLabelParts } from './stepLabel';
+import { fillTemplate } from '../../../../../../../shared/fillTemplate';
 import classes from '../stats.module.css';
 
 interface Props {
@@ -23,7 +25,7 @@ const CHEVRON_GAP = 7;
 const StepLine: React.FC<{ row: StepRow; t: (key: string) => string; onInspect: () => void }> = ({
   row, t, onInspect,
 }) => {
-  const skill = t(`flow.skill.${row.type}`);
+  const { title, skill } = useStepLabelParts(row.label, row.type, t);
   return (
   <UnstyledButton
     onClick={onInspect}
@@ -41,9 +43,9 @@ const StepLine: React.FC<{ row: StepRow; t: (key: string) => string; onInspect: 
           c={row.failures > 0 ? 'var(--mantine-color-text)' : 'dimmed'}
           truncate
         >
-          {row.label}
+          {title}
         </Text>
-        {skill !== row.label && (
+        {skill && (
           <Text fz="var(--font-size-sm)" c="dimmed" truncate>{skill}</Text>
         )}
       </Group>
@@ -124,18 +126,22 @@ export const FlowLine: React.FC<{
             fw={600}
             c={row.failures > 0 ? OUTCOME_COLORS.timeout : 'dimmed'}
           >
+            {/* Step failures, not failed runs: a loop step can fail on several items of one run. */}
             {row.failures > 0
-              ? `${row.failures.toLocaleString()} ${t('settings.stats.flow.failures')}`
+              ? fillTemplate(t('settings.stats.flow.stepFailures'), { count: row.failures.toLocaleString() })
               : t('settings.stats.flow.clean')}
           </Text>
-          <Text
-            fz="var(--font-size-md)"
-            fw={600}
-            c={row.runs.success === row.runTotal ? OUTCOME_COLORS.success : 'var(--mantine-color-text)'}
-            style={{ minWidth: 44, textAlign: 'right' }}
-          >
-            {formatShare(row.runs.success, row.runTotal)}
-          </Text>
+          <Group gap={5} wrap="nowrap" align="baseline">
+            <Text fz="var(--font-size-sm)" c="dimmed">{t('settings.stats.successRate')}</Text>
+            <Text
+              fz="var(--font-size-md)"
+              fw={600}
+              c={row.runs.success === row.runTotal ? OUTCOME_COLORS.success : 'var(--mantine-color-text)'}
+              style={{ minWidth: 44, textAlign: 'right' }}
+            >
+              {formatShare(row.runs.success, row.runTotal)}
+            </Text>
+          </Group>
         </Group>
       </Group>
     </UnstyledButton>

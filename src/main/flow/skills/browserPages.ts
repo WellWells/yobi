@@ -8,6 +8,8 @@ import { SILENT_WEB_PREFERENCES, muteWindow } from '../../silentWindow';
 import { executeAutomationWithTimeout } from '../../providers/automationExecutor';
 import { BROWSER_HELPER_PREAMBLE } from '../../providers/browserHelpers';
 import { FlowUserError } from '../userError';
+import { PrivateAddressRefusedError, assertPublicWebUrl, isPublicWebOnly } from '../../net/publicWebScope';
+import { guardPublicOnly, unguardPublicOnly } from '../../requestFilter';
 
 export const BROWSER_FLOW_PARTITION = 'persist:browser-flow';
 
@@ -82,6 +84,10 @@ export async function openPage(url: string, opts: OpenPageOptions): Promise<Open
     );
   }
   assertHttpUrl(url);
+  // A run that reads the public web only (a non-owner admin's flow) opens no local address; the
+  // window's own requests are checked as a page read's are, and so is where it ended up.
+  const publicOnly = isPublicWebOnly();
+  if (publicOnly) await assertPublicWebUrl(url);
 
   const preloadPath = path.join(__dirname, '../preload/browserPage.js');
   const win = new BrowserWindow({
@@ -110,9 +116,14 @@ export async function openPage(url: string, opts: OpenPageOptions): Promise<Open
   });
 
   const id = `page-${createEntityId()}`;
+  const contentsId = win.webContents.id;
   pages.set(id, { win, flowId: opts.flowId });
-  win.on('closed', () => { pages.delete(id); });
+  win.on('closed', () => {
+    pages.delete(id);
+    unguardPublicOnly(contentsId);
+  });
 
+  let refused: string | undefined;
   await new Promise<void>((resolve) => {
     let done = false;
     const finish = (): void => {
@@ -120,6 +131,12 @@ export async function openPage(url: string, opts: OpenPageOptions): Promise<Open
       done = true;
       resolve();
     };
+    if (publicOnly) {
+      guardPublicOnly(contentsId, (refusedUrl) => {
+        refused ??= refusedUrl;
+        finish();
+      });
+    }
     win.webContents.once('did-finish-load', finish);
     win.webContents.once('did-fail-load', (_e, code, _desc, _u, isMainFrame) => {
       if (isMainFrame && code !== -3) finish();
@@ -127,6 +144,16 @@ export async function openPage(url: string, opts: OpenPageOptions): Promise<Open
     loadURLFollowingIdentity(win.webContents, url).catch(() => finish());
     setTimeout(finish, OPEN_LOAD_TIMEOUT_MS);
   });
+
+  if (publicOnly) {
+    try {
+      if (refused) throw new PrivateAddressRefusedError(refused);
+      if (!win.webContents.isDestroyed()) await assertPublicWebUrl(win.webContents.getURL() || url);
+    } catch (err) {
+      safeDestroy(win);
+      throw err;
+    }
+  }
 
   if (opts.show === true) revealPage(win);
 

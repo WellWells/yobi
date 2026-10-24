@@ -1,15 +1,18 @@
 import type { StoredConfig } from './configTypes';
 
-const OBJECT_FIELDS = ['telegram', 'line', 'smtp'] as const;
+const OBJECT_FIELDS = ['telegram', 'line', 'discord', 'slack'] as const;
 
 // Ciphertext every container must hold as a string: `decryptTokenChecked` calls `startsWith` on
-// it during boot.
+// it during boot. The legacy single mail account (`smtp`) is read once by its migration, which
+// tolerates any shape, so it is not repaired here.
 const SECRET_FIELDS: Record<(typeof OBJECT_FIELDS)[number], readonly string[]> = {
   telegram: ['botTokenEncrypted', 'apiHashEncrypted'],
   line: ['channelAccessTokenEncrypted', 'channelSecretEncrypted'],
-  smtp: ['passwordEncrypted'],
+  discord: ['botTokenEncrypted'],
+  slack: ['botTokenEncrypted', 'appTokenEncrypted'],
 };
 const BYOK_SECRET_FIELDS = ['apiKeyEncrypted'] as const;
+const MAIL_SECRET_FIELDS = ['passwordEncrypted'] as const;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -28,16 +31,17 @@ function repairSecrets(container: Record<string, unknown>, keys: readonly string
   return fixed;
 }
 
-function repairByok(byok: unknown): unknown[] | null {
-  if (!Array.isArray(byok)) return [];
+/** A list of secret-holding entries (BYOK keys, mail accounts): non-objects dropped, bad ciphertext emptied. */
+function repairList(list: unknown, secretFields: readonly string[]): unknown[] | null {
+  if (!Array.isArray(list)) return [];
   let changed = false;
   const repaired: unknown[] = [];
-  for (const entry of byok) {
+  for (const entry of list) {
     if (!isPlainObject(entry)) {
       changed = true;
       continue;
     }
-    const fixed = repairSecrets(entry, BYOK_SECRET_FIELDS);
+    const fixed = repairSecrets(entry, secretFields);
     if (fixed) changed = true;
     repaired.push(fixed ?? entry);
   }
@@ -73,10 +77,17 @@ export function repairStoredShape(
     fields.push(key);
   }
 
-  const byok = repairByok(stored.byokInstances);
+  const byok = repairList(stored.byokInstances, BYOK_SECRET_FIELDS);
   if (byok) {
     patch.byokInstances = byok;
     fields.push('byokInstances');
+  }
+
+  // Absent is fine (a config from before multiple mailboxes); the migration fills it in.
+  const mail = stored.mailAccounts === undefined ? null : repairList(stored.mailAccounts, MAIL_SECRET_FIELDS);
+  if (mail) {
+    patch.mailAccounts = mail;
+    fields.push('mailAccounts');
   }
 
   if (fields.length === 0) return null;

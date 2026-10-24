@@ -3,6 +3,7 @@ import { Alert, Button, Stack, Text } from '@mantine/core';
 import { Download, Info } from 'lucide-react';
 import { useYtdlToolsState, useYtdlToolsStore, ytdlToolsUsable } from '../../../store/ytdlToolsStore';
 import { pausedSites } from '../../../../../shared/linkSites/siteChanged';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 interface Props {
   t: (key: string) => string;
@@ -22,7 +23,7 @@ export const YtdlToolsNotice: React.FC<Props> = ({ t }) => {
         <Stack gap={2}>
           {paused.map(({ site, label }) => (
             <Text key={site} fz="xs" style={{ lineHeight: 1.6 }}>
-              {t('ytdl.notice.youtubeChanged').replace('{{site}}', label)}
+              {fillTemplate(t('ytdl.notice.youtubeChanged'), { site: label })}
             </Text>
           ))}
         </Stack>

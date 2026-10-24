@@ -392,6 +392,7 @@ export async function execLineRead(
     store: lineWatermarkStore,
     labels: transcriptLabels(),
     errorLabels: errorLabels(),
+    // Static on purpose: the step that reads this transcript may be another provider or signed out.
     maxChars: charBudgetFor(PROVIDER_PROMPT_POLICIES[detectProvider(deps.getTargetUrl())]),
     now: () => new Date(),
     log: sendLog,

@@ -15,7 +15,8 @@ interface Props {
   t: (key: string) => string;
 }
 
-function formatRemaining(expiresAt: string, now: number): string {
+/** A pairing code's time left, `m:ss`. */
+export function formatRemaining(expiresAt: string, now: number): string {
   const remainingMs = Date.parse(expiresAt) - now;
   if (!Number.isFinite(remainingMs) || remainingMs <= 0) return '0:00';
   const totalSeconds = Math.floor(remainingMs / 1_000);

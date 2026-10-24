@@ -3,6 +3,7 @@ import type { ChatTurnEvent } from '../../../shared/types';
 import { attachmentMetaNames } from '../../../shared/conversationDoc';
 import { fileApi, promptApi, ipcEvents } from '../api/electronApi';
 import { NEW_CONVERSATION_KEY, useAppStore } from '../store/appStore';
+import { remapPathValues, useConversationMoves } from '../store/conversationMoves';
 import { resolveSendTarget } from './sendTarget';
 
 export interface SendTurnRequest {
@@ -19,6 +20,8 @@ function nextSendId(): string {
 
 export function useConversationTurns(onError: (message: string) => void) {
   const originBySendId = useRef(new Map<string, string>());
+  // A conversation moved into a folder while its answer was coming is still where the answer goes.
+  useConversationMoves((moves) => remapPathValues(originBySendId.current, moves));
 
   const sendTurn = useCallback(({ prompt, targetUrl, attachments }: SendTurnRequest): void => {
     void (async () => {

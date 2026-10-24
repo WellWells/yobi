@@ -14,6 +14,7 @@ import { isMac } from '../../../utils/keyLabels';
 import { ModelMenuItems } from '../ModelMenuItems';
 import { SUB_POSITION, threadLink } from './headerMenuModel';
 import { searchRowLabel } from './headerMenuSearch';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 const SUB_DROPDOWN_STYLE = { maxHeight: 320, overflowY: 'auto' } as const;
 
@@ -151,7 +152,7 @@ export const HeaderMenuActions: React.FC<HeaderMenuActionsProps> = ({
       {/* Only a conversation that lives on a provider's website has one; otherwise the row is left out. */}
       {link.available && show('threadUrl') && (
         <MMenu.Item leftSection={<Globe size={14} />} onClick={() => copy(link.url, 'header.menu.copied.threadUrl')}>
-          {t('header.menu.copyThreadUrl').replace('{{provider}}', link.provider)}
+          {fillTemplate(t('header.menu.copyThreadUrl'), { provider: link.provider })}
         </MMenu.Item>
       )}
 

@@ -23,7 +23,7 @@ export const GEMINI_URL_VIDEO_LIMIT_BYTES = 15_000_000;
  */
 export const TELEGRAM_CAPTION_CHARS = 1_000;
 
-/** Where a post lives. A Threads, Instagram, Facebook, TikTok, PTT, Dcard or Reddit post is read and forwarded exactly as an X post is. */
+/** Where a post lives. A Threads, Instagram, Facebook, TikTok, PTT, Dcard, Reddit or Weibo post is read and forwarded exactly as an X post is. */
 export type PostSource = PostSiteId;
 
 export interface XMediaInput {
@@ -50,7 +50,7 @@ export function isAccountLink(input: Pick<XMediaInput, 'source' | 'url'>): boole
 }
 
 /**
- * The first X, Threads, Instagram, Facebook, TikTok, PTT, Dcard or Reddit post link in `text` and the words around it; null
+ * The first X, Threads, Instagram, Facebook, TikTok, PTT, Dcard, Reddit or Weibo post link in `text` and the words around it; null
  * when there is none. The sites and their order are the link-site table's post rows.
  */
 export function parseXMediaInput(text: string): XMediaInput | null {

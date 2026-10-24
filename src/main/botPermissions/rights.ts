@@ -18,9 +18,7 @@ import type { BotBuiltinCommandKey, BotPlatform } from '../../shared/types';
 
 /** The ids paired on a platform right now, as strings. Read live: pairing changes while running. */
 export function pairedBotUserIds(platform: BotPlatform): string[] {
-  return platform === 'telegram'
-    ? config.telegram.pairing.pairedUsers.map((user) => String(user.userId))
-    : config.line.pairing.pairedUsers.map((user) => user.userId);
+  return (config[platform]?.pairing.pairedUsers ?? []).map((user) => String(user.userId));
 }
 
 export function isBotUserPaired(platform: BotPlatform, userId: string): boolean {
@@ -32,21 +30,18 @@ export function isBotUserPaired(platform: BotPlatform, userId: string): boolean 
 export function getBotGrants(platform: BotPlatform, userId: string): BotGrant[] {
   const id = String(userId ?? '').trim();
   if (!isBotUserPaired(platform, id)) return [];
-  const stored = platform === 'telegram' ? config.telegram.permissions : config.line.permissions;
-  return normalizeGrantList(stored?.[id], platform);
+  return normalizeGrantList(config[platform]?.permissions?.[id], platform);
 }
 
 /** Blocked by the owner. Only unpaired people are on the list: a paired account is unpaired instead. */
 export function isBotUserBlocked(platform: BotPlatform, userId: string): boolean {
   const id = String(userId ?? '').trim();
-  const blocked = platform === 'telegram' ? config.telegram.blockedUsers : config.line.blockedUsers;
-  return Boolean(id) && (blocked ?? []).includes(id) && !isBotUserPaired(platform, id);
+  return Boolean(id) && (config[platform]?.blockedUsers ?? []).includes(id) && !isBotUserPaired(platform, id);
 }
 
 /** The grants one group gives everyone in it, or null while it waits for the owner's approval. */
 function getGroupGrants(platform: BotPlatform, chatId: string): BotGroupGrant[] | null {
-  const stored = platform === 'telegram' ? config.telegram.groupPermissions : config.line.groupPermissions;
-  return groupGrantsOf(stored, chatId);
+  return groupGrantsOf(config[platform]?.groupPermissions, chatId);
 }
 
 /**
@@ -115,6 +110,23 @@ export function computeBotFlowAdmin(
   if (!id || String(chatId ?? '').trim() !== id || !isBotUserPaired(platform, id)) return false;
   if (state && isBotSelfAccount(state, platform, id)) return true;
   return platform === 'telegram' && getBotGrants(platform, id).includes('admin');
+}
+
+/**
+ * Whether a connector change may be put to this person as a question in the chat: the owner ("me"),
+ * still paired, in their own private chat. A connector granted to anyone else was the owner sharing
+ * their data, never a write permission, so everyone else's changes are refused as before. `state`
+ * is the memory file; null (unreadable) means not the owner.
+ */
+export function computeBotConnectorChanges(
+  state: UserMemoryState | null,
+  platform: BotPlatform,
+  userId: string,
+  chatId: string,
+): boolean {
+  const id = String(userId ?? '').trim();
+  if (!id || String(chatId ?? '').trim() !== id || !isBotUserPaired(platform, id)) return false;
+  return state !== null && isBotSelfAccount(state, platform, id);
 }
 
 /** `computeBotFlowAdmin` with a fresh read of the memory file; unreadable leaves only the admin grant. */

@@ -5,9 +5,14 @@
    (`SearchPalette.module.css .row`): flat, transparent, selected marked by the accent-dim fill
    alone (the Settings nav's active item, `views/settings/components.tsx` NavItem).
    The vertical margin is larger than the chat rail's 2px: these rows are taller and have no border. */
+/* The margin sits on a frame around the row so the swipe layer (components/SwipeRow) between
+   them covers exactly the rounded row. */
+.frame {
+  margin: 4px 8px;
+}
+
 .row {
   padding: 6px 10px 6px 12px;
-  margin: 4px 8px;
   border-radius: 8px;
   background: transparent;
   cursor: pointer;
@@ -41,4 +46,21 @@
 
 .sortableWrap:focus-visible .row {
   box-shadow: 0 0 0 2px var(--mantine-color-accent-dim);
+}
+
+/* The row's "⋯" keeps its slot left of the switch whether it shows or not, so hovering moves
+   nothing and the switch stays at the right edge. Like the chat sidebar's: only while the mouse is
+   over the row or its menu is open (not for the open flow or a focused row), plus when Tab lands on
+   the button itself. */
+.rowMore {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s ease;
+}
+
+.row:hover .rowMore,
+.row[data-menu-open='true'] .rowMore,
+.rowMore:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
 }

@@ -1,7 +1,7 @@
-import React, { useEffect, useState, useCallback, useContext } from 'react';
+import React, { useEffect, useState, useCallback, useContext, useRef } from 'react';
 import { ActionIcon, Badge } from '@mantine/core';
 import { Copy, Check } from 'lucide-react';
-import { getHighlighterSync, loadShiki, shikiThemeFor, ensureShikiTheme } from '../utils/shikiPlugins';
+import { forgetHighlight, getCachedHighlight, highlightCode } from '../utils/shikiHighlight';
 import { useThemeStore } from '../store/themeStore';
 import { useI18nStore } from '../store/i18nStore';
 import { CaptureContentThemeContext } from '../utils/forcedCodeTheme';
@@ -13,42 +13,32 @@ interface ShikiCodeBlockProps {
 }
 
 export const ShikiCodeBlock = React.memo<ShikiCodeBlockProps>(({ lang, code }) => {
-  const [html, setHtml] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const storeTheme = useThemeStore((state) => state.theme);
   const forcedTheme = useContext(CaptureContentThemeContext);
   const theme = forcedTheme ?? storeTheme;
   const staticRender = forcedTheme !== null;
   const { t } = useI18nStore();
+  // A block seen before (switching back to a conversation) is coloured on its first paint.
+  const [html, setHtml] = useState<string | null>(() => getCachedHighlight(code, lang, theme) ?? null);
+  const latest = useRef({ code, lang, theme });
 
   useEffect(() => {
+    const previous = latest.current;
+    latest.current = { code, lang, theme };
+    // Code changing in place (a streaming answer) keeps only its newest entry in the cache.
+    if (previous.code !== code) forgetHighlight(previous.code, previous.lang, previous.theme);
+
+    const cached = getCachedHighlight(code, lang, theme);
+    if (cached !== undefined) {
+      setHtml(cached);
+      return;
+    }
     let cancelled = false;
-
-    const highlight = async () => {
-      let highlighter = getHighlighterSync();
-      if (!highlighter) {
-        highlighter = await loadShiki();
-      }
-      if (cancelled || !highlighter) return;
-
-      const shikiTheme = await ensureShikiTheme(highlighter, shikiThemeFor(theme));
-      if (cancelled) return;
-      try {
-        const result = await highlighter.codeToHtml(code, {
-          lang: lang || 'text',
-          theme: shikiTheme,
-        });
-        if (!cancelled) setHtml(result);
-      } catch {
-        try {
-          const result = await highlighter.codeToHtml(code, { lang: 'text', theme: shikiTheme });
-          if (!cancelled) setHtml(result);
-        } catch {
-        }
-      }
-    };
-
-    void highlight();
+    void highlightCode(code, lang, theme).then((result) => {
+      if (latest.current.code !== code) forgetHighlight(code, lang, theme);
+      if (!cancelled && result !== null) setHtml(result);
+    });
     return () => { cancelled = true; };
   }, [code, lang, theme]);
 

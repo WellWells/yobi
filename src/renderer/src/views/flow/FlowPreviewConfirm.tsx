@@ -8,6 +8,7 @@ import { SKILL_ICON, skillHue } from './skills';
 import { analyzeFlow, isCodeSummary, llmProviderLabel, summarizeStep } from './flowCapabilities';
 import type { FlowDefinition } from '../../../../shared/types';
 import { Z_MODAL_CONFIRM } from '../../config/zLayers';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 const EXPANDABLE_OVER = 100;
 
@@ -63,7 +64,7 @@ export const StepRow: React.FC<{
             <Group gap={2} wrap="nowrap" align="center" style={{ flexShrink: 0 }}>
               <CornerDownRight size={11} color="var(--mantine-color-dimmed)" />
               <Text fz="xs" c="dimmed">
-                {t('flow.import.confirm.llmSentTo').replace('{{provider}}', provider)}
+                {fillTemplate(t('flow.import.confirm.llmSentTo'), { provider })}
               </Text>
             </Group>
           )}
@@ -126,8 +127,8 @@ export const FlowPreviewConfirm: React.FC<FlowPreviewConfirmProps> = ({
 
   const canImport = !hasRisk || scrolledToEnd;
   const title = flows.length === 1
-    ? t('flow.import.confirm.title').replace('{{name}}', flows[0].name)
-    : t('flow.import.confirm.title.many').replace('{{count}}', String(flows.length));
+    ? fillTemplate(t('flow.import.confirm.title'), { name: flows[0].name })
+    : fillTemplate(t('flow.import.confirm.title.many'), { count: String(flows.length) });
 
   return (
     <AppModal
@@ -158,7 +159,7 @@ export const FlowPreviewConfirm: React.FC<FlowPreviewConfirmProps> = ({
                     {caps.risks.map((risk) => (
                       <Text key={risk.kind} fz="xs">
                         {`• ${t(`flow.import.confirm.risk.${risk.kind}`)} — ${
-                          t('flow.import.confirm.risk.steps').replace('{{steps}}', risk.steps.join(', '))
+                          fillTemplate(t('flow.import.confirm.risk.steps'), { steps: risk.steps.join(', ') })
                         }`}
                       </Text>
                     ))}
@@ -181,8 +182,15 @@ export const FlowPreviewConfirm: React.FC<FlowPreviewConfirmProps> = ({
                 </Group>
               )}
 
+              {caps.watchFolders.map((folder) => (
+                <Text key={folder} fz="xs" c="dimmed" style={{ wordBreak: 'break-all' }}>
+                  {t('flow.import.confirm.watchFolder')}
+                  <Text span fz="xs" ff="monospace">{folder}</Text>
+                </Text>
+              ))}
+
               <Text fz="xs" c="dimmed">
-                {t('flow.import.confirm.steps').replace('{{count}}', String(flow.steps.length))}
+                {fillTemplate(t('flow.import.confirm.steps'), { count: String(flow.steps.length) })}
               </Text>
             </Stack>
         ))}

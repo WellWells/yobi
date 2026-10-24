@@ -19,8 +19,15 @@ import type {
 import type { ReadingPrefs } from '../shared/readingPrefs';
 import type { YtdlToolsState } from '../shared/ytdl';
 import type { DownloadsKeep } from '../shared/downloads';
+import type { McpFlowToolsRequest, McpFlowToolsResult } from '../shared/mcpFlowStep';
 import type { TelegramLargeUploadInput, TelegramLargeUploadResult } from '../shared/telegramUpload';
 import type { ConversationHistoryList, ConversationRestoreResult } from '../shared/conversationHistory';
+import type { ConversationMovedEvent, ConversationMoveResult } from '../shared/conversationMove';
+import type { ConversationFolder, FolderActionResult, FolderDeleteResult } from '../shared/conversationFolders';
+import type { SidebarViewPrefs } from '../shared/sidebarView';
+import type { FeedPreviewRequest, FeedPreviewResult } from '../shared/feedPreview';
+import type { PttBoardChoice, PttBoardPreviewRequest, PttBoardPreviewResult } from '../shared/pttBoard';
+import type { LinkRecognitionState, LinkRecognitionTarget } from '../shared/linkRecognition';
 import type {
   NotionBrowseResult,
   NotionDocStatus,
@@ -37,15 +44,22 @@ import type {
   QuickExportSettings,
   FeedCandidate, FlowDefinition, FlowExecutionEvent, FlowExecutionLog, FlowExecutionResult, HiddenSources,
   ScraperPickRequest, ScraperPickResult,
-  FlowBuildOutcome, FlowBuildPayload, FlowBuildRequestPayload, MarkdownCaptureRequest, MarkdownCaptureResult, MetricsSnapshot, NotifyEventPrefs, OutputFile, PromptPreferences, StartedConversation, ConversationImportResult, ResponseEditRequest, ResponseEditResult,
+  FlowBuildOutcome, FlowBuildPayload, FlowBuildRequestPayload, MarkdownCaptureRequest, MarkdownCaptureResult, MetricsSnapshot, NotifyEventPrefs, OutputFile, PromptPreferences, StartedConversation, ConversationImportResult, ConversationPinRequest, ResponseEditRequest, ResponseEditResult,
   SchedulePreview, ShareLinkRequest, ShareLinkResult, ShareSettings, StashedAttachment, TriggerConfig,
   SiteAccount, SiteAccountStatus,
 } from '../shared/types';
-import type { BotAudienceSnapshot, BotPlatform } from '../shared/types';
-import type { FlowMetricsSnapshot } from '../shared/flowMetrics';
 import type {
+  BotAudienceSnapshot, BotPlatform, TrackpadGestureEvent, TrashedConversation, TrashResult,
+} from '../shared/types';
+import type { FlowMetricsSnapshot } from '../shared/flowMetrics';
+import type { ConversationMenuCommandEvent, ConversationMenuTarget } from '../shared/conversationMenu';
+import type {
+  BotApprovePairingRequest,
+  BotApprovePairingResult,
   BotSetBlockedRequest,
   BotSetBlockedResult,
+  BotSetDefaultGrantsRequest,
+  BotSetDefaultGrantsResult,
   BotSetGroupPermissionsRequest,
   BotSetGroupPermissionsResult,
   BotSetPermissionsRequest,
@@ -54,14 +68,16 @@ import type {
 import type { ConversationTokenStats } from '../shared/tokenEstimate';
 import type { ShortcutOverride } from '../shared/shortcuts';
 import type {
-  PromptTriggerOptions, Provider, QueueState, EmailSettingsSnapshot, DataKeyStatus, AgentCommandResult, AgentRunState, AgentRunSummary, AgentTracePayload, AgentConfirmPayload, AgentConfirmChoice, SmtpCredentials,
+  PromptTriggerOptions, Provider, QueueState, EmailSettingsSnapshot, DataKeyStatus, AgentCommandResult, AgentRunState, AgentRunSummary, AgentTracePayload, AgentConfirmPayload, AgentConfirmChoice, MailAccountInput, MailAccountSaveResult,
   SelectPathRequest, SelectPathResult, SettingsSnapshot, TempChatResult, BotProviderCommand, TelegramRuntimeSnapshot,
   TelegramSettingsSnapshot, LineSettingsSnapshot, LineRuntimeSnapshot, LineCredentialsUpdate, LineChatListResult,
+  SocketBotPlatform, SocketBotRuntimeSnapshot, SocketBotSettingsSnapshot, SocketBotActionResult,
   McpServerView, McpServerSaveRequest, McpServerActionResult, SecretHealth, SecretTarget,
   UpdateAvailablePayload, UpdateSource, UiNotificationPayload, ComposerEditorEventPayload, ExternalEditorSettings,
   BatchCaptureFormat, BatchCaptureItem, BatchCaptureProgress, BatchCaptureResult, ZipExportResult,
 } from '../shared/types';
 import type { StepProgress } from '../shared/stepProgress';
+import type { CalendarSaveRequest, CalendarSaveResult, CalendarSummary, CalendarTestRequest, CalendarTestResult } from '../shared/calendars';
 
 export type ElectronAPI = {
   showWorker: () => void;
@@ -84,6 +100,7 @@ export type ElectronAPI = {
   onUiNotification: (cb: (payload: UiNotificationPayload) => void) => () => void;
   onTelegramRuntime: (cb: (snapshot: TelegramRuntimeSnapshot) => void) => () => void;
   onLineRuntime: (cb: (snapshot: LineRuntimeSnapshot) => void) => () => void;
+  onSocketBotRuntime: (cb: (snapshot: SocketBotRuntimeSnapshot) => void) => () => void;
 
   getAccountStatuses: () => Promise<AccountStatus[]>;
   openAccountLogin: (provider: AuthProvider) => Promise<boolean>;
@@ -141,10 +158,18 @@ export type ElectronAPI = {
   getFileList: () => Promise<OutputFile[]>;
   searchFileList: (query: string) => Promise<OutputFile[]>;
   getFileContent: (filePath: string) => Promise<string | null>;
-  deleteFile: (filePath: string) => Promise<boolean>;
-  deleteFiles: (filePaths: string[]) => Promise<number>;
+  deleteFile: (filePath: string) => Promise<TrashResult>;
+  deleteFiles: (filePaths: string[]) => Promise<TrashResult>;
+  deleteFilesPermanently: (filePaths: string[]) => Promise<number>;
   deleteAllFiles: () => Promise<number>;
+  listTrash: () => Promise<TrashedConversation[]>;
+  restoreFromTrash: (trashIds: string[]) => Promise<string[]>;
+  purgeTrash: (trashIds: string[] | 'all') => Promise<number>;
+  onTrashChanged: (cb: (count: number) => void) => () => void;
   updateFileH1: (filePath: string, title: string) => Promise<boolean>;
+  setConversationsPinned: (request: ConversationPinRequest) => Promise<number>;
+  setConversationMenuTarget: (target: ConversationMenuTarget | null) => Promise<boolean>;
+  onConversationMenuCommand: (cb: (event: ConversationMenuCommandEvent) => void) => () => void;
   editTurnResponse: (request: ResponseEditRequest) => Promise<ResponseEditResult>;
   listConversationVersions: (filePath: string) => Promise<ConversationHistoryList>;
   getConversationVersion: (filePath: string, vid: string) => Promise<string | null>;
@@ -173,14 +198,26 @@ export type ElectronAPI = {
   startConversation: (prompt: string) => Promise<StartedConversation | null>;
   importConversations: (filePaths: string[]) => Promise<ConversationImportResult>;
   startFileDrag: (filePaths: string[]) => void;
+  /** `folder`: '' for the outputs folder, or a folder directly in it. */
+  moveConversations: (filePaths: string[], folder: string) => Promise<ConversationMoveResult>;
+  onConversationMoved: (cb: (event: ConversationMovedEvent) => void) => () => void;
+  /** Folders are addressed by name; main finds them in outputs itself. */
+  listFolders: () => Promise<ConversationFolder[]>;
+  /** `restoring`: making a deleted folder again (its undo), which may be a system folder. */
+  createFolder: (name: string, options?: { restoring?: boolean }) => Promise<FolderActionResult>;
+  renameFolder: (from: string, to: string) => Promise<FolderActionResult>;
+  deleteFolder: (name: string) => Promise<FolderDeleteResult>;
+  onFolderListChanged: (cb: (folders: ConversationFolder[]) => void) => () => void;
 
   getHotkey: () => Promise<string>;
   updateHotkey: (hotkey: string) => Promise<HotkeyBindResult>;
+  getRegionHotkey: () => Promise<string>;
+  updateRegionHotkey: (hotkey: string) => Promise<HotkeyBindResult>;
+  takeRegionCapture: () => Promise<StashedAttachment | null>;
+  onRegionCaptureReady: (cb: () => void) => () => void;
   setHotkeyPaused: (paused: boolean) => Promise<boolean>;
-  getHotkeyEnabled: () => Promise<boolean>;
   getShortcuts: () => Promise<Record<string, ShortcutOverride>>;
   updateShortcuts: (next: Record<string, ShortcutOverride>) => Promise<Record<string, ShortcutOverride>>;
-  setHotkeyEnabled: (enabled: boolean) => Promise<HotkeyBindResult>;
   getAiUrl: () => Promise<string>;
   updateAiUrl: (url: string) => Promise<boolean>;
   getHiddenSources: () => Promise<HiddenSources>;
@@ -203,6 +240,10 @@ export type ElectronAPI = {
 
   getSyncSystemLanguageToModel: () => Promise<boolean>;
   updateSyncSystemLanguageToModel: (enabled: boolean) => Promise<boolean>;
+  getOneShotTemporaryChat: () => Promise<boolean>;
+  updateOneShotTemporaryChat: (enabled: boolean) => Promise<boolean>;
+  getProviderFallback: () => Promise<boolean>;
+  updateProviderFallback: (enabled: boolean) => Promise<boolean>;
   getNotifyOnComplete: () => Promise<boolean>;
   updateNotifyOnComplete: (enabled: boolean) => Promise<boolean>;
   getNotifyEvents: () => Promise<NotifyEventPrefs>;
@@ -278,15 +319,33 @@ export type ElectronAPI = {
   revokeLinePairingCode: (code: string) => Promise<{ ok: boolean; snapshot: LineSettingsSnapshot }>;
   unpairLineUser: (userId: string) => Promise<{ ok: boolean; snapshot: LineSettingsSnapshot }>;
   refreshLineAccount: () => Promise<{ ok: boolean; message?: string }>;
+  getSocketBotSettings: (platform: SocketBotPlatform) => Promise<SocketBotSettingsSnapshot | null>;
+  updateSocketBotEnabled: (platform: SocketBotPlatform, enabled: boolean) => Promise<SocketBotActionResult>;
+  updateSocketBotSecrets: (platform: SocketBotPlatform, secrets: Record<string, string>) => Promise<SocketBotActionResult>;
+  updateSocketBotLlmDirect: (platform: SocketBotPlatform, config: BotLlmDirectConfig) => Promise<SocketBotActionResult>;
+  generateSocketBotPairingCode: (platform: SocketBotPlatform) => Promise<SocketBotActionResult>;
+  revokeSocketBotPairingCode: (platform: SocketBotPlatform, code: string) => Promise<SocketBotActionResult>;
+  unpairSocketBotUser: (platform: SocketBotPlatform, userId: string) => Promise<SocketBotActionResult>;
+  reconnectSocketBot: (platform: SocketBotPlatform) => Promise<SocketBotActionResult>;
   setBotPermissions: (request: BotSetPermissionsRequest) => Promise<BotSetPermissionsResult>;
+  setBotDefaultGrants: (request: BotSetDefaultGrantsRequest) => Promise<BotSetDefaultGrantsResult>;
   setBotGroupPermissions: (request: BotSetGroupPermissionsRequest) => Promise<BotSetGroupPermissionsResult>;
   setBotBlocked: (request: BotSetBlockedRequest) => Promise<BotSetBlockedResult>;
+  approveBotPairingRequest: (request: BotApprovePairingRequest) => Promise<BotApprovePairingResult>;
   getBotAudience: (platform: BotPlatform) => Promise<BotAudienceSnapshot>;
 
   getDataKeyStatus: (name: string) => Promise<DataKeyStatus>;
   updateDataKey: (name: string, value: string) => Promise<{ ok: boolean }>;
+  listCalendars: () => Promise<CalendarSummary[]>;
+  saveCalendar: (request: CalendarSaveRequest) => Promise<CalendarSaveResult>;
+  removeCalendar: (id: string) => Promise<CalendarSummary[]>;
+  testCalendar: (request: CalendarTestRequest) => Promise<CalendarTestResult>;
   getEmailSettings: () => Promise<EmailSettingsSnapshot>;
-  updateEmailCredentials: (creds: SmtpCredentials) => Promise<{ ok: boolean; message?: string }>;
+  updateEmailCredentials: (input: MailAccountInput) => Promise<MailAccountSaveResult>;
+  removeMailAccount: (id: string) => Promise<EmailSettingsSnapshot>;
+  setDefaultMailAccount: (id: string) => Promise<EmailSettingsSnapshot>;
+  signInMicrosoftMail: (id?: string) => Promise<MailAccountSaveResult>;
+  cancelMicrosoftMail: () => Promise<void>;
 
   getByokSettings: () => Promise<ByokSettingsSnapshot>;
   saveByokInstance: (req: ByokInstanceSaveRequest) => Promise<{ ok: boolean; snapshot: ByokSettingsSnapshot }>;
@@ -302,6 +361,7 @@ export type ElectronAPI = {
   disconnectMcpServer: (id: string) => Promise<McpServerActionResult>;
   setBuiltinConnectorEnabled: (id: string, enabled: boolean) => Promise<McpServerActionResult>;
   onMcpServerStatus: (cb: (servers: McpServerView[]) => void) => () => void;
+  getMcpFlowTools: (req: McpFlowToolsRequest) => Promise<McpFlowToolsResult>;
 
   getTempChatMode: () => Promise<boolean>;
   setTempChatMode: (enabled: boolean) => Promise<boolean>;
@@ -331,6 +391,8 @@ export type ElectronAPI = {
 
   isWindowMaximized: () => Promise<boolean>;
   onWindowMaximizedChanged: (cb: (maximized: boolean) => void) => () => void;
+  /** macOS only: main forwards nothing on other platforms. */
+  onTrackpadGesture: (cb: (event: TrackpadGestureEvent) => void) => () => void;
 
   onShowCloseDialog: (cb: () => void) => () => void;
   respondCloseDialog: (action: 'quit' | 'hide', remember: boolean) => void;
@@ -347,17 +409,22 @@ export type ElectronAPI = {
   updateLayoutMode: (mode: string) => Promise<boolean>;
   getShowTokenUsage: () => Promise<boolean>;
   updateShowTokenUsage: (show: boolean) => Promise<boolean>;
+  getLinkRecognition: () => Promise<LinkRecognitionState>;
+  setLinkRecognition: (target: LinkRecognitionTarget, on: boolean) => Promise<LinkRecognitionState>;
+  onLinkRecognitionChanged: (cb: (state: LinkRecognitionState) => void) => () => void;
   getMarkdownZoom: () => Promise<number>;
   updateMarkdownZoom: (zoom: number) => Promise<boolean>;
   getReadingPrefs: () => Promise<ReadingPrefs>;
   updateReadingPrefs: (patch: Partial<ReadingPrefs>) => Promise<ReadingPrefs>;
+  getSidebarView: () => Promise<SidebarViewPrefs>;
+  updateSidebarView: (patch: Partial<SidebarViewPrefs>) => Promise<SidebarViewPrefs>;
   getCaptureSettings: () => Promise<CaptureSettings>;
   updateCaptureSettings: (settings: CaptureSettings) => Promise<boolean>;
   getQuickExport: () => Promise<QuickExportSettings>;
   updateQuickExport: (settings: QuickExportSettings) => Promise<HotkeyBindResult>;
 
   getFlows: () => Promise<FlowDefinition[]>;
-  saveFlow: (flow: FlowDefinition, source?: FlowSaveSource) => Promise<FlowDefinition | null>;
+  saveFlow: (flow: FlowDefinition, source?: FlowSaveSource, reviewed?: boolean) => Promise<FlowDefinition | null>;
   listFlowVersions: (flowId: string) => Promise<FlowVersionList>;
   restoreFlowVersion: (flowId: string, vid: string) => Promise<FlowVersionRestoreResult>;
   deleteFlowVersion: (flowId: string, vid: string) => Promise<boolean>;
@@ -384,6 +451,8 @@ export type ElectronAPI = {
   onFlowBuildProgress: (cb: (payload: FlowBuildPayload) => void) => () => void;
   getFlowAiUrl: () => Promise<string>;
   previewSchedule: (trigger: TriggerConfig) => Promise<SchedulePreview>;
+  getWatchMissing: () => Promise<string[]>;
+  onWatchMissing: (cb: (flowIds: string[]) => void) => () => void;
   exportFlow: (flow: FlowDefinition) => Promise<boolean>;
   exportFlowResult: (content: string, defaultFileName: string) => Promise<boolean>;
   onFlowExecutionLog: (cb: (log: FlowExecutionLog) => void) => () => void;
@@ -396,6 +465,8 @@ export type ElectronAPI = {
   rssHasCheckpoint: (stepId: string) => Promise<boolean>;
   rssClearCheckpoint: (stepId: string) => Promise<boolean>;
   rssDiscoverFeed: (siteUrl: string) => Promise<FeedCandidate[]>;
+  rssPreviewFeed: (request: FeedPreviewRequest) => Promise<FeedPreviewResult>;
+  rssCancelPreview: (slot: string) => Promise<boolean>;
 
   scraperHasCheckpoint: (stepId: string) => Promise<boolean>;
   scraperClearCheckpoint: (stepId: string) => Promise<boolean>;
@@ -405,6 +476,11 @@ export type ElectronAPI = {
   ytSubsClearCheckpoint: (stepId: string) => Promise<boolean>;
   xPostsHasCheckpoint: (stepId: string) => Promise<boolean>;
   xPostsClearCheckpoint: (stepId: string) => Promise<boolean>;
+  pttBoardHasCheckpoint: (stepId: string) => Promise<boolean>;
+  pttBoardClearCheckpoint: (stepId: string) => Promise<boolean>;
+  pttFindBoards: (query: string) => Promise<PttBoardChoice[]>;
+  pttPreviewBoard: (request: PttBoardPreviewRequest) => Promise<PttBoardPreviewResult>;
+  pttCancelPreview: (slot: string) => Promise<boolean>;
 };
 
 const api: ElectronAPI = {
@@ -472,6 +548,11 @@ const api: ElectronAPI = {
     const handler = (_: Electron.IpcRendererEvent, snapshot: LineRuntimeSnapshot) => cb(snapshot);
     ipcRenderer.on(IPC.LINE_RUNTIME, handler);
     return () => ipcRenderer.removeListener(IPC.LINE_RUNTIME, handler);
+  },
+  onSocketBotRuntime: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, snapshot: SocketBotRuntimeSnapshot) => cb(snapshot);
+    ipcRenderer.on(IPC.SOCKET_BOT_RUNTIME, handler);
+    return () => ipcRenderer.removeListener(IPC.SOCKET_BOT_RUNTIME, handler);
   },
   getAccountStatuses: () => ipcRenderer.invoke(IPC.GET_ACCOUNT_STATUSES),
   openAccountLogin: (provider) => ipcRenderer.invoke(IPC.OPEN_ACCOUNT_LOGIN, provider),
@@ -576,8 +657,24 @@ const api: ElectronAPI = {
   getFileContent: (filePath) => ipcRenderer.invoke(IPC.GET_FILE_CONTENT, filePath),
   deleteFile: (filePath) => ipcRenderer.invoke(IPC.DELETE_FILE, filePath),
   deleteFiles: (filePaths) => ipcRenderer.invoke(IPC.DELETE_FILES, filePaths),
+  deleteFilesPermanently: (filePaths) => ipcRenderer.invoke(IPC.DELETE_FILES_PERMANENTLY, filePaths),
   deleteAllFiles: () => ipcRenderer.invoke(IPC.DELETE_ALL_FILES),
+  listTrash: () => ipcRenderer.invoke(IPC.TRASH_LIST),
+  restoreFromTrash: (trashIds) => ipcRenderer.invoke(IPC.TRASH_RESTORE, trashIds),
+  purgeTrash: (trashIds) => ipcRenderer.invoke(IPC.TRASH_PURGE, trashIds),
+  onTrashChanged: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, count: number) => cb(count);
+    ipcRenderer.on(IPC.TRASH_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.TRASH_CHANGED, handler);
+  },
   updateFileH1: (filePath, title) => ipcRenderer.invoke(IPC.UPDATE_FILE_H1, filePath, title),
+  setConversationsPinned: (request) => ipcRenderer.invoke(IPC.CONVERSATION_SET_PINNED, request),
+  setConversationMenuTarget: (target) => ipcRenderer.invoke(IPC.CONVERSATION_MENU_STATE, target),
+  onConversationMenuCommand: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, event: ConversationMenuCommandEvent) => cb(event);
+    ipcRenderer.on(IPC.CONVERSATION_MENU_COMMAND, handler);
+    return () => ipcRenderer.removeListener(IPC.CONVERSATION_MENU_COMMAND, handler);
+  },
   editTurnResponse: (request) => ipcRenderer.invoke(IPC.EDIT_TURN_RESPONSE, request),
   listConversationVersions: (filePath) => ipcRenderer.invoke(IPC.CONVERSATION_HISTORY_LIST, filePath),
   getConversationVersion: (filePath, vid) => ipcRenderer.invoke(IPC.CONVERSATION_HISTORY_GET, filePath, vid),
@@ -610,14 +707,35 @@ const api: ElectronAPI = {
   startConversation: (prompt) => ipcRenderer.invoke(IPC.START_CONVERSATION, prompt),
   importConversations: (filePaths) => ipcRenderer.invoke(IPC.IMPORT_CONVERSATIONS, filePaths),
   startFileDrag: (filePaths) => ipcRenderer.send(IPC.START_FILE_DRAG, filePaths),
+  moveConversations: (filePaths, folder) => ipcRenderer.invoke(IPC.CONVERSATION_MOVE, filePaths, folder),
+  onConversationMoved: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, event: ConversationMovedEvent) => cb(event);
+    ipcRenderer.on(IPC.CONVERSATION_MOVED, handler);
+    return () => ipcRenderer.removeListener(IPC.CONVERSATION_MOVED, handler);
+  },
+  listFolders: () => ipcRenderer.invoke(IPC.FOLDER_LIST),
+  createFolder: (name, options) => ipcRenderer.invoke(IPC.FOLDER_CREATE, name, options),
+  renameFolder: (from, to) => ipcRenderer.invoke(IPC.FOLDER_RENAME, from, to),
+  deleteFolder: (name) => ipcRenderer.invoke(IPC.FOLDER_DELETE, name),
+  onFolderListChanged: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, folders: ConversationFolder[]) => cb(folders);
+    ipcRenderer.on(IPC.FOLDER_LIST_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.FOLDER_LIST_CHANGED, handler);
+  },
 
   getHotkey: () => ipcRenderer.invoke(IPC.GET_HOTKEY),
   updateHotkey: (hotkey) => ipcRenderer.invoke(IPC.UPDATE_HOTKEY, hotkey),
+  getRegionHotkey: () => ipcRenderer.invoke(IPC.GET_REGION_HOTKEY),
+  updateRegionHotkey: (hotkey) => ipcRenderer.invoke(IPC.UPDATE_REGION_HOTKEY, hotkey),
+  takeRegionCapture: () => ipcRenderer.invoke(IPC.REGION_CAPTURE_TAKE),
+  onRegionCaptureReady: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on(IPC.REGION_CAPTURE_READY, handler);
+    return () => ipcRenderer.removeListener(IPC.REGION_CAPTURE_READY, handler);
+  },
   setHotkeyPaused: (paused) => ipcRenderer.invoke(IPC.SET_HOTKEY_PAUSED, paused),
-  getHotkeyEnabled: () => ipcRenderer.invoke(IPC.GET_HOTKEY_ENABLED),
   getShortcuts: () => ipcRenderer.invoke(IPC.GET_SHORTCUTS),
   updateShortcuts: (next) => ipcRenderer.invoke(IPC.UPDATE_SHORTCUTS, next),
-  setHotkeyEnabled: (enabled) => ipcRenderer.invoke(IPC.SET_HOTKEY_ENABLED, enabled),
   getAiUrl: () => ipcRenderer.invoke(IPC.GET_AI_URL),
   updateAiUrl: (url) => ipcRenderer.invoke(IPC.UPDATE_AI_URL, url),
   getHiddenSources: () => ipcRenderer.invoke(IPC.GET_HIDDEN_SOURCES),
@@ -652,6 +770,10 @@ const api: ElectronAPI = {
 
   getSyncSystemLanguageToModel: () => ipcRenderer.invoke(IPC.GET_SYNC_SYSTEM_LANGUAGE_TO_MODEL),
   updateSyncSystemLanguageToModel: (enabled) => ipcRenderer.invoke(IPC.UPDATE_SYNC_SYSTEM_LANGUAGE_TO_MODEL, enabled),
+  getOneShotTemporaryChat: () => ipcRenderer.invoke(IPC.GET_ONE_SHOT_TEMPORARY_CHAT),
+  updateOneShotTemporaryChat: (enabled) => ipcRenderer.invoke(IPC.UPDATE_ONE_SHOT_TEMPORARY_CHAT, enabled),
+  getProviderFallback: () => ipcRenderer.invoke(IPC.GET_PROVIDER_FALLBACK),
+  updateProviderFallback: (enabled) => ipcRenderer.invoke(IPC.UPDATE_PROVIDER_FALLBACK, enabled),
   getNotifyOnComplete: () => ipcRenderer.invoke(IPC.GET_NOTIFY_ON_COMPLETE),
   updateNotifyOnComplete: (enabled) => ipcRenderer.invoke(IPC.UPDATE_NOTIFY_ON_COMPLETE, enabled),
   getNotifyEvents: () => ipcRenderer.invoke(IPC.GET_NOTIFY_EVENTS),
@@ -731,15 +853,33 @@ const api: ElectronAPI = {
   revokeLinePairingCode: (code) => ipcRenderer.invoke(IPC.REVOKE_LINE_PAIRING_CODE, code),
   unpairLineUser: (userId) => ipcRenderer.invoke(IPC.UNPAIR_LINE_USER, userId),
   refreshLineAccount: () => ipcRenderer.invoke(IPC.REFRESH_LINE_ACCOUNT),
+  getSocketBotSettings: (platform) => ipcRenderer.invoke(IPC.SOCKET_BOT_GET_SETTINGS, platform),
+  updateSocketBotEnabled: (platform, enabled) => ipcRenderer.invoke(IPC.SOCKET_BOT_UPDATE_ENABLED, platform, enabled),
+  updateSocketBotSecrets: (platform, secrets) => ipcRenderer.invoke(IPC.SOCKET_BOT_UPDATE_SECRETS, platform, secrets),
+  updateSocketBotLlmDirect: (platform, config) => ipcRenderer.invoke(IPC.SOCKET_BOT_UPDATE_LLM_DIRECT, platform, config),
+  generateSocketBotPairingCode: (platform) => ipcRenderer.invoke(IPC.SOCKET_BOT_GENERATE_PAIRING_CODE, platform),
+  revokeSocketBotPairingCode: (platform, code) => ipcRenderer.invoke(IPC.SOCKET_BOT_REVOKE_PAIRING_CODE, platform, code),
+  unpairSocketBotUser: (platform, userId) => ipcRenderer.invoke(IPC.SOCKET_BOT_UNPAIR_USER, platform, userId),
+  reconnectSocketBot: (platform) => ipcRenderer.invoke(IPC.SOCKET_BOT_RECONNECT, platform),
   setBotPermissions: (request) => ipcRenderer.invoke(IPC.BOT_SET_PERMISSIONS, request),
+  setBotDefaultGrants: (request) => ipcRenderer.invoke(IPC.BOT_SET_DEFAULT_GRANTS, request),
   setBotGroupPermissions: (request) => ipcRenderer.invoke(IPC.BOT_SET_GROUP_PERMISSIONS, request),
   setBotBlocked: (request) => ipcRenderer.invoke(IPC.BOT_SET_BLOCKED, request),
+  approveBotPairingRequest: (request) => ipcRenderer.invoke(IPC.BOT_APPROVE_PAIRING_REQUEST, request),
   getBotAudience: (platform) => ipcRenderer.invoke(IPC.BOT_GET_AUDIENCE, platform),
 
   getDataKeyStatus: (name) => ipcRenderer.invoke(IPC.GET_DATA_KEY_STATUS, name),
   updateDataKey: (name, value) => ipcRenderer.invoke(IPC.UPDATE_DATA_KEY, name, value),
+  listCalendars: () => ipcRenderer.invoke(IPC.CALENDAR_LIST),
+  saveCalendar: (request) => ipcRenderer.invoke(IPC.CALENDAR_SAVE, request),
+  removeCalendar: (id) => ipcRenderer.invoke(IPC.CALENDAR_REMOVE, id),
+  testCalendar: (request) => ipcRenderer.invoke(IPC.CALENDAR_TEST, request),
   getEmailSettings: () => ipcRenderer.invoke(IPC.GET_EMAIL_SETTINGS),
   updateEmailCredentials: (creds) => ipcRenderer.invoke(IPC.UPDATE_EMAIL_CREDENTIALS, creds),
+  removeMailAccount: (id) => ipcRenderer.invoke(IPC.REMOVE_MAIL_ACCOUNT, id),
+  setDefaultMailAccount: (id) => ipcRenderer.invoke(IPC.SET_DEFAULT_MAIL_ACCOUNT, id),
+  signInMicrosoftMail: (id) => ipcRenderer.invoke(IPC.MAIL_MICROSOFT_SIGN_IN, id),
+  cancelMicrosoftMail: () => ipcRenderer.invoke(IPC.MAIL_MICROSOFT_CANCEL),
 
   getByokSettings: () => ipcRenderer.invoke(IPC.BYOK_GET_SETTINGS),
   saveByokInstance: (req) => ipcRenderer.invoke(IPC.BYOK_SAVE_INSTANCE, req),
@@ -754,6 +894,7 @@ const api: ElectronAPI = {
   connectMcpServer: (id) => ipcRenderer.invoke(IPC.MCP_CONNECT_SERVER, id),
   disconnectMcpServer: (id) => ipcRenderer.invoke(IPC.MCP_DISCONNECT_SERVER, id),
   setBuiltinConnectorEnabled: (id, enabled) => ipcRenderer.invoke(IPC.MCP_SET_BUILTIN_ENABLED, id, enabled),
+  getMcpFlowTools: (req) => ipcRenderer.invoke(IPC.MCP_FLOW_TOOLS, req),
   onMcpServerStatus: (cb) => {
     const handler = (_: Electron.IpcRendererEvent, servers: McpServerView[]) => cb(servers);
     ipcRenderer.on(IPC.MCP_SERVER_STATUS, handler);
@@ -808,6 +949,11 @@ const api: ElectronAPI = {
     ipcRenderer.on(IPC.WINDOW_MAXIMIZED_CHANGED, handler);
     return () => ipcRenderer.removeListener(IPC.WINDOW_MAXIMIZED_CHANGED, handler);
   },
+  onTrackpadGesture: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, event: TrackpadGestureEvent) => cb(event);
+    ipcRenderer.on(IPC.TRACKPAD_GESTURE, handler);
+    return () => ipcRenderer.removeListener(IPC.TRACKPAD_GESTURE, handler);
+  },
 
   onShowCloseDialog: (cb) => {
     const handler = () => cb();
@@ -854,10 +1000,19 @@ const api: ElectronAPI = {
   updateLayoutMode: (mode) => ipcRenderer.invoke(IPC.UPDATE_LAYOUT_MODE, mode),
   getShowTokenUsage: () => ipcRenderer.invoke(IPC.GET_SHOW_TOKEN_USAGE),
   updateShowTokenUsage: (show) => ipcRenderer.invoke(IPC.UPDATE_SHOW_TOKEN_USAGE, show),
+  getLinkRecognition: () => ipcRenderer.invoke(IPC.GET_LINK_RECOGNITION),
+  setLinkRecognition: (group, on) => ipcRenderer.invoke(IPC.SET_LINK_RECOGNITION, group, on),
+  onLinkRecognitionChanged: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, state: LinkRecognitionState) => cb(state);
+    ipcRenderer.on(IPC.LINK_RECOGNITION_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.LINK_RECOGNITION_CHANGED, handler);
+  },
   getMarkdownZoom: () => ipcRenderer.invoke(IPC.GET_MARKDOWN_ZOOM),
   updateMarkdownZoom: (zoom) => ipcRenderer.invoke(IPC.UPDATE_MARKDOWN_ZOOM, zoom),
   getReadingPrefs: () => ipcRenderer.invoke(IPC.GET_READING_PREFS),
   updateReadingPrefs: (patch) => ipcRenderer.invoke(IPC.UPDATE_READING_PREFS, patch),
+  getSidebarView: () => ipcRenderer.invoke(IPC.GET_SIDEBAR_VIEW),
+  updateSidebarView: (patch) => ipcRenderer.invoke(IPC.UPDATE_SIDEBAR_VIEW, patch),
 
   getCaptureSettings: () => ipcRenderer.invoke(IPC.GET_CAPTURE_SETTINGS),
   updateCaptureSettings: (settings) => ipcRenderer.invoke(IPC.UPDATE_CAPTURE_SETTINGS, settings),
@@ -865,7 +1020,7 @@ const api: ElectronAPI = {
   updateQuickExport: (settings) => ipcRenderer.invoke(IPC.UPDATE_QUICK_EXPORT, settings),
 
   getFlows: () => ipcRenderer.invoke(IPC.FLOW_GET_ALL),
-  saveFlow: (flow, source) => ipcRenderer.invoke(IPC.FLOW_SAVE, flow, source),
+  saveFlow: (flow, source, reviewed) => ipcRenderer.invoke(IPC.FLOW_SAVE, flow, source, reviewed),
   listFlowVersions: (flowId) => ipcRenderer.invoke(IPC.FLOW_VERSIONS_LIST, flowId),
   restoreFlowVersion: (flowId, vid) => ipcRenderer.invoke(IPC.FLOW_VERSION_RESTORE, flowId, vid),
   deleteFlowVersion: (flowId, vid) => ipcRenderer.invoke(IPC.FLOW_VERSION_DELETE, flowId, vid),
@@ -902,6 +1057,12 @@ const api: ElectronAPI = {
     return () => ipcRenderer.removeListener(IPC.FLOW_BUILD_PROGRESS, handler);
   },
   previewSchedule: (trigger) => ipcRenderer.invoke(IPC.FLOW_PREVIEW_SCHEDULE, trigger),
+  getWatchMissing: () => ipcRenderer.invoke(IPC.FLOW_WATCH_MISSING_GET),
+  onWatchMissing: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, flowIds: string[]) => cb(flowIds);
+    ipcRenderer.on(IPC.FLOW_WATCH_MISSING, handler);
+    return () => ipcRenderer.removeListener(IPC.FLOW_WATCH_MISSING, handler);
+  },
   exportFlow: (flow) => ipcRenderer.invoke(IPC.FLOW_EXPORT, flow),
   exportFlowResult: (content, defaultFileName) => ipcRenderer.invoke(IPC.FLOW_EXPORT_RESULT, { content, defaultFileName }),
   onFlowExecutionLog: (cb) => {
@@ -938,6 +1099,8 @@ const api: ElectronAPI = {
   rssHasCheckpoint: (stepId) => ipcRenderer.invoke(IPC.RSS_HAS_CHECKPOINT, stepId),
   rssClearCheckpoint: (stepId) => ipcRenderer.invoke(IPC.RSS_CLEAR_CHECKPOINT, stepId),
   rssDiscoverFeed: (siteUrl) => ipcRenderer.invoke(IPC.RSS_DISCOVER_FEED, siteUrl),
+  rssPreviewFeed: (request) => ipcRenderer.invoke(IPC.RSS_PREVIEW_FEED, request),
+  rssCancelPreview: (slot) => ipcRenderer.invoke(IPC.RSS_CANCEL_PREVIEW, slot),
 
   scraperHasCheckpoint: (stepId) => ipcRenderer.invoke(IPC.SCRAPER_HAS_CHECKPOINT, stepId),
   scraperClearCheckpoint: (stepId) => ipcRenderer.invoke(IPC.SCRAPER_CLEAR_CHECKPOINT, stepId),
@@ -947,6 +1110,11 @@ const api: ElectronAPI = {
   ytSubsClearCheckpoint: (stepId) => ipcRenderer.invoke(IPC.YT_SUBS_CLEAR_CHECKPOINT, stepId),
   xPostsHasCheckpoint: (stepId) => ipcRenderer.invoke(IPC.X_POSTS_HAS_CHECKPOINT, stepId),
   xPostsClearCheckpoint: (stepId) => ipcRenderer.invoke(IPC.X_POSTS_CLEAR_CHECKPOINT, stepId),
+  pttBoardHasCheckpoint: (stepId) => ipcRenderer.invoke(IPC.PTT_BOARD_HAS_CHECKPOINT, stepId),
+  pttBoardClearCheckpoint: (stepId) => ipcRenderer.invoke(IPC.PTT_BOARD_CLEAR_CHECKPOINT, stepId),
+  pttFindBoards: (query) => ipcRenderer.invoke(IPC.PTT_FIND_BOARDS, query),
+  pttPreviewBoard: (request) => ipcRenderer.invoke(IPC.PTT_PREVIEW_BOARD, request),
+  pttCancelPreview: (slot) => ipcRenderer.invoke(IPC.PTT_CANCEL_PREVIEW, slot),
 };
 
 contextBridge.exposeInMainWorld('electronAPI', api);

@@ -90,7 +90,8 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
     return () => observer.disconnect();
   }, []);
 
-  const handleSave = useCallback(async () => { await saveFlow(flow); }, [flow, saveFlow]);
+  // The editor's own Save (button or shortcut) is the owner's review of the flow they have open.
+  const handleSave = useCallback(async () => { await saveFlow(flow, undefined, true); }, [flow, saveFlow]);
   const handleRestore = useCallback(() => { restoreFlow(flow.id); }, [flow.id, restoreFlow]);
   const handleRun = useCallback(async () => {
     await saveFlow(flow);

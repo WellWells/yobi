@@ -10,8 +10,10 @@ import type { FlowDefinition } from '../../../../shared/types';
 import type { FlowIssue } from '../../../../shared/flowIssues';
 import { FlowSidebarItem } from './FlowSidebarItem';
 import { useFlowIssues } from '../../hooks/useFlowIssues';
+import { useScrollEdgeFade } from '../../hooks/useScrollEdgeFade';
 import { useFlowSensors } from './dnd';
 import { EmptyState } from '../../components/EmptyState';
+import type { MenuAnchor } from '../../components/RowMoreButton';
 import styles from './FlowSidebarItem.module.css';
 
 const LONG_PRESS_MS = 500;
@@ -40,7 +42,12 @@ export interface FlowSidebarListProps {
   onToggleSelect: (flowId: string) => void;
   onRowClick: (flowId: string, mods: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => void;
   onContextMenu: (e: React.MouseEvent, flowId: string) => void;
+  /** A row's "⋯" button or swipe "More": the right-click menu, at a point. */
+  onOpenMenuAt: (flowId: string, at: MenuAnchor) => void;
+  /** The flow whose menu is open, if any. */
+  menuFlowId: string | null;
   onToggleEnabled: (flow: FlowDefinition, enabled: boolean) => void;
+  onDelete: (flowId: string) => void;
   onReorder: (orderedIds: string[]) => void;
 }
 
@@ -74,11 +81,12 @@ const SortableFlowRow: React.FC<{
 export const FlowSidebarList: React.FC<FlowSidebarListProps> = ({
   flows, selectedFlowId, runningFlowIds, t,
   selectMode, isSelected, onToggleSelect,
-  onRowClick, onContextMenu, onToggleEnabled, onReorder,
+  onRowClick, onContextMenu, onOpenMenuAt, menuFlowId, onToggleEnabled, onDelete, onReorder,
 }) => {
   const sensors = useFlowSensors({ delay: LONG_PRESS_MS });
   const ids = useMemo(() => flows.map((f) => f.id), [flows]);
   const listRef = useRef<HTMLDivElement>(null);
+  const fadeClass = useScrollEdgeFade(listRef);
   // Read from the store rather than the `flows` prop: which flow wins a duplicated
   // command depends on the whole list, so a filtered view would name the wrong one.
   const issues = useFlowIssues();
@@ -102,7 +110,10 @@ export const FlowSidebarList: React.FC<FlowSidebarListProps> = ({
       onToggleSelect={() => onToggleSelect(flow.id)}
       onRowClick={(mods) => onRowClick(flow.id, mods)}
       onContextMenu={(e) => onContextMenu(e, flow.id)}
+      onOpenMenuAt={(at) => onOpenMenuAt(flow.id, at)}
+      menuOpen={menuFlowId === flow.id}
       onToggleEnabled={(enabled) => onToggleEnabled(flow, enabled)}
+      onDelete={() => onDelete(flow.id)}
     />
   );
 
@@ -116,7 +127,7 @@ export const FlowSidebarList: React.FC<FlowSidebarListProps> = ({
   };
 
   return (
-    <Box ref={listRef} flex={1} style={{ overflowY: 'auto', padding: '4px 0' }}>
+    <Box ref={listRef} flex={1} className={fadeClass} style={{ overflowY: 'auto', padding: '4px 0' }}>
       {flows.length === 0 ? (
         <EmptyState icon={Workflow} label={t('flow.flowList.empty')} />
       ) : selectMode ? (

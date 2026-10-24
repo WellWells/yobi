@@ -1,4 +1,5 @@
 import type { FlowIssue } from '../../../../shared/flowIssues';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 /** Matches how the main process joins variable names in its own log lines. */
 const JOIN = ', ';
@@ -13,10 +14,13 @@ function issueSuffix(issue: FlowIssue): string {
   return issue.wins ? 'duplicate.wins' : 'duplicate.loses';
 }
 
+// Flow and connector names are the user's own text, so they go in through fillTemplate.
 export function describeFlowIssue(issue: FlowIssue, t: (k: string) => string): string {
-  return t(`flow.issue.${issueSuffix(issue)}`)
-    .replace('{{scope}}', issue.scope ? t(`flow.issue.scope.${issue.scope}`) : '')
-    .replace('{{command}}', issue.command ?? '')
-    .replace('{{others}}', (issue.otherNames ?? []).join(JOIN))
-    .replace('{{names}}', (issue.varNames ?? []).join(JOIN));
+  return fillTemplate(t(`flow.issue.${issueSuffix(issue)}`), {
+    scope: issue.scope ? t(`flow.issue.scope.${issue.scope}`) : '',
+    command: issue.command ?? '',
+    others: (issue.otherNames ?? []).join(JOIN),
+    names: (issue.varNames ?? []).join(JOIN),
+    folder: issue.folder ?? '',
+  });
 }

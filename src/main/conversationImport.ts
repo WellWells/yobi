@@ -4,8 +4,10 @@ import dayjs from 'dayjs';
 import type { ConversationImportResult } from '../shared/types';
 import { writeFileAtomic } from './atomicWrite';
 import { buildOutputFile, buildSafeFileNameFromTitle, getUniquePath } from './files';
+import { listConversationFiles } from './conversationIndex';
 import type { ConversationHeadingAliases } from '../shared/conversationDoc';
 import { comparableConversationText, withoutConversationId } from '../shared/conversationHistory';
+import { withoutPin } from '../shared/conversationPin';
 
 export const IMPORTABLE_EXTENSIONS: ReadonlySet<string> = new Set(['.md', '.markdown']);
 /** A conversation this size is already thousands of turns; anything bigger is not one. */
@@ -24,19 +26,15 @@ function isInside(dir: string, target: string): boolean {
  * An earlier import of the same file, under any name this module could have given it:
  * `stem.md`, `stem-<stamp>.md`, or either with getUniquePath's ` (2)`. Opening a copy stamps its
  * thread marker (with a blank line) under the title, so copies are compared as a reader sees them.
+ * Searched in every folder too: a copy the user filed into a folder is still that copy.
  */
-async function findEarlierCopy(root: string, stem: string, content: string): Promise<string | null> {
+export async function findEarlierCopy(root: string, stem: string, content: string): Promise<string | null> {
   const wanted = comparableConversationText(content);
-  let names: string[];
-  try {
-    names = await fs.readdir(root);
-  } catch {
-    return null;
-  }
-  const candidates = names.filter((name) => name.toLowerCase().endsWith('.md')
-    && (name === `${stem}.md` || name.startsWith(`${stem}-`) || name.startsWith(`${stem} (`)));
-  for (const name of candidates) {
-    const candidate = path.join(root, name);
+  const candidates = (await listConversationFiles(root)).filter((candidate) => {
+    const name = path.basename(candidate);
+    return name === `${stem}.md` || name.startsWith(`${stem}-`) || name.startsWith(`${stem} (`);
+  });
+  for (const candidate of candidates) {
     try {
       if (comparableConversationText(await fs.readFile(candidate, 'utf-8')) === wanted) return candidate;
     } catch {
@@ -113,8 +111,9 @@ export async function importConversationFiles(
       }
       await fs.mkdir(root, { recursive: true });
       const target = await getUniquePath(path.join(root, targetFileName(source, content, root, aliases)), '');
-      // A copy starts its own version history: sharing the source's id would mix the two.
-      await writeFileAtomic(target, withoutConversationId(content));
+      // A copy starts its own version history: sharing the source's id would mix the two. It also
+      // starts unpinned: the pin was where the source sat in someone's list, not part of the text.
+      await writeFileAtomic(target, withoutPin(withoutConversationId(content)));
       outcome.imported.push(target);
     } catch {
       outcome.failed += 1;

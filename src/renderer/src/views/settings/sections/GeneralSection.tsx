@@ -1,8 +1,6 @@
 import React from 'react';
 import { ActionIcon, Box, Group, Stack, Tooltip } from '@mantine/core';
-import {
-  AppWindow, FolderOpen, Languages,
-} from 'lucide-react';
+import { AppWindow, FolderOpen } from 'lucide-react';
 import {
   SectionCard, SettingRow, SelectDropdown, ToggleSwitch,
   SectionTitle,
@@ -13,14 +11,11 @@ import { LANGUAGE_PACK_GUIDE_URL } from '../../../config/projectLinks';
 import { isMac } from '../../../utils/keyLabels';
 import { ExternalLink } from './lineLinks';
 import { ExternalEditorSetting } from './ExternalEditorSetting';
-import { YtdlToolsSetting } from './YtdlToolsSetting';
-import type { BotRoster } from './botPermissionsView';
 
 type SystemSettings = ReturnType<typeof useSystemSettings>;
 
 interface Props {
   system: SystemSettings;
-  roster: BotRoster;
   t: (key: string) => string;
   locale: string;
   availableLocales: string[];
@@ -32,25 +27,23 @@ interface Props {
 }
 
 export const GeneralSection: React.FC<Props> = ({
-  system, roster, t, locale, availableLocales, onSetLocale, getLocaleLabel,
+  system, t, locale, availableLocales, onSetLocale, getLocaleLabel,
   onOpenLanguagesFolder, showSection, sectionGap,
 }) => (
   <Box
     display={showSection(TAG_SETS.tray, 'general') || showSection(TAG_SETS.language, 'general')
-      || showSection(TAG_SETS.editor, 'general') || showSection(TAG_SETS.ytdl, 'general') ? 'block' : 'none'}
+      || showSection(TAG_SETS.editor, 'general') ? 'block' : 'none'}
   >
 
     <SectionCard style={{ marginBottom: sectionGap, display: showSection(TAG_SETS.tray, 'general') ? 'block' : 'none' }}>
       <SectionTitle icon={<AppWindow size={15} />} label={isMac ? t('settings.tray.title.mac') : t('settings.tray.title')} />
       <Stack gap={14}>
         <SettingRow
-          icon={<AppWindow size={13} />}
           label={isMac ? t('settings.tray.closeToTray.mac') : t('settings.tray.closeToTray')}
           hint={isMac ? t('settings.tray.closeToTray.hint.mac') : t('settings.tray.closeToTray.hint')}
           control={<ToggleSwitch checked={system.closeToTray} onChange={() => { void system.handleToggleCloseToTray(); }} />}
         />
         <SettingRow
-          icon={<AppWindow size={13} />}
           label={t('settings.tray.launchAtStartup')}
           hint={t('settings.tray.launchAtStartup.hint')}
           control={<ToggleSwitch checked={system.launchAtStartup} onChange={() => { void system.handleToggleLaunchAtStartup(); }} />}
@@ -60,7 +53,6 @@ export const GeneralSection: React.FC<Props> = ({
 
     <SectionCard style={{ marginBottom: sectionGap, display: showSection(TAG_SETS.language, 'general') ? 'block' : 'none' }}>
       <SettingRow
-        icon={<Languages size={13} />}
         label={t('settings.language')}
         hint={(
           <>
@@ -91,8 +83,6 @@ export const GeneralSection: React.FC<Props> = ({
     </SectionCard>
 
     <ExternalEditorSetting t={t} visible={showSection(TAG_SETS.editor, 'general')} sectionGap={sectionGap} />
-
-    <YtdlToolsSetting t={t} visible={showSection(TAG_SETS.ytdl, 'general')} sectionGap={sectionGap} roster={roster} />
 
   </Box>
 );

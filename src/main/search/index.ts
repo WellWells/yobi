@@ -17,6 +17,7 @@ import { charsPlusBreaks, utf8Len } from '../../shared/textBudget';
 import { isFetchableWebUrl } from '../../shared/webUrl';
 import { citationHost } from '../../shared/citations';
 import { buildCitedPrompt, linkifyCitations, synthesize } from './synthesize';
+import { resendIfGeminiCapFell } from '../providers/geminiPromptTooLong';
 import type { QueryPlan, SearchOutcome, SerpHit, SourceDoc, TemporalFilter } from './types';
 import type { ResearchPhaseId } from '../../shared/researchProgress';
 
@@ -140,6 +141,15 @@ export async function searchSourceList(query: string, locale: string, limit: num
   return selectTargets(rankHits(hits, query, plan.temporal !== 'none'), limit);
 }
 
+/**
+ * The sources a synthesis prompt carries, and how to pack them again at the budget that holds when
+ * `repack` is called: Gemini's cap can fall while the prompt is on its way.
+ */
+interface PackedSources {
+  sources: SourceDoc[];
+  repack: () => SourceDoc[];
+}
+
 async function buildSources(
   scored: ScoredSource[],
   query: string,
@@ -150,7 +160,7 @@ async function buildSources(
   history: string,
   onProgress: ((progress: SearchProgress) => void) | undefined,
   mapFactor: number = SEARCH_MAP_OVERFLOW_FACTOR,
-): Promise<SourceDoc[]> {
+): Promise<PackedSources> {
   const budget = reserveForHistory(synthesisBudget(targetUrl), history);
   if (!isByokTargetUrl(targetUrl)) {
     const relevant = scored.map((entry) => entry.doc);
@@ -159,9 +169,13 @@ async function buildSources(
     const mapped = overflowsBudget(relevant, budget, mapFactor)
       ? await mapOnWebProvider(relevant, query, targetUrl, locale, summaryReporter(onProgress, relevant.length))
       : relevant;
-    const sources = extractRelevant(mapped, plan.queries.join(' '), budget);
-    sendLog(`🔎 [Search] Extracted ${sources.length} sources (${describeUsage(sources, budget)}) for single-shot synthesis`);
-    return sources;
+    const pack = (): SourceDoc[] => {
+      const now = reserveForHistory(synthesisBudget(targetUrl), history);
+      const sources = extractRelevant(mapped, plan.queries.join(' '), now);
+      sendLog(`🔎 [Search] Extracted ${sources.length} sources (${describeUsage(sources, now)}) for single-shot synthesis`);
+      return sources;
+    };
+    return { sources: pack(), repack: pack };
   }
   const relevant = scored.filter((entry, index) => index === 0 || entry.score > 0).map((entry) => entry.doc);
   const mapInputs = isByokGroupUrl(targetUrl) ? relevant : relevant.slice(0, BYOK_MAP_MAX_SINGLE_KEY);
@@ -172,10 +186,29 @@ async function buildSources(
     ? `🔎 [Search] Collecting ${mapInputs.length} summaries (started as pages arrived)...`
     : `🔎 [Search] Summarizing ${mapInputs.length} sources (${mapConcurrency(targetUrl)} at a time)...`);
   const onEach = summaryReporter(onProgress, mapInputs.length);
-  return fitToBudget(
+  const sources = fitToBudget(
     mapper ? await mapper.collect(mapInputs, onEach) : await mapDocuments(mapInputs, query, targetUrl, locale, onEach),
     budget.bytes,
   );
+  // A BYOK budget does not move.
+  return { sources, repack: () => sources };
+}
+
+/** One synthesis; when the Gemini page refused it unsent because its cap fell, packed again and sent once more. */
+async function synthesizePacked(
+  packed: PackedSources,
+  targetUrl: string,
+  prompt: (sources: SourceDoc[]) => string,
+): Promise<{ raw: string; sources: SourceDoc[] }> {
+  let sources = packed.sources;
+  const raw = await resendIfGeminiCapFell(
+    () => synthesize(prompt(sources), targetUrl),
+    (cap) => {
+      sendLog(`🔎 [Search] Gemini takes only ${cap} characters now — packing the sources again`);
+      sources = packed.repack();
+    },
+  );
+  return { raw, sources };
 }
 
 /** Opens the summarize phase with its count, and returns what reports each page as it finishes. */
@@ -330,26 +363,23 @@ export async function runWebSearch(
 
   onProgress?.({ stage: 'analyzing' });
   const scored = rankSourcesScored(docs, question);
-  const sources = mode === 'quick'
-    ? buildQuickSources(scored, plan, targetUrl, history)
+  const packed: PackedSources = mode === 'quick'
+    ? { sources: buildQuickSources(scored, plan, targetUrl, history), repack: () => buildQuickSources(scored, plan, targetUrl, history) }
     : await buildSources(scored, question, plan, targetUrl, locale, mapper, history, onProgress);
-  if (sources.length === 0) {
+  if (packed.sources.length === 0) {
     throw new SearchPipelineError('search.error.noRelevant', 'No sources were relevant to the query');
   }
 
   onProgress?.({ stage: 'synthesizing' });
   sendLog('🔎 [Search] Synthesizing cited answer...');
-  const raw = await synthesize(
-    buildCitedPrompt({
-      query: question,
-      docs: sources,
-      locale,
-      concise: mode === 'quick',
-      lean: isLeanPromptProvider(targetUrl),
-      history,
-    }),
-    targetUrl,
-  );
+  const { raw, sources } = await synthesizePacked(packed, targetUrl, (docs) => buildCitedPrompt({
+    query: question,
+    docs,
+    locale,
+    concise: mode === 'quick',
+    lean: isLeanPromptProvider(targetUrl),
+    history,
+  }));
   return { answer: linkifyCitations(raw, sources), sources, ...(partiallyBlocked ? { partiallyBlocked } : {}) };
 }
 
@@ -389,32 +419,30 @@ async function runOverGivenUrls(
     (url) => onProgress?.({ stage: 'read', host: citationHost(url) }),
     undefined,
     (url) => onProgress?.({ stage: 'readFailed', host: citationHost(url) }),
+    { recall: false },
   );
   if (docs.length === 0) {
     throw new SearchPipelineError('search.error.noSources', 'No source pages could be read');
   }
 
   onProgress?.({ stage: 'analyzing' });
-  const sources = await buildSources(
+  const packed = await buildSources(
     rankSourcesScored(docs, query), query, plan, targetUrl, locale, null, history, onProgress,
     GIVEN_URLS_MAP_OVERFLOW_FACTOR,
   );
-  if (sources.length === 0) {
+  if (packed.sources.length === 0) {
     throw new SearchPipelineError('search.error.noRelevant', 'No sources were relevant to the query');
   }
 
   onProgress?.({ stage: 'synthesizing' });
   sendLog('🔎 [Search] Synthesizing cited answer...');
-  const raw = await synthesize(
-    buildCitedPrompt({
-      query,
-      docs: sources,
-      locale,
-      concise: false,
-      lean: isLeanPromptProvider(targetUrl),
-      history,
-    }),
-    targetUrl,
-  );
+  const { raw, sources } = await synthesizePacked(packed, targetUrl, (docs) => buildCitedPrompt({
+    query,
+    docs,
+    locale,
+    concise: false,
+    lean: isLeanPromptProvider(targetUrl),
+    history,
+  }));
   return { answer: linkifyCitations(raw, sources), sources };
 }

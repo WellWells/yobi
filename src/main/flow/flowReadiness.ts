@@ -1,7 +1,10 @@
+import { SOCKET_BOT_PLATFORMS } from '../../shared/types';
 import type { FlowBuildBlocker, FlowSetupNeed, SkillType } from '../../shared/types';
 import { config } from '../config';
-import { isSmtpAccountComplete } from '../smtpAccount';
+import { isSocketBotConfigured } from './botRecipientDirectory';
 import { getYtdlToolsState } from '../youtubeDownload';
+import { calendarCount } from '../calendar/calendarStore';
+import { readableMailAccounts, usableMailAccounts } from '../mail/mailAccount';
 
 /**
  * What the app has actually been set up with. A plain snapshot rather than a live read so the
@@ -11,12 +14,18 @@ import { getYtdlToolsState } from '../youtubeDownload';
 export interface IntegrationSnapshot {
   telegram: boolean;
   line: boolean;
-  /** Paired recipients across both bots. A bot with no one paired has nowhere to send. */
+  /** Discord or Slack is connected. Absent counts as neither. */
+  socketBots?: boolean;
+  /** Paired recipients across the connected bots. A bot with no one paired has nowhere to send. */
   botRecipients: number;
   smtp: boolean;
   lineReader: boolean;
   /** The video download tools are installed (or pointed at). Absent counts as not installed. */
   ytdlTools?: boolean;
+  /** Subscribed calendars (Settings › Connectors › Calendars). Absent counts as none. */
+  calendars?: number;
+  /** The mail account can read mail (IMAP), not only send. Absent counts as no. */
+  mailbox?: boolean;
 }
 
 /**
@@ -28,11 +37,21 @@ const NEED_BY_SKILL: Partial<Record<SkillType, FlowSetupNeed>> = {
   bot: 'bot',
   email_send: 'email',
   line_read: 'line',
+  // Only a connected bot hears a group; "bot" also wants a paired account, which the summary is sent to.
+  telegram_read: 'bot',
   youtube_download: 'ytdl',
+  // Reported like the others, never a gate: a calendar step that fails soft (the morning brief)
+  // runs without one and the brief leaves the schedule out.
+  calendar: 'calendar',
+  mail_fetch: 'mailbox',
 };
 
 export function setupNeedFor(skill: SkillType): FlowSetupNeed | null {
   return NEED_BY_SKILL[skill] ?? null;
+}
+
+function mailSource() {
+  return { mailAccounts: config.mailAccounts ?? [], mailDefaultId: config.mailDefaultId ?? '' };
 }
 
 export function snapshotIntegrations(): IntegrationSnapshot {
@@ -40,13 +59,18 @@ export function snapshotIntegrations(): IntegrationSnapshot {
   const line = Boolean(config.line?.enabled && config.line.channelAccessToken);
   const telegramPaired = config.telegram?.pairing?.pairedUsers?.length ?? 0;
   const linePaired = config.line?.pairing?.pairedUsers?.length ?? 0;
+  const socket = SOCKET_BOT_PLATFORMS.filter((platform) => isSocketBotConfigured(platform));
+  const socketPaired = socket.reduce((sum, platform) => sum + (config[platform]?.pairing?.pairedUsers?.length ?? 0), 0);
   return {
     telegram,
     line,
-    botRecipients: (telegram ? telegramPaired : 0) + (line ? linePaired : 0),
-    smtp: isSmtpAccountComplete(config.smtp),
+    socketBots: socket.length > 0,
+    botRecipients: (telegram ? telegramPaired : 0) + (line ? linePaired : 0) + socketPaired,
+    smtp: usableMailAccounts(mailSource()).length > 0,
     lineReader: Boolean(config.lineReaderEnabled),
     ytdlTools: ['ready', 'custom'].includes(getYtdlToolsState().status),
+    calendars: calendarCount(),
+    mailbox: readableMailAccounts(mailSource()).length > 0,
   };
 }
 
@@ -58,9 +82,11 @@ export function snapshotIntegrations(): IntegrationSnapshot {
  * which is the run the user only finds out about from an empty Telegram.
  */
 export function isSetupDone(need: FlowSetupNeed, snap: IntegrationSnapshot): boolean {
-  if (need === 'bot') return (snap.telegram || snap.line) && snap.botRecipients > 0;
+  if (need === 'bot') return (snap.telegram || snap.line || snap.socketBots === true) && snap.botRecipients > 0;
   if (need === 'email') return snap.smtp;
   if (need === 'ytdl') return snap.ytdlTools === true;
+  if (need === 'calendar') return (snap.calendars ?? 0) > 0;
+  if (need === 'mailbox') return snap.mailbox === true;
   return snap.lineReader;
 }
 

@@ -1,6 +1,7 @@
 import React from 'react';
-import { Box, Group, Text, Tooltip, UnstyledButton } from '@mantine/core';
+import { Box, Group, Progress, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { CircleHelp } from 'lucide-react';
+import { formatShare } from './aggregate';
 import classes from './stats.module.css';
 
 /** The one display-scale number on the page; everything else stays at body scale. */
@@ -30,7 +31,8 @@ export const HelpDot: React.FC<{ hint: string }> = ({ hint }) => (
 );
 
 interface LegendItemProps {
-  color: string;
+  /** The swatch of the chart or share bar segment this number belongs to; none when no mark draws it. */
+  color?: string;
   label: string;
   value: string;
   hint?: string;
@@ -39,12 +41,14 @@ interface LegendItemProps {
 
 /**
  * Carries the secondary numbers itself, so the chart needs no separate table repeating them.
- * Clickable when the number leads somewhere — failures lead to the log.
+ * Clickable when the number leads somewhere — failures lead to the log. A swatch only appears when
+ * something on the card is drawn in that colour; a dot with no chart behind it reads as a key to
+ * nothing.
  */
 export const LegendItem: React.FC<LegendItemProps> = ({ color, label, value, hint, onClick }) => {
   const body = (
     <Group gap={7} wrap="nowrap">
-      <Box w={8} h={8} style={{ borderRadius: 2, background: color, flexShrink: 0 }} />
+      {color && <Box w={8} h={8} style={{ borderRadius: 2, background: color, flexShrink: 0 }} />}
       <Text fz="var(--font-size-sm)" c="dimmed">{label}</Text>
       <Text
         fz="var(--font-size-sm)"
@@ -70,6 +74,34 @@ export const LegendItem: React.FC<LegendItemProps> = ({ color, label, value, hin
     )
     : <Box px={6} py={3}>{body}</Box>;
   return hint ? <Tooltip label={hint} position="top" maw={300} multiline>{wrapped}</Tooltip> : wrapped;
+};
+
+export interface ShareSegment {
+  id: string;
+  color: string;
+  value: number;
+  label: string;
+}
+
+/**
+ * One bar split by share, the way the big apps draw "usage by feature": it gives a breakdown legend
+ * something to point at when the card has no day-by-day chart. Empty segments are left out.
+ */
+export const ShareBar: React.FC<{ segments: ShareSegment[] }> = ({ segments }) => {
+  const total = segments.reduce((sum, segment) => sum + segment.value, 0);
+  if (total <= 0) return null;
+  return (
+    <Progress.Root size={8} radius="sm" bg="var(--mantine-color-bg-tertiary)">
+      {segments.filter((segment) => segment.value > 0).map((segment) => (
+        <Progress.Section
+          key={segment.id}
+          value={(segment.value / total) * 100}
+          color={segment.color}
+          aria-label={`${segment.label} ${formatShare(segment.value, total)}`}
+        />
+      ))}
+    </Progress.Root>
+  );
 };
 
 /** A label/value pair set on one line, used for the running breakdowns under a figure. */

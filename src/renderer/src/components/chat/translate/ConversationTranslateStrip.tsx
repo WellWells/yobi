@@ -5,6 +5,7 @@ import { useI18nStore } from '../../../store/i18nStore';
 import { useTranslateStore } from '../../../store/translateStore';
 import { AppButton } from '../../AppButton';
 import { cancelConversationTranslation } from './conversationTranslateActions';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 /**
  * "Translating the whole conversation: 3/12" with a cancel, above the composer while it runs.
@@ -32,7 +33,7 @@ export const ConversationTranslateStrip: React.FC<{ t: (key: string) => string }
         truncate
         style={{ flex: 1, minWidth: 0, fontVariantNumeric: 'tabular-nums' }}
       >
-        {t(key).replace('{{language}}', languageDisplayName(job.to, locale)).replace('{{progress}}', progress)}
+        {fillTemplate(t(key), { language: languageDisplayName(job.to, locale), progress })}
       </Text>
       <AppButton size="compact-sm" variant="default" disabled={job.cancelling} onClick={cancelConversationTranslation}>
         {t('chat.rewrite.cancel')}

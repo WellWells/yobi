@@ -1,6 +1,7 @@
 import { clipboardApi, fileApi } from '../../api/electronApi';
 import { showAppNotice } from '../../hooks/useUiNotifications';
 import { conversationPlainMarkdown } from './conversationText';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 type Translate = (key: string) => string;
 
@@ -37,6 +38,6 @@ export async function copyFilesWithNotice(filePaths: string[], t: Translate): Pr
   if (copied === 0) return;
   const message = copied === 1
     ? t('context.copied.file')
-    : t('selection.copied.files').replace('{{count}}', String(copied));
+    : fillTemplate(t('selection.copied.files'), { count: String(copied) });
   showAppNotice({ message, level: 'success' });
 }

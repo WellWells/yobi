@@ -1,17 +1,21 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Group, Stack, Text, Button as MButton } from '@mantine/core';
-import { KeyRound, Lock, MessageSquare, Plug, RefreshCw, Server, Users, UsersRound } from 'lucide-react';
+import { KeyRound, MessageSquare, Plug, RefreshCw, Server, Users, UsersRound } from 'lucide-react';
 import { AppPasswordInput } from '../../../components/AppPasswordInput';
 import { AppButton } from '../../../components/AppButton';
 import { AppNumberInput } from '../../../components/AppNumberInput';
 import { SectionCard, SettingRow, SettingField, SettingDivider, ToggleSwitch, SectionTitle } from '../components';
 import { BotDefaultModelSetting } from './BotDefaultModelSetting';
 import { BotReplyPreview } from './BotReplyPreview';
+import { BotAskTtlSetting } from './BotAskTtlSetting';
+import type { BotCommandsControls } from './BotAskTtlSetting';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import { SecretHealthAlert } from '../../../components/SecretHealthAlert';
 import { LineAccountAlerts } from './LineAccountAlerts';
 import { LinePairingPanel } from './LinePairingPanel';
 import { LinePairedUsers } from './LinePairedUsers';
+import { BotDefaultGrants } from './BotUserPermissions';
 import { BotAudienceSection } from './BotAudienceSection';
 import { LineWebhookGuide } from './LineWebhookGuide';
 import type { useLineSettings } from '../hooks/useLineSettings';
@@ -41,13 +45,15 @@ interface Props {
   line: LineSettings;
   /** Each paired account's grants and owner mark, edited under its row. */
   access: BotAccessControls;
+  /** The shared commands config; its answer window is shown in this card's reply section. */
+  botCommands?: BotCommandsControls;
   t: (key: string) => string;
   showSection: (tags: readonly string[], category: 'bots') => boolean;
   isSearching: boolean;
   sectionGap: number;
 }
 
-export const LineSection: React.FC<Props> = ({ line, access, t, showSection, isSearching, sectionGap }) => {
+export const LineSection: React.FC<Props> = ({ line, access, botCommands, t, showSection, isSearching, sectionGap }) => {
   const settings = line.lineSettings;
   const runtimeStatus = settings?.runtime.status;
   const account = settings?.runtime.account;
@@ -89,7 +95,6 @@ export const LineSection: React.FC<Props> = ({ line, access, t, showSection, isS
         )}
 
         <SettingRow
-          icon={<MessageSquare size={13} />}
           label={t('settings.line.enabled')}
           hint={expanded ? undefined : t('settings.line.enabled.offHint')}
           control={
@@ -103,7 +108,7 @@ export const LineSection: React.FC<Props> = ({ line, access, t, showSection, isS
         {expanded && (
           <>
             <Stack gap={12} mt={12}>
-              <SettingField icon={<KeyRound size={13} />} label={t('settings.line.tokenLabel')}>
+              <SettingField label={t('settings.line.tokenLabel')}>
                 <AppPasswordInput
                   tone="body"
                   mono
@@ -112,14 +117,13 @@ export const LineSection: React.FC<Props> = ({ line, access, t, showSection, isS
                   placeholder={t('settings.line.tokenPlaceholder')}
                 />
                 <Text fz="var(--font-size-sm)" c="dimmed">
-                  {t('settings.line.tokenCurrent')}:{' '}
-                  {settings?.hasChannelAccessToken
-                    ? (settings.channelAccessTokenPreview || '****')
-                    : t('settings.line.notSet')}
+                  {fillTemplate(t('settings.line.tokenCurrent'), {
+                    value: settings?.hasChannelAccessToken ? (settings.channelAccessTokenPreview || '****') : t('settings.line.notSet'),
+                  })}
                 </Text>
               </SettingField>
 
-              <SettingField icon={<Lock size={13} />} label={t('settings.line.secretLabel')}>
+              <SettingField label={t('settings.line.secretLabel')}>
                 <AppPasswordInput
                   tone="body"
                   mono
@@ -128,10 +132,9 @@ export const LineSection: React.FC<Props> = ({ line, access, t, showSection, isS
                   placeholder={t('settings.line.secretPlaceholder')}
                 />
                 <Text fz="var(--font-size-sm)" c="dimmed">
-                  {t('settings.line.secretCurrent')}:{' '}
-                  {settings?.hasChannelSecret
-                    ? (settings.channelSecretPreview || '****')
-                    : t('settings.line.notSet')}
+                  {fillTemplate(t('settings.line.secretCurrent'), {
+                    value: settings?.hasChannelSecret ? (settings.channelSecretPreview || '****') : t('settings.line.notSet'),
+                  })}
                 </Text>
               </SettingField>
 
@@ -163,7 +166,7 @@ export const LineSection: React.FC<Props> = ({ line, access, t, showSection, isS
 
             <SectionTitle icon={<Server size={15} />} label={t('settings.line.section.webhook')} />
             <Stack gap={12}>
-              <SettingField icon={<Server size={13} />} label={t('settings.line.portLabel')}>
+              <SettingField label={t('settings.line.portLabel')}>
                 <Group gap={8} align="center">
                   <AppNumberInput
                     w={140}
@@ -222,6 +225,8 @@ export const LineSection: React.FC<Props> = ({ line, access, t, showSection, isS
                 t={t}
               />
 
+              <BotDefaultGrants access={access} t={t} />
+
               <SettingDivider my={4} />
 
               <Text fz="var(--font-size-sm)" fw={600} c="var(--mantine-color-default-color)">
@@ -265,6 +270,8 @@ export const LineSection: React.FC<Props> = ({ line, access, t, showSection, isS
                   t={t}
                 />
               )}
+
+              {botCommands && <BotAskTtlSetting botCommands={botCommands} t={t} />}
             </Stack>
           </>
         )}

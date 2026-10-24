@@ -23,7 +23,26 @@ const RAW_FETCH_TIMEOUT_MS = 15_000;
  */
 const RAW_FETCH_MAX_BYTES = 10 * 1_048_576;
 
+/** The longest a loaded page gets to finish drawing before its DOM is read. */
 const JS_SETTLE_MS = 1_500;
+
+/** How often a loaded page's text length is read. */
+const SETTLE_POLL_MS = 250;
+
+/**
+ * Equal reads in a row that call a page done. Three, not two: a page that draws its menus at
+ * load and its article over a request that lands a moment later holds still for one poll.
+ */
+const SETTLE_STABLE_READS = 3;
+
+/**
+ * The least body text (menus included) a stable page has to show to be read before JS_SETTLE_MS:
+ * below it the page may still be an empty app shell waiting on its data. Search's own threshold
+ * for a readable page is the same number of cleaned characters.
+ */
+const MIN_TEXT_CHARS = 400;
+
+const TEXT_LENGTH_SCRIPT = 'document.body ? document.body.innerText.length : 0';
 
 const JS_EXEC_TIMEOUT_MS = 10_000;
 export const URL_PARSER_PARTITION = 'persist:url-parser';
@@ -53,11 +72,16 @@ export interface RawFetchOptions {
   post?: { contentType: string; body: string };
   /** Aborts the request and rejects with the signal's reason: a flow's Stop ends the read. */
   signal?: AbortSignal;
+  /**
+   * `no-store` for an answer that varies with a header the site may not list in `Vary` (a markdown
+   * answer stored without `Vary: Accept` comes back to the next plain read of the URL).
+   */
+  cache?: Electron.ClientRequestConstructorOptions['cache'];
 }
 
 /** What a stopped read rejects with: the signal's own reason, or a plain error when it has none. */
-function abortReason(signal: AbortSignal): Error {
-  return signal.reason instanceof Error ? signal.reason : new Error('Raw fetch aborted');
+function abortReason(signal: AbortSignal, fallback = 'Raw fetch aborted'): Error {
+  return signal.reason instanceof Error ? signal.reason : new Error(fallback);
 }
 
 export interface RawFetchResponse {
@@ -68,6 +92,8 @@ export interface RawFetchResponse {
    * asked for without that option): a share link names its post only there.
    */
   finalUrl: string;
+  /** Lower-case names, the first value of a repeated header. */
+  headers?: Readonly<Record<string, string>>;
 }
 
 export async function fetchRawText(url: string, options?: RawFetchOptions): Promise<string> {
@@ -122,6 +148,7 @@ function requestRaw(
       redirect: guard || stopAtRedirect ? 'manual' : 'follow',
       ...(cookiesFrom ? { session: cookiesFrom, useSessionCookies: true } : {}),
       ...(options?.origin ? { origin: options.origin } : {}),
+      ...(options?.cache ? { cache: options.cache } : {}),
     });
     for (const [name, value] of Object.entries(options?.headers ?? {})) request.setHeader(name, value);
     if (post) request.setHeader('Content-Type', post.contentType);
@@ -185,6 +212,7 @@ function requestRaw(
             status: response.statusCode,
             text: decodeBody(Buffer.concat(chunks), headerValue(response.headers['content-type'])),
             finalUrl,
+            headers: firstHeaderValues(response.headers),
           },
         });
       });
@@ -215,6 +243,10 @@ function headerValue(value: string | string[] | undefined): string {
   return Array.isArray(value) ? value[0] ?? '' : value ?? '';
 }
 
+function firstHeaderValues(headers: Record<string, string | string[]>): Record<string, string> {
+  return Object.fromEntries(Object.entries(headers).map(([name, value]) => [name.toLowerCase(), headerValue(value)]));
+}
+
 function decodeBody(body: Buffer, contentType: string): string {
   const label = charsetOf(contentType) ?? sniffCharset(body) ?? 'utf-8';
   if (/^utf-?8$/i.test(label)) return body.toString('utf8');
@@ -243,8 +275,12 @@ export interface PageLoadResult {
   finalUrl: string;
 }
 
-export async function loadPageHtml(url: string, validateRedirectHost?: (host: string) => void): Promise<string> {
-  return (await loadPageResult(url, validateRedirectHost)).html;
+export async function loadPageHtml(
+  url: string,
+  validateRedirectHost?: (host: string) => void,
+  signal?: AbortSignal,
+): Promise<string> {
+  return (await loadPageResult(url, validateRedirectHost, signal)).html;
 }
 
 async function snapshotDom(win: BrowserWindow): Promise<PageLoadResult> {
@@ -267,21 +303,40 @@ async function snapshotDom(win: BrowserWindow): Promise<PageLoadResult> {
  * Residual: Chromium resolves names itself, after our lookup. A name that answers public to us and
  * private to Chromium a moment later (DNS rebinding) passes; the final-URL check narrows it but
  * cannot see the address Chromium connected to.
+ *
+ * An aborted `signal` destroys the window at once and rejects with the signal's reason.
  */
-export function loadPageResult(url: string, validateRedirectHost?: (host: string) => void): Promise<PageLoadResult> {
-  if (!isPublicWebOnly()) return openPageWindow(url, validateRedirectHost, false);
-  return assertPublicWebUrl(url).then(() => openPageWindow(url, validateRedirectHost, true));
+export function loadPageResult(
+  url: string,
+  validateRedirectHost?: (host: string) => void,
+  signal?: AbortSignal,
+): Promise<PageLoadResult> {
+  if (!isPublicWebOnly()) return openPageWindow(url, validateRedirectHost, false, signal);
+  return assertPublicWebUrl(url).then(() => openPageWindow(url, validateRedirectHost, true, signal));
 }
 
 function openPageWindow(
   url: string,
   validateRedirectHost: ((host: string) => void) | undefined,
   publicOnly: boolean,
+  signal: AbortSignal | undefined,
 ): Promise<PageLoadResult> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortReason(signal, 'Page load aborted'));
+      return;
+    }
     let settled = false;
     let domReady = false;
     let settleTimer: ReturnType<typeof setTimeout> | null = null;
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+
+    // Every way the load settles goes through here: the settle ceiling and the text poll both stop.
+    const stopSettling = (): void => {
+      if (settleTimer) clearTimeout(settleTimer);
+      if (pollTimer) clearTimeout(pollTimer);
+      pollTimer = null;
+    };
 
     const win = new BrowserWindow({
       x: -20_000,
@@ -311,7 +366,19 @@ function openPageWindow(
     const contentsId = win.webContents.id;
     markHeadless(contentsId);
 
+    // Also while the DOM is being read out (`settled` already set): that read can wait up to
+    // JS_EXEC_TIMEOUT_MS on a page that has stopped answering, and its result is not wanted now.
+    const onAbort = (): void => {
+      if (!signal) return;
+      settled = true;
+      stopSettling();
+      clearTimeout(timeout);
+      teardown();
+      reject(abortReason(signal, 'Page load aborted'));
+    };
+
     const teardown = (): void => {
+      signal?.removeEventListener('abort', onAbort);
       unmarkHeadless(contentsId);
       unguardPublicOnly(contentsId);
       safeDestroy(win);
@@ -320,11 +387,13 @@ function openPageWindow(
     const fail = (err: unknown): void => {
       if (settled) return;
       settled = true;
-      if (settleTimer) clearTimeout(settleTimer);
+      stopSettling();
       clearTimeout(timeout);
       teardown();
       reject(err instanceof Error ? err : new Error(String(err)));
     };
+
+    signal?.addEventListener('abort', onAbort, { once: true });
 
     const finish = async (): Promise<void> => {
       try {
@@ -363,7 +432,7 @@ function openPageWindow(
     const timeout = setTimeout(() => {
       if (settled) return;
       settled = true;
-      if (settleTimer) clearTimeout(settleTimer);
+      stopSettling();
       if (domReady) {
         appendLogLine(`[${fileStamp(new Date())}] ⚠️ [Page] load never fired within ${LOAD_TIMEOUT_MS / 1_000}s, serializing the DOM as it stands: ${url}`);
         void finish();
@@ -377,14 +446,47 @@ function openPageWindow(
       domReady = true;
     });
 
-    win.webContents.on('did-finish-load', () => {
+    const settleNow = (): void => {
       if (settled) return;
-      settleTimer = setTimeout(() => {
+      settled = true;
+      stopSettling();
+      clearTimeout(timeout);
+      void finish();
+    };
+
+    // A page that needs JS to draw its text is read once its text length holds still across
+    // SETTLE_STABLE_READS polls, or at JS_SETTLE_MS at the latest. A failed poll (the window is
+    // going away) leaves it to the ceiling.
+    let lastLength = -1;
+    let sameReads = 0;
+    const pollText = (): void => {
+      pollTimer = setTimeout(async () => {
+        pollTimer = null;
         if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        void finish();
-      }, JS_SETTLE_MS);
+        let length = -1;
+        try {
+          const read: unknown = await win.webContents.executeJavaScript(TEXT_LENGTH_SCRIPT);
+          if (typeof read === 'number') length = read;
+        } catch {
+          return;
+        }
+        if (settled) return;
+        sameReads = length === lastLength ? sameReads + 1 : 1;
+        lastLength = length;
+        if (length >= MIN_TEXT_CHARS && sameReads >= SETTLE_STABLE_READS) {
+          settleNow();
+          return;
+        }
+        pollText();
+      }, SETTLE_POLL_MS);
+    };
+
+    // A later load in the same window (the page moved itself) keeps the first ceiling, as the
+    // earliest timer always won.
+    win.webContents.on('did-finish-load', () => {
+      if (settled || settleTimer) return;
+      settleTimer = setTimeout(settleNow, JS_SETTLE_MS);
+      pollText();
     });
 
     win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
@@ -393,7 +495,7 @@ function openPageWindow(
       if (errorCode === -3) return;
       settled = true;
       clearTimeout(timeout);
-      if (settleTimer) clearTimeout(settleTimer);
+      stopSettling();
       teardown();
       reject(new Error(`Failed to load page: ${errorDescription} (${errorCode})`));
     });
@@ -402,7 +504,7 @@ function openPageWindow(
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      if (settleTimer) clearTimeout(settleTimer);
+      stopSettling();
       teardown();
       reject(err);
     });

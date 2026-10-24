@@ -119,6 +119,17 @@ function topLevelUrl(details: OnBeforeRequestListenerDetails): string {
   return details.referrer ?? '';
 }
 
+/**
+ * The sessions whose windows read someone else's page for its text: the page readers, the agent's
+ * browser, and the hidden Maps window that reads a place's rating. The AI worker's session keeps
+ * its provider pages untouched; the site readers have their own media filter (`sitePage.ts`).
+ */
+export const FILTERED_PARTITIONS: readonly string[] = ['persist:url-parser', 'persist:browser-flow', 'persist:gmaps'];
+
+export function installPageRequestFilters(fromPartition: (partition: string) => Session): void {
+  for (const partition of FILTERED_PARTITIONS) installRequestFilter(fromPartition(partition));
+}
+
 /** One listener per session: Electron keeps only the last onBeforeRequest handler. */
 export function installRequestFilter(target: Session): void {
   target.webRequest.onBeforeRequest((details, callback) => {

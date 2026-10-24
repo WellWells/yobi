@@ -26,9 +26,12 @@ import { registerFlowVersionHandlers } from './flowVersions';
 import { showSaveDialogForWin } from './context';
 import type { IpcContext } from './context';
 import type { StepProgress } from '../../shared/stepProgress';
+import { whileConversationBusy } from '../conversationBusy';
+import { IMAGE_CHAT_FLOW_ID } from '../../shared/imageRequest';
+import { runImageCommand } from '../chat/imageCommand';
 
 function registerCheckpointHandlers(
-  kind: 'rss' | 'scraper' | 'youtube_subs' | 'x_posts',
+  kind: 'rss' | 'scraper' | 'youtube_subs' | 'x_posts' | 'ptt_board',
   hasChannel: string,
   clearChannel: string,
   logTag: string,
@@ -60,9 +63,15 @@ export function registerFlowHandlers(ctx: IpcContext): void {
     return flowManager?.getAll() ?? [];
   });
 
-  ipcMain.handle(IPC.FLOW_SAVE, async (_event, flow: FlowDefinition, source?: unknown) => {
+  ipcMain.handle(IPC.FLOW_SAVE, async (_event, flow: FlowDefinition, source?: unknown, reviewed?: unknown) => {
     if (!flowManager) return null;
-    return flowManager.save(flow, { source: parseFlowSaveSource(source) });
+    // A chat-made flow's public-web-only mark is lifted only by the editor's own Save (the button or
+    // its shortcut), with the flow in front of the owner. Run, Run all, the switch, rename and the
+    // editor's auto-saves save too, and keep the mark the stored flow has; the renderer's copy is
+    // never trusted for it.
+    const { publicWebOnly: _publicWebOnly, ...owned } = flow;
+    const marked = reviewed !== true && flowManager.getAll().some((stored) => stored.id === flow.id && stored.publicWebOnly === true);
+    return flowManager.save(marked ? { ...owned, publicWebOnly: true } : owned, { source: parseFlowSaveSource(source) });
   });
 
   registerFlowVersionHandlers(ctx);
@@ -102,8 +111,7 @@ export function registerFlowHandlers(ctx: IpcContext): void {
     return flowManager.queueExecution(flowId);
   });
 
-  ipcMain.handle(IPC.FLOW_RUN_CHAT_COMMAND, async (
-    _event,
+  const runFlowChatCommand = async (
     storedFlowId: string,
     command: string,
     input: string,
@@ -118,6 +126,27 @@ export function registerFlowHandlers(ctx: IpcContext): void {
     const failed = (error: string): ChatCommandResult => ({
       result: { flowId, success: false, outputs: {}, error, completedSteps: 0, totalSteps: 0, completedAt: new Date().toISOString() },
     });
+    // A picture asked for that the chat's own send would not bring back: not a flow, one send that
+    // draws, on the page the words name (Gemini when none).
+    if (flowId === IMAGE_CHAT_FLOW_ID) {
+      const outcome = await runImageCommand(flowManager ?? undefined, {
+        prompt: (input ?? '').trim(),
+        strings: (await loadLanguageData(config.locale)) ?? {},
+        origin: 'app',
+        ...(conversationPath ? { conversationPath } : {}),
+      });
+      if (!outcome.success) {
+        const error = outcome.error ?? '';
+        return { result: { ...failed(error).result, displayError: error } };
+      }
+      return {
+        result: {
+          flowId, success: true, outputs: {}, finalOutput: outcome.answer ?? '', completedSteps: 1, totalSteps: 1,
+          completedAt: new Date().toISOString(), lastLlmProvider: outcome.providerLabel,
+        },
+        ...(outcome.filePath ? { filePath: outcome.filePath } : {}),
+      };
+    }
     if (!flowManager) return failed('FlowManager not available');
 
     const info = flowManager.getChatCommandInfo(flowId, command);
@@ -222,7 +251,22 @@ export function registerFlowHandlers(ctx: IpcContext): void {
       sendLog(`⚠️ [Flow] Failed to save chat-skill result: ${err instanceof Error ? err.message : String(err)}`);
       return { result: flowResult };
     }
-  });
+  };
+
+  // Busy until the result is written: it lands in this conversation.
+  ipcMain.handle(IPC.FLOW_RUN_CHAT_COMMAND, (
+    _event,
+    storedFlowId: string,
+    command: string,
+    input: string,
+    conversationPath?: string,
+    progressId?: string,
+    modelUrl?: string,
+  ): Promise<ChatCommandResult> => whileConversationBusy(
+    conversationPath,
+    'flowCommand',
+    () => runFlowChatCommand(storedFlowId, command, input, conversationPath, progressId, modelUrl),
+  ));
 
   ipcMain.handle(IPC.FLOW_ABORT, async (_event, flowId: string) => {
     if (!flowManager) return false;
@@ -276,6 +320,8 @@ export function registerFlowHandlers(ctx: IpcContext): void {
   ipcMain.handle(IPC.FLOW_PREVIEW_SCHEDULE, (_event, trigger: TriggerConfig) => {
     return previewSchedule(trigger);
   });
+
+  ipcMain.handle(IPC.FLOW_WATCH_MISSING_GET, () => flowManager?.getWatchMissing() ?? []);
 
   ipcMain.handle(IPC.FLOW_EXPORT, async (_event, flow: FlowDefinition) => {
     try {
@@ -336,4 +382,5 @@ export function registerFlowHandlers(ctx: IpcContext): void {
   registerCheckpointHandlers('scraper', IPC.SCRAPER_HAS_CHECKPOINT, IPC.SCRAPER_CLEAR_CHECKPOINT, 'Scraper');
   registerCheckpointHandlers('youtube_subs', IPC.YT_SUBS_HAS_CHECKPOINT, IPC.YT_SUBS_CLEAR_CHECKPOINT, 'YT Subs');
   registerCheckpointHandlers('x_posts', IPC.X_POSTS_HAS_CHECKPOINT, IPC.X_POSTS_CLEAR_CHECKPOINT, 'X Posts');
+  registerCheckpointHandlers('ptt_board', IPC.PTT_BOARD_HAS_CHECKPOINT, IPC.PTT_BOARD_CLEAR_CHECKPOINT, 'PTT Board');
 }

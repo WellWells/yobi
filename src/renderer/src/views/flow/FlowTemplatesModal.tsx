@@ -5,10 +5,13 @@ import { AppModal } from '../../components/AppModal';
 import { AppTextInput } from '../../components/AppTextInput';
 import { GroupHeader } from '../../components/GroupHeader';
 import { useDragScroll } from '../../hooks/useDragScroll';
+import { isMac } from '../../utils/keyLabels';
+import { comboLabel } from '../../../../shared/shortcuts';
 import { FLOW_TEMPLATES, type FlowTemplate, type TemplateCategory } from './examples';
 import { TemplateIcon } from './TemplateIcon';
 import classes from './FlowTemplatesModal.module.css';
 import { Z_MODAL } from '../../config/zLayers';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 interface FlowTemplatesModalProps {
   open: boolean;
@@ -24,7 +27,9 @@ interface FlowTemplatesModalProps {
   escapeDisabled?: boolean;
 }
 
+// Selected text first: the one rail that needs nothing set up — no bot, no feed, no recipient.
 const CATEGORIES: { key: TemplateCategory; labelKey: string; descKey: string }[] = [
+  { key: 'hotkey', labelKey: 'flow.templates.category.hotkey', descKey: 'flow.templates.category.hotkey.desc' },
   { key: 'push', labelKey: 'flow.templates.category.push', descKey: 'flow.templates.category.push.desc' },
   { key: 'command', labelKey: 'flow.templates.category.command', descKey: 'flow.templates.category.command.desc' },
 ];
@@ -169,12 +174,14 @@ export const FlowTemplatesModal: React.FC<FlowTemplatesModalProps> = ({
 
                       {/* One fact per tile: how you invoke it, or how much it wants from you. */}
                       <Box className={classes.meta}>
-                        {tpl.command ? (
-                          <Code fz={10} fw={600}>{`/${tpl.command}`}</Code>
+                        {tpl.command || tpl.hotkey ? (
+                          <Code fz={10} fw={600}>
+                            {tpl.command ? `/${tpl.command}` : comboLabel(tpl.hotkey ?? '', isMac)}
+                          </Code>
                         ) : (
                           <Text fz={10} c="dimmed">
                             {tpl.setupCount > 0
-                              ? t('flow.templates.setup').replace('{{count}}', String(tpl.setupCount))
+                              ? fillTemplate(t('flow.templates.setup'), { count: String(tpl.setupCount) })
                               : t('flow.templates.ready')}
                           </Text>
                         )}

@@ -1,4 +1,5 @@
 import { config } from '../config';
+import { isBotPlatform } from '../../shared/types';
 import type { BotPlatform } from '../../shared/types';
 import type { UserMemoryEntry } from '../../shared/userMemory';
 import { memoryAccess } from './memoryRules';
@@ -12,16 +13,14 @@ import type { UserMemoryState } from './memoryState';
  */
 export function isBotSelfAccount(state: UserMemoryState, platform: BotPlatform, userId: string): boolean {
   const id = (userId ?? '').trim();
-  if (!id || !state.botSelf[platform].includes(id)) return false;
-  const paired = platform === 'telegram'
-    ? config.telegram.pairing.pairedUsers.map((user) => String(user.userId))
-    : config.line.pairing.pairedUsers.map((user) => user.userId);
-  return paired.includes(id);
+  if (!id || !(state.botSelf[platform] ?? []).includes(id)) return false;
+  return (config[platform]?.pairing.pairedUsers ?? []).some((user) => String(user.userId) === id);
 }
 
 /**
- * A bot chat reaches the memory only from the user's own account in a private chat. Telegram and
- * LINE both give a private chat the user's own id as its chat id; a group or room never has it.
+ * A bot chat reaches the memory only from the user's own account in a private chat. Every platform
+ * files a private chat under the user's own id as its chat id (Telegram and LINE give it that id;
+ * Discord and Slack runtimes map their DM channels to it); a group or room never has it.
  */
 export function botMemoryContext(
   state: UserMemoryState,
@@ -36,7 +35,7 @@ export function botMemoryContext(
 /** `platform:chatId:userId`, the key bot conversations and agent runs are filed under. */
 export function parseBotChatKey(chatKey: string): { platform: BotPlatform; chatId: string; userId: string } | null {
   const [platform, chatId, userId] = (chatKey ?? '').split(':');
-  if ((platform !== 'telegram' && platform !== 'line') || !chatId || !userId) return null;
+  if (!platform || !isBotPlatform(platform) || !chatId || !userId) return null;
   return { platform, chatId, userId };
 }
 

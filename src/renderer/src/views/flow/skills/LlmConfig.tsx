@@ -7,7 +7,8 @@ import { ToggleSwitch } from '../../../components/ToggleSwitch';
 import { buildCapturePaletteOptions, withCapturePalette } from './captureConfig';
 import { PROVIDER_DROPDOWN_MAX_HEIGHT, providerSectionsToSelectData } from '../../../config/models';
 import { useProviderModels } from '../../../hooks/useProviderModels';
-import { UPLOAD_CAPABLE_PROVIDER_LABELS } from '../../../../../shared/types';
+import { BYOK_IMAGE_PROVIDER_LABELS, UPLOAD_CAPABLE_PROVIDER_LABELS } from '../../../../../shared/types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 import type { SkillConfigProps } from './types';
 
 export const LlmConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
@@ -48,7 +49,10 @@ export const LlmConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
     />
     {(step.config.attachments ?? '').trim() && (
       <Text fz="xs" c="dimmed">
-        {t('flow.skill.llm.attachments.hint').replace('{{providers}}', UPLOAD_CAPABLE_PROVIDER_LABELS)}
+        {fillTemplate(t('flow.skill.llm.attachments.hint'), {
+          providers: UPLOAD_CAPABLE_PROVIDER_LABELS,
+          byok: BYOK_IMAGE_PROVIDER_LABELS,
+        })}
       </Text>
     )}
     <SelectDropdown
@@ -136,7 +140,7 @@ export const LlmConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
     />
     {step.config.emitFailFlag === 'true' && (
       <Text fz="xs" c="dimmed">
-        {t('flow.skill.llm.emitFailFlag.hint').replace('{{flag}}', `{{${step.outputKey}.isFailed}}`)}
+        {fillTemplate(t('flow.skill.llm.emitFailFlag.hint'), { flag: `{{${step.outputKey}.isFailed}}` })}
       </Text>
     )}
   </Stack>

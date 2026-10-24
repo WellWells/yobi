@@ -18,6 +18,8 @@ import { sendLog, sendToRenderer } from '../helpers';
 import { listOutputFiles } from '../files';
 import { buildSettingsSnapshot, showSaveDialogForWin } from './context';
 import { applyImportedConfigLiveEffects } from './settings';
+import { settleFilledInRegionHotkey } from '../regionHotkeyDefault';
+import { loadFlowsFromDisk } from '../flow/flowPersistence';
 import type { IpcContext } from './context';
 
 function errMsg(err: unknown): string {
@@ -62,16 +64,29 @@ export function registerBackupHandlers(ctx: IpcContext): void {
         const requested = Array.isArray(categories) ? categories : [];
         if (!zipPath || requested.length === 0) return { ok: false, restored: [], error: 'empty' };
 
+        // Same order as launch: nothing held, then the three hotkeys, then the restored flows.
+        // Reloading the flows first would skip one on a combo the three still held from before;
+        // binding the three while the outgoing flows hold theirs would fail a combo moving from an
+        // old flow to a hotkey. So the outgoing flows let go first and the new ones register last.
+        let flowsRestored = false;
         const { restored, importedConfig } = await applyBackup(zipPath, requested, {
           reloadFlows: async () => {
-            if (ctx.flowManager) await ctx.flowManager.reload();
+            flowsRestored = true;
           },
         });
 
+        // A config from before the region hotkey: its filled-in default yields to a flow using it.
+        if (importedConfig) await settleFilledInRegionHotkey(loadFlowsFromDisk);
+        if (flowsRestored) ctx.flowManager?.releaseTriggers();
         let snapshot: SettingsSnapshot | undefined;
         if (importedConfig) {
           applyImportedConfigLiveEffects(importedConfig, ctx);
           snapshot = buildSettingsSnapshot();
+        }
+        if (flowsRestored && ctx.flowManager) {
+          await ctx.flowManager.reload().catch((err: unknown) => {
+            sendLog(`⚠️ Reloading the restored flows failed: ${errMsg(err)}`);
+          });
         }
         if (restored.includes('outputs')) {
           sendToRenderer(IPC.FILE_LIST, await listOutputFiles());

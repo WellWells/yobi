@@ -13,6 +13,7 @@ import type {
 } from '../../../../../shared/types';
 import { Z_MODAL } from '../../../config/zLayers';
 import { backupImpactLabel } from './backupLabels';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 interface Props {
   open: boolean;
@@ -109,9 +110,7 @@ export const BackupImportModal: React.FC<Props> = ({ open, t, onClose, onImporte
   }, [zipPath, selected, onImported, onClose, t]);
 
   const metaLine = inspect
-    ? t('settings.backup.import.meta')
-      .replace('{{date}}', inspect.createdAt ? new Date(inspect.createdAt).toLocaleString() : '—')
-      .replace('{{version}}', inspect.appVersion ?? '—')
+    ? fillTemplate(t('settings.backup.import.meta'), { date: inspect.createdAt ? new Date(inspect.createdAt).toLocaleString() : '—', version: inspect.appVersion ?? '—' })
     : '';
 
   return (

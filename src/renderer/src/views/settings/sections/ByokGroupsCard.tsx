@@ -8,6 +8,7 @@ import { WebDialog } from '../../../components/WebDialog';
 import { ByokGroupForm } from './ByokGroupForm';
 import type { useByokGroups } from '../hooks/useByokGroups';
 import type { ByokGroupSnapshot } from '../../../../../shared/types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 type ByokGroups = ReturnType<typeof useByokGroups>;
 
@@ -143,7 +144,7 @@ export const ByokGroupsCard: React.FC<Props> = ({ byokGroups, t, sectionGap }) =
 
       <WebDialog
         open={confirmDelete !== null}
-        title={t('settings.byok.group.delete.confirm.title').replace('{{name}}', confirmDelete?.name ?? '')}
+        title={fillTemplate(t('settings.byok.group.delete.confirm.title'), { name: confirmDelete?.name ?? '' })}
         description={t('settings.byok.group.delete.confirm.detail')}
         confirmText={t('settings.byok.group.delete')}
         cancelText={t('dialog.cancel')}

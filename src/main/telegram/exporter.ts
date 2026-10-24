@@ -1,5 +1,6 @@
 import type { TelegramReplyTarget } from '../../shared/types';
 import { escapeRegExp } from '../../shared/regex';
+import { telegramCallbackData } from './callbackRouter';
 
 const TELEGRAM_EXPORT_TTL_MS = 30 * 60 * 1000;
 export const TELEGRAM_EXPORT_CB_PREFIX = 'expdl';
@@ -87,7 +88,7 @@ export class ExportTokenRegistry {
 }
 
 export function buildExportCallbackData(token: string, format: TelegramExportFormat): string {
-  return `${TELEGRAM_EXPORT_CB_PREFIX}:${token}:${format}`;
+  return telegramCallbackData(TELEGRAM_EXPORT_CB_PREFIX, `${token}:${format}`);
 }
 
 export function parseExportCallbackData(data: string): { token: string; format: TelegramExportFormat } | null {

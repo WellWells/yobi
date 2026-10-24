@@ -155,6 +155,14 @@ textarea:focus-visible {
   box-shadow: 0 0 0 3px var(--accent-dim);
 }
 
+/* Text fields add an accent border on top of that ring; the outline above already covers them.
+   :focus-visible (not :focus) keeps the ring for keyboard users while suppressing it for pointer
+   interactions. */
+input:focus-visible,
+textarea:focus-visible {
+  border-color: var(--accent);
+}
+
 button:disabled,
 input:disabled,
 select:disabled,
@@ -169,15 +177,6 @@ textarea:disabled {
    the dimmed glyph from the rule above is the whole signal. Loading keeps Mantine's look. */
 .mantine-ActionIcon-root:is([data-variant='subtle'], [data-variant='transparent']):is(:disabled, [data-disabled]):not([data-loading]) {
   background: transparent;
-}
-
-/* Use :focus-visible (not :focus) to preserve the focus ring for keyboard users
-   while suppressing it for pointer interactions. */
-input:focus-visible,
-textarea:focus-visible {
-  outline: 2px solid transparent;
-  outline-offset: 2px;
-  border-color: var(--accent);
 }
 
 ::placeholder {
@@ -593,8 +592,22 @@ textarea:focus-visible {
   pointer-events: auto;
 }
 
-/* ── Mantine Menu & Combobox & Select custom theme overrides ─────────────── */
+/* A dropdown opened over the title bar sits inside its drag region, and Electron hands those clicks
+   to the window before the page sees them: only the part below the bar was clickable. */
 .mantine-Menu-dropdown,
+.mantine-Popover-dropdown,
+.mantine-Combobox-dropdown,
+.mantine-Select-dropdown,
+.mantine-HoverCard-dropdown {
+  -webkit-app-region: no-drag;
+}
+
+/* ── Mantine Menu & Combobox & Select custom theme overrides ─────────────── */
+/* A submenu (Menu.Sub) renders as a Popover dropdown with role="menu", not a Menu dropdown. Left
+   out, it fell back to a surface the colour of --bg-hover: lighter than its parent menu, and a
+   hovered row inside it could not be seen at all. */
+.mantine-Menu-dropdown,
+.mantine-Popover-dropdown[role='menu'],
 .mantine-Combobox-dropdown,
 .mantine-Select-dropdown {
   background-color: var(--bg-secondary) !important;

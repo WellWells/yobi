@@ -83,6 +83,17 @@ export function matchesFilter(tile: ConnectorTile, filter: string): boolean {
   return tile.category === filter;
 }
 
+/**
+ * Stable split: what the user already added (a saved remote server, a built-in switched on)
+ * comes first, the rest of the gallery after it, each part in its original order.
+ */
+export function addedFirst<T>(items: readonly T[], isAdded: (item: T) => boolean): { added: T[]; rest: T[] } {
+  const added: T[] = [];
+  const rest: T[] = [];
+  for (const item of items) (isAdded(item) ? added : rest).push(item);
+  return { added, rest };
+}
+
 export function matchesQuery(tile: ConnectorTile, query: string): boolean {
   const trimmed = query.trim().toLowerCase();
   if (!trimmed) return true;

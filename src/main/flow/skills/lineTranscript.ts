@@ -6,6 +6,7 @@
  */
 import { createHash } from 'node:crypto';
 import type { ParsedMessage } from '../../line/schema';
+import { fillTemplate } from '../../../shared/fillTemplate';
 
 export interface LineWatermark {
   /** Epoch ms of the newest message reported so far. */
@@ -145,8 +146,7 @@ function dayOf(msg: ParsedMessage): string {
 
 function speakerOf(msg: ParsedMessage, labels: TranscriptLabels): string {
   const name = msg.sender ?? '';
-  // A replacer function, so a `$&` inside a LINE name is inserted literally.
-  return msg.from_me ? labels.me.replace('{{name}}', () => name) : name;
+  return msg.from_me ? fillTemplate(labels.me, { name }) : name;
 }
 
 function lineOf(msg: ParsedMessage, labels: TranscriptLabels): string {

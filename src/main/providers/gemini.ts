@@ -14,8 +14,21 @@ import {
   GEMINI_INPUT_SELECTOR as INPUT_SELECTOR,
   GEMINI_NEW_CHAT_SELECTOR,
   GEMINI_STOP_SELECTOR,
+  INJECTED_GEMINI_TEMPORARY_JS,
   INJECTED_GEMINI_WAIT_AND_READ_JS,
 } from './geminiReadScript';
+import { decodePageImages } from './generatedImages';
+import type { ProviderRunResult } from './generatedImages';
+import { GEMINI_SIGNED_OUT_PROMPT_CAP, geminiPromptCap, noteGeminiComposerCut } from './geminiSignInState';
+import { GEMINI_PROMPT_TOO_LONG, geminiPromptTooLongMessage, parseGeminiPromptTooLong } from './geminiPromptTooLong';
+import { charsPlusBreaks } from '../../shared/textBudget';
+
+/** What the page script returns: the pictures still base64, checked by `decodePageImages`. */
+interface PageRunResult {
+  response: string;
+  title: string;
+  images?: unknown;
+}
 
 const MAX_BOUNCE_ATTEMPTS = 5;
 
@@ -27,10 +40,11 @@ export async function runGeminiAutomation(
   attachments?: string[],
   wantTitle = false,
   continuingThread = false,
-): Promise<{ response: string; title: string }> {
+  temporary = false,
+): Promise<ProviderRunResult> {
   for (let attempt = 1; ; attempt++) {
     try {
-      return await runGeminiAttempt(workerWin, prompt, timeoutMs, targetUrl, attachments, wantTitle, continuingThread);
+      return await runGeminiAttempt(workerWin, prompt, timeoutMs, targetUrl, attachments, wantTitle, continuingThread, temporary);
     } catch (err) {
       if (err instanceof Error && err.message.includes('GEMINI_BOUNCED') && attempt < MAX_BOUNCE_ATTEMPTS) {
         const where = continuingThread ? 'the same thread' : 'a fresh chat';
@@ -50,19 +64,29 @@ async function runGeminiAttempt(
   attachments?: string[],
   wantTitle = false,
   continuingThread = false,
-): Promise<{ response: string; title: string }> {
+  temporary = false,
+): Promise<ProviderRunResult> {
   const wc = workerWin.webContents;
 
   applyWorkerUserAgent(wc, WORKER_USER_AGENTS.gemini);
 
-  const landing = await ensureOnPage(wc, targetUrl, PAGE_REUSE.gemini, { continuingThread });
+  const landing = await ensureOnPage(wc, targetUrl, PAGE_REUSE.gemini, { continuingThread, temporary });
   const reused = landing === 'reused';
   if (reused) sendLog('♻️ Gemini page kept open — typing straight into it, no reload');
   if (!reused) await waitForInputArea(wc, 15_000);
 
   await applyVisibilityPatch(wc);
+  // First of all: the switch is a fresh conversation, which would drop the model pick and uploads.
+  if (temporary && !continuingThread && !(await wc.executeJavaScript(buildGeminiTemporaryChatScript(), true))) {
+    sendLog('⚠️ Gemini has no temporary chat on this page — sending as a normal chat');
+  }
   // Before anything is typed: the model and thinking switch apply to the next message only.
   await syncGeminiModel(wc);
+  // The picker read just now can have shown the page signed out: a prompt sized for the signed-in
+  // cap would lose its tail on the page, so it is refused before anything is typed or uploaded.
+  const cap = geminiPromptCap();
+  const size = charsPlusBreaks(prompt);
+  if (size > cap) throw new Error(geminiPromptTooLongMessage(cap, size));
 
   if (attachments && attachments.length > 0) {
     const uploadLog = await uploadFilesToGemini(wc, attachments, 120_000);
@@ -84,12 +108,12 @@ async function runGeminiAttempt(
   const onFullNavigate = () => { fullyNavigated = true; };
   wc.on('did-navigate', onFullNavigate);
 
-  const autoScript = buildGeminiAutomationScript(prompt, baseline, timeoutMs, COPY_BTN_SELECTOR, wantTitle, continuingThread);
-  let result: { response: string; title: string } | null = null;
+  const autoScript = buildGeminiAutomationScript(prompt, baseline, timeoutMs, COPY_BTN_SELECTOR, wantTitle, continuingThread, temporary);
+  let result: PageRunResult | null = null;
 
   try {
     try {
-      result = await executeAutomationWithTimeout<{ response: string; title: string }>(
+      result = await executeAutomationWithTimeout<PageRunResult>(
         wc,
         autoScript,
         timeoutMs,
@@ -110,7 +134,7 @@ async function runGeminiAttempt(
       const readScript = buildGeminiReadScript(
         recoveryBaseline, timeoutMs, COPY_BTN_SELECTOR, wantTitle, responseBaseline,
       );
-      result = await executeAutomationWithTimeout<{ response: string; title: string }>(
+      result = await executeAutomationWithTimeout<PageRunResult>(
         wc,
         readScript,
         timeoutMs,
@@ -118,17 +142,29 @@ async function runGeminiAttempt(
       );
     }
 
-    if (!result || !result.response || result.response.trim() === '') {
+    const images = decodePageImages(result?.images);
+    if (images.length > 0) sendLog(`🖼️ Gemini drew ${images.length} picture(s) for this answer`);
+    // A picture with no words is an answer; nothing at all is not.
+    if (!result || ((!result.response || result.response.trim() === '') && images.length === 0)) {
       throw new Error('Clipboard interceptor returned empty text');
     }
 
     return {
-      response: result.response.trim(),
+      response: (result.response || '').trim(),
       title: (result.title || '').trim(),
+      ...(images.length > 0 ? { images } : {}),
     };
   } catch (err) {
     if (err instanceof Error && err.message.includes('GEMINI_LOGIN_REQUIRED')) {
       await showLoginWindowIfNeeded('Gemini', PROVIDER_URLS.gemini);
+    }
+    // The page kept less than the whole prompt and nothing was sent. No login window: a scheduled
+    // flow or a bot must not open one. Reported in the cap the next prompt is sized for.
+    const cut = parseGeminiPromptTooLong(err instanceof Error ? err.message : String(err));
+    if (cut) {
+      noteGeminiComposerCut(cut.limit);
+      sendLog(`⚠️ Gemini's composer kept only ${cut.limit} of ${cut.size} characters — not sent; prompts are now capped at ${geminiPromptCap()}`);
+      throw new Error(geminiPromptTooLongMessage(geminiPromptCap(), charsPlusBreaks(prompt)));
     }
     throw err;
   }
@@ -171,6 +207,17 @@ async function waitForInputArea(wc: WebContents, timeoutMs: number): Promise<voi
   throw new Error('Gemini input area not found after navigation');
 }
 
+/** Resolves true once the page is a temporary chat, false where Gemini offers none. */
+export function buildGeminiTemporaryChatScript(): string {
+  return `
+(async function geminiTemporary() {
+  ${INJECTED_SLEEP_JS}
+  ${INJECTED_WAIT_FOR_JS}
+  ${INJECTED_GEMINI_TEMPORARY_JS}
+  return await geminiEnterTemporaryChat();
+})()`;
+}
+
 export function buildGeminiAutomationScript(
   prompt: string,
   baselineCopyCount: number,
@@ -178,6 +225,7 @@ export function buildGeminiAutomationScript(
   copyBtnSelector: string,
   wantTitle: boolean,
   continuingThread = false,
+  temporary = false,
 ): string {
   const escapedPrompt = JSON.stringify(prompt);
   const escapedSelector = JSON.stringify(copyBtnSelector);
@@ -192,10 +240,14 @@ export function buildGeminiAutomationScript(
   var PROMPT = ${escapedPrompt};
   var WANT_TITLE = ${wantTitle};
   var CONTINUING = ${continuingThread};
+  var TEMPORARY = ${temporary && !continuingThread};
+  var SAFE_CAP = ${GEMINI_SIGNED_OUT_PROMPT_CAP};
+  var TOO_LONG_TAG = ${JSON.stringify(GEMINI_PROMPT_TOO_LONG)};
   ${INJECTED_SLEEP_JS}
   ${INJECTED_WAIT_FOR_JS}
   ${INJECTED_INTERCEPT_COPY_JS}
   ${INJECTED_GEMINI_WAIT_AND_READ_JS}
+  ${INJECTED_GEMINI_TEMPORARY_JS}
 
   await waitFor(function() {
     return !!document.querySelector(INPUT_SEL);
@@ -240,6 +292,10 @@ export function buildGeminiAutomationScript(
       } catch(e) {}
     }
   }
+
+  // The runner switched before syncing the model and uploading; a new chat started just above
+  // can have left that, so check again (a no-op on a page that already is one).
+  if (TEMPORARY) await geminiEnterTemporaryChat();
 
   function placeCursorAtEnd(el) {
     try {
@@ -302,6 +358,93 @@ export function buildGeminiAutomationScript(
     return false;
   }
 
+  // Signed out, the composer silently keeps only the first 32,000 characters and the send button
+  // stays enabled, so the only check is the composer itself, after filling and before clicking.
+  // Lone surrogates may come back as U+FFFD; whitespace (Quill's breaks, nbsp, U+FEFF) is skipped.
+  function norm(s) {
+    return String(s || '')
+      .replace(/[\\uD800-\\uDBFF](?![\\uDC00-\\uDFFF])|(?<![\\uD800-\\uDBFF])[\\uDC00-\\uDFFF]/g, '\\uFFFD')
+      .replace(/\\s+/g, '');
+  }
+  var EXP = PROMPT.replace(/\\r\\n?/g, '\\n');
+  var EXP_SQ = norm(EXP);
+  var TAIL = EXP_SQ.length > 0 ? EXP_SQ.slice(-200) : '';
+
+  function quillOf(el) {
+    var container = el && el.closest ? el.closest('.ql-container') : null;
+    var quill = container ? container.__quill : null;
+    return quill && typeof quill.getText === 'function' ? quill : null;
+  }
+  // How much of the prompt, in the page's own unit ('\\n' = 1), the composer text covers: up to the
+  // next non-space character after what it holds; 0 when it does not hold the prompt's start.
+  function keptOfPrompt(got) {
+    if (EXP_SQ.slice(0, got.length) !== got) return 0;
+    var seen = 0;
+    for (var i = 0; i < EXP.length; i++) {
+      if (/\\s/.test(EXP.charAt(i))) continue;
+      if (seen === got.length) return i;
+      seen++;
+    }
+    return EXP.length;
+  }
+  // Quill's model is what Gemini sends; innerText would count every break twice.
+  function composerSnapshot(el) {
+    var quill = quillOf(el);
+    if (quill) {
+      var text = quill.getText();
+      return { text: text, kept: typeof quill.getLength === 'function' ? quill.getLength() - 1 : keptOfPrompt(norm(text)) };
+    }
+    var raw = el ? (el.textContent || '') : '';
+    return { text: raw, kept: keptOfPrompt(norm(raw)) };
+  }
+  function judge(snap) {
+    var got = norm(snap.text);
+    if (got.length < EXP_SQ.length) return 'short';
+    return !TAIL || got.slice(-TAIL.length) === TAIL ? 'whole' : 'mismatch';
+  }
+  function clearComposer(el) {
+    if (!el) return;
+    var quill = quillOf(el);
+    try { if (quill && typeof quill.deleteText === 'function') quill.deleteText(0, quill.getLength(), 'user'); } catch (e) {}
+    if (norm(el.textContent).length > 0) {
+      try {
+        placeCursorAtEnd(el);
+        document.execCommand('selectAll', false, null);
+        document.execCommand('delete', false, null);
+      } catch (e) {}
+    }
+    if (norm(el.textContent).length > 0) {
+      while (el.firstChild) el.removeChild(el.firstChild);
+      el.classList.add('ql-blank');
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'deleteContentBackward' }));
+    }
+  }
+  async function verifyComposerHoldsPrompt(el) {
+    var snap = composerSnapshot(el);
+    // Only a prompt the signed-out cap can cut waits for the composer to settle; others judge at once.
+    if (EXP.length > SAFE_CAP) {
+      var last = norm(snap.text).length;
+      for (var i = 0; i < 2; i++) {
+        await sleep(150);
+        snap = composerSnapshot(getComposer() || el);
+        var now = norm(snap.text).length;
+        if (now === last) break;
+        last = now;
+      }
+    }
+    var verdict = judge(snap);
+    if (verdict === 'whole') return;
+    clearComposer(getComposer() || el);
+    // A cap keeps the prompt's start, at least the signed-out 32,000 (measured: never less). Less,
+    // or text that is not the prompt's start, is a fill that went wrong, not a cap to remember.
+    var head = norm(snap.text);
+    if (EXP.length > SAFE_CAP && verdict === 'short' && snap.kept >= SAFE_CAP && EXP_SQ.slice(0, head.length) === head) {
+      throw new Error(TOO_LONG_TAG + ': Gemini keeps only ' + snap.kept + ' of ' + EXP.length
+        + ' characters; the end of the prompt is missing, so it was not sent');
+    }
+    throw new Error('Gemini composer never registered the whole prompt, so it was not sent');
+  }
+
   async function submitPrompt() {
     var filled = await fillComposer();
     if (!filled) {
@@ -318,6 +461,7 @@ export function buildGeminiAutomationScript(
     } catch(e) {
       throw new Error('Gemini send button never became clickable within 8s (composer had text but send stayed disabled)');
     }
+    await verifyComposerHoldsPrompt(getComposer());
     sendBtn.click();
 
     var landed = false;

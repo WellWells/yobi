@@ -9,7 +9,7 @@ import type {
   QueueTaskItem,
 } from '../../shared/types';
 import { compactPreview } from '../../shared/textBudget';
-import { INTERACTIVE_RUN_KEY, SIGNED_IN_RUN_KEY, executeFlow } from './executor';
+import { BOT_RUN_KEY, INTERACTIVE_RUN_KEY, SIGNED_IN_RUN_KEY, executeFlow } from './executor';
 import { signInUseForRun } from '../botPermissions/signedInReads';
 import { closeRunPages } from './skills/browserPages';
 import { runFlowBuild } from './flowBuild';
@@ -23,6 +23,7 @@ import { classifyFailure, recordTaskOutcome } from '../metrics';
 import { pruneFlowMetrics } from '../flowMetrics';
 import { recordFlowRun } from '../flowMeter';
 import { runInMetricDomain } from '../llmMeter';
+import { publicWebOnlyIf } from '../net/publicWebScope';
 import { IPC, BOT_COMMAND_RE } from '../../shared/types';
 import { builtinById, isBuiltinFlowId } from '../../shared/builtinFlows';
 import type { BuiltinBuildContext } from '../../shared/builtinFlows';
@@ -45,6 +46,7 @@ import type { FlowSaveOrigin, FlowVersionRestoreResult, FlowVersionView } from '
 import { FlowTriggerRegistry } from './flowTriggers';
 import type { TriggerFire } from './flowTriggers';
 import { shouldDeleteAfterRun } from '../../shared/flowDeleteAfterRun';
+import { FILE_TRIGGER_NAME_VAR } from '../../shared/flowFileTrigger';
 import { flushScheduleState, loadScheduleState, pruneScheduleState } from './scheduleState';
 import { FlowQueue, QUEUE_CANCELLED } from './flowQueue';
 import { llmLane } from './lanes';
@@ -88,16 +90,21 @@ export interface FlowBotCommandDef {
 
 type FlowExecutionSource = 'ui' | 'bot' | 'system' | 'chat';
 
+const ALREADY_RUNNING = 'Flow is already running';
+
 export class FlowManager {
   private flows: FlowDefinition[] = [];
   private deps: FlowExecutorDeps;
   private _running = new Set<string>();
+  /** Called once when the run under that key ends. */
+  private _runEndWaiters = new Map<string, Array<() => void>>();
   private _abortControllers = new Map<string, AbortController>();
   private _onBotCommandsChanged: (() => void) | null = null;
   private triggers = new FlowTriggerRegistry((flowId, extraContext, fire) => {
     if (fire?.systemEvent && !this.admitSystemFire(flowId, fire.systemEvent)) return;
-    void this.createQueueExecution(flowId, extraContext, 'ui', fire).result;
-  });
+    if (fire?.file) return this.runForFile(flowId, extraContext, fire);
+    return this.createQueueExecution(flowId, extraContext, 'ui', fire).result;
+  }, (flowIds) => sendToRenderer(IPC.FLOW_WATCH_MISSING, flowIds));
   private queue = new FlowQueue();
 
   constructor(deps: FlowExecutorDeps) {
@@ -142,6 +149,14 @@ export class FlowManager {
     });
   }
 
+  /**
+   * Lets go of every trigger of the current flows (hotkeys, schedules, watchers) until `reload()`
+   * registers the new ones; a restore uses it so a combo leaving a flow is free for the hotkeys.
+   */
+  releaseTriggers(): void {
+    this.triggers.unregisterAll(this.flows);
+  }
+
   async reload(): Promise<void> {
     resetFlowVersionCache();
     this.triggers.unregisterAll(this.flows);
@@ -157,6 +172,11 @@ export class FlowManager {
 
   getAll(): FlowDefinition[] {
     return this.flows;
+  }
+
+  /** Flows whose watched folder is not there right now (a file trigger's issue). */
+  getWatchMissing(): string[] {
+    return this.triggers.watchMissingFlowIds();
   }
 
   getExecutorDeps(): FlowExecutorDeps {
@@ -493,10 +513,18 @@ export class FlowManager {
     }
 
     // Only a run the person started in the desktop chat may show them a window (a site's
-    // verification), and only the owner's own may read with the site sign-ins; whatever a caller
-    // put under either key is dropped.
-    const { [INTERACTIVE_RUN_KEY]: _interactive, [SIGNED_IN_RUN_KEY]: _signedIn, ...callerContext } = extraContext ?? {};
-    const runContext = source === 'chat' ? { ...callerContext, [INTERACTIVE_RUN_KEY]: '1' } : callerContext;
+    // verification), only the owner's own may read with the site sign-ins, and a run a bot message
+    // started is marked so a connector step will not change anything; whatever a caller put under
+    // any of these keys is dropped.
+    const {
+      [INTERACTIVE_RUN_KEY]: _interactive,
+      [SIGNED_IN_RUN_KEY]: _signedIn,
+      [BOT_RUN_KEY]: _botRun,
+      ...callerContext
+    } = extraContext ?? {};
+    const runContext = source === 'chat'
+      ? { ...callerContext, [INTERACTIVE_RUN_KEY]: '1' }
+      : source === 'bot' ? { ...callerContext, [BOT_RUN_KEY]: '1' } : callerContext;
     const result = this.queue.enqueue(
       taskId,
       `[Flow] ${flow.name || flowId}`,
@@ -548,6 +576,18 @@ export class FlowManager {
     }, { source: 'ai-build' });
     sendToRenderer(IPC.FLOW_CREATED, saved);
     return saved;
+  }
+
+  /**
+   * Switches on a flow an agent saved once its user approved it in a bot chat. Returns the flow as it
+   * now is — still off when a required setting is missing — or null when it is gone.
+   */
+  async enableFlowFromAgent(flowId: string): Promise<FlowDefinition | null> {
+    if (!this.flows.some((flow) => flow.id === flowId)) return null;
+    await this.setEnabledMany([flowId], true);
+    const flow = this.flows.find((candidate) => candidate.id === flowId) ?? null;
+    if (flow) sendToRenderer(IPC.FLOW_UPDATED, flow);
+    return flow;
   }
 
   /**
@@ -649,7 +689,7 @@ export class FlowManager {
     if (this._running.has(runKey)) {
       return this.failureResult(
         flowId,
-        'Flow is already running',
+        ALREADY_RUNNING,
         flow.steps.length,
         t(getLangCache(), 'flow.error.alreadyRunning'),
       );
@@ -667,7 +707,8 @@ export class FlowManager {
       const onLog = (log: FlowExecutionLog): void => {
         sendToRenderer(IPC.FLOW_EXECUTION_LOG, log);
       };
-      const result = await runInMetricDomain(
+      // A flow a non-owner bot admin made reads the public web only, however the run started.
+      const result = await publicWebOnlyIf(flow.publicWebOnly === true, () => runInMetricDomain(
         'flow',
         () => executeFlow(
           flow,
@@ -676,7 +717,7 @@ export class FlowManager {
           extraContext,
           controller.signal,
         ),
-      );
+      ));
       this.recordRunMetrics(result);
       const deleted = fire?.oneTimeSchedule === true && await this.deleteAfterOneTimeRun(flowId, result);
       this.notifyRunOutcome(flow, result, deleted);
@@ -685,6 +726,9 @@ export class FlowManager {
       closeRunPages(flowId);
       this._abortControllers.delete(runKey);
       this._running.delete(runKey);
+      const waiters = this._runEndWaiters.get(runKey) ?? [];
+      this._runEndWaiters.delete(runKey);
+      for (const wake of waiters) wake();
       sendToRenderer(IPC.FLOW_EXECUTION_ENDED, { flowId, name: flow.name } satisfies FlowExecutionEvent);
       this.blankWorkerWhenIdle();
     }
@@ -702,6 +746,41 @@ export class FlowManager {
     }
     sendLog(`🖥️ [Flow] "${name}" started by system event: ${event}`);
     return true;
+  }
+
+  /**
+   * A new file has one chance to run: no later fire brings it back. While the same flow is running
+   * (a Run, a schedule, a file run from before the flow was saved) it waits for that run to end
+   * rather than failing as "already running", and runs only if the flow still watches a folder.
+   */
+  private async runForFile(
+    flowId: string,
+    extraContext: Record<string, string> | undefined,
+    fire: TriggerFire,
+  ): Promise<FlowExecutionResult | undefined> {
+    const fileName = extraContext?.[FILE_TRIGGER_NAME_VAR] ?? '';
+    let waited = false;
+    for (;;) {
+      if (this._running.has(flowId)) {
+        if (!waited) sendLog(`📂 [Flow] "${fileName}" waits for the run of "${this.flowById(flowId)?.name ?? flowId}" in progress`);
+        waited = true;
+        await new Promise<void>((resolve) => {
+          const list = this._runEndWaiters.get(flowId);
+          if (list) list.push(resolve);
+          else this._runEndWaiters.set(flowId, [resolve]);
+        });
+        continue;
+      }
+      // The watch itself, not the flow's settings: shutdown stops every watch but leaves the flow
+      // enabled with its file trigger.
+      if (waited && !this.triggers.watchesFiles(flowId)) {
+        sendLog(`📂 [Flow] "${fileName}" waited for a flow that stopped watching — not run`);
+        return undefined;
+      }
+      const result = await this.createQueueExecution(flowId, extraContext, 'ui', fire).result;
+      if (result.error !== ALREADY_RUNNING) return result;
+      waited = true;
+    }
   }
 
   /**

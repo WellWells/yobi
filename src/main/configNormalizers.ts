@@ -1,5 +1,5 @@
 import { DEFAULT_CAPTURE_WIDTH, DEFAULT_SHARE_INSTANCE, MAX_CAPTURE_WIDTH, MIN_CAPTURE_WIDTH, SHARE_EXPIRE_VALUES, clampCaptureMargin, defaultQuickExportHotkey, normalizeShareExpireList } from '../shared/types';
-import type { BotBuiltinCommand, BotBuiltinCommands, BotByokCommands, BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureSettings, QuickExportFormat, QuickExportSettings, HiddenSources, LinePairedUser, LinePairingState, McpServerConfig, NotifyEventPrefs, PendingPairingCode, Provider, PromptLength, PromptPreferences, PromptTone, ShareExpire, ShareExpireCache, ShareSettings, TelegramChannel, TelegramChatKind, TelegramPairedUser, TelegramPairingState } from '../shared/types';
+import type { BotBuiltinCommand, BotBuiltinCommands, BotByokCommands, BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureSettings, QuickExportFormat, QuickExportSettings, HiddenSources, LinePairedUser, LinePairingState, McpServerConfig, NotifyEventPrefs, PendingPairingCode, Provider, PromptLength, PromptPreferences, PromptTone, ShareExpire, ShareExpireCache, ShareSettings, SocketBotPlatform, TelegramChannel, TelegramChatKind, TelegramPairedUser, TelegramPairingState } from '../shared/types';
 import {
   AGENT_ASK_TTL_MAX_MINUTES,
   AGENT_ASK_TTL_MIN_MINUTES,
@@ -14,7 +14,9 @@ import {
 import { isThemePreference } from '../shared/themes';
 import { bySiteFlag } from '../shared/siteConnectors';
 import { normalizeReadingFont } from '../shared/readingPrefs';
+import { normalizeSidebarView } from '../shared/sidebarView';
 import { normalizeDownloadsKeep } from '../shared/downloads';
+import { normalizeLinkRecognition } from '../shared/linkRecognition';
 import type { GeminiModelCatalog, GeminiModelChoice, GeminiModelInfo } from '../shared/geminiModels';
 import type {
   ClaudeModelCatalog,
@@ -32,16 +34,31 @@ import {
   type CaptureBackgroundStyle,
 } from '../shared/capturePalettes';
 import { defaultStored } from './configTypes';
+import { LEGACY_MAIL_ACCOUNT_ID } from './mail/mailIds';
 // The module itself, not the façade: the façade reads config, which imports this file.
 import { normalizeBotPermissions } from './botPermissions/normalize';
-import { normalizeBlockedUsers, normalizeGroupPermissions } from '../shared/botPermissions';
+import { normalizeBlockedUsers, normalizeDefaultGrantList, normalizeGroupPermissions } from '../shared/botPermissions';
 import { normalizeInstanceUrl } from './share/privatebin';
 import { normalizeEditorChoice } from './editorPresets';
-import type { ByokInstance, Config, LineConfig, SmtpConfig, TelegramConfig, WindowBounds } from './configTypes';
-import { canonicalise, SHORTCUTS } from '../shared/shortcuts';
+import type {
+  ByokInstance, Config, DiscordConfig, ImapConfig, LineConfig, MailAccountConfig, SlackConfig, SmtpConfig, SocketBotConfig, StoredConfig, StoredMailAccount, TelegramConfig, WindowBounds,
+} from './configTypes';
+import { canonicalise, comboOverlaps, SHORTCUTS } from '../shared/shortcuts';
 import type { ShortcutOverride } from '../shared/shortcuts';
 
 type LegacyTelegramConfig = TelegramConfig & { providerCommands?: unknown };
+
+/**
+ * The region hotkey for a config written before it existed (1.9, an old backup): its default,
+ * unless the ask or quick-export hotkey already holds that combo — the three never share one, so
+ * the slot then starts empty (off).
+ */
+export function regionHotkeyForOlderConfig(hotkey: string, quickExportHotkey: string): string {
+  const fallback = defaultStored.regionHotkey;
+  const isMac = process.platform === 'darwin';
+  const claimed = [hotkey, quickExportHotkey].some((combo) => comboOverlaps(combo, fallback, isMac));
+  return claimed ? '' : fallback;
+}
 
 export function normalizeConfig(raw: unknown): Config {
   const obj = (raw && typeof raw === 'object') ? (raw as Partial<Config>) : {};
@@ -54,6 +71,7 @@ export function normalizeConfig(raw: unknown): Config {
     ? obj.localeSetByUser
     : (typeof obj.locale === 'string' && obj.locale !== 'zh-TW' && obj.locale !== 'en-US');
 
+  const mailAccounts = normalizeMailAccounts(obj.mailAccounts);
   const hidden = normalizeHiddenSources({
     providers: obj.hiddenProviders,
     byokIds: obj.hiddenByokIds,
@@ -61,7 +79,18 @@ export function normalizeConfig(raw: unknown): Config {
   });
   const legacyAgentTarget = legacyAgentCommandTarget(obj.builtinCommands);
   // Written by versions that still had Duck.ai; dropped so it does not ride along forever.
-  const { hiddenDuckaiModelIds: _legacyDuckaiIds, ...current } = obj as Partial<Config> & { hiddenDuckaiModelIds?: unknown };
+  // `hotkeyEnabled` is the switch the ask hotkey had before an empty combo became the only "off":
+  // a switched-off hotkey becomes an empty one, and the flag is dropped from the saved shape.
+  const {
+    hiddenDuckaiModelIds: _legacyDuckaiIds,
+    hotkeyEnabled: legacyHotkeyEnabled,
+    ...current
+  } = obj as Partial<Config> & { hiddenDuckaiModelIds?: unknown; hotkeyEnabled?: unknown };
+
+  const hotkey = legacyHotkeyEnabled === false
+    ? ''
+    : (typeof obj.hotkey === 'string' ? obj.hotkey.trim() : defaultStored.hotkey);
+  const quickExport = normalizeQuickExport(obj.quickExport);
 
   return {
     ...defaultStored,
@@ -74,11 +103,19 @@ export function normalizeConfig(raw: unknown): Config {
     externalEditorCommand: typeof obj.externalEditorCommand === 'string' ? obj.externalEditorCommand.trim() : '',
     localeSetByUser: inferredLocaleSetByUser,
     metricsEnabled: obj.metricsEnabled !== false,
-    hotkeyEnabled: obj.hotkeyEnabled !== false,
+    oneShotTemporaryChat: obj.oneShotTemporaryChat !== false,
+    providerFallback: obj.providerFallback !== false,
+    hotkey,
+    regionHotkey: typeof obj.regionHotkey === 'string'
+      ? obj.regionHotkey.trim()
+      : regionHotkeyForOlderConfig(hotkey, quickExport.hotkey),
+    mailEnabled: obj.mailEnabled === true,
     lineReaderEnabled: obj.lineReaderEnabled === true,
     thunderbirdEnabled: obj.thunderbirdEnabled === true,
     xConnectorEnabled: obj.xConnectorEnabled === true,
     taiwanRailEnabled: typeof obj.taiwanRailEnabled === 'boolean' ? obj.taiwanRailEnabled : null,
+    pttConnectorEnabled: typeof obj.pttConnectorEnabled === 'boolean' ? obj.pttConnectorEnabled : null,
+    linkRecognition: normalizeLinkRecognition(obj.linkRecognition),
     ...bySiteFlag((row) => obj[row.flag] === true),
     notifyEvents: normalizeNotifyEvents(obj.notifyEvents),
     youtubePrompt: typeof obj.youtubePrompt === 'string' ? obj.youtubePrompt : defaultStored.youtubePrompt,
@@ -87,8 +124,9 @@ export function normalizeConfig(raw: unknown): Config {
     markdownZoom: clampedZoom,
     readingFont: normalizeReadingFont(obj.readingFont),
     readingFullWidth: obj.readingFullWidth === true,
+    sidebarView: normalizeSidebarView(obj.sidebarView),
     captureSettings: normalizeCaptureSettings(obj.captureSettings),
-    quickExport: normalizeQuickExport(obj.quickExport),
+    quickExport,
     shortcuts: normalizeShortcuts(obj.shortcuts),
     share: normalizeShareSettings(obj.share),
     windowBounds: normalizeWindowBounds(obj.windowBounds),
@@ -100,7 +138,10 @@ export function normalizeConfig(raw: unknown): Config {
     botByokCommands: normalizeBotByokCommands(obj.botByokCommands),
     telegram: deserializePairingConfig(obj.telegram, legacyAgentTarget),
     line: normalizeLine(obj.line, legacyAgentTarget),
-    smtp: normalizeSmtp(obj.smtp),
+    discord: normalizeDiscord(obj.discord),
+    slack: normalizeSlack(obj.slack),
+    mailAccounts,
+    mailDefaultId: mailAccounts.some((account) => account.id === obj.mailDefaultId) ? String(obj.mailDefaultId) : '',
     byokInstances: normalizeByokInstances(obj.byokInstances),
     byokGroups: normalizeByokGroups(obj.byokGroups),
     mcpServers: normalizeMcpServers(obj.mcpServers),
@@ -369,9 +410,45 @@ export function normalizeLine(raw: unknown, legacyAgentTarget = ''): LineConfig 
     pairing,
     permissions,
     permissionsVersion,
+    defaultGrants: normalizeDefaultGrantList(obj.defaultGrants, 'line'),
     groupPermissions: normalizeGroupPermissions(obj.groupPermissions),
     blockedUsers: normalizeBlockedUsers(obj.blockedUsers),
   };
+}
+
+/** What every socket platform keeps (`SocketBotConfig`), read from an untrusted object. */
+function normalizeSocketBot(platform: SocketBotPlatform, obj: Partial<SocketBotConfig>): SocketBotConfig {
+  const pairing = deserializeLinePairingState(obj.pairing);
+  const { permissions, permissionsVersion } = normalizeBotPermissions({
+    platform,
+    raw: obj.permissions,
+    rawVersion: obj.permissionsVersion,
+    pairedIds: pairing.pairedUsers.map((user) => user.userId),
+  });
+  return {
+    enabled: Boolean(obj.enabled),
+    llmDirect: normalizeLlmDirect(obj.llmDirect),
+    pairing,
+    permissions,
+    permissionsVersion,
+    defaultGrants: normalizeDefaultGrantList(obj.defaultGrants, platform),
+    groupPermissions: normalizeGroupPermissions(obj.groupPermissions),
+    blockedUsers: normalizeBlockedUsers(obj.blockedUsers),
+  };
+}
+
+function trimmedString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+export function normalizeDiscord(raw: unknown): DiscordConfig {
+  const obj = (raw && typeof raw === 'object') ? (raw as Partial<DiscordConfig>) : {};
+  return { ...normalizeSocketBot('discord', obj), botToken: trimmedString(obj.botToken) };
+}
+
+export function normalizeSlack(raw: unknown): SlackConfig {
+  const obj = (raw && typeof raw === 'object') ? (raw as Partial<SlackConfig>) : {};
+  return { ...normalizeSocketBot('slack', obj), botToken: trimmedString(obj.botToken), appToken: trimmedString(obj.appToken) };
 }
 
 /**
@@ -450,6 +527,90 @@ export function normalizeSmtp(raw: unknown): SmtpConfig {
     port: Number.isFinite(port) && port > 0 && port <= 65_535 ? Math.floor(port) : 587,
     user: typeof obj.user === 'string' ? obj.user.trim() : '',
     password: typeof obj.password === 'string' ? obj.password : '',
+  };
+}
+
+const MAIL_ACCOUNT_ID = /^[a-z0-9]{1,16}$/;
+
+export { LEGACY_MAIL_ACCOUNT_ID };
+
+/**
+ * Before 2026-10-23 the store held one account as `smtp` (+ `imap`). Moves it, ciphertext and all,
+ * into `mailAccounts` as the default account and drops the old fields; null when there is nothing
+ * to change. An empty legacy object (every older config has one) is simply dropped.
+ */
+export function migrateLegacyMailAccount(stored: StoredConfig): StoredConfig | null {
+  if (stored.smtp === undefined && stored.imap === undefined) return null;
+  const { smtp: legacy, imap: legacyImap, ...rest } = stored;
+  const address = typeof legacy?.user === 'string' ? legacy.user.trim() : '';
+  if (!address || (stored.mailAccounts ?? []).length > 0) return { ...rest, mailAccounts: stored.mailAccounts ?? [] };
+  const account: StoredMailAccount = {
+    id: LEGACY_MAIL_ACCOUNT_ID,
+    address,
+    auth: 'password',
+    smtp: { host: typeof legacy?.host === 'string' ? legacy.host.trim() : '', port: normalizePort(legacy?.port, 587) },
+    imap: normalizeImap(legacyImap),
+    passwordEncrypted: typeof legacy?.passwordEncrypted === 'string' ? legacy.passwordEncrypted : '',
+  };
+  return { ...rest, mailAccounts: [account], mailDefaultId: LEGACY_MAIL_ACCOUNT_ID };
+}
+
+function normalizePort(raw: unknown, fallback: number): number {
+  const port = Number(raw);
+  return Number.isFinite(port) && port > 0 && port <= 65_535 ? Math.floor(port) : fallback;
+}
+
+interface MailSignIn {
+  address: string;
+  auth?: string;
+  smtp: { host: string };
+  imap: { host: string };
+}
+
+/**
+ * Whether two mailbox entries sign in to the same servers as the same person in the same way. A
+ * saved secret may only ever be carried over between entries that do: matching ids alone is not
+ * enough, because every upgraded install calls its one account `main`, so a restored backup's
+ * `main` can be someone else; and a Microsoft refresh token must never be sent as a password.
+ */
+export function sameMailSignIn(a: MailSignIn, b: MailSignIn): boolean {
+  const same = (x: string, y: string) => x.trim().toLowerCase() === y.trim().toLowerCase();
+  return same(a.address, b.address) && same(a.smtp.host, b.smtp.host) && same(a.imap.host, b.imap.host)
+    && (a.auth ?? 'password') === (b.auth ?? 'password');
+}
+
+/** One entry per address (the first wins), each with a short id that message ids start with. */
+export function normalizeMailAccounts(raw: unknown): MailAccountConfig[] {
+  if (!Array.isArray(raw)) return [];
+  const ids = new Set<string>();
+  const addresses = new Set<string>();
+  const accounts: MailAccountConfig[] = [];
+  for (const item of raw) {
+    const entry = (item && typeof item === 'object') ? (item as Partial<MailAccountConfig>) : {};
+    const id = typeof entry.id === 'string' ? entry.id.trim() : '';
+    const address = typeof entry.address === 'string' ? entry.address.trim() : '';
+    if (!MAIL_ACCOUNT_ID.test(id) || !address || ids.has(id) || addresses.has(address.toLowerCase())) continue;
+    ids.add(id);
+    addresses.add(address.toLowerCase());
+    const smtp = (entry.smtp && typeof entry.smtp === 'object') ? entry.smtp : { host: '', port: 587 };
+    accounts.push({
+      id,
+      address,
+      auth: entry.auth === 'microsoft' ? 'microsoft' : 'password',
+      password: typeof entry.password === 'string' ? entry.password : '',
+      smtp: { host: typeof smtp.host === 'string' ? smtp.host.trim() : '', port: normalizePort(smtp.port, 587) },
+      imap: normalizeImap(entry.imap),
+    });
+  }
+  return accounts;
+}
+
+export function normalizeImap(raw: unknown): ImapConfig {
+  const obj = (raw && typeof raw === 'object') ? (raw as Partial<ImapConfig>) : {};
+  const port = Number(obj.port);
+  return {
+    host: typeof obj.host === 'string' ? obj.host.trim() : '',
+    port: Number.isFinite(port) && port > 0 && port <= 65_535 ? Math.floor(port) : 993,
   };
 }
 
@@ -533,24 +694,24 @@ export function normalizeShortcuts(raw: unknown): Record<string, ShortcutOverrid
   for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
     if (!known.has(id)) continue;
     if (!value || typeof value !== 'object') continue;
+    // `off: true` is the switch older versions stored beside the combo; an empty combo is the
+    // only "off" now, so a switched-off shortcut loads as an empty one whatever combo it kept.
     const entry = value as { combo?: unknown; off?: unknown };
-    const next: ShortcutOverride = {};
-    if (typeof entry.combo === 'string') next.combo = canonicalise(entry.combo);
-    if (entry.off === true) next.off = true;
-    if (next.combo === undefined && !next.off) continue;
-    out[id] = next;
+    if (entry.off === true) out[id] = { combo: '' };
+    else if (typeof entry.combo === 'string') out[id] = { combo: canonicalise(entry.combo) };
   }
   return out;
 }
 
 export function normalizeQuickExport(raw: unknown): QuickExportSettings {
-  const obj = (raw && typeof raw === 'object') ? (raw as Partial<QuickExportSettings>) : null;
+  // `enabled: false` is the switch older versions stored beside the combo: it loads as an empty combo.
+  const obj = (raw && typeof raw === 'object') ? (raw as Partial<QuickExportSettings> & { enabled?: unknown }) : null;
   const validFormats: QuickExportFormat[] = ['png', 'webp', 'pdf', 'text'];
+  const storedHotkey = typeof obj?.hotkey === 'string'
+    ? obj.hotkey.trim()
+    : defaultQuickExportHotkey(process.platform === 'darwin');
   return {
-    enabled: obj?.enabled !== false,
-    hotkey: typeof obj?.hotkey === 'string'
-      ? obj.hotkey.trim()
-      : defaultQuickExportHotkey(process.platform === 'darwin'),
+    hotkey: obj?.enabled === false ? '' : storedHotkey,
     format: validFormats.includes(obj?.format as QuickExportFormat) ? (obj!.format as QuickExportFormat) : 'png',
     zip: obj?.zip === true,
   };
@@ -583,6 +744,7 @@ export function deserializePairingConfig(raw: unknown, legacyAgentTarget = ''): 
     channels: normalizeTelegramChannels(obj.channels),
     permissions,
     permissionsVersion,
+    defaultGrants: normalizeDefaultGrantList(obj.defaultGrants, 'telegram'),
     groupPermissions: normalizeGroupPermissions(obj.groupPermissions),
     blockedUsers: normalizeBlockedUsers(obj.blockedUsers),
   };

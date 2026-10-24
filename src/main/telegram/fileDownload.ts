@@ -3,6 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { TELEGRAM_MAX_DOWNLOAD_BYTES } from './attachmentPlan';
+import { UPLOADABLE_EXTENSIONS } from '../../shared/attachmentFormats';
 
 const FETCH_TIMEOUT_MS = 60_000;
 const TEMP_DIR_NAME = 'yobi-telegram-media';
@@ -13,14 +14,17 @@ export function telegramTempDir(): string {
   return path.join(os.tmpdir(), TEMP_DIR_NAME);
 }
 
-// SECURITY: the incoming name is attacker-controlled. Always generate the stem and keep
-// only a short alphanumeric extension, so traversal and control characters stay impossible.
+// SECURITY: the incoming name is attacker-controlled. Always generate the stem, and keep the
+// sender's extension only when it is a picture or document type: traversal and control characters
+// stay impossible, and nothing a double-click would run (.exe, .bat, .lnk…) is ever written.
+const KEPT_EXTENSIONS: ReadonlySet<string> = new Set([...UPLOADABLE_EXTENSIONS, 'txt']);
+
 export function safeLocalFileName(originalName: string | undefined, fallbackExt: string): string {
   const raw = (originalName ?? '').trim().toLowerCase();
   const base = raw.replace(/\\/g, '/').split('/').pop() ?? '';
   const dot = base.lastIndexOf('.');
   const candidate = dot > 0 ? base.slice(dot + 1) : '';
-  const ext = /^[a-z0-9]{1,12}$/.test(candidate) ? candidate : fallbackExt;
+  const ext = KEPT_EXTENSIONS.has(candidate) ? candidate : fallbackExt;
   return `${Date.now()}-${randomUUID().slice(0, 8)}.${ext}`;
 }
 

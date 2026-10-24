@@ -6,15 +6,18 @@ import { sendLog } from '../helpers';
 import type { BotPlatform } from '../../shared/types';
 import {
   classifySendFailure,
+  clearPairingRequest,
   contactKey,
   describeContact,
   forgetContact,
   listContacts,
   listPairedContacts,
+  markPairingCard,
   normalizeContactMap,
   recordUse,
   revokeAllPairings,
   revokePairing,
+  setPairingRequest,
   setReachability,
   upsertContact,
   type BotContact,
@@ -37,15 +40,25 @@ function storePath(): string {
   return path.join(getFlowDataDir(), 'bot-directory.json');
 }
 
+let loading: Promise<void> | null = null;
+
+/**
+ * Reads the file once; callers arriving while it is read wait for that one read, so a second read
+ * landing late cannot replace a change made in between. Writers read `cache` again after the
+ * await, never the value from before it.
+ */
 async function load(): Promise<BotContactMap> {
   if (cache) return cache;
-  try {
-    const raw = await fs.readFile(storePath(), 'utf-8');
-    cache = normalizeContactMap(JSON.parse(raw));
-  } catch {
-    cache = {};
-  }
-  return cache;
+  loading ??= (async () => {
+    try {
+      const raw = await fs.readFile(storePath(), 'utf-8');
+      cache = normalizeContactMap(JSON.parse(raw));
+    } catch {
+      cache = {};
+    }
+  })().finally(() => { loading = null; });
+  await loading;
+  return cache ?? {};
 }
 
 function persist(): Promise<void> {
@@ -63,7 +76,8 @@ function persist(): Promise<void> {
 }
 
 export async function recordBotContact(input: BotContactInput): Promise<void> {
-  const current = await load();
+  await load();
+  const current = cache ?? {};
   const next = upsertContact(current, input, new Date().toISOString());
   if (next === current) return;
   cache = next;
@@ -72,9 +86,46 @@ export async function recordBotContact(input: BotContactInput): Promise<void> {
 
 /** An unpaired person addressed the bot in `chatId`; recorded for the owner's "used the bot" list. */
 export async function recordBotUse(input: Omit<BotContactInput, 'kind'>, chatId: string): Promise<void> {
-  const current = await load();
+  await load();
+  const current = cache ?? {};
   cache = recordUse(current, { ...input, kind: 'user' }, chatId, new Date().toISOString());
   await persist();
+}
+
+/** An unpaired person asked in a private chat to use the bot; recorded with the time. */
+export async function recordBotPairingRequest(input: Omit<BotContactInput, 'kind'>, now = new Date().toISOString()): Promise<void> {
+  await load();
+  const current = cache ?? {};
+  const next = setPairingRequest(current, { ...input, kind: 'user' }, now);
+  if (next === current) return;
+  cache = next;
+  await persist();
+}
+
+/** The managers got the card of this person's waiting request. */
+export async function markBotPairingCardSent(platform: BotPlatform, id: string, now = new Date().toISOString()): Promise<void> {
+  await load();
+  const current = cache ?? {};
+  const next = markPairingCard(current, platform, id, now);
+  if (next === current) return;
+  cache = next;
+  await persist();
+}
+
+/** Drops a person's request to pair (they were paired or blocked); the entry stays. */
+export async function clearBotPairingRequest(platform: BotPlatform, id: string): Promise<void> {
+  await load();
+  const current = cache ?? {};
+  const next = clearPairingRequest(current, platform, id);
+  if (next === current) return;
+  cache = next;
+  await persist();
+}
+
+/** One entry, or undefined when the directory never saw it. */
+export async function findBotContact(platform: BotPlatform, kind: BotContactKind, id: string): Promise<BotContact | undefined> {
+  await load();
+  return (cache ?? {})[contactKey(platform, kind, id.trim())];
 }
 
 export async function markBotUnreachable(
@@ -84,7 +135,8 @@ export async function markBotUnreachable(
   reachability: BotReachability,
   lastError?: string,
 ): Promise<void> {
-  const current = await load();
+  await load();
+  const current = cache ?? {};
   const key = contactKey(platform, kind, id);
   const next = setReachability(current, key, reachability, new Date().toISOString(), lastError);
   if (next === current) return;
@@ -99,7 +151,8 @@ export async function markBotReachable(
   kind: BotContactKind,
   id: string,
 ): Promise<void> {
-  const current = await load();
+  await load();
+  const current = cache ?? {};
   const key = contactKey(platform, kind, id);
   const next = setReachability(current, key, 'ok', new Date().toISOString());
   if (next === current) return;
@@ -141,7 +194,8 @@ export async function listBotPairedContacts(platform: BotPlatform): Promise<BotC
 }
 
 export async function revokeBotPairing(platform: BotPlatform, id: string): Promise<void> {
-  const current = await load();
+  await load();
+  const current = cache ?? {};
   const next = revokePairing(current, platform, id);
   if (next === current) return;
   cache = next;
@@ -149,7 +203,8 @@ export async function revokeBotPairing(platform: BotPlatform, id: string): Promi
 }
 
 export async function revokeAllBotPairings(): Promise<void> {
-  const current = await load();
+  await load();
+  const current = cache ?? {};
   const next = revokeAllPairings(current);
   if (next === current) return;
   cache = next;
@@ -157,7 +212,8 @@ export async function revokeAllBotPairings(): Promise<void> {
 }
 
 export async function forgetBotChat(platform: BotPlatform, id: string): Promise<void> {
-  const current = await load();
+  await load();
+  const current = cache ?? {};
   const next = forgetContact(current, contactKey(platform, 'chat', id));
   if (next === current) return;
   cache = next;
@@ -166,6 +222,7 @@ export async function forgetBotChat(platform: BotPlatform, id: string): Promise<
 
 export function __resetBotDirectoryCache(): void {
   cache = null;
+  loading = null;
   writeChain = Promise.resolve();
 }
 

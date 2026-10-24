@@ -1,5 +1,5 @@
 import { canonicalise } from './combo';
-import type { ShortcutDef, ShortcutView } from './types';
+import type { ComboRelation, ShortcutDef, ShortcutView } from './types';
 
 export const CHROMIUM_MENU_ACCELERATORS: readonly string[] = [
   'CommandOrControl+R',        
@@ -37,6 +37,15 @@ export const SHORTCUTS = [
     rebindable: true,
     storage: 'legacy:quickExport',
     hintKey: 'settings.hotkey.export.hint',
+  },
+  {
+    id: 'global.regionAsk',
+    group: 'global',
+    scope: { kind: 'global-os' },
+    defaultCombo: (isMac: boolean) => (isMac ? 'Command+Control+J' : 'Alt+J'),
+    rebindable: true,
+    storage: 'legacy:regionHotkey',
+    hintKey: 'settings.hotkey.region.hint',
   },
 
   {
@@ -168,6 +177,15 @@ export const SHORTCUTS = [
     storage: 'config.shortcuts',
   },
   {
+    // Alt+letter like reveal (Alt+R): no other app taught a key for "pin", so it is Yobi's own.
+    id: 'files.togglePin',
+    group: 'files',
+    scope: { kind: 'widget', owner: 'sidebarList' },
+    defaultCombo: 'Alt+P',
+    rebindable: true,
+    storage: 'config.shortcuts',
+  },
+  {
     id: 'files.delete',
     group: 'files',
     scope: { kind: 'view', views: ['chat'] },
@@ -255,6 +273,7 @@ export const SHORTCUTS = [
     scope: { kind: 'widget', owner: 'composer' },
     defaultCombo: '',
     displayCombos: ['Home', 'End'],
+    comboRelation: 'each',
     rebindable: false,
     lockReasonKey: 'settings.shortcut.lock.caretKey',
   },
@@ -264,6 +283,7 @@ export const SHORTCUTS = [
     scope: { kind: 'widget', owner: 'sidebarList' },
     defaultCombo: '',
     displayCombos: ['Up', 'Down'],
+    comboRelation: 'each',
     rebindable: false,
     lockReasonKey: 'settings.shortcut.lock.aria',
   },
@@ -273,6 +293,7 @@ export const SHORTCUTS = [
     scope: { kind: 'widget', owner: 'sidebarList' },
     defaultCombo: '',
     displayCombos: ['Enter', 'Space'],
+    comboRelation: 'or',
     rebindable: false,
     lockReasonKey: 'settings.shortcut.lock.aria',
   },
@@ -325,6 +346,7 @@ export const SHORTCUTS = [
     scope: { kind: 'widget', owner: 'mediaViewer' },
     defaultCombo: '',
     displayCombos: ['Left', 'Right'],
+    comboRelation: 'each',
     rebindable: false,
     lockReasonKey: 'settings.shortcut.lock.convention',
   },
@@ -334,6 +356,7 @@ export const SHORTCUTS = [
     scope: { kind: 'widget', owner: 'mediaViewer' },
     defaultCombo: '',
     displayCombos: ['Space', 'K'],
+    comboRelation: 'or',
     rebindable: false,
     lockReasonKey: 'settings.shortcut.lock.convention',
   },
@@ -343,6 +366,7 @@ export const SHORTCUTS = [
     scope: { kind: 'widget', owner: 'mediaViewer' },
     defaultCombo: '',
     displayCombos: ['J', 'L'],
+    comboRelation: 'each',
     rebindable: false,
     lockReasonKey: 'settings.shortcut.lock.convention',
   },
@@ -352,6 +376,7 @@ export const SHORTCUTS = [
     scope: { kind: 'widget', owner: 'writingTools' },
     defaultCombo: '',
     displayCombos: ['Enter', 'Escape'],
+    comboRelation: 'each',
     rebindable: false,
     lockReasonKey: 'settings.shortcut.lock.field',
   },
@@ -361,6 +386,7 @@ export const SHORTCUTS = [
     scope: { kind: 'widget', owner: 'inlineEdit' },
     defaultCombo: '',
     displayCombos: ['Enter', 'Escape'],
+    comboRelation: 'each',
     rebindable: false,
     lockReasonKey: 'settings.shortcut.lock.field',
   },
@@ -386,12 +412,23 @@ export const SHORTCUTS = [
     scope: { kind: 'reference', owner: 'quickExportPanel' },
     defaultCombo: '',
     displayCombos: ['Enter', 'Escape'],
+    comboRelation: 'each',
     rebindable: false,
     lockReasonKey: 'settings.shortcut.lock.otherWindow',
   },
   {
+    id: 'regionOverlay.confirmCancel',
+    group: 'global',
+    scope: { kind: 'reference', owner: 'regionOverlay' },
+    defaultCombo: '',
+    displayCombos: ['Enter', 'Escape'],
+    comboRelation: 'each',
+    rebindable: false,
+    lockReasonKey: 'settings.shortcut.lock.regionOverlay',
+  },
+  {
     id: 'platform.reload',
-    group: 'platform',
+    group: 'window',
     scope: { kind: 'reference', owner: 'platform' },
     defaultCombo: 'CommandOrControl+R',
     rebindable: false,
@@ -400,7 +437,7 @@ export const SHORTCUTS = [
   },
   {
     id: 'platform.closeWindow',
-    group: 'platform',
+    group: 'window',
     scope: { kind: 'reference', owner: 'platform' },
     defaultCombo: 'CommandOrControl+W',
     rebindable: false,
@@ -423,13 +460,18 @@ export function resolveDefaultCombo(def: ShortcutDef, isMac: boolean): string {
   return typeof def.defaultCombo === 'function' ? def.defaultCombo(isMac) : def.defaultCombo;
 }
 
+/** Aliases always run the same action, so only a display-only set can map onto several actions. */
+export function comboRelation(def: ShortcutDef): ComboRelation {
+  return def.comboRelation ?? 'or';
+}
+
 export function isDispatchable(def: ShortcutDef): boolean {
   return def.scope.kind === 'window' || def.scope.kind === 'view';
 }
 
+/** `combo: ''` is the only way a shortcut is switched off; there is no separate on/off flag. */
 export interface ShortcutOverride {
   combo?: string;
-  off?: true;
 }
 
 export function digitPrefixOf(def: ShortcutDef): string {
@@ -450,7 +492,6 @@ export function activeCombos(
 
   if (!def.rebindable) return shipped;
 
-  if (override?.off) return [];
   if (override?.combo !== undefined) return override.combo ? [override.combo] : [];
   return shipped;
 }

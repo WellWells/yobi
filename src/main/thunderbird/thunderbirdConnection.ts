@@ -5,9 +5,8 @@
  */
 import * as path from 'node:path';
 import { app } from 'electron';
-import { denyReasonForFileTool, getAgentFileRoots } from '../flow/agent/agentSandbox';
-import { resolveUserPath } from '../flow/skills/fileOps';
-import { applyAttachmentPolicy, type CallVerdict } from './attachmentPolicy';
+import { prepareAttachmentCall } from '../mcp/agentAttachmentGuard';
+import type { CallVerdict } from './attachmentPolicy';
 import { bridgeScriptPath, CONNECTION_FILE_ENV, connectBridge, type BridgeConnection } from './bridge';
 
 /**
@@ -40,8 +39,5 @@ export function connectThunderbirdMcp(clientName: string, clientVersion: string)
 
 /** The same rule `file_read` follows, so mailing a file is never a way around the read sandbox. */
 export function prepareThunderbirdCall(args: Record<string, unknown>): Promise<CallVerdict> {
-  return applyAttachmentPolicy(args, async (raw) => {
-    const denied = await denyReasonForFileTool('file_read', { path: raw }, await getAgentFileRoots());
-    return denied ? { denied } : { path: await resolveUserPath(raw) };
-  });
+  return prepareAttachmentCall(args);
 }

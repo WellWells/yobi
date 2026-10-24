@@ -1,6 +1,6 @@
 import type {
-  AgentStageLabel, FlowAssessment, FlowBuildEvent, FlowBuildPhase,
-  FlowDefinition, SkillType, TriggerType,
+  AgentFlowRecipient, AgentStageLabel, FlowAssessment, FlowBuildEvent, FlowBuildPhase,
+  FlowDefinition, TriggerType,
 } from '../../../shared/types';
 import { describeRecipientSetup, withRecipientQuestion } from '../../../shared/botRecipientQuestion';
 import type { RecipientDirectory } from '../../../shared/botRecipients';
@@ -11,13 +11,15 @@ import type { FlowRef } from '../flowEdit';
 import { FlowAbortError } from '../runtime';
 import { sendLog } from '../../helpers';
 import type { FlowExecutorDeps } from '../types';
-import { renderIssueLines, sensitiveTypesOf } from './agentFlowShared';
-import type { FlowWriteConfirmRequest } from './agentFlowShared';
+import { buildHoldReason, describeSavedFlow, holdingSave, sensitiveTypesOf } from './agentFlowShared';
+import type { FlowHold, FlowSaveRequest, FlowWriteConfirmRequest } from './agentFlowShared';
 import { runEditFlowTool } from './agentFlowEdit';
+import { DRAW_IMAGE_BRIEF, DRAW_IMAGE_LINE, runDrawImage } from './agentDrawImage';
+import type { DrawImage } from './agentDrawImage';
 
-export type { FlowWriteConfirmRequest } from './agentFlowShared';
+export type { FlowSaveRequest, FlowWriteConfirmRequest } from './agentFlowShared';
 
-export const AGENT_BUILTIN_TOOLS = ['assess_flow', 'build_flow', 'edit_flow', 'delegate'] as const;
+export const AGENT_BUILTIN_TOOLS = ['assess_flow', 'build_flow', 'edit_flow', 'delegate', 'draw_image'] as const;
 
 export type AgentBuiltinTool = typeof AGENT_BUILTIN_TOOLS[number];
 
@@ -42,6 +44,13 @@ export interface BuiltinDeps {
   recipients?: RecipientDirectory;
   confirm?: (request: FlowWriteConfirmRequest) => Promise<boolean>;
   /**
+   * A bot admin's run: `build_flow` / `edit_flow` hold the finished flow and hand it back as
+   * `deferred` instead of saving it; the engine pauses on it and saves it once the answer approves.
+   */
+  holdFlows?: FlowHold;
+  /** Switches on a flow saved from an approved chat question; null when it is gone. */
+  enableFlow?: (flowId: string) => Promise<FlowDefinition | null>;
+  /**
    * The whole assessment, not a digest of it: `build_flow` reuses the skills and trigger to skip
    * a second assessment, and the gate below needs the questions it raised.
    */
@@ -58,6 +67,10 @@ export interface BuiltinDeps {
    * the call's own trace row: helpers in one batch run side by side and each reports on its own.
    */
   runSubtask?: (task: string, step: number) => Promise<BuiltinOutcome>;
+  /** Draws on a web page and keeps the pictures for the answer. Absent = this run cannot draw. */
+  drawImage?: DrawImage;
+  /** Drawings made so far; `draw_image` counts them. */
+  drawCalls?: number;
 }
 
 const MIN_BUILTIN_TIMEOUT_MS = 30_000;
@@ -86,21 +99,31 @@ const FLOW_TOOL_LINES = [
   '- "edit_flow": Change a flow the user has (never build a copy); saves over it once they approve. Yobi already holds bot tokens and chat IDs — never ask for them. config keys: "change" (user\'s words; REQUIRED), "flow" (its name; omit for the one made earlier in this chat) → returns: what changed.',
 ];
 
-export function buildBuiltinCatalog(includeDelegate = false, includeFlows = true): string {
+export function buildBuiltinCatalog(includeDelegate = false, includeFlows = true, includePictures = false): string {
   return [
     ...(includeFlows ? FLOW_TOOL_LINES : []),
     ...(includeDelegate ? [DELEGATE_LINE] : []),
+    ...(includePictures ? [DRAW_IMAGE_BRIEF] : []),
   ].join('\n');
+}
+
+/** A builtin's full entry, what `tool_help` returns for it. */
+export function builtinToolEntry(tool: AgentBuiltinTool): string {
+  if (tool === 'draw_image') return DRAW_IMAGE_LINE;
+  if (tool === 'delegate') return DELEGATE_LINE;
+  return FLOW_TOOL_LINES.find((line) => line.startsWith(`- "${tool}"`)) ?? '';
 }
 
 export function builtinRequiredFields(tool: AgentBuiltinTool): string[] {
   if (tool === 'delegate') return ['task'];
   if (tool === 'edit_flow') return ['change'];
+  if (tool === 'draw_image') return ['prompt'];
   return tool === 'assess_flow' || tool === 'build_flow' ? ['goal'] : [];
 }
 
 /** Every key a builtin reads — the required ones plus the optional, which the validator would otherwise drop. */
 export function builtinConfigKeys(tool: AgentBuiltinTool): string[] {
+  if (tool === 'draw_image') return ['prompt', 'provider'];
   return tool === 'edit_flow' ? ['change', 'flow'] : builtinRequiredFields(tool);
 }
 
@@ -119,6 +142,7 @@ const TRIGGER_TEXT: Record<TriggerType, string> = {
   chat: 'It runs when the user types a /command in this chat.',
   manual: 'It runs when the user presses Run.',
   system: 'It runs when the computer starts Yobi, wakes from sleep, or locks or unlocks the screen.',
+  file: 'It runs once for each new file that appears in a folder on this computer.',
 };
 
 /**
@@ -149,22 +173,6 @@ export function renderAssessment(assessment: FlowAssessment, setup: readonly str
   return text.length > ASSESS_OBSERVATION_LIMIT ? `${text.slice(0, ASSESS_OBSERVATION_LIMIT)}…` : text;
 }
 
-/**
- * What the model is allowed to say about the flow it just saved. The issues are here because the
- * alternative — a cheerful "done!" over a flow with an empty feed URL — is the same class of
- * false claim `withActionFooter` exists to stop one layer down.
- */
-function describeFlow(flow: FlowDefinition, issues: Parameters<typeof renderIssueLines>[0]): string {
-  const steps = flow.steps.map((step) => step.type as SkillType);
-  const shown = steps.slice(0, 12).join(' → ');
-  const more = steps.length > 12 ? ` (+${steps.length - 12} more)` : '';
-  return [
-    `Saved the flow "${flow.name}" with ${steps.length} step(s), DISABLED for the user to review: ${shown}${more}.`,
-    ...renderIssueLines(issues),
-    'Tell the user it is waiting in the flow list and what it will do — do not build it again; to change it, use "edit_flow".',
-  ].join('\n');
-}
-
 const PHASE_STAGE: Record<FlowBuildPhase, AgentStageLabel> = {
   understand: 'analyzing',
   discover: 'discovering',
@@ -173,11 +181,14 @@ const PHASE_STAGE: Record<FlowBuildPhase, AgentStageLabel> = {
   verify: 'verifying',
 };
 
-/** Mirrors each build event onto the agent's trace row and the shared build channel. */
-function buildReporter(ctx: BuiltinDeps): ((event: FlowBuildEvent) => void) | undefined {
+/**
+ * Mirrors each build event onto the agent's trace row and the shared build channel. A held build
+ * has saved nothing yet, so its `done` is not broadcast: the flow exists only once it is approved.
+ */
+function buildReporter(ctx: BuiltinDeps, held = false): ((event: FlowBuildEvent) => void) | undefined {
   if (!ctx.onStage && !ctx.onBuild) return undefined;
   return (event: FlowBuildEvent) => {
-    ctx.onBuild?.(event);
+    if (!(held && event.kind === 'done')) ctx.onBuild?.(event);
     if (event.kind === 'phase' && event.status === 'active') ctx.onStage?.(PHASE_STAGE[event.phase]);
   };
 }
@@ -185,6 +196,8 @@ function buildReporter(ctx: BuiltinDeps): ((event: FlowBuildEvent) => void) | un
 export interface BuiltinOutcome {
   observation: string;
   status: 'ok' | 'error';
+  /** Nothing was saved: the finished flow waits for the user's answer in the chat (`holdFlows`). */
+  deferred?: FlowSaveRequest;
 }
 
 /**
@@ -244,12 +257,13 @@ async function runBuild(goal: string, ctx: BuiltinDeps): Promise<BuiltinOutcome>
   const askFirst = askFirstReason(ctx.assessed);
   if (askFirst) return { observation: `ERROR: ${askFirst}`, status: 'error' };
 
-  const saveFlow = ctx.saveFlow;
-  const report = buildReporter(ctx);
+  const holding = ctx.holdFlows ? holdingSave() : null;
+  let heldRecipients: AgentFlowRecipient[] = [];
+  const report = buildReporter(ctx, holding !== null);
   const outcome = await runFlowBuild({
     goal,
     deps: budgetedDeps(ctx),
-    save: saveFlow,
+    save: holding?.save ?? ctx.saveFlow,
     ...(ctx.providerUrl ? { providerUrl: ctx.providerUrl } : {}),
     ...(ctx.assessed ? { assessed: ctx.assessed } : {}),
     ...(ctx.recipients ? { recipients: ctx.recipients } : {}),
@@ -258,6 +272,11 @@ async function runBuild(goal: string, ctx: BuiltinDeps): Promise<BuiltinOutcome>
     askUser: false,
     ...(report ? { emit: report } : {}),
     confirm: async (flow, recipients) => {
+      // Held, not confirmed: the question in the chat is the confirmation, asked after the run pauses.
+      if (holding) {
+        heldRecipients = recipients;
+        return true;
+      }
       if (!ctx.confirm) return false;
       const stepTypes = flow.steps.map((step) => String(step.type));
       ctx.onStage?.('confirming');
@@ -283,10 +302,26 @@ async function runBuild(goal: string, ctx: BuiltinDeps): Promise<BuiltinOutcome>
     return { observation: `ERROR: ${outcome.questions.join(' ')}`, status: 'error' };
   }
 
+  if (holding && ctx.holdFlows) {
+    const { flow, report: { issues } } = outcome;
+    const off = buildHoldReason(flow, issues, ctx.holdFlows);
+    sendLog(`🧩 [Agent] holding flow "${flow.name}" (${flow.steps.length} steps) for the user's answer in the chat`);
+    return {
+      observation: '',
+      status: 'ok',
+      deferred: {
+        kind: 'flowSave',
+        pending: { mode: 'build', flow, issues, ...(off ? { off } : {}) },
+        recipients: heldRecipients,
+        sensitiveTypes: sensitiveTypesOf(flow.steps.map((step) => String(step.type))),
+      },
+    };
+  }
+
   sendLog(`🧩 [Agent] built flow "${outcome.flow.name}" (${outcome.flow.steps.length} steps, disabled)`);
   // What a later "change it" in this conversation refers to.
   ctx.recentFlows?.push({ id: outcome.flow.id, name: outcome.flow.name });
-  return { observation: describeFlow(outcome.flow, outcome.report.issues), status: 'ok' };
+  return { observation: describeSavedFlow(outcome.flow, outcome.report.issues), status: 'ok' };
 }
 
 export async function runBuiltinTool(
@@ -302,6 +337,8 @@ export async function runBuiltinTool(
     if (!ctx.runSubtask) return { observation: 'ERROR: This run cannot hand off sub-tasks. Do the reading yourself.', status: 'error' };
     return ctx.runSubtask(task, step);
   }
+  // The context itself, so the drawing count carries from one call to the next.
+  if (tool === 'draw_image') return runDrawImage(config, ctx);
   if (tool === 'edit_flow') {
     return runEditFlowTool(config, {
       deps: budgetedDeps(ctx),
@@ -312,6 +349,7 @@ export async function runBuiltinTool(
       ...(ctx.replaceFlow ? { replaceFlow: ctx.replaceFlow } : {}),
       ...(ctx.recipients ? { recipients: ctx.recipients } : {}),
       ...(ctx.confirm ? { confirm: ctx.confirm } : {}),
+      ...(ctx.holdFlows ? { hold: ctx.holdFlows } : {}),
       ...(ctx.onStage ? { onStage: (label: AgentStageLabel) => ctx.onStage?.(label) } : {}),
     });
   }

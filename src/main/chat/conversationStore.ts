@@ -1,5 +1,4 @@
 import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
 import {
   appendTurn,
   hasThreadMetaAnchor,
@@ -17,8 +16,10 @@ import type {
 } from '../../shared/conversationDoc';
 import type { ResponseEditRequest, ResponseEditResult } from '../../shared/types';
 import { keepConversationId, withConversationId } from '../../shared/conversationHistory';
+import { keepPinState } from '../../shared/conversationPin';
 import { notionDocParts, writeNotionDoc } from '../../shared/notion/notionDoc';
 import { writeFileAtomic } from '../atomicWrite';
+import { conversationPathKey } from '../conversationPaths';
 import { newConversationId, recordConversationVersion } from '../history/conversationHistory';
 import { loadMarkdownHeadingAliases } from '../files';
 import { getLangCache, t } from '../i18n';
@@ -63,8 +64,7 @@ const fileChains = new Map<string, Promise<void>>();
  * second, and two renames onto one file fail with EPERM on Windows.
  */
 export function withConversationFile<T>(filePath: string, work: () => Promise<T>): Promise<T> {
-  const resolved = path.resolve(filePath);
-  const key = process.platform === 'win32' || process.platform === 'darwin' ? resolved.toLowerCase() : resolved;
+  const key = conversationPathKey(filePath);
   const run = (fileChains.get(key) ?? Promise.resolve()).then(work);
   const tail = run.then(() => undefined, () => undefined);
   fileChains.set(key, tail);
@@ -84,11 +84,14 @@ export function appendConversationTurn(
   });
 }
 
-/** The caller's marker replaces the file's whole, except for the id: a send that began before it was given must not erase it. */
+/**
+ * The caller's marker replaces the file's whole, except for the id and the pin: a send that began
+ * before either was given must not erase it.
+ */
 export function updateConversationThread(filePath: string, meta: ThreadMeta): Promise<void> {
   return withConversationFile(filePath, async () => {
     const raw = await fs.readFile(filePath, 'utf-8');
-    await writeFileAtomic(filePath, writeThreadMeta(raw, keepConversationId(raw, meta)));
+    await writeFileAtomic(filePath, writeThreadMeta(raw, keepPinState(raw, keepConversationId(raw, meta))));
   });
 }
 
@@ -225,6 +228,6 @@ export function commitConversationTurn(args: {
   return withConversationFile(args.filePath, async () => {
     const raw = await fs.readFile(args.filePath, 'utf-8');
     const withTurn = appendTurn(raw, args.turn, currentTurnLabels());
-    await writeFileAtomic(args.filePath, writeThreadMeta(withTurn, keepConversationId(raw, args.thread)));
+    await writeFileAtomic(args.filePath, writeThreadMeta(withTurn, keepPinState(raw, keepConversationId(raw, args.thread))));
   });
 }

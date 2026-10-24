@@ -1,5 +1,5 @@
 import type {
-  SkillType, AgentTraceEvent, AgentTurnRecord, FlowBuildEvent, FlowDefinition,
+  SkillType, AgentChatLine, AgentPendingFlow, AgentReplyContext, AgentTraceEvent, AgentTurnRecord, FlowBuildEvent, FlowDefinition,
 } from '../../../shared/types';
 import { AGENT_ASK_TOOL, isByokTargetUrl } from '../../../shared/types';
 import { isDeliverableSkill } from '../../../shared/flowSkillSchema';
@@ -15,25 +15,30 @@ import {
   AGENT_FIELD_DEFAULTS, AGENT_HELP_TOOL, AgentRunError, AgentScopeError, buildToolCatalog, describeToolSpec, FULL_TOOL_SCOPE,
   isHelpTool, OPTS_MARKER, readOnlyScope, scopeHasFlowTools, validateAgentAction, validateFinalAnswer,
 } from './agentTools';
-import type { AgentAction, AgentToolScope, FinalAnswer } from './agentTools';
+import type { AgentAction, AgentToolScope, AskGate, FinalAnswer } from './agentTools';
 import {
   applyPlanUpdate, buildActionRepair, buildDeltaPrompt, buildFinishPrompt, buildHeldDelta, buildRepairPrompt,
-  RECAP_HOOK, hasRecapSection,
+  buildTranscriptRepair, BYOK_REBUILD_BUDGET, deltaRuleNotices, RECAP_HOOK, hasRecapSection, renderScratch,
+  scratchRebuildCost,
   buildTurnPrompt, emptyPlan, historyThatFits, planComplete, scratchFitFor, SCRATCH_IN_PROMPT,
-  SCRATCH_IN_PROMPT_MCP, SCRATCH_IN_PROMPT_MCP_CAPPED, SCRATCH_TOTAL_BUDGET,
+  SCRATCH_IN_PROMPT_MCP_CAPPED, SCRATCH_TOTAL_BUDGET,
   capGoalForProvider, CHANGE_RULES_EST, INSTRUCTION_EST, MAX_SELF_ASSESSED_STEPS, SYNTH_SCRATCH_BUDGET_LEAN,
-  SYNTH_SCRATCH_SLOTS_LEAN,
+  chatSections, fitChatToProvider, type ChatContext,
 } from './agentPrompts';
-import { promptCapFor } from '../../chat/conversationContext';
-import type { AgentPlan, HeldFinish, PromptFit, ScratchEntry, TurnPromptOptions } from './agentPrompts';
+import { resetByokTranscript, transcriptChars } from './byokTranscript';
+import { measureFor, promptCapFor } from '../../chat/conversationContext';
+import type { AgentPlan, DeltaRuleState, HeldFinish, PromptFit, ScratchEntry, TurnPromptOptions } from './agentPrompts';
 import { COMPLETE, finishCompletion, synthesisCompletion } from './completion';
 import type { AgentCompletion } from '../../../shared/types';
 import { agentWorkspaceDir, getAgentFileRoots } from './agentSandbox';
 import { maskSecrets } from './secretMask';
 import { getProviderLabel } from '../../providers';
+import { byokImagesFor } from '../../providers/byokImages';
+import { geminiCapFellSince, resendIfGeminiCapFell } from '../../providers/geminiPromptTooLong';
+import type { ByokImage } from '../../providers/byokClient';
 import { getMcpRegistry } from '../../mcp';
 import {
-  buildMcpCatalog, buildMcpIndex, buildMcpSummary, describeMcpServer, describeMcpTool, findMcpServer, hasMcpTools,
+  buildMcpCatalog, buildMcpIndex, buildMcpSummary, describeMcpServer, describeMcpTool, findMcpServer, hasMcpTools, subIndex,
   mcpCatalogBudgetChars, MCP_SCRATCH_RESERVE_SLOTS, mcpScratchReserveChars,
   validateMcpAction,
 } from './mcpTools';
@@ -42,14 +47,20 @@ import { connectServersForRun } from './mcpConnectOnUse';
 import { NO_WRITES, writesAllFailed } from './writeOutcome';
 import type { AgentWriteOutcome } from './writeOutcome';
 import type { BuiltinDeps, BuiltinOutcome } from './agentBuiltins';
+import type { DrawImage } from './agentDrawImage';
 import type { FlowRef } from '../flowEdit';
 import type { RecipientDirectory } from '../../../shared/botRecipients';
 import { runCall } from './agentCall';
 import type { AgentConfirmRequest, CallContext, ShellConfirmRequest } from './agentCall';
 import {
-  SHELL_NO_LONGER_ALLOWED, declinedShellObservation, isModelQuestion, isShellApproved, shellApprovalConfig, shellApprovalOf,
+  CONNECTOR_CHANGE_NO_LONGER_ALLOWED, FLOW_SAVE_NO_LONGER_ALLOWED, SHELL_NO_LONGER_ALLOWED, connectorApprovalConfig,
+  connectorApprovalOf, declinedConnectorObservation, declinedFlowObservation, declinedShellObservation, flowApprovalConfig,
+  isFlowApproval, isModelQuestion, isShellApproved, shellApprovalConfig, shellApprovalOf,
 } from './shellApproval';
+import type { FlowHold, FlowSaveRequest } from './agentFlowShared';
+import { commitHeldFlow, isPendingFlow } from './agentFlowHold';
 import type { ShellApprovalText } from './shellApproval';
+import type { McpConfirmRequest } from './mcpAction';
 import { batchResource, llmConcurrency, runScheduled, validateBatchAction } from './agentBatch';
 import type { BatchAction, BatchCall } from './agentBatch';
 import { createLedger } from './evidenceLedger';
@@ -60,8 +71,7 @@ import { connectorNotes, renderRuntimeContext, resolveToolContract } from './con
 
 export {
   buildActionRepair, buildDeltaPrompt, buildFinishPrompt, buildTurnPrompt, historyThatFits,
-  renderScratch, scratchFitFor, SCRATCH_IN_PROMPT, SCRATCH_IN_PROMPT_MCP,
-  SCRATCH_TOTAL_BUDGET,
+  renderScratch, scratchFitFor, SCRATCH_IN_PROMPT, SCRATCH_TOTAL_BUDGET,
 } from './agentPrompts';
 export type { AgentPlan, PromptFit, ScratchEntry, TurnPromptOptions } from './agentPrompts';
 export { AgentRunError, AgentScopeError, FULL_TOOL_SCOPE } from './agentTools';
@@ -83,8 +93,8 @@ interface CallResult {
   startedAt: number;
   ms: number;
   research?: ResearchProgress;
-  /** A shell command that did not run: it waits for the user's answer (`shellApproval`). */
-  deferred?: ShellConfirmRequest;
+  /** A shell command, change or held flow that did not run: it waits for the user's answer (`shellApproval`, `connectorApproval`, `flowApproval`). */
+  deferred?: ShellConfirmRequest | McpConfirmRequest | FlowSaveRequest;
 }
 
 const DEFAULT_MAX_TURNS = 8;
@@ -116,8 +126,9 @@ export function catalogFitsInFull(providerUrl: string, scope: AgentToolScope): b
   const room = promptCapFor(providerUrl) - INSTRUCTION_EST - MIN_EVIDENCE_ROOM;
   return buildToolCatalog(scope).length <= room;
 }
-// BYOK re-sends the whole prompt every turn (no delta, no caching), so tokens, not steps, are
-// what stops a long BYOK run; sized so a self-assessed 40-step run is not cut off early.
+// BYOK re-sends its whole conversation every turn (the endpoint keeps no thread; a cache hit cuts
+// the price, not a free key's quota), so tokens, not steps, are what stops a long BYOK run; sized
+// so a self-assessed 40-step run is not cut off early.
 export const AGENT_BYOK_TOKEN_BUDGET = 400_000;
 const AGENT_BYOK_TOKEN_CEILING = 600_000;
 const SYNTH_MIN_TIMEOUT_MS = 45_000;
@@ -125,6 +136,18 @@ const STALL_THRESHOLD = 2;
 const MAX_STALE_READS = 2;
 /** A run that has asked twice and still cannot proceed should say what is missing, not ask a third time. */
 const MAX_ASKS_PER_RUN = 2;
+
+/**
+ * Whether the run has anything to ask about. 2026-10-20: a bot message of just "1" was asked a
+ * question built from saved memory, and the user's next "1" picked its first choice. A goal with
+ * no letter in it holds no request; a message it replies to or a file sent with it carries one.
+ * The conversation does not: a "2" answering a numbered list there is resolved from it with no
+ * question needed, and nearly every bot chat has history, so counting it would undo the gate.
+ */
+export function goalIsAskable(goal: string, options: Pick<AgentRunOptions, 'replyTo' | 'attachments'>): boolean {
+  return /\p{L}/u.test(goal) || options.replyTo !== undefined || (options.attachments?.length ?? 0) > 0;
+}
+
 const RUNTIME_CONTEXT_MAX = 600;
 /** The headings and fences around the two evidence blocks, charged to the budgets that yield to them. */
 const EVIDENCE_HEADING_CHARS = 220;
@@ -134,6 +157,8 @@ const EVIDENCE_HEADING_CHARS = 220;
  * history and observations. A declared run (the user named the server) always gets its tools.
  */
 const MCP_SUMMARY_THRESHOLD = 20;
+/** Under a declared run's named servers: the rest of what is connected, one line each. */
+const OTHER_SERVERS_HEADING = `Also connected (not named; open one with "${AGENT_HELP_TOOL}", then call with "call_mcp"):`;
 
 /**
  * Free `tool_help` look-ups per run: discovery should not cost a step, and the cap stops the
@@ -206,6 +231,18 @@ export interface AgentRunOptions {
   /** The paired chats a bot step can reach; read live when omitted. */
   recipients?: RecipientDirectory;
   /**
+   * Set only for a bot admin's run, with the question's words in the user's language: a flow
+   * `build_flow` or `edit_flow` finishes is held, the run pauses with this question, and the held
+   * flow (`onPendingFlow`, read back as `pendingFlow` on resume) is saved when the answer approves it.
+   */
+  flowApproval?: { hold: FlowHold; text: (request: FlowSaveRequest) => ShellApprovalText };
+  /** The flow held when this run paused, from its run file. Only read with `flowApproval`. */
+  pendingFlow?: AgentPendingFlow;
+  /** Stores the held flow on the run (undefined clears it once the answer is handled). */
+  onPendingFlow?: (pending: AgentPendingFlow | undefined) => void;
+  /** Switches on a flow saved from an approved chat question; null when it is gone. */
+  onEnableFlow?: (flowId: string) => Promise<FlowDefinition | null>;
+  /**
    * Disclose only these MCP servers. This is what a connector command (`/notion`) sets, and what
    * the conversation keeps disclosing afterwards. It is a DISCLOSURE, not a restriction: the run
    * keeps its built-in tools and the prompt says the user named these servers, so the model can
@@ -253,6 +290,11 @@ export interface AgentRunOptions {
    */
   shellApproval?: (request: ShellConfirmRequest) => ShellApprovalText;
   /**
+   * The same for a connector change, set only for the owner's own bot chat: the change pauses the
+   * run as this question, and the call stored on it runs when the user approves it.
+   */
+  connectorApproval?: (request: McpConfirmRequest) => ShellApprovalText;
+  /**
    * The user's saved memory and the rule for changing it, pre-rendered by the caller that decided
    * this run may use it. A helper never gets it: it cannot answer the user, so it has nothing to
    * remember and no reason to see what the user told Yobi about themself.
@@ -265,11 +307,30 @@ export interface AgentRunOptions {
    */
   recapRule?: string;
   /**
+   * The chat message a bot request replies to and the group talk around it, shown before the GOAL
+   * in every full prompt and charged like the evidence blocks. Never a helper's: its goal is the
+   * model's own wording.
+   */
+  replyTo?: AgentReplyContext;
+  recentChat?: readonly AgentChatLine[];
+  /** The GOAL is about the group's talk itself: no conversation history, only `recentChat`. */
+  chatRecap?: boolean;
+  /**
    * The user's answer preferences (tone, length, and for the user themself the nickname and custom
    * instructions), pre-rendered by the caller. Shares the memory block's slot and reserve; a helper
    * never gets it, since its text is an observation, not the answer.
    */
   answerPrefs?: string;
+  /**
+   * What `draw_image` calls: draws on a web page and keeps the pictures for the answer. Only used
+   * when the scope offers `draw_image` (`AgentToolScope.pictures`); a helper never gets either.
+   */
+  drawImage?: DrawImage;
+  /**
+   * Keeps the pictures a built-in connector's read saved (the metro map) for the answer. Not tied
+   * to `draw_image`'s scope: nothing is drawn, the picture is the operator's own; a helper never gets it.
+   */
+  keepPictures?: (files: readonly string[]) => Promise<void>;
 }
 
 interface RunEvidence {
@@ -286,7 +347,7 @@ export type AgentRunResult =
   } & RunEvidence)
   | ({
     kind: 'question'; question: string; choices?: string[]; toolCalls: number; turns: number;
-    /** The program's question approving a shell command (not the model's own); shown word for word. */
+    /** The program's question approving a shell command or a connector change (not the model's own); shown word for word. */
     shellApproval?: boolean;
   } & RunEvidence);
 
@@ -332,13 +393,40 @@ export function callSignature(tool: string, config: Record<string, string>): str
   return JSON.stringify([tool.toLowerCase(), ...parts]);
 }
 
-export function repeatObservation(tool: string, step: number): string {
+/**
+ * `earlier` is that step's own observation, handed back with the refusal. Saying "its result is in
+ * the steps above" was false once the step had been condensed or scrolled away, and the model then
+ * retyped the arguments to get past the guard (2026-10-17). Absent only when the earlier call is in
+ * the same batch and has not been filed yet.
+ */
+export function repeatObservation(tool: string, step: number, earlier?: string): string {
+  const refusal = `ERROR: You already called ${tool} with these exact arguments in step ${step}, and calling it again cannot change the result.`;
+  if (earlier !== undefined) {
+    return [
+      `${refusal} Here it is again — use it, or change the arguments substantially, use a different tool, or finish:`,
+      earlier || '(empty)',
+    ].join('\n');
+  }
   return [
-    `ERROR: You already called ${tool} with these exact arguments in step ${step} —`,
-    'its result is in the steps above and calling it again cannot change it.',
-    'Do not repeat a call: change the arguments substantially, use a different tool, or finish',
-    'with what you already have.',
+    refusal,
+    'Its result is among this turn\'s calls. Do not repeat a call: change the arguments substantially,',
+    'use a different tool, or finish with what you already have.',
   ].join(' ');
+}
+
+/**
+ * A BYOK run's pictures. A new run fails on one it cannot send; a run resumed after `ask_user`
+ * goes on without them instead (a pasted picture's stash may be gone by then), since the turns
+ * before the question already read them.
+ */
+async function runImages(providerUrl: string, options: AgentRunOptions): Promise<readonly ByokImage[] | undefined> {
+  try {
+    return await byokImagesFor(providerUrl, options.attachments, '[Agent]');
+  } catch (err) {
+    if (!options.resumeFrom?.length) throw err;
+    sendLog(`⚠️ [Agent] Resumed without the attached images — ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
+  }
 }
 
 async function synthesizeFinal(
@@ -355,6 +443,7 @@ async function synthesizeFinal(
   noWriteLanded: boolean,
   actions: string,
   userMemory: string,
+  chat: ChatContext,
   signal?: AbortSignal,
 ): Promise<FinalAnswer> {
   const ceiling = lean ? SYNTH_SCRATCH_BUDGET_LEAN : SCRATCH_TOTAL_BUDGET;
@@ -363,25 +452,32 @@ async function synthesizeFinal(
       goal,
       scratch: over.scratch ?? scratch,
       lean,
-      scratchSlots: lean ? Math.max(scratchSlots, SYNTH_SCRATCH_SLOTS_LEAN) : scratchSlots,
+      scratchSlots,
       totalBudget: ceiling,
       history: over.history ?? '',
       plan,
       writesAllFailed: noWriteLanded,
       actions,
       userMemory,
+      ...chat,
       ...(over.fit ? { scratchFit: over.fit } : {}),
     });
   // History first, then the observations against whatever the history decision left — the same
   // order the turn prompt uses, so the two cannot disagree about who yields to whom.
   const assembleFinish = (h: string): string => assemble({ history: h });
-  const finishHistory = historyThatFits(assembleFinish, history, providerUrl);
   const fitFor = (wrap: (prompt: string) => string, h: string): PromptFit =>
     scratchFitFor(providerUrl, wrap(assemble({ history: h, scratch: [] })), ceiling);
+  // Built when sent, so a resend after Gemini's cap fell under it is built for the cap that holds.
+  const finishPrompt = (): string => {
+    const finishHistory = historyThatFits(assembleFinish, history, providerUrl);
+    return assemble({ history: finishHistory, fit: fitFor((prompt) => prompt, finishHistory) });
+  };
 
-  const result = await askJson<FinalAnswer>({
-    basePrompt: assemble({ history: finishHistory, fit: fitFor((prompt) => prompt, finishHistory) }),
-    session,
+  const result = await resendIfGeminiCapFell(() => askJson<FinalAnswer>({
+    basePrompt: finishPrompt(),
+    // A request of its own on BYOK: appended to the run's conversation it would carry every
+    // observation twice — the conversation's, and the 64,000 characters this prompt renders.
+    session: lean ? createProviderSession(undefined, false, session.images) : session,
     providerUrl,
     deps,
     timeoutMs,
@@ -393,7 +489,7 @@ async function synthesizeFinal(
       return wrap(assemble({ history: h, fit: fitFor(wrap, h) }));
     },
     signal,
-  });
+  }), (cap) => sendLog(`✂️ [Agent] ${getProviderLabel(providerUrl)} takes only ${cap} characters now — building the answer again`));
   if (!result.ok || !result.value) {
     throw new AgentRunError(
       result.reason ?? 'invalid_output',
@@ -415,6 +511,7 @@ export async function runAgent(
   const pinnedMaxTurns = options.maxTurns === undefined ? undefined : Math.max(1, options.maxTurns);
   let maxTurns = pinnedMaxTurns ?? DEFAULT_MAX_TURNS;
   const readOnly = options.readOnly === true;
+  const askable = goalIsAskable(trimmedGoal, options);
   const baseScope = options.toolScope ?? FULL_TOOL_SCOPE;
   // A helper never delegates again.
   const toolScope: AgentToolScope = readOnly
@@ -432,8 +529,8 @@ export async function runAgent(
   const recapHook = hasRecapSection(userMemory);
   // Capped once, here, so every budget computed below sees the length that will really be sent;
   // everything else competing for a capped prompt yields to the cap.
-  const promptGoal = capGoalForProvider(providerUrl, trimmedGoal, buildTurnPrompt({
-    goal: '', catalog, scratch: [], mustFinish: false, lean: isByokTargetUrl(providerUrl), allowAsk: true,
+  const baseline = (over: { goal: string } & ChatContext): string => buildTurnPrompt({
+    catalog, scratch: [], mustFinish: false, lean: isByokTargetUrl(providerUrl), allowAsk: true,
     // Measured WITH the own-data rule although the MCP index is not built yet: the baseline may
     // never come out shorter than the prompt this run really sends, or the goal is handed room the
     // provider's cap does not have and the tail — the action instruction — comes off the end.
@@ -441,7 +538,15 @@ export async function runAgent(
     userMemory,
     // Same reason: a run the user watches may be shown the batch shape, so the baseline carries it.
     batchGrammar: !readOnly,
-  }));
+    ...over,
+  });
+  // The group talk yields first, so a long recap never costs the request its own words.
+  const chat: ChatContext = readOnly ? {} : fitChatToProvider(providerUrl, {
+    ...(options.replyTo ? { replyTo: options.replyTo } : {}),
+    ...(options.recentChat?.length ? { recentChat: options.recentChat } : {}),
+    ...(options.chatRecap ? { chatRecap: true } : {}),
+  }, (fitted) => baseline({ goal: trimmedGoal, ...fitted }));
+  const promptGoal = capGoalForProvider(providerUrl, trimmedGoal, baseline({ goal: '', ...chat }));
   const fileRoots = await getAgentFileRoots();
   const workspaceDir = await agentWorkspaceDir();
   const lean = isByokTargetUrl(providerUrl);
@@ -451,8 +556,9 @@ export async function runAgent(
 
   const mcpRegistry = getMcpRegistry();
   const scopedIds = options.mcpServerIds;
-  // Filter BEFORE buildMcpIndex: handles are slugified with -2/-3 collision suffixes, so filtering
-  // afterwards can leave a `notion-2` with no `notion` and a validator error listing a phantom set.
+  // Filter the grants BEFORE buildMcpIndex: handles are slugified with -2/-3 collision suffixes, so
+  // filtering afterwards can leave a `notion-2` with no `notion` and a validator error listing a
+  // phantom set. The named servers are a view of that one index (`subIndex`), same handles.
   const noConnectors = options.noConnectors === true;
   const allowedIds = options.allowedMcpServerIds;
   // A helper's servers were connected by the run that delegated to it.
@@ -466,26 +572,32 @@ export async function runAgent(
   }
   const mcpServers =(noConnectors ? [] : mcpRegistry?.getAgentTools() ?? [])
     .filter((server) => !allowedIds || allowedIds.includes(server.serverId))
-    .filter((server) => !scopedIds || scopedIds.includes(server.serverId))
     // A helper is shown the reads only, so a change is not even a shape it can propose.
     .map((server) => (readOnly
       ? { ...server, tools: server.tools.filter((tool) => resolveToolContract(server.serverId, tool).risk({}) === 'read') }
       : server));
+  // Every server the run may reach, named or not: `call_mcp`, `tool_help` and the gates read this.
   const mcpIndex = buildMcpIndex(mcpServers);
   const mcpCandidate = mcpRegistry !== null && hasMcpTools(mcpIndex);
   // Declared = the user named these connectors themselves (a `/notion`-style disclosure that then
   // sticks to the conversation), as opposed to plain `/agent` sweeping up everything connected.
   const declared = (scopedIds?.length ?? 0) > 0;
+  // Naming one puts it first, in full; it does not take the others away (2026-10-22: a keyword
+  // match decided what the agent could reach, and once Notion was named, Jira was gone for the rest
+  // of the conversation with nothing the model could do). The others stay one line each, as in an
+  // undeclared run's summary, and open with `tool_help`. Only those already connected: the wait
+  // for a connection is spent on the servers the user named.
+  const shownIndex = declared ? subIndex(mcpIndex, (id) => scopedIds?.includes(id) === true) : mcpIndex;
+  const otherIndex = declared ? subIndex(mcpIndex, (id) => scopedIds?.includes(id) !== true) : null;
   // Read off the index, not the scope: an undeclared `/agent` run sweeps up every connected server,
   // and those are exactly the runs where nothing else tells the model its own data is reachable.
   const userDataSources = mcpIndex.handles.some((server) => server.userData);
   // A declared connector that cannot answer is an error even though the run has other tools to
   // fall back on. Falling back silently would let the user watch the agent solve their Notion
   // question by searching the web, with nothing anywhere saying Notion was never reachable.
-  if (!mcpCandidate && declared) {
+  if (declared && (!mcpCandidate || !hasMcpTools(shownIndex))) {
     throw new AgentScopeError('not-connected');
   }
-  const mcpScratchSlots = lean ? SCRATCH_IN_PROMPT_MCP : SCRATCH_IN_PROMPT_MCP_CAPPED;
 
   // What the user said is the one source a gate may treat as the user's own words; the answers to
   // earlier questions in this run count, the model's prose about them does not. Approving a shell
@@ -499,26 +611,33 @@ export async function runAgent(
   const ledger = createLedger(runWords, options.priorEvidence);
   const evidenceOut = (): RunEvidence => ({ actions: [...ledger.actions], evidence: ledger.snapshot(true) });
   const earlierActions = readOnly ? '' : renderActionLines(ledger.priorActions);
-  const changeTools = !readOnly && mcpCandidate && mcpIndex.handles
+  // Read off the servers the catalog lists in full: an unnamed one in a declared run is a summary
+  // line, and its rules would take the named ones' room on a capped page. A change on it still goes
+  // through the action gate's confirmation like any other.
+  const changeTools = !readOnly && mcpCandidate && shownIndex.handles
     .some((server) => server.tools.some((tool) => resolveToolContract(server.serverId, tool).risk({}) !== 'read'));
   // The notes explain the change tools; a helper is shown none, so they would only name tools it lacks.
-  const notes = mcpCandidate && !readOnly ? connectorNotes(mcpIndex.handles).join('\n') : '';
+  const notes = mcpCandidate && !readOnly ? connectorNotes(shownIndex.handles).join('\n') : '';
   // Charged like the goal: these blocks sit in every turn prompt and none can be trimmed later. The
   // memory is its real length, not an estimate — it is known before the first turn and never grows.
   const evidenceReserve = (earlierActions ? earlierActions.length + EVIDENCE_HEADING_CHARS : 0)
     + (changeTools ? CHANGE_RULES_EST + RUNTIME_CONTEXT_MAX + EVIDENCE_HEADING_CHARS : 0)
     + (userMemory ? userMemory.length + 2 : 0)
     // The recap reminder repeated where the finish shape is described, charged like its section.
-    + (recapHook ? RECAP_HOOK.length + 4 : 0);
+    + (recapHook ? RECAP_HOOK.length + 4 : 0)
+    // In the provider's own unit: a recap of Chinese chat is three times its length in bytes.
+    + measureFor(providerUrl)(chatSections(chat).join('\n'));
 
   const { buildAgentHistory, historyPromptCost, MCP_CATALOG_RESERVE } = await import('./agentContext');
-  const history = await buildAgentHistory({
+  // A question about the group's talk is answered from that talk: the bot's own earlier answers to
+  // this person were taken for "the discussion above" and summarised instead (2026-10-17).
+  const history = chat.chatRecap ? '' : await buildAgentHistory({
     ...(options.conversationPath ? { conversationPath: options.conversationPath } : {}),
     ...(options.temporaryChat ? { temporaryChat: true } : {}),
     providerUrl,
     catalogLen: catalog.length,
     goalLen: promptGoal.length + evidenceReserve,
-    // The reserve, not the window: `renderScratch` prints the last `mcpScratchSlots`
+    // The reserve, not the window: `renderScratch` prints the last `SCRATCH_IN_PROMPT_MCP_CAPPED`
     // observations, but a browser run sends the full prompt only on turn 1 (empty scratchpad)
     // and on a thread-loss rebuild; every other turn is a delta carrying one observation.
     mcpReserve: mcpCandidate
@@ -557,9 +676,19 @@ export async function runAgent(
       ? { text: summaryText, includedCount: mcpToolTotal, omitted: 0, brief: false }
       : { text: '', includedCount: 0, omitted: 0, brief: false }
     : mcpBudget > mcpOverhead
-      ? buildMcpCatalog(mcpIndex, mcpBudget - mcpOverhead)
+      ? buildMcpCatalog(shownIndex, mcpBudget - mcpOverhead)
       : { text: '', includedCount: 0, omitted: 0, brief: false };
   const mcpEnabled = mcpSection.includedCount > 0;
+  // The servers the user did not name, after the named ones have taken what they need: one summary
+  // line each, left out only when the budget cannot hold them (the named ones come first).
+  const otherSummary = otherIndex && hasMcpTools(otherIndex) ? buildMcpSummary(otherIndex) : '';
+  const otherRoom = mcpBudget - mcpOverhead - mcpSection.text.length - OTHER_SERVERS_HEADING.length - 2;
+  const otherSection = mcpEnabled && otherSummary && otherRoom >= otherSummary.length
+    ? [OTHER_SERVERS_HEADING, otherSummary]
+    : [];
+  if (otherSummary && otherSection.length === 0) {
+    sendLog(`⚠️ [Agent] ${otherIndex?.handles.length ?? 0} other connector(s) left out — ${providerLabel}'s input limit fits only the named one(s)`);
+  }
   if (summarise && mcpEnabled) {
     sendLog(`🗂️ [Agent] ${mcpIndex.handles.length} connector(s) summarised — ${mcpToolTotal} tool(s) behind "${AGENT_HELP_TOOL}"`);
   }
@@ -577,14 +706,17 @@ export async function runAgent(
         mcpSectionHeading,
         mcpSection.text,
         ...(mcpSection.brief ? [mcpSectionFooter] : []),
+        ...otherSection,
         ...(notes ? [notes] : []),
       ].join('\n')
     : catalog;
-  const scratchSlots = mcpEnabled ? mcpScratchSlots : SCRATCH_IN_PROMPT;
+  // BYOK has no window of steps, only a budget (`renderScratch` condenses what does not fit): a
+  // count let three short weather readings fall out of view while the budget sat nearly empty.
+  const scratchSlots = lean ? Number.POSITIVE_INFINITY : mcpEnabled ? SCRATCH_IN_PROMPT_MCP_CAPPED : SCRATCH_IN_PROMPT;
   // Offered to the run the user is watching, never to a helper: fan-out below fan-out multiplies
   // every rate limit, and a helper exists to do one reading job.
   const batchGrammar = !readOnly;
-  const validateDecision = (allowAsk: boolean) => (json: unknown): Validation<AgentDecision> => {
+  const validateDecision = (allowAsk: AskGate) => (json: unknown): Validation<AgentDecision> => {
     const obj = json && typeof json === 'object' && !Array.isArray(json) ? json as Record<string, unknown> : null;
     if (batchGrammar && obj?.action === 'call_tools') {
       return validateBatchAction(obj, { scope: toolScope, mcpIndex: mcpEnabled ? mcpIndex : null });
@@ -720,7 +852,10 @@ export async function runAgent(
     // Through `askUser`, like the other two confirm sites — otherwise the time a user spends
     // reading a generated flow is the only think-time still billed to the agent's wall clock.
     ...(options.onConfirm ? { confirm: askUser } : {}),
+    ...(options.flowApproval ? { holdFlows: options.flowApproval.hold } : {}),
+    ...(options.onEnableFlow ? { enableFlow: options.onEnableFlow } : {}),
     ...(toolScope.delegate ? { runSubtask } : {}),
+    ...(toolScope.pictures && options.drawImage ? { drawImage: options.drawImage } : {}),
   };
   const callCtx: CallContext = {
     deps,
@@ -734,16 +869,20 @@ export async function runAgent(
     unattended: options.unattended === true,
     askUser,
     ...(options.shellApproval ? { deferShell: options.shellApproval } : {}),
+    ...(options.connectorApproval ? { deferChanges: true } : {}),
     builtins: builtinCtx,
     fileRoots,
     workspaceDir,
     remainingMs,
+    ...(options.keepPictures ? { keepPictures: options.keepPictures } : {}),
     ...(options.onTrace ? { onTrace: options.onTrace } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
   };
 
   let lastRawDecision = '';
   let staleReads = 0;
+  /** A turn already rebuilt because Gemini's cap fell under it; only once per run. */
+  let rebuiltForCap = false;
   let budgetSettled = false;
 
   let toolCalls = scratch.length;
@@ -756,6 +895,8 @@ export async function runAgent(
    * stop being true the moment it stops being true.
    */
   let observationCut = false;
+  /** The same, against what a delta carries — the cap a live thread actually read it under. */
+  let deltaObservationCut = false;
   /**
    * A `finish` whose own `done` said the goal is not achieved, sent back once for another try while
    * steps remain. `pending` is true for the single turn that has to be told so; `steps` is the
@@ -765,7 +906,11 @@ export async function runAgent(
   let heldFinish: { title: string; content: string; missing: string; steps: number; pending: boolean } | null = null;
   const plan: AgentPlan = emptyPlan();
   if (options.resumePlan) applyPlanUpdate(plan, options.resumePlan.steps, options.resumePlan.done);
-  const session = createProviderSession(lean ? undefined : options.attachments);
+  const session = lean
+    ? createProviderSession(undefined, true, await runImages(providerUrl, options))
+    : createProviderSession(options.attachments);
+  /** The rules as of the previous turn, so a delta can say what changed (`deltaRuleNotices`). */
+  let ruleState: DeltaRuleState | null = null;
   let budgetWarned = false;
   const spentTokens = (): number | null => {
     if (!lean) return null;
@@ -803,11 +948,76 @@ export async function runAgent(
     return { kind: 'answer', title, answer, toolCalls, turns, writes, completion, ...evidenceOut() };
   };
 
-  // A shell command put to the user in the chat runs here, before the model is asked anything:
-  // the answer approved the string stored on the question, and that string is the one that runs.
+  /**
+   * Runs a call the user approved in the chat, before the model is asked anything: the answer
+   * approved what was stored on the question, and that is what runs. Nothing is asked again — the
+   * answer was the approval. A run resumed on the desktop has no chat question behind it in this
+   * sense: it gets the dialog, as any such call there does.
+   */
+  const runApproved = async (
+    call: AgentAction | McpAction,
+    approvedInChat: boolean,
+    /** Does the work instead of `runCall` — a held flow is saved, not built again. */
+    execute?: () => Promise<{ observation: string; status: 'ok' | 'error'; write: boolean; landed: boolean }>,
+  ): Promise<void> => {
+    const step = scratch.length + 1;
+    activeStep = step;
+    const { label, config } = planCall(call, providerUrl, deepResearch);
+    const signature = callSignature(label, config);
+    const startedAt = Date.now();
+    toolCalls++;
+    const serverName = call.action === 'call_mcp' ? findMcpServer(mcpIndex, call.server)?.serverName : undefined;
+    options.onProgress?.({ stage: 'tool', tool: label, ...(serverName ? { server: serverName } : {}) });
+    options.onTrace?.({ kind: 'tool', turn: step, tool: label, config });
+    sendLog(`🤖 [Agent] running the approved ${label} ${maskSecrets(JSON.stringify(config), true)}`);
+    const approvedCtx: CallContext = approvedInChat
+      ? { ...callCtx, deferShell: undefined, deferChanges: false, askUser: async () => true }
+      : callCtx;
+    const result = execute ? await execute() : await runCall(approvedCtx, call, config, step, signature);
+    if (result.write) {
+      writes.attempted += 1;
+      if (result.landed) writes.succeeded += 1;
+    }
+    if (result.status === 'ok') signatures.set(signature, step);
+    options.onTrace?.({ kind: 'observation', turn: step, tool: label, status: result.status, preview: truncate(result.observation, 200) });
+    const stored = truncate(result.observation, observationLimit);
+    const forDelta = truncate(result.observation, deltaObservationLimit);
+    scratch.push({ thought: '', tool: label, config, observation: stored, ...(forDelta === stored ? {} : { deltaObservation: forDelta }) });
+    options.onTurn?.({
+      index: step,
+      turn: resumedTurns,
+      thought: '',
+      tool: label,
+      config,
+      observation: stored,
+      status: result.status,
+      at: new Date(startedAt).toISOString(),
+      toolMs: Date.now() - startedAt,
+    });
+  };
+
   const lastResumed = scratch[scratch.length - 1];
   const pendingShell = lastResumed?.observation ? shellApprovalOf(lastResumed) : null;
-  if (lastResumed && pendingShell) {
+  const pendingChange = lastResumed?.observation ? connectorApprovalOf(lastResumed) : null;
+  const flowAnswered = Boolean(lastResumed?.observation) && lastResumed !== undefined && isFlowApproval(lastResumed);
+  if (lastResumed && flowAnswered) {
+    const pending = isPendingFlow(options.pendingFlow) ? options.pendingFlow : null;
+    // Handled once, whatever the answer: the held flow must not wait for a later answer to approve it.
+    options.onPendingFlow?.(undefined);
+    if (!isShellApproved(lastResumed)) {
+      sendLog('🔒 [Agent] the user did not approve saving the flow');
+      lastResumed.observation = declinedFlowObservation(lastResumed.observation);
+    } else if (!pending || !options.flowApproval || !scopeHasFlowTools(toolScope)) {
+      sendLog('🔒 [Agent] an approved flow was not saved: this run may no longer save flows from the chat');
+      lastResumed.observation = `${lastResumed.observation}\n${FLOW_SAVE_NO_LONGER_ALLOWED}`;
+    } else {
+      const tool = pending.mode === 'build' ? 'build_flow' : 'edit_flow';
+      await runApproved({ thought: '', action: 'call_tool', tool, config: { flow: pending.flow.name } }, true, async () => {
+        const saved = await commitHeldFlow(pending, builtinCtx);
+        return { ...saved, write: true, landed: saved.status === 'ok' };
+      });
+    }
+  } else if (lastResumed && pendingShell) {
     if (!isShellApproved(lastResumed)) {
       sendLog('🔒 [Agent] the user did not approve the shell command');
       lastResumed.observation = declinedShellObservation(lastResumed.observation);
@@ -815,41 +1025,23 @@ export async function runAgent(
       sendLog('🔒 [Agent] an approved shell command did not run: shell is no longer in this run\'s scope');
       lastResumed.observation = `${lastResumed.observation}\n${SHELL_NO_LONGER_ALLOWED}`;
     } else {
-      const step = scratch.length + 1;
-      activeStep = step;
       const config = { command: pendingShell.command, ...(pendingShell.shell ? { shell: pendingShell.shell } : {}) };
-      const signature = callSignature('shell', config);
-      const startedAt = Date.now();
-      toolCalls++;
-      options.onProgress?.({ stage: 'tool', tool: 'shell' });
-      options.onTrace?.({ kind: 'tool', turn: step, tool: 'shell', config });
-      sendLog(`🤖 [Agent] running the approved shell command ${maskSecrets(JSON.stringify(config), true)}`);
-      // The answer was the approval, so nothing is asked again. A run resumed on the desktop has
-      // no chat question behind it in this sense: it gets the dialog, as any shell call there does.
-      const approvedCtx: CallContext = options.shellApproval
-        ? { ...callCtx, deferShell: undefined, askUser: async () => true }
-        : callCtx;
-      const result = await runCall(approvedCtx, { thought: '', action: 'call_tool', tool: 'shell', config }, config, step, signature);
-      if (result.write) {
-        writes.attempted += 1;
-        if (result.landed) writes.succeeded += 1;
-      }
-      if (result.status === 'ok') signatures.set(signature, step);
-      options.onTrace?.({ kind: 'observation', turn: step, tool: 'shell', status: result.status, preview: truncate(result.observation, 200) });
-      const stored = truncate(result.observation, observationLimit);
-      const forDelta = truncate(result.observation, deltaObservationLimit);
-      scratch.push({ thought: '', tool: 'shell', config, observation: stored, ...(forDelta === stored ? {} : { deltaObservation: forDelta }) });
-      options.onTurn?.({
-        index: step,
-        turn: resumedTurns,
-        thought: '',
-        tool: 'shell',
-        config,
-        observation: stored,
-        status: result.status,
-        at: new Date(startedAt).toISOString(),
-        toolMs: Date.now() - startedAt,
-      });
+      await runApproved({ thought: '', action: 'call_tool', tool: 'shell', config }, options.shellApproval !== undefined);
+    }
+  } else if (lastResumed && pendingChange) {
+    // Looked up by id: the handle the question was asked under may be numbered differently now.
+    const handle = mcpIndex.handles.find((server) => server.serverId === pendingChange.serverId);
+    if (!isShellApproved(lastResumed)) {
+      sendLog('🔒 [Agent] the user did not approve the connector change');
+      lastResumed.observation = declinedConnectorObservation(lastResumed.observation);
+    } else if (!mcpRegistry || !handle?.tools.some((tool) => tool.name === pendingChange.name)) {
+      sendLog('🔒 [Agent] an approved connector change was not made: the connector is no longer in this run\'s reach');
+      lastResumed.observation = `${lastResumed.observation}\n${CONNECTOR_CHANGE_NO_LONGER_ALLOWED}`;
+    } else {
+      await runApproved(
+        { thought: '', action: 'call_mcp', server: handle.handle, name: pendingChange.name, arguments: pendingChange.arguments },
+        options.connectorApproval !== undefined,
+      );
     }
   }
 
@@ -861,8 +1053,10 @@ export async function runAgent(
     if (scratch.length > 0 && overTokenCeiling()) break;
 
     const mustFinish = turn === maxTurns || remainingMs() < MIN_TURN_BUDGET_MS || overTokenBudget();
-    const canAsk = !mustFinish && !readOnly
+    const askBudget = !mustFinish && !readOnly
       && scratch.filter(isModelQuestion).length < MAX_ASKS_PER_RUN;
+    const canAsk = askBudget && askable;
+    const askGate: AskGate = canAsk || (askBudget ? 'no_request' : false);
     const turnTimeoutMs = Math.max(10_000, Math.min(reasoningTimeoutMs, remainingMs()));
     const held: HeldFinish | undefined = heldFinish?.pending && !mustFinish
       ? { missing: heldFinish.missing, stepsLeft: maxTurns - turn + 1, ...(summarise && mcpEnabled ? { connectorHelp: true } : {}) }
@@ -892,41 +1086,90 @@ export async function runAgent(
       flowTools: scopeHasFlowTools(toolScope),
       webTools,
       ...(held ? { held } : {}),
+      ...chat,
     };
+    const capAtBuild = promptCapFor(providerUrl);
     const buildTurn = (h: string): string => buildTurnPrompt({ ...turnOptions, history: h });
     const turnHistory = historyThatFits(buildTurn, history, providerUrl);
     // Fit the observations to what the cap has left AFTER the history decision above. They are
     // the only block that grows every turn, so they are the only one that can walk a prompt
     // that fitted on turn 1 off the end of the cap by turn 4.
-    const scratchFit = scratchFitFor(providerUrl, buildTurnPrompt({ ...turnOptions, scratch: [], history: turnHistory }));
-    const basePrompt = buildTurnPrompt({ ...turnOptions, history: turnHistory, scratchFit });
     const previous = scratch.slice(-Math.min(lastBatchSize, scratch.length));
+    // A BYOK full prompt is only ever sent to start a conversation over, so its steps take part of
+    // the budget and leave the rest to the turns that follow (`BYOK_REBUILD_BUDGET`) — but never
+    // less than the last turn's results in full: they reached the model only in the delta a
+    // rebuild replaces, and condensing them would leave it the head of pages it never read.
+    const scratchCeiling = lean
+      ? Math.min(SCRATCH_TOTAL_BUDGET, Math.max(BYOK_REBUILD_BUDGET, scratchRebuildCost(scratch, previous.length)))
+      : SCRATCH_TOTAL_BUDGET;
+    const scratchFit = scratchFitFor(
+      providerUrl,
+      buildTurnPrompt({ ...turnOptions, scratch: [], history: turnHistory }),
+      scratchCeiling,
+    );
+    const basePrompt = buildTurnPrompt({ ...turnOptions, history: turnHistory, scratchFit });
+    const rulesNow: DeltaRuleState = {
+      deliverable: [...deliverables.keys()],
+      // Against what the delta carried, not the full prompt's slot: a browser delta holds a
+      // 24,000-character observation whole, and telling it "trimmed" would be false.
+      offload: deltaObservationCut && toolScope.delegate === true && !mustFinish && !planComplete(plan),
+      runtimeContext: turnOptions.runtimeContext ?? '',
+      planned: plan.steps.length > 0,
+    };
+    const notices = ruleState ? deltaRuleNotices(rulesNow, ruleState) : [];
+    const ruleStateBefore: DeltaRuleState | null = ruleState;
+    ruleState = rulesNow;
     // After a hold the live thread has already read the last observations — its reply to them was
     // the finish that was held — so it is sent the notice alone, not those observations again.
-    const sessionPrompt: string | undefined = held
-      ? buildHeldDelta(held, canAsk, plan, writesAllFailed(writes), recapHook)
+    let sessionPrompt: string | undefined = held
+      ? buildHeldDelta(held, plan, writesAllFailed(writes), recapHook, notices)
       : previous.length > 0
-        ? buildDeltaPrompt(previous, scratch.length, mustFinish, turnOptions.stalled, plan, writesAllFailed(writes), providerUrl, recapHook)
+        ? buildDeltaPrompt(previous, scratch.length, mustFinish, turnOptions.stalled, plan, writesAllFailed(writes), providerUrl, recapHook, notices)
         : undefined;
+    const transcript = session.transcript;
+    // A BYOK conversation that would outgrow the budget is rebuilt into one full prompt: the
+    // current rules, the newest steps whole and the older ones condensed — what a browser thread
+    // that was lost gets, and what keeps every request within today's largest one.
+    if (transcript && (transcript.messages.length === 0 || sessionPrompt === undefined
+      || transcriptChars(transcript, sessionPrompt) > SCRATCH_TOTAL_BUDGET)) {
+      if (transcript.messages.length > 0) {
+        sendLog(`🗜️ [Agent] turn ${turn}: conversation rebuilt into one message — ${scratch.length} step(s), older ones condensed`);
+      }
+      resetByokTranscript(transcript, renderScratch(scratch, scratchSlots, scratchFit.budget, scratchFit.measure).length);
+      sessionPrompt = undefined;
+    }
     options.onProgress?.({ stage: 'thinking' });
     options.onTrace?.({ kind: 'thinking', turn: nextStep, provider: providerLabel });
 
     const decisionStartedAt = Date.now();
-    const decision: AskJsonResult<AgentDecision> = await askJson<AgentDecision>({
-      basePrompt,
-      sessionPrompt,
-      session,
-      providerUrl,
-      deps,
-      timeoutMs: turnTimeoutMs,
-      validate: validateDecision(canAsk),
-      buildRepair: buildActionRepair({ ...turnOptions, history }, providerUrl),
-      onReject: (error, attempt, preview) => {
-        sendLog(`↻ [Agent] turn ${turn}: response rejected (${error}) — asking again (${attempt}); reply: "${preview}"`);
-        options.onTrace?.({ kind: 'stage', turn: nextStep, label: 'repairing', detail: String(attempt) });
-      },
-      signal: options.signal,
-    });
+    let decision: AskJsonResult<AgentDecision>;
+    try {
+      decision = await askJson<AgentDecision>({
+        basePrompt,
+        sessionPrompt,
+        session,
+        providerUrl,
+        deps,
+        timeoutMs: turnTimeoutMs,
+        validate: validateDecision(askGate),
+        buildRepair: buildActionRepair({ ...turnOptions, history }, providerUrl),
+        transcriptRepair: buildTranscriptRepair,
+        onReject: (error, attempt, preview) => {
+          sendLog(`↻ [Agent] turn ${turn}: response rejected (${error}) — asking again (${attempt}); reply: "${preview}"`);
+          options.onTrace?.({ kind: 'stage', turn: nextStep, label: 'repairing', detail: String(attempt) });
+        },
+        signal: options.signal,
+      });
+    } catch (err) {
+      // Refused unsent because Gemini's cap fell under a prompt built for the larger one (the
+      // picker showed the page signed out): build this turn again at the cap that holds now.
+      if (rebuiltForCap || !geminiCapFellSince(capAtBuild, err)) throw err;
+      rebuiltForCap = true;
+      ruleState = ruleStateBefore;
+      sendLog(`✂️ [Agent] turn ${turn}: ${providerLabel} takes only ${promptCapFor(providerUrl)} characters now — building the turn again`);
+      turn--;
+      continue;
+    }
     const modelMs = Date.now() - decisionStartedAt;
 
     // Not after a hold: a model told "finish again if nothing can get it" may send the very finish
@@ -1095,7 +1338,8 @@ export async function runAgent(
 
       if (repeatedAt !== undefined) {
         sendLog(`🔁 [Agent] skipped a repeat of ${toolLabel} (identical to step ${repeatedAt})`);
-        return settle(repeatObservation(toolLabel, repeatedAt), 'error');
+        const earlier = scratch[repeatedAt - 1];
+        return settle(repeatObservation(toolLabel, repeatedAt, earlier ? earlier.deltaObservation || earlier.observation : undefined), 'error');
       }
       if (call.action !== 'call_mcp' && isHelpTool(call.tool ?? '')) {
         // Connector tools first: a tier-1 brief is the only entry the model saw for them, so
@@ -1158,12 +1402,33 @@ export async function runAgent(
         )
       : [await executeCall(calls[0], firstStep)];
 
-    // Only a lone call can be a shell command (a batch holds reads), so only `results[0]`.
+    // Only a lone call can be a shell command or a change (a batch holds reads), so only `results[0]`.
     const deferred = results[0]?.deferred;
-    if (deferred && options.shellApproval) {
-      const text = options.shellApproval(deferred);
-      const config = shellApprovalConfig(text, { command: deferred.command, shell: results[0].config.shell ?? '' });
-      sendLog(`❓ [Agent] pausing to ask the user to approve a shell command (${deferred.interpreter})`);
+    const approval = deferred?.kind === 'shell'
+      ? options.shellApproval && {
+        text: options.shellApproval(deferred),
+        store: (text: ShellApprovalText) => shellApprovalConfig(text, { command: deferred.command, shell: results[0].config.shell ?? '' }),
+        what: `a shell command (${deferred.interpreter})`,
+      }
+      : deferred?.kind === 'flowSave'
+        ? options.flowApproval && {
+          text: options.flowApproval.text(deferred),
+          // The flow itself waits on the run, not on the question the model reads back.
+          store: (text: ShellApprovalText) => {
+            options.onPendingFlow?.(deferred.pending);
+            return flowApprovalConfig(text);
+          },
+          what: `saving the flow "${deferred.pending.flow.name}"`,
+        }
+        : deferred && options.connectorApproval && {
+          text: options.connectorApproval(deferred),
+          store: (text: ShellApprovalText) => connectorApprovalConfig(text, { serverId: deferred.serverId, name: deferred.toolName, arguments: deferred.args }),
+          what: `a change in ${deferred.serverName} (${deferred.toolName})`,
+        };
+    if (approval) {
+      const { text } = approval;
+      const config = approval.store(text);
+      sendLog(`❓ [Agent] pausing to ask the user to approve ${approval.what}`);
       options.onTurn?.({
         index: firstStep,
         turn,
@@ -1185,6 +1450,7 @@ export async function runAgent(
     // numbers it will name next turn, the checkpoint and the delta all have to agree.
     consecutiveErrors = results.some((result) => result.status === 'ok') ? 0 : consecutiveErrors + 1;
     observationCut = results.some((result) => result.observation.length > observationLimit);
+    deltaObservationCut = results.some((result) => result.observation.length > deltaObservationLimit);
     results.forEach((result, index) => {
       const step = firstStep + index;
       const stored = truncate(result.observation, observationLimit);
@@ -1235,7 +1501,7 @@ export async function runAgent(
   }
   const final = await synthesizeFinal(
     promptGoal, scratch, providerUrl, deps, synthTimeoutMs, lean, scratchSlots, session, history, plan,
-    writesAllFailed(writes), renderActionLines(ledger.actions, 8), userMemory, options.signal,
+    writesAllFailed(writes), renderActionLines(ledger.actions, 8), userMemory, chat, options.signal,
   );
   return answered(final.title, final.content, turnsUsed, synthesisCompletion(final.done, final.missing));
 }

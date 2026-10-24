@@ -1,11 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import { Divider, Group, Menu, Text } from '@mantine/core';
-import { Check, Globe, MessageSquare, Waypoints, X } from 'lucide-react';
+import { Check, ChevronRight, Globe, MessageSquare, Plug, Waypoints, X } from 'lucide-react';
 import type { ChatMode } from '../../config/chatModes';
 import { renderServerIcon } from '../../config/connectorIcons';
 import type { KeywordCandidate } from '../../../../shared/connectorKeywords';
 import { ComposerPill } from './ComposerPill';
 import { composerMenuPosition, type MenuDirection } from './composerMenuDirection';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 interface ModeDropdownProps {
   /** Agent when switched on by itself or implied by the web or a connector; otherwise chat. */
@@ -23,6 +24,7 @@ interface ModeDropdownProps {
 }
 
 const MENU_WIDTH = 300;
+const CONNECTOR_LIST_STYLE = { width: 220, maxHeight: 320, overflowY: 'auto' } as const;
 /** Past this the pill would out-grow the composer footer, so the rest become a count. */
 const NAMES_IN_PILL = 2;
 
@@ -64,9 +66,8 @@ export const ModeDropdown: React.FC<ModeDropdownProps> = ({
   const label = pillLabel(
     t(value === 'agent' ? 'chat.mode.agent.label' : 'chat.mode.chat.label'),
     activeNames,
-    (count) => t('chat.mode.connectors.more').replace('{{count}}', String(count)),
+    (count) => fillTemplate(t('chat.mode.connectors.more'), { count: String(count) }),
   );
-  const anythingActive = web || active.length > 0;
   const agentOn = value === 'agent';
 
   return (
@@ -123,29 +124,6 @@ export const ModeDropdown: React.FC<ModeDropdownProps> = ({
 
         <Divider my={4} color="var(--mantine-color-default-border)" />
 
-        <Menu.Label>
-          <Group gap={6} justify="space-between" wrap="nowrap">
-            <Text fz="var(--font-size-sm)" c="var(--mantine-color-dimmed)">
-              {t('chat.mode.connectors.title')}
-            </Text>
-            {anythingActive && (
-              <Text
-                component="span"
-                fz="var(--font-size-sm)"
-                c="var(--mantine-color-dimmed)"
-                style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 3 }}
-                onClick={() => {
-                  active.forEach((connector) => onToggleConnector(connector.id));
-                  if (web) onToggleWeb();
-                }}
-              >
-                <X size={11} />
-                {t('chat.mode.connectors.clear')}
-              </Text>
-            )}
-          </Group>
-        </Menu.Label>
-
         <Menu.Item
           onClick={onToggleWeb}
           leftSection={<Globe size={15} />}
@@ -160,29 +138,66 @@ export const ModeDropdown: React.FC<ModeDropdownProps> = ({
           </Text>
         </Menu.Item>
 
+        {/* The connector list grows with every one the user adds, so it lives one level down and
+            scrolls there instead of pushing the menu past the window. */}
         {connectors.length > 0 && (
-          <>
-            <Divider my={4} color="var(--mantine-color-default-border)" />
-            {connectors.map((connector) => {
-              const isActive = activeConnectorIds.includes(connector.id);
-              return (
-                <Menu.Item
-                  key={connector.id}
-                  onClick={() => onToggleConnector(connector.id)}
-                  leftSection={renderServerIcon(connector.url, 15)}
-                  rightSection={isActive ? <Check size={13} color="var(--mantine-color-accent)" /> : null}
-                  style={{
-                    background: isActive ? 'var(--mantine-color-accent-dim)' : undefined,
-                    color: isActive ? 'var(--mantine-color-accent)' : undefined,
-                  }}
-                >
-                  <Text fz="var(--font-size-md)" fw={isActive ? 600 : 400} lh={1.3}>
-                    {connector.name}
-                  </Text>
-                </Menu.Item>
-              );
-            })}
-          </>
+          <Menu.Sub position={menuDirection === 'up' ? 'right-end' : 'right-start'}>
+            <Menu.Sub.Target>
+              <Menu.Sub.Item
+                leftSection={<Plug size={15} />}
+                rightSection={
+                  <Group gap={6} wrap="nowrap">
+                    {active.length > 0 && (
+                      <Text span fz="var(--font-size-sm)" c="var(--mantine-color-accent)">
+                        {active.length}
+                      </Text>
+                    )}
+                    <ChevronRight size={14} color="var(--mantine-color-dimmed)" />
+                  </Group>
+                }
+                style={{ color: active.length > 0 ? 'var(--mantine-color-accent)' : undefined }}
+              >
+                <Text fz="var(--font-size-md)" fw={active.length > 0 ? 600 : 400} lh={1.3}>
+                  {t('chat.mode.connectors.title')}
+                </Text>
+              </Menu.Sub.Item>
+            </Menu.Sub.Target>
+
+            <Menu.Sub.Dropdown style={CONNECTOR_LIST_STYLE}>
+              {connectors.map((connector) => {
+                const isActive = activeConnectorIds.includes(connector.id);
+                return (
+                  <Menu.Item
+                    key={connector.id}
+                    onClick={() => onToggleConnector(connector.id)}
+                    leftSection={renderServerIcon(connector.url, 15)}
+                    rightSection={isActive ? <Check size={13} color="var(--mantine-color-accent)" /> : null}
+                    style={{
+                      background: isActive ? 'var(--mantine-color-accent-dim)' : undefined,
+                      color: isActive ? 'var(--mantine-color-accent)' : undefined,
+                    }}
+                  >
+                    <Text fz="var(--font-size-md)" fw={isActive ? 600 : 400} lh={1.3}>
+                      {connector.name}
+                    </Text>
+                  </Menu.Item>
+                );
+              })}
+              {active.length > 0 && (
+                <>
+                  <Divider my={4} color="var(--mantine-color-default-border)" />
+                  <Menu.Item
+                    leftSection={<X size={15} />}
+                    onClick={() => active.forEach((connector) => onToggleConnector(connector.id))}
+                  >
+                    <Text fz="var(--font-size-md)" lh={1.3}>
+                      {t('chat.mode.connectors.clear')}
+                    </Text>
+                  </Menu.Item>
+                </>
+              )}
+            </Menu.Sub.Dropdown>
+          </Menu.Sub>
         )}
       </Menu.Dropdown>
     </Menu>

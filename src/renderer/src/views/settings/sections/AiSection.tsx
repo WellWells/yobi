@@ -1,9 +1,7 @@
 import React from 'react';
-import { ActionIcon, Box, Group, Stack, Text } from '@mantine/core';
-import {
-  Eye, FileText, Languages, MessageSquare, Minus, Plus, RotateCcw, Ruler,
-  SlidersHorizontal, Timer, User2, MonitorPlay,
-} from 'lucide-react';
+import { Box, Stack, Text } from '@mantine/core';
+import { Eye, RotateCcw, SlidersHorizontal, Timer, MonitorPlay } from 'lucide-react';
+import { NumberStepper } from '../NumberStepper';
 import { AppButton } from '../../../components/AppButton';
 import { AppTextarea } from '../../../components/AppTextarea';
 import { AppTextInput } from '../../../components/AppTextInput';
@@ -15,7 +13,9 @@ import {
   MIN_RESPONSE_TIMEOUT_SEC, MAX_RESPONSE_TIMEOUT_SEC,
 } from '../hooks/useSystemSettings';
 import type { useSystemSettings } from '../hooks/useSystemSettings';
+import { buildPromptPreview } from '../hooks/usePromptPrefs';
 import type { usePromptPrefs } from '../hooks/usePromptPrefs';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 type SystemSettings = ReturnType<typeof useSystemSettings>;
 type PromptPrefs = ReturnType<typeof usePromptPrefs>;
@@ -39,6 +39,54 @@ interface Props {
   sectionGap: number;
 }
 
+const PromptPreviewCard: React.FC<{
+  prefs: PromptPrefs;
+  localeLabel: string;
+  t: (key: string) => string;
+  sectionGap: number;
+}> = ({ prefs, localeLabel, t, sectionGap }) => {
+  const preview = buildPromptPreview(prefs.promptPrefs, prefs.syncSystemLanguageToModel, localeLabel, t);
+  return (
+    <SectionCard style={{ marginBottom: sectionGap }}>
+      <SectionTitle icon={<Eye size={15} />} label={t('settings.prompt.preview.title')} mb={8} />
+      {preview ? (
+        <Box
+          component="pre"
+          bg="var(--mantine-color-bg-tertiary)"
+          style={{
+            border: '1px solid var(--mantine-color-default-border)',
+            borderRadius: 'var(--radius-sm)',
+            padding: '10px 12px',
+            margin: 0,
+            fontSize: 'var(--font-size-sm)',
+            color: 'var(--mantine-color-default-color)',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            fontFamily: 'var(--font-sans)',
+            lineHeight: 1.65,
+          }}
+        >
+          {preview}
+        </Box>
+      ) : (
+        <Text
+          fz="var(--font-size-sm)"
+          c="dimmed"
+          bg="var(--mantine-color-bg-tertiary)"
+          fs="italic"
+          p="10px 12px"
+          style={{
+            border: '1px solid var(--mantine-color-default-border)',
+            borderRadius: 'var(--radius-sm)',
+          }}
+        >
+          {t('settings.prompt.preview.empty')}
+        </Text>
+      )}
+    </SectionCard>
+  );
+};
+
 export const AiSection: React.FC<Props> = ({
   system, prefs, t, localeLabel, showSection, sectionGap,
 }) => (
@@ -50,9 +98,8 @@ export const AiSection: React.FC<Props> = ({
 
         <Stack gap={12}>
           <SettingRow
-            icon={<Languages size={13} />}
             label={t('settings.prompt.localeSync.title')}
-            hint={t('settings.prompt.localeSync.hint').replace('{{locale}}', localeLabel)}
+            hint={fillTemplate(t('settings.prompt.localeSync.hint'), { locale: localeLabel })}
             alignStart
             control={
               <ToggleSwitch
@@ -63,7 +110,6 @@ export const AiSection: React.FC<Props> = ({
           />
 
           <SettingField
-            icon={<User2 size={13} />}
             label={t('settings.prompt.nickname.label')}
             hint={t('settings.prompt.nickname.hint')}
           >
@@ -80,7 +126,7 @@ export const AiSection: React.FC<Props> = ({
             />
           </SettingField>
 
-          <SettingField icon={<MessageSquare size={13} />} label={t('settings.prompt.tone.label')}>
+          <SettingField label={t('settings.prompt.tone.label')}>
             <SegmentedControl
               value={prefs.promptPrefs.tone}
               options={[
@@ -93,7 +139,7 @@ export const AiSection: React.FC<Props> = ({
             />
           </SettingField>
 
-          <SettingField icon={<Ruler size={13} />} label={t('settings.prompt.length.label')}>
+          <SettingField label={t('settings.prompt.length.label')}>
             <SegmentedControl
               value={prefs.promptPrefs.length}
               options={[
@@ -105,7 +151,7 @@ export const AiSection: React.FC<Props> = ({
             />
           </SettingField>
 
-          <SettingField icon={<FileText size={13} />} label={t('settings.prompt.custom.label')}>
+          <SettingField label={t('settings.prompt.custom.label')}>
             <AppTextarea
               value={prefs.promptPrefs.customInstructions}
               onChange={(e) => prefs.setPromptPrefs({ ...prefs.promptPrefs, customInstructions: e.target.value })}
@@ -124,43 +170,7 @@ export const AiSection: React.FC<Props> = ({
         </Stack>
       </SectionCard>
 
-      <SectionCard style={{ marginBottom: sectionGap }}>
-        <SectionTitle icon={<Eye size={15} />} label={t('settings.prompt.preview.title')} mb={8} />
-        {prefs.combinedPromptPreview ? (
-          <Box
-            component="pre"
-            bg="var(--mantine-color-bg-tertiary)"
-            style={{
-              border: '1px solid var(--mantine-color-default-border)',
-              borderRadius: 'var(--radius-sm)',
-              padding: '10px 12px',
-              margin: 0,
-              fontSize: 'var(--font-size-sm)',
-              color: 'var(--mantine-color-default-color)',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
-              fontFamily: 'var(--font-sans)',
-              lineHeight: 1.65,
-            }}
-          >
-            {prefs.combinedPromptPreview}
-          </Box>
-        ) : (
-          <Text
-            fz="var(--font-size-sm)"
-            c="dimmed"
-            bg="var(--mantine-color-bg-tertiary)"
-            fs="italic"
-            p="10px 12px"
-            style={{
-              border: '1px solid var(--mantine-color-default-border)',
-              borderRadius: 'var(--radius-sm)',
-            }}
-          >
-            {t('settings.prompt.preview.empty')}
-          </Text>
-        )}
-      </SectionCard>
+      <PromptPreviewCard prefs={prefs} localeLabel={localeLabel} t={t} sectionGap={sectionGap} />
 
     </Box>
 
@@ -196,59 +206,19 @@ export const AiSection: React.FC<Props> = ({
 
     <SectionCard style={{ marginBottom: sectionGap, display: showSection(TAG_SETS.timeout, 'ai') ? 'block' : 'none' }}>
       <SectionTitle icon={<Timer size={15} />} label={t('settings.responseTimeout.title')} />
-      <Group gap={10} align="center">
-        <ActionIcon
-          variant="default"
-          size={32}
-          aria-label={t('settings.responseTimeout.decrease')}
-          onClick={() => {
-            const base = system.timeoutInputIsInteger ? system.timeoutParsed : system.responseTimeoutSec;
-            void system.persistResponseTimeoutSec(base - 1);
-          }}
-          disabled={system.responseTimeoutSec <= MIN_RESPONSE_TIMEOUT_SEC}
-        >
-          <Minus size={14} />
-        </ActionIcon>
-
-        <Box pos="relative" w={120}>
-          <AppTextInput
-            type="text"
-            inputMode="numeric"
-            tone="body"
-            numeric
-            value={system.responseTimeoutInput}
-            onChange={(e) => system.setResponseTimeoutInput(e.target.value.replace(/[^\d]/g, ''))}
-            onBlur={() => {
-              const base = system.timeoutInputIsInteger ? system.timeoutParsed : system.responseTimeoutSec;
-              void system.persistResponseTimeoutSec(base);
-            }}
-            error={system.timeoutInvalid}
-            rightSection={
-              <Text component="span" fz="var(--font-size-base)" c="dimmed">
-                {t('settings.responseTimeout.seconds')}
-              </Text>
-            }
-            rightSectionWidth={30}
-          />
-        </Box>
-
-        <ActionIcon
-          variant="default"
-          size={32}
-          aria-label={t('settings.responseTimeout.increase')}
-          onClick={() => {
-            const base = system.timeoutInputIsInteger ? system.timeoutParsed : system.responseTimeoutSec;
-            void system.persistResponseTimeoutSec(base + 1);
-          }}
-          disabled={system.responseTimeoutSec >= MAX_RESPONSE_TIMEOUT_SEC}
-        >
-          <Plus size={14} />
-        </ActionIcon>
-
-        <Text fz="var(--font-size-sm)" c="dimmed">
-          {t('settings.responseTimeout.range')}
-        </Text>
-      </Group>
+      <NumberStepper
+        value={system.responseTimeoutSec}
+        input={system.responseTimeoutInput}
+        onInputChange={system.setResponseTimeoutInput}
+        onCommit={(seconds) => { void system.persistResponseTimeoutSec(seconds); }}
+        min={MIN_RESPONSE_TIMEOUT_SEC}
+        max={MAX_RESPONSE_TIMEOUT_SEC}
+        unit={t('settings.responseTimeout.seconds')}
+        range={t('settings.responseTimeout.range')}
+        decreaseLabel={t('settings.responseTimeout.decrease')}
+        increaseLabel={t('settings.responseTimeout.increase')}
+        error={system.timeoutInvalid}
+      />
       <Text
         fz="var(--font-size-sm)"
         mt={8}

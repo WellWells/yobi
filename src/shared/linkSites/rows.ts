@@ -1,5 +1,5 @@
 import { parseFacebookUrl } from '../facebookLinks';
-import { BILIBILI_SHARE_TITLE, parseBilibiliUrl } from './bilibiliLinks';
+import { BILIBILI_SHARE_TITLE, bilibiliListVideoId, bilibiliVideoUrl, parseBilibiliListUrl, parseBilibiliUrl } from './bilibiliLinks';
 import { parseDcardUrl } from './dcardLinks';
 import { parseInstagramUrl } from '../instagramLinks';
 import { parseM3u8Url } from './m3u8Links';
@@ -8,9 +8,13 @@ import { parsePttUrl } from './pttLinks';
 import { parseRedditUrl } from './redditLinks';
 import { parseSoundcloudUrl } from './soundcloudLinks';
 import { parseTikTokUrl } from './tiktokLinks';
-import { parseVimeoUrl } from './vimeoLinks';
+import { parseVimeoListUrl, parseVimeoUrl } from './vimeoLinks';
+import { parseWeiboUrl } from './weiboLinks';
 import { parseXPostUrl } from '../xHandles';
-import { isYoutubeMusicUrl, strictYoutubeVideoId, youtubeWatchUrl } from '../youtubeUrl';
+import {
+  isYoutubeMusicUrl, strictYoutubeListId, strictYoutubePlaylistId, strictYoutubeVideoId, youtubePlaylistUrl, youtubeWatchUrl,
+} from '../youtubeUrl';
+import { PLAYLIST_KIND } from './types';
 import type { LinkMatch, LinkRef, LinkSiteRow, PostRef, PostRow, PostSiteId, VideoRef, VideoRow, VideoSiteId } from './types';
 
 function postRef(site: PostSiteId, ref: { url: string; id: string; author: string; kind?: string }): PostRef {
@@ -20,6 +24,26 @@ function postRef(site: PostSiteId, ref: { url: string; id: string; author: strin
 /** A YouTube video by its id, the link rebuilt as the standard watch URL. */
 export function youtubeVideoRef(id: string): VideoRef {
   return { site: 'youtube', shape: 'video', url: youtubeWatchUrl(id), id, author: '' };
+}
+
+/** A link to a whole list on a video site (`PLAYLIST_KIND`): taken only to answer that downloads go one at a time. */
+function playlistRef(site: VideoSiteId, list: { id: string; url: string }): VideoRef {
+  return { site, shape: 'video', url: list.url, id: list.id, author: '', kind: PLAYLIST_KIND };
+}
+
+/**
+ * The kinds of link a video row takes only to turn away: a whole playlist or collection
+ * (`PLAYLIST_KIND`, refused by the download skills) and SoundCloud's `set` (refused by its own
+ * read, in its own words).
+ */
+const LIST_KINDS: ReadonlySet<string> = new Set([PLAYLIST_KIND, 'set']);
+
+/**
+ * Whether a link names a whole list rather than one video: a row takes it only to say downloads
+ * go one at a time, so a group the bot merely overhears never gets that answer.
+ */
+export function isListLink(ref: LinkRef): boolean {
+  return ref.shape === 'video' && LIST_KINDS.has(ref.kind ?? '');
 }
 
 /*
@@ -105,6 +129,7 @@ const PTT_ROW: PostRow = {
     return ref ? postRef('ptt', ref) : null;
   },
   pushes: true,
+  region: 'tw',
 };
 
 /*
@@ -122,6 +147,7 @@ const DCARD_ROW: PostRow = {
     const ref = parseDcardUrl(token);
     return ref ? postRef('dcard', ref) : null;
   },
+  region: 'tw',
 };
 
 /*
@@ -143,8 +169,26 @@ const REDDIT_ROW: PostRow = {
 };
 
 /*
+ * A Weibo post or a video page: its text, pictures and video forwarded, its comments analyzed. A
+ * video page is a post here, as a TikTok video is: the reader looks up the post the video belongs
+ * to, and the forward takes the best version the chat allows rather than offering a menu.
+ */
+const WEIBO_ROW: PostRow = {
+  id: 'weibo',
+  label: 'Weibo',
+  shape: 'post',
+  match(token) {
+    if (!/(?:^|[./])weibo\.(?:com|cn)\//i.test(token)) return null;
+    const ref = parseWeiboUrl(token);
+    return ref ? postRef('weibo', ref) : null;
+  },
+};
+
+/*
  * A YouTube Music link is the same video under the same watch URL; its kind `music` makes the
- * link alone the MP3 rather than the menu (`parseVideoInput`).
+ * link alone the MP3 rather than the menu (`parseVideoInput`). A video opened inside a playlist
+ * (`&list=`) is that video alone, marked `inList` so the menu says the rest is not downloaded; a
+ * link to the whole playlist is taken only to say so (`PLAYLIST_KIND`).
  */
 const YOUTUBE_ROW: VideoRow = {
   id: 'youtube',
@@ -154,22 +198,39 @@ const YOUTUBE_ROW: VideoRow = {
   subtitles: true,
   match(token) {
     const id = strictYoutubeVideoId(token);
-    if (!id) return null;
-    return isYoutubeMusicUrl(token) ? { ...youtubeVideoRef(id), kind: 'music' } : youtubeVideoRef(id);
+    if (!id) {
+      const list = strictYoutubePlaylistId(token);
+      return list ? playlistRef('youtube', { id: list, url: youtubePlaylistUrl(list) }) : null;
+    }
+    const ref: VideoRef = isYoutubeMusicUrl(token) ? { ...youtubeVideoRef(id), kind: 'music' } : youtubeVideoRef(id);
+    return strictYoutubeListId(token) ? { ...ref, inList: true } : ref;
   },
 };
 
 /**
  * A bilibili video or `b23.tv` share link. A share link is taken as a video before it is resolved
  * (`match` cannot wait on the network): `info` resolves it and turns away one that does not lead
- * to a single video. Its kind is `short` and its id the share code until then.
+ * to a single video. Its kind is `short` and its id the share code until then. A list player that
+ * names the video it plays (`?bvid=`) is that video, marked `inList` as YouTube's `&list=` is.
+ * Never a whole list: the connector reads this too, and a list is no video to read.
  */
 export function bilibiliVideoRef(token: string): VideoRef | null {
   const link = parseBilibiliUrl(token);
-  if (!link) return null;
+  if (!link) {
+    const playing = bilibiliListVideoId(token);
+    return playing ? { site: 'bilibili', shape: 'video', url: bilibiliVideoUrl(playing), id: playing, author: '', inList: true } : null;
+  }
   if (link.kind === 'short') return { site: 'bilibili', shape: 'video', url: link.url, id: link.id, author: '', kind: 'short' };
   const variant = link.part > 1 ? { variant: `p=${link.part}` } : {};
   return { site: 'bilibili', shape: 'video', url: link.url, id: link.id, author: '', ...variant };
+}
+
+/** The bilibili row's link: a video (`bilibiliVideoRef`), else a whole list, taken only to say downloads go one at a time. */
+function bilibiliRowRef(token: string): VideoRef | null {
+  const video = bilibiliVideoRef(token);
+  if (video) return video;
+  const list = parseBilibiliListUrl(token);
+  return list ? playlistRef('bilibili', list) : null;
 }
 
 /*
@@ -182,7 +243,7 @@ const BILIBILI_ROW: VideoRow = {
   shape: 'video',
   summary: true,
   subtitles: true,
-  match: bilibiliVideoRef,
+  match: bilibiliRowRef,
   shareTitle: BILIBILI_SHARE_TITLE,
 };
 
@@ -207,10 +268,15 @@ const SOUNDCLOUD_ROW: VideoRow = {
   match: soundcloudRef,
 };
 
-/** A Vimeo video, the link rebuilt as `https://vimeo.com/<id>` (+ an unlisted video's hash). */
+/**
+ * A Vimeo video, the link rebuilt as `https://vimeo.com/<id>` (+ an unlisted video's hash); a
+ * whole showcase is taken only to say downloads go one at a time.
+ */
 export function vimeoVideoRef(token: string): VideoRef | null {
   const link = parseVimeoUrl(token);
-  return link ? { site: 'vimeo', shape: 'video', url: link.url, id: link.id, author: '' } : null;
+  if (link) return { site: 'vimeo', shape: 'video', url: link.url, id: link.id, author: '' };
+  const list = parseVimeoListUrl(token);
+  return list ? playlistRef('vimeo', list) : null;
 }
 
 /*
@@ -247,7 +313,7 @@ const M3U8_ROW: VideoRow = {
 
 /** Every link site, in the order a token is tried against them. The order is behaviour. */
 export const LINK_SITE_ROWS: readonly LinkSiteRow[] = [
-  X_ROW, THREADS_ROW, INSTAGRAM_ROW, FACEBOOK_ROW, TIKTOK_ROW, PTT_ROW, DCARD_ROW, REDDIT_ROW, YOUTUBE_ROW, BILIBILI_ROW, SOUNDCLOUD_ROW, VIMEO_ROW, M3U8_ROW,
+  X_ROW, THREADS_ROW, INSTAGRAM_ROW, FACEBOOK_ROW, TIKTOK_ROW, PTT_ROW, DCARD_ROW, REDDIT_ROW, WEIBO_ROW, YOUTUBE_ROW, BILIBILI_ROW, SOUNDCLOUD_ROW, VIMEO_ROW, M3U8_ROW,
 ];
 
 const POST_ROWS = LINK_SITE_ROWS.filter((row): row is PostRow => row.shape === 'post');

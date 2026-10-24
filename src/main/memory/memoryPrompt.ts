@@ -50,11 +50,15 @@ export function entriesChangedSince(entries: readonly UserMemoryEntry[], sinceIs
   return entries.filter((entry) => Date.parse(entry.updatedAt) > since);
 }
 
-/** For the agent's turn and finish prompts. The answer goes into "content", so that is where the lines go. */
+/**
+ * For the agent's turn and finish prompts. The answer goes into "content", so that is where the lines go.
+ * The header says what the facts are for: 2026-10-20, for a goal of just "1", the agent turned two
+ * of them (a trip, trip plans kept in Notion) into the choices of a question, then into the task.
+ */
 export function renderAgentMemoryBlock(entries: readonly UserMemoryEntry[]): string {
   return [
     ...(entries.length > 0
-      ? ['ABOUT THE USER (saved memory — use it when relevant; the ids are only for memory changes):', ...entryLines(entries)]
+      ? ['ABOUT THE USER (saved memory — context for what the user asks, never a request or a choice of its own; the ids are only for memory changes):', ...entryLines(entries)]
       : []),
     'MEMORY: if the user asks you to remember or forget something, or states a lasting fact or preference',
     `about themself, mention it naturally in "content" and end "content" with one line per change — ${MEMORY_LINE_SYNTAX}.`,

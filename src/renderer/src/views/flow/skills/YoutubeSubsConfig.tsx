@@ -4,10 +4,11 @@ import { AppTextarea } from '../../../components/AppTextarea';
 import { AppNumberInput } from '../../../components/AppNumberInput';
 import { ToggleSwitch } from '../../../components/ToggleSwitch';
 import { SettingRow } from '../../../components/SettingRow';
-import { Trash2, BookmarkCheck, Clapperboard } from 'lucide-react';
+import { Trash2, BookmarkCheck } from 'lucide-react';
 import { ytSubsApi, ipcEvents } from '../../../api/electronApi';
 import { isValidYoutubeChannelListOrVar } from './validation';
 import type { SkillConfigProps } from './types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 export const YoutubeSubsConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
   const channels = step.config.channels ?? '';
@@ -63,7 +64,6 @@ export const YoutubeSubsConfig: React.FC<SkillConfigProps> = ({ step, onChange, 
       />
 
       <SettingRow
-        icon={<Clapperboard size={13} />}
         label={t('flow.skill.youtube_subs.skipShorts')}
         hint={t('flow.skill.youtube_subs.skipShorts.hint')}
         control={
@@ -103,7 +103,7 @@ export const YoutubeSubsConfig: React.FC<SkillConfigProps> = ({ step, onChange, 
       </Button>
 
       <Text fz="xs" c="dimmed">
-        {t('flow.skill.browser.outputHint').replace('{{outputKey}}', `{{${step.outputKey}}}`)}
+        {fillTemplate(t('flow.skill.browser.outputHint'), { outputKey: `{{${step.outputKey}}}` })}
       </Text>
     </Stack>
   );

@@ -25,6 +25,8 @@ import {
 import { firstAllowedRunBetween, nextAllowedRuns, onceIsFirstCronMatch } from './scheduleRuns';
 import { SystemTriggers } from './systemTriggers';
 import { resolveSystemEvent } from '../../shared/flowSystemEvents';
+import { FileTriggers, fileRunContext, nodeFileWatchFs } from './fileTriggers';
+import type { FileWatchFs } from './fileTriggers';
 
 /**
  * Whether anything in the flow reads `{{selection}}`. Serialized so a reference in any field counts,
@@ -47,9 +49,16 @@ export interface TriggerFire {
   oneTimeSchedule?: boolean;
   /** Started by this system event; skipped while the flow is already queued or running. */
   systemEvent?: SystemEvent;
+  /** Started by a new file in a watched folder: waits for a run of the same flow in progress. */
+  file?: boolean;
 }
 
-export type TriggerHandler = (flowId: string, extraContext?: Record<string, string>, fire?: TriggerFire) => void;
+/** Returns the run's result where there is one: a file trigger waits for it before the next file. */
+export type TriggerHandler = (
+  flowId: string,
+  extraContext?: Record<string, string>,
+  fire?: TriggerFire,
+) => void | Promise<unknown>;
 
 export class FlowTriggerRegistry {
   private cronJobs = new Map<string, ScheduledTask[]>();
@@ -57,10 +66,31 @@ export class FlowTriggerRegistry {
   private flowHotkeys = new Map<string, string[]>();
   private onTrigger: TriggerHandler;
   private system: SystemTriggers;
+  private files: FileTriggers;
 
-  constructor(onTrigger: TriggerHandler) {
+  /** `onWatchMissing` hears which flows' watched folders are not there, each time that changes. */
+  constructor(
+    onTrigger: TriggerHandler,
+    onWatchMissing?: (flowIds: string[]) => void,
+    fileWatchFs: FileWatchFs = nodeFileWatchFs,
+  ) {
     this.onTrigger = onTrigger;
     this.system = new SystemTriggers((flowId, systemEvent) => this.onTrigger(flowId, undefined, { systemEvent }));
+    this.files = new FileTriggers(
+      (flowId, filePath) => Promise.resolve(this.onTrigger(flowId, fileRunContext(filePath), { file: true })),
+      onWatchMissing,
+      fileWatchFs,
+    );
+  }
+
+  /** Flows whose watched folder is missing right now. */
+  watchMissingFlowIds(): string[] {
+    return this.files.missingFlowIds();
+  }
+
+  /** The flow watches a folder right now (registered, not switched off, deleted or shut down). */
+  watchesFiles(flowId: string): boolean {
+    return this.files.watchesFiles(flowId);
   }
 
   /** Called once per launch, after every flow is registered; never on a save or a reload. */
@@ -87,6 +117,8 @@ export class FlowTriggerRegistry {
         this.registerCron(flow, trigger, index, allowCatchUp);
       } else if (trigger.type === 'system') {
         this.system.add(flow.id, flow.name, resolveSystemEvent(trigger.systemEvent));
+      } else if (trigger.type === 'file') {
+        this.files.add(flow.id, flow.name, trigger, index);
       }
     });
   }
@@ -285,6 +317,7 @@ export class FlowTriggerRegistry {
     }
 
     this.system.remove(flow.id);
+    this.files.remove(flow.id);
   }
 
   unregisterAll(flows: FlowDefinition[]): void {

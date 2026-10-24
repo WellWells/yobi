@@ -8,6 +8,7 @@ import { HISTORY_DIR_NAME } from '../history/historyPaths';
 import { BACKUP_CATEGORY_IDS } from '../../shared/types';
 import type { BackupCategoryId } from '../../shared/types';
 import { toIsoDate } from '../../shared/localTime';
+import { isBackupConversationPath } from './fsUtils';
 
 export const BACKUP_TYPE = 'yobi-backup';
 export const BACKUP_VERSION = 1;
@@ -27,11 +28,10 @@ export interface CategoryDef {
   kind: 'file' | 'dir';
   zipPrefix: string;
   resolveSource: () => string | Promise<string>;
-  fileFilter?: (fileName: string) => boolean;
+  /** Which files belong to the category, by their `/`-separated path inside its folder. */
+  fileFilter?: (relativePath: string) => boolean;
   replaceMode?: 'whole-dir' | 'by-filter';
 }
-
-const isMarkdown = (fileName: string): boolean => fileName.toLowerCase().endsWith('.md');
 
 export const CATEGORY_DEFS: Record<BackupCategoryId, CategoryDef> = {
   config: {
@@ -72,7 +72,7 @@ export const CATEGORY_DEFS: Record<BackupCategoryId, CategoryDef> = {
     kind: 'dir',
     zipPrefix: 'outputs',
     resolveSource: () => getOutputDir(),
-    fileFilter: isMarkdown,
+    fileFilter: isBackupConversationPath,
     replaceMode: 'by-filter',
   },
   history: {
@@ -95,6 +95,7 @@ export function isValidManifest(raw: unknown): raw is BackupManifest {
   if (manifest.type !== BACKUP_TYPE) return false;
   if (typeof manifest.version !== 'number') return false;
   if (manifest.version > BACKUP_VERSION) return false;
+  if (typeof manifest.createdAt !== 'string' || typeof manifest.appVersion !== 'string') return false;
   if (!Array.isArray(manifest.categories)) return false;
   return true;
 }

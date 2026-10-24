@@ -98,6 +98,27 @@ export function daysBetween(from: string, to: string): number {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 }
 
+/**
+ * A date argument as models send it: blank or a word for today means today; 明天/後天/tomorrow
+ * count on from `today`; anything else is returned for the caller to check as YYYY-MM-DD.
+ */
+export function dateArg(text: string | undefined, today: string): string {
+  const word = text?.trim().toLowerCase() ?? '';
+  if (!word || /^(today|now|今天|今日|現在)$/u.test(word)) return today;
+  if (/^(tomorrow|明天|明日)$/u.test(word)) return addDays(today, 1);
+  if (/^(後天|后天|day after tomorrow)$/u.test(word)) return addDays(today, 2);
+  return text?.trim() ?? today;
+}
+
+/**
+ * A time argument as models send it: blank or "now" (NOW, 現在, current…) means no time asked —
+ * live eval 2026-10-22: a model sent "NOW", was refused, and tried a shell command for the clock.
+ */
+export function timeArg(text: string | undefined): string | undefined {
+  const word = text?.trim() ?? '';
+  return !word || /^(now|current|現在|目前|此刻|即時)$/iu.test(word) ? undefined : word;
+}
+
 export function addDays(date: string, days: number): string {
   return new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 }

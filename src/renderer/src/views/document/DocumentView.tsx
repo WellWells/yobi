@@ -25,6 +25,7 @@ import { DocumentChangeMarks } from './DocumentChangeMarks';
 import { sendableChanges, sendCount, syncLine } from './documentSync';
 import { SyncStatusLabel } from './SyncStatusLabel';
 import { useNotionDoc } from './useNotionDoc';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 /** The same reading column as a conversation's answers. */
 const MAX_WIDTH = 720;
@@ -127,7 +128,7 @@ export const DocumentView: React.FC<DocumentViewProps> = ({
                 aria-disabled={syncBlocked !== null || undefined}
                 onClick={() => { if (!syncBlocked && !sync.busy) pushAll(); }}
               >
-                {t('notion.sync.push').replace('{{count}}', String(toSend))}
+                {fillTemplate(t('notion.sync.push'), { count: String(toSend) })}
               </AppButton>
             </Tooltip>
           )}
@@ -180,7 +181,7 @@ export const DocumentView: React.FC<DocumentViewProps> = ({
               onClose={sync.dismissUpdated}
             >
               <Group gap={8} justify="space-between" wrap="nowrap">
-                <Box>{t('notion.notice.updated').replace('{{count}}', String(sync.updated))}</Box>
+                <Box>{fillTemplate(t('notion.notice.updated'), { count: String(sync.updated) })}</Box>
                 <AppButton size="compact-sm" variant="subtle" onClick={() => { sync.dismissUpdated(); onOpenHistory(); }}>
                   {t('notion.notice.viewChanges')}
                 </AppButton>

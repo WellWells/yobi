@@ -4,6 +4,7 @@ import { FolderOpen, Square, X } from 'lucide-react';
 import { AppButton } from '../AppButton';
 import { fileApi } from '../../api/electronApi';
 import type { BatchExportState } from './useBatchExport';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 interface BatchExportStripProps {
   state: BatchExportState;
@@ -35,7 +36,7 @@ export const BatchExportStrip: React.FC<BatchExportStripProps> = ({ state, onSto
       >
         <Group justify="space-between" wrap="nowrap" gap={8}>
           <Text fz="var(--font-size-xs)" c="dimmed" style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
-            {t('batchExport.progress').replace('{{done}}', String(state.done)).replace('{{total}}', String(state.total))}
+            {fillTemplate(t('batchExport.progress'), { done: String(state.done), total: String(state.total) })}
           </Text>
           <AppButton
             size="xs"
@@ -81,7 +82,7 @@ export const BatchExportStrip: React.FC<BatchExportStripProps> = ({ state, onSto
           ))}
           {more > 0 && (
             <Text fz="var(--font-size-xs)" c="var(--text-muted)">
-              {t('batchExport.more').replace('{{count}}', String(more))}
+              {fillTemplate(t('batchExport.more'), { count: String(more) })}
             </Text>
           )}
         </Stack>

@@ -10,6 +10,7 @@ export const FLOW_ERROR_REASONS = [
   'network',
   'auth',
   'http',
+  'recipient',
   'not_found',
   'parse',
   'script',
@@ -26,7 +27,10 @@ const SCRIPT_SKILLS = new Set<SkillType>(['js', 'browser_js', 'shell', 'run']);
 /**
  * Matched top to bottom, first hit wins, so the order IS the classification policy:
  *
- * - `blocked` leads because a verification challenge often also mentions a status code, and
+ * - `recipient` leads: a bot send that cannot reach its chat is fixed by picking another
+ *   recipient, yet Telegram words it as "chat not found" (which `not_found` would read as missing
+ *   page content) or as a 403 "bot was blocked by the user" (`auth` / `blocked` territory).
+ * - `blocked` comes next because a verification challenge often also mentions a status code, and
  *   "the site is fighting us off" is a different fix from "the request was wrong".
  * - `auth` precedes `http` so 401/403 reads as a sign-in problem rather than a generic 4xx.
  * - `not_found` claims 404 before `http` does: a page that is gone is a content problem.
@@ -34,6 +38,8 @@ const SCRIPT_SKILLS = new Set<SkillType>(['js', 'browser_js', 'shell', 'run']);
  *   and "it was too slow" is the actionable half.
  */
 const REASON_PATTERNS: ReadonlyArray<readonly [FlowErrorReason, RegExp]> = [
+  // Telegram's wording for a chat the bot cannot post to — the phrases `botDirectory` reads too.
+  ['recipient', /chat not found|bot was blocked by the user|bot was kicked|bot is not a member|user is deactivated/i],
   ['blocked', /cloudflare|captcha|verification challenge|are you a robot|access denied|sandbox|not allowed|outside the allowed|blocked by|ssrf|private address|loopback address/i],
   ['auth', /\b(401|403)\b|unauthorized|forbidden|permission denied|sign in|signed out|not logged in|login required|invalid api key|api key not valid|credential|token (has )?expired/i],
   ['not_found', /\b404\b|no (items|results|matches|entries|transcript|content|text|data)\b|not found|no such|nothing matched|no matching|selector|empty (result|response|page|feed)|returned nothing/i],

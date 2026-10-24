@@ -5,15 +5,6 @@ import { captureBackgroundCss, paletteCardTheme } from '../../../../shared/captu
 import type { CaptureBackgroundStyle, CaptureDirection } from '../../../../shared/capturePalettes';
 import type { CardLayout, MarkdownCaptureRequest } from '../../../../shared/types';
 
-const SAMPLE_PROMPT = 'How do I keep the exported card readable?';
-const SAMPLE_RESPONSE = [
-  '### Three things matter',
-  '',
-  '- **Width** sets the line length',
-  '- Hi-DPI doubles the pixels, not the layout',
-  '- Everything else is chosen per export',
-].join('\n');
-
 export interface CardStyleSampleProps {
   palette: string;
   backgroundStyle: CaptureBackgroundStyle;
@@ -25,18 +16,26 @@ export interface CardStyleSampleProps {
   t: (key: string) => string;
 }
 
-export const CardStyleSample: React.FC<CardStyleSampleProps> = ({
-  palette, backgroundStyle, direction, cardLayout, width, margin, hiDpi, t,
-}) => {
-  const request = useMemo<MarkdownCaptureRequest>(() => ({
+/** The preview card's request; every word on it comes from the locale pack. */
+export function sampleCardRequest(props: Omit<CardStyleSampleProps, 't'>, t: (key: string) => string): MarkdownCaptureRequest {
+  const { palette, backgroundStyle, direction, cardLayout, width, margin, hiDpi } = props;
+  const prompt = t('settings.cardStyle.sample.prompt');
+  const response = [
+    `### ${t('settings.cardStyle.sample.heading')}`,
+    '',
+    `- ${t('settings.cardStyle.sample.width')}`,
+    `- ${t('settings.cardStyle.sample.hiDpi')}`,
+    `- ${t('settings.cardStyle.sample.rest')}`,
+  ].join('\n');
+  return {
     payload: {
       title: t('settings.cardStyle.sample.title'),
-      prompt: SAMPLE_PROMPT,
-      content: SAMPLE_RESPONSE,
+      prompt,
+      content: response,
       summary: '',
       provider: '',
       timestamp: '',
-      turns: [{ prompt: SAMPLE_PROMPT, response: SAMPLE_RESPONSE }],
+      turns: [{ prompt, response }],
     },
     options: {
       mode: 'copy',
@@ -54,7 +53,16 @@ export const CardStyleSample: React.FC<CardStyleSampleProps> = ({
       pixelRatio: hiDpi ? 2 : 1,
       zip: false,
     },
-  }), [palette, backgroundStyle, direction, cardLayout, width, margin, hiDpi, t]);
+  };
+}
+
+export const CardStyleSample: React.FC<CardStyleSampleProps> = ({
+  palette, backgroundStyle, direction, cardLayout, width, margin, hiDpi, t,
+}) => {
+  const request = useMemo<MarkdownCaptureRequest>(
+    () => sampleCardRequest({ palette, backgroundStyle, direction, cardLayout, width, margin, hiDpi }, t),
+    [palette, backgroundStyle, direction, cardLayout, width, margin, hiDpi, t],
+  );
 
   return (
     <Stack gap={8}>

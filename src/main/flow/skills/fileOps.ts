@@ -2,13 +2,15 @@ import * as fs from 'node:fs/promises';
 import { createWriteStream } from 'node:fs';
 import { once } from 'node:events';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import { recordDownloads, yobiDownloadsDir } from '../../downloadsCache';
 import { getOutputDir } from '../../files';
 import { sendLog } from '../../helpers';
 import { ensureHttpScheme } from '../../urlParser';
 import { FlowUserError } from '../userError';
+import { PROGRAM_SNIFF_BYTES, isRunnableName, looksLikeProgram } from '../../executableFiles';
 import { parseNumberField } from './numberField';
+import { isPdfFile, readPdfText } from './pdfText';
+import { expandHome } from '../../homePath';
 
 function pad(value: number): string {
   return String(value).padStart(2, '0');
@@ -44,11 +46,7 @@ function ensureTxtExt(name: string): string {
   return path.extname(name) ? name : `${name}.txt`;
 }
 
-export function expandHome(p: string): string {
-  if (p === '~') return os.homedir();
-  if (p.startsWith('~/') || p.startsWith('~\\')) return path.join(os.homedir(), p.slice(2));
-  return p;
-}
+export { expandHome };
 
 export async function resolveUserPath(raw: string): Promise<string> {
   const expanded = expandHome(raw);
@@ -135,10 +133,13 @@ export async function execFileRead(config: Record<string, string>): Promise<stri
   if (!filePath) return '';
   try {
     const resolved = await resolveUserPath(filePath);
-    const content = await fs.readFile(resolved, 'utf-8');
-    sendLog(`📖 [Flow] File read: ${resolved} (${content.length} chars)`);
+    const bytes = await fs.readFile(resolved);
+    const pdf = isPdfFile(resolved, bytes);
+    const content = pdf ? await readPdfText(bytes, path.basename(resolved)) : bytes.toString('utf-8');
+    sendLog(`📖 [Flow] File read: ${resolved} (${pdf ? 'PDF, ' : ''}${content.length} chars)`);
     return content;
   } catch (err) {
+    if (err instanceof FlowUserError) throw err;
     throw new Error(`file_read: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
@@ -190,8 +191,25 @@ export function deriveDownloadExt(finalUrl: string, contentType: string): string
   return '.bin';
 }
 
+/**
+ * Control and format characters go (U+202E would show `invoice‮fdp.exe` for a .exe), and so do
+ * trailing dots and spaces, which Windows drops when it saves — the checked name is the saved one.
+ */
 export function sanitizeDownloadName(name: string): string {
-  return path.basename(name).replace(/[<>:"/\\|?*]/g, '_').replace(/^\.+/, '').trim();
+  return path.basename(name)
+    .replace(/[\u0000-\u001F\u007F\p{Cf}]/gu, '')
+    .replace(/[<>:"/\\|?*]/g, '_')
+    .replace(/^\.+/, '')
+    .replace(/[.\s]+$/, '')
+    .trim();
+}
+
+function refuseRunnable(name: string): FlowUserError {
+  return new FlowUserError(
+    'flow.error.downloadRunnable',
+    { name },
+    `file_download: Yobi does not download programs, scripts, archives or disk images (${name})`,
+  );
 }
 
 const DEFAULT_MAX_DOWNLOAD_MB = 100;
@@ -248,6 +266,10 @@ export async function execFileDownload(config: Record<string, string>, timeoutMs
     let baseName = requested ? sanitizeDownloadName(expandFilenameTokens(requested)) : '';
     if (baseName && !path.extname(baseName)) baseName += deriveDownloadExt(finalUrl, contentType);
     if (!baseName) baseName = autoDownloadName(deriveDownloadExt(finalUrl, contentType));
+    if (isRunnableName(baseName)) {
+      await res.body.cancel().catch(() => {});
+      throw refuseRunnable(baseName);
+    }
 
     const dir = downloadsFolder(config.folder);
     await fs.mkdir(dir, { recursive: true });
@@ -256,12 +278,24 @@ export async function execFileDownload(config: Record<string, string>, timeoutMs
 
     const out = createWriteStream(partPath);
     let bytes = 0;
+    // Whatever it is called, a program's own bytes give it away: the first few KB are checked.
+    const head: Uint8Array[] = [];
+    let sniffed = false;
+    const sniff = (): void => {
+      sniffed = true;
+      if (looksLikeProgram(Buffer.concat(head))) throw refuseRunnable(baseName);
+    };
     try {
       for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
         bytes += chunk.length;
         if (!unlimited && bytes > maxBytes) throw new Error(`file exceeds max size ${maxSizeMb} MB`);
+        if (!sniffed) {
+          head.push(chunk);
+          if (bytes >= PROGRAM_SNIFF_BYTES) sniff();
+        }
         if (!out.write(chunk)) await once(out, 'drain');
       }
+      if (!sniffed) sniff();
       await new Promise<void>((resolve, reject) => out.end((err?: Error | null) => (err ? reject(err) : resolve())));
     } catch (streamErr) {
       out.destroy();
@@ -275,6 +309,7 @@ export async function execFileDownload(config: Record<string, string>, timeoutMs
     return resolved;
   } catch (err) {
     if (partPath) await fs.rm(partPath, { force: true }).catch(() => { });
+    if (err instanceof FlowUserError) throw err;
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(`file_download: timed out after ${Math.ceil(timeoutMs / 1_000)}s`);
     }

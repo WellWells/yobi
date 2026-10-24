@@ -1,9 +1,9 @@
 import { Box, Group, Loader, Progress, Stack, Text } from '@mantine/core';
-import { Download, Globe, Merge, Send } from 'lucide-react';
+import { Download, Globe, Hourglass, Merge, Send } from 'lucide-react';
 import type { StepProgress } from '../../../../shared/stepProgress';
 import { stepProgressText } from '../../../../shared/stepProgress';
 
-const PHASE_ICON = { reading: Globe, starting: Download, downloading: Download, processing: Merge, sending: Send } as const;
+const PHASE_ICON = { working: Hourglass, reading: Globe, starting: Download, downloading: Download, processing: Merge, sending: Send } as const;
 
 const NUMERIC = { fontVariantNumeric: 'tabular-nums' } as const;
 

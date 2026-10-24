@@ -1,6 +1,15 @@
 import type { ComponentType } from 'react';
 import { KeyRound, Layers } from 'lucide-react';
-import { PROVIDER_LABELS, PROVIDER_URLS, buildByokUrl, buildByokGroupUrl, isByokGroupUrl, isByokUrl, isModelUrlHidden } from '../../../shared/types';
+import {
+  PROVIDER_LABELS,
+  PROVIDER_URLS,
+  buildByokUrl,
+  buildByokGroupUrl,
+  byokTypeTakesImages,
+  isByokGroupUrl,
+  isByokUrl,
+  isModelUrlHidden,
+} from '../../../shared/types';
 import type { ByokGroupSnapshot, ByokInstanceSnapshot, ByokProviderType, HiddenSources } from '../../../shared/types';
 import { ClaudeIcon, GeminiIcon, GrokIcon, KimiIcon, OpenAiIcon, OpenRouterIcon, PerplexityIcon } from './brandIcons';
 
@@ -15,6 +24,8 @@ export interface ModelOption {
   url: string;
   icon: ModelIcon;
   shortLabel?: string;
+  /** A BYOK key (or a group with one) whose preset reads pictures (`byokTypeTakesImages`). */
+  imageInput?: true;
 }
 
 export const MODELS: ModelOption[] = [
@@ -52,19 +63,28 @@ export function makeByokModelOption(instance: ByokInstanceSnapshot): ModelOption
     label: instance.name,
     url: buildByokUrl(instance.id),
     icon: getByokTypeIcon(instance.providerType),
+    ...(byokTypeTakesImages(instance.providerType) ? { imageInput: true as const } : {}),
   };
 }
 
-export function makeByokGroupModelOption(group: ByokGroupSnapshot): ModelOption {
+/** `instances` decide whether the group takes pictures: it does when any of its keys does. */
+export function makeByokGroupModelOption(group: ByokGroupSnapshot, instances: readonly ByokInstanceSnapshot[]): ModelOption {
+  const takesImages = group.memberIds.some((memberId) => {
+    const member = instances.find((instance) => instance.id === memberId);
+    return member ? byokTypeTakesImages(member.providerType) : false;
+  });
   return {
     label: group.name,
     url: buildByokGroupUrl(group.id),
     icon: Layers,
+    ...(takesImages ? { imageInput: true as const } : {}),
   };
 }
 
-export function makeByokGroupModels(groups: ByokGroupSnapshot[]): ModelOption[] {
-  return groups.filter((group) => group.memberIds.length > 0).map(makeByokGroupModelOption);
+export function makeByokGroupModels(groups: ByokGroupSnapshot[], instances: readonly ByokInstanceSnapshot[]): ModelOption[] {
+  return groups
+    .filter((group) => group.memberIds.length > 0)
+    .map((group) => makeByokGroupModelOption(group, instances));
 }
 
 export function findModelOption(url: string, extraModels: ModelOption[] = []): ModelOption {

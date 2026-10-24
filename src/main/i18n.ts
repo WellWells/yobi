@@ -4,8 +4,11 @@ import { getLanguageDir, getUserLanguageDir } from './files';
 import { fillTemplate } from '../shared/fillTemplate';
 import { formatResetTime, parseClaudeUsageLimit } from './providers/claudeUsageLimit';
 import { CLAUDE_BUSY, CLAUDE_LEFT_CONVERSATION } from './providers/claudeReadScript';
+import { parseGeminiPromptTooLong } from './providers/geminiPromptTooLong';
+import { GEMINI_SIGNED_OUT_PROMPT_CAP } from './providers/geminiSignInState';
 import { WORKER_WINDOW_UNAVAILABLE } from './workerWindowError';
 import { QUEUE_CANCELLED } from './flow/flowQueue';
+import { parseFlowRequestTooLong, parseFlowTooLongToRevise } from './flow/flowBuildTooLong';
 import { mtprotoErrorKey } from './telegram/mtproto/errors';
 import { TELEGRAM_LARGE_UPLOAD_FAILED, TELEGRAM_LARGE_UPLOAD_NOT_READY } from './telegram/largeUploadError';
 import {
@@ -22,6 +25,7 @@ import {
   MCP_URL_NEEDS_HTTPS,
 } from './mcp/mcpErrors';
 import type { PromptPreferences } from '../shared/types';
+import { BYOK_IMAGE_PROVIDER_LABELS } from '../shared/types';
 
 export function isValidLocaleTag(tag: string): boolean {
   return /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(tag);
@@ -112,7 +116,15 @@ const PROVIDER_ERROR_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [/^(Gemini) accepted the prompt but never started generating/, 'main.error.answerNotStarted'],
 ];
 
-const AUTOMATION_FAILED_RE = /^(ChatGPT|Claude|Gemini|Perplexity) automation failed: ([\s\S]*)$/;
+/**
+ * Step failures the statistics page showed in raw English (2026-10-19): Telegram's answer to a
+ * send whose chat id the bot cannot reach (grammY wraps it as `Call to 'sendMessage' failed!
+ * (400: Bad Request: chat not found)`), and the page reader giving up on a page (`pageLoader.ts`).
+ */
+const TELEGRAM_CHAT_NOT_FOUND_RE = /\bBad Request: chat not found\b/i;
+const PAGE_READ_TIMEOUT_RE = /^DOM serialization timed out after \d+s$/;
+
+const AUTOMATION_FAILED_RE =/^(ChatGPT|Claude|Gemini|Perplexity) automation failed: ([\s\S]*)$/;
 const AUTOMATION_FAILED_KEYS: Record<string, string> = {
   ChatGPT: 'main.error.chatgptAutomationFailed',
   Claude: 'main.error.claudeAutomationFailed',
@@ -174,6 +186,7 @@ function localizeKnownError(raw: string, strings: Record<string, string>): strin
     'BYOK provider not found — the instance may have been deleted': t(strings, 'main.error.byokInstanceMissing'),
     'BYOK group not found — it may have been deleted': t(strings, 'main.error.byokGroupMissing'),
     'BYOK group has no usable keys — add at least one key to the group': t(strings, 'main.error.byokGroupEmpty'),
+    'BYOK group has no key that takes images': t(strings, 'main.error.byokNoImageKey', { providers: BYOK_IMAGE_PROVIDER_LABELS }),
     'Telegram bot is not running': t(strings, 'main.error.botNotRunning', { bot: 'Telegram' }),
     'LINE bot is not running': t(strings, 'main.error.botNotRunning', { bot: 'LINE' }),
     [QUEUE_CANCELLED]: t(strings, 'main.error.cancelledInQueue'),
@@ -188,12 +201,24 @@ function localizeKnownError(raw: string, strings: Record<string, string>): strin
   const upload = mtprotoErrorKey(raw);
   if (upload) return t(strings, upload.key, upload.vars);
   if (raw.startsWith(WORKER_WINDOW_UNAVAILABLE)) return t(strings, 'main.error.workerWindowUnavailable');
+  const overChars = parseFlowRequestTooLong(raw);
+  if (overChars !== null) return t(strings, 'main.error.flowRequestTooLong', { chars: overChars.toLocaleString('en-US') });
+  const flowOverChars = parseFlowTooLongToRevise(raw);
+  if (flowOverChars !== null) return t(strings, 'main.error.flowTooLongToRevise', { chars: flowOverChars.toLocaleString('en-US') });
+  if (TELEGRAM_CHAT_NOT_FOUND_RE.test(raw)) return t(strings, 'main.error.telegramChatNotFound');
+  if (PAGE_READ_TIMEOUT_RE.test(raw)) return t(strings, 'main.error.pageReadTimeout');
   // A link site's click-to-verify check that a bot message or a schedule could not answer
   // (`siteVerification.ts`), and a verification window the person left unfinished.
   const verify = SITE_VERIFICATION_RE.exec(raw);
   if (verify) {
     const key = verify[2] ? 'flow.error.siteVerificationNeeded' : 'flow.error.siteVerificationIncomplete';
     return t(strings, key, { site: verify[1] ?? verify[3] });
+  }
+  // A limit above the signed-out cap only happens signed in, so only the smaller one hints at signing in.
+  const tooLong = parseGeminiPromptTooLong(raw);
+  if (tooLong) {
+    const key = tooLong.limit > GEMINI_SIGNED_OUT_PROMPT_CAP ? 'main.error.geminiPromptTooLongSignedIn' : 'main.error.geminiPromptTooLong';
+    return t(strings, key, { limit: tooLong.limit.toLocaleString('en-US') });
   }
   const login = LOGIN_REQUIRED_RE.exec(raw);
   if (login) return t(strings, 'main.error.loginRequired', { provider: LOGIN_REQUIRED_PROVIDERS[login[1]] });
@@ -230,6 +255,7 @@ export function localizeUserFacingError(raw: string, strings: Record<string, str
 
   const prefixHandlers: [string, string][] = [
     ['BYOK configuration incomplete: ', 'main.error.byokConfigIncomplete'],
+    ['BYOK image unusable: ', 'main.error.byokImageUnusable'],
     ['BYOK request failed: ', 'main.error.byokRequestFailed'],
   ];
   for (const [prefix, key] of prefixHandlers) {

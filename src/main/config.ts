@@ -2,10 +2,12 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { openStoreWithRecovery } from './configStore';
 import { repairStoredShape } from './configShapeRepair';
-import { PROVIDER_URLS, byokIdFromUrl, byokGroupIdFromUrl } from '../shared/types';
-import type { HiddenSources, SecretFailure, SecretScope } from '../shared/types';
+import { PROVIDER_URLS, SOCKET_BOT_PLATFORMS, SOCKET_BOT_SECRET_FIELDS, byokIdFromUrl, byokGroupIdFromUrl, isSocketBotPlatform } from '../shared/types';
+import type { HiddenSources, SecretFailure, SecretScope, SocketBotPlatform } from '../shared/types';
 import { defaultStored } from './configTypes';
-import type { Config, LineConfig, StoredByokInstance, StoredConfig, StoredLineConfig, StoredSmtpConfig, StoredTelegramConfig, TelegramConfig } from './configTypes';
+import type {
+  Config, LineConfig, StoredByokInstance, StoredConfig, StoredLineConfig, StoredMailAccount, StoredTelegramConfig, TelegramConfig,
+} from './configTypes';
 import { encryptToken, decryptToken, decryptTokenChecked } from './configEncryption';
 import { getConfigDir, getConfigPath } from './configPaths';
 import { clearAllSecretFailures, clearSecretFailures, getSecretHealth, recordSecretFailure } from './secretHealth';
@@ -22,7 +24,12 @@ import {
   normalizeChatgptModelChoice,
   normalizeByokInstances,
   normalizeLine,
-  normalizeSmtp,
+  normalizeDiscord,
+  normalizeSlack,
+  normalizeMailAccounts,
+  migrateLegacyMailAccount,
+  sameMailSignIn,
+  LEGACY_MAIL_ACCOUNT_ID,
   deserializePairingConfig,
 } from './configNormalizers';
 import { carryCurrentGrantsIntoLegacyBackup, telegramAdminMirror } from './botPermissions/normalize';
@@ -49,7 +56,11 @@ function migrateProviderCommandsIfNeeded(dir: string): void {
 const configDir = getConfigDir();
 migrateProviderCommandsIfNeeded(configDir);
 
-const store = openStoreWithRecovery<StoredConfig>('config', configDir, defaultStored);
+// electron-store writes its defaults into config.json as it opens it, which would hide that a
+// config from before the region hotkey lacks the field; normalizeConfig fills it in instead,
+// after checking the combo against the user's other hotkeys.
+const { regionHotkey: _regionDefault, ...storeDefaults } = defaultStored;
+const store = openStoreWithRecovery<StoredConfig>('config', configDir, storeDefaults as StoredConfig);
 
 function repairStoredShapeIfNeeded(): void {
   const result = repairStoredShape(store.store as Record<string, unknown>, defaultStored);
@@ -60,28 +71,51 @@ function repairStoredShapeIfNeeded(): void {
 
 repairStoredShapeIfNeeded();
 
+function migrateLegacyMailAccountIfNeeded(): void {
+  const migrated = migrateLegacyMailAccount(store.store as StoredConfig);
+  if (migrated) store.store = migrated;
+}
+
+migrateLegacyMailAccountIfNeeded();
+
 function buildConfigFromStore(): Config {
   const stored = store.store as StoredConfig & {
     telegram: StoredTelegramConfig & { botToken?: string };
-    smtp: StoredSmtpConfig & { password?: string };
   };
   const {
     telegram: { botTokenEncrypted: _enc, apiHashEncrypted: _hashEnc, ...telegramRest },
     line: { channelAccessTokenEncrypted: _laEnc, channelSecretEncrypted: _lsEnc, ...lineRest },
-    smtp: { passwordEncrypted: _smtpEnc, ...smtpRest },
     byokInstances: storedByok,
+    mailAccounts: storedMail,
     ...rest
   } = stored;
   return normalizeConfig({
     ...rest,
     telegram: { ...telegramRest, botToken: '', apiHash: '' },
     line: { ...lineRest, channelAccessToken: '', channelSecret: '' },
-    smtp: { ...smtpRest, password: '' },
     byokInstances: (storedByok ?? []).map(({ apiKeyEncrypted: _keyEnc, ...instRest }) => ({ ...instRest, apiKey: '' })),
+    mailAccounts: (storedMail ?? []).map(({ passwordEncrypted: _pwEnc, ...accountRest }) => ({ ...accountRest, password: '' })),
   });
 }
 
+// Read before anything saves: whether config.json lacked the region hotkey when the app started.
+let regionHotkeyFilled = typeof (store.store as Partial<StoredConfig>).regionHotkey !== 'string';
+
 const config: Config = buildConfigFromStore();
+
+/**
+ * Whether the region hotkey is a default filled in for a config from before it (config.json at
+ * launch, or a restored backup) that has not yet been checked against the user's flows.
+ */
+function regionHotkeyFilledIn(): boolean {
+  return regionHotkeyFilled;
+}
+
+/** The checked region hotkey is saved, so the check is made once. */
+function settleRegionHotkey(regionHotkey: string): void {
+  regionHotkeyFilled = false;
+  saveConfig({ regionHotkey });
+}
 
 let telegramTokenUnavailable = false;
 let telegramApiHashUnavailable = false;
@@ -108,10 +142,49 @@ function readSecret(stored: string, at: SecretFailure): string {
   return readSecretChecked(stored, at).value;
 }
 
+/*
+ * Socket platforms (Discord, Slack) keep each secret field `x` (`SOCKET_BOT_SECRET_FIELDS`) as
+ * `xEncrypted` in the store, so reading, saving, re-encrypting, wiping and restoring them is one
+ * loop over the platforms and their fields rather than a branch per platform.
+ */
+type SecretRecord = Record<string, string>;
+
+function socketSecrets(platform: SocketBotPlatform): readonly string[] {
+  return SOCKET_BOT_SECRET_FIELDS[platform];
+}
+
+function storedSocketSection(stored: StoredConfig | undefined, platform: SocketBotPlatform): SecretRecord {
+  return ((stored?.[platform] ?? {}) as unknown) as SecretRecord;
+}
+
+function liveSocketSection(target: Config, platform: SocketBotPlatform): SecretRecord {
+  return (target[platform] as unknown) as SecretRecord;
+}
+
+function initSocketSecrets(stored: StoredConfig): void {
+  for (const platform of SOCKET_BOT_PLATFORMS) {
+    const section = storedSocketSection(stored, platform);
+    for (const field of socketSecrets(platform)) {
+      liveSocketSection(config, platform)[field] = readSecret(section[`${field}Encrypted`] ?? '', { scope: platform, id: '', field, label: '' });
+    }
+  }
+}
+
+/** One platform's section as stored: its secrets encrypted (or kept, see `writeSecret`), the rest as is. */
+function storedSocketConfig<P extends SocketBotPlatform>(platform: P, merged: Config[P], previous: StoredConfig | undefined): StoredConfig[P] {
+  const plain = { ...(merged as unknown as Record<string, unknown>) };
+  const before = storedSocketSection(previous, platform);
+  for (const field of socketSecrets(platform)) {
+    const plaintext = typeof plain[field] === 'string' ? plain[field] as string : '';
+    delete plain[field];
+    plain[`${field}Encrypted`] = writeSecret(plaintext, before[`${field}Encrypted`] ?? '', { scope: platform, id: '', field, label: '' });
+  }
+  return plain as unknown as StoredConfig[P];
+}
+
 function initSensitiveConfig(): void {
-  const stored = store.store as StoredConfig & {
-    smtp: StoredSmtpConfig & { password?: string };
-  };
+  const stored = store.store as StoredConfig;
+  initSocketSecrets(stored);
   const telegramToken = readSecretChecked(
     stored.telegram?.botTokenEncrypted ?? '',
     { scope: 'telegram', id: '', field: 'botToken', label: '' },
@@ -126,7 +199,13 @@ function initSensitiveConfig(): void {
   config.telegram.apiHash = apiHash.value;
   telegramApiHashUnavailable = apiHash.failed;
 
-  config.smtp.password = readSecret(stored.smtp?.passwordEncrypted ?? '', { scope: 'smtp', id: '', field: 'password', label: '' });
+  const storedMail = stored.mailAccounts ?? [];
+  for (const account of config.mailAccounts) {
+    account.password = readSecret(
+      storedMail.find((entry) => entry.id === account.id)?.passwordEncrypted ?? '',
+      { scope: 'smtp', id: account.id, field: 'password', label: account.address },
+    );
+  }
 
   config.line.channelAccessToken = readSecret(
     stored.line?.channelAccessTokenEncrypted ?? '',
@@ -175,9 +254,18 @@ function clearStoredSecret(scope: SecretScope, id: string, field: string): void 
     else config.line.channelAccessToken = '';
   }
 
+  if (isSocketBotPlatform(scope) && socketSecrets(scope).includes(field)) {
+    store.store = { ...current, [scope]: { ...storedSocketSection(current, scope), [`${field}Encrypted`]: '' } } as StoredConfig;
+    liveSocketSection(config, scope)[field] = '';
+  }
+
   if (scope === 'smtp') {
-    store.store = { ...current, smtp: { ...current.smtp, passwordEncrypted: '' } } as StoredConfig;
-    config.smtp.password = '';
+    store.store = {
+      ...current,
+      mailAccounts: (current.mailAccounts ?? []).map((entry) => (entry.id === id ? { ...entry, passwordEncrypted: '' } : entry)),
+    } as StoredConfig;
+    const account = config.mailAccounts.find((entry) => entry.id === id);
+    if (account) account.password = '';
   }
 
   if (scope === 'byok') {
@@ -217,14 +305,22 @@ function reEncryptSensitiveConfig(): void {
         ? encryptToken(config.line.channelSecret)
         : current.line.channelSecretEncrypted,
     },
-    smtp: {
-      ...current.smtp,
-      passwordEncrypted: config.smtp.password ? encryptToken(config.smtp.password) : current.smtp.passwordEncrypted,
-    },
+    mailAccounts: (current.mailAccounts ?? []).map((entry) => {
+      const plaintext = config.mailAccounts.find((account) => account.id === entry.id)?.password ?? '';
+      return plaintext ? { ...entry, passwordEncrypted: encryptToken(plaintext) } : entry;
+    }),
     byokInstances: (current.byokInstances ?? []).map((entry) => {
       const plaintext = config.byokInstances.find((instance) => instance.id === entry.id)?.apiKey ?? '';
       return plaintext ? { ...entry, apiKeyEncrypted: encryptToken(plaintext) } : entry;
     }),
+    ...Object.fromEntries(SOCKET_BOT_PLATFORMS.map((platform) => {
+      const section = { ...storedSocketSection(current, platform) };
+      for (const field of socketSecrets(platform)) {
+        const plaintext = liveSocketSection(config, platform)[field];
+        if (plaintext) section[`${field}Encrypted`] = encryptToken(plaintext);
+      }
+      return [platform, section];
+    })),
   } as StoredConfig;
 }
 
@@ -239,17 +335,30 @@ function writeSecret(plaintext: string, previousEncrypted: string, at: SecretFai
 }
 
 function saveConfig(cfg: Partial<Config>): void {
-  const { telegram: partialTelegram, line: partialLine, smtp: partialSmtp, byokInstances: partialByok, ...nonSensitivePartial } = cfg;
+  const {
+    telegram: partialTelegram, line: partialLine, discord: partialDiscord, slack: partialSlack,
+    byokInstances: partialByok, mailAccounts: partialMail, ...nonSensitivePartial
+  } = cfg;
 
+  const mergedMail = partialMail !== undefined ? normalizeMailAccounts(partialMail) : config.mailAccounts;
   const mergedBase = normalizeConfig({
     ...config,
     ...nonSensitivePartial,
     telegram: config.telegram,
     line: config.line,
-    smtp: config.smtp,
+    discord: config.discord,
+    slack: config.slack,
     byokInstances: config.byokInstances,
+    // The default id is checked against the accounts being saved, not the ones being replaced.
+    mailAccounts: mergedMail,
   });
-  const { telegram: _ignoredTelegram, line: _ignoredLine, smtp: _ignoredSmtp, byokInstances: _ignoredByok, ...storedBase } = mergedBase;
+  const {
+    telegram: _ignoredTelegram, line: _ignoredLine, discord: _ignoredDiscord, slack: _ignoredSlack,
+    byokInstances: _ignoredByok, mailAccounts: _ignoredMail, ...storedBase
+  } = mergedBase;
+
+  const mergedDiscord = partialDiscord !== undefined ? normalizeDiscord({ ...config.discord, ...partialDiscord }) : config.discord;
+  const mergedSlack = partialSlack !== undefined ? normalizeSlack({ ...config.slack, ...partialSlack }) : config.slack;
 
   const mergedTelegram = partialTelegram !== undefined
     ? deserializePairingConfig({ ...config.telegram, ...partialTelegram })
@@ -284,16 +393,17 @@ function saveConfig(cfg: Partial<Config>): void {
     ),
   };
 
-  const mergedSmtp = partialSmtp !== undefined
-    ? normalizeSmtp({ ...config.smtp, ...partialSmtp })
-    : config.smtp;
-  const { password, ...smtpWithoutPassword } = mergedSmtp;
-  const previousStoredSmtp = store.store.smtp;
-  const smtpPasswordEncrypted = writeSecret(
-    password,
-    previousStoredSmtp?.passwordEncrypted ?? '',
-    { scope: 'smtp', id: '', field: 'password', label: '' },
-  );
+  // A blank password keeps the account's saved one, but only while it is still the same sign-in;
+  // a removed account takes its ciphertext with it.
+  const previousStoredMail = store.store.mailAccounts ?? [];
+  const storedMail: StoredMailAccount[] = mergedMail.map(({ password, ...accountRest }) => ({
+    ...accountRest,
+    passwordEncrypted: writeSecret(
+      password,
+      previousStoredMail.find((entry) => entry.id === accountRest.id && sameMailSignIn(entry, accountRest))?.passwordEncrypted ?? '',
+      { scope: 'smtp', id: accountRest.id, field: 'password', label: accountRest.address },
+    ),
+  }));
 
   const mergedByok = partialByok !== undefined
     ? normalizeByokInstances(partialByok)
@@ -311,9 +421,8 @@ function saveConfig(cfg: Partial<Config>): void {
   // A deleted BYOK instance must take its alert with it, or the user is left staring at a
   // warning about a key that no longer has a field to be re-entered into.
   for (const failure of getSecretHealth().failures) {
-    if (failure.scope !== 'byok') continue;
-    if (mergedByok.some((instance) => instance.id === failure.id)) continue;
-    clearSecretFailures('byok', failure.id);
+    if (failure.scope === 'byok' && !mergedByok.some((instance) => instance.id === failure.id)) clearSecretFailures('byok', failure.id);
+    if (failure.scope === 'smtp' && !mergedMail.some((account) => account.id === failure.id)) clearSecretFailures('smtp', failure.id);
   }
 
   store.store = {
@@ -324,14 +433,21 @@ function saveConfig(cfg: Partial<Config>): void {
       apiHashEncrypted: telegramApiHashEncrypted,
     },
     line: storedLine,
-    smtp: {
-      ...smtpWithoutPassword,
-      passwordEncrypted: smtpPasswordEncrypted,
-    },
+    discord: storedSocketConfig('discord', mergedDiscord, store.store),
+    slack: storedSocketConfig('slack', mergedSlack, store.store),
     byokInstances: storedByok,
+    mailAccounts: storedMail,
   } as StoredConfig;
 
-  Object.assign(config, { ...mergedBase, telegram: mergedTelegram, line: mergedLine, smtp: mergedSmtp, byokInstances: mergedByok });
+  Object.assign(config, {
+    ...mergedBase,
+    telegram: mergedTelegram,
+    line: mergedLine,
+    discord: mergedDiscord,
+    slack: mergedSlack,
+    byokInstances: mergedByok,
+    mailAccounts: mergedMail,
+  });
 }
 
 function wipeSensitiveConfig(): void {
@@ -340,16 +456,23 @@ function wipeSensitiveConfig(): void {
     ...current,
     telegram: { ...current.telegram, botTokenEncrypted: '', apiHashEncrypted: '' },
     line: { ...current.line, channelAccessTokenEncrypted: '', channelSecretEncrypted: '' },
-    smtp: { ...current.smtp, passwordEncrypted: '' },
+    mailAccounts: (current.mailAccounts ?? []).map((account) => ({ ...account, passwordEncrypted: '' })),
     byokInstances: (current.byokInstances ?? []).map((instance) => ({ ...instance, apiKeyEncrypted: '' })),
+    ...Object.fromEntries(SOCKET_BOT_PLATFORMS.map((platform) => [platform, {
+      ...storedSocketSection(current, platform),
+      ...Object.fromEntries(socketSecrets(platform).map((field) => [`${field}Encrypted`, ''])),
+    }])),
   } as StoredConfig;
+  for (const platform of SOCKET_BOT_PLATFORMS) {
+    for (const field of socketSecrets(platform)) liveSocketSection(config, platform)[field] = '';
+  }
   telegramTokenUnavailable = false;
   telegramApiHashUnavailable = false;
   config.telegram.botToken = '';
   config.telegram.apiHash = '';
   config.line.channelAccessToken = '';
   config.line.channelSecret = '';
-  config.smtp.password = '';
+  for (const account of config.mailAccounts) account.password = '';
   for (const instance of config.byokInstances) instance.apiKey = '';
   // The ciphertext is gone, so there is nothing left to fail to decrypt.
   clearAllSecretFailures();
@@ -389,14 +512,29 @@ function importConfigFromJson(raw: unknown): Config | null {
     };
   }
 
-  const rawSmtp = rawConfig.smtp;
-  if (rawSmtp && typeof rawSmtp === 'object' && 'passwordEncrypted' in (rawSmtp as Record<string, unknown>)) {
-    const enc = (rawSmtp as Record<string, unknown>).passwordEncrypted;
-    patched.smtp = {
-      ...(rawSmtp as Record<string, unknown>),
-      password: decryptToken(typeof enc === 'string' ? enc : ''),
-    };
+  const rawMail = rawConfig.mailAccounts;
+  const rawSmtp = rawConfig.smtp && typeof rawConfig.smtp === 'object' ? rawConfig.smtp as Record<string, unknown> : null;
+  const legacyAddress = typeof rawSmtp?.user === 'string' ? rawSmtp.user.trim() : '';
+  const backupHasMail = Array.isArray(rawMail) || Boolean(legacyAddress);
+  if (Array.isArray(rawMail)) {
+    patched.mailAccounts = rawMail.map((item) => {
+      if (!item || typeof item !== 'object' || !('passwordEncrypted' in (item as Record<string, unknown>))) return item;
+      const entry = item as Record<string, unknown>;
+      return { ...entry, password: decryptToken(typeof entry.passwordEncrypted === 'string' ? entry.passwordEncrypted : '') };
+    });
+  } else if (rawSmtp && legacyAddress) {
+    // A backup from before multiple mailboxes: its one account becomes the default, as on upgrade.
+    patched.mailAccounts = [{
+      id: LEGACY_MAIL_ACCOUNT_ID,
+      address: legacyAddress,
+      smtp: { host: rawSmtp.host, port: rawSmtp.port },
+      imap: rawConfig.imap,
+      password: decryptToken(typeof rawSmtp.passwordEncrypted === 'string' ? rawSmtp.passwordEncrypted : ''),
+    }];
+    patched.mailDefaultId = LEGACY_MAIL_ACCOUNT_ID;
   }
+  delete patched.smtp;
+  delete patched.imap;
 
   const rawLine = rawConfig.line;
   if (rawLine && typeof rawLine === 'object'
@@ -410,6 +548,19 @@ function importConfigFromJson(raw: unknown): Config | null {
       channelAccessToken: decryptToken(typeof laEnc === 'string' ? laEnc : ''),
       channelSecret: decryptToken(typeof lsEnc === 'string' ? lsEnc : ''),
     };
+  }
+
+  for (const platform of SOCKET_BOT_PLATFORMS) {
+    const section = rawConfig[platform];
+    if (!section || typeof section !== 'object') continue;
+    const obj = section as Record<string, unknown>;
+    const decrypted = Object.fromEntries(socketSecrets(platform)
+      .filter((field) => `${field}Encrypted` in obj)
+      .map((field) => {
+        const enc = obj[`${field}Encrypted`];
+        return [field, decryptToken(typeof enc === 'string' ? enc : '')];
+      }));
+    patched[platform] = { ...obj, ...decrypted };
   }
 
   const rawByok = rawConfig.byokInstances;
@@ -431,6 +582,9 @@ function importConfigFromJson(raw: unknown): Config | null {
   const lineGrants = carryCurrentGrantsIntoLegacyBackup(patched.line, config.line.permissions);
   patched.telegram = telegramGrants.value;
   patched.line = lineGrants.value;
+  for (const platform of SOCKET_BOT_PLATFORMS) {
+    if (platform in patched) patched[platform] = carryCurrentGrantsIntoLegacyBackup(patched[platform], config[platform].permissions).value;
+  }
 
   const normalized = normalizeConfig(patched);
   if (telegramGrants.carried) {
@@ -439,7 +593,17 @@ function importConfigFromJson(raw: unknown): Config | null {
       normalized.telegram.pairing.pairedUsers.map((user) => user.userId),
     );
   }
-  if (!normalized.smtp.password) normalized.smtp.password = config.smtp.password;
+  // No mail in the backup means it predates the feature, not "delete every mailbox". A password the
+  // backup cannot give back (another machine's key) keeps the current one only for the same sign-in
+  // (address and servers): two installs both call their upgraded account `main`.
+  if (!backupHasMail) {
+    normalized.mailAccounts = config.mailAccounts;
+    normalized.mailDefaultId = config.mailDefaultId;
+  }
+  for (const account of normalized.mailAccounts) {
+    if (account.password) continue;
+    account.password = config.mailAccounts.find((existing) => sameMailSignIn(existing, account))?.password ?? '';
+  }
   if (!normalized.telegram.botToken) normalized.telegram.botToken = config.telegram.botToken;
   // The API id and hash are one pair: a hash the backup cannot give back (another machine's key,
   // or a backup from before big uploads) keeps the current pair rather than mixing the two.
@@ -451,6 +615,18 @@ function importConfigFromJson(raw: unknown): Config | null {
   }
   if (!normalized.line.channelAccessToken) normalized.line.channelAccessToken = config.line.channelAccessToken;
   if (!normalized.line.channelSecret) normalized.line.channelSecret = config.line.channelSecret;
+  // A platform the backup predates keeps everything it has now; one it holds keeps only the
+  // secrets the backup cannot give back (another machine's key).
+  for (const platform of SOCKET_BOT_PLATFORMS) {
+    if (!(platform in rawConfig)) {
+      Object.assign(normalized, { [platform]: config[platform] });
+      continue;
+    }
+    for (const field of socketSecrets(platform)) {
+      const restored = liveSocketSection(normalized, platform);
+      if (!restored[field]) restored[field] = liveSocketSection(config, platform)[field] ?? '';
+    }
+  }
   if (!Array.isArray(rawByok)) {
     normalized.byokInstances = config.byokInstances;
   }
@@ -489,6 +665,7 @@ function importConfigFromJson(raw: unknown): Config | null {
   }
 
   saveConfig(normalized);
+  regionHotkeyFilled = typeof rawConfig.regionHotkey !== 'string';
   return config;
 }
 
@@ -503,6 +680,8 @@ function getHiddenSources(): HiddenSources {
 export {
   config,
   saveConfig,
+  regionHotkeyFilledIn,
+  settleRegionHotkey,
   getHiddenSources,
   wipeSensitiveConfig,
   markTelegramTokenResolved,

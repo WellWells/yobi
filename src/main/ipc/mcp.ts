@@ -5,6 +5,8 @@ import { errorText } from '../../shared/errorText';
 import { getMcpRegistry } from '../mcp';
 import { MCP_UNAVAILABLE } from '../mcp/mcpErrors';
 import { localizeActionResult, localizeServerViews } from '../mcp/mcpServerViews';
+import { listFlowTools } from '../mcp/flowTools';
+import type { McpFlowToolsRequest, McpFlowToolsResult } from '../../shared/mcpFlowStep';
 
 // Every result leaves through localizeActionResult: both the action's own error and each card's.
 function unavailableResult(): McpServerActionResult {
@@ -53,6 +55,17 @@ export function registerMcpHandlers(): void {
       return localizeActionResult(await registry.setBuiltinEnabled((id ?? '').trim(), enabled === true));
     } catch (err) {
       return localizeActionResult({ ok: false, servers: registry.listServers(), error: errorText(err) });
+    }
+  });
+
+  // The flow editor's connector step. Connects only what needs no sign-in; never opens a browser.
+  ipcMain.handle(IPC.MCP_FLOW_TOOLS, async (_event, req: McpFlowToolsRequest): Promise<McpFlowToolsResult> => {
+    const registry = getMcpRegistry();
+    if (!registry || !req || typeof req !== 'object') return { status: 'missing', tools: [] };
+    try {
+      return await listFlowTools(registry, req);
+    } catch {
+      return { status: 'unavailable', tools: [] };
     }
   });
 }

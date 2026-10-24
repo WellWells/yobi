@@ -1,6 +1,5 @@
 import React from 'react';
 import { Stack, Text } from '@mantine/core';
-import { ShieldAlert } from 'lucide-react';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { AppNumberInput } from '../../../components/AppNumberInput';
 import { ToggleSwitch } from '../../../components/ToggleSwitch';
@@ -8,6 +7,7 @@ import { SettingRow } from '../../../components/SettingRow';
 import { isValidXPostUrlOrVar } from './validation';
 import { XSignInNotice } from './XSignInNotice';
 import type { SkillConfigProps } from './types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 export const XThreadConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
   const url = step.config.url ?? '';
@@ -39,7 +39,6 @@ export const XThreadConfig: React.FC<SkillConfigProps> = ({ step, onChange, t })
       />
 
       <SettingRow
-        icon={<ShieldAlert size={13} />}
         label={t('flow.skill.x_thread.emitFailFlag')}
         hint={t('flow.skill.x_thread.emitFailFlag.hint')}
         control={
@@ -51,7 +50,7 @@ export const XThreadConfig: React.FC<SkillConfigProps> = ({ step, onChange, t })
       />
 
       <Text fz="xs" c="dimmed">
-        {t('flow.skill.x_thread.outputHint').replaceAll('{{outputKey}}', `{{${step.outputKey}}}`)}
+        {fillTemplate(t('flow.skill.x_thread.outputHint'), { outputKey: `{{${step.outputKey}}}` })}
       </Text>
     </Stack>
   );

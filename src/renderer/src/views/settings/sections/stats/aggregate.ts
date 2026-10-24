@@ -7,6 +7,7 @@ import type {
   MetricOutcome,
   MetricsSnapshot,
 } from '../../../../../../shared/types';
+import type { FlowMetricsSnapshot } from '../../../../../../shared/flowMetrics';
 import { toIsoDate } from '../../../../../../shared/localTime';
 
 export const RANGE_DAYS = [3, 7, 14, 30] as const;
@@ -145,6 +146,21 @@ export function aggregateStats(
   result.runTotal = sumCounts(result.runs);
   result.requestTotal = sumCounts(result.requests);
   return result;
+}
+
+/**
+ * Whether anything is recorded at all, whatever the selected range: the daily entries expire
+ * after 30 days, but the lifetime totals stay until the user clears them.
+ */
+export function hasStoredStats(snapshot: MetricsSnapshot | null, flowSnapshot: FlowMetricsSnapshot | null): boolean {
+  if (flowSnapshot && (flowSnapshot.since || Object.keys(flowSnapshot.flows).length > 0)) return true;
+  if (!snapshot) return false;
+  if (snapshot.since || Object.keys(snapshot.daily).length > 0) return true;
+  const lifetime = DOMAINS.some((domain) => sumCounts(snapshot[domain].runs) + sumCounts(snapshot[domain].requests) > 0);
+  return lifetime
+    || snapshot.tokens.input + snapshot.tokens.output > 0
+    || Object.keys(snapshot.keys).length > 0
+    || Object.keys(snapshot.downloads).length > 0;
 }
 
 function emptyDomain(): DomainMetrics {

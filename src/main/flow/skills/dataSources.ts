@@ -275,19 +275,64 @@ export interface GeocodedPlace {
   longitude: number;
 }
 
-export async function geocodePlace(location: string, timeoutMs: number): Promise<GeocodedPlace | null> {
+export interface GeocoderResult {
+  name?: string; country?: string; country_code?: string; latitude?: number; longitude?: number;
+  feature_code?: string; population?: number;
+}
+
+const HAN = /\p{Script=Han}/u;
+/** A zh-only match must be a capital, an admin seat, or a city this size to be trusted. */
+const ZH_FALLBACK_MIN_POPULATION = 100_000;
+const ZH_FALLBACK_SEAT_CODES = new Set(['PPLC', 'PPLA', 'PPLA2']);
+
+async function searchGeocoder(name: string, language: 'en' | 'zh', count: number, timeoutMs: number): Promise<GeocoderResult[]> {
   const geo = await fetchJson(
-    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`,
+    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=${count}&language=${language}&format=json`,
     timeoutMs,
-  ) as { results?: Array<{ name?: string; country?: string; country_code?: string; latitude?: number; longitude?: number }> };
-  const place = geo.results?.[0];
-  if (!place || typeof place.latitude !== 'number' || typeof place.longitude !== 'number') return null;
+  ) as { results?: GeocoderResult[] };
+  return (geo.results ?? []).filter((r) => typeof r.latitude === 'number' && typeof r.longitude === 'number');
+}
+
+function toPlace(place: GeocoderResult, location: string): GeocodedPlace {
+  const countryCode = (place.country_code ?? '').toUpperCase();
+  // The zh index names Taiwan in Simplified; the bundled table says 臺灣.
+  const country = countryCode === 'TW' && HAN.test(place.country ?? '') ? '臺灣' : place.country;
   return {
-    displayName: place.country ? `${place.name}, ${place.country}` : String(place.name ?? location),
-    countryCode: (place.country_code ?? '').toUpperCase(),
-    latitude: place.latitude,
-    longitude: place.longitude,
+    displayName: country ? `${place.name}, ${country}` : String(place.name ?? location),
+    countryCode,
+    latitude: place.latitude as number,
+    longitude: place.longitude as number,
   };
+}
+
+/**
+ * The zh index is where the wrong places hide: 紐約 is a Kentucky hamlet, 清境 a Guangxi
+ * village, 东京 two Chinese ones. A Taiwan match wins; otherwise only a capital, an admin seat
+ * or a sizeable city is believed, and anything less is "not found" rather than a wrong forecast.
+ */
+export function pickZhFallback(results: GeocoderResult[]): GeocoderResult | null {
+  return results.find((r) => (r.country_code ?? '').toUpperCase() === 'TW')
+    ?? results.find((r) => ZH_FALLBACK_SEAT_CODES.has(r.feature_code ?? '') || (r.population ?? 0) >= ZH_FALLBACK_MIN_POPULATION)
+    ?? null;
+}
+
+/**
+ * Chinese names try the bundled Taiwan table first (the geocoder's en index has no CJK names,
+ * and its zh index puts 高雄 in Sichuan); then Open-Meteo in English, then — for CJK input
+ * only — its zh index under `pickZhFallback`.
+ */
+export async function geocodePlace(location: string, timeoutMs: number): Promise<GeocodedPlace | null> {
+  const isHan = HAN.test(location);
+  if (isHan) {
+    const { lookupTaiwanPlace } = await import('./taiwanPlaces');
+    const hit = lookupTaiwanPlace(location);
+    if (hit) return hit;
+  }
+  const en = (await searchGeocoder(location, 'en', 1, timeoutMs))[0];
+  if (en) return toPlace(en, location);
+  if (!isHan) return null;
+  const zh = pickZhFallback(await searchGeocoder(location.trim(), 'zh', 10, timeoutMs));
+  return zh ? toPlace(zh, location) : null;
 }
 
 export async function execWeather(config: Record<string, string>, timeoutMs: number): Promise<string> {

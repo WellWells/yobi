@@ -27,5 +27,5 @@ export {
   xAnalyzeInput,
 } from './linkSites/registry';
 export type { BuiltinBuildContext } from './linkSites/registry';
-export { xAnalyzePrompt, youtubeSummaryPrompt, ytCommandPrompt } from './builtin/prompts';
-export { BOT_MODEL_VARIABLE, CHAT_MODEL_VARIABLE } from './builtin/steps';
+export { pushesAnalyzePrompt, xAnalyzePrompt, youtubeSummaryPrompt, ytCommandPrompt } from './builtin/prompts';
+export { BOT_MODEL_VARIABLE, CHAT_MODEL_VARIABLE, TRIGGER_IS_INPUT_VARIABLE } from './builtin/steps';

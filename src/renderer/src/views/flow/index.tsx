@@ -1,15 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Flex, Group, Menu, Stack,
+  Flex, Menu, Stack,
 } from '@mantine/core';
 import {
-  ArrowDown, ArrowUp, Copy, Download, ListChecks, Pencil, Play, Plus, Power, PowerOff, Search, Sparkles, Trash2, Upload, Workflow,
+  ArrowDown, ArrowUp, ChevronDown, Copy, Download, ListChecks, Pencil, Play, Plus, Power, PowerOff, Sparkles, Trash2, Upload, Workflow,
 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useI18nStore } from '../../store/i18nStore';
 import { useFlowStore } from '../../store/useFlowStore';
 import { flowApi, ipcEvents } from '../../api/electronApi';
-import { PanelToolbar, ToolbarButton, ToolbarIconButton } from '../../components/PanelToolbar';
+import { PanelToolbar, ToolbarIconButton, ToolbarSearchButton } from '../../components/PanelToolbar';
+import { SidebarActionRow } from '../../components/SidebarActionRow';
 import { EmptyState } from '../../components/EmptyState';
 import { AppButton } from '../../components/AppButton';
 import { WebDialog } from '../../components/WebDialog';
@@ -33,6 +34,8 @@ import { YtdlToolsDialog } from '../../components/ytdl/YtdlToolsDialog';
 import { Z_POPOVER } from '../../config/zLayers';
 import { useShortcutAction } from '../../shortcuts/useShortcutAction';
 import { useResolvedCombo } from '../../store/shortcutStore';
+import type { MenuAnchor } from '../../components/RowMoreButton';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 export const FlowView: React.FC = () => {
   const { t } = useI18nStore();
@@ -248,6 +251,10 @@ export const FlowView: React.FC = () => {
     e.stopPropagation();
     setContextMenu({ x: e.clientX, y: e.clientY, flowId });
   }, []);
+  // A row's "⋯" opens the very menu a right-click does, under the button; again closes it.
+  const openContextMenuAt = useCallback((flowId: string, at: MenuAnchor) => {
+    setContextMenu((current) => (current?.flowId === flowId ? null : { ...at, flowId }));
+  }, []);
 
   const contextFlow = useMemo(
     () => (contextMenu ? flows.find((flow) => flow.id === contextMenu.flowId) ?? null : null),
@@ -271,36 +278,34 @@ export const FlowView: React.FC = () => {
           style={{ borderRight: '1px solid var(--mantine-color-default-border)', overflow: 'hidden' }}
         >
           <PanelToolbar>
-            <Menu trigger="hover" position="bottom-start" width="target" withinPortal zIndex={Z_POPOVER}>
-              <Menu.Target>
-                <ToolbarButton
-                  icon={Plus}
-                  label={t('flow.newFlow')}
-                  withChevron
-                  onClick={() => setTemplatesOpen(true)}
-                />
-              </Menu.Target>
-              <Menu.Dropdown>
-                <Menu.Item leftSection={<Plus size={13} />} onClick={() => setTemplatesOpen(true)}>
-                  {t('flow.newFlow')}
-                </Menu.Item>
-                <Menu.Item leftSection={<Sparkles size={13} />} onClick={() => setGenerateOpen(true)}>
-                  {t('flow.generate')}
-                </Menu.Item>
-                <Menu.Item leftSection={<Download size={13} />} onClick={() => setImportOpen(true)}>
-                  {t('flow.import')}
-                </Menu.Item>
-              </Menu.Dropdown>
-            </Menu>
-            <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
-              <ToolbarIconButton icon={Search} label={t('flow.search.tooltip')} onClick={openSearch} />
-              <ToolbarIconButton
-                icon={Play}
-                label={t('flow.runAll')}
-                disabled={flows.length === 0 || isBatchRunning}
-                onClick={() => { void handleRunAllFlows(); }}
-              />
-            </Group>
+            {/* The row opens the template gallery; its ▾ holds the other ways to add a flow. */}
+            <SidebarActionRow
+              icon={Plus}
+              label={t('flow.newFlow')}
+              onClick={() => setTemplatesOpen(true)}
+              trailing={(
+                <Menu position="bottom-end" offset={4} withinPortal zIndex={Z_POPOVER}>
+                  <Menu.Target>
+                    <ToolbarIconButton icon={ChevronDown} label={t('flow.newFlow.more')} onClick={() => undefined} />
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    <Menu.Item leftSection={<Sparkles size={13} />} onClick={() => setGenerateOpen(true)}>
+                      {t('flow.generate')}
+                    </Menu.Item>
+                    <Menu.Item leftSection={<Download size={13} />} onClick={() => setImportOpen(true)}>
+                      {t('flow.import')}
+                    </Menu.Item>
+                  </Menu.Dropdown>
+                </Menu>
+              )}
+            />
+            <ToolbarSearchButton label={t('flow.search.tooltip')} onClick={openSearch} />
+            <ToolbarIconButton
+              icon={Play}
+              label={t('flow.runAll')}
+              disabled={flows.length === 0 || isBatchRunning}
+              onClick={() => { void handleRunAllFlows(); }}
+            />
           </PanelToolbar>
 
           <FlowSidebarList
@@ -313,7 +318,10 @@ export const FlowView: React.FC = () => {
             onToggleSelect={selection.toggle}
             onRowClick={handleRowClick}
             onContextMenu={(e, id) => openContextMenu(e, id)}
+            onOpenMenuAt={openContextMenuAt}
+            menuFlowId={contextMenu?.flowId ?? null}
             onToggleEnabled={(flow, enabled) => { void handleToggleEnabled(flow, enabled); }}
+            onDelete={(flowId) => { setPendingDeleteId(flowId); setContextMenu(null); }}
             onReorder={(orderedIds) => { void reorderFlows(orderedIds); }}
           />
 
@@ -381,7 +389,7 @@ export const FlowView: React.FC = () => {
 
         <WebDialog
           open={bulkDeleteOpen}
-          title={t('selection.deleteFlows.confirm').replace('{{count}}', String(selection.count))}
+          title={fillTemplate(t('selection.deleteFlows.confirm'), { count: String(selection.count) })}
           description={t('selection.delete.detail')}
           confirmText={t('common.delete')}
           cancelText={t('dialog.cancel')}

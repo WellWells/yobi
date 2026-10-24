@@ -1,14 +1,32 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, Brain, ChartLine, Cpu, DatabaseBackup, ImageDown, Keyboard, Palette, Plug, SlidersHorizontal, Sparkles } from 'lucide-react';
+import { Bell, Bot, Brain, ChartLine, Cpu, DatabaseBackup, ImageDown, Keyboard, Link, Palette, Plug, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useI18nStore } from '../../../store/i18nStore';
 import { useAppStore } from '../../../store/appStore';
-import { buildHaystacks, CATEGORY_IDS, CATEGORY_TAG_MAP, TAG_SETS } from './settingsSearch';
+import type { LucideIcon } from 'lucide-react';
+import { buildHaystacks, CATEGORY_IDS, CATEGORY_TAG_MAP, DEFAULT_SETTINGS_CATEGORY, TAG_SETS } from './settingsSearch';
 import type { Category } from './settingsSearch';
 import { useShortcutAction } from '../../../shortcuts/useShortcutAction';
 
 export { TAG_SETS } from './settingsSearch';
 export type { Category } from './settingsSearch';
+
+// The nav lists categories in CATEGORY_IDS order; this only says which glyph each one wears.
+const CATEGORY_ICON: Record<Category, LucideIcon> = {
+  accounts: Cpu,
+  ai: Sparkles,
+  memory: Brain,
+  connectors: Plug,
+  bots: Bot,
+  general: SlidersHorizontal,
+  appearance: Palette,
+  notifications: Bell,
+  links: Link,
+  export: ImageDown,
+  shortcuts: Keyboard,
+  stats: ChartLine,
+  system: DatabaseBackup,
+};
 
 export function useSettingsNav() {
   const { t, locale, translations, enTranslations } = useI18nStore(
@@ -20,7 +38,7 @@ export function useSettingsNav() {
     })),
   );
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeCategory, setActiveCategory] = useState<Category>('general');
+  const [activeCategory, setActiveCategory] = useState<Category>(DEFAULT_SETTINGS_CATEGORY);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const categoryRequest = useAppStore((s) => s.settingsCategoryRequest);
 
@@ -65,19 +83,11 @@ export function useSettingsNav() {
     return CATEGORY_TAG_MAP[category].some((key) => sectionVisible(TAG_SETS[key]));
   };
 
-  const navCategoryDefs = useMemo(() => [
-    { id: 'general' as Category, label: t('settings.group.general'), icon: React.createElement(SlidersHorizontal, { size: 14 }) },
-    { id: 'shortcuts' as Category, label: t('settings.group.shortcuts'), icon: React.createElement(Keyboard, { size: 14 }) },
-    { id: 'appearance' as Category, label: t('settings.group.appearance'), icon: React.createElement(Palette, { size: 14 }) },
-    { id: 'export' as Category, label: t('settings.group.export'), icon: React.createElement(ImageDown, { size: 14 }) },
-    { id: 'accounts' as Category, label: t('settings.group.accounts'), icon: React.createElement(Cpu, { size: 14 }) },
-    { id: 'ai' as Category, label: t('settings.group.ai'), icon: React.createElement(Sparkles, { size: 14 }) },
-    { id: 'memory' as Category, label: t('settings.group.memory'), icon: React.createElement(Brain, { size: 14 }) },
-    { id: 'connectors' as Category, label: t('settings.group.connectors'), icon: React.createElement(Plug, { size: 14 }) },
-    { id: 'bots' as Category, label: t('settings.group.bots'), icon: React.createElement(Bot, { size: 14 }) },
-    { id: 'stats' as Category, label: t('settings.group.stats'), icon: React.createElement(ChartLine, { size: 14 }) },
-    { id: 'system' as Category, label: t('settings.group.system'), icon: React.createElement(DatabaseBackup, { size: 14 }) },
-  ], [locale]);
+  const navCategoryDefs = useMemo(() => CATEGORY_IDS.map((id) => ({
+    id,
+    label: t(`settings.group.${id}`),
+    icon: React.createElement(CATEGORY_ICON[id], { size: 14 }),
+  })), [locale]);
 
   return {
     searchQuery,

@@ -8,6 +8,7 @@ import classes from './ConnectorCard.module.css';
 import { BotAccessCaption } from '../BotAccessCaption';
 import { CommandClashNotice } from './CommandClashNotice';
 import type { useMcpServers } from '../../hooks/useMcpServers';
+import { fillTemplate } from '../../../../../../shared/fillTemplate';
 
 interface Props {
   mcp: ReturnType<typeof useMcpServers>;
@@ -49,6 +50,7 @@ export const BuiltinConnectorCard: React.FC<Props> = ({
   return (
     <Box
       p={12}
+      h="100%"
       className={classes.card}
       data-interactive={interactive || undefined}
       style={{
@@ -78,7 +80,7 @@ export const BuiltinConnectorCard: React.FC<Props> = ({
               </Text>
               {connected && (
                 <Badge variant="light" color="var(--mantine-color-success)" size="sm">
-                  {t('settings.mcp.toolCount').replace('{{count}}', String(toolCount))}
+                  {fillTemplate(t('settings.mcp.toolCount'), { count: String(toolCount) })}
                 </Badge>
               )}
               {server?.status === 'error' && !waiting && (

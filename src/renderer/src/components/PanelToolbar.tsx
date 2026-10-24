@@ -1,9 +1,11 @@
 import React from 'react';
-import { ActionIcon, Group, Text, Tooltip } from '@mantine/core';
-import { ChevronDown, Search, X } from 'lucide-react';
+import { ActionIcon, Group, Tooltip } from '@mantine/core';
+import { Search, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { AppButton } from './AppButton';
 import { AppTextInput } from './AppTextInput';
+import { useResolvedCombo } from '../store/shortcutStore';
+import { comboLabel } from '../../../shared/shortcuts';
+import { isMac } from '../utils/keyLabels';
 
 /**
  * Vertical padding of a panel toolbar. With a 30px control and the 1px rule that makes the 47px
@@ -42,35 +44,6 @@ export const PanelToolbar: React.FC<PanelToolbarProps> = ({
     {children}
   </Group>
 );
-
-export interface ToolbarButtonProps extends React.ComponentProps<typeof AppButton> {
-  icon: LucideIcon;
-  label: string;
-  withChevron?: boolean;
-}
-
-export const ToolbarButton = React.forwardRef<HTMLButtonElement, ToolbarButtonProps>(({
-  icon: Icon, label, withChevron = false, ...props
-}, ref) => (
-  <AppButton
-    ref={ref}
-    variant="default"
-    size="xs"
-    radius="sm"
-    flex={1}
-    justify="flex-start"
-    pl={10}
-    leftSection={<Icon size={14} />}
-    {...props}
-  >
-    <Group gap={5} wrap="nowrap" component="span" align="center">
-      <Text component="span" fz="var(--font-size-base)">{label}</Text>
-      {withChevron && <ChevronDown size={13} />}
-    </Group>
-  </AppButton>
-));
-
-ToolbarButton.displayName = 'ToolbarButton';
 
 export interface ToolbarIconButtonProps {
   icon: LucideIcon;
@@ -143,3 +116,25 @@ export const ToolbarSearchInput = React.forwardRef<HTMLInputElement, ToolbarSear
 ));
 
 ToolbarSearchInput.displayName = 'ToolbarSearchInput';
+
+export interface ToolbarSearchButtonProps {
+  label: string;
+  onClick: () => void;
+}
+
+/**
+ * A sidebar's search entry: an icon button that opens the search palette, its name carrying the
+ * palette's shortcut. Not a field — a field-sized box at the top of the sidebar drew the clicks
+ * meant for the action beside it.
+ */
+export const ToolbarSearchButton: React.FC<ToolbarSearchButtonProps> = ({ label, onClick }) => {
+  const keys = comboLabel(useResolvedCombo('nav.quickSwitch'), isMac);
+  return (
+    <ToolbarIconButton
+      icon={Search}
+      label={keys ? `${label} (${keys})` : label}
+      onClick={onClick}
+      aria-haspopup="dialog"
+    />
+  );
+};

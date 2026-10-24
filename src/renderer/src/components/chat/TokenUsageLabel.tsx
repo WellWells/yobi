@@ -1,6 +1,7 @@
 import React from 'react';
 import { Text, Tooltip } from '@mantine/core';
 import { formatTokenCount, type TokenUsage } from '../../../../shared/tokenEstimate';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 interface TokenUsageLabelProps {
   usage: TokenUsage;
@@ -12,9 +13,7 @@ interface TokenUsageLabelProps {
 export const TokenUsageLabel: React.FC<TokenUsageLabelProps> = ({ usage, labelKey, t, detail }) => {
   const total = usage.input + usage.output;
   const tooltip = [
-    t(usage.exact ? 'chat.tokens.tooltip.exact' : 'chat.tokens.tooltip.estimated')
-      .replace('{{input}}', formatTokenCount(usage.input))
-      .replace('{{output}}', formatTokenCount(usage.output)),
+    fillTemplate(t(usage.exact ? 'chat.tokens.tooltip.exact' : 'chat.tokens.tooltip.estimated'), { input: formatTokenCount(usage.input), output: formatTokenCount(usage.output) }),
     detail,
   ].filter(Boolean).join('\n\n');
 
@@ -25,7 +24,7 @@ export const TokenUsageLabel: React.FC<TokenUsageLabelProps> = ({ usage, labelKe
         c="dimmed"
         style={{ cursor: 'help', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}
       >
-        {`${usage.exact ? '' : '~'}${t(labelKey).replace('{{total}}', formatTokenCount(total))}`}
+        {`${usage.exact ? '' : '~'}${fillTemplate(t(labelKey), { total: formatTokenCount(total) })}`}
       </Text>
     </Tooltip>
   );

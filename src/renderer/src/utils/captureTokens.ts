@@ -1,11 +1,12 @@
 import { formatTokenCount, sumTurnUsage, type TokenUsage } from '../../../shared/tokenEstimate';
 import type { TurnMeta } from '../../../shared/conversationDoc';
+import { fillTemplate } from '../../../shared/fillTemplate';
 
 type Translate = (key: string) => string;
 
 function label(usage: TokenUsage, key: string, t: Translate): string {
   const prefix = usage.exact ? '' : '~';
-  return `${prefix}${t(key).replace('{{total}}', formatTokenCount(usage.input + usage.output))}`;
+  return `${prefix}${fillTemplate(t(key), { total: formatTokenCount(usage.input + usage.output) })}`;
 }
 
 export function turnTokenLabel(meta: TurnMeta, t: Translate): string | undefined {

@@ -1,10 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Group, Stack, Text } from '@mantine/core';
 import { useShallow } from 'zustand/react/shallow';
-import { Search, Timer } from 'lucide-react';
+import { Search } from 'lucide-react';
 import {
-  AGENT_ASK_TTL_MAX_MINUTES,
-  AGENT_ASK_TTL_MIN_MINUTES,
   BOT_BUILTIN_COMMAND_KEYS,
   BOT_COMMAND_RE,
   DEFAULT_BUILTIN_COMMANDS,
@@ -16,8 +14,7 @@ import type {
   BotBuiltinCommands as BuiltinCommandsConfig,
 } from '../../../../../shared/types';
 import { AppTextInput } from '../../../components/AppTextInput';
-import { AppNumberInput } from '../../../components/AppNumberInput';
-import { SelectDropdown, SettingRow, ToggleSwitch } from '../components';
+import { SelectDropdown, ToggleSwitch } from '../components';
 import { PROVIDER_DROPDOWN_MAX_HEIGHT, providerSectionsToSelectData } from '../../../config/models';
 import { useProviderModels } from '../../../hooks/useProviderModels';
 import { selectHiddenSources, useAppStore } from '../../../store/appStore';
@@ -33,7 +30,6 @@ interface Props {
   builtinCommands: BuiltinCommandsConfig;
   busy: boolean;
   onUpdate: (key: BotBuiltinCommandKey, patch: Partial<BotBuiltinCommand>) => void;
-  onUpdateAskTtl: (minutes: number) => void;
   /** Paired accounts and their grants, for the read-only "who can use" caption. */
   roster: BotRoster;
   t: (key: string) => string;
@@ -126,22 +122,8 @@ const BuiltinCommandRow: React.FC<RowProps> = ({ commandKey, cfg, busy, onUpdate
 };
 
 export const BotBuiltinCommands: React.FC<Props> = ({
-  builtinCommands, busy, onUpdate, onUpdateAskTtl, roster, t,
+  builtinCommands, busy, onUpdate, roster, t,
 }) => {
-  const [ttl, setTtl] = useState(String(builtinCommands.askTtlMinutes));
-  useEffect(() => { setTtl(String(builtinCommands.askTtlMinutes)); }, [builtinCommands.askTtlMinutes]);
-
-  const commitTtl = (): void => {
-    const parsed = Number(ttl);
-    if (!Number.isFinite(parsed)) {
-      setTtl(String(builtinCommands.askTtlMinutes));
-      return;
-    }
-    const clamped = Math.min(AGENT_ASK_TTL_MAX_MINUTES, Math.max(AGENT_ASK_TTL_MIN_MINUTES, Math.round(parsed)));
-    setTtl(String(clamped));
-    onUpdateAskTtl(clamped);
-  };
-
   return (
     <Box>
       <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6} mb={10}>
@@ -159,23 +141,6 @@ export const BotBuiltinCommands: React.FC<Props> = ({
             t={t}
           />
         ))}
-        <SettingRow
-          icon={<Timer size={13} />}
-          label={t('settings.bot.builtin.askTtl.label')}
-          hint={t('settings.bot.builtin.askTtl.hint')}
-          alignStart
-          control={
-            <AppNumberInput
-              w={110}
-              min={AGENT_ASK_TTL_MIN_MINUTES}
-              max={AGENT_ASK_TTL_MAX_MINUTES}
-              value={ttl}
-              onChange={(value) => setTtl(String(value))}
-              onBlur={commitTtl}
-              disabled={busy}
-            />
-          }
-        />
       </Stack>
     </Box>
   );

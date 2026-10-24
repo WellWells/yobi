@@ -1,13 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Stack } from '@mantine/core';
-import { SquarePen, Terminal } from 'lucide-react';
-import { AppTextInput, SectionCard, SectionTitle, SelectDropdown, SettingField, SettingRow } from '../components';
+import { AppTextInput, FitSelectDropdown, SectionCard, SettingField, SettingRow } from '../components';
 import { composerEditorApi } from '../../../api/electronApi';
 import { useResolvedCombo } from '../../../store/shortcutStore';
 import { comboLabel } from '../../../../../shared/shortcuts';
 import { isMac } from '../../../utils/keyLabels';
 import { hostPlatform } from '../../../utils/hostPlatform';
 import type { ExternalEditorSettings } from '../../../../../shared/types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 interface Props {
   t: (key: string) => string;
@@ -26,7 +26,7 @@ export function editorOptions(
 ): { value: string; label: string }[] {
   const systemLabel = t(SYSTEM_EDITOR_KEY);
   return [
-    { value: '', label: t('settings.editor.auto').replace('{{editor}}', settings.autoName ?? systemLabel) },
+    { value: '', label: fillTemplate(t('settings.editor.auto'), { editor: settings.autoName ?? systemLabel }) },
     { value: 'system', label: systemLabel },
     ...settings.editors.map((editor) => ({ value: editor.id, label: editor.label })),
     { value: 'custom', label: t('settings.editor.custom') },
@@ -60,14 +60,13 @@ export const ExternalEditorSetting: React.FC<Props> = ({ t, visible, sectionGap 
 
   return (
     <SectionCard style={{ marginBottom: sectionGap, display: visible ? 'block' : 'none' }}>
-      <SectionTitle icon={<SquarePen size={15} />} label={t('settings.editor.title')} />
+      {/* One setting, so the row is the card's heading (as Language is): no title above it repeating the icon. */}
       <Stack gap={14}>
         <SettingRow
-          icon={<SquarePen size={13} />}
-          label={t('settings.editor.label')}
-          hint={t('settings.editor.hint').replace('{{shortcut}}', shortcut)}
+          label={t('settings.editor.title')}
+          hint={fillTemplate(t('settings.editor.hint'), { shortcut })}
           control={(
-            <SelectDropdown
+            <FitSelectDropdown
               value={settings.choice}
               options={editorOptions(settings, t)}
               onDropdownOpen={() => { void load(); }}
@@ -77,7 +76,6 @@ export const ExternalEditorSetting: React.FC<Props> = ({ t, visible, sectionGap 
         />
         {settings.choice === 'custom' && (
           <SettingField
-            icon={<Terminal size={13} />}
             label={t('settings.editor.command.label')}
             hint={t('settings.editor.command.hint')}
           >

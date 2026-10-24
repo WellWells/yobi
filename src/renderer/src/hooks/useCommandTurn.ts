@@ -1,6 +1,7 @@
 import { startTransition, useCallback, useRef } from 'react';
 import { fileApi } from '../api/electronApi';
 import { NEW_CONVERSATION_KEY, useAppStore } from '../store/appStore';
+import { remapPathValues, useConversationMoves } from '../store/conversationMoves';
 
 let commandSendCounter = 0;
 function nextCommandSendId(): string {
@@ -10,6 +11,8 @@ function nextCommandSendId(): string {
 
 export function useCommandTurn() {
   const originBySendId = useRef(new Map<string, string>());
+  // A conversation moved into a folder while its command ran is still where the answer goes.
+  useConversationMoves((moves) => remapPathValues(originBySendId.current, moves));
 
   const begin = useCallback((prompt: string, runId?: string, attachments?: string[], command?: boolean): string => {
     const conversationPath = useAppStore.getState().selectedFile?.path ?? '';

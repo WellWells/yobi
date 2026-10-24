@@ -3,6 +3,7 @@ import { saveOutput } from '../output';
 import type { MarkdownOptions } from '../output';
 import type { MapPlaceRef, TurnMeta } from '../../shared/conversationDoc';
 import { updateConversationThread } from './conversationStore';
+import { resolveConversationPath } from '../conversationIndex';
 import {
   providerKeyFor,
   recordConversationTurn,
@@ -31,8 +32,10 @@ export async function appendOrCreateConversation(args: {
 
   if (plan && conversationPath) {
     try {
+      // Moved into a folder while the answer was coming: found again by its id, not started over.
+      const target = await resolveConversationPath({ path: conversationPath }) ?? conversationPath;
       await recordConversationTurn({
-        conversationPath,
+        conversationPath: target,
         prompt: args.prompt,
         response: args.response,
         meta: args.turnMeta,
@@ -42,8 +45,8 @@ export async function appendOrCreateConversation(args: {
         previousTurnCount: plan.previousTurnCount,
         ...(args.threadAt ? { threadAt: args.threadAt } : {}),
       });
-      onLog(`💬 Appended to ${path.basename(conversationPath)}`);
-      return conversationPath;
+      onLog(`💬 Appended to ${path.basename(target)}`);
+      return target;
     } catch (err: unknown) {
       const detail = err instanceof Error ? err.message : String(err);
       onLog(`⚠️ Could not append to the conversation (${detail}) — saving as a new file`);

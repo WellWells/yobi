@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Group, Stack, Text } from '@mantine/core';
-import { FolderClock, FolderCog, MonitorDown, RefreshCw, Trash2, FlaskConical } from 'lucide-react';
+import { MonitorDown, RefreshCw, Trash2 } from 'lucide-react';
 import {
-  AppTextInput, GroupHeader, SectionCard, SectionTitle, SelectDropdown, SettingField, SettingRow, ToggleSwitch,
+  AppTextInput, GroupHeader, SectionCard, SectionTitle, SelectDropdown, SettingDivider, SettingField, SettingRow,
+  ToggleSwitch,
 } from '../components';
 import { AppButton } from '../../../components/AppButton';
 import { YtdlToolsSetup } from '../../../components/ytdl/YtdlToolsSetup';
@@ -16,6 +17,7 @@ import type { DownloadsKeep } from '../../../../../shared/downloads';
 import { BotAccessCaption } from './BotAccessCaption';
 import { anyBotEnabled, whoCanUse, whoCanUseText } from './botPermissionsView';
 import type { BotRoster } from './botPermissionsView';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 interface Props {
   t: (key: string) => string;
@@ -60,14 +62,12 @@ export const YtdlToolsSetting: React.FC<Props> = ({ t, visible, sectionGap, rost
   };
 
   // One line per site whose downloads are paused; with none paused, the last failure, if any.
-  const paused = pausedSites(state).map(({ label, at }) => t('settings.ytdl.youtubeChanged')
-    .replace('{{time}}', formatTime(at))
-    .replace('{{site}}', label));
+  const paused = pausedSites(state).map(({ label, at }) => fillTemplate(t('settings.ytdl.youtubeChanged'), { time: formatTime(at), site: label }));
   const lastFailure = state.lastFailure
-    ? t('settings.ytdl.lastFailure')
-      .replace('{{reason}}', t(`settings.ytdl.failure.${state.lastFailure.category}`)
-        .replace('{{site}}', siteLabel(state.lastFailure.site ?? 'youtube')))
-      .replace('{{time}}', formatTime(state.lastFailure.at))
+    ? fillTemplate(t('settings.ytdl.lastFailure'), {
+      reason: fillTemplate(t(`settings.ytdl.failure.${state.lastFailure.category}`), { site: siteLabel(state.lastFailure.site ?? 'youtube') }),
+      time: formatTime(state.lastFailure.at),
+    })
     : '';
   const failures = paused.length > 0 ? paused : [lastFailure].filter(Boolean);
 
@@ -75,19 +75,16 @@ export const YtdlToolsSetting: React.FC<Props> = ({ t, visible, sectionGap, rost
     <SectionCard style={{ marginBottom: sectionGap, display: visible ? 'block' : 'none' }}>
       <SectionTitle icon={<MonitorDown size={15} />} label={t('settings.ytdl.title')} />
       <Stack gap={14}>
-        {anyBotEnabled(roster) && <BotAccessCaption text={whoCanUseText(whoCanUse(roster, 'download'), 'downloader', t)} />}
         {!usable && <YtdlToolsSetup />}
         {usable && (
           <>
             <Stack gap={2}>
               <Text fz="sm">
-                {t(state.status === 'custom' ? 'settings.ytdl.statusCustom' : 'settings.ytdl.statusReady')
-                  .replace('{{ytdlp}}', state.ytdlpVersion ?? '?')
-                  .replace('{{ffmpeg}}', state.ffmpegVersion ?? '?')}
+                {fillTemplate(t(state.status === 'custom' ? 'settings.ytdl.statusCustom' : 'settings.ytdl.statusReady'), { ytdlp: state.ytdlpVersion ?? '?', ffmpeg: state.ffmpegVersion ?? '?' })}
               </Text>
               {state.lastCheckedAt && (
                 <Text fz="xs" c="var(--text-muted)" style={{ fontVariantNumeric: 'tabular-nums' }}>
-                  {t('settings.ytdl.lastChecked').replace('{{time}}', formatTime(state.lastCheckedAt))}
+                  {fillTemplate(t('settings.ytdl.lastChecked'), { time: formatTime(state.lastCheckedAt) })}
                 </Text>
               )}
               {failures.map((line) => <Text key={line} fz="xs" c="var(--mantine-color-warning)">{line}</Text>)}
@@ -122,7 +119,6 @@ export const YtdlToolsSetting: React.FC<Props> = ({ t, visible, sectionGap, rost
 
         {keep && (
           <SettingRow
-            icon={<FolderClock size={13} />}
             label={t('settings.ytdl.keep')}
             hint={t('settings.ytdl.keep.hint')}
             control={(
@@ -140,7 +136,6 @@ export const YtdlToolsSetting: React.FC<Props> = ({ t, visible, sectionGap, rost
 
         <GroupHeader label={t('settings.ytdl.advanced')} variant="plain" />
         <SettingRow
-          icon={<FlaskConical size={13} />}
           label={t('settings.ytdl.nightly')}
           hint={t('settings.ytdl.nightly.hint')}
           control={(
@@ -152,7 +147,6 @@ export const YtdlToolsSetting: React.FC<Props> = ({ t, visible, sectionGap, rost
           )}
         />
         <SettingField
-          icon={<FolderCog size={13} />}
           label={t('settings.ytdl.custom')}
           hint={t('settings.ytdl.custom.hint')}
         >
@@ -193,6 +187,14 @@ export const YtdlToolsSetting: React.FC<Props> = ({ t, visible, sectionGap, rost
             </Group>
           </Stack>
         </SettingField>
+
+        {/* Who may use it through the bots closes the card, so it opens on the tools' state. */}
+        {anyBotEnabled(roster) && (
+          <>
+            <SettingDivider />
+            <BotAccessCaption text={whoCanUseText(whoCanUse(roster, 'download'), 'downloader', t)} />
+          </>
+        )}
       </Stack>
     </SectionCard>
   );

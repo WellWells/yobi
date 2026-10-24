@@ -14,6 +14,7 @@ import { FLOW_VARIABLE_TYPES } from '../../../../shared/types';
 import type {
   FlowDefinition, FlowVariable, FlowVariableType, SkillInstance,
 } from '../../../../shared/types';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 export interface FlowVariablesPanelProps {
   flow: FlowDefinition;
@@ -43,7 +44,7 @@ const UsageHint: React.FC<{ usages: number; t: (k: string) => string }> = ({ usa
   if (usages > 0) {
     return (
       <Text fz="xs" c="dimmed">
-        {t('flow.variables.usedIn').replace('{{count}}', String(usages))}
+        {fillTemplate(t('flow.variables.usedIn'), { count: String(usages) })}
       </Text>
     );
   }
@@ -158,6 +159,7 @@ const DefinitionRow: React.FC<DefinitionRowProps> = ({
 
       <Divider my={2} />
 
+      {/* No `steps`: the value list stays mounted under its Collapse and already previews the feed. */}
       <VariableField variable={variable} onChange={(value) => onPatch({ value })} t={t} />
 
       <Group justify="space-between" align="center">
@@ -269,6 +271,7 @@ export const FlowVariablesPanel: React.FC<FlowVariablesPanelProps> = ({ flow, t,
                     <VariableField
                       variable={variable}
                       allVariables={variables}
+                      steps={flow.steps}
                       onChange={(value) => patchAt(index, { value })}
                       onChangeMany={patchValuesByKey}
                       t={t}

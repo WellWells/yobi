@@ -1,6 +1,6 @@
-import { IPC } from '../../shared/types';
+import { IPC, isSocketBotPlatform } from '../../shared/types';
 import type { FlowExecutionResult } from '../../shared/types';
-import { BOT_MODEL_VARIABLE } from '../../shared/builtinFlows';
+import { BOT_MODEL_VARIABLE, TRIGGER_IS_INPUT_VARIABLE } from '../../shared/builtinFlows';
 import {
   botAccessDeniedText,
   botBuiltinAllowed,
@@ -8,11 +8,17 @@ import {
   botDownloadAllowed,
   botFlowAdminAllowed,
   botFlowAllowed,
+  grantPairingDefaults,
   isBotGroupPending,
   isBotUserBlocked,
   notifyBotGroupJoined,
   pairedMenuAccess,
+  setBotGroupPermissions,
 } from '../botPermissions';
+import { getBotAudience } from '../botPermissions/audience';
+import { currentLinkSiteFilter } from '../linkRecognition';
+import { registerTelegramPairer, telegramAccountAdmin, telegramInvites } from './telegramAccountAdmin';
+import { isBuiltinConnectorOn } from '../botPermissions/managedAccounts';
 import { config, getHiddenSources, saveConfig } from '../config';
 import { resolveLlmDirectTarget } from '../providerCommands';
 import { relaunchApp, sendLog, sendToRenderer, createTaskId } from '../helpers';
@@ -22,6 +28,7 @@ import { resolveUrlPrompt } from '../urlParser';
 import { withPublicWebOnly } from '../net/publicWebScope';
 import { TelegramRuntime, normalizePairingState, parseRecipientIds } from '../telegram';
 import { sweepOrphanTempAttachments } from '../telegram/fileDownload';
+import { uploadFallbackUrl } from '../telegram/attachmentPlan';
 import { registerTelegramLargeUploader } from '../telegram/mtproto';
 import {
   clearBotConversation,
@@ -34,10 +41,12 @@ import {
   botChatKey,
   clearPendingAgentAsk,
   hasPendingAgentAsk,
+  markAgentAskShown,
   newConversationLabel,
+  pendingAgentAskRunId,
   resumeBotAgentAsk,
   runBotBuiltinCommand,
-  takePendingAgentAsk,
+  takePendingAgentAnswer,
 } from '../botBuiltinCommands';
 import {
   isTelegramAdminUser,
@@ -70,7 +79,13 @@ export function createTelegramRuntime(deps: {
     log: sendLog,
   });
 
-  return new TelegramRuntime({
+  // The private chats a group's or a pairing request's card goes to: the owner and admin-grant holders, paired.
+  const getManagerIds = async (): Promise<number[]> => (await pairedMenuAccess('telegram'))
+    .filter((entry) => entry.flowAdmin)
+    .map((entry) => Number(entry.userId))
+    .filter((id) => Number.isSafeInteger(id) && id > 0);
+
+  const runtime: TelegramRuntime = new TelegramRuntime({
     getEnabled: () => config.telegram.enabled,
     getToken: () => config.telegram.botToken,
     getAllowGroupCommands: () => config.telegram.allowGroupCommands,
@@ -83,6 +98,7 @@ export function createTelegramRuntime(deps: {
       saveConfig({ telegram: config.telegram });
       sendToRenderer(IPC.TELEGRAM_RUNTIME, getTelegramRuntimeSnapshot());
     },
+    grantPairingDefaults: (userId) => grantPairingDefaults('telegram', String(userId)),
     getChannels: () => config.telegram.channels,
     saveChannels: (next) => {
       config.telegram.channels = next;
@@ -103,6 +119,7 @@ export function createTelegramRuntime(deps: {
     isAdminUser: (userId) => isTelegramAdminUser(userId),
     canUseBuiltin: (key, userId, chatId) => botBuiltinAllowed('telegram', key, String(userId), String(chatId)),
     canUseDownloader: (userId, chatId) => botDownloadAllowed('telegram', String(userId), String(chatId)),
+    linkSites: currentLinkSiteFilter,
     canChat: (userId, chatId) => botChatAllowed('telegram', String(userId), String(chatId)),
     isFlowAdmin: (userId, chatId) => botFlowAdminAllowed('telegram', String(userId), String(chatId)),
     isBlocked: (userId) => isBotUserBlocked('telegram', String(userId)),
@@ -110,6 +127,28 @@ export function createTelegramRuntime(deps: {
     onGroupJoined: (group) => {
       if (notifyBotGroupJoined('telegram', group)) sendLog(`[telegram] added to group ${group.id} — waiting for approval in settings`);
     },
+    groupAdmin: {
+      listGroups: async () => (await getBotAudience('telegram')).groups.map(({ id, title, pending, grants }) => ({
+        id,
+        ...(title ? { title } : {}),
+        pending,
+        grants,
+      })),
+      // The same write as the settings page; the page refetches on the runtime broadcast.
+      setGrants: (chatId, grants) => {
+        const result = setBotGroupPermissions({ platform: 'telegram', chatId, grants });
+        if (!result.ok) {
+          sendLog(`[bot] group permissions change from Telegram refused: ${result.reason}`);
+          return false;
+        }
+        sendToRenderer(IPC.TELEGRAM_RUNTIME, getTelegramRuntimeSnapshot());
+        return true;
+      },
+      isConnectorOn: isBuiltinConnectorOn,
+      getManagerIds,
+    },
+    accountAdmin: telegramAccountAdmin(() => runtime, getManagerIds),
+    invites: telegramInvites(),
     onUse: (user, chatId) => {
       void recordBotUse({
         platform: 'telegram',
@@ -124,6 +163,7 @@ export function createTelegramRuntime(deps: {
       config.telegram.llmDirect,
       getHiddenSources(),
     ).targetUrl || config.targetUrl,
+    getUploadFallbackUrl: () => uploadFallbackUrl(getHiddenSources()),
     getByokContextBudgetChars: () => config.byokContextBudgetChars,
     onTaskRequest: async (request) => {
       const requestTarget = request.targetUrl || config.targetUrl;
@@ -157,6 +197,7 @@ export function createTelegramRuntime(deps: {
         ...(request.attachments?.length
           ? { attachments: request.attachments, ephemeralAttachments: true }
           : {}),
+        ...(request.uploadFallback ? { uploadFallback: true } : {}),
         ...(conversationPath ? { conversationPath } : {}),
         ...(fileLabel ? { fileLabel } : {}),
       });
@@ -197,7 +238,7 @@ export function createTelegramRuntime(deps: {
       ];
     },
     getBuiltinCommands: () => resolveBotCommands(getFlowManager).builtins,
-    onBuiltinCommand: (key, input, targetUrl, chatId, userId, onProgressText) => runBotBuiltinCommand(
+    onBuiltinCommand: (key, input, targetUrl, chatId, userId, onProgressText, chat) => runBotBuiltinCommand(
       { getFlowManager, getStrings: getLangCache },
       {
         key,
@@ -205,18 +246,27 @@ export function createTelegramRuntime(deps: {
         targetUrl,
         chatKey: botChatKey('telegram', String(chatId), String(userId)),
         onProgressText,
+        ...chat,
       },
     ),
     onAgentAnswer: async (answer, chatId, userId, onProgressText) => {
       const chatKey = botChatKey('telegram', String(chatId), String(userId));
-      const runId = takePendingAgentAsk(chatKey);
-      if (!runId) return null;
+      const pending = takePendingAgentAnswer(chatKey);
+      if (!pending) return null;
       return resumeBotAgentAsk(
         { getFlowManager, getStrings: getLangCache },
-        { runId, answer, chatKey, onProgressText },
+        { runId: pending.runId, answer, chatKey, numbered: pending.numbered, onProgressText },
       );
     },
-    hasPendingAgentAsk: (chatId, userId) => hasPendingAgentAsk(
+    hasPendingAgentAsk: (chatId, userId, sent) => hasPendingAgentAsk(
+      botChatKey('telegram', String(chatId), String(userId)),
+      sent,
+    ),
+    markAgentAskShown: (chatId, userId, shown) => markAgentAskShown(
+      botChatKey('telegram', String(chatId), String(userId)),
+      shown,
+    ),
+    pendingAgentAskRunId: (chatId, userId) => pendingAgentAskRunId(
       botChatKey('telegram', String(chatId), String(userId)),
     ),
     onDropAgentAsk: (chatId, userId) => clearPendingAgentAsk(
@@ -226,10 +276,12 @@ export function createTelegramRuntime(deps: {
       botChatKey('telegram', String(chatId), String(userId)),
     ),
     getFlowCommands: () => getFlowManager()?.getBotCommands() ?? [],
-    onFlowCommand: async (flowId, inputVariable, input, userId, chatId, onProgress) => {
+    onFlowCommand: async (flowId, inputVariable, input, userId, chatId, onProgress, messageId, messageIsInput) => {
       const extraContext: Record<string, string> = {
         [inputVariable]: input,
         'bot.triggerChatId': String(chatId),
+        ...(messageId ? { 'bot.triggerMessageId': String(messageId) } : {}),
+        ...(messageId && messageIsInput ? { [TRIGGER_IS_INPUT_VARIABLE]: '1' } : {}),
         'bot.triggerUserId': String(userId),
         'bot.triggerPlatform': 'telegram',
         [BOT_MODEL_VARIABLE]: resolveLlmDirectTarget(config.telegram.llmDirect, getHiddenSources()).targetUrl,
@@ -239,7 +291,7 @@ export function createTelegramRuntime(deps: {
       if (isFlowAdminOnly(flowManager.getBotCommands(), flowId)
         && !(await botFlowAdminAllowed('telegram', String(userId), String(chatId)))) {
         sendLog(`[Flow] Bot flow ${flowId} refused for user ${userId} in chat ${chatId} — limited to admins in a private chat`);
-        return notRun(flowId, 'Flow command limited to admins', t(getLangCache(), 'telegram.cmd.flowNotAllowed'));
+        return notRun(flowId, 'Flow command limited to admins', t(getLangCache(), 'bot.chat.flowNotAllowed'));
       }
       if (!(await botFlowAllowed('telegram', flowId, String(userId), String(chatId)))) {
         sendLog(`[Flow] Bot flow ${flowId} refused for user ${userId} — no download grant`);
@@ -250,6 +302,9 @@ export function createTelegramRuntime(deps: {
       return execution;
     },
   });
+  // The settings page's "Allow" on a pairing request pairs through this runtime.
+  registerTelegramPairer(runtime);
+  return runtime;
 }
 
 /** A flow command that was never queued, reported the way a failed run is. */
@@ -275,8 +330,9 @@ function collectFlowRecipientIds(flowManager: FlowManager | null): number[] {
   for (const flow of flowManager.getAll()) {
     for (const step of flow.steps) {
       if (step.type !== 'bot') continue;
-      const platform = step.config.platform;
-      if (platform === 'line') continue;
+      // Another bot's ids are not Telegram chats (a flow variable or `auto` may still mean Telegram).
+      const platform = (step.config.platform ?? '').trim().toLowerCase();
+      if (platform === 'line' || isSocketBotPlatform(platform)) continue;
       raw.push(String(step.config.chatIds ?? ''), String(step.config.chatId ?? ''));
     }
   }

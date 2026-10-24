@@ -41,17 +41,24 @@ import { systemAcceptLanguages } from './chromeIdentity';
 import { SITE_PARTITIONS } from './siteAccounts';
 import { READER_PARTITIONS } from './sitePage';
 import { handleTurnMediaScheme, registerTurnMediaScheme } from './turnMediaProtocol';
-import { installRequestFilter } from './requestFilter';
+import { installPageRequestFilters } from './requestFilter';
+import { refusePageReaderDownloads } from './downloadGuard';
 import { setupIpcHandlers } from './ipc';
 import { startModelCatalogRefresh } from './modelCatalogRefresh';
 import { startDownloadsSweep } from './downloadsCache';
+import { startTrashSweep } from './conversationTrash';
+import { broadcastTrashChanged } from './ipc/conversationTrash';
+import { fileBotConversationsOnce } from './conversationFolderMigration';
 import { cleanupYtdlJobs, startYtdlUpdateSchedule, stopYtdlUpdateSchedule } from './youtubeDownload';
 import { startPerplexityVisitorWipe } from './providers/perplexityVisitor';
+import { refreshGeminiSignIn, setGeminiCookieReader } from './providers/geminiSignInState';
+import { getAccountStatus } from './providers/authStatus';
 import { startOutputFileWatch } from './outputWatcher';
 import { classifyFailure, flushMetrics, recordTaskOutcome } from './metrics';
 import { flushFlowMetrics } from './flowMetrics';
 import { notifyQueueLevelFailure, processTask } from './taskProcessor';
-import { bindHotkey as bindHotkeyImpl, bindQuickExportHotkey } from './hotkeyBinding';
+import { bindHotkey as bindHotkeyImpl, bindQuickExportHotkey, bindRegionHotkey, bindRegionHotkeyAtLaunch } from './hotkeyBinding';
+import { loadFlowsFromDisk } from './flow/flowPersistence';
 import type { FlowManager } from './flow';
 import { checkForUpdates } from './updater';
 import { destroyTray, isTrayCreated } from './tray';
@@ -63,6 +70,7 @@ import { initFlowManager, broadcastMergedQueueState } from './bootstrap/flowSetu
 import { createTelegramRuntime } from './bootstrap/telegramSetup';
 import { handleDiscardedTask } from './taskReporting';
 import { createLineRuntime } from './bootstrap/lineSetup';
+import { createSocketBotRuntimes } from './bootstrap/socketBotSetup';
 import { initMcp } from './bootstrap/mcpSetup';
 import { initSecretHealthBridge, probeStoredSecrets, reportSecretHealth } from './bootstrap/secretHealthSetup';
 
@@ -70,8 +78,15 @@ app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 
+/*
+ * Fixed at 9333, away from Chrome's default 9222, so attaching to "the dev app" can never land on a
+ * browser instead. YOBI_CDP_PORT is only for throwaway instances (screenshots, demos) that must run
+ * next to `npm run dev`.
+ */
+const DEV_CDP_PORT = '9333';
+
 if (!app.isPackaged) {
-  app.commandLine.appendSwitch('remote-debugging-port', process.env['YOBI_CDP_PORT'] || '9222');
+  app.commandLine.appendSwitch('remote-debugging-port', process.env['YOBI_CDP_PORT'] || DEV_CDP_PORT);
 }
 app.userAgentFallback = CLEAN_UA;
 
@@ -129,6 +144,10 @@ const lineRuntime = createLineRuntime({
   getFlowManager: () => flowManager,
 });
 
+const socketBots = createSocketBotRuntimes({
+  getFlowManager: () => flowManager,
+});
+
 // Has to be registered before the app is ready.
 registerTurnMediaScheme();
 
@@ -143,6 +162,9 @@ app.whenReady().then(async () => {
   await applyPendingFactoryReset();
 
   session.fromPartition('persist:gemini').setUserAgent(CLEAN_UA);
+  // A cookie-store read, not a page load: a send that comes first is sized signed out.
+  setGeminiCookieReader(() => getAccountStatus('gemini'));
+  void refreshGeminiSignIn();
   session.fromPartition('persist:url-parser').setUserAgent(CLEAN_UA);
   session.fromPartition('persist:browser-flow').setUserAgent(CLEAN_UA);
   session.fromPartition('persist:youtube').setUserAgent(userAgentForUrl('https://www.youtube.com/'));
@@ -153,18 +175,18 @@ app.whenReady().then(async () => {
   const sitePartitions = [...new Set([...SITE_PARTITIONS, ...READER_PARTITIONS])];
   for (const partition of sitePartitions) session.fromPartition(partition).setUserAgent(CLEAN_UA, siteLanguages);
 
-  // Page-fetching sessions only: the AI worker session keeps its provider pages untouched.
-  installRequestFilter(session.fromPartition('persist:url-parser'));
-  installRequestFilter(session.fromPartition('persist:browser-flow'));
+  installPageRequestFilters((partition) => session.fromPartition(partition));
 
   // Client hints on every page-loading session, not just the worker. They hook onBeforeSendHeaders
-  // and installRequestFilter hooks onBeforeRequest, so neither displaces the other.
+  // and the request filter hooks onBeforeRequest, so neither displaces the other.
   registerWorkerClientHints(session.fromPartition('persist:gemini'));
   registerWorkerClientHints(session.fromPartition('persist:url-parser'));
   registerWorkerClientHints(session.fromPartition('persist:browser-flow'));
   registerWorkerClientHints(session.fromPartition('persist:youtube'));
   registerWorkerClientHints(session.fromPartition('persist:gmaps'));
   for (const partition of sitePartitions) registerWorkerClientHints(session.fromPartition(partition));
+
+  refusePageReaderDownloads((partition) => session.fromPartition(partition), sendLog);
 
   initSecretHealthBridge();
   initSensitiveConfig();
@@ -178,7 +200,7 @@ app.whenReady().then(async () => {
   // above, both before there is any window or language pack to report through.
   reportStoreRecoveries();
 
-  flowManager = initFlowManager({ queue, telegramRuntime, lineRuntime });
+  flowManager = initFlowManager({ queue, telegramRuntime, lineRuntime, socketBots });
   initMcp();
 
   // focus() orders a hidden macOS window front, which would undo a tray start.
@@ -193,9 +215,11 @@ app.whenReady().then(async () => {
     queue,
     telegramRuntime,
     lineRuntime,
+    socketBots,
     getMainWin,
     bindHotkey,
     bindQuickExportHotkey,
+    bindRegionHotkey,
     checkForUpdates,
     flowManager: flowManager!,
     ...buildTrayIpcCallbacks(),
@@ -203,18 +227,26 @@ app.whenReady().then(async () => {
 
   bindHotkey();
   bindQuickExportHotkey();
+  void bindRegionHotkeyAtLaunch(loadFlowsFromDisk);
   void reportSecretHealth();
   void telegramRuntime.syncWithConfig();
   void lineRuntime.syncWithConfig();
+  for (const runtime of Object.values(socketBots)) void runtime.syncWithConfig();
   startModelCatalogRefresh();
   startYtdlUpdateSchedule();
   // Records of downloads already cleaned up, or scratch left by a run the app closed on.
   void cleanupYtdlJobs().catch(() => {});
   // Downloads/Yobi keeps each download as long as Settings › Downloader says (three days unless changed).
   startDownloadsSweep();
+  // Recently Deleted keeps a conversation for TRASH_RETENTION_DAYS, then deletes it for good.
+  startTrashSweep(() => { void broadcastTrashChanged(); });
+  // Bot conversations from before folders existed go into Telegram/ and LINE/, once.
+  void fileBotConversationsOnce().catch((err: unknown) => {
+    sendLog(`⚠️ Could not file the bot conversations into folders: ${err instanceof Error ? err.message : String(err)}`);
+  });
   startPerplexityVisitorWipe();
   stopOutputFileWatch = startOutputFileWatch();
-  sendLog(config.hotkeyEnabled
+  sendLog(config.hotkey
     ? `✅ Ready — copy text and press ${config.hotkey}`
     : '✅ Ready — the ask hotkey is switched off');
 });
@@ -230,6 +262,7 @@ app.on('before-quit', () => {
   stopOutputFileWatch?.();
   void telegramRuntime.shutdown();
   void lineRuntime.shutdown();
+  for (const runtime of Object.values(socketBots)) void runtime.shutdown();
 });
 
 app.on('quit', () => {

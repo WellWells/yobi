@@ -16,7 +16,13 @@ export interface ElectronInputLike {
   meta: boolean;
 }
 
-export type ShortcutGroup = 'global' | 'nav' | 'chat' | 'flow' | 'files' | 'editor' | 'platform';
+export type ShortcutGroup = 'global' | 'nav' | 'chat' | 'flow' | 'files' | 'editor' | 'window';
+
+/**
+ * How a row's combos relate when it shows more than one: `or` = any of them runs the one action;
+ * `each` = they map in order onto the slash-separated actions the label names (Home / End).
+ */
+export type ComboRelation = 'or' | 'each';
 
 export type ShortcutView = 'chat' | 'settings' | 'about' | 'logs' | 'flow';
 
@@ -39,6 +45,7 @@ export type ShortcutStorage =
   | 'config.shortcuts'
   | 'legacy:hotkey'
   | 'legacy:quickExport'
+  | 'legacy:regionHotkey'
   | 'none';
 
 export interface ShortcutDef {
@@ -54,4 +61,5 @@ export interface ShortcutDef {
   hintKey?: string;
   lockReasonKey?: string;
   displayCombos?: readonly string[];
+  comboRelation?: ComboRelation;
 }

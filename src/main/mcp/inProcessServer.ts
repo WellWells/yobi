@@ -7,8 +7,14 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult, type Tool } from '@modelcontextprotocol/sdk/types.js';
+import { PICTURES_META_KEY } from './mcpTypes';
 
 const SERVER_VERSION = '1.0.0';
+
+/** A dispatch result that also carries pictures for the answer; its `value` is what the model reads. */
+export class ToolResultWithPictures {
+  constructor(readonly value: unknown, readonly files: readonly string[]) {}
+}
 
 export interface ToolServerSpec {
   name: string;
@@ -27,6 +33,12 @@ export function createToolServer(spec: ToolServerSpec): Server {
     const args = (req.params.arguments ?? {}) as Record<string, unknown>;
     try {
       const result = await spec.dispatch(req.params.name, args, extra.signal);
+      if (result instanceof ToolResultWithPictures) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result.value) }],
+          ...(result.files.length > 0 ? { _meta: { [PICTURES_META_KEY]: [...result.files] } } : {}),
+        };
+      }
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     } catch (err) {
       const body = { error: err instanceof Error ? err.name : 'Error', message: err instanceof Error ? err.message : String(err) };

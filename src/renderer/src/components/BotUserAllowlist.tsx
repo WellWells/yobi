@@ -1,11 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Stack, Text } from '@mantine/core';
 import { MultiSelectDropdown } from './MultiSelectDropdown';
-import { lineApi, telegramApi } from '../api/electronApi';
+import { lineApi, socketBotApi, telegramApi } from '../api/electronApi';
 import { useI18nStore } from '../store/i18nStore';
 import { useAppStore } from '../store/appStore';
 import { lineAccountLabel, telegramAccountChoiceLabel } from '../utils/botAccountLabel';
-import type { LinePairedUser, TelegramPairedUser } from '../../../shared/types';
+import { BOT_PLATFORM_NAMES, SOCKET_BOT_PLATFORMS } from '../../../shared/types';
+import type { BotPlatform, LinePairedUser, TelegramPairedUser } from '../../../shared/types';
+
+type StringIdPlatform = Exclude<BotPlatform, 'telegram'>;
+const STRING_ID_PLATFORMS: readonly StringIdPlatform[] = ['line', ...SOCKET_BOT_PLATFORMS];
 
 interface Choice {
   value: string;
@@ -30,38 +34,47 @@ export const BotUserAllowlist: React.FC<BotUserAllowlistProps> = ({ value, onCha
   const t = useI18nStore((s) => s.t);
   const currentView = useAppStore((s) => s.currentView);
   const [telegramUsers, setTelegramUsers] = useState<TelegramPairedUser[]>([]);
-  const [lineUsers, setLineUsers] = useState<LinePairedUser[]>([]);
+  /** Paired people on the platforms with string ids, in `STRING_ID_PLATFORMS` order. */
+  const [stringIdUsers, setStringIdUsers] = useState<Partial<Record<StringIdPlatform, LinePairedUser[]>>>({});
 
   useEffect(() => {
     if (currentView !== 'flow') return;
     void telegramApi.getSettings().then((s) => setTelegramUsers(s.pairing.pairedUsers));
-    void lineApi.getSettings().then((s) => setLineUsers(s.pairing.pairedUsers));
+    void lineApi.getSettings().then((s) => setStringIdUsers((prev) => ({ ...prev, line: s.pairing.pairedUsers })));
+    for (const platform of SOCKET_BOT_PLATFORMS) {
+      void socketBotApi.getSettings(platform).then((s) => {
+        if (s) setStringIdUsers((prev) => ({ ...prev, [platform]: s.pairing.pairedUsers }));
+      });
+    }
   }, [currentView]);
 
   const selected = useMemo(() => value ?? [], [value]);
 
-  const options = useMemo(() => {
+  const groups = useMemo(() => {
     const telegram: Choice[] = telegramUsers.map((user) => ({
       value: String(user.userId),
       label: telegramAccountChoiceLabel(user, t),
     }));
-    const line: Choice[] = lineUsers.map((user) => ({
-      value: user.userId,
-      label: lineAccountLabel(user, t),
+    const others = STRING_ID_PLATFORMS.map((platform) => ({
+      platform,
+      items: (stringIdUsers[platform] ?? []).map((user) => ({ value: user.userId, label: lineAccountLabel(user, t) })),
     }));
-    const known = new Set([...telegram, ...line].map((choice) => choice.value));
+    return [{ platform: 'telegram' as const, items: telegram }, ...others];
+  }, [telegramUsers, stringIdUsers, t]);
+
+  const options = useMemo(() => {
+    const known = new Set(groups.flatMap((group) => group.items.map((choice) => choice.value)));
     const orphans: Choice[] = selected
       .filter((id) => !known.has(id))
       .map((id) => ({ value: id, label: id }));
 
     return [
-      ...(telegram.length > 0 ? [{ group: t('flow.skill.bot.platform.telegram'), items: telegram }] : []),
-      ...(line.length > 0 ? [{ group: t('flow.skill.bot.platform.line'), items: line }] : []),
+      ...groups.filter((group) => group.items.length > 0).map((group) => ({ group: BOT_PLATFORM_NAMES[group.platform], items: group.items })),
       ...(orphans.length > 0 ? [{ group: t('flow.trigger.bot.allowedUsers.unpaired'), items: orphans }] : []),
     ];
-  }, [telegramUsers, lineUsers, selected, t]);
+  }, [groups, selected, t]);
 
-  const hasAnyone = telegramUsers.length > 0 || lineUsers.length > 0 || selected.length > 0;
+  const hasAnyone = groups.some((group) => group.items.length > 0) || selected.length > 0;
 
   return (
     <Stack gap={4}>

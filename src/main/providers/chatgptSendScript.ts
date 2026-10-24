@@ -5,7 +5,13 @@
  */
 export const CHATGPT_COMPOSER_FORM_SELECTOR = 'form[data-chatgpt-composer], form[data-type="unified-composer"]';
 export const CHATGPT_USER_TURN_SELECTOR = '[data-message-author-role="user"], [data-chatgpt-search-unit-key$=":user"]';
-export const CHATGPT_ASSISTANT_TURN_SELECTOR = '[data-message-author-role="assistant"], [data-chatgpt-search-unit-key$=":assistant"]';
+/**
+ * The pictures ChatGPT drew for an answer (2026-10-19, normal chat). The redesigned page gives
+ * such a message no `:assistant` unit — only `data-chatgpt-search-message-ids` around the gallery —
+ * so the gallery itself counts as the answer; without it a picture-only answer was never seen.
+ */
+export const CHATGPT_IMAGE_GALLERY_SELECTOR = '[data-testid="generated-image-gallery"]';
+export const CHATGPT_ASSISTANT_TURN_SELECTOR = `[data-message-author-role="assistant"], [data-chatgpt-search-unit-key$=":assistant"], ${CHATGPT_IMAGE_GALLERY_SELECTOR}`;
 /** One per attached file. Redesigned page: the children of the composer's attachment strip. */
 export const CHATGPT_ATTACHMENT_TILE_SELECTOR = '[role="group"][aria-label], [data-composer-attachments] > div > *';
 /** Absent while the composer is empty (a voice button takes its place) and while answering. */
@@ -29,6 +35,10 @@ export const CHATGPT_STOP_SELECTOR = 'button[data-testid="stop-button"], [data-t
 /** A message's id in either page generation (page script: needs no helpers in scope). */
 export const CHATGPT_MESSAGE_ID_JS = `function chatgptMessageId(el) {
   if (!el) return null;
+  // A picture gallery is inside its message; the message carries the id.
+  if (!el.hasAttribute('data-message-id') && !el.hasAttribute('data-chatgpt-search-message-ids') && el.closest) {
+    el = el.closest('[data-message-id], [data-chatgpt-search-message-ids]') || el;
+  }
   var id = el.getAttribute('data-message-id');
   if (id) return id;
   var ids = (el.getAttribute('data-chatgpt-search-message-ids') || '').split(' ').filter(Boolean);

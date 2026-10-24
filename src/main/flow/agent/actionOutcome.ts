@@ -156,7 +156,7 @@ export function readableToolId(id: string): string {
  * What a result line calls the tool: Yobi's own translated name (connectors it describes), then
  * the server's own title, then the id spelled out.
  */
-export function toolDisplayName(record: ActionRecord, translate: Translate): string {
+export function toolDisplayName(record: Pick<ActionRecord, 'serverId' | 'tool' | 'title'>, translate: Translate): string {
   const key = toolTitleKey(record.serverId, record.tool);
   const named = key ? translate(key, {}).trim() : '';
   if (named && named !== key) return named;

@@ -3,7 +3,7 @@ import { ActionIcon, Badge, Box, Group, Text, Tooltip } from '@mantine/core';
 import { Check, Copy, FileText, FolderOpen, Image, Pencil, X } from 'lucide-react';
 import type { TurnMeta } from '../../../../shared/conversationDoc';
 import { readTurnButtons, readTurnFiles, readTurnMedia, readTurnXPost, revealTargets } from '../../../../shared/conversationDoc';
-import { isDesktopBuiltinFlowId } from '../../../../shared/builtinFlows';
+import { isUntypedBuiltinCommand } from '../../../../shared/imageRequest';
 import { isAccountLink, parseXMediaInput } from '../../../../shared/xMedia';
 import { TurnMedia } from './TurnMedia';
 import { TurnPickTiles } from './TurnPickTiles';
@@ -21,6 +21,7 @@ import { chatModeLabelKeyForCommand } from '../../config/chatModes';
 import { MessageMarkdown } from './MessageMarkdown';
 import { TurnTrace } from './TurnTrace';
 import { MemoryNotes } from './MemoryNotes';
+import { ProviderSwitchNote } from './ProviderSwitchNote';
 import { AnswerEditor } from './AnswerEditor';
 import { undoAnswerEdit } from './answerEditActions';
 import { draftKey, useAnswerEditStore } from '../../store/answerEditStore';
@@ -30,6 +31,7 @@ import { TranslationBlock } from './translate/TranslationBlock';
 import { TurnTranslateControls } from './translate/TurnTranslateControls';
 import { useTurnTranslation } from './translate/useTurnTranslation';
 import { translationOnly } from '../../store/translateStore';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 const CAPTURE_ACTIONS = [
   { format: 'png' as CaptureFormat, labelKey: 'chat.copyAsPng', Icon: Image },
@@ -110,8 +112,8 @@ export const AssistantTurn = React.memo<AssistantTurnProps>(({
       : translation.busy ? t('chat.edit.lockedTranslating') : null;
   const hideOriginal = translationOnly(translation);
 
-  // A pasted link's built-in was not a command anyone typed: no `/…` badge.
-  const commandLabel = meta.c && !isDesktopBuiltinFlowId(meta.c)
+  // A pasted link's built-in, or a drawn picture, was not a command anyone typed: no `/…` badge.
+  const commandLabel = meta.c && !isUntypedBuiltinCommand(meta.c)
     ? (() => {
       const labelKey = chatModeLabelKeyForCommand(meta.c);
       return labelKey ? t(labelKey) : `/${meta.c}`;
@@ -175,12 +177,12 @@ export const AssistantTurn = React.memo<AssistantTurnProps>(({
         )}
         {typeof meta.summarized === 'number' && meta.summarized > 0 && (
           <Badge variant="light" size="sm">
-            {t('chat.context.summarized').replace('{{count}}', String(meta.summarized))}
+            {fillTemplate(t('chat.context.summarized'), { count: String(meta.summarized) })}
           </Badge>
         )}
         {typeof meta.dropped === 'number' && meta.dropped > 0 && (
           <Badge variant="light" size="sm">
-            {t('chat.context.dropped').replace('{{count}}', String(meta.dropped))}
+            {fillTemplate(t('chat.context.dropped'), { count: String(meta.dropped) })}
           </Badge>
         )}
         {editedLabel && (
@@ -190,7 +192,7 @@ export const AssistantTurn = React.memo<AssistantTurnProps>(({
             position="bottom"
             label={(
               <>
-                <Text fz="inherit">{t('chat.edit.badgeTooltip').replace('{{time}}', editedLabel)}</Text>
+                <Text fz="inherit">{fillTemplate(t('chat.edit.badgeTooltip'), { time: editedLabel })}</Text>
                 <Text fz="inherit">{editUnsent ? t('chat.edit.badgeUnsent') : t('chat.edit.badgeSent')}</Text>
               </>
             )}
@@ -204,6 +206,7 @@ export const AssistantTurn = React.memo<AssistantTurnProps>(({
           <TokenUsageLabel usage={usage} labelKey="chat.tokens.label" t={t} />
         )}
       </Group>
+      <ProviderSwitchNote meta={meta} t={t} />
 
       {editing && editPath && turnIndex !== undefined ? (
         <AnswerEditor

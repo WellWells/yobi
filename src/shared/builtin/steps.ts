@@ -35,6 +35,13 @@ export function chatFlowOf(id: string, name: string, steps: SkillInstance[]): Fl
  * already answer on, a BYOK key included.
  */
 export const BOT_MODEL_VARIABLE = 'bot.modelUrl';
+
+/**
+ * Set ("1") when the Telegram message that started the run says nothing but the flow's input — a
+ * link pasted alone, typed, not a button's message: a bot step may then take its place
+ * (`replaceTrigger`) and delete it. A link among other words is never deleted.
+ */
+export const TRIGGER_IS_INPUT_VARIABLE = 'bot.triggerIsInput';
 export const BOT_MODEL = `{{${BOT_MODEL_VARIABLE}}}`;
 
 /**

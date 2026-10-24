@@ -67,6 +67,7 @@ export const AgentConfirmDialog: React.FC = () => {
   // only dangerous when one of its steps is.
   const isMcp = current.kind === 'mcp';
   const rows = isMcp ? current.rows ?? [] : [];
+  const summary = isMcp ? current.summary ?? '' : '';
   const dangerous = isShell || (isFlow && current.sensitiveTypes.length > 0) || (isMcp && current.danger === true);
   // Older payloads carry no flag; only an explicit false hides the button.
   const allowAlways = isMcp && current.allowAlways !== false;
@@ -95,23 +96,25 @@ export const AgentConfirmDialog: React.FC = () => {
       <Stack gap={14}>
         <Text fz="var(--font-size-sm)" c="var(--text-primary)" style={{ lineHeight: 1.6 }}>
           {isFlow
-            ? t(flowMessageKey)
-              .replace('{{name}}', current.flowName)
-              .replace('{{count}}', String(current.stepTypes.length))
+            ? fillTemplate(t(flowMessageKey), { name: current.flowName, count: String(current.stepTypes.length) })
             : isShell
-              ? t('agent.shell.confirm.message').replace('{{shell}}', current.interpreter)
-              : t('agent.mcp.confirm.message')
-                .replace('{{tool}}', current.toolName)
-                .replace('{{server}}', current.serverName)}
+              ? fillTemplate(t('agent.shell.confirm.message'), { shell: current.interpreter })
+              : fillTemplate(t('agent.mcp.confirm.message'), { tool: current.toolName, server: current.serverName })}
         </Text>
+
+        {summary ? (
+          <Text fz="var(--font-size-sm)" fw={600} c="var(--text-primary)" style={{ lineHeight: 1.6, wordBreak: 'break-word' }}>
+            {summary}
+          </Text>
+        ) : null}
 
         {current.kind === 'flow' && current.recipients?.length ? (
           <Text fz="var(--font-size-sm)" c="var(--text-primary)" style={{ lineHeight: 1.6, wordBreak: 'break-word' }}>
-            {t('agent.flow.confirm.recipients').replace('{{names}}', current.recipients.map((recipient) => {
+            {fillTemplate(t('agent.flow.confirm.recipients'), { names: current.recipients.map((recipient) => {
               if (recipient.kind === 'everyone') return t('agent.flow.confirm.recipient.everyone');
               if (recipient.kind === 'sender') return t('agent.flow.confirm.recipient.sender');
               return recipient.name ?? '';
-            }).join(t('flow.build.recipient.separator')))}
+            }).join(t('flow.build.recipient.separator')) })}
           </Text>
         ) : null}
 
@@ -136,9 +139,10 @@ export const AgentConfirmDialog: React.FC = () => {
               </Group>
             </ScrollArea.Autosize>
           </Stack>
-        ) : rows.length > 0 && !isShell ? (
+        ) : (rows.length > 0 || summary) && !isShell ? (
+          // Something readable is above, so the arguments fold away behind "Details".
           <Stack gap={10}>
-            <ConfirmRows rows={rows} t={t} />
+            {rows.length > 0 && <ConfirmRows rows={rows} t={t} />}
             <AppButton
               variant="subtle"
               size="compact-sm"
@@ -170,7 +174,7 @@ export const AgentConfirmDialog: React.FC = () => {
             </ScrollArea.Autosize>
             {isShell && (
               <Text fz="var(--font-size-xs)" c="dimmed">
-                {t('agent.shell.confirm.where').replace('{{cwd}}', current.cwd)}
+                {fillTemplate(t('agent.shell.confirm.where'), { cwd: current.cwd })}
               </Text>
             )}
           </Stack>
@@ -178,8 +182,7 @@ export const AgentConfirmDialog: React.FC = () => {
 
         {isFlow && dangerous && (
           <Text fz="var(--font-size-sm)" c="var(--error)" style={{ lineHeight: 1.6 }}>
-            {t('agent.flow.confirm.warning')
-              .replace('{{types}}', current.sensitiveTypes.map((type) => t(`flow.skill.${type}`)).join('、'))}
+            {fillTemplate(t('agent.flow.confirm.warning'), { types: current.sensitiveTypes.map((type) => t(`flow.skill.${type}`)).join('、') })}
           </Text>
         )}
 

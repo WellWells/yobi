@@ -3,6 +3,7 @@ import { siteChangedAt } from './linkSites/siteChanged';
 import type { SiteChangedMap } from './linkSites/siteChanged';
 import type { LinkMatch, LinkSiteId, VideoRef, VideoSiteId } from './linkSites/types';
 import type { FlowButton } from './types';
+import { fillTemplate } from './fillTemplate';
 
 export type { FlowButton };
 
@@ -29,8 +30,9 @@ export function formatLimit(bytes: number): string {
 export type YtdlDestination = 'telegram' | 'local';
 
 /**
- * `''` = not given (show the menu), `summary`, `srt` (the subtitles), `best`, `mp3` (the sound
- * alone), or a quality number such as `720`.
+ * `''` = not given (show the menu), `download` (the download menu: the qualities, the MP3 and the
+ * subtitles), `summary`, `srt` (the subtitles), `best`, `mp3` (the sound alone), or a quality
+ * number such as `720`.
  */
 export type YtdlQuality = string;
 
@@ -90,7 +92,13 @@ const QUALITY_ALIASES: Record<string, string> = {
   '字幕': 'srt',
   '字幕檔': 'srt',
   '字幕文件': 'srt',
+  download: 'download',
+  '下載': 'download',
+  '下载': 'download',
 };
+
+/** The word a menu's "download" button carries: it brings the download menu, not a file. */
+export const DOWNLOAD_MENU = 'download';
 
 /**
  * One quality word: an alias, or a number of lines with an optional `p` and frame rate
@@ -152,7 +160,7 @@ export function parseVideoInput(raw: string): VideoInput | null {
 
 /**
  * Whether `site`'s menu takes the quality: "summary" and the subtitles only where its row offers
- * them; a site with sound only (SoundCloud) takes the MP3 alone.
+ * them; a site with sound only (SoundCloud) takes the MP3 alone — its menu is all download.
  */
 function offeredBy(site: VideoSiteId, quality: YtdlQuality): boolean {
   if (quality === 'summary') return videoHasSummary(site);
@@ -198,7 +206,7 @@ export function isBareYtdlMessage(raw: string): boolean {
   return isVideoMenuMatch(matchLink(raw));
 }
 
-/** One of the menu's own words beside a video link: a quality, "mp3", "summary", the subtitles, "split" or the ambiguous `2k`. */
+/** One of the menu's own words beside a video link: a quality, "mp3", "summary", the subtitles, "download", "split" or the ambiguous `2k`. */
 export function isYtdlMenuWord(token: string): boolean {
   const word = token.toLowerCase();
   return NO_OP_WORDS.has(word) || word === '2k' || parseQualityToken(token) !== null;
@@ -405,25 +413,33 @@ export const MAX_FLOW_BUTTON_LABEL = 64;
 
 /**
  * A bot step's `buttons` field: one button per line, `label | input`. A line without `|` uses
- * the same text for both. Blank lines are skipped; at most `MAX_FLOW_BUTTONS`.
+ * the same text for both. A blank line between buttons starts a new group (`rowStart`); at most
+ * `MAX_FLOW_BUTTONS`.
  */
 export function parseFlowButtons(text: string): FlowButton[] {
   const buttons: FlowButton[] = [];
+  let gap = false;
   for (const line of text.split(/\r?\n/)) {
     const trimmed = line.trim();
-    if (!trimmed) continue;
+    if (!trimmed) {
+      gap = buttons.length > 0;
+      continue;
+    }
     const bar = trimmed.indexOf('|');
     const label = (bar >= 0 ? trimmed.slice(0, bar) : trimmed).trim();
     const input = (bar >= 0 ? trimmed.slice(bar + 1) : trimmed).trim();
     if (!label || !input) continue;
-    buttons.push({ label: Array.from(label).slice(0, MAX_FLOW_BUTTON_LABEL).join(''), input });
+    buttons.push({ label: Array.from(label).slice(0, MAX_FLOW_BUTTON_LABEL).join(''), input, ...(gap ? { rowStart: true } : {}) });
+    gap = false;
     if (buttons.length >= MAX_FLOW_BUTTONS) break;
   }
   return buttons;
 }
 
 export function formatFlowButtons(buttons: readonly FlowButton[]): string {
-  return buttons.map((b) => `${b.label.replace(/\|/g, '/')} | ${b.input}`).join('\n');
+  return buttons
+    .map((b, i) => `${i > 0 && b.rowStart ? '\n' : ''}${b.label.replace(/\|/g, '/')} | ${b.input}`)
+    .join('\n');
 }
 
 /**
@@ -452,8 +468,6 @@ export function withButtonImages(buttons: readonly FlowButton[], images: string 
 }
 
 export interface YtdlMenuLabels {
-  /** The "summary" button's label; left out for a site with no transcript to sum up. */
-  summary?: string;
   /** The subtitles (.srt) button's label; left out for a video with no subtitles. */
   subtitles?: string;
   /** `{{size}}` = "95 MB". */
@@ -468,24 +482,46 @@ export function formatMegabytes(bytes: number): string {
   return `${mb >= 10 ? Math.round(mb) : Math.max(0.1, Math.round(mb * 10) / 10)} MB`;
 }
 
-/** `720p · 95 MB`, or with the "saved to computer" words when it is over what the chat can be sent. */
+/** `95 MB`, or with the "saved to computer" words when it is over what the chat can be sent. */
+function sizeText(choice: Pick<YtdlChoice, 'sizeBytes'>, sendLimitBytes: SizeLimit, labels: YtdlMenuLabels): string {
+  const size = choice.sizeBytes === null ? labels.unknownSize : formatMegabytes(choice.sizeBytes);
+  const template = exceedsLimit(choice, sendLimitBytes) ? labels.sizeSavedOnly : labels.size;
+  return fillTemplate(template, { size });
+}
+
+/** `720p · 95 MB`: a desktop menu's button. */
 function sizedLabel(
   choice: Pick<YtdlChoice, 'label' | 'sizeBytes'>,
   sendLimitBytes: SizeLimit,
   labels: YtdlMenuLabels,
 ): string {
-  const size = choice.sizeBytes === null ? labels.unknownSize : formatMegabytes(choice.sizeBytes);
-  const template = exceedsLimit(choice, sendLimitBytes) ? labels.sizeSavedOnly : labels.size;
-  return `${choice.label} · ${template.replace('{{size}}', size)}`;
+  return `${choice.label} · ${sizeText(choice, sendLimitBytes, labels)}`;
 }
 
 /**
- * The menu under a video: "summary" first (when the site has a transcript), then one button per
- * quality, then the MP3 (when `audio` is given), then the subtitles (when the video has them).
- * A choice over `sendLimitBytes` (what the chat can be sent now; null on the computer) still gets
- * a button and says it is only saved to the computer. "summary" and the subtitles need no download
- * tools, so they stay while downloads are off; the button limit cuts qualities, never the MP3 or
- * the subtitles.
+ * A bot chat's menu names the sizes in its text, so its buttons can be short: `720p 95 MB, …,
+ * MP3 21 MB` — the qualities, then the MP3 when there is one.
+ */
+export function ytdlSizeList(
+  choices: readonly YtdlChoice[],
+  audio: YtdlAudioChoice | null,
+  sendLimitBytes: SizeLimit,
+  labels: YtdlMenuLabels,
+): string {
+  const items: ReadonlyArray<Pick<YtdlChoice, 'label' | 'sizeBytes'>> = audio ? [...choices, audio] : choices;
+  return items.map((c) => `${c.label} ${sizeText(c, sendLimitBytes, labels)}`).join(', ');
+}
+
+/**
+ * The download menu under a video: one button per quality, then the MP3 (when `audio` is given),
+ * then the subtitles (when the video has them). A choice over `sendLimitBytes` (what the chat can
+ * be sent now; null on the computer) still gets a button and says it is only saved to the
+ * computer. The subtitles need no download tools, so they stay while downloads are off; the button
+ * limit cuts qualities, never the MP3 or the subtitles.
+ *
+ * `compact` is a bot chat's menu (its text lists the sizes, `ytdlSizeList`): the MP3 and the
+ * subtitles in one group, then the bare qualities in a group of their own, so a phone shows two
+ * short rows instead of a column of pairs.
  */
 export function buildYtdlButtons(
   url: string,
@@ -494,15 +530,57 @@ export function buildYtdlButtons(
   labels: YtdlMenuLabels,
   downloadReady: boolean,
   audio: YtdlAudioChoice | null = null,
+  compact = false,
 ): FlowButton[] {
-  const buttons: FlowButton[] = labels.summary === undefined ? [] : [{ label: labels.summary, input: `${url} summary` }];
   const last: FlowButton[] = labels.subtitles === undefined ? [] : [{ label: labels.subtitles, input: `${url} srt` }];
-  if (!downloadReady) return [...buttons, ...last];
+  if (!downloadReady) return last;
+  if (compact) {
+    const actions: FlowButton[] = [...(audio ? [{ label: audio.label, input: `${url} mp3` }] : []), ...last];
+    const qualities = choices
+      .slice(0, MAX_FLOW_BUTTONS - actions.length)
+      .map((choice, i): FlowButton => ({ label: choice.label, input: `${url} ${choice.quality}`, ...(i === 0 && actions.length > 0 ? { rowStart: true } : {}) }));
+    return [...actions, ...qualities];
+  }
+  const buttons: FlowButton[] = [];
   for (const choice of choices) {
     buttons.push({ label: sizedLabel(choice, sendLimitBytes, labels), input: `${url} ${choice.quality}` });
   }
   const tail: FlowButton[] = audio ? [{ label: sizedLabel(audio, sendLimitBytes, labels), input: `${url} mp3` }, ...last] : last;
   return [...buttons.slice(0, MAX_FLOW_BUTTONS - tail.length), ...tail];
+}
+
+/**
+ * The first menu under a video whose site can sum it up: "analyze" (the summary) and "download",
+ * which brings the download menu (`DOWNLOAD_MENU`) — the qualities only when asked for. A label
+ * left out leaves its button out.
+ */
+export function buildVideoEntryButtons(url: string, labels: { analyze?: string; download?: string }): FlowButton[] {
+  return [
+    ...(labels.analyze === undefined ? [] : [{ label: labels.analyze, input: `${url} summary` }]),
+    ...(labels.download === undefined ? [] : [{ label: labels.download, input: `${url} ${DOWNLOAD_MENU}` }]),
+  ];
+}
+
+/**
+ * A pasted video's preview (the user, 2026-10-23): up to 10 minutes at 480p, up to 20 minutes at
+ * 360p, longer ones none; 480p is the most a preview ever is, 360p the least.
+ */
+export const PREVIEW_MAX_SECONDS = 20 * 60;
+const PREVIEW_480_SECONDS = 10 * 60;
+const PREVIEW_MIN_QUALITY = 360;
+
+/**
+ * The quality a preview downloads, or null for none. The quality its length allows, else the
+ * best below it down to 360p — always one whose estimate is known and fits `limitBytes` (what
+ * this person gets in this chat). Measured 2026-10-23: YouTube 480p is 4–11 MB a minute (6
+ * typical), 360p 3–7; bilibili 480P 6–6.5, 360P 4–5 — so the size, not the length, decides
+ * whether one fits a 49 MB Telegram bot.
+ */
+export function previewQuality(choices: readonly YtdlChoice[], durationS: number, limitBytes: SizeLimit): number | null {
+  if (!(durationS > 0) || durationS > PREVIEW_MAX_SECONDS) return null;
+  const most = durationS <= PREVIEW_480_SECONDS ? 480 : PREVIEW_MIN_QUALITY;
+  const fits = choices.filter((c) => c.quality >= PREVIEW_MIN_QUALITY && c.quality <= most && c.sizeBytes !== null && !exceedsLimit(c, limitBytes));
+  return fits.length > 0 ? Math.max(...fits.map((c) => c.quality)) : null;
 }
 
 export interface YtdlProgressSample {

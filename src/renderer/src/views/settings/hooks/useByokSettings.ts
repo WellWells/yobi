@@ -40,7 +40,7 @@ export function useByokSettings() {
 
   const syncPickerModels = useCallback((next: ByokSettingsSnapshot) => {
     const store = useAppStore.getState();
-    store.setByokGroupModels(makeByokGroupModels(next.groups));
+    store.setByokGroupModels(makeByokGroupModels(next.groups, next.instances));
     store.setByokModels(next.instances.map(makeByokModelOption));
   }, []);
 

@@ -1,4 +1,4 @@
-export type { KeyboardEventLike, ShortcutDef } from './types';
+export type { ComboRelation, KeyboardEventLike, ShortcutDef, ShortcutGroup } from './types';
 
 export {
   canonicalise,
@@ -19,6 +19,7 @@ export {
   SHORTCUTS,
   activeCombos,
   collisionCombos,
+  comboRelation,
   digitPrefixOf,
   isDispatchable,
   resolveDefaultCombo,

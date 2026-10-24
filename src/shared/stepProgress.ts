@@ -7,7 +7,7 @@ import { fillTemplate as fill } from './fillTemplate';
  * message a text one. `youtube_download` reports it, and `youtube_info` while a slow video read
  * (`reading`) is still going.
  */
-export type StepProgressPhase = 'reading' | 'starting' | 'downloading' | 'processing' | 'sending';
+export type StepProgressPhase = 'working' | 'reading' | 'starting' | 'downloading' | 'processing' | 'sending';
 
 export interface StepProgress {
   phase: StepProgressPhase;
@@ -40,6 +40,7 @@ export function formatEta(seconds: number, t: (key: string) => string): string {
 
 /** The words for a progress report; `t` returns the raw template for a key (main or renderer). */
 export function stepProgressText(p: StepProgress, t: (key: string) => string): StepProgressText {
+  if (p.phase === 'working') return { title: t('ytdl.progress.working'), detail: '' };
   if (p.phase === 'reading') return { title: fill(t('ytdl.progress.reading'), { site: p.label }), detail: '' };
   if (p.phase === 'starting') return { title: fill(t('ytdl.progress.start'), { quality: p.label }), detail: '' };
   const audio = p.kind === 'audio';

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Box, Flex, Stack } from '@mantine/core';
+import { Box, Flex, Stack, Title } from '@mantine/core';
 
 import { Search } from 'lucide-react';
 import { PanelToolbar, ToolbarSearchInput } from '../components/PanelToolbar';
@@ -7,17 +7,19 @@ import { EmptyState } from '../components/EmptyState';
 import { useShallow } from 'zustand/react/shallow';
 import { useI18nStore } from '../store/i18nStore';
 import { useAppStore } from '../store/appStore';
-import { useShortcutStore } from '../store/shortcutStore';
+import { applyShortcutSnapshot } from '../shortcuts/applyShortcutSnapshot';
 import { useSecretHealthStore } from '../store/secretHealthStore';
 import { useFlowStore } from '../store/useFlowStore';
 import { useThemeStore, resolveThemePreference } from '../store/themeStore';
 import { initReadingFromConfig } from '../store/readingStore';
+import { initSidebarViewFromConfig } from '../store/sidebarViewStore';
+import { initLinkRecognitionFromConfig } from '../store/linkRecognitionStore';
 import { settingsApi, fileApi, systemApi } from '../api/electronApi';
 import { SECRET_SCOPE_META } from '../../../shared/types';
 import type { BackupImportResult, SettingsSnapshot } from '../../../shared/types';
 
 import { GroupHeader, NavItem } from './settings/components';
-import { useHotkeyRecorder } from './settings/hooks/useHotkeyRecorder';
+import { useHotkeyRecorder, useRegionHotkeyRecorder } from './settings/hooks/useHotkeyRecorder';
 import { useQuickExportRecorder } from './settings/hooks/useQuickExportRecorder';
 import { useExportPreferences } from './settings/hooks/useExportPreferences';
 import { useShareSettings } from './settings/hooks/useShareSettings';
@@ -34,7 +36,7 @@ import { useMcpServers } from './settings/hooks/useMcpServers';
 import { useUserMemory } from './settings/hooks/useUserMemory';
 import { useBotAccess } from './settings/hooks/useBotAccess';
 import { MemorySection } from './settings/sections/MemorySection';
-import { useSettingsNav } from './settings/hooks/useSettingsNav';
+import { TAG_SETS, useSettingsNav } from './settings/hooks/useSettingsNav';
 import type { Category } from './settings/hooks/useSettingsNav';
 import { GeneralSection } from './settings/sections/GeneralSection';
 import { ShortcutsSection } from './settings/sections/ShortcutsSection';
@@ -48,8 +50,14 @@ import { McpSection } from './settings/sections/McpSection';
 import { BotCommandsSection } from './settings/sections/BotCommandsSection';
 import { TelegramSection } from './settings/sections/TelegramSection';
 import { LineSection } from './settings/sections/LineSection';
+import { SocketBotSection } from './settings/sections/SocketBotSection';
+import { useSocketBotSettings } from './settings/hooks/useSocketBotSettings';
+import { anyBotEnabled as anyRosterBotEnabled } from './settings/sections/botPermissionsView';
 import { StatsSection } from './settings/sections/StatsSection';
 import { SystemSection } from './settings/sections/SystemSection';
+import { CalendarsSetting } from './settings/sections/CalendarsSetting';
+import { LinkRecognitionSetting } from './settings/sections/LinkRecognitionSetting';
+import { YtdlToolsSetting } from './settings/sections/YtdlToolsSetting';
 import type { DangerAction } from './settings/sections/SystemSection';
 
 const SECTION_GAP = 12;
@@ -67,6 +75,7 @@ export const SettingsView: React.FC = () => {
 
   const hotkey = useHotkeyRecorder();
   const quickExport = useQuickExportRecorder();
+  const regionHotkey = useRegionHotkeyRecorder();
   const exportPreferences = useExportPreferences();
   const shareSettings = useShareSettings();
   const prefs = usePromptPrefs();
@@ -76,11 +85,14 @@ export const SettingsView: React.FC = () => {
   const line = useLineSettings();
   const botCommands = useBotCommands();
   const account = useAccountSettings();
+  const { applyOneShotTemporaryChatReset, applyProviderFallbackReset } = account;
   const byok = useByokSettings();
   const byokGroups = useByokGroups(byok.snapshot, byok.applySnapshot);
   const mcp = useMcpServers();
   const userMemory = useUserMemory();
-  const botAccess = useBotAccess({ telegram, line, memory: userMemory, mcp, t });
+  const discord = useSocketBotSettings('discord');
+  const slack = useSocketBotSettings('slack');
+  const botAccess = useBotAccess({ telegram, line, discord, slack, memory: userMemory, mcp, t });
   const nav = useSettingsNav();
 
   // Back to the top when the category changes: the view never unmounts, so any entry point would
@@ -100,8 +112,7 @@ export const SettingsView: React.FC = () => {
 
   const [dangerAction, setDangerAction] = useState<DangerAction>(null);
   const applySettingsSnapshot = useCallback(async (snapshot: SettingsSnapshot) => {
-    hotkey.applyHotkeyReset(snapshot.hotkey, snapshot.hotkeyEnabled);
-    useShortcutStore.getState().setOverrides(snapshot.shortcuts ?? {});
+    await applyShortcutSnapshot(snapshot);
     prefs.applyPromptReset(snapshot.promptPreferences, snapshot.syncSystemLanguageToModel, snapshot.youtubePrompt);
     system.applySystemReset(
       snapshot.notifyOnComplete,
@@ -111,15 +122,23 @@ export const SettingsView: React.FC = () => {
       snapshot.notifyEvents,
     );
     metrics.applyMetricsReset(snapshot.metricsEnabled);
+    applyOneShotTemporaryChatReset(snapshot.oneShotTemporaryChat);
+    applyProviderFallbackReset(snapshot.providerFallback);
     setTheme(resolveThemePreference(snapshot.theme));
     // Reading prefs are not in the snapshot: re-read them so the store, mirror and root attributes follow the restored config.
     initReadingFromConfig();
-    await setLocale(snapshot.locale);
+    initSidebarViewFromConfig();
+    // The restored config already holds the language and whether the user picked it: applying it
+    // must not mark it user-picked, or an auto-detected zh-TW would make the user a Taiwan user.
+    await setLocale(snapshot.locale, { persist: false });
+    await window.electronAPI.setLocaleAuto(snapshot.locale);
+    // After the language: the link switches' defaults follow it.
+    initLinkRecognitionFromConfig();
     await telegram.loadTelegramSettings();
     await line.loadLineSettings();
     await botCommands.loadBotCommands();
     await byok.reload();
-  }, [hotkey, prefs, system, metrics, telegram, line, botCommands, byok, setTheme, setLocale]);
+  }, [prefs, system, metrics, applyOneShotTemporaryChatReset, applyProviderFallbackReset, telegram, line, botCommands, byok, setTheme, setLocale]);
 
   const getLocaleLabel = useCallback((localeCode: string): string => {
     const selfName = localeTranslations[localeCode]?.['language.name.self'];
@@ -180,7 +199,7 @@ export const SettingsView: React.FC = () => {
     </Box>
   );
 
-  const anyBotEnabled = (telegram.telegramSettings?.enabled ?? false) || (line.lineSettings?.enabled ?? false);
+  const anyBotEnabled = anyRosterBotEnabled(botAccess.roster);
 
   return (
     <Flex flex={1} bg="var(--mantine-color-body)" style={{ overflow: 'hidden' }}>
@@ -221,61 +240,19 @@ export const SettingsView: React.FC = () => {
         </Box>
       </Stack>
 
-      <Box flex={1} ref={contentRef} p="24px 20px 40px" style={{ overflowY: 'auto' }}>
-        <Box maw={560} mx="auto">
-          {categoryBlock('general', (
-            <>
-              <GeneralSection
-                system={system}
-                roster={botAccess.roster}
-                t={t}
-                locale={locale}
-                availableLocales={availableLocales}
-                onSetLocale={setLocale}
-                getLocaleLabel={getLocaleLabel}
-                onOpenLanguagesFolder={handleOpenLanguagesFolder}
-                showSection={(tags) => nav.showSection(tags, 'general')}
-                sectionGap={SECTION_GAP}
-              />
-              <NotificationsSection
-                system={system}
-                t={t}
-                showSection={(tags) => nav.showSection(tags, 'general')}
-                sectionGap={SECTION_GAP}
-              />
-            </>
-          ))}
-
-          {categoryBlock('shortcuts', (
-            <ShortcutsSection
-              hotkey={hotkey}
-              quickExport={quickExport}
-              t={t}
-              showSection={(tags) => nav.showSection(tags, 'shortcuts')}
-              sectionGap={SECTION_GAP}
-              onOpenFlow={handleOpenFlow}
-            />
-          ))}
-
-          {categoryBlock('appearance', (
-            <AppearanceSection
-              t={t}
-              showSection={(tags) => nav.showSection(tags, 'appearance')}
-              sectionGap={SECTION_GAP}
-            />
-          ))}
-
-          {categoryBlock('export', (
-            <ExportSection
-              quickExport={quickExport}
-              preferences={exportPreferences}
-              share={shareSettings}
-              t={t}
-              showSection={(tags) => nav.showSection(tags, 'export')}
-              sectionGap={SECTION_GAP}
-            />
-          ))}
-
+      {/* The scrollbar's lane is kept even on pages too short to scroll, so the centred column
+          does not shift sideways when switching between a short page and a long one. */}
+      <Box flex={1} ref={contentRef} p="24px 20px 40px" style={{ overflowY: 'auto', scrollbarGutter: 'stable' }}>
+        {/* Blocks follow CATEGORY_IDS (the nav order): multi-category search results stack this way. */}
+        {/* 720px, the width ChatGPT's and Claude's settings give their content: wide enough for
+            two connector tiles side by side, and the same on every page so nothing jumps. */}
+        <Box maw={720} mx="auto">
+          {/* The page names itself, like every big app's settings; search results carry a header per category instead. */}
+          {!nav.isSearching && (
+            <Title order={1} fz="var(--font-size-3xl)" fw={700} c="var(--mantine-color-text)" mb={16}>
+              {t(`settings.group.${nav.activeCategory}`)}
+            </Title>
+          )}
           {categoryBlock('accounts', (
             <>
               <ModelSourcesSection
@@ -317,13 +294,16 @@ export const SettingsView: React.FC = () => {
           ))}
 
           {categoryBlock('connectors', (
-            <McpSection
-              mcp={mcp}
-              roster={botAccess.roster}
-              t={t}
-              showSection={(tags) => nav.showSection(tags, 'connectors')}
-              sectionGap={SECTION_GAP}
-            />
+            <>
+              <McpSection
+                mcp={mcp}
+                roster={botAccess.roster}
+                t={t}
+                showSection={(tags) => nav.showSection(tags, 'connectors')}
+                sectionGap={SECTION_GAP}
+              />
+              <CalendarsSetting t={t} visible={nav.showSection(TAG_SETS.calendars, 'connectors')} sectionGap={SECTION_GAP} />
+            </>
           ))}
 
           {categoryBlock('bots', (
@@ -331,6 +311,7 @@ export const SettingsView: React.FC = () => {
               <TelegramSection
                 telegram={telegram}
                 access={botAccess.telegram}
+                botCommands={botCommands}
                 t={t}
                 showSection={(tags) => nav.showSection(tags, 'bots')}
                 isSearching={nav.isSearching}
@@ -339,11 +320,24 @@ export const SettingsView: React.FC = () => {
               <LineSection
                 line={line}
                 access={botAccess.line}
+                botCommands={botCommands}
                 t={t}
                 showSection={(tags) => nav.showSection(tags, 'bots')}
                 isSearching={nav.isSearching}
                 sectionGap={SECTION_GAP}
               />
+              {([discord, slack] as const).map((bot) => (
+                <SocketBotSection
+                  key={bot.platform}
+                  bot={bot}
+                  access={botAccess[bot.platform]}
+                  botCommands={botCommands}
+                  t={t}
+                  showSection={(tags) => nav.showSection(tags, 'bots')}
+                  isSearching={nav.isSearching}
+                  sectionGap={SECTION_GAP}
+                />
+              ))}
               <BotCommandsSection
                 botCommands={botCommands}
                 anyBotEnabled={anyBotEnabled}
@@ -354,6 +348,67 @@ export const SettingsView: React.FC = () => {
                 sectionGap={SECTION_GAP}
               />
             </>
+          ))}
+
+          {categoryBlock('general', (
+            <GeneralSection
+              system={system}
+              t={t}
+              locale={locale}
+              availableLocales={availableLocales}
+              onSetLocale={setLocale}
+              getLocaleLabel={getLocaleLabel}
+              onOpenLanguagesFolder={handleOpenLanguagesFolder}
+              showSection={(tags) => nav.showSection(tags, 'general')}
+              sectionGap={SECTION_GAP}
+            />
+          ))}
+
+          {categoryBlock('appearance', (
+            <AppearanceSection
+              t={t}
+              showSection={(tags) => nav.showSection(tags, 'appearance')}
+              sectionGap={SECTION_GAP}
+            />
+          ))}
+
+          {categoryBlock('notifications', (
+            <NotificationsSection
+              system={system}
+              t={t}
+              showSection={(tags) => nav.showSection(tags, 'notifications')}
+              sectionGap={SECTION_GAP}
+            />
+          ))}
+
+          {categoryBlock('links', (
+            <>
+              <LinkRecognitionSetting t={t} visible={nav.showSection(TAG_SETS.links, 'links')} sectionGap={SECTION_GAP} />
+              <YtdlToolsSetting t={t} visible={nav.showSection(TAG_SETS.ytdl, 'links')} sectionGap={SECTION_GAP} roster={botAccess.roster} />
+            </>
+          ))}
+
+          {categoryBlock('export', (
+            <ExportSection
+              quickExport={quickExport}
+              preferences={exportPreferences}
+              share={shareSettings}
+              t={t}
+              showSection={(tags) => nav.showSection(tags, 'export')}
+              sectionGap={SECTION_GAP}
+            />
+          ))}
+
+          {categoryBlock('shortcuts', (
+            <ShortcutsSection
+              hotkey={hotkey}
+              quickExport={quickExport}
+              region={regionHotkey}
+              t={t}
+              showSection={(tags) => nav.showSection(tags, 'shortcuts')}
+              sectionGap={SECTION_GAP}
+              onOpenFlow={handleOpenFlow}
+            />
           ))}
 
           {categoryBlock('stats', (

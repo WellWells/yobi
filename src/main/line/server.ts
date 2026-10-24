@@ -1,8 +1,8 @@
 import * as http from 'node:http';
 import type { webhook } from '@line/bot-sdk';
 import { verifyLineSignature } from './signature';
-import { parseChatEvents, parseTextEvents } from './events';
-import type { LineChatEvent, LineTextEvent } from './events';
+import { parseChatEvents, parsePostbackEvents, parseTextEvents } from './events';
+import type { LineChatEvent, LinePostbackEvent, LineTextEvent } from './events';
 
 export const LINE_WEBHOOK_PATH = '/line/webhook';
 
@@ -14,6 +14,8 @@ export interface LineWebhookServerDeps {
   onEvents: (events: LineTextEvent[]) => void;
   /** The bot joined or left a group or multi-person chat. */
   onChatEvents?: (events: LineChatEvent[]) => void;
+  /** Taps on postback buttons (Flex cards). */
+  onPostbacks?: (events: LinePostbackEvent[]) => void;
   onLog: (message: string) => void;
 }
 
@@ -110,6 +112,8 @@ export class LineWebhookServer {
       if (events.length > 0) this.deps.onEvents(events);
       const chatEvents = parseChatEvents(body);
       if (chatEvents.length > 0) this.deps.onChatEvents?.(chatEvents);
+      const postbacks = parsePostbackEvents(body);
+      if (postbacks.length > 0) this.deps.onPostbacks?.(postbacks);
     } catch (err: unknown) {
       this.deps.onLog(`[line] failed to parse webhook body: ${err instanceof Error ? err.message : String(err)}`);
     }

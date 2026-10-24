@@ -1,6 +1,6 @@
 import { isByokTargetUrl } from '../../shared/types';
 import { charsPlusBreaks, utf8Len } from '../../shared/textBudget';
-import { detectProvider, PROVIDER_PROMPT_POLICIES } from '../providers';
+import { detectProvider, promptPolicyFor } from '../providers';
 
 const BYOK_BUDGET_BYTES = 360_000;
 export const PROMPT_OVERHEAD_BYTES = 4_800;
@@ -12,7 +12,7 @@ const MIN_BUDGET = 4_000;
 const LEAN_CAP_THRESHOLD = 20_000;
 
 function providerCap(targetUrl: string): number {
-  const caps = PROVIDER_PROMPT_POLICIES[detectProvider(targetUrl)];
+  const caps = promptPolicyFor(detectProvider(targetUrl));
   return caps.maxCharsPlusBreaks ?? caps.maxBytes ?? 0;
 }
 
@@ -35,7 +35,7 @@ export function synthesisBudget(targetUrl: string): SynthesisBudget {
   const lean = isLeanPromptProvider(targetUrl);
   const overheadBytes = lean ? LEAN_PROMPT_OVERHEAD_BYTES : PROMPT_OVERHEAD_BYTES;
   const overheadCpb = lean ? LEAN_PROMPT_OVERHEAD_CPB : PROMPT_OVERHEAD_CPB;
-  const caps = PROVIDER_PROMPT_POLICIES[detectProvider(targetUrl)];
+  const caps = promptPolicyFor(detectProvider(targetUrl));
   return {
     bytes: caps.maxBytes === null
       ? UNBOUNDED

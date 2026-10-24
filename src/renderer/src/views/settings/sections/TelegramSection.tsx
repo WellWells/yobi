@@ -1,16 +1,19 @@
 import React from 'react';
 import { Box, Group, Stack, Text, Button as MButton } from '@mantine/core';
-import { Bot, KeyRound, Link, Megaphone, MessageSquare, Plug, Send, Users, UsersRound } from 'lucide-react';
+import { KeyRound, Link, MessageSquare, Plug, Send, Users, UsersRound } from 'lucide-react';
 import dayjs from 'dayjs';
 import { AppPasswordInput } from '../../../components/AppPasswordInput';
-import { SectionCard, SettingRow, SettingField, SettingDivider, SelectDropdown, ToggleSwitch, SectionTitle } from '../components';
+import { SectionCard, SettingRow, SettingField, SettingDivider, SelectDropdown, ToggleSwitch, SectionTitle, StatusLine } from '../components';
 import { SecretHealthAlert } from '../../../components/SecretHealthAlert';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 import { BotDefaultModelSetting } from './BotDefaultModelSetting';
 import { BotReplyPreview } from './BotReplyPreview';
-import { TelegramChannels } from './TelegramChannels';
+import { BotAskTtlSetting } from './BotAskTtlSetting';
+import type { BotCommandsControls } from './BotAskTtlSetting';
 import { BotAudienceSection } from './BotAudienceSection';
 import { TelegramPairingPanel } from './TelegramPairingPanel';
 import { TelegramPairedUsers } from './TelegramPairedUsers';
+import { BotDefaultGrants } from './BotUserPermissions';
 import { TelegramLargeUploadSettings } from './TelegramLargeUploadSettings';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import type { useTelegramSettings } from '../hooks/useTelegramSettings';
@@ -42,6 +45,8 @@ interface Props {
   telegram: TelegramSettings;
   /** Each paired account's grants and owner mark, edited under its row. */
   access: BotAccessControls;
+  /** The shared commands config; its answer window is shown in this card's reply section. */
+  botCommands?: BotCommandsControls;
   t: (key: string) => string;
   showSection: (tags: readonly string[], category: 'bots') => boolean;
   isSearching: boolean;
@@ -49,11 +54,10 @@ interface Props {
 }
 
 export const TelegramSection: React.FC<Props> = ({
-  telegram, access, t, showSection, isSearching, sectionGap,
+  telegram, access, botCommands, t, showSection, isSearching, sectionGap,
 }) => {
   const settings = telegram.telegramSettings;
   const runtimeStatus = settings?.runtime.status;
-  const channels = settings?.channels ?? [];
   const pendingCodes = settings?.pairing.pendingCodes ?? [];
   const pairedUsers = settings?.pairing.pairedUsers ?? [];
   const expanded = (settings?.enabled ?? false) || isSearching;
@@ -89,7 +93,6 @@ export const TelegramSection: React.FC<Props> = ({
         )}
 
         <SettingRow
-          icon={<Bot size={13} />}
           label={t('settings.telegram.enabled')}
           hint={expanded ? undefined : t('settings.telegram.enabled.offHint')}
           control={
@@ -103,7 +106,7 @@ export const TelegramSection: React.FC<Props> = ({
         {expanded && (
           <>
             <Stack gap={12} mt={12}>
-              <SettingField icon={<KeyRound size={13} />} label={t('settings.telegram.tokenLabel')}>
+              <SettingField label={t('settings.telegram.tokenLabel')}>
                 <Group gap={8} align="center">
                   <AppPasswordInput
                     flex={1}
@@ -123,10 +126,9 @@ export const TelegramSection: React.FC<Props> = ({
                   </MButton>
                 </Group>
                 <Text fz="var(--font-size-sm)" c="dimmed">
-                  {t('settings.telegram.tokenCurrent')}:{' '}
-                  {settings?.hasToken
-                    ? (settings.tokenPreview ?? '****')
-                    : t('settings.telegram.tokenNotSet')}
+                  {fillTemplate(t('settings.telegram.tokenCurrent'), {
+                    value: settings?.hasToken ? (settings.tokenPreview ?? '****') : t('settings.telegram.tokenNotSet'),
+                  })}
                 </Text>
               </SettingField>
 
@@ -149,14 +151,6 @@ export const TelegramSection: React.FC<Props> = ({
                 </Box>
               )}
             </Stack>
-
-            <SettingDivider my={16} />
-
-            <TelegramLargeUploadSettings
-              saved={settings?.largeUpload}
-              reload={telegram.loadTelegramSettings}
-              t={t}
-            />
 
             <SettingDivider my={16} />
 
@@ -190,6 +184,8 @@ export const TelegramSection: React.FC<Props> = ({
                 t={t}
               />
 
+              <BotDefaultGrants access={access} t={t} />
+
               <Text fz="var(--font-size-sm)" fw={600} c="var(--mantine-color-default-color)">
                 {t('settings.telegram.paired.title')}
               </Text>
@@ -217,7 +213,6 @@ export const TelegramSection: React.FC<Props> = ({
             <SectionTitle icon={<MessageSquare size={15} />} label={t('settings.telegram.section.reply')} />
             <Stack gap={12}>
               <SettingRow
-                icon={<MessageSquare size={13} />}
                 label={t('settings.telegram.compactReply')}
                 hint={t('settings.telegram.compactReply.hint')}
                 control={
@@ -264,37 +259,48 @@ export const TelegramSection: React.FC<Props> = ({
                   t={t}
                 />
               )}
+
+              {botCommands && <BotAskTtlSetting botCommands={botCommands} t={t} />}
             </Stack>
 
             <SettingDivider my={16} />
 
-            <SectionTitle icon={<Megaphone size={15} />} label={t('settings.telegram.channels.title')} />
-            <TelegramChannels
-              channels={channels}
+            <SectionTitle icon={<UsersRound size={15} />} label={t('settings.telegram.chats.title')} />
+            <BotAudienceSection
+              platform="telegram"
+              connectors={access.connectors}
+              refreshKey={settings}
+              channels={settings?.channels ?? []}
               contacts={settings?.contacts ?? []}
-              onForget={(chatId) => { void telegram.handleForgetTelegramChannel(chatId); }}
+              onForgetChannel={(chatId) => { void telegram.handleForgetTelegramChannel(chatId); }}
+              header={
+                <Stack gap={6}>
+                  <SettingRow
+                    label={t('settings.telegram.allowGroup')}
+                    hint={t('settings.telegram.allowGroup.hint')}
+                    alignStart
+                    control={
+                      <ToggleSwitch
+                        checked={settings?.allowGroupCommands ?? false}
+                        onChange={() => { void telegram.handleToggleTelegramGroupCommands(); }}
+                      />
+                    }
+                  />
+                  {settings?.allowGroupCommands && settings.runtime.readsAllGroupMessages === false && (
+                    <StatusLine tone="warning">{t('settings.telegram.groupPrivacyHint')}</StatusLine>
+                  )}
+                </Stack>
+              }
               t={t}
             />
-            <Box mt={12}>
-              <SettingRow
-                icon={<Users size={13} />}
-                label={t('settings.telegram.allowGroup')}
-                hint={settings?.allowGroupCommands && settings.runtime.readsAllGroupMessages === false
-                  ? t('settings.telegram.groupPrivacyHint')
-                  : undefined}
-                control={
-                  <ToggleSwitch
-                    checked={settings?.allowGroupCommands ?? false}
-                    onChange={() => { void telegram.handleToggleTelegramGroupCommands(); }}
-                  />
-                }
-              />
-            </Box>
 
             <SettingDivider my={16} />
 
-            <SectionTitle icon={<UsersRound size={15} />} label={t('settings.bot.group.title')} />
-            <BotAudienceSection platform="telegram" connectors={access.connectors} refreshKey={settings} t={t} />
+            <TelegramLargeUploadSettings
+              saved={settings?.largeUpload}
+              reload={telegram.loadTelegramSettings}
+              t={t}
+            />
           </>
         )}
       </SectionCard>

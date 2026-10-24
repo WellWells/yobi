@@ -12,12 +12,13 @@ import { readPttThread } from './pttReader';
 import { readRedditThread } from './redditReader';
 import { readThreadsPostThread } from './threadsReader';
 import { readTikTokThread } from './tiktokReader';
+import { readWeiboThread } from './weiboReader';
 import { isSignedInOnly, threadForOthers } from './readAccess';
 import type { ReadAccess } from './readAccess';
 import { readPostThread, type XRead } from './xReader';
 import type { XPost, XThread } from './xPosts';
 
-/* A pasted post link, whichever site it is on: `x_media` and `x_thread` read X, Threads, Instagram, Facebook, TikTok, PTT, Dcard and Reddit alike. */
+/* A pasted post link, whichever site it is on: `x_media` and `x_thread` read X, Threads, Instagram, Facebook, TikTok, PTT, Dcard, Reddit and Weibo alike. */
 
 /** The parts of a post link a reader uses: a table row's `PostRef` and `parseXMediaInput`'s result both carry them. */
 export type PostLink = Pick<PostRef, 'url' | 'id' | 'author'>;
@@ -94,6 +95,12 @@ export const SITE_READERS: Record<PostSiteId, SiteReader> = {
   reddit: {
     read: (link, { comments, signal, interactive }) => readRedditThread(link.url, { comments, signal, interactive }),
     fileStem: (post) => `reddit-${post.id}`,
+  },
+  // Comments are their own API calls, which a forward does not show. A post names its author by
+  // nickname only, which its owner can change: the files are named after the site.
+  weibo: {
+    read: (link, { comments, signal }) => readWeiboThread(link.url, { comments, signal }),
+    fileStem: (post) => `weibo-${post.id}`,
   },
 };
 

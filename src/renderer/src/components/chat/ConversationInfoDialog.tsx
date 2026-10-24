@@ -1,8 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Group, Stack, Text } from '@mantine/core';
-import {
-  Bot, CalendarClock, Check, Coins, ExternalLink, FileText, History, Info, Layers, Link2, MessagesSquare, Paperclip, Timer,
-} from 'lucide-react';
+import { Check, ExternalLink, Info, Link2 } from 'lucide-react';
 import type { ConversationDoc } from '../../../../shared/conversationDoc';
 import { formatCardTime } from '../../../../shared/captureCard';
 import { clipboardApi } from '../../api/electronApi';
@@ -78,23 +76,19 @@ export const ConversationInfoDialog: React.FC<ConversationInfoDialogProps> = ({
       {info && (
         <Stack gap={14}>
           <SettingRow
-            icon={<CalendarClock size={13} />}
             label={t('chat.info.started')}
             control={<Value>{formatCardTime(info.startedAt, locale) || '—'}</Value>}
           />
           <SettingRow
-            icon={<History size={13} />}
             label={t('chat.info.lastActive')}
             control={<Value>{formatCardTime(info.lastActiveAt, locale) || '—'}</Value>}
           />
           <SettingRow
-            icon={<MessagesSquare size={13} />}
             label={t('chat.info.turns')}
             control={<Value>{fill(t('chat.info.turnsValue'), { count: info.turns })}</Value>}
           />
           {info.models.length > 0 && (
             <SettingRow
-              icon={<Bot size={13} />}
               label={t('chat.info.models')}
               alignStart
               control={(
@@ -112,7 +106,6 @@ export const ConversationInfoDialog: React.FC<ConversationInfoDialogProps> = ({
             />
           )}
           <SettingRow
-            icon={<Coins size={13} />}
             label={t('chat.info.tokens')}
             hint={tokenHint() || undefined}
             alignStart
@@ -121,7 +114,6 @@ export const ConversationInfoDialog: React.FC<ConversationInfoDialogProps> = ({
             )}
           />
           <SettingRow
-            icon={<Timer size={13} />}
             label={t('chat.info.duration')}
             hint={durationHint()}
             alignStart
@@ -131,7 +123,6 @@ export const ConversationInfoDialog: React.FC<ConversationInfoDialogProps> = ({
           />
           {(info.context.summarized > 0 || info.context.dropped > 0) && (
             <SettingRow
-              icon={<Layers size={13} />}
               label={t('chat.info.context')}
               hint={t('chat.info.contextHint')}
               alignStart
@@ -144,7 +135,6 @@ export const ConversationInfoDialog: React.FC<ConversationInfoDialogProps> = ({
           )}
           {info.attachments.length > 0 && (
             <SettingRow
-              icon={<Paperclip size={13} />}
               label={t('chat.info.attachments')}
               hint={info.attachments.join(' · ')}
               alignStart
@@ -152,7 +142,6 @@ export const ConversationInfoDialog: React.FC<ConversationInfoDialogProps> = ({
             />
           )}
           <SettingRow
-            icon={<FileText size={13} />}
             label={t('chat.info.file')}
             hint={(
               <Text component="span" fz="var(--font-size-sm)" ff="var(--font-mono)" style={{ wordBreak: 'break-all' }}>

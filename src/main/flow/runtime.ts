@@ -36,7 +36,9 @@ export function resolveStepTimeoutMs(
   // A file goes up a home connection: a large upload (up to Telegram's 2000 MiB) can take as long
   // as the download did, so it gets the download's time.
   if (type === 'bot' && (config?.attachment ?? '').trim()) return YTDL_STEP_TIMEOUT_MS;
-  if (type === 'browser' || type === 'rss' || type === 'scraper' || type === 'research' || type === 'gmap_reviews' || type === 'youtube' || type === 'youtube_subs' || type === 'youtube_info' || type === 'x_posts' || type === 'x_thread' || type === 'x_trends' || type === 'browser_js' || type === 'file_download' || type === 'share') {
+  if (type === 'browser' || type === 'rss' || type === 'scraper' || type === 'research' || type === 'gmap_reviews' || type === 'youtube' || type === 'youtube_subs' || type === 'youtube_info' || type === 'x_posts' || type === 'ptt_board' || type === 'x_thread' || type === 'x_trends' || type === 'browser_js' || type === 'file_download' || type === 'share'
+    // A connector call may wait out a connect and then the registry's own 120 s call timeout.
+    || type === 'mcp') {
     return BROWSER_STEP_TIMEOUT_MS;
   }
   return DEFAULT_STEP_TIMEOUT_MS;

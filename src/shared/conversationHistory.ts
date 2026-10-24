@@ -41,7 +41,8 @@ const NO_ALIASES: ConversationHeadingAliases = {
   provider: new Set(), time: new Set(), prompt: new Set(), response: new Set(),
 };
 
-const THREAD_MARKER_LINE = /^<!--\s*yobi:thread\s/m;
+// The marker of an untitled file that starts with a BOM sits right after the BOM, on line 1.
+const THREAD_MARKER_LINE = /^﻿?<!--\s*yobi:thread\s/m;
 
 /**
  * Only a file with a title or a thread marker can carry an id: without either, the marker would
@@ -75,6 +76,7 @@ export function conversationIdOf(raw: string): string | null {
  * and the first marker comes with a blank line, so neither counts as a change.
  */
 export function comparableConversationText(raw: string): string {
+  // `stripConversationMarkers` drops a leading BOM as well: it is no text either.
   return stripConversationMarkers(raw.replace(/\r\n?/g, '\n'))
     .split('\n')
     .map((line) => line.trimEnd())
@@ -104,11 +106,34 @@ export function shouldKeepBeforeReload(before: string, after: string): boolean {
  * cannot carry one.
  */
 export function withConversationId(raw: string, newId: () => string): { raw: string; id: string } | null {
+  if (!conversationIdOf(raw) && !canVersionConversation(raw)) return null;
+  return stampConversationId(raw, newId);
+}
+
+/**
+ * The file with its id, given one when it had none — a file with no title too: the marker then
+ * becomes line 1 with a blank line after it, which the list's preview skips. Files are given an
+ * id when created and when first moved, so a moved file can always be found again by it.
+ */
+export function stampConversationId(raw: string, newId: () => string): { raw: string; id: string } {
   const existing = conversationIdOf(raw);
   if (existing) return { raw, id: existing };
-  if (!canVersionConversation(raw)) return null;
   const id = newId();
   return { raw: writeThreadMeta(raw, { ...threadOf(raw), id, v: 1 }), id };
+}
+
+/** A file saved with a BOM keeps it in front of the marker (`writeThreadMeta`). */
+const LEADING_THREAD_MARKER = /^\uFEFF?<!--\s*yobi:thread\s[^\n]*-->[ \t]*\r?\n(?:[ \t]*\r?\n)?/;
+
+/** The text below a thread marker that opens the file (a file with no title), for its first line and preview. */
+export function withoutLeadingThreadMarker(raw: string): string {
+  const match = LEADING_THREAD_MARKER.exec(raw);
+  return match ? raw.slice(match[0].length) : raw;
+}
+
+/** Whether a line is a thread marker, which is not the conversation's text. */
+export function isThreadMarkerLine(line: string): boolean {
+  return THREAD_MARKER_LINE.test(line.trim());
 }
 
 /** A copy of a conversation starts its own history: the id is dropped. */
@@ -134,7 +159,7 @@ export function keepConversationId(current: string, thread: ThreadMeta): ThreadM
 export function threadAfterRestore(version: ThreadMeta, current: ThreadMeta): ThreadMeta {
   const {
     threadUrl: _url, threadTurns: _turns, threadAt: _at, summary: _summary, summarizedTurns: _covered,
-    id: _id, mcp: _mcp, web: _web, agent: _agent, notion: _notion, ...rest
+    id: _id, mcp: _mcp, web: _web, agent: _agent, notion: _notion, pinned: _pinned, ...rest
   } = version;
   return {
     ...rest,
@@ -143,6 +168,8 @@ export function threadAfterRestore(version: ThreadMeta, current: ThreadMeta): Th
     ...(current.mcp !== undefined ? { mcp: current.mcp } : {}),
     ...(current.web !== undefined ? { web: current.web } : {}),
     ...(current.agent !== undefined ? { agent: current.agent } : {}),
+    // Restoring old text does not pin or unpin the conversation.
+    ...(current.pinned === true ? { pinned: true } : {}),
     ...(isConversationId(current.id) ? { id: current.id } : {}),
     v: 1,
   };

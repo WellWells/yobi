@@ -2,6 +2,7 @@ import React from 'react';
 import { Group, ScrollArea, Stack, Text } from '@mantine/core';
 import { Minus, Pencil, Plus } from 'lucide-react';
 import type { FlowChangeSummary } from '../../../shared/flowVersions';
+import { fillTemplate } from '../../../shared/fillTemplate';
 
 const EDIT_ICON = { added: Plus, removed: Minus, changed: Pencil } as const;
 
@@ -37,13 +38,13 @@ export const FlowEditRows: React.FC<FlowEditRowsProps> = ({ edit, t, maxHeight =
             <Group key={`${kind}-${index}-${step.label}`} gap={8} wrap="nowrap" align="flex-start">
               <Icon size={14} style={{ flexShrink: 0, marginTop: 3 }} color="var(--text-muted)" />
               <Text fz="var(--font-size-sm)" c="var(--text-primary)" style={{ lineHeight: 1.6, wordBreak: 'break-word' }}>
-                {t(`agent.flow.edit.${kind}`).replace('{{label}}', step.label)}
+                {fillTemplate(t(`agent.flow.edit.${kind}`), { label: step.label })}
                 <Text span fz="var(--font-size-xs)" c="var(--text-muted)">{` · ${t(`flow.skill.${step.type}`)}`}</Text>
               </Text>
             </Group>
           );
         })}
-        {edit.renamedFrom && line(t('agent.flow.edit.renamed').replace('{{from}}', edit.renamedFrom))}
+        {edit.renamedFrom && line(fillTemplate(t('agent.flow.edit.renamed'), { from: edit.renamedFrom }))}
         {edit.trigger && line(t('agent.flow.edit.trigger'))}
         {FLAG_KEYS.map(([flag, key]) => (edit[flag] ? <React.Fragment key={flag}>{line(t(key))}</React.Fragment> : null))}
       </Stack>

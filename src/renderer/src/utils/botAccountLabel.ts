@@ -1,4 +1,5 @@
 import type { LinePairedUser, TelegramPairedUser, TelegramSettingsSnapshot } from '../../../shared/types';
+import { fillTemplate } from '../../../shared/fillTemplate';
 
 type Translate = (key: string) => string;
 
@@ -18,12 +19,12 @@ export function telegramAccountLabel(user: TelegramNamed, t: Translate): string 
   const name = telegramName(user);
   if (name) return name;
   if (user.username) return `@${user.username}`;
-  return t('settings.bot.account.id').replace('{{id}}', String(user.userId));
+  return fillTemplate(t('settings.bot.account.id'), { id: String(user.userId) });
 }
 
 export function lineAccountLabel(user: LinePairedUser, t: Translate): string {
   const name = user.displayName?.trim();
-  return name || t('settings.bot.account.id').replace('{{id}}', user.userId);
+  return name || fillTemplate(t('settings.bot.account.id'), { id: user.userId });
 }
 
 /** The handle shown next to a Telegram name, when the label is the name rather than the handle. */

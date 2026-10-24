@@ -7,6 +7,7 @@ import { ipcEvents, xPostsApi } from '../../../api/electronApi';
 import { isValidXAccountListOrVar } from './validation';
 import { XSignInNotice } from './XSignInNotice';
 import type { SkillConfigProps } from './types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 export const XPostsConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
   const accounts = step.config.accounts ?? '';
@@ -78,7 +79,7 @@ export const XPostsConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) 
       </Button>
 
       <Text fz="xs" c="dimmed">
-        {t('flow.skill.x_posts.outputHint').replaceAll('{{outputKey}}', `{{${step.outputKey}}}`)}
+        {fillTemplate(t('flow.skill.x_posts.outputHint'), { outputKey: `{{${step.outputKey}}}` })}
       </Text>
     </Stack>
   );

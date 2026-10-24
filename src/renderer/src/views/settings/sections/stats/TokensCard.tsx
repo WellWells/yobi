@@ -25,8 +25,10 @@ export const TokensCard: React.FC<Props> = ({ stats, t }) => {
         <HelpDot hint={t('settings.stats.tokens.hint')} />
       </Group>
       <Stack gap={16}>
+        {/* Exact, like every other figure on the page and the input/output numbers under the
+            chart; only the chart's axis and tooltip abbreviate (589.9k), where space is short. */}
         <Figure
-          value={formatTokenCount(total)}
+          value={total.toLocaleString()}
           caption={
             <Text component="span" fz="var(--font-size-sm)" c="dimmed">
               {t('settings.stats.tokens.caption')}

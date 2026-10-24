@@ -16,6 +16,7 @@ import type { LoopVarHint } from './variableInsert';
 import { useFlowStore } from '../../store/useFlowStore';
 import { findMatchingMarker } from '../../store/flowHelpers';
 import type { FlowDefinition, FlowVariable, SkillInstance, SkillType, TriggerConfig } from '../../../../shared/types';
+import { hasFileTrigger } from '../../../../shared/flowFileTrigger';
 
 const GUIDE = '2px dashed var(--mantine-color-violet-filled)';
 const INDENT = 24;
@@ -37,6 +38,7 @@ interface RowProps {
   flowId: string;
   botTrigger: TriggerConfig;
   hasHotkeyTrigger: boolean;
+  hasFileTrigger: boolean;
   prevSteps: SkillInstance[];
   allPrevSteps: SkillInstance[];
   loopVars: LoopVarHint[];
@@ -45,7 +47,7 @@ interface RowProps {
 }
 
 const SortableStepRow: React.FC<RowProps> = React.memo(({
-  step, index, total, level, prevLevel, prevStep, flowId, botTrigger, hasHotkeyTrigger, prevSteps,
+  step, index, total, level, prevLevel, prevStep, flowId, botTrigger, hasHotkeyTrigger, hasFileTrigger, prevSteps,
   allPrevSteps, loopVars, flowVariables, t,
 }) => {
   const locked = ENDERS.includes(step.type);
@@ -99,6 +101,7 @@ const SortableStepRow: React.FC<RowProps> = React.memo(({
           allPrevSteps={allPrevSteps}
           flowTrigger={botTrigger}
           hasHotkeyTrigger={hasHotkeyTrigger}
+          hasFileTrigger={hasFileTrigger}
           loopVars={loopVars}
           flowVariables={flowVariables}
           dragHandle={handle}
@@ -160,6 +163,11 @@ export const FlowStepsCard: React.FC<FlowStepsCardProps> = ({ flow, t, onAddStep
 
   const hasHotkeyTrigger = useMemo(
     () => [flow.trigger, ...(flow.extraTriggers ?? [])].some((tr) => tr.type === 'hotkey'),
+    [flow.trigger, flow.extraTriggers],
+  );
+
+  const hasFileTriggerOn = useMemo(
+    () => hasFileTrigger([flow.trigger, ...(flow.extraTriggers ?? [])]),
     [flow.trigger, flow.extraTriggers],
   );
 
@@ -235,6 +243,7 @@ export const FlowStepsCard: React.FC<FlowStepsCardProps> = ({ flow, t, onAddStep
                     flowId={flow.id}
                     botTrigger={botTrigger}
                     hasHotkeyTrigger={hasHotkeyTrigger}
+                    hasFileTrigger={hasFileTriggerOn}
                     prevSteps={rowData[index].prevSteps}
                     allPrevSteps={rowData[index].allPrevSteps}
                     loopVars={rowData[index].loopVars}

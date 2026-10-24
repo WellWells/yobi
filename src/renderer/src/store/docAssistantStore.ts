@@ -90,6 +90,10 @@ interface DocAssistantState {
   threads: Record<string, AssistantThread>;
   open: boolean;
   width: number;
+  /** A click opened a document: the panel puts the caret in its box once, then clears this. */
+  focusRequested: boolean;
+  requestFocus: () => void;
+  consumeFocusRequest: () => void;
   setOpen: (open: boolean) => void;
   setWidth: (width: number) => void;
   patch: (path: string, patch: Partial<AssistantThread>) => void;
@@ -107,6 +111,9 @@ export const useDocAssistantStore = create<DocAssistantState>((set) => ({
   threads: {},
   open: readOpen(),
   width: readWidth(),
+  focusRequested: false,
+  requestFocus: () => set({ focusRequested: true }),
+  consumeFocusRequest: () => set({ focusRequested: false }),
   setOpen: (open) => {
     remember(OPEN_KEY, open ? '1' : '0');
     set({ open });

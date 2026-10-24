@@ -2,14 +2,17 @@ import type { Message, PhotoSize } from 'grammy/types';
 import { t } from '../i18n';
 import { inlineBudgetFor, truncateByMeasure } from '../chat/conversationContext';
 import {
+  providerAttachmentCapacity,
   resolveAttachmentPlan,
+  uploadTargetFor,
   type AttachmentPlan,
   type AttachmentRejectReason,
   type TelegramMediaKind,
 } from './attachmentPlan';
 import { deleteTempAttachments, downloadTelegramFile, readTextAttachment } from './fileDownload';
-import { extractBotMention, type TelegramCommandOptions, type TelegramContext } from './commandHandlers';
+import { admitPaced, extractBotMention, telegramSent, type TelegramCommandOptions, type TelegramContext } from './commandHandlers';
 import { getErrorMessage } from './errors';
+import { readReplyContext } from './replyContext';
 import { fenceUntrusted } from '../../shared/promptFencing';
 import { UPLOAD_CAPABLE_PROVIDER_LABELS } from '../../shared/types';
 
@@ -84,11 +87,19 @@ export function safeLabel(fileName: string | undefined): string {
   return flattened.length > 80 ? `${flattened.slice(0, 80)}\u2026` : flattened;
 }
 
-function fallbackExtFor(item: MediaItem): string {
+const DOCUMENT_EXT_BY_MIME: Readonly<Record<string, string>> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/heic': 'heic',
+  'application/pdf': 'pdf',
+};
+
+/** The extension the scratch copy gets when the sender's own is not one `safeLocalFileName` keeps. */
+function fallbackExtFor(item: MediaItem, route: 'upload' | 'inline'): string {
+  if (route === 'inline') return 'txt';
   if (item.kind === 'photo') return 'jpg';
-  if (item.kind === 'voice') return 'oga';
-  if (item.kind === 'audio') return 'mp3';
-  return 'bin';
+  return DOCUMENT_EXT_BY_MIME[(item.mimeType ?? '').toLowerCase()] ?? 'bin';
 }
 
 export interface MediaGate {
@@ -98,24 +109,41 @@ export interface MediaGate {
 }
 
 export function mediaGate(ctx: TelegramContext, options: TelegramCommandOptions): MediaGate {
+  const caption = ctx.msg?.caption ?? '';
+  return addressedGate(ctx, options, caption, ctx.msg?.caption_entities, () => {
+    if (caption) options.onLog(`[telegram] group media from unpaired user ${ctx.from?.id} — ignored`);
+  });
+}
+
+/**
+ * Who may hand the bot a picture or a file: a paired account in its private chat, or one that
+ * mentions the bot in a group that takes commands — `text` is the caption, or the message replying
+ * to the media.
+ */
+function addressedGate(
+  ctx: TelegramContext,
+  options: TelegramCommandOptions,
+  text: string,
+  entities: Parameters<typeof extractBotMention>[1],
+  onUnpairedInGroup: () => void,
+): MediaGate {
   const deny: MediaGate = { allowed: false, addressed: false, prompt: '' };
   const chat = ctx.chat;
   const from = ctx.from;
   if (!chat || !from) return deny;
 
-  const caption = ctx.msg?.caption ?? '';
   if (chat.type === 'private') {
     if (!options.isPairedUser(from.id)) return deny;
-    return { allowed: true, addressed: true, prompt: caption.trim() };
+    return { allowed: true, addressed: true, prompt: text.trim() };
   }
   if (chat.type !== 'group' && chat.type !== 'supergroup') return deny;
   if (!options.allowGroupCommands()) return deny;
   if (!options.isPairedUser(from.id)) {
-    if (caption) options.onLog(`[telegram] group media from unpaired user ${from.id} — ignored`);
+    onUnpairedInGroup();
     return deny;
   }
 
-  const match = extractBotMention(caption, ctx.msg?.caption_entities, options.getBotUsername?.() ?? '');
+  const match = extractBotMention(text, entities, options.getBotUsername?.() ?? '');
   return { allowed: true, addressed: match.mentioned, prompt: match.mentioned ? match.prompt.trim() : '' };
 }
 
@@ -148,6 +176,7 @@ async function prepareItems(
   const token = options.getBotToken?.() ?? '';
   const { budget, measure } = inlineBudgetFor(targetUrl, options.getByokContextBudgetChars?.() ?? 32_000);
   let remaining = budget;
+  const uploadCapacity = providerAttachmentCapacity(targetUrl);
 
   for (const item of items) {
     const plan: AttachmentPlan = resolveAttachmentPlan(
@@ -156,6 +185,11 @@ async function prepareItems(
     );
     if (plan.route === 'reject') {
       out.rejections.push(plan.reason);
+      continue;
+    }
+    // Fewer slots than an album has items (a BYOK key): the rest are counted as skipped.
+    if (plan.route === 'upload' && out.attachments.length >= uploadCapacity) {
+      out.failures += 1;
       continue;
     }
     if (!token) {
@@ -170,8 +204,9 @@ async function prepareItems(
       localPath = await downloadTelegramFile({
         token,
         filePath: file.file_path,
-        originalName: item.fileName,
-        fallbackExt: fallbackExtFor(item),
+        // Text is only ever read, so its copy is a .txt whatever the sender named it (.bat, .ps1…).
+        ...(plan.route === 'upload' && item.fileName ? { originalName: item.fileName } : {}),
+        fallbackExt: fallbackExtFor(item, plan.route),
       });
     } catch (err: unknown) {
       const message = getErrorMessage(err);
@@ -210,11 +245,36 @@ async function prepareItems(
   return out;
 }
 
+/**
+ * A picture or a file (an album is one) is a request like a message, paced the same way
+ * (`admitPaced`). Only paired accounts hand the bot media, so no run holds the ticket: it goes
+ * back once the task is queued. Only a request taken drops the question waiting for this person:
+ * one the pace refuses runs nothing, so the question keeps waiting (review 2026-10-20: dropped
+ * first, a refused photo reply left the run paused for good under buttons that no longer worked).
+ */
+async function pacedBatch(
+  ctx: TelegramContext,
+  options: TelegramCommandOptions,
+  items: readonly MediaItem[],
+  caption: string,
+  context: readonly string[] = [],
+): Promise<void> {
+  const ticket = await admitPaced(ctx, options);
+  if (!ticket) return;
+  if (ctx.chat && ctx.from) options.onDropAgentAsk?.(ctx.chat.id, ctx.from.id);
+  try {
+    await processBatch(ctx, options, items, caption, context);
+  } finally {
+    ticket.done();
+  }
+}
+
 async function processBatch(
   ctx: TelegramContext,
   options: TelegramCommandOptions,
   items: readonly MediaItem[],
   caption: string,
+  context: readonly string[] = [],
 ): Promise<void> {
   const strings = options.getStrings();
   const chat = ctx.chat;
@@ -225,7 +285,10 @@ async function processBatch(
   const targetUrl = options.getEffectiveTargetUrl?.() ?? direct.targetUrl;
   const capped = items.slice(0, MAX_ALBUM_ITEMS);
   const overflow = items.length - capped.length;
-  const batch = await prepareItems(capped, ctx, options, targetUrl);
+  const planTarget = uploadTargetFor(capped, targetUrl, options.getUploadFallbackUrl?.() ?? '');
+  const viaFallback = planTarget !== targetUrl;
+  if (viaFallback) options.onLog('[telegram] the bot model takes no uploads — this media goes to the fallback model');
+  const batch = await prepareItems(capped, ctx, options, planTarget);
 
   if (batch.attachments.length === 0 && batch.inlineBlocks.length === 0) {
     if (batch.rejections.length > 0) {
@@ -248,18 +311,19 @@ async function processBatch(
       .catch(() => {});
   }
 
-  const promptParts = [caption || defaultPromptFor(capped, strings), ...batch.inlineBlocks];
+  const promptParts = [caption || defaultPromptFor(capped, strings), ...context, ...batch.inlineBlocks];
   await queueMediaTask(ctx, options, {
     prompt: promptParts.join('\n\n'),
-    targetUrl: direct.targetUrl,
+    targetUrl: viaFallback ? planTarget : direct.targetUrl,
     attachments: batch.attachments,
+    uploadFallback: viaFallback,
   });
 }
 
 async function queueMediaTask(
   ctx: TelegramContext,
   options: TelegramCommandOptions,
-  params: { prompt: string; targetUrl: string; attachments: string[] },
+  params: { prompt: string; targetUrl: string; attachments: string[]; uploadFallback: boolean },
 ): Promise<void> {
   const strings = options.getStrings();
   const chat = ctx.chat;
@@ -276,6 +340,7 @@ async function queueMediaTask(
       prompt: params.prompt,
       targetUrl: params.targetUrl,
       ...(params.attachments.length > 0 ? { attachments: params.attachments } : {}),
+      ...(params.uploadFallback ? { uploadFallback: true as const } : {}),
       replyTarget: {
         chatId: chat.id,
         userId: from.id,
@@ -312,7 +377,38 @@ async function queueMediaTask(
 export interface MediaIntake {
   handle: (ctx: TelegramContext) => Promise<void>;
   handleUnsupported: (ctx: TelegramContext) => Promise<void>;
+  /**
+   * A text message replying to a picture or a file, addressed to the bot: true when it was handled
+   * here, as if that media had been sent with this text as its caption.
+   */
+  handleReply: (ctx: TelegramContext) => Promise<boolean>;
   dispose: () => void;
+}
+
+/**
+ * The media a text message replies to, when the bot can read it. An open agent question takes the
+ * text as its answer when it was sent after the question (one sent before is a request of its
+ * own), and a prompt starting with `/` gets the mention usage; both stay with the
+ * text handler. A person who may not hand the bot media also falls through: the agent is told the
+ * message carries something it cannot see.
+ */
+async function handleRepliedMedia(ctx: TelegramContext, options: TelegramCommandOptions): Promise<boolean> {
+  const message = ctx.message;
+  const replied = message?.reply_to_message;
+  if (!message?.text || !replied || replied.forum_topic_created) return false;
+  const item = extractMediaItem(replied);
+  if (!item) return false;
+  const gate = addressedGate(ctx, options, message.text, message.entities, () => {});
+  if (!gate.allowed || !gate.addressed || gate.prompt.startsWith('/')) return false;
+  if (!ctx.chat || !ctx.from || options.hasPendingAgentAsk?.(ctx.chat.id, ctx.from.id, telegramSent(message))) return false;
+
+  const reply = readReplyContext(message, options.getBotUsername?.() ?? '');
+  const quoted = reply?.text
+    ? [fenceUntrusted('replied_message', [reply.from && !reply.self ? `from: ${safeLabel(reply.from)}` : '', reply.text].filter(Boolean).join('\n\n'))]
+    : [];
+  options.onLog(`[telegram] reply to ${item.kind} from ${ctx.from.id} → media task`);
+  await pacedBatch(ctx, options, [item], gate.prompt, quoted);
+  return true;
 }
 
 export function createMediaIntake(options: TelegramCommandOptions): MediaIntake {
@@ -333,13 +429,12 @@ export function createMediaIntake(options: TelegramCommandOptions): MediaIntake 
     if (!pending.addressed) return;
 
     const { ctx } = pending;
-    if (ctx.chat && ctx.from) options.onDropAgentAsk?.(ctx.chat.id, ctx.from.id);
     if (pending.captionIsCommand) {
       void ctx.reply(t(options.getStrings(), 'telegram.media.captionCommand'))
         .catch((err: unknown) => options.onLog(`[telegram] album reply failed: ${getErrorMessage(err)}`));
       return;
     }
-    void processBatch(ctx, options, pending.items, pending.caption)
+    void pacedBatch(ctx, options, pending.items, pending.caption)
       .catch((err: unknown) => options.onLog(`[telegram] album batch failed: ${getErrorMessage(err)}`));
   };
 
@@ -356,12 +451,11 @@ export function createMediaIntake(options: TelegramCommandOptions): MediaIntake 
 
       if (!groupId) {
         if (!gate.addressed) return;
-        if (ctx.chat && ctx.from) options.onDropAgentAsk?.(ctx.chat.id, ctx.from.id);
         if (captionLooksLikeCommand(gate.prompt)) {
           await ctx.reply(t(options.getStrings(), 'telegram.media.captionCommand'));
           return;
         }
-        await processBatch(ctx, options, [item], gate.prompt);
+        await pacedBatch(ctx, options, [item], gate.prompt);
         return;
       }
 
@@ -393,6 +487,8 @@ export function createMediaIntake(options: TelegramCommandOptions): MediaIntake 
       if (!gate.allowed || !gate.addressed) return;
       await ctx.reply(t(options.getStrings(), 'telegram.media.unsupportedType'));
     },
+
+    handleReply: (ctx) => handleRepliedMedia(ctx, options),
 
     dispose: () => {
       for (const pending of albums.values()) clearTimeout(pending.timer);

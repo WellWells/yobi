@@ -7,6 +7,7 @@ import { SelectDropdown } from '../../../components/SelectDropdown';
 import { ToggleSwitch } from '../../../components/ToggleSwitch';
 import { LINE_RANGE_PRESETS } from '../../../../../shared/lineRange';
 import type { SkillConfigProps } from './types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -93,7 +94,7 @@ export const LineReadConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }
       />
 
       <Text fz="xs" c="dimmed">
-        {t('flow.skill.line_read.outputHint').replace('{{outputKey}}', `{{${step.outputKey}}}`)}
+        {fillTemplate(t('flow.skill.line_read.outputHint'), { outputKey: `{{${step.outputKey}}}` })}
       </Text>
     </Stack>
   );

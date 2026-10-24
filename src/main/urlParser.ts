@@ -10,13 +10,15 @@ import { isYoutubeUrl, fetchYoutubeVideo } from './youtubeTranscript';
 import { isMapsUrl } from './mapReviews';
 import { splitMapsQuestion } from './mapQuestion';
 import { resolveMapsPrompt } from './mapUrlPrompt';
+import { mapsLinksRecognized } from './linkRecognition';
 import type { MapPlaceRef } from '../shared/conversationDoc';
 import { withVideoSlots } from '../shared/youtubePrompt';
+import { fillTemplate } from '../shared/fillTemplate';
 
 export { fetchRawText, fetchRawResponse, ensureHttpScheme, runParserBlocks, runCssSelector, parseRssFeed, extractFeedLinks, withVideoSlots };
 export type { ParserBlock, ParserBlockType, RssFeedItem };
 
-const MAX_CONTENT_CHARS = 80_000;
+export const MAX_CONTENT_CHARS = 80_000;
 
 export interface UrlParseResult {
   title: string;
@@ -278,15 +280,18 @@ export interface ResolvedPrompt {
 }
 
 export async function resolveUrlPrompt(text: string, ctx: UrlPromptContext): Promise<ResolvedPrompt> {
+  // Maps switched off in Settings: its link is any other link, fetched as a page, and a question
+  // around it is just words. Every caller (chat, hotkey, agent, bots) comes through here.
+  const maps = mapsLinksRecognized();
   if (!isSingleUrl(text)) {
-    const asked = splitMapsQuestion(text);
+    const asked = maps ? splitMapsQuestion(text) : null;
     if (!asked) return { prompt: text };
     return await resolveMapsPrompt(asked.url, asked.question, ctx) ?? { prompt: text };
   }
 
   if (isYoutubeUrl(text)) return resolveYoutubePrompt(text, ctx);
 
-  if (isMapsUrl(text)) {
+  if (maps && isMapsUrl(text)) {
     const maps = await resolveMapsPrompt(text.trim(), '', ctx);
     if (maps) return maps;
   }
@@ -302,15 +307,13 @@ export async function resolveUrlPrompt(text: string, ctx: UrlPromptContext): Pro
     const truncatedLabel = ctx.langData['urlParser.truncated']
       ?? '(The page was too long and the rest was not sent. End the summary with a note that it is incomplete.)';
     const prompt = buildUrlAnalysisPrompt(parsed, promptTemplate, truncatedLabel);
-    const logDone = (ctx.langData['urlParser.log.done'] ?? '🔗 Fetched {{chars}} chars — wrapping analysis prompt...')
-      .replace('{{chars}}', String(parsed.cleanedText.length));
+    const logDone = fillTemplate(ctx.langData['urlParser.log.done'] ?? '🔗 Fetched {{chars}} chars — wrapping analysis prompt...', { chars: String(parsed.cleanedText.length) });
     ctx.onLog(logDone);
     // The record shows the link as typed; the summary template and page text go to the model only.
     return { prompt, displayPrompt: text.trim() };
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    const logError = (ctx.langData['urlParser.log.error'] ?? '❌ URL fetch failed: {{error}} (sending raw URL instead)')
-      .replace('{{error}}', errMsg);
+    const logError = fillTemplate(ctx.langData['urlParser.log.error'] ?? '❌ URL fetch failed: {{error}} (sending raw URL instead)', { error: errMsg });
     ctx.onLog(logError);
     return { prompt: text };
   }
@@ -323,8 +326,7 @@ async function resolveYoutubePrompt(text: string, ctx: UrlPromptContext): Promis
   const result = await fetchYoutubeVideo(text).catch(() => ({ title: '', transcript: '', ok: false }));
 
   if (result.ok) {
-    const logDone = (ctx.langData['youtube.log.done'] ?? '▶️ Transcript fetched ({{chars}} chars) — wrapping summary prompt...')
-      .replace('{{chars}}', String(result.transcript.length));
+    const logDone = fillTemplate(ctx.langData['youtube.log.done'] ?? '▶️ Transcript fetched ({{chars}} chars) — wrapping summary prompt...', { chars: String(result.transcript.length) });
     ctx.onLog(logDone);
     return {
       prompt: buildYoutubePrompt(template, {

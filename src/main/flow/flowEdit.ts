@@ -1,11 +1,12 @@
 import type { AgentFlowRecipient, FlowBuildIssue, FlowDefinition, SkillType } from '../../shared/types';
-import { ALWAYS_INCLUDED_SKILLS, MAX_SELECTED_SKILLS, SKILL_TYPES } from '../../shared/flowSkillSchema';
+import { ALWAYS_INCLUDED_SKILLS, MAX_SELECTED_SKILLS, SKILL_TYPES, buildFlowEditPrompt } from '../../shared/flowSkillSchema';
 import { flowRecipients, resolveFlowRecipients } from '../../shared/botRecipients';
 import type { RecipientDirectory } from '../../shared/botRecipients';
 import { withRecipientQuestion } from '../../shared/botRecipientQuestion';
 import type { RecipientWording } from '../../shared/botRecipientQuestion';
 import { lazyRecipients, recipientWording } from './botRecipientDirectory';
-import { assessFlowSupport, reviseFlowDefinition } from './flowGenerator';
+import { assessFlowSupport, flowPromptOverflow, reviseFlowDefinition } from './flowGenerator';
+import { revisionTooLong } from './flowBuildTooLong';
 import { lintGeneratedFlow, recipientBuildIssues } from './flowLint';
 import { SENSITIVE_STEP_TYPES, diffFlows, isEmptyDiff, mergeRevision, sameStep } from './flowRevision';
 import type { FlowDiff } from './flowRevision';
@@ -189,6 +190,11 @@ export async function runFlowEdit(request: FlowEditRequest): Promise<FlowEditOut
   if (existing.length > MAX_SELECTED_SKILLS) {
     return { status: 'failed', error: `This flow uses ${existing.length} kinds of step, more than can be revised in one go — the user has to change it in the flow editor.` };
   }
+  // The revision prompt carries the whole saved flow, which the assessment does not: measured with
+  // only the skills the flow already uses, it is the smallest the revision can be, so a flow too big
+  // to revise is told before the assessment is paid for.
+  const overChars = flowPromptOverflow(buildFlowEditPrompt(original, change, existing), request.providerUrl);
+  if (overChars !== null) return { status: 'failed', error: revisionTooLong(overChars, change) };
   const words = request.words ?? change;
   const recipients = lazyRecipients(request.recipients);
 

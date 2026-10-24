@@ -6,6 +6,7 @@ import { useI18nStore } from '../../store/i18nStore';
 import { useYtdlToolsState, useYtdlToolsStore, ytdlToolsUsable } from '../../store/ytdlToolsStore';
 import { formatMegabytes } from '../../../../shared/ytdl';
 import type { YtdlToolsState } from '../../../../shared/ytdl';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 interface Props {
   /** Shown as a secondary button (the dialog's "Later"); omitted where there is nothing to close. */
@@ -41,7 +42,7 @@ export const YtdlToolsSetup: React.FC<Props> = ({ onLater, onReady }) => {
   if (usable) {
     return (
       <Text fz="sm" c="var(--mantine-color-success)">
-        {t('ytdl.tools.ready').replace('{{version}}', state.ytdlpVersion ?? '')}
+        {fillTemplate(t('ytdl.tools.ready'), { version: state.ytdlpVersion ?? '' })}
       </Text>
     );
   }
@@ -73,7 +74,7 @@ export const YtdlToolsSetup: React.FC<Props> = ({ onLater, onReady }) => {
       <Stack gap={2}>
         <Text fz="xs" c="var(--text-muted)">{t('ytdl.tools.components')}</Text>
         <Text fz="xs" c="var(--text-muted)" style={{ overflowWrap: 'anywhere' }}>
-          {t('ytdl.tools.location').replace('{{path}}', state.location)}
+          {fillTemplate(t('ytdl.tools.location'), { path: state.location })}
         </Text>
       </Stack>
       {state.status === 'broken' && (
@@ -90,7 +91,7 @@ export const YtdlToolsSetup: React.FC<Props> = ({ onLater, onReady }) => {
       {installing && progress && (
         <Stack gap={4}>
           <Text fz="xs" c="var(--text-muted)">
-            {t(`ytdl.tools.phase.${progress.phase}`).replace('{{component}}', progress.component)}
+            {fillTemplate(t(`ytdl.tools.phase.${progress.phase}`), { component: progress.component })}
           </Text>
           <Progress size="xs" value={progressPercent(state)} animated aria-label={t('ytdl.tools.progressLabel')} />
         </Stack>
@@ -107,7 +108,7 @@ export const YtdlToolsSetup: React.FC<Props> = ({ onLater, onReady }) => {
           loading={installing || starting}
           onClick={() => void start()}
         >
-          {t(state.status === 'broken' ? 'ytdl.tools.redownload' : 'ytdl.tools.download').replace('{{size}}', size)}
+          {fillTemplate(t(state.status === 'broken' ? 'ytdl.tools.redownload' : 'ytdl.tools.download'), { size })}
         </AppButton>
       </Group>
     </Stack>

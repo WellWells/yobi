@@ -7,6 +7,7 @@ import {
   type TelegramCommandOptions,
   type TelegramContext,
 } from './commandHandlers';
+import { handlePairingRequest } from './pairingRequest';
 
 type TelegramConversation = Conversation;
 
@@ -56,7 +57,8 @@ export async function handleStartCommand(
   }
   const inlineCode = extractCommandPrompt(ctx.message?.text || '');
   if (!inlineCode) {
-    await ctx.reply(t(options.getStrings(), 'telegram.cmd.pairingTip'));
+    // A bare /start is someone asking to use the bot: the managers are asked (or the tip, with none).
+    await handlePairingRequest(ctx as TelegramContext, options);
     return;
   }
   const ok = tryConsumePairingCode(ctx, inlineCode, options);

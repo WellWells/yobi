@@ -12,23 +12,35 @@ import {
   builtinCommandGrant,
   connectorGrant,
   grantAllows,
-  isExplicitGrant,
+  isDefaultableGrant,
   isGrantAvailableOn,
   normalizeGrantList,
+  ownerImpliesGrant,
   sortBotGrants,
 } from '../../../../../shared/botPermissions';
 import type { BotGrant } from '../../../../../shared/botPermissions';
-import { BUILTIN_RAIL_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID, PUBLIC_DATA_CONNECTOR_IDS } from '../../../../../shared/builtinConnectors';
+import {
+  BUILTIN_CONNECTOR_TITLES,
+  BUILTIN_MAIL_SERVER_ID,
+  BUILTIN_PTT_SERVER_ID,
+  BUILTIN_RAIL_SERVER_ID,
+  BUILTIN_THUNDERBIRD_SERVER_ID,
+  BUILTIN_X_SERVER_ID,
+  PUBLIC_DATA_CONNECTOR_IDS,
+} from '../../../../../shared/builtinConnectors';
 import { SITE_CONNECTOR_ROWS, siteConnectorServerId } from '../../../../../shared/siteConnectors';
-import { BUILTIN_LINE_SERVER_ID } from '../../../../../shared/types';
+import { BOT_PLATFORM_NAMES, BUILTIN_LINE_SERVER_ID, SOCKET_BOT_PLATFORMS } from '../../../../../shared/types';
 import type {
   BotBuiltinCommandKey,
   BotPlatform,
   LineSettingsSnapshot,
+  SocketBotPlatform,
+  SocketBotSettingsSnapshot,
   TelegramSettingsSnapshot,
 } from '../../../../../shared/types';
 import type { UserMemoryBotSelf } from '../../../../../shared/userMemory';
 import { lineAccountLabel, telegramAccountLabel } from '../../../utils/botAccountLabel';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 type Translate = (key: string) => string;
 
@@ -38,16 +50,9 @@ export interface BotConnectorOption {
   name: string;
 }
 
-/** Built-in connectors carry Yobi's own translated titles; their stored names are English ids. */
-const BUILTIN_CONNECTOR_TITLES: Record<string, string> = {
-  [BUILTIN_LINE_SERVER_ID]: 'settings.mcp.line.title',
-  [BUILTIN_THUNDERBIRD_SERVER_ID]: 'settings.mcp.thunderbird.title',
-  [BUILTIN_X_SERVER_ID]: 'settings.mcp.x.title',
-  [BUILTIN_RAIL_SERVER_ID]: 'settings.mcp.rail.title',
-  ...Object.fromEntries(SITE_CONNECTOR_ROWS.map((row) => [siteConnectorServerId(row.site), row.keys.title])),
-};
 const BUILTIN_ORDER: readonly string[] = [
-  BUILTIN_LINE_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID, BUILTIN_RAIL_SERVER_ID,
+  BUILTIN_LINE_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID, BUILTIN_RAIL_SERVER_ID, BUILTIN_PTT_SERVER_ID,
+  BUILTIN_MAIL_SERVER_ID,
   ...SITE_CONNECTOR_ROWS.map((row) => siteConnectorServerId(row.site)),
 ];
 
@@ -105,6 +110,7 @@ export function grantLabel(grant: BotGrant, connectors: readonly BotConnectorOpt
     case 'agent': return t('settings.bot.perm.grant.agent');
     case 'web': return t('settings.bot.perm.grant.web');
     case 'download': return t('settings.bot.perm.grant.download');
+    case 'preview': return t('settings.bot.perm.grant.preview');
     case 'local': return t('settings.bot.perm.grant.local');
     case 'shell': return t('settings.bot.perm.grant.shell');
     case 'admin': return t('settings.bot.perm.grant.admin');
@@ -123,6 +129,7 @@ export function grantDescription(grant: BotGrant, t: Translate): string {
     case 'agent': return t('settings.bot.perm.grant.agent.desc');
     case 'web': return t('settings.bot.perm.grant.web.desc');
     case 'download': return t('settings.bot.perm.grant.download.desc');
+    case 'preview': return t('settings.bot.perm.grant.preview.desc');
     case 'local': return t('settings.bot.perm.grant.local.desc');
     case 'shell': return t('settings.bot.perm.grant.shell.desc');
     case 'admin': return t('settings.bot.perm.grant.admin.desc');
@@ -170,19 +177,20 @@ function sharedLimits(items: readonly GrantItem[]): GrantLimit[] {
 }
 
 /**
- * The removable chips of one account. The owner already has everything except shell and admin, so
- * only those show as chips for them; the row says "everything" in words instead.
+ * The removable chips of one account. The owner already has everything but shell, admin and the
+ * video preview (`ownerImpliesGrant`), so only those show as chips for them; the row says
+ * "everything" in words instead.
  */
 export function grantChips(grants: readonly BotGrant[], input: GrantViewInput): GrantItem[] {
   return normalizeGrantList(grants, input.platform)
-    .filter((grant) => !input.isOwner || isExplicitGrant(grant))
+    .filter((grant) => !input.isOwner || !ownerImpliesGrant(grant))
     .map((grant) => item(grant, input));
 }
 
 /**
  * What the "+ Permission" menu offers: only grants the account does not have yet, grouped.
  * Single connectors are hidden once all connectors are granted (they would change nothing),
- * admin is Telegram only, and the owner is only offered shell and admin.
+ * admin is Telegram only, and the owner is only offered what "me" does not imply.
  */
 export function grantMenuGroups(grants: readonly BotGrant[], input: GrantViewInput): GrantMenuGroup[] {
   const has = new Set<BotGrant>(grants);
@@ -194,7 +202,7 @@ export function grantMenuGroups(grants: readonly BotGrant[], input: GrantViewInp
   };
   if (!input.isOwner) {
     push('commands', 'settings.bot.perm.group.commands', ['web']);
-    push('links', 'settings.bot.perm.group.links', ['download']);
+    push('links', 'settings.bot.perm.group.links', ['download', 'preview']);
     // Agent is not a command: it widens what an account's ordinary messages may use.
     push('agent', 'settings.bot.perm.group.agent', ['agent', 'local', 'shell']);
     const singles = has.has(ALL_CONNECTORS_GRANT)
@@ -202,6 +210,7 @@ export function grantMenuGroups(grants: readonly BotGrant[], input: GrantViewInp
       : input.connectors.map((option) => connectorGrant(option.id));
     push('connectors', 'settings.bot.perm.group.connectors', [ALL_CONNECTORS_GRANT, ...singles]);
   } else {
+    push('links', 'settings.bot.perm.group.links', ['preview']);
     push('agent', 'settings.bot.perm.group.agent', ['shell']);
   }
   push('manage', 'settings.bot.perm.group.manage', ['admin']);
@@ -209,23 +218,40 @@ export function grantMenuGroups(grants: readonly BotGrant[], input: GrantViewInp
 }
 
 /**
+ * The "+ Permission" menu of a platform's defaults for new pairings: an account's menu without
+ * the grants that are never a default (shell, admin).
+ */
+export function defaultGrantMenuGroups(grants: readonly BotGrant[], input: GrantViewInput): GrantMenuGroup[] {
+  return grantMenuGroups(grants, { ...input, isOwner: false })
+    .map((group) => {
+      const items = group.items.filter((entry) => isDefaultableGrant(entry.grant));
+      return { ...group, limits: sharedLimits(items), items };
+    })
+    .filter((group) => group.items.length > 0);
+}
+
+/** A grant that does nothing without another: added with it, taken away with it. */
+const GRANT_NEEDS: Partial<Record<BotGrant, BotGrant>> = { shell: 'agent', preview: 'download' };
+
+/**
  * Adds one grant. All connectors replaces the single ones it already covers; shell brings agent
- * with it, because it only exists on the agent kit — a shell chip that did nothing would lie.
+ * with it, because it only exists on the agent kit — a shell chip that did nothing would lie —
+ * and the preview brings the downloader it comes before.
  */
 export function addGrant(grants: readonly BotGrant[], grant: BotGrant): BotGrant[] {
   const kept = grant === ALL_CONNECTORS_GRANT
     ? grants.filter((existing) => connectorIdOf(existing) === null)
     : grants;
-  const added: BotGrant[] = grant === 'shell' ? ['agent', 'shell'] : [grant];
+  const added: BotGrant[] = GRANT_NEEDS[grant] ? [GRANT_NEEDS[grant], grant] : [grant];
   return sortBotGrants([...new Set<BotGrant>([...kept, ...added])]);
 }
 
-/** Removes one grant; taking agent away takes shell with it, for the same reason. */
+/** Removes one grant; taking agent (or the downloader) away takes shell (or the preview) with it, for the same reason. */
 export function removeGrant(grants: readonly BotGrant[], grant: BotGrant): BotGrant[] {
-  return grants.filter((existing) => existing !== grant && !(grant === 'agent' && existing === 'shell'));
+  return grants.filter((existing) => existing !== grant && GRANT_NEEDS[existing] !== grant);
 }
 
-function sameGrants(a: readonly BotGrant[], b: readonly BotGrant[]): boolean {
+export function sameGrants(a: readonly BotGrant[], b: readonly BotGrant[]): boolean {
   if (a.length !== b.length) return false;
   const sortedA = sortBotGrants(a);
   const sortedB = sortBotGrants(b);
@@ -264,12 +290,14 @@ export interface BotRoster {
 export interface BotRosterInput {
   telegram: TelegramSettingsSnapshot | null | undefined;
   line: LineSettingsSnapshot | null | undefined;
+  /** Discord's and Slack's snapshots; absent = not loaded (or a caller that does not show them). */
+  socket?: Partial<Record<SocketBotPlatform, SocketBotSettingsSnapshot | null | undefined>>;
   botSelf: UserMemoryBotSelf | null | undefined;
   t: Translate;
 }
 
-/** Every paired account on both platforms with its saved grants and its owner mark. */
-export function buildBotRoster({ telegram, line, botSelf, t }: BotRosterInput): BotRoster {
+/** Every paired account on every platform with its saved grants and its owner mark. */
+export function buildBotRoster({ telegram, line, socket, botSelf, t }: BotRosterInput): BotRoster {
   const accounts: BotRosterAccount[] = [];
   for (const user of telegram?.pairing.pairedUsers ?? []) {
     const userId = String(user.userId);
@@ -277,7 +305,7 @@ export function buildBotRoster({ telegram, line, botSelf, t }: BotRosterInput): 
       platform: 'telegram',
       userId,
       label: telegramAccountLabel(user, t),
-      isOwner: botSelf?.telegram.includes(userId) ?? false,
+      isOwner: botSelf?.telegram?.includes(userId) ?? false,
       grants: normalizeGrantList(telegram?.permissions?.[userId], 'telegram'),
     });
   }
@@ -286,11 +314,31 @@ export function buildBotRoster({ telegram, line, botSelf, t }: BotRosterInput): 
       platform: 'line',
       userId: user.userId,
       label: lineAccountLabel(user, t),
-      isOwner: botSelf?.line.includes(user.userId) ?? false,
+      isOwner: botSelf?.line?.includes(user.userId) ?? false,
       grants: normalizeGrantList(line?.permissions?.[user.userId], 'line'),
     });
   }
-  return { accounts, enabled: { telegram: telegram?.enabled ?? false, line: line?.enabled ?? false } };
+  const enabled: Record<BotPlatform, boolean> = {
+    telegram: telegram?.enabled ?? false,
+    line: line?.enabled ?? false,
+    discord: false,
+    slack: false,
+  };
+  for (const platform of SOCKET_BOT_PLATFORMS) {
+    const snapshot = socket?.[platform];
+    if (!snapshot) continue;
+    enabled[platform] = snapshot.enabled;
+    for (const user of snapshot.pairing.pairedUsers) {
+      accounts.push({
+        platform,
+        userId: user.userId,
+        label: lineAccountLabel(user, t),
+        isOwner: botSelf?.[platform]?.includes(user.userId) ?? false,
+        grants: normalizeGrantList(snapshot.permissions?.[user.userId], platform),
+      });
+    }
+  }
+  return { accounts, enabled };
 }
 
 export interface WhoCanUse {
@@ -301,15 +349,15 @@ export interface WhoCanUse {
 }
 
 /**
- * Who on a switched-on bot can use one capability in a private chat: the owner (who has every
- * grant but admin) and the accounts granted it. `connector:<id>` counts `connector:*` holders.
+ * Who on a switched-on bot can use one capability in a private chat: the owner (for what "me"
+ * implies) and the accounts granted it. `connector:<id>` counts `connector:*` holders.
  */
 export function whoCanUse(roster: BotRoster, grant: BotGrant): WhoCanUse {
   let owner = false;
   const labels: string[] = [];
   for (const account of roster.accounts) {
     if (!roster.enabled[account.platform] || !isGrantAvailableOn(grant, account.platform)) continue;
-    if (account.isOwner && !isExplicitGrant(grant)) {
+    if (account.isOwner && ownerImpliesGrant(grant)) {
       owner = true;
       continue;
     }
@@ -354,21 +402,19 @@ export function whoCanUseText(who: WhoCanUse, kind: WhoCaptionKind, t: Translate
   const shown = names.slice(0, WHO_MAX_NAMES).join(t('settings.bot.perm.who.separator'));
   const rest = names.length - WHO_MAX_NAMES;
   const list = rest > 0
-    ? t('settings.bot.perm.who.more').replace('{{names}}', shown).replace('{{count}}', String(rest))
+    ? fillTemplate(t('settings.bot.perm.who.more'), { names: shown, count: String(rest) })
     : shown;
-  return t(keys.list).replace('{{names}}', list);
+  return fillTemplate(t(keys.list), { names: list });
 }
 
 /** The owner accounts, for the memory page's read-only line: "Ann (Telegram)". */
 export function ownerAccountLabels(roster: BotRoster, t: Translate): string[] {
   return roster.accounts
     .filter((account) => account.isOwner)
-    .map((account) => t('settings.bot.perm.ownerAccount')
-      .replace('{{name}}', account.label)
-      .replace('{{platform}}', account.platform === 'telegram' ? 'Telegram' : 'LINE'));
+    .map((account) => fillTemplate(t('settings.bot.perm.ownerAccount'), { name: account.label, platform: BOT_PLATFORM_NAMES[account.platform] }));
 }
 
-/** Whether either bot is switched on; connector captions only appear then. */
+/** Whether any bot is switched on; connector captions only appear then. */
 export function anyBotEnabled(roster: BotRoster): boolean {
-  return roster.enabled.telegram || roster.enabled.line;
+  return Object.values(roster.enabled).some(Boolean);
 }

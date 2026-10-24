@@ -1,4 +1,5 @@
 import { nativeImage } from 'electron';
+import { parseImageSize } from '../imageSize';
 import { assertPublicHttpUrl } from '../net/ssrfGuard';
 import { userAgentForUrl } from '../userAgent';
 
@@ -17,24 +18,6 @@ function refererFor(url: string): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-function parseImageSize(raw: Buffer): { width: number; height: number } | null {
-  if (raw.length >= 24 && raw[0] === 0x89 && raw.toString('ascii', 1, 4) === 'PNG') {
-    return { width: raw.readUInt32BE(16), height: raw.readUInt32BE(20) };
-  }
-  if (raw.length >= 4 && raw[0] === 0xff && raw[1] === 0xd8) {
-    let offset = 2;
-    while (offset + 9 < raw.length) {
-      if (raw[offset] !== 0xff) { offset++; continue; }
-      const marker = raw[offset + 1];
-      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
-        return { height: raw.readUInt16BE(offset + 5), width: raw.readUInt16BE(offset + 7) };
-      }
-      offset += 2 + raw.readUInt16BE(offset + 2);
-    }
-  }
-  return null;
 }
 
 async function readCappedBody(res: Response, cap: number): Promise<Buffer | null> {

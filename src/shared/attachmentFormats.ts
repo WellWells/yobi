@@ -79,6 +79,21 @@ export function isUploadable(mimeType: string | undefined, fileName: string | un
   return UPLOADABLE_EXTENSIONS.has(extensionOf(fileName));
 }
 
+/** The picture formats every image-taking BYOK preset reads (Gemini's API has no GIF). */
+const BYOK_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+const BYOK_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp'] as const;
+
+export function isByokImageFile(mimeType: string | undefined, fileName: string | undefined): boolean {
+  // The bytes decide in main (`byokImages.ts`); this only keeps other kinds of file out.
+  if (BYOK_IMAGE_MIMES.has(normalizeMime(mimeType))) return true;
+  return (BYOK_IMAGE_EXTENSIONS as readonly string[]).includes(extensionOf(fileName));
+}
+
+export const BYOK_IMAGE_ACCEPT = [
+  ...BYOK_IMAGE_MIMES,
+  ...BYOK_IMAGE_EXTENSIONS.map((ext) => `.${ext}`),
+].join(',');
+
 export const ATTACHMENT_ACCEPT = [
   'image/*',
   'text/plain',

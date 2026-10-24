@@ -7,6 +7,7 @@ import { AppButton } from '../../components/AppButton';
 import { MessageMarkdown } from '../../components/chat/MessageMarkdown';
 import { RenderedDiff } from '../../components/chat/RenderedDiff';
 import type { AssistantEditCard, AssistantMessage } from '../../store/docAssistantStore';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 interface AssistantReplyProps {
   message: AssistantMessage;
@@ -69,7 +70,7 @@ const EditRow: React.FC<{
   const open = toggled ?? pending;
   const [before, after] = dedentPair(edit.before, edit.after);
   const settled = edit.state !== 'pending' && edit.state !== 'applied';
-  const where = edit.heading ? t('notion.sync.under').replace('{{heading}}', edit.heading) : t('notion.sync.top');
+  const where = edit.heading ? fillTemplate(t('notion.sync.under'), { heading: edit.heading }) : t('notion.sync.top');
   return (
     <Box
       className="yobi-assistant-edit"
@@ -196,8 +197,7 @@ export const AssistantReply: React.FC<AssistantReplyProps> = ({
         <Stack gap={6}>
           <Group justify="space-between" gap={6} wrap="nowrap">
             <Text fz="var(--font-size-xs)" fw={600} c="var(--text-muted)">
-              {t(pending.length === edits.length ? 'notion.assistant.edits.count' : 'notion.assistant.edits.made')
-                .replace('{{count}}', String(edits.length))}
+              {fillTemplate(t(pending.length === edits.length ? 'notion.assistant.edits.count' : 'notion.assistant.edits.made'), { count: String(edits.length) })}
             </Text>
             <Group gap={4} wrap="nowrap">
               {applied.length > 1 && (
@@ -211,7 +211,7 @@ export const AssistantReply: React.FC<AssistantReplyProps> = ({
                     {t('notion.assistant.edits.skipAll')}
                   </AppButton>
                   <BlockedButton size="compact-sm" leftSection={<Check size={13} />} blocked={applyBlocked} onPress={() => onApply(pending)}>
-                    {t('notion.assistant.edits.applyAll').replace('{{count}}', String(pending.length))}
+                    {fillTemplate(t('notion.assistant.edits.applyAll'), { count: String(pending.length) })}
                   </BlockedButton>
                 </>
               )}
@@ -235,7 +235,7 @@ export const AssistantReply: React.FC<AssistantReplyProps> = ({
       {unplaced.length > 0 && (
         <Stack gap={6}>
           <Text fz="var(--font-size-xs)" fw={600} c="var(--mantine-color-warning)">
-            {t('notion.assistant.unplaced.title').replace('{{count}}', String(unplaced.length))}
+            {fillTemplate(t('notion.assistant.unplaced.title'), { count: String(unplaced.length) })}
           </Text>
           <Text fz="var(--font-size-xs)" c="var(--text-muted)">{t('notion.assistant.unplaced.hint')}</Text>
           {unplaced.map((edit, index) => (

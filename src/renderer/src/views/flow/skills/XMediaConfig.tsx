@@ -2,6 +2,9 @@ import React from 'react';
 import { Stack, Text } from '@mantine/core';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { SelectDropdown } from '../../../components/SelectDropdown';
+import { SettingRow } from '../../../components/SettingRow';
+import { ToggleSwitch } from '../../../components/ToggleSwitch';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 import { useGeminiChoices } from './useGeminiChoices';
 import type { SkillConfigProps } from './types';
 
@@ -54,8 +57,18 @@ export const XMediaConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) 
         onChange={(value) => onChange({ ...step.config, reader: value })}
         size="sm"
       />
+      <SettingRow
+        label={t('flow.skill.x_media.emitFailFlag')}
+        hint={fillTemplate(t('flow.skill.x_media.emitFailFlag.hint'), { flag: `{{${step.outputKey}.isFailed}}` })}
+        control={
+          <ToggleSwitch
+            checked={step.config.emitFailFlag === 'true'}
+            onChange={(e) => onChange({ ...step.config, emitFailFlag: e.currentTarget.checked ? 'true' : 'false' })}
+          />
+        }
+      />
       <Text fz="xs" c="dimmed">
-        {t('flow.skill.x_media.outputHint').replaceAll('{{outputKey}}', `{{${step.outputKey}}}`)}
+        {fillTemplate(t('flow.skill.x_media.outputHint'), { outputKey: `{{${step.outputKey}}}` })}
       </Text>
     </Stack>
   );

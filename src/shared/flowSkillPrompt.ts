@@ -9,6 +9,21 @@ export const ALWAYS_INCLUDED_SKILLS: readonly SkillType[] = [
 
 export const MAX_SELECTED_SKILLS = 8;
 
+/**
+ * The most of a rejected reply a generation or revision repair prompt quotes back. Less is quoted
+ * when the provider cannot hold this much on top of the full prompt (`fitRepairExcerpt`).
+ */
+export const REPAIR_EXCERPT_MAX_CHARS = 2_000;
+
+/** The assessment's own ceiling: its reply is a short object, and a long one is mostly chatter. */
+const ASSESS_REPAIR_EXCERPT_MAX_CHARS = 1_000;
+
+/** The head of a rejected reply, never ending on half a surrogate pair. */
+export function repairExcerpt(previousResponse: string, maxChars: number): string {
+  const cut = previousResponse.trim().slice(0, Math.max(0, maxChars));
+  return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
+}
+
 function renderSkillBrief(spec: SkillSpec): string {
   return `- "${spec.type}": ${spec.brief}`;
 }
@@ -57,9 +72,10 @@ function renderNotes(skills: readonly SkillType[]): string[] {
 const TRIGGER_BRIEFS: readonly string[] = [
   '- "cron": run on a SCHEDULE — any repeating time, from every few seconds to specific days and times (e.g. every minute, every weekday at 08:00). Runs in the background while the app is open; no external scheduler needed.',
   '- "hotkey": run when the user presses a global keyboard shortcut, from anywhere on the desktop.',
-  '- "bot": run when the user sends a /command to the Telegram or LINE bot; their message text becomes an input variable.',
+  '- "bot": run when the user sends a /command to the chat bot (Telegram, LINE, Discord, Slack); their message text becomes an input variable.',
   '- "chat": run when the user types a /command in the app\'s own chat box; the text after it becomes an input variable.',
   '- "system": run when the computer does something: "systemEvent" is "startup" (the app starts, as when the user signs in to the computer), "resume" (wakes from sleep), "unlock" or "lock" (the screen).',
+  '- "file": run once for each NEW file that lands in a folder on this computer (a downloaded invoice, a saved scan), as soon as it has finished writing; the run gets that file\'s path. No polling needed.',
   '- "manual": run only when the user presses Run. The default when the request implies no timing.',
 ];
 
@@ -111,7 +127,7 @@ export function buildFlowAssessPrompt(goal: string): string {
     '- Shape:',
     '{',
     '  "skills": [ ...skill names, spelled exactly as below... ],',
-    '  "trigger": "cron" | "hotkey" | "bot" | "chat" | "system" | "manual",',
+    '  "trigger": "cron" | "hotkey" | "bot" | "chat" | "system" | "file" | "manual",',
     '  "outline": [ ...3-8 short steps describing what the flow will do, in order... ],',
     '  "gaps": [ ...parts of the request no trigger or skill can do; [] when there are none... ],',
     '  "questions": [ ...what you would have to invent a value for; [] when nothing is missing... ],',
@@ -219,7 +235,7 @@ export function flowCompilerRules(
     '{',
     '  "name": string,                // short flow name',
     '  "description": string,         // one sentence',
-    '  "trigger": { "type": "manual" | "hotkey" | "cron" | "bot" | "chat" | "system", ... },',
+    '  "trigger": { "type": "manual" | "hotkey" | "cron" | "bot" | "chat" | "system" | "file", ... },',
     '  "extraTriggers": [ { ...same shape as trigger... } ],  // OPTIONAL — omit unless the flow needs several triggers',
     edit
       ? '  "steps": [ { "id": string (existing steps only), "type": <skill>, "label": string, "config": { ... }, "outputKey": string }, ... ]'
@@ -232,6 +248,7 @@ export function flowCompilerRules(
     '- cron:   {"type":"cron","cronExpression":"0 8 * * 1-5"}  (standard 5-field cron: minute hour day-of-month month day-of-week; a 6th LEADING seconds field is allowed for sub-minute schedules; day-of-month accepts "L" for the month end — uneven steps like "*/7" still run but the visual schedule editor cannot display them)',
     '- bot:    {"type":"bot","botCommand":"my_cmd","botCommandDescription":"...","botInputVariable":"input"}  (a Telegram /command)',
     '- chat:   {"type":"chat","chatCommand":"my_cmd","chatCommandDescription":"...","chatInputVariable":"input"}  (a /command run from the in-app chat)',
+    '- file:   {"type":"file","watchFolder":"~/Downloads","watchPattern":"*.pdf"}  (runs once per NEW file there)',
     'Infer the trigger from the request (e.g. "every morning at 8" -> cron "0 8 * * *").',
     ...(triggerHint
       ? [`- The assessment already chose "${triggerHint}" for this request; use it unless the request plainly contradicts it.`]
@@ -248,12 +265,11 @@ export function flowCompilerRules(
     '',
     'RULES:',
     '- "outputKey" is a unique snake_case id (e.g. "rss_1", "llm_1"); reference a prior step output with {{outputKey}}.',
-    '- A {{outputKey}} reference must point to a step that appears EARLIER in the steps array.',
     '- Each step\'s OUTPUT (above) states exactly what {{outputKey}} resolves to — match a downstream reference to that shape (a JSON array → loop it; a plain string → use it directly).',
     '- Built-in variables: {{clipboard}} (clipboard text snapshotted at flow start), {{timestamp}} (ISO-8601 UTC time at flow start), {{flow.name}}, and — hotkey triggers ONLY — {{selection}}. Loop body: {{item}}, {{item.<field>}} (or the custom loopVar name).',
     '- Sub-variables: some steps also expose {{outputKey.field}} extras (see each skill\'s OUTPUT, e.g. {{yt_1.title}}, {{weather_1.temp}}, {{stock_1.price}}); only reference the sub-variables named in that skill\'s OUTPUT. Exception: every field of an object LOOP item is available as {{<loopVar>.<field>}}.',
     '- Any other {{variable}} is INVALID: an unknown or misspelled reference silently resolves to "" at runtime, and the app rejects flows that contain one — use only variables defined above or produced by an EARLIER step.',
-    '- Magic {{file}}: capture, file_write, file_download, and an llm step with exportFormat set the most-recently produced file path as {{file}}; to send or delete that file, reference {{file}} (NOT the step\'s outputKey).',
+    '- Magic {{file}}: a file trigger seeds it (and {{file.name}}) with the new file; capture, file_write, file_download, and an llm step with exportFormat set it to the file they produce; to send or delete that file, reference {{file}} (NOT the step\'s outputKey).',
     '- Failure branching: a step with emitFailFlag="true" (llm, browser, browser_js, bot, research) sets {{outputKey.isFailed}}="0" on success or "1" on failure and continues instead of aborting — gate later steps with an "if" on {{outputKey.isFailed}}.',
     '- Skills marked [no outputKey] must use "outputKey": "".',
     '- Every "loop" needs a matching "end_loop" later; every "if" needs a matching "end_if" (blocks may nest).',
@@ -295,13 +311,14 @@ export function buildFlowAssessRepairPrompt(
   goal: string,
   previousResponse: string,
   error: string,
+  excerptMax: number = REPAIR_EXCERPT_MAX_CHARS,
 ): string {
   return [
     'Your previous attempt at this assessment was REJECTED.',
     `Validation error: ${error}`,
     '',
     'Your previous output (for reference — do not repeat its mistake):',
-    previousResponse.trim().slice(0, 1_000),
+    repairExcerpt(previousResponse, Math.min(excerptMax, ASSESS_REPAIR_EXCERPT_MAX_CHARS)),
     '',
     'Answer again, obeying ALL of these rules. Output the JSON object and nothing else — no',
     'greeting, no explanation, no markdown code fence:',
@@ -316,13 +333,14 @@ export function buildFlowRepairPrompt(
   previousResponse: string,
   error: string,
   triggerHint?: string,
+  excerptMax: number = REPAIR_EXCERPT_MAX_CHARS,
 ): string {
   return [
     'Your previous attempt to produce a Yobi flow JSON was REJECTED.',
     `Validation error: ${error}`,
     '',
     'Your previous output (for reference — do not repeat its mistake):',
-    previousResponse.trim().slice(0, 2_000),
+    repairExcerpt(previousResponse, excerptMax),
     '',
     'Produce a corrected flow that fixes the error above and obeys ALL of these rules:',
     '',

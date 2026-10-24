@@ -5,6 +5,7 @@ import { AppButton } from '../../../components/AppButton';
 import { AppTextInput } from '../../../components/AppTextInput';
 import type { useByokGroups } from '../hooks/useByokGroups';
 import { BYOK_PROVIDER_TYPE_LABELS } from '../../../../../shared/types';
+import { byokModelLabel } from '../../../../../shared/byokModelLabel';
 
 interface Props {
   byokGroups: ReturnType<typeof useByokGroups>;
@@ -56,7 +57,7 @@ export const ByokGroupForm: React.FC<Props> = ({ byokGroups, t, mt }) => {
                   {BYOK_PROVIDER_TYPE_LABELS[key.providerType]}
                 </Badge>
                 <Text fz="var(--font-size-sm)" c="dimmed" ff="var(--font-mono)" truncate>
-                  {key.model}
+                  {byokModelLabel(key.model)}
                 </Text>
               </Group>
             }

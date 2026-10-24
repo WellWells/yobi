@@ -1,6 +1,7 @@
 import type { ConversationDoc } from '../../../../../shared/conversationDoc';
 import { providerOfThreadUrl } from '../../../../../shared/providerThread';
 import { PROVIDER_LABELS } from '../../../../../shared/types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 /**
  * The ⋮ sits at the window's right edge, so its submenus open to the left; opening right, a nested
@@ -105,5 +106,5 @@ export function menuStatsText(
       return String(value);
     }
   };
-  return template.replace('{{turns}}', format(turns)).replace('{{words}}', format(words));
+  return fillTemplate(template, { turns: format(turns), words: format(words) });
 }

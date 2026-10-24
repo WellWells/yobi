@@ -3,6 +3,7 @@ import { Stack, Text } from '@mantine/core';
 import { AppNumberInput } from '../../../components/AppNumberInput';
 import { XSignInNotice } from './XSignInNotice';
 import type { SkillConfigProps } from './types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 export const XTrendsConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
   const maxItems = step.config.maxItems ?? '20';
@@ -37,7 +38,7 @@ export const XTrendsConfig: React.FC<SkillConfigProps> = ({ step, onChange, t })
       <Text fz="xs" c="dimmed">{t('flow.skill.x_trends.hint')}</Text>
 
       <Text fz="xs" c="dimmed">
-        {t('flow.skill.x_trends.outputHint').replaceAll('{{outputKey}}', `{{${step.outputKey}}}`)}
+        {fillTemplate(t('flow.skill.x_trends.outputHint'), { outputKey: `{{${step.outputKey}}}` })}
       </Text>
     </Stack>
   );

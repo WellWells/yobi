@@ -15,6 +15,7 @@ import {
   pickMenuActive, setMenuActive, watchSubmenuKeyboardFocus,
 } from './menuSearchNav';
 import { useProviderLabel } from './useTurnTranslation';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 interface LanguageMenuItemsProps {
   defaultTag: TranslateLanguage;
@@ -140,7 +141,7 @@ export const LanguageMenuItems: React.FC<LanguageMenuItemsProps> = ({
         <Menu.Sub.Target>
           <Menu.Sub.Item leftSection={<Bot size={14} />}>
             <Text inherit truncate maw={220}>
-              {t('chat.translate.menu.model').replace('{{model}}', modelUrl ? providerLabel(modelUrl) : '…')}
+              {fillTemplate(t('chat.translate.menu.model'), { model: modelUrl ? providerLabel(modelUrl) : '…' })}
             </Text>
           </Menu.Sub.Item>
         </Menu.Sub.Target>

@@ -34,6 +34,7 @@ import { composerNoticeText, pickComposerNotice } from '../../utils/composerNoti
 import { looksLikeFlowRequest } from '../../../../shared/flowIntent';
 import { looksLikeWebSearchRequest } from '../../../../shared/webIntent';
 import { looksLikeToolRequest } from '../../../../shared/toolIntent';
+import { IMAGE_CHAT_FLOW_ID, imageRouteFor, pictureIsWholeJob } from '../../../../shared/imageRequest';
 import { useAppStore } from '../../store/appStore';
 import { useAgentRunStore } from '../../store/useAgentRunStore';
 import { endTarget, homeTarget } from '../../utils/composerKeys';
@@ -51,10 +52,12 @@ import {
 import { mcpCommandFlowId, parseMcpCommandFlowId } from '../../../../shared/mcpCommand';
 import { matchConnectorKeywords, type KeywordCandidate } from '../../../../shared/connectorKeywords';
 import { desktopLinkFlowFor } from '../../../../shared/builtinFlows';
+import { currentLinkSiteFilter } from '../../store/linkRecognitionStore';
 import { useResolvedCombo } from '../../store/shortcutStore';
 import { deleteAllText, wantsComposerClear } from './composerClear';
 import { replaceAllText, useExternalEditor, wantsExternalEditor } from './composerExternalEditor';
 import { showAppNotice } from '../../hooks/useUiNotifications';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 interface PromptInputAreaProps {
   t: (key: string) => string;
@@ -171,8 +174,8 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
   const [menuDismissed, setMenuDismissed] = useState(false);
   const cycleModelKeys = comboLabel(useResolvedCombo('chat.cycleModel'), isMac);
   const modelTooltip = cycleModelKeys
-    ? t('chat.model.tooltip').replace('{{shortcut}}', cycleModelKeys)
-    : t('chat.model.tooltip').replace(' · {{shortcut}}', '').replace('{{shortcut}}', '');
+    ? fillTemplate(t('chat.model.tooltip'), { shortcut: cycleModelKeys })
+    : fillTemplate(t('chat.model.tooltip').replace(' · {{shortcut}}', ''), { shortcut: '' });
   const promptInputRef = useRef<HTMLTextAreaElement>(null);
 
   // Ctrl+G: every save in the editor lands here as it happens; closing the editor brings the
@@ -478,7 +481,10 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     // An agent waiting on this conversation takes the link as its answer, as a bot chat does.
     const answering = useAgentRunStore.getState().pendingQuestion?.conversationPath
       === (useAppStore.getState().selectedFile?.path ?? '');
-    const linkFlow = quotes.length === 0 && attachments.length === 0 && !answering ? desktopLinkFlowFor(text) : null;
+    // A site switched off in Settings › Recognize links is an ordinary message.
+    const linkFlow = quotes.length === 0 && attachments.length === 0 && !answering
+      ? desktopLinkFlowFor(text, currentLinkSiteFilter())
+      : null;
     if (linkFlow) {
       if (onRunCommand(builtinChatCommand(linkFlow), text)) clearComposer();
       keepFocus();
@@ -487,11 +493,25 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     // Naming a connector in an ordinary sentence discloses it and makes this an agent turn.
     // Disclosure, not instruction: the model still decides the connector is not the right
     // instrument for this question, exactly as it does for one the user typed a slash for.
-    const attached = matchConnectorKeywords(text, connectors).filter((id) => !activeConnectorIds.includes(id));
+    const named = matchConnectorKeywords(text, connectors);
+    const attached = named.filter((id) => !activeConnectorIds.includes(id));
     const agentCommand = chatCommands.find((c) => c.flowId === BUILTIN_AGENT_FLOW_ID);
     // Decided up front but applied only on the branch that runs as an agent: a flow request below
     // is routed on its own terms.
     const wantsWeb = !web && agentCommand !== undefined && looksLikeWebSearchRequest(text);
+    // A picture asked for ("使用 gpt 產生…"; nobody named = Gemini) is drawn on that page for this
+    // message only, the mode and the model left as set — unless the chat's own model is the one
+    // asked for and its ordinary send below brings the picture back, in its own thread. Only when
+    // the picture is the whole job (`pictureIsWholeJob`); the agent below draws too.
+    if (
+      quotes.length === 0 && attachments.length === 0 && !answering
+      && pictureIsWholeJob(text, named.length > 0)
+      && imageRouteFor(text, activeModelUrl, { agent: Boolean(modeCommand), temporary: tempChatMode })
+    ) {
+      if (onRunCommand(builtinChatCommand(IMAGE_CHAT_FLOW_ID), text)) clearComposer();
+      keepFocus();
+      return;
+    }
     if (attached.length > 0 && agentCommand) {
       // The set is handed to the run rather than read back from state, which has not flushed
       // yet — the same reason the connector command path passes its own. Web likewise.
@@ -534,6 +554,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     keepFocus();
   }, [
     promptInput, chatCommands, chatMode, connectors, activeConnectorIds, web, quotes, attachments,
+    activeModelUrl, tempChatMode,
     modeCommand, handleChangeMode, pickMode, onDiscloseConnectors, onRunCommand, onUnknownCommand,
     onSetWeb, onSend, withQuotes, clearComposer, modelStops, pickModel, onUnknownModel,
   ]);

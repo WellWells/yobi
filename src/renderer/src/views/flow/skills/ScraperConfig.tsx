@@ -8,6 +8,7 @@ import { scraperApi, ipcEvents } from '../../../api/electronApi';
 import { isValidUrlOrVar } from './validation';
 import type { FlowVariable } from '../../../../../shared/types';
 import type { SkillConfigProps } from './types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 function resolveVars(raw: string, vars: FlowVariable[] | undefined): string {
   return raw.replace(/\{\{\s*var\.([a-zA-Z0-9_]+)\s*\}\}/g, (_m, name: string) =>
@@ -69,7 +70,7 @@ export const ScraperConfig: React.FC<SkillConfigProps> = ({ step, onChange, t, f
   }, [onChange]);
 
   const matchCount = (count: number): string =>
-    t('flow.skill.scraper.matchCount').replace('{{count}}', String(count));
+    fillTemplate(t('flow.skill.scraper.matchCount'), { count: String(count) });
 
   return (
     <Stack gap="xs">
@@ -167,7 +168,7 @@ export const ScraperConfig: React.FC<SkillConfigProps> = ({ step, onChange, t, f
       </Button>
 
       <Text fz="xs" c="dimmed">
-        {t('flow.skill.browser.outputHint').replace('{{outputKey}}', `{{${step.outputKey}}}`)}
+        {fillTemplate(t('flow.skill.browser.outputHint'), { outputKey: `{{${step.outputKey}}}` })}
       </Text>
     </Stack>
   );

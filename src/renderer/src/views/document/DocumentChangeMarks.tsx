@@ -6,6 +6,7 @@ import type { NotionPendingChange } from '../../../../shared/notion/notionSyncTy
 import { AppButton } from '../../components/AppButton';
 import { RenderedDiff } from '../../components/chat/RenderedDiff';
 import { locateChanges, setHighlight, type ChangeSpot } from './documentMarks';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 interface DocumentChangeMarksProps {
   /** The document as written (the spaced body), which the page under the marks is drawn from. */
@@ -74,7 +75,7 @@ const ChangeCard: React.FC<{ change: NotionPendingChange; busy: boolean; onRever
     <Box style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <Group justify="space-between" gap={8} mb={8} wrap="nowrap" style={{ flexShrink: 0 }}>
         <Text fz="var(--font-size-xs)" c="var(--text-muted)" truncate>
-          {change.heading ? t('notion.sync.under').replace('{{heading}}', change.heading) : t('notion.sync.top')}
+          {change.heading ? fillTemplate(t('notion.sync.under'), { heading: change.heading }) : t('notion.sync.top')}
         </Text>
         {(change.conflict || change.locked) && (
           <Badge variant="light" size="sm" color="var(--mantine-color-warning)" style={{ flexShrink: 0 }}>
@@ -232,11 +233,11 @@ export const DocumentChangeMarks: React.FC<DocumentChangeMarksProps> = ({ body, 
     <Box ref={layerRef} pos="absolute" inset={0} style={{ pointerEvents: 'none' }} data-selection-ignore data-find-omit>
       {boxes.map((box) => {
         const change = changes.find((entry) => entry.id === box.id);
-        const where = change?.heading ? t('notion.sync.under').replace('{{heading}}', change.heading) : t('notion.sync.top');
+        const where = change?.heading ? fillTemplate(t('notion.sync.under'), { heading: change.heading }) : t('notion.sync.top');
         return (
           <UnstyledButton
             key={box.id}
-            aria-label={t('notion.marks.label').replace('{{where}}', where)}
+            aria-label={fillTemplate(t('notion.marks.label'), { where })}
             aria-expanded={openId === box.id}
             onClick={() => {
               clearTimers();

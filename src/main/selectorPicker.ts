@@ -25,8 +25,7 @@ interface PickedSet {
 function pickerStrings(strings: Record<string, string>): PickerStrings {
   return {
     banner: t(strings, 'flow.skill.scraper.pickBannerList'),
-    cancelHint: t(strings, 'flow.skill.scraper.pickBannerCancel')
-      .replace('{{shortcut}}', comboLabel('Escape', process.platform === 'darwin')),
+    cancelHint: t(strings, 'flow.skill.scraper.pickBannerCancel', { shortcut: comboLabel('Escape', process.platform === 'darwin') }),
     notAList: t(strings, 'flow.skill.scraper.pickNotAList'),
     scope: t(strings, 'flow.skill.scraper.pickScope'),
     rowCount: t(strings, 'flow.skill.scraper.matchCount'),

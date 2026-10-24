@@ -17,6 +17,19 @@ export interface ComboRecorderOptions {
   onCommit: (combo: string) => void;
   onAbort?: () => void;
   allowBareKeys?: boolean;
+  /**
+   * Backspace or Delete pressed alone commits an empty combo: the shortcut is switched off.
+   * Settings has no on/off switch beside a shortcut, so this is how one is turned off.
+   */
+  clearable?: boolean;
+}
+
+const CLEAR_KEYS = new Set(['Backspace', 'Delete']);
+
+export function isClearPress(
+  event: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'metaKey'>,
+): boolean {
+  return CLEAR_KEYS.has(event.key) && !event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey;
 }
 
 export interface ComboRecorder {
@@ -38,7 +51,7 @@ export function isCommittable(combo: string, allowBareKeys = false): boolean {
 }
 
 export function useComboRecorder({
-  onCommit, onAbort, allowBareKeys = false,
+  onCommit, onAbort, allowBareKeys = false, clearable = false,
 }: ComboRecorderOptions): ComboRecorder {
   const [recording, setRecording] = useState(false);
   const [draft, setDraft] = useState('');
@@ -74,6 +87,13 @@ export function useComboRecorder({
       return;
     }
 
+    if (clearable && isClearPress(event)) {
+      stop();
+      (event.currentTarget as HTMLElement).blur();
+      onCommit('');
+      return;
+    }
+
     if (MODIFIER_KEYS.has(event.key)) {
       setRejected(false);
       const partial = modifiersFromEvent(event, isMac);
@@ -91,7 +111,7 @@ export function useComboRecorder({
     stop();
     (event.currentTarget as HTMLElement).blur();
     onCommit(combo);
-  }, [recording, stop, onCommit, onAbort, allowBareKeys]);
+  }, [recording, stop, onCommit, onAbort, allowBareKeys, clearable]);
 
   return { recording, draft, rejected, start, stop, handleKeyDown };
 }

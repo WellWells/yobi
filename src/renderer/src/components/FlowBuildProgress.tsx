@@ -4,6 +4,7 @@ import type { FlowBuildPhase, SkillType } from '../../../shared/types';
 import { useI18nStore } from '../store/i18nStore';
 import type { FlowBuildState } from '../store/useFlowBuildStore';
 import { LABEL_OFFSET, PROGRESS_ROW_STYLE, ProgressMark } from './ProgressMark';
+import { fillTemplate } from '../../../shared/fillTemplate';
 
 /** The five phases of a build, drawn the same way in the Flow Builder and in a chat turn. */
 
@@ -54,20 +55,17 @@ export function FlowBuildProgressView({ state }: { state: FlowBuildState }) {
             {phase === 'understand' && state.provider && (
               // Named because a large prompt may go to a different provider than the one picked.
               <Text component="span" pl={LABEL_OFFSET} style={SUB_STYLE}>
-                {t('flow.build.provider').replace('{{name}}', state.provider)}
+                {fillTemplate(t('flow.build.provider'), { name: state.provider })}
               </Text>
             )}
             {phase === 'discover' && status === 'done' && state.skills.length > 0 && (
               <Text component="span" pl={LABEL_OFFSET} style={SUB_STYLE}>
-                {t('flow.build.tools.found').replace('{{names}}', toolNames(state.skills, t).join('、'))}
+                {fillTemplate(t('flow.build.tools.found'), { names: toolNames(state.skills, t).join('、') })}
               </Text>
             )}
             {phase === 'discover' && state.blocked.length > 0 && (
               <Text component="span" pl={LABEL_OFFSET} style={{ ...SUB_STYLE, color: 'var(--mantine-color-warning)' }}>
-                {t('flow.build.tools.blocked').replace(
-                  '{{names}}',
-                  state.blocked.map((entry) => t(`flow.build.need.${entry.need}`)).join('、'),
-                )}
+                {fillTemplate(t('flow.build.tools.blocked'), { names: state.blocked.map((entry) => t(`flow.build.need.${entry.need}`)).join('、') })}
               </Text>
             )}
             {phase === 'plan' && outline.length > 0 && outline.map((line, index) => (

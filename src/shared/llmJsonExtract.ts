@@ -107,6 +107,16 @@ function attemptParse(text: string): Parsed | undefined {
   return repaired === undefined ? undefined : { value: repaired, repaired: true };
 }
 
+/**
+ * One JSON object or array written by a person (a flow step's arguments): parsed as written, else
+ * with the same repairs a model's reply gets (trailing commas, stray backslashes, jsonrepair).
+ * `repaired` marks a parse jsonrepair had to rewrite, which can guess (`{"a": }` reads as null).
+ */
+export function parseJsonLenient(text: string): { value: unknown; repaired: boolean } | undefined {
+  const trimmed = text.trim();
+  return trimmed ? attemptParse(trimmed) : undefined;
+}
+
 function scanBalanced(text: string, start: number): string | null {
   const open = text[start];
   const close = open === '{' ? '}' : ']';

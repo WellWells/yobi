@@ -1,4 +1,5 @@
 import { resolveTimeGroup, type TimeGroupKey } from './timeGroups';
+import { fillTemplate } from '../../../shared/fillTemplate';
 
 export interface TimeLabelOptions {
   now: Date;
@@ -34,16 +35,16 @@ export function formatTimeLabel(timestamp: string, options: TimeLabelOptions): s
 
   const diffMinutes = Math.floor((now.getTime() - date.getTime()) / 60_000);
   if (diffMinutes < 1) return t('sidebar.time.justNow');
-  if (diffMinutes < 60) return t('sidebar.time.minutesAgo').replace('{{count}}', String(diffMinutes));
+  if (diffMinutes < 60) return fillTemplate(t('sidebar.time.minutesAgo'), { count: String(diffMinutes) });
 
   const resolved = group ?? resolveTimeGroup(timestamp, now);
   switch (resolved) {
     case 'undated':
       return '';
     case 'today':
-      return group ? clock(date, locale) : t('sidebar.time.today').replace('{{time}}', clock(date, locale));
+      return group ? clock(date, locale) : fillTemplate(t('sidebar.time.today'), { time: clock(date, locale) });
     case 'yesterday':
-      return group ? clock(date, locale) : t('sidebar.time.yesterday').replace('{{time}}', clock(date, locale));
+      return group ? clock(date, locale) : fillTemplate(t('sidebar.time.yesterday'), { time: clock(date, locale) });
     case 'past7':
       return weekdayClock(date, locale);
     default:

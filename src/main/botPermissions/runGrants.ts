@@ -1,8 +1,9 @@
 import { NO_BOT_RIGHTS, intersectBotRights } from '../../shared/botPermissions';
 import type { BotRights } from '../../shared/botPermissions';
 import type { AgentRunState } from '../../shared/types';
-import { parseBotChatKey } from '../memory/memoryContext';
-import { getBotRights } from './rights';
+import { isBotSelfAccount, parseBotChatKey } from '../memory/memoryContext';
+import { loadUserMemory } from '../memory/memoryStore';
+import { computeBotConnectorChanges, computeBotFlowAdmin, getBotRights } from './rights';
 
 type BotRunGrants = NonNullable<AgentRunState['botGrants']>;
 
@@ -15,6 +16,28 @@ export async function botChatRights(chatKey: string): Promise<BotRights> {
   const parsed = parseBotChatKey(chatKey);
   if (!parsed) return { ...NO_BOT_RIGHTS };
   return getBotRights(parsed.platform, parsed.userId, parsed.chatId);
+}
+
+/** `computeBotConnectorChanges` for a chat key, with a fresh read of the memory file; a failure fails closed. */
+export async function botChatApprovesConnectorChanges(chatKey: string): Promise<boolean> {
+  const parsed = parseBotChatKey(chatKey);
+  if (!parsed) return false;
+  const state = await loadUserMemory().catch(() => null);
+  return computeBotConnectorChanges(state, parsed.platform, parsed.userId, parsed.chatId);
+}
+
+/**
+ * Whether the person behind a bot chat key may build and change flows from this chat, read now: a
+ * flow admin (`computeBotFlowAdmin`: the owner, or a Telegram admin-grant holder, still paired, in
+ * their own private chat). `owner` says which — another admin's flows that read the owner's data
+ * are saved switched off. A failure fails closed.
+ */
+export async function botChatFlowBuilder(chatKey: string): Promise<{ owner: boolean } | null> {
+  const parsed = parseBotChatKey(chatKey);
+  if (!parsed) return null;
+  const state = await loadUserMemory().catch(() => null);
+  if (!computeBotFlowAdmin(state, parsed.platform, parsed.userId, parsed.chatId)) return null;
+  return { owner: state !== null && isBotSelfAccount(state, parsed.platform, parsed.userId) };
 }
 
 function grantsOf(rights: BotRights): BotRunGrants {
@@ -34,6 +57,7 @@ function asRights(grants: BotRunGrants): BotRights {
     agent: true,
     admin: true,
     download: true,
+    preview: true,
     web: grants.web,
     local: grants.local,
     shell: grants.shell === true,

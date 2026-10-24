@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { ActionIcon, Box, Group, Menu, Stack, Text, Tooltip } from '@mantine/core';
 import { CircleUserRound, LogIn, LogOut, MoreVertical, RotateCcw } from 'lucide-react';
-import { SectionCard, SectionTitle, VisibilityToggle } from '../components';
+import {
+  GroupHeader, SectionCard, SectionTitle, SettingRow, ToggleSwitch, VisibilityToggle,
+} from '../components';
 import { AccountStatusPill, pillStateOf } from './AccountStatusPill';
 import { AppButton } from '../../../components/AppButton';
 import { WebDialog } from '../../../components/WebDialog';
@@ -14,6 +16,7 @@ import {
 } from '../../../../../shared/types';
 import type { AuthProvider, HiddenSources, Provider } from '../../../../../shared/types';
 import { Z_POPOVER } from '../../../config/zLayers';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 type AccountSettings = ReturnType<typeof useAccountSettings>;
 
@@ -123,7 +126,7 @@ export const ModelSourcesSection: React.FC<Props> = ({ account, t, showSection, 
                     <Group gap={8} align="center" wrap="nowrap" style={{ flexShrink: 0 }}>
                       {loggedIn === false && (
                         <AppButton
-                          variant="filled"
+                          variant="default"
                           size="xs"
                           leftSection={<LogIn size={13} />}
                           loading={busy}
@@ -154,13 +157,39 @@ export const ModelSourcesSection: React.FC<Props> = ({ account, t, showSection, 
               );
             })}
           </Stack>
+
+          <GroupHeader label={t('settings.accounts.temporaryChat.group')} />
+          <SettingRow
+            label={t('settings.accounts.temporaryChat.title')}
+            hint={t('settings.accounts.temporaryChat.hint')}
+            alignStart
+            control={
+              <ToggleSwitch
+                checked={account.oneShotTemporaryChat}
+                onChange={() => { void account.toggleOneShotTemporaryChat(); }}
+              />
+            }
+          />
+
+          <GroupHeader label={t('settings.accounts.fallback.group')} />
+          <SettingRow
+            label={t('settings.accounts.fallback.title')}
+            hint={t('settings.accounts.fallback.hint')}
+            alignStart
+            control={
+              <ToggleSwitch
+                checked={account.providerFallback}
+                onChange={() => { void account.toggleProviderFallback(); }}
+              />
+            }
+          />
         </SectionCard>
       </Box>
 
       <WebDialog
         open={confirmLogout !== null}
-        title={t('settings.accounts.logout.confirm.title').replace('{{provider}}', confirmLabel)}
-        description={t('settings.accounts.logout.confirm.detail').replace('{{provider}}', confirmLabel)}
+        title={fillTemplate(t('settings.accounts.logout.confirm.title'), { provider: confirmLabel })}
+        description={fillTemplate(t('settings.accounts.logout.confirm.detail'), { provider: confirmLabel })}
         confirmText={t('settings.accounts.logout')}
         cancelText={t('dialog.cancel')}
         danger
@@ -174,8 +203,8 @@ export const ModelSourcesSection: React.FC<Props> = ({ account, t, showSection, 
 
       <WebDialog
         open={confirmReset !== null}
-        title={t('settings.accounts.reset.confirm.title').replace('{{provider}}', resetLabel)}
-        description={t(resetDetailKey).replace('{{provider}}', resetLabel)}
+        title={fillTemplate(t('settings.accounts.reset.confirm.title'), { provider: resetLabel })}
+        description={fillTemplate(t(resetDetailKey), { provider: resetLabel })}
         confirmText={t('settings.accounts.reset')}
         cancelText={t('dialog.cancel')}
         danger

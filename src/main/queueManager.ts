@@ -1,5 +1,6 @@
 import type { QueueState, QueueTaskItem, Task } from '../shared/types';
 import { compactPreview } from '../shared/textBudget';
+import { markConversationBusy } from './conversationBusy';
 
 type QueueListener = (state: QueueState) => void;
 
@@ -28,6 +29,7 @@ export class QueueManager {
   private listener: QueueListener | null = null;
   private discardListener: ((task: Task) => void) | null = null;
   private skipCurrentTask: (() => void) | null = null;
+  private readonly busyReleases = new Map<Task, () => void>();
   private readonly TASK_HARD_TIMEOUT_MS = 10 * 60_000;
 
   private worker: (task: Task) => Promise<void>;
@@ -47,15 +49,24 @@ export class QueueManager {
   }
 
   enqueue(task: Task): void {
+    // The conversation is busy from queued until its answer is written, which can be after the
+    // queue has given up on the task (hard timeout, skip): it is released by the worker itself.
+    if (task.conversationPath) this.busyReleases.set(task, markConversationBusy(task.conversationPath, 'sending'));
     this.queue.push(task);
     this.notify();
     this.drain();
+  }
+
+  private releaseBusy(task: Task): void {
+    this.busyReleases.get(task)?.();
+    this.busyReleases.delete(task);
   }
 
   cancel(taskId: string): boolean {
     const index = this.queue.findIndex((task) => task.id === taskId);
     if (index < 0) return false;
     const [discarded] = this.queue.splice(index, 1);
+    if (discarded) this.releaseBusy(discarded);
     this.notify();
     if (discarded) this.discardListener?.(discarded);
     return true;
@@ -122,9 +133,21 @@ export class QueueManager {
         const skipSignal = new Promise<void>((_resolve, reject) => {
           this.skipCurrentTask = () => reject(new TaskSkippedError(task.id));
         });
-        await Promise.race([this.worker(task), hardTimeout, skipSignal]).finally(() => {
+        let work: Promise<void>;
+        try {
+          work = this.worker(task);
+        } catch (err) {
+          work = Promise.reject(err);
+        }
+        const release = () => this.releaseBusy(task);
+        const settled = work.then(release, release);
+        await Promise.race([work, hardTimeout, skipSignal]).finally(() => {
           clearTimeout(hardTimeoutId);
           this.skipCurrentTask = null;
+          // A worker given up on that never settles must not hold its conversation for good.
+          const fallback = setTimeout(release, this.TASK_HARD_TIMEOUT_MS);
+          fallback.unref?.();
+          void settled.then(() => clearTimeout(fallback));
         });
       } catch (err) {
         this.onTaskError?.(task, err);

@@ -13,6 +13,7 @@ import { ModelDropdown } from '../../components/chat/ModelDropdown';
 import { flowApi } from '../../api/electronApi';
 import { PROVIDER_URLS } from '../../../../shared/types';
 import { Z_MODAL, Z_POPOVER } from '../../config/zLayers';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 /** What `pickProvider` falls back to, so an unset picker shows the model that will really run. */
 const DEFAULT_GENERATE_MODEL: string = PROVIDER_URLS.gemini;
@@ -174,7 +175,7 @@ export const FlowGenerateModal: React.FC<FlowGenerateModalProps> = ({
             {screen === 'questions' && (
               <Stack gap="xs">
                 <Text fz="sm" fw={600}>
-                  {t('flow.build.questions.title').replace('{{count}}', String(state.questions.length))}
+                  {fillTemplate(t('flow.build.questions.title'), { count: String(state.questions.length) })}
                 </Text>
                 {state.questions.map((question, index) => (
                   <Stack key={`${index}-${question}`} gap={4}>
@@ -208,12 +209,10 @@ export const FlowGenerateModal: React.FC<FlowGenerateModalProps> = ({
             {screen === 'done' && state.report && (
               <Stack gap="xs">
                 <Text fz="sm" fw={600}>
-                  {t('flow.build.done.title').replace('{{name}}', state.flowName ?? '')}
+                  {fillTemplate(t('flow.build.done.title'), { name: state.flowName ?? '' })}
                 </Text>
                 <Text fz="xs" c="dimmed">
-                  {t('flow.build.done.summary')
-                    .replace('{{steps}}', String(state.report.steps))
-                    .replace('{{tools}}', String(state.report.skills.length))}
+                  {fillTemplate(t('flow.build.done.summary'), { steps: String(state.report.steps), tools: String(state.report.skills.length) })}
                 </Text>
                 {issueRows.length > 0 && (
                   <Alert color="var(--mantine-color-warning)" icon={<TriangleAlert size={14} />} p="xs">
@@ -221,10 +220,7 @@ export const FlowGenerateModal: React.FC<FlowGenerateModalProps> = ({
                       <Text fz="xs" fw={600}>{t('flow.build.done.check')}</Text>
                       {issueRows.map((issue) => (
                         <Text key={`${issue.kind}-${issue.step}-${issue.detail}`} fz="xs">
-                          {t(`flow.build.issue.${issue.kind}`)
-                            .replace('{{step}}', String(issue.step))
-                            .replace('{{skill}}', t(`flow.skill.${issue.skill}`))
-                            .replace('{{detail}}', issue.kind === 'setup' ? t(`flow.build.need.${issue.detail}`) : issue.detail)}
+                          {fillTemplate(t(`flow.build.issue.${issue.kind}`), { step: String(issue.step), skill: t(`flow.skill.${issue.skill}`), detail: issue.kind === 'setup' ? t(`flow.build.need.${issue.detail}`) : issue.detail })}
                         </Text>
                       ))}
                     </Stack>
@@ -243,8 +239,7 @@ export const FlowGenerateModal: React.FC<FlowGenerateModalProps> = ({
                 <Alert color="var(--mantine-color-error)" icon={<TriangleAlert size={14} />} p="xs">
                   <Stack gap={2}>
                     <Text fz="xs" fw={600}>
-                      {t('flow.build.failed.title')
-                        .replace('{{phase}}', t(`flow.build.phase.${state.error?.phase ?? 'build'}`))}
+                      {fillTemplate(t('flow.build.failed.title'), { phase: t(`flow.build.phase.${state.error?.phase ?? 'build'}`) })}
                     </Text>
                     <Text fz="xs">{state.error?.message ?? ''}</Text>
                   </Stack>

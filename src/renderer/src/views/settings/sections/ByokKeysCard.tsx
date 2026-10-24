@@ -10,7 +10,9 @@ import { getByokTypeIcon } from '../../../config/models';
 import { ByokKeyForm } from './ByokKeyForm';
 import type { useByokSettings } from '../hooks/useByokSettings';
 import { BYOK_PROVIDER_TYPE_LABELS } from '../../../../../shared/types';
+import { byokModelLabel } from '../../../../../shared/byokModelLabel';
 import type { ByokInstanceSnapshot } from '../../../../../shared/types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 type ByokSettings = ReturnType<typeof useByokSettings>;
 
@@ -76,7 +78,7 @@ export const ByokKeysCard: React.FC<Props> = ({ byok, t, sectionGap }) => {
                       </Badge>
                     </Group>
                     <Text fz="var(--font-size-sm)" c="dimmed" lh={1.5} truncate>
-                      {instance.model}
+                      {byokModelLabel(instance.model)}
                       {' · '}
                       {instance.hasKey ? instance.keyPreview : t('settings.byok.keyNotSet')}
                     </Text>
@@ -139,7 +141,7 @@ export const ByokKeysCard: React.FC<Props> = ({ byok, t, sectionGap }) => {
 
       <WebDialog
         open={confirmDelete !== null}
-        title={t('settings.byok.delete.confirm.title').replace('{{name}}', confirmDelete?.name ?? '')}
+        title={fillTemplate(t('settings.byok.delete.confirm.title'), { name: confirmDelete?.name ?? '' })}
         description={t('settings.byok.delete.confirm.detail')}
         confirmText={t('settings.byok.delete')}
         cancelText={t('dialog.cancel')}

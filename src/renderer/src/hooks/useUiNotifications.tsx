@@ -25,9 +25,11 @@ const LEVEL_COLORS: Record<NoticeLevel, string> = {
   error: 'var(--error)',
 };
 
-// Long enough to read a sentence; failures get twice that. Notices with buttons never auto-close.
+// Long enough to read a sentence; failures get twice that. Notices with buttons never auto-close,
+// except an undo: it offers a way back for a moment, then the change stands.
 const DISMISS_MS = 5_000;
 const DISMISS_MS_ERROR = 10_000;
+export const UNDO_NOTICE_MS = 6_000;
 
 export interface AppNotice {
   /** The bold first line. Falls back to the message when omitted. */
@@ -38,6 +40,8 @@ export interface AppNotice {
   filePath?: string;
   /** Action the main process attached to an OS notice that fell back to this surface. */
   action?: UiNotificationPayload['action'];
+  /** A button that takes back what the notice reports; it closes the notice. */
+  undo?: { label: string; run: () => void };
 }
 
 /**
@@ -65,9 +69,28 @@ function runPayloadAction(action: NonNullable<UiNotificationPayload['action']>):
   useAppStore.getState().openSettingsCategory(failure ? SECRET_SCOPE_META[failure.scope].category : 'accounts');
 }
 
-function noticeBody(detail: string | undefined, notice: AppNotice): React.ReactNode {
+function noticeBody(detail: string | undefined, notice: AppNotice, getId: () => string): React.ReactNode {
   const { t } = useI18nStore.getState();
-  const { filePath, action } = notice;
+  const { filePath, action, undo } = notice;
+  if (undo) {
+    return (
+      <Stack gap={8}>
+        {detail ? <Text fz="var(--font-size-sm)">{detail}</Text> : null}
+        <Group gap={8}>
+          <Button
+            variant="default"
+            size="compact-xs"
+            onClick={() => {
+              notifications.hide(getId());
+              undo.run();
+            }}
+          >
+            {undo.label}
+          </Button>
+        </Group>
+      </Stack>
+    );
+  }
   if (!filePath && !action) return detail;
 
   const text = detail ? <Text fz="var(--font-size-sm)">{detail}</Text> : null;
@@ -104,10 +127,13 @@ export function showAppNotice(notice: AppNotice): string {
   const heading = notice.title ?? notice.message;
   const detail = notice.title ? notice.message : undefined;
   let id = '';
+  let autoClose: number | false = level === 'error' ? DISMISS_MS_ERROR : DISMISS_MS;
+  if (notice.undo) autoClose = UNDO_NOTICE_MS;
+  else if (hasActions) autoClose = false;
   id = notifications.show({
     title: heading,
-    message: noticeBody(detail, notice),
-    autoClose: hasActions ? false : (level === 'error' ? DISMISS_MS_ERROR : DISMISS_MS),
+    message: noticeBody(detail, notice, () => id),
+    autoClose,
     withBorder: true,
     withCloseButton: true,
     style: { '--notification-color': LEVEL_COLORS[level] } as React.CSSProperties,

@@ -206,15 +206,17 @@ export async function runWorkerCompletion(
   targetUrl: string,
   timeoutMs: number,
   label: string,
+  opts: { refuseCut?: boolean } = {},
 ): Promise<string> {
-  const prepared = preparePromptForProvider(prompt, targetUrl);
-  if (prepared.truncated) {
-    sendLog(`✂️ [Search] Prompt truncated to ${prepared.capLabel} for ${getProviderLabel(targetUrl)}`);
-  }
   const queuedAt = Date.now();
   return llmLane.runExclusive(async () => {
     const startedAt = Date.now();
     const queued = startedAt - queuedAt;
+    // Prepared once the lane is ours: a Gemini run queued ahead can lower the cap this is cut to.
+    const prepared = preparePromptForProvider(prompt, targetUrl, opts);
+    if (prepared.truncated) {
+      sendLog(`✂️ [Search] Prompt truncated to ${prepared.capLabel} for ${getProviderLabel(targetUrl)}`);
+    }
     const workerWin = await ensureWorkerWindow(targetUrl);
     if (!workerWin || workerWin.isDestroyed()) throw workerWindowUnavailable();
     try {
@@ -232,7 +234,9 @@ export async function synthesize(prompt: string, targetUrl: string): Promise<str
     const { response } = await runByokCompletion(targetUrl, prompt, BYOK_IDLE_TIMEOUT_MS);
     return response;
   }
-  return runWorkerCompletion(prompt, targetUrl, WEB_PROVIDER_TIMEOUT_MS, 'synthesis');
+  // The question ends the prompt, and the sources were packed to the cap: a cut here can only come
+  // from the cap falling while it was queued, and is refused so the sources are packed again.
+  return runWorkerCompletion(prompt, targetUrl, WEB_PROVIDER_TIMEOUT_MS, 'synthesis', { refuseCut: true });
 }
 
 export function mdLinkDestination(url: string): string {

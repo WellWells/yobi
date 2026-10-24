@@ -9,13 +9,14 @@ import { AppSegmentedControl } from '../../components/AppSegmentedControl';
 import { GroupHeader } from '../../components/GroupHeader';
 import type { FlowDefinition, TriggerConfig, TriggerType } from '../../../../shared/types';
 import type { FlowIssue } from '../../../../shared/flowIssues';
-import { findTriggerConflict } from '../../../../shared/flowIssues';
+import { findTriggerConflicts } from '../../../../shared/flowIssues';
 import { readsOwnerData } from '../../../../shared/botCommandAccess';
 import { useFlowIssues } from '../../hooks/useFlowIssues';
 import { HotkeyRecorder } from './HotkeyRecorder';
 import { CommandTriggerFields } from './CommandTriggerFields';
 import { ScheduleFields } from './ScheduleFields';
 import { SystemTriggerFields } from './SystemTriggerFields';
+import { FileTriggerFields } from './FileTriggerFields';
 
 const INLINE_CARD = {
   background: 'var(--mantine-color-default)',
@@ -27,16 +28,19 @@ interface TriggerConfigFormProps {
   value: TriggerConfig;
   onChange: (trigger: TriggerConfig) => void;
   t: (k: string) => string;
-  conflict?: FlowIssue;
+  conflicts?: FlowIssue[];
   allowManual?: boolean;
   showBotCompoundHint?: boolean;
   soleTrigger?: boolean;
   /** The flow reads the owner's own data (decides how a bot command without a mode reads). */
   ownerData?: boolean;
+  /** The app cannot find the flow's watched folder right now. */
+  folderMissing?: boolean;
 }
 
 const TriggerConfigForm: React.FC<TriggerConfigFormProps> = ({
-  value, onChange, t, conflict, allowManual = true, showBotCompoundHint = false, soleTrigger = false, ownerData = false,
+  value, onChange, t, conflicts, allowManual = true, showBotCompoundHint = false, soleTrigger = false, ownerData = false,
+  folderMissing = false,
 }) => {
   const patch = useCallback((p: Partial<TriggerConfig>) => {
     const next = { ...value, ...p };
@@ -48,6 +52,7 @@ const TriggerConfigForm: React.FC<TriggerConfigFormProps> = ({
       { value: 'hotkey', label: t('flow.trigger.hotkey') },
       { value: 'cron', label: t('flow.trigger.cron') },
       { value: 'system', label: t('flow.trigger.system') },
+      { value: 'file', label: t('flow.trigger.file') },
       { value: 'bot', label: t('flow.trigger.bot') },
       { value: 'chat', label: t('flow.trigger.chat') },
     ];
@@ -84,13 +89,17 @@ const TriggerConfigForm: React.FC<TriggerConfigFormProps> = ({
         <SystemTriggerFields value={value} patch={patch} t={t} cardStyle={INLINE_CARD} />
       )}
 
+      {value.type === 'file' && (
+        <FileTriggerFields value={value} patch={patch} t={t} folderMissing={folderMissing} cardStyle={INLINE_CARD} />
+      )}
+
       {value.type === 'bot' && (
         <CommandTriggerFields
           kind="bot"
           value={value}
           patch={patch}
           t={t}
-          conflict={conflict}
+          conflicts={conflicts}
           showBotCompoundHint={showBotCompoundHint}
           cardStyle={INLINE_CARD}
           ownerData={ownerData}
@@ -103,7 +112,7 @@ const TriggerConfigForm: React.FC<TriggerConfigFormProps> = ({
           value={value}
           patch={patch}
           t={t}
-          conflict={conflict}
+          conflicts={conflicts}
           cardStyle={INLINE_CARD}
         />
       )}
@@ -130,6 +139,7 @@ export const TriggerEditor: React.FC<TriggerEditorProps> = ({ flow, t }) => {
   // Edits land in the store before they are saved, so this tracks the field live.
   const issues = useFlowIssues().get(flow.id) ?? [];
   const ownerData = readsOwnerData(flow.steps);
+  const folderMissing = issues.some((issue) => issue.kind === 'watchFolderMissing');
 
   return (
     <Stack gap="md">
@@ -137,10 +147,11 @@ export const TriggerEditor: React.FC<TriggerEditorProps> = ({ flow, t }) => {
         value={flow.trigger}
         onChange={(next) => updateTrigger(flow.id, next)}
         t={t}
-        conflict={findTriggerConflict(issues, flow.trigger)}
+        conflicts={findTriggerConflicts(issues, flow.trigger)}
         showBotCompoundHint={hasNonBotTrigger}
         soleTrigger={extraTriggers.length === 0}
         ownerData={ownerData}
+        folderMissing={folderMissing}
       />
 
       <Box>
@@ -166,10 +177,11 @@ export const TriggerEditor: React.FC<TriggerEditorProps> = ({ flow, t }) => {
                 value={tr}
                 onChange={(next) => updateExtraTrigger(flow.id, i, next)}
                 t={t}
-                conflict={findTriggerConflict(issues, tr)}
+                conflicts={findTriggerConflicts(issues, tr)}
                 allowManual={false}
                 showBotCompoundHint={hasNonBotTrigger}
                 ownerData={ownerData}
+                folderMissing={folderMissing}
               />
             </Box>
           ))}

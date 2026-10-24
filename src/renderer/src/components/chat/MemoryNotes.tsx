@@ -6,6 +6,7 @@ import type { MemoryNote } from '../../../../shared/userMemory';
 import { userMemoryApi } from '../../api/electronApi';
 import { useAppStore } from '../../store/appStore';
 import { useUserMemoryStore } from '../../store/userMemoryStore';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 /** One text line; the icon box takes this height so the icon centres on the first line. */
 const NOTE_LINE_HEIGHT = 'calc(var(--font-size-sm) * 1.55)';
@@ -24,7 +25,7 @@ function openCuration(focus: string): void {
 
 function noteText(note: MemoryNote, t: (key: string) => string): string {
   if (note.op === 'review' && !note.text) return t('memory.note.reviewAll');
-  return t(MEMORY_NOTE_KEYS[note.op]).replace('{{text}}', note.text);
+  return fillTemplate(t(MEMORY_NOTE_KEYS[note.op]), { text: note.text });
 }
 
 /**

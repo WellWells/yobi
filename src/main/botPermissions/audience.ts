@@ -9,6 +9,7 @@ import { groupGrantsOf } from '../../shared/botPermissions';
 import type { BotGroupGrant } from '../../shared/botPermissions';
 import type { BotAudienceSnapshot, BotAudienceUser, BotContact, BotPlatform } from '../../shared/types';
 import { pairedBotUserIds } from './rights';
+import { isPairingRequestWaiting } from './pairingRequests';
 
 export const MAX_AUDIENCE_USERS = 200;
 
@@ -46,7 +47,7 @@ export function buildBotAudience(source: AudienceSource): BotAudienceSnapshot {
   const people = new Map(source.contacts.filter((c) => c.kind === 'user').map((c) => [c.id, c]));
   const titleOf = (chatId: string): string => chats.find((c) => c.id === chatId)?.title ?? chatId;
   const ids = new Set<string>([
-    ...[...people.values()].filter((c) => c.lastUsedAt).map((c) => c.id),
+    ...[...people.values()].filter((c) => c.lastUsedAt || c.pairingRequestedAt).map((c) => c.id),
     ...blocked,
   ]);
   const users: BotAudienceUser[] = [...ids]
@@ -54,28 +55,31 @@ export function buildBotAudience(source: AudienceSource): BotAudienceSnapshot {
     .map((id) => {
       const contact = people.get(id);
       const chatId = contact?.lastUsedChatId ?? id;
+      const requested = isPairingRequestWaiting(contact, { paired: false, blocked: blocked.has(id) });
       return {
         id,
         name: personName(contact, id),
         ...(contact?.username ? { username: contact.username } : {}),
-        lastUsedAt: contact?.lastUsedAt ?? '',
+        lastUsedAt: contact?.lastUsedAt ?? contact?.pairingRequestedAt ?? '',
         useCount: contact?.useCount ?? 0,
         where: chatId === id ? '' : titleOf(chatId),
         blocked: blocked.has(id),
+        ...(requested ? { requested: true as const } : {}),
       };
     })
-    .sort((a, b) => b.lastUsedAt.localeCompare(a.lastUsedAt));
-  // The newest first; a blocked person is never dropped off the end, or they could not be unblocked.
+    .sort((a, b) => Number(Boolean(b.requested)) - Number(Boolean(a.requested)) || b.lastUsedAt.localeCompare(a.lastUsedAt));
+  // Requests first, then the newest; a blocked person is never dropped off the end, or they could
+  // not be unblocked.
   const kept = users.filter((u, index) => index < MAX_AUDIENCE_USERS || u.blocked);
   return { groups, users: kept };
 }
 
 export async function getBotAudience(platform: BotPlatform): Promise<BotAudienceSnapshot> {
-  const target = platform === 'telegram' ? config.telegram : config.line;
+  const target = config[platform];
   return buildBotAudience({
     contacts: await listBotContacts({ platform }),
-    groupPermissions: target.groupPermissions,
-    blockedUsers: target.blockedUsers,
+    groupPermissions: target?.groupPermissions ?? {},
+    blockedUsers: target?.blockedUsers ?? [],
     pairedIds: pairedBotUserIds(platform),
   });
 }

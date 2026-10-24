@@ -1,10 +1,17 @@
-import React from 'react';
+import React, { useMemo, useRef } from 'react';
 import { Box, Checkbox, Flex, Stack, Text } from '@mantine/core';
 import { Circle } from 'lucide-react';
 import type { OutputFile } from '../../../../shared/types';
 import { AppTextInput } from '../AppTextInput';
 import { ProviderTag } from '../ProviderTag';
+import { RowMoreButton } from '../RowMoreButton';
+import type { MenuAnchor } from '../RowMoreButton';
+import { SwipeRow } from '../SwipeRow';
+import { menuAnchorUnderRow, swipeAnchorElement } from '../../utils/rowSwipe';
+import { conversationLeadingActions, conversationTrailingActions } from '../../utils/rowSwipeActions';
+import type { ConversationSwipeLabels } from '../../utils/rowSwipeActions';
 import styles from '../Sidebar.module.css';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 interface FileItemProps {
   file: OutputFile;
@@ -20,8 +27,18 @@ interface FileItemProps {
   onToggleSelect: (path: string) => void;
   onRowClick: (f: OutputFile, mods: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => void;
   onOpenMenu: (e: React.MouseEvent<HTMLElement>, f: OutputFile) => void;
+  /** The hover "⋯" button and the swipe's "More": the same menu as a right-click, at a point. */
+  onOpenMenuAt: (f: OutputFile, at: MenuAnchor) => void;
+  /** This row's menu is open (the "⋯" stays visible). */
+  menuOpen: boolean;
+  moreLabel: string;
   /** The row is being dragged out of the window; the OS takes over from here. */
   onDragOut: (f: OutputFile) => void;
+  /** The context menu's delete path. */
+  onDelete: (f: OutputFile) => void;
+  /** The context menu's pin toggle (the right swipe). */
+  onTogglePin: (f: OutputFile) => void;
+  swipeLabels: ConversationSwipeLabels;
   onCommitEdit: () => Promise<void>;
   onCancelEdit: () => void;
   timeLabel: string;
@@ -32,9 +49,24 @@ interface FileItemProps {
 export const FileItem: React.FC<FileItemProps> = React.memo(({
   file, selected, unread, unreadLabel, isEditing, editingText, setEditingText,
   selectMode, checked, onToggleSelect,
-  onRowClick, onOpenMenu, onDragOut, onCommitEdit, onCancelEdit, timeLabel, turnsLabel, registerItemRef,
+  onRowClick, onOpenMenu, onOpenMenuAt, menuOpen, moreLabel, onDragOut, onDelete, onTogglePin, swipeLabels,
+  onCommitEdit, onCancelEdit, timeLabel, turnsLabel, registerItemRef,
 }) => {
   const highlighted = selectMode ? checked : selected;
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  // Left swipe (macOS): More, Delete.
+  const trailing = useMemo(() => conversationTrailingActions(swipeLabels, {
+    onMore: () => {
+      const row = rowRef.current;
+      if (row) onOpenMenuAt(file, menuAnchorUnderRow(swipeAnchorElement(row).getBoundingClientRect()));
+    },
+    onDelete: () => onDelete(file),
+  }), [swipeLabels, onOpenMenuAt, onDelete, file]);
+  // Right swipe (macOS): pin or unpin, as in Apple Notes.
+  const leading = useMemo(() => conversationLeadingActions(swipeLabels, {
+    onTogglePin: () => onTogglePin(file),
+    pinned: Boolean(file.pinned),
+  }), [swipeLabels, onTogglePin, file]);
   const body = (
     <>
       <Flex align="center" gap={6}>
@@ -56,11 +88,11 @@ export const FileItem: React.FC<FileItemProps> = React.memo(({
             data-selected={String(highlighted)}
             className={styles.timestamp}
           >
-            {turnsLabel.replace('{{count}}', String(file.turns))}
+            {fillTemplate(turnsLabel, { count: String(file.turns) })}
           </Text>
         )}
         {unread && (
-          <Box ml="auto">
+          <Box ml="auto" className={styles.unreadDot}>
             <Circle size={9} fill="var(--mantine-color-accent)" stroke="var(--mantine-color-accent)" strokeWidth={1.5} aria-label={unreadLabel} />
           </Box>
         )}
@@ -94,9 +126,13 @@ export const FileItem: React.FC<FileItemProps> = React.memo(({
   );
 
   return (
+    <SwipeRow leading={leading} trailing={trailing} disabled={selectMode || isEditing}>
     <Stack
       gap={3}
-      ref={(node) => registerItemRef(file.path, node as HTMLDivElement | null)}
+      ref={(node) => {
+        rowRef.current = node as HTMLDivElement | null;
+        registerItemRef(file.path, node as HTMLDivElement | null);
+      }}
       tabIndex={0}
       onClick={(e) => {
         if (isEditing) return;
@@ -112,8 +148,17 @@ export const FileItem: React.FC<FileItemProps> = React.memo(({
       aria-selected={highlighted}
       data-selected={String(highlighted)}
       data-editing={String(isEditing)}
+      data-menu-open={menuOpen || undefined}
       className={styles.fileItem}
     >
+      {!selectMode && !isEditing && (
+        <RowMoreButton
+          label={moreLabel}
+          menuOpen={menuOpen}
+          onOpen={(at) => onOpenMenuAt(file, at)}
+          className={styles.rowMore}
+        />
+      )}
       {selectMode ? (
         <Flex align="center" gap={8}>
           <Checkbox
@@ -128,5 +173,6 @@ export const FileItem: React.FC<FileItemProps> = React.memo(({
         </Flex>
       ) : body}
     </Stack>
+    </SwipeRow>
   );
 });

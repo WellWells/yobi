@@ -4,6 +4,7 @@ import { Check, CircleAlert, CloudOff } from 'lucide-react';
 import { useFormatTime } from '../../hooks/useFormatTime';
 import { useAppStore } from '../../store/appStore';
 import type { SyncLine } from './documentSync';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 /** The header's one line about the document and Notion: synced, sending, waiting, or why not. */
 export const SyncStatusLabel: React.FC<{ line: SyncLine | null; t: (key: string) => string }> = ({ line, t }) => {
@@ -33,10 +34,10 @@ export const SyncStatusLabel: React.FC<{ line: SyncLine | null; t: (key: string)
         </Group>
       );
     case 'conflicts':
-      return text(t('notion.status.conflicts').replace('{{count}}', String(line.count)), 'var(--mantine-color-warning)', <CircleAlert size={12} color="var(--mantine-color-warning)" />);
+      return text(fillTemplate(t('notion.status.conflicts'), { count: String(line.count) }), 'var(--mantine-color-warning)', <CircleAlert size={12} color="var(--mantine-color-warning)" />);
     case 'locked':
       return text(
-        t('notion.status.locked').replace('{{count}}', String(line.count)),
+        fillTemplate(t('notion.status.locked'), { count: String(line.count) }),
         'var(--mantine-color-warning)',
         <CircleAlert size={12} color="var(--mantine-color-warning)" />,
         t('notion.sync.lockedReason'),
@@ -47,7 +48,7 @@ export const SyncStatusLabel: React.FC<{ line: SyncLine | null; t: (key: string)
       return text(t('notion.status.unsynced'), 'var(--mantine-color-warning)', <CircleAlert size={12} color="var(--mantine-color-warning)" />);
     case 'synced':
       return text(
-        line.at ? t('notion.status.syncedAt').replace('{{time}}', formatTime(line.at)) : t('notion.status.synced'),
+        line.at ? fillTemplate(t('notion.status.syncedAt'), { time: formatTime(line.at) }) : t('notion.status.synced'),
         'var(--text-muted)',
         <Check size={12} color="var(--mantine-color-success)" />,
       );

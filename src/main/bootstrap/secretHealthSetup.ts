@@ -4,6 +4,7 @@ import { getLangCache, t } from '../i18n';
 import { reEncryptSensitiveConfig } from '../config';
 import { probeDataKeys, reEncryptDataKeys } from '../dataKeyStore';
 import { probeAuthRecords, reEncryptAuthRecords } from '../mcp/mcpTokenStore';
+import { probeCalendars, reEncryptCalendars } from '../calendar/calendarStore';
 import { checkSecretKey, getSecretHealth, refreshCanary, setSecretHealthListener } from '../secretHealth';
 import { getMainWin } from '../windows';
 
@@ -28,6 +29,7 @@ export function initSecretHealthBridge(): void {
 export function probeStoredSecrets(): void {
   probeAuthRecords();
   probeDataKeys();
+  probeCalendars();
 }
 
 /**
@@ -42,6 +44,7 @@ export async function reportSecretHealth(): Promise<void> {
     reEncryptSensitiveConfig();
     reEncryptAuthRecords();
     reEncryptDataKeys();
+    reEncryptCalendars();
     refreshCanary();
     sendLog('🔐 Stored secrets re-encrypted under the OS key provider that replaced the old one');
   }

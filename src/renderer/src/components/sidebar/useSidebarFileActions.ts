@@ -4,6 +4,8 @@ import type { OutputFile } from '../../../../shared/types';
 import { fileApi } from '../../api/electronApi';
 import { conversationHeaderTitle } from '../chat/headerMenu/headerMenuModel';
 import type { FileContextMenuState } from './FileContextMenu';
+import { baseNameOf, movedPathFor } from '../../../../shared/conversationMove';
+import { useConversationMoves } from '../../store/conversationMoves';
 
 /**
  * What "Edit H1 title" starts from: the title the chat header shows — the H1, else the file name
@@ -22,26 +24,35 @@ export function titleToWrite(draft: string, seed: string): string | null {
 }
 
 interface SidebarFileActionsDeps {
-  visibleFiles: OutputFile[];
   selectedFile: OutputFile | null;
-  selectFile: (file: OutputFile | null) => void;
   setFileContent: (content: string | null) => void;
   loadFiles: () => Promise<OutputFile[]>;
-  onSelect: (file: OutputFile) => Promise<void>;
+  /** Moves to Recently Deleted; `openNeighbour` opens the next row when the open one goes. */
+  deleteConversations: (paths: readonly string[], openNeighbour: boolean) => Promise<void>;
 }
 
 /**
  * Per-row actions: edit the title, delete, the right-click menu. A conversation's title is its
- * H1; the file name is not edited from here.
+ * H1; the file name is not edited from here. Deleting does not ask: it goes to Recently Deleted,
+ * and the notice it raises can take it back.
  */
 export function useSidebarFileActions({
-  visibleFiles, selectedFile, selectFile, setFileContent, loadFiles, onSelect,
+  selectedFile, setFileContent, loadFiles, deleteConversations,
 }: SidebarFileActionsDeps) {
   const [editingPath, setEditingPath] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
   const [editingSeed, setEditingSeed] = useState('');
-  const [pendingDeleteFile, setPendingDeleteFile] = useState<OutputFile | null>(null);
   const [contextMenu, setContextMenu] = useState<FileContextMenuState | null>(null);
+
+  // A row moved into a folder keeps its title edit and its open menu.
+  useConversationMoves((moves) => {
+    const movedFile = (file: OutputFile): OutputFile => {
+      const to = movedPathFor(moves, file.path);
+      return to ? { ...file, path: to, name: baseNameOf(to) } : file;
+    };
+    setEditingPath((current) => movedPathFor(moves, current) ?? current);
+    setContextMenu((current) => (current ? { ...current, file: movedFile(current.file) } : current));
+  });
 
   const openContextMenu = (e: React.MouseEvent<HTMLElement>, file: OutputFile) => {
     e.preventDefault();
@@ -59,25 +70,7 @@ export function useSidebarFileActions({
 
   const startDelete = (file: OutputFile) => {
     setContextMenu(null);
-    setPendingDeleteFile(file);
-  };
-
-  const handleConfirmDelete = async () => {
-    if (!pendingDeleteFile) return;
-    const target = pendingDeleteFile;
-    const currentIdx = visibleFiles.findIndex((f) => f.path === target.path);
-    const nextFile = visibleFiles[currentIdx + 1] ?? visibleFiles[currentIdx - 1] ?? null;
-    setPendingDeleteFile(null);
-    const ok = await fileApi.deleteFile(target.path);
-    if (!ok) return;
-    if (selectedFile?.path === target.path) {
-      if (nextFile && nextFile.path !== target.path) {
-        await onSelect(nextFile);
-      } else {
-        selectFile(null);
-        setFileContent(null);
-      }
-    }
+    void deleteConversations([file.path], true);
   };
 
   const handleCommitEdit = async () => {
@@ -109,14 +102,11 @@ export function useSidebarFileActions({
     editingPath,
     editingText,
     setEditingText,
-    pendingDeleteFile,
-    setPendingDeleteFile,
     contextMenu,
     setContextMenu,
     openContextMenu,
     startEditH1,
     startDelete,
-    handleConfirmDelete,
     handleCommitEdit,
     handleCancelEdit,
   };

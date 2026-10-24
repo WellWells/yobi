@@ -9,17 +9,82 @@ import { byPair, pairKey, priceTra } from './railFares';
 import { formatJourney, formatLeg, formatTraFares, officialLinks, placeLabel } from './railFormat';
 import type { LegLive } from './railFormat';
 import { planJourneys } from './router';
-import { addDays, clockMinutes, daysBetween, formatClock, formatQueryTime, isIsoDate, taipeiClock } from './railTime';
+import { addDays, clockMinutes, dateArg, DAY_MINUTES, daysBetween, formatClock, formatQueryTime, isIsoDate, taipeiClock, timeArg } from './railTime';
 import { nodeMode } from './railTypes';
 import type { Leg, RailMode, RailNode, RailTrain, TimeIs, TripSort } from './railTypes';
 import { isResolved, resolvePlace, stationName } from './stations';
 import { seatKey } from './tdxSources';
 import type { SeatInfo, TraDelay } from './tdxSources';
+import type { TraTrainLive } from './traWebSource';
 
 /** How far ahead the operators publish: THSR about four weeks, TRA about two months. */
 export const PUBLISHED_DAYS: Readonly<Record<RailMode, number>> = { thsr: 28, tra: 60 };
 const LIVE_AHEAD_MIN = 180;
 const MAX_LIMIT = 8;
+
+/**
+ * Without TDX, the THSR searches that list the day's full-length trains, both ways: 南港–左營, and
+ * 台北–左營 for the trains that start or end at 台北 instead of 南港.
+ */
+export const THSR_WHOLE_LINE: readonly [RailNode, RailNode][] = [
+  ['thsr:0990', 'thsr:1070'], ['thsr:1070', 'thsr:0990'],
+  ['thsr:1000', 'thsr:1070'], ['thsr:1070', 'thsr:1000'],
+];
+
+function uniquePairs(pairs: readonly [RailNode, RailNode][]): [RailNode, RailNode][] {
+  const seen = new Set<string>();
+  return pairs.filter(([from, to]) => {
+    const key = `${from}>${to}`;
+    if (seen.has(key) || from === to) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** Without TDX, TRA's train page is asked about trains leaving within this many minutes, at most this many. */
+const TRA_PAGE_AHEAD_MIN = 30;
+const TRA_PAGE_MAX_TRAINS = 3;
+
+/**
+ * Until when the previous service day's TRA trains may still be on their way: ODS keeps a train in
+ * the file of the day it starts, its calls after midnight past 1440 (the real files run to 07:52).
+ */
+const OVERNIGHT_REACH_MIN = 8 * 60;
+
+/**
+ * The trains of service day `serviceDay` from midnight on, as times of the next day, each marked
+ * with the day it started; trains done by then are left out.
+ */
+export function afterMidnight(trains: readonly RailTrain[], serviceDay: string): RailTrain[] {
+  return trains.flatMap((train) => {
+    const stops = train.stops
+      .filter((stop) => stop.dep >= DAY_MINUTES)
+      .map((stop) => ({ ...stop, arr: Math.max(0, stop.arr - DAY_MINUTES), dep: stop.dep - DAY_MINUTES }));
+    return stops.length >= 2 ? [{ ...train, stops, serviceDay }] : [];
+  });
+}
+
+/** TRA's own page's "誤點 5 分" / "準點" as a delay report; null when the train is not running. */
+export function pageDelay(page: TraTrainLive | null): TraDelay | null {
+  if (!page?.position) return null;
+  const late = /誤點\s*(\d+)\s*分/u.exec(page.position.status);
+  if (!late && !/準點/u.test(page.position.status)) return null;
+  return {
+    minutes: late ? Number(late[1]) : 0,
+    station: page.position.stations.join('–'),
+    at: page.queriedAt.replace(/\//gu, '-'),
+  };
+}
+
+/** One entry per train number: several searches list the same train, the one with the most stops is kept. */
+export function mergeTrains(trains: readonly RailTrain[]): RailTrain[] {
+  const byNo = new Map<string, RailTrain>();
+  for (const train of trains) {
+    const held = byNo.get(train.no);
+    if (!held || train.stops.length > held.stops.length) byNo.set(train.no, train);
+  }
+  return [...byNo.values()];
+}
 
 export interface TripArgs {
   from: string;
@@ -78,6 +143,19 @@ export function createRailService(deps: RailDataDeps) {
     void data.sweep(today).catch(() => undefined);
   }
 
+  /**
+   * The TRA trains of the service day before `date`, for a question about its small hours; a note
+   * says so when that file cannot be read (ODS lists today onward only, so after a first launch
+   * past midnight there is no copy to fall back on).
+   */
+  async function previousDayTra(date: string, notes: string[], signal?: AbortSignal): Promise<RailTrain[]> {
+    const previous = addDays(date, -1);
+    return data.traTimetable(previous, signal).then((r) => r.value, (err: unknown) => {
+      notes.push(`TRA trains of ${previous} still running after midnight are not included: ${errorText(err)}`);
+      return [];
+    });
+  }
+
   /** The day's trains for the modes asked, with a note for each source that could not be read. */
   async function dayTrains(date: string, modes: readonly RailMode[], thsrPairs: [RailNode, RailNode][], notes: string[], signal?: AbortSignal): Promise<RailTrain[]> {
     const trains: RailTrain[] = [];
@@ -89,12 +167,15 @@ export function createRailService(deps: RailDataDeps) {
     }
     if (modes.includes('thsr') && ahead <= PUBLISHED_DAYS.thsr) {
       tasks.push(data.thsrTimetable(date, signal).then((r) => { trains.push(...r.value); }, async (err) => {
-        // THSR's own search still has the direct trains between the stations asked about.
-        const fallback = await Promise.all(thsrPairs.map(([from, to]) => data.thsrWeb(from, to, date, signal).then((r) => r.value.trains, () => [] as RailTrain[])));
-        const found = fallback.flat();
+        // THSR's own search lists each train with every station it calls at, so the whole-line
+        // searches give the day's full-length trains (and a change to or from TRA anywhere on
+        // the line); the pairs asked about add the trains that do not run end to end.
+        const pairs = uniquePairs([...thsrPairs, ...THSR_WHOLE_LINE]);
+        const fallback = await Promise.all(pairs.map(([from, to]) => data.thsrWeb(from, to, date, signal).then((r) => r.value.trains, () => [] as RailTrain[])));
+        const found = mergeTrains(fallback.flat());
         trains.push(...found);
         notes.push(found.length > 0
-          ? `THSR timetable from thsrc.com.tw for these stations only (TDX: ${errorText(err)})`
+          ? `THSR timetable from thsrc.com.tw: whole-line trains and the stations asked (TDX: ${errorText(err)})`
           : `THSR timetable unavailable: ${errorText(err)}`);
       }));
     }
@@ -118,7 +199,29 @@ export function createRailService(deps: RailDataDeps) {
     if (!isToday) return { lives, live };
 
     const traLegs = legs.filter((leg) => nodeMode(leg.from) === 'tra' && leg.dep <= nowMin + LIVE_AHEAD_MIN && leg.arr >= nowMin);
-    if (traLegs.length > 0) {
+    if (traLegs.length > 0 && !data.hasTdxKey()) {
+      // No TDX key: TRA's own train-status page, one request per train, for the few trains
+      // already running or about to leave (a train not yet out has no position to report).
+      // The page reports one run, picked by its ride date: a train still running from last night
+      // is asked about by the day it started, or the page answers for today's run of that number.
+      const runOf = (leg: Leg) => ({ no: leg.train.no, day: leg.train.serviceDay ?? date });
+      const runKey = (run: { no: string; day: string }) => `${run.day}|${run.no}`;
+      const runs = new Map(traLegs.filter((leg) => leg.dep <= nowMin + TRA_PAGE_AHEAD_MIN).map((leg) => [runKey(runOf(leg)), runOf(leg)] as const));
+      const running = [...runs.values()].slice(0, TRA_PAGE_MAX_TRAINS);
+      const pages = await Promise.all(running.map((run) => data.traTrainLive(run.no, run.day, signal).then((r) => r.value, () => null)));
+      const delays = new Map(running.flatMap((run, i) => {
+        const delay = pageDelay(pages[i]);
+        return delay ? [[runKey(run), delay] as const] : [];
+      }));
+      const labels = running.map((run) => (run.day === date ? run.no : `${run.no} (left on ${run.day})`));
+      live.tra_delay = running.length > 0
+        ? `from TRA's train-status page for ${labels.join(', ')} (no TDX key; other trains not checked)`
+        : 'not checked: no train in these plans is running yet (no TDX key; TRA\'s train-status page reports running trains)';
+      for (const leg of traLegs) {
+        const delay = delays.get(runKey(runOf(leg)));
+        if (delay) (lives.get(leg) as LegLive).delay = delay;
+      }
+    } else if (traLegs.length > 0) {
       const delays = await data.traDelays(signal);
       const note = liveNote('tra_delay', delays, now);
       if (note) live.tra_delay = note;
@@ -153,12 +256,12 @@ export function createRailService(deps: RailDataDeps) {
     const modes: RailMode[] = args.modes === 'thsr' || args.modes === 'tra' ? [args.modes] : ['thsr', 'tra'];
     const from = resolveOrThrow(args.from, modes);
     const to = resolveOrThrow(args.to, modes);
-    let date = args.date?.trim() || clock.date;
+    let date = dateArg(args.date, clock.date);
     checkDate(date, clock.date, modes);
     const timeIs: TimeIs = args.time_is === 'arrive' ? 'arrive' : 'depart';
     const sort: TripSort = args.sort === 'shortest' || args.sort === 'earliest_departure' ? args.sort : 'earliest_arrival';
     const limit = Math.min(MAX_LIMIT, Math.max(1, Math.round(Number(args.limit) || 5)));
-    const asked = args.time?.trim();
+    const asked = timeArg(args.time);
     let time = asked ? clockMinutes(asked) : date === clock.date ? clock.minutes : timeIs === 'arrive' ? 24 * 60 : 0;
     if (!Number.isFinite(time)) throw new Error(`time must be HH:MM, got "${asked}"`);
 
@@ -167,6 +270,10 @@ export function createRailService(deps: RailDataDeps) {
     const thsrPairs = thsrFrom.flatMap((f) => thsrTo.map((t): [RailNode, RailNode] => [f, t]));
     const notes: string[] = [];
     let trains = await dayTrains(date, modes, thsrPairs, notes, signal);
+    if (modes.includes('tra') && time < OVERNIGHT_REACH_MIN) {
+      // Asked for the small hours: last night's trains are still running (THSR stops before midnight).
+      trains = [...afterMidnight(await previousDayTra(date, notes, signal), addDays(date, -1)), ...trains];
+    }
     if (trains.length === 0) throw new Error(`No timetable could be read for ${date}. ${notes.join('; ')}`);
     let journeys = planJourneys(trains, { from, to, time, timeIs, sort, limit });
     if (journeys.length === 0 && timeIs === 'depart') {
@@ -215,21 +322,29 @@ export function createRailService(deps: RailDataDeps) {
     const raw = String(args.train ?? '').replace(/[次號号車车\s]/gu, '');
     if (!/^\d{1,4}$/u.test(raw)) throw new Error(`train must be a train number such as 1006 or 0803, got "${args.train}"`);
     const modes: RailMode[] = args.mode === 'thsr' || args.mode === 'tra' ? [args.mode] : ['thsr', 'tra'];
-    const date = args.date?.trim() || clock.date;
+    const date = dateArg(args.date, clock.date);
     checkDate(date, clock.date, modes);
     const notes: string[] = [];
     const trains = await dayTrains(date, modes, [], notes, signal);
     const wanted = (train: RailTrain) => (train.mode === 'thsr' ? train.no === raw.padStart(4, '0') : train.no === raw.replace(/^0+(?=\d)/u, ''));
-    const found = trains.filter(wanted);
+    const isToday = date === clock.date;
+    // In the small hours a train of the previous service day may still be running (its file holds it).
+    const previousDay = isToday && modes.includes('tra') && clock.minutes < OVERNIGHT_REACH_MIN
+      ? (await previousDayTra(date, notes, signal)).filter((train) => wanted(train) && (train.stops.at(-1)?.arr ?? 0) > DAY_MINUTES + clock.minutes)
+      : [];
+    const found = [...previousDay.map((train) => ({ train, day: addDays(date, -1) })), ...trains.filter(wanted).map((train) => ({ train, day: date }))];
     if (found.length === 0) {
       throw new Error(`No train ${raw} on ${date}${notes.length > 0 ? ` (${notes.join('; ')})` : ''}`);
     }
-    const isToday = date === clock.date;
-    const results = await Promise.all(found.map(async (train) => {
-      const whole = formatLeg({ train, from: train.stops[0].node, to: train.stops.at(-1)?.node as RailNode, dep: train.stops[0].dep, arr: train.stops.at(-1)?.arr ?? 0 });
+    if (previousDay.length > 0) notes.push(`A train with service_day left on ${addDays(date, -1)} and is still running; its times marked (+1) are on ${date}`);
+    const results = await Promise.all(found.map(async ({ train, day }) => {
+      const whole = {
+        ...formatLeg({ train, from: train.stops[0].node, to: train.stops.at(-1)?.node as RailNode, dep: train.stops[0].dep, arr: train.stops.at(-1)?.arr ?? 0 }),
+        ...(day !== date ? { service_day: day } : {}),
+      };
       const stops = train.stops.map((s) => ({ station: stationName(s.node), arrive: formatClock(s.arr), depart: formatClock(s.dep) }));
       if (!isToday || train.mode !== 'tra') return { ...whole, stops };
-      const page = await data.traTrainLive(train.no, date, signal).catch((err: unknown) => ({ error: errorText(err) }));
+      const page = await data.traTrainLive(train.no, day, signal).catch((err: unknown) => ({ error: errorText(err) }));
       if ('error' in page) return { ...whole, stops, live: `unavailable from TRA's site (${page.error})` };
       const position = page.value?.position;
       return {
@@ -247,7 +362,7 @@ export function createRailService(deps: RailDataDeps) {
       trains: results,
       ...(alerts.length > 0 ? { alerts } : {}),
       ...(notes.length > 0 ? { notes } : {}),
-      official_links: officialLinks(found.map((t) => t.mode), { train: true }),
+      official_links: officialLinks(found.map((f) => f.train.mode), { train: true }),
     };
   }
 

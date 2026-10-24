@@ -113,17 +113,17 @@ export class RailCache {
     }
   }
 
-  /** Deletes the dated files for days before `today` (`YYYY-MM-DD`), and forgets them in memory. */
-  async sweep(today: string): Promise<void> {
+  /** Deletes the dated files for days before `keepFrom` (`YYYY-MM-DD`), and forgets them in memory. */
+  async sweep(keepFrom: string): Promise<void> {
     for (const key of [...this.memory.keys()]) {
       const date = DATED_FILE.exec(`${key}.json`)?.[1];
-      if (date && date < today) this.memory.delete(key);
+      if (date && date < keepFrom) this.memory.delete(key);
     }
     if (!this.dir) return;
     const names = await fs.readdir(this.dir).catch(() => [] as string[]);
     await Promise.all(names.map(async (name) => {
       const date = DATED_FILE.exec(name)?.[1];
-      if (date && date < today) await fs.rm(path.join(this.dir as string, name), { force: true }).catch(() => undefined);
+      if (date && date < keepFrom) await fs.rm(path.join(this.dir as string, name), { force: true }).catch(() => undefined);
     }));
   }
 }

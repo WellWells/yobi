@@ -2,6 +2,7 @@ import { BrowserWindow, session } from 'electron';
 import { userAgentForUrl } from './userAgent';
 import { SILENT_WEB_PREFERENCES, muteWindow } from './silentWindow';
 import { withTimeout } from './promiseRace';
+import { markHeadless, unmarkHeadless } from './requestFilter';
 import { computeVerdictTier, VERDICT_I18N_KEYS, VERDICT_LABEL_EN } from '../shared/steamVerdict';
 
 export function localizedVerdict(rating: string, total: string, langData: Record<string, string>): { verdict: string; tier: string } {
@@ -118,10 +119,16 @@ export async function fetchPlaceStats(
     // Electron has no popup blocker: a window.open() from the page would show a real window.
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
+    // The rating is read from aria-labels, so the request filter may drop the page's photos, map
+    // tiles, fonts and frames. Every way the read ends goes through `finish`, which releases it.
+    const contentsId = win.webContents.id;
+    markHeadless(contentsId);
+
     const finish = (stats: PlaceStats | null): void => {
       if (settled) return;
       settled = true;
       clearTimeout(overall);
+      unmarkHeadless(contentsId);
       safeDestroy(win);
       resolve(stats);
     };

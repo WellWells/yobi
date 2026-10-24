@@ -1,7 +1,7 @@
 import React from 'react';
 import { Autocomplete, Box, Group, Stack, Text } from '@mantine/core';
-import { CheckCircle2, KeyRound, ListChecks, XCircle, Zap } from 'lucide-react';
-import { SelectDropdown } from '../components';
+import { KeyRound, ListChecks, Zap } from 'lucide-react';
+import { SelectDropdown, StatusLine } from '../components';
 import { AppButton } from '../../../components/AppButton';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { AppPasswordInput } from '../../../components/AppPasswordInput';
@@ -9,6 +9,7 @@ import { buildInputStyles } from '../../../components/inputStyles';
 import type { useByokSettings } from '../hooks/useByokSettings';
 import { BYOK_MODEL_EXAMPLES, BYOK_PROVIDER_TYPES, BYOK_PROVIDER_TYPE_LABELS } from '../../../../../shared/types';
 import type { ByokProviderType } from '../../../../../shared/types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 const MODEL_INPUT_STYLES = {
   ...buildInputStyles({ tone: 'body', mono: true }),
@@ -127,7 +128,7 @@ export const ByokKeyForm: React.FC<Props> = ({ byok, t, mt }) => {
         )}
         {byok.models.length > 0 && (
           <Text fz="var(--font-size-sm)" c="dimmed" mt={4}>
-            {t('settings.byok.model.loaded').replace('{{count}}', String(byok.models.length))}
+            {fillTemplate(t('settings.byok.model.loaded'), { count: String(byok.models.length) })}
           </Text>
         )}
       </Box>
@@ -159,20 +160,12 @@ export const ByokKeyForm: React.FC<Props> = ({ byok, t, mt }) => {
         </Group>
       </Group>
       {byok.testStatus === 'ok' && (
-        <Group gap={6} align="flex-start" wrap="nowrap">
-          <Box c="var(--mantine-color-success)" mt={2} style={{ flexShrink: 0 }}><CheckCircle2 size={14} /></Box>
-          <Text fz="var(--font-size-sm)" c="dimmed">
-            {t('settings.byok.test.ok')}
-            {byok.testMessage ? ` — ${byok.testMessage}` : ''}
-          </Text>
-        </Group>
+        <StatusLine tone="success">
+          {t('settings.byok.test.ok')}
+          {byok.testMessage ? ` — ${byok.testMessage}` : ''}
+        </StatusLine>
       )}
-      {byok.testStatus === 'error' && (
-        <Group gap={6} align="flex-start" wrap="nowrap">
-          <Box c="var(--mantine-color-error)" mt={2} style={{ flexShrink: 0 }}><XCircle size={14} /></Box>
-          <Text fz="var(--font-size-sm)" c="var(--mantine-color-error)">{byok.testMessage}</Text>
-        </Group>
-      )}
+      {byok.testStatus === 'error' && <StatusLine tone="error">{byok.testMessage}</StatusLine>}
     </Stack>
   );
 };

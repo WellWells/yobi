@@ -1,0 +1,37 @@
+/* Fills the sidebar toolbar ahead of its icon buttons, at their 30px height. The toolbar's 10px
+   inset plus the button's 10px left padding put the icon in the conversation titles' column. */
+.row {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: var(--mantine-radius-sm);
+  transition: background 0.15s ease;
+}
+
+.row:hover {
+  background: var(--mantine-color-default-hover);
+}
+
+.button {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px 0 10px;
+  border-radius: var(--mantine-radius-sm);
+  color: var(--mantine-color-text);
+}
+
+.button svg {
+  flex-shrink: 0;
+}
+
+.button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--mantine-color-accent-dim);
+}

@@ -6,6 +6,11 @@ import { runClaudeAutomation } from './claude';
 import { isClaudeLoginRequiredError } from './claudeSession';
 import { getByokLabel } from './byokClient';
 import { ensureOnPage, extractThreadUrl, isSamePage, PAGE_REUSE, waitForThreadSettled } from './pageReuse';
+import { supportsTemporaryChat, temporaryChatUrl } from './temporaryChat';
+import type { GeneratedImage, ProviderRunResult } from './generatedImages';
+import { promptPolicyFor } from './promptPolicy';
+import { geminiPromptTooLongMessage } from './geminiPromptTooLong';
+import { config } from '../config';
 import { meterText } from '../tokenMeter';
 import { meterLlmRequest } from '../llmMeter';
 import { PROVIDER_LABELS, isByokTargetUrl, migrateRemovedTargetUrl, providerFromUrl } from '../../shared/types';
@@ -25,7 +30,8 @@ const PROVIDER_RUNNER: Record<
     attachments?: string[],
     wantTitle?: boolean,
     continuingThread?: boolean,
-  ) => Promise<{ response: string; title: string }>
+    temporary?: boolean,
+  ) => Promise<ProviderRunResult>
 > = {
   gemini: runGeminiAutomation,
   perplexity: runPerplexityAutomation,
@@ -33,17 +39,8 @@ const PROVIDER_RUNNER: Record<
   claude: runClaudeAutomation,
 };
 
-export interface ProviderPromptPolicy {
-  maxBytes: number | null;
-  maxCharsPlusBreaks: number | null;
-}
-
-export const PROVIDER_PROMPT_POLICIES: Record<Provider, ProviderPromptPolicy> = {
-  chatgpt: { maxBytes: 65_535, maxCharsPlusBreaks: null },
-  claude: { maxBytes: 100_000, maxCharsPlusBreaks: null },
-  perplexity: { maxBytes: 40_000, maxCharsPlusBreaks: null },
-  gemini: { maxBytes: null, maxCharsPlusBreaks: 33_499 },
-};
+export { PROVIDER_PROMPT_POLICIES, promptPolicyFor } from './promptPolicy';
+export type { ProviderPromptPolicy } from './promptPolicy';
 
 export interface PreparedPromptInfo {
   provider: Provider;
@@ -74,14 +71,28 @@ export function getProviderLabel(url: string): string {
   return PROVIDER_LABELS[detectProvider(url)];
 }
 
-export function preparePromptForProvider(prompt: string, targetUrl: string): PreparedPromptInfo {
+/**
+ * Blank lines dropped, then cut to the provider's cap. `refuseCut` is for senders whose prompt ends
+ * with the user's own words: on Gemini an over-cap prompt is refused instead of losing its tail
+ * (the other providers keep today's cut).
+ */
+export function preparePromptForProvider(
+  prompt: string,
+  targetUrl: string,
+  opts: { refuseCut?: boolean } = {},
+): PreparedPromptInfo {
   const provider = detectProvider(targetUrl);
-  const policy = PROVIDER_PROMPT_POLICIES[provider];
+  const policy = promptPolicyFor(provider);
   const originalLength = prompt.length;
 
   const removed = removeBlankLines(prompt);
   let nextPrompt = removed.text;
   const removedBlankLines = removed.removed;
+
+  const cap = policy.maxCharsPlusBreaks;
+  if (opts.refuseCut && provider === 'gemini' && typeof cap === 'number' && charsPlusBreaks(nextPrompt) > cap) {
+    throw new Error(geminiPromptTooLongMessage(cap, charsPlusBreaks(nextPrompt)));
+  }
 
   let truncated = false;
   let capLabel: string | null = null;
@@ -110,6 +121,18 @@ export function preparePromptForProvider(prompt: string, targetUrl: string): Pre
   };
 }
 
+/**
+ * How far past the provider's cap a prompt is, measured as `preparePromptForProvider` measures it
+ * (blank lines dropped first) and in the cap's own unit; 0 when it fits.
+ */
+export function promptOverflow(prompt: string, targetUrl: string): number {
+  const policy = promptPolicyFor(detectProvider(targetUrl));
+  const text = removeBlankLines(prompt).text;
+  const overBytes = policy.maxBytes ? utf8Len(text) - policy.maxBytes : 0;
+  const overChars = policy.maxCharsPlusBreaks ? charsPlusBreaks(text) - policy.maxCharsPlusBreaks : 0;
+  return Math.max(0, overBytes, overChars);
+}
+
 /** A thread is one page, so telling two threads apart is telling two pages apart. */
 export function isSameThread(a: string, b: string): boolean {
   return isSamePage(a, b);
@@ -120,6 +143,8 @@ export interface AutomationResult {
   title: string;
   threadUrl: string | null;
   threadLost?: true;
+  /** Pictures the provider drew for this answer (Gemini, ChatGPT); absent when there are none. */
+  images?: GeneratedImage[];
 }
 
 function currentUrl(workerWin: BrowserWindow): string {
@@ -138,6 +163,12 @@ export async function runAutomation(
   attachments?: string[],
   expectThreadUrl?: string,
   wantTitle = false,
+  /**
+   * Whether a new conversation is the provider's temporary chat. Left out = a one-shot send
+   * (flow step, translation, search), which follows the user's setting; a sender that keeps
+   * the conversation (chat, an /agent session) passes its own answer.
+   */
+  temporary?: boolean,
 ): Promise<AutomationResult> {
   if (isByokTargetUrl(targetUrl)) {
     throw new Error('BYOK targets must not reach browser automation');
@@ -163,10 +194,15 @@ export async function runAutomation(
     }
   }
 
-  const navigationTarget = expectThreadUrl ?? migrateRemovedTargetUrl(targetUrl);
+  // A resumed thread is whatever it already is; only a new conversation can start temporary.
+  // A caller that keeps the conversation says so; anything else is a one-shot nobody continues.
+  const wantsTemporary = temporary ?? config.oneShotTemporaryChat;
+  const temporaryNewChat = wantsTemporary && !expectThreadUrl && supportsTemporaryChat(provider);
+  const newChatTarget = migrateRemovedTargetUrl(targetUrl);
+  const navigationTarget = expectThreadUrl ?? (temporaryNewChat ? temporaryChatUrl(newChatTarget) : newChatTarget);
   // Only the send itself is a model request; a lost thread never reached the provider.
   const result = await meterLlmRequest(() => PROVIDER_RUNNER[provider](
-    workerWin, prompt, timeoutMs, navigationTarget, attachments, wantTitle, Boolean(expectThreadUrl),
+    workerWin, prompt, timeoutMs, navigationTarget, attachments, wantTitle, Boolean(expectThreadUrl), temporaryNewChat,
   ));
   meterText(prompt, result.response);
   return { ...result, threadUrl: extractThreadUrl(provider, currentUrl(workerWin)) };

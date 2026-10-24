@@ -2,6 +2,7 @@ import { watch, type FSWatcher } from 'node:fs';
 import * as path from 'node:path';
 import { IPC } from '../shared/types';
 import { getOutputDir } from './files';
+import { invalidateConversationIndex } from './conversationIndex';
 import { sendLog, sendToRenderer } from './helpers';
 
 /*
@@ -87,7 +88,11 @@ export function watchOutputDir(
 export function startOutputFileWatch(): () => void {
   return watchOutputDir(
     getOutputDir,
-    () => sendToRenderer(IPC.OUTPUT_FILES_CHANGED),
+    () => {
+      // A file moved or renamed outside Yobi: the id index is rebuilt the next time a path is missing.
+      invalidateConversationIndex();
+      sendToRenderer(IPC.OUTPUT_FILES_CHANGED);
+    },
     {
       onError: (err) => {
         const message = err instanceof Error ? err.message : String(err);

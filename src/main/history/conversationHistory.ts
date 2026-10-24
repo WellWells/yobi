@@ -185,35 +185,60 @@ export async function deleteConversationHistory(id: string): Promise<void> {
 }
 
 /**
- * Of `ids`, the ones no conversation under `outputDir` names any more. A copy of a file (made in
- * Explorer) carries the same id as its original, so the original still names it. Throws when the
- * folder or a file in it cannot be read: then nobody can tell, and every history stays.
+ * Of `ids`, the ones no conversation in any of `dirs` names any more. A copy of a file (made in
+ * Explorer) carries the same id as its original, so the original still names it; so does a
+ * conversation waiting in Recently Deleted. Throws when a folder or a file in it cannot be read:
+ * then nobody can tell, and every history stays.
  */
-async function idsNoLongerNamed(ids: ReadonlySet<string>, outputDir: string): Promise<Set<string>> {
-  const names = await fs.readdir(outputDir, { recursive: true });
-  const named = await Promise.all(names.filter((name) => name.endsWith('.md')).map(async (name): Promise<unknown> => {
-    let raw: string;
-    try {
-      raw = await fs.readFile(path.join(outputDir, name), 'utf-8');
-    } catch (err: unknown) {
-      // Gone since the listing, or a folder named like a file: neither is a conversation.
-      if (errorCode(err) === 'ENOENT' || errorCode(err) === 'EISDIR') return null;
-      throw err;
-    }
-    return [...ids].some((id) => raw.includes(id)) ? threadOf(raw).id : null;
-  }));
+async function idsNoLongerNamed(ids: ReadonlySet<string>, dirs: readonly string[]): Promise<Set<string>> {
   const left = new Set(ids);
-  for (const id of named) if (typeof id === 'string') left.delete(id);
+  for (const dir of dirs) {
+    const names = await fs.readdir(dir, { recursive: true });
+    const named = await Promise.all(names.filter((name) => name.endsWith('.md')).map(async (name): Promise<unknown> => {
+      let raw: string;
+      try {
+        raw = await fs.readFile(path.join(dir, name), 'utf-8');
+      } catch (err: unknown) {
+        // Gone since the listing, or a folder named like a file: neither is a conversation.
+        if (errorCode(err) === 'ENOENT' || errorCode(err) === 'EISDIR') return null;
+        throw err;
+      }
+      return [...left].some((id) => raw.includes(id)) ? threadOf(raw).id : null;
+    }));
+    for (const id of named) if (typeof id === 'string') left.delete(id);
+  }
   return left;
 }
 
 /**
- * Deleting conversations in the App deletes their versions with them: forgetting has to mean the
- * earlier versions too. An id is read before its file goes; a file that cannot be read still goes.
- * A history another conversation in `outputDir` still names (a copy) stays, and so does every
- * history when the folder cannot be read. Returns the number of files deleted.
+ * Removes what Yobi kept beside each conversation — its versions and a Notion document's sync
+ * state (the page in Notion is never touched) — for the ids no conversation in `dirs` names any
+ * more. When a folder cannot be read, everything stays.
  */
-export async function deleteConversationFiles(filePaths: readonly string[], outputDir: string): Promise<number> {
+export async function forgetOrphanedConversations(ids: ReadonlySet<string>, dirs: readonly string[]): Promise<void> {
+  if (ids.size === 0) return;
+  const orphaned = await idsNoLongerNamed(ids, dirs).catch((err: unknown) => {
+    console.warn(`[history] kept the versions of deleted conversations: ${err instanceof Error ? err.message : String(err)}`);
+    return new Set<string>();
+  });
+  for (const id of orphaned) {
+    await deleteConversationHistory(id).catch(() => undefined);
+    await deleteNotionSync(id).catch(() => undefined);
+  }
+}
+
+/**
+ * Deleting conversations for good deletes their versions with them: forgetting has to mean the
+ * earlier versions too. An id is read before its file goes; a file that cannot be read still goes.
+ * A history another conversation in `outputDir` or `alsoNamedIn` still names (a copy, or one in
+ * Recently Deleted) stays, and so does every history when a folder cannot be read. Returns the
+ * number of files deleted.
+ */
+export async function deleteConversationFiles(
+  filePaths: readonly string[],
+  outputDir: string,
+  alsoNamedIn: readonly string[] = [],
+): Promise<number> {
   const ids = new Set<string>();
   let deleted = 0;
   for (const filePath of filePaths) {
@@ -227,15 +252,6 @@ export async function deleteConversationFiles(filePaths: readonly string[], outp
     const id: unknown = raw === null ? null : threadOf(raw).id;
     if (isConversationId(id)) ids.add(id);
   }
-  if (ids.size === 0) return deleted;
-  const orphaned = await idsNoLongerNamed(ids, outputDir).catch((err: unknown) => {
-    console.warn(`[history] kept the versions of deleted conversations: ${err instanceof Error ? err.message : String(err)}`);
-    return new Set<string>();
-  });
-  for (const id of orphaned) {
-    await deleteConversationHistory(id).catch(() => undefined);
-    // A Notion document's sync state goes with it; the page in Notion is never touched.
-    await deleteNotionSync(id).catch(() => undefined);
-  }
+  await forgetOrphanedConversations(ids, [outputDir, ...alsoNamedIn]);
   return deleted;
 }

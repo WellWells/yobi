@@ -2,6 +2,7 @@ import type { TriggerConfig } from './types';
 import { BOT_COMMAND_RE, SYSTEM_EVENTS } from './types';
 import type { SystemEvent } from './types';
 import { parseCronToScheduleFields } from './flowSchedule';
+import { isUsableWatchFolder, parseWatchPatterns } from './flowFileTrigger';
 
 export type TriggerValidationResult =
   | { ok: true; trigger: TriggerConfig }
@@ -30,6 +31,26 @@ function isPlausibleCronExpression(expression: string): boolean {
   return (parts.length === 5 || numeric.test(parts[0]))
     && numeric.test(minute) && numeric.test(hour) && numeric.test(dayOfMonth)
     && named.test(month) && named.test(dayOfWeek);
+}
+
+/** The folder is required and must stand on its own; a blank pattern means any file. */
+function validateFileTrigger(tr: Record<string, unknown>): TriggerValidationResult {
+  const watchFolder = typeof tr.watchFolder === 'string' ? tr.watchFolder.trim() : '';
+  if (!watchFolder) return { ok: false, error: 'File trigger is missing "watchFolder"' };
+  if (!isUsableWatchFolder(watchFolder)) {
+    return { ok: false, error: `Invalid watchFolder "${watchFolder}" — use a full folder path such as "C:\\Users\\me\\Downloads", or one under the home folder such as "~/Downloads"` };
+  }
+  const watchPattern = parseWatchPatterns(typeof tr.watchPattern === 'string' ? tr.watchPattern : '').join('; ');
+  const watchSubfolders = tr.watchSubfolders === true || tr.watchSubfolders === 'true';
+  return {
+    ok: true,
+    trigger: {
+      type: 'file',
+      watchFolder,
+      ...(watchPattern ? { watchPattern } : {}),
+      ...(watchSubfolders ? { watchSubfolders } : {}),
+    },
+  };
 }
 
 export function validateTrigger(raw: unknown): TriggerValidationResult {
@@ -90,5 +111,6 @@ export function validateTrigger(raw: unknown): TriggerValidationResult {
     }
     return { ok: true, trigger: { type: 'system', systemEvent: event as SystemEvent } };
   }
-  return { ok: false, error: `Unknown trigger type "${String(tr.type)}" — use "manual", "hotkey", "cron", "bot", "chat" or "system"` };
+  if (tr.type === 'file') return validateFileTrigger(tr);
+  return { ok: false, error: `Unknown trigger type "${String(tr.type)}" — use "manual", "hotkey", "cron", "bot", "chat", "system" or "file"` };
 }

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActionIcon, Box, Group, Progress, Stack, Text, Tooltip } from '@mantine/core';
-import { Brain, MessagesSquare, Pencil, Plus, Sparkles, Trash2, TriangleAlert } from 'lucide-react';
+import { Brain, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { useUserMemoryStore } from '../../../store/userMemoryStore';
 import { MemoryCurateModal } from './MemoryCurateModal';
 import { AppButton } from '../../../components/AppButton';
@@ -8,7 +8,7 @@ import { useAppStore } from '../../../store/appStore';
 import { WebDialog } from '../../../components/WebDialog';
 import { EmptyState } from '../../../components/EmptyState';
 import { GroupHeader } from '../../../components/GroupHeader';
-import { SectionCard, SectionTitle, SettingDivider, SettingField, SettingRow, ToggleSwitch } from '../components';
+import { SectionCard, SectionTitle, SettingDivider, SettingField, SettingRow, StatusLine, ToggleSwitch } from '../components';
 import { buildTimeGroupHeads } from '../../../utils/timeGroups';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import type { useUserMemory } from '../hooks/useUserMemory';
@@ -17,6 +17,7 @@ import { ownerAccountLabels } from './botPermissionsView';
 import type { BotRoster } from './botPermissionsView';
 import { memoryNearlyFull } from '../../../../../shared/userMemory';
 import type { UserMemoryEntry } from '../../../../../shared/userMemory';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 type UserMemory = ReturnType<typeof useUserMemory>;
 
@@ -121,7 +122,7 @@ export const MemorySection: React.FC<Props> = ({
       <SectionCard style={{ marginBottom: sectionGap }}>
         <SectionTitle
           icon={<Brain size={15} />}
-          label={t('settings.memory.title')}
+          label={t('settings.memory.list')}
           rightSection={(
             <Group gap={8} wrap="nowrap">
               <AppButton
@@ -143,7 +144,6 @@ export const MemorySection: React.FC<Props> = ({
         />
         <Stack gap={12}>
           <SettingRow
-            icon={<Brain size={13} />}
             label={t('settings.memory.enabled')}
             hint={t('settings.memory.enabled.hint')}
             control={<ToggleSwitch checked={snapshot.enabled} onChange={() => { void memory.setEnabled(!snapshot.enabled); }} />}
@@ -152,12 +152,10 @@ export const MemorySection: React.FC<Props> = ({
           <Stack gap={4}>
             <Group justify="space-between" gap={8}>
               <Text fz="var(--font-size-sm)" c="dimmed">
-                {t('settings.memory.usage')
-                  .replace('{{used}}', snapshot.usedChars.toLocaleString(locale))
-                  .replace('{{max}}', snapshot.maxChars.toLocaleString(locale))}
+                {fillTemplate(t('settings.memory.usage'), { used: snapshot.usedChars.toLocaleString(locale), max: snapshot.maxChars.toLocaleString(locale) })}
               </Text>
               <Text fz="var(--font-size-sm)" c="dimmed">
-                {t('settings.memory.count').replace('{{count}}', String(snapshot.entries.length))}
+                {fillTemplate(t('settings.memory.count'), { count: String(snapshot.entries.length) })}
               </Text>
             </Group>
             <Progress
@@ -167,10 +165,7 @@ export const MemorySection: React.FC<Props> = ({
               aria-label={t('settings.memory.title')}
             />
             {full && (
-              <Group gap={6} wrap="nowrap" align="flex-start" mt={2}>
-                <Box c="var(--mantine-color-warning)" mt={2} style={{ flexShrink: 0 }}><TriangleAlert size={13} /></Box>
-                <Text fz="var(--font-size-sm)" c="var(--mantine-color-warning)">{t('settings.memory.full')}</Text>
-              </Group>
+              <StatusLine tone="warning">{t('settings.memory.full')}</StatusLine>
             )}
           </Stack>
 
@@ -214,7 +209,6 @@ export const MemorySection: React.FC<Props> = ({
 
       <SectionCard style={{ marginBottom: sectionGap }}>
         <SettingField
-          icon={<MessagesSquare size={13} />}
           label={t('settings.memory.bots')}
           hint={t('settings.memory.bots.hint')}
         >

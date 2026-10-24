@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { DEFAULT_CAPTURE_WIDTH, IPC } from '../../shared/types';
+import { SYSTEM_FOLDERS } from '../../shared/conversationFolders';
 import { config } from '../config';
 import { sendToRenderer } from '../helpers';
 import { getWorkerWin, ensureWorkerWindow } from '../windows';
@@ -22,6 +23,7 @@ import { loadRecipientDirectory } from '../flow/botRecipientDirectory';
 import { appQueueState, type QueueManager } from '../queueManager';
 import type { TelegramRuntime } from '../telegram';
 import type { LineRuntime } from '../line';
+import type { SocketBotRuntimes } from './socketBotSetup';
 
 export function broadcastMergedQueueState(queue: QueueManager, flowManager: FlowManager | null): void {
   const state = appQueueState(queue, flowManager);
@@ -33,8 +35,9 @@ export function initFlowManager(deps: {
   queue: QueueManager;
   telegramRuntime: TelegramRuntime;
   lineRuntime: LineRuntime;
+  socketBots: SocketBotRuntimes;
 }): FlowManager {
-  const { queue, telegramRuntime, lineRuntime } = deps;
+  const { queue, telegramRuntime, lineRuntime, socketBots } = deps;
 
   const flowManager = new FlowManager({
     getWorkerWin,
@@ -44,11 +47,12 @@ export function initFlowManager(deps: {
     sendTelegramMessage: async (chatId, text, extras) => {
       await telegramRuntime.sendProactive(chatId, text, extras);
     },
+    deleteTelegramMessage: (chatId, messageId) => telegramRuntime.deleteMessage(chatId, messageId),
     sendTelegramFile: async (chatId, filePath, sendAs, caption, authorizedPaths, extras) => {
       await telegramRuntime.sendProactiveFile(chatId, filePath, sendAs, caption, authorizedPaths, extras);
     },
-    sendTelegramAlbum: async (chatId, filePaths, caption, authorizedPaths) => {
-      await telegramRuntime.sendProactiveAlbum(chatId, filePaths, caption, authorizedPaths);
+    sendTelegramAlbum: async (chatId, filePaths, caption, authorizedPaths, replyTo) => {
+      await telegramRuntime.sendProactiveAlbum(chatId, filePaths, caption, authorizedPaths, replyTo);
     },
     sendLineMessage: async (userId, text) => {
       await lineRuntime.sendProactive(userId, text);
@@ -62,7 +66,12 @@ export function initFlowManager(deps: {
     sendLineCarousel: async (userId, items, altText) => {
       await lineRuntime.sendProactiveCarousel(userId, items, altText);
     },
+    sendLineMenu: async (userId, menu) => {
+      await lineRuntime.sendProactiveMenu(userId, menu);
+    },
     getLinePairedUsers: () => config.line.pairing.pairedUsers,
+    sendSocketBot: (platform, chatId, message) => socketBots[platform].sendToChat(chatId, message),
+    getSocketBotPairedUsers: (platform) => config[platform].pairing.pairedUsers,
     captureMarkdown: async (payload, format, background, options) => {
       const requestedFileName = (options?.fileName ?? '').trim();
       const fileStem = requestedFileName ? buildSafeFileNameFromTitle(requestedFileName) : buildSnapshotFileName();
@@ -115,6 +124,8 @@ export function initFlowManager(deps: {
         prompt,
         response,
         outputDir,
+        // Filed with the other flow results, out of the way of the user's own conversations.
+        folder: SYSTEM_FOLDERS.flows,
         title: fallbackTitle || 'Flow',
         provider: providerLabel,
         promptLabel,

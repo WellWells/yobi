@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { MetricDomain, MetricOutcome, TokenCounts } from '../shared/types';
 import { classifyFailure } from './metricsNormalize';
+import { GEMINI_PROMPT_TOO_LONG } from './providers/geminiPromptTooLong';
 
 /**
  * Which part of the app a model request belongs to. Set once at the top of a chat task, an agent
@@ -40,6 +41,11 @@ function isAbort(err: unknown, signal?: AbortSignal): boolean {
   return name === 'AbortError' || name === 'FlowAbortError';
 }
 
+/** A Gemini prompt too long for the page is refused before the send: nothing reached the model. */
+function refusedBeforeSending(err: unknown): boolean {
+  return (err instanceof Error ? err.message : String(err)).includes(GEMINI_PROMPT_TOO_LONG);
+}
+
 /**
  * Wraps one round trip to a model — one browser automation, or one BYOK completion including
  * its failover attempts. Counted against whichever domain is in scope.
@@ -52,7 +58,7 @@ export async function meterLlmRequest<T>(fn: () => Promise<T>, signal?: AbortSig
     sinks?.onRequest(domain, 'success');
     return result;
   } catch (err: unknown) {
-    if (!isAbort(err, signal)) {
+    if (!isAbort(err, signal) && !refusedBeforeSending(err)) {
       sinks?.onRequest(domain, classifyFailure(err instanceof Error ? err.message : String(err)));
     }
     throw err;

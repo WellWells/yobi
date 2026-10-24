@@ -1,10 +1,11 @@
 import { listBotContacts } from './botDirectory';
 import { parseBotChatKey } from './botConversations';
 import { config } from './config';
-import { findLinePairedDisplayName } from './line/pairing';
+import { findBotPairedDisplayName } from './botChat/pairingState';
+import { isBotPlatform } from '../shared/types';
 import type { BotPlatform } from '../shared/types';
 
-const PLATFORM_TAGS: Record<BotPlatform, string> = { telegram: 'tg', line: 'line' } as const;
+const PLATFORM_TAGS: Record<BotPlatform, string> = { telegram: 'tg', line: 'line', discord: 'discord', slack: 'slack' } as const;
 const NAME_MAX = 40;
 
 /** Characters Windows refuses in a file name, plus controls; trailing dots and spaces are refused too. */
@@ -34,10 +35,12 @@ async function telegramName(kind: 'user' | 'chat', id: string): Promise<string> 
   return [contact.firstName, contact.lastName].filter(Boolean).join(' ') || contact.username || '';
 }
 
-async function chatName(platform: string, group: boolean, chatId: string, userId: string): Promise<string> {
+async function chatName(platform: BotPlatform, group: boolean, chatId: string, userId: string): Promise<string> {
   try {
     if (platform === 'telegram') return await telegramName(group ? 'chat' : 'user', group ? chatId : userId);
-    if (platform === 'line' && !group) return findLinePairedDisplayName(config.line.pairing, userId) ?? '';
+    if (!group) return findBotPairedDisplayName(config[platform].pairing, userId) ?? '';
+    // Platforms with string ids register a group's name in the directory when the bot first sees it.
+    return (await listBotContacts({ platform, kind: 'chat' })).find((entry) => entry.id === chatId)?.title ?? '';
   } catch {
     // An unreadable directory only costs the file its name; the id stands in.
   }
@@ -49,6 +52,7 @@ export async function botConversationFileLabel(chatKey: string): Promise<string>
   const parsed = parseBotChatKey(chatKey);
   if (!parsed) return '';
   const { platform, chatId, userId } = parsed;
+  if (!isBotPlatform(platform)) return '';
   const group = chatId !== userId;
   const name = await chatName(platform, group, chatId, userId);
   return botFileLabel(platform, name || (group ? chatId : userId));

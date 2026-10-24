@@ -1,3 +1,4 @@
+import { BOT_PLATFORM_NAMES } from './types';
 import type { BotPlatform, FlowAssessment, TriggerType } from './types';
 import { PLATFORM_ORDER, connectedPlatforms, namedIn, saysEveryone, saysForMe } from './botRecipients';
 import type { RecipientDirectory } from './botRecipients';
@@ -11,13 +12,18 @@ import type { RecipientDirectory } from './botRecipients';
 
 const BOT_COMMAND_TRIGGER: TriggerType = 'bot';
 
+/** How a request names each platform. */
+const PLATFORM_WORDS: Readonly<Record<BotPlatform, RegExp>> = {
+  telegram: /telegram|電報|电报|(?<![a-z])tg(?![a-z])/i,
+  line: /(?<![a-z])line(?![a-z])/i,
+  discord: /discord/i,
+  slack: /slack/i,
+};
+
 /** Which platforms the words point at: one named alone, otherwise every connected one. */
 function platformsFromWords(words: string, dir: RecipientDirectory): BotPlatform[] {
-  const line = /(?<![a-z])line(?![a-z])/i.test(words);
-  const telegram = /telegram|電報|电报|(?<![a-z])tg(?![a-z])/i.test(words);
-  if (line && !telegram) return ['line'];
-  if (telegram && !line) return ['telegram'];
-  return connectedPlatforms(dir);
+  const named = PLATFORM_ORDER.filter((platform) => PLATFORM_WORDS[platform].test(words));
+  return named.length === 1 ? named : connectedPlatforms(dir);
 }
 
 export interface RecipientWording {
@@ -73,8 +79,11 @@ export function withRecipientQuestion(
 
 /** What a flow builder may say about the bots without naming anyone. English: it is read by the model. */
 export function describeRecipientSetup(dir: RecipientDirectory): string[] {
-  const lines = PLATFORM_ORDER.map((platform) => {
-    const name = platform === 'telegram' ? 'Telegram' : 'LINE';
+  // Telegram and LINE are always described; a newer bot only once connected, so the line every
+  // build pays for does not grow for people who never set one up.
+  const described = PLATFORM_ORDER.filter((platform) => platform === 'telegram' || platform === 'line' || dir.connected[platform]);
+  const lines = described.map((platform) => {
+    const name = BOT_PLATFORM_NAMES[platform];
     if (!dir.connected[platform]) return `${name} bot: not connected.`;
     const own = dir.entries.filter((entry) => entry.platform === platform);
     const people = own.filter((entry) => entry.kind === 'person');
@@ -83,7 +92,7 @@ export function describeRecipientSetup(dir: RecipientDirectory): string[] {
     const chatNote = chats > 0 ? `, ${chats} group or channel chat(s)` : '';
     return `${name} bot: connected — ${people.length} paired ${people.length === 1 ? 'person' : 'people'}${selfNote}${chatNote}.`;
   });
-  if (!dir.connected.telegram && !dir.connected.line) {
+  if (connectedPlatforms(dir).length === 0) {
     lines.push('The flow can still be built; the user connects a bot in Settings before it can send.');
   }
   return lines;

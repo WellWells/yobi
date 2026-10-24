@@ -35,14 +35,15 @@ import type { TimedSubtitles, VideoInfo, VideoSite } from './videoSiteTypes';
 /**
  * The page's video, or `{ missing }` once the page shows none: bilibili sends a gone video to
  * its home page (`selfDef.errorpage`). `{ notVideo }` (the path it went to) when the video link
- * turned out to be something else: the page moved off `/video/`, or its data points elsewhere
+ * turned out to be something else: the page moved off `/video/` (a language segment before it, as
+ * in `/zh-Hant/video/…` for visitors in Taiwan since 2026-10, is still the video), or its data points elsewhere
  * (`redirect_url`, a series episode the page is about to move to). While the page has not
  * opened or the script check runs there is no state yet: null, keep waiting.
  */
 export const VIDEO_DATA_PROBE = `(() => {
   if (location.href.includes('selfDef.errorpage')) return { missing: true };
   if (!/(^|\\.)bilibili\\.com$/.test(location.hostname)) return null;
-  if (!location.pathname.startsWith('/video/')) return { notVideo: location.pathname };
+  if (!/^\\/(?:[a-z]{2}(?:-[a-z]{2,4})?\\/)?video\\//i.test(location.pathname)) return { notVideo: location.pathname };
   const state = window.__INITIAL_STATE__;
   if (!state) return null;
   const data = state.videoData;
@@ -317,6 +318,7 @@ async function bilibiliInfo(ref: VideoRef, signal?: AbortSignal, access?: Pick<R
     cover: data.cover,
     summary: words,
     summaryNeedsSignIn: subtitles.signedIn === false,
+    ...(data.parts > 1 ? { part: { index: part, total: data.parts } } : {}),
     ...(words ? { subtitles: (stop?: AbortSignal) => bilibiliSubtitles(video, stop) } : {}),
     // Every quality is H.264 with AAC; Telegram may price one with the low AAC so it fits whole.
     choices: (destination, includeSmall = false, limitBytes) => bilibiliChoices(playurl, includeSmall, data.durationS, destination, limitBytes),

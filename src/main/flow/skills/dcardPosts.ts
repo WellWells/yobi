@@ -10,7 +10,7 @@ import type { XMedia, XPost } from './xPosts';
 
 /**
  * A comment's length in the analysis: 130 of Dcard's at full length could fill Gemini's web input
- * (33,499 characters) on their own; the most-liked come first, so a cut tail loses the least.
+ * (32,000 characters signed out) on their own; the most-liked come first, so a cut tail loses the least.
  */
 export const COMMENT_MAX_CHARS = 300;
 

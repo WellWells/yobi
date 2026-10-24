@@ -5,6 +5,7 @@ import { AppTextInput } from '../../components/AppTextInput';
 import { GroupHeader } from '../../components/GroupHeader';
 import type { TriggerConfig } from '../../../../shared/types';
 import type { FlowIssue } from '../../../../shared/flowIssues';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 import { describeFlowIssue } from './flowIssueText';
 import { BotCommandAccessField } from './BotCommandAccessField';
 
@@ -13,8 +14,8 @@ interface CommandTriggerFieldsProps {
   value: TriggerConfig;
   patch: (p: Partial<TriggerConfig>) => void;
   t: (k: string) => string;
-  /** Another enabled flow already claims this command. */
-  conflict?: FlowIssue;
+  /** Another enabled flow also claims this command, or a connector lost it to this flow. */
+  conflicts?: FlowIssue[];
   showBotCompoundHint?: boolean;
   cardStyle?: React.CSSProperties;
   /** The flow reads the owner's own data (decides how a bot command without a mode reads). */
@@ -27,7 +28,7 @@ const FIELDS = {
 } as const;
 
 export const CommandTriggerFields: React.FC<CommandTriggerFieldsProps> = ({
-  kind, value, patch, t, conflict, showBotCompoundHint = false, cardStyle, ownerData = false,
+  kind, value, patch, t, conflicts, showBotCompoundHint = false, cardStyle, ownerData = false,
 }) => {
   const fields = FIELDS[kind];
   const Icon = kind === 'bot' ? Bot : MessageSquare;
@@ -39,7 +40,7 @@ export const CommandTriggerFields: React.FC<CommandTriggerFieldsProps> = ({
 
   const commandEmpty = !commandValue.trim();
   const inputVariableName = inputVariableValue.trim() || tk('inputVariable.placeholder');
-  const inputVariableHint = tk('inputVariable.hint').replace(/\{\{(input|variable)\}\}/g, inputVariableName);
+  const inputVariableHint = fillTemplate(tk('inputVariable.hint'), { input: inputVariableName, variable: inputVariableName });
 
   return (
     <Stack gap="sm" p="sm" style={cardStyle}>
@@ -86,12 +87,12 @@ export const CommandTriggerFields: React.FC<CommandTriggerFieldsProps> = ({
         </Group>
       )}
 
-      {conflict && (
-        <Group gap={6} align="flex-start" wrap="nowrap">
+      {conflicts?.map((conflict) => (
+        <Group key={conflict.kind} gap={6} align="flex-start" wrap="nowrap">
           <TriangleAlert size={13} color="var(--mantine-color-warning)" style={{ marginTop: 2, flexShrink: 0 }} />
           <Text fz="xs" c="var(--mantine-color-warning)">{describeFlowIssue(conflict, t)}</Text>
         </Group>
-      )}
+      ))}
 
       {kind === 'bot' && showBotCompoundHint && (
         <Group gap={6} align="flex-start" wrap="nowrap">

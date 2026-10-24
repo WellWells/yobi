@@ -16,7 +16,7 @@
 
 ---
 
-**Yobi** is a flow engine that runs on your desktop. Chain data, AI and actions into an automation, then trigger it on a schedule, from a global hotkey, with a command to your Telegram or LINE bot, from a slash command in the app, or when Yobi starts, the PC wakes, or the screen locks or unlocks. Because it runs on your machine rather than a server, a flow reaches what a hosted tool cannot: LINE on this PC (Windows), your files, your shell, a real browser. The AI steps drive the providers' own web pages, so there is no API key and no per-token bill.
+**Yobi** is a flow engine that runs on your desktop. Chain data, AI and actions into an automation, then trigger it on a schedule, from a global hotkey, with a command to your Telegram, LINE, Discord or Slack bot, from a slash command in the app, when a new file lands in a folder, or when Yobi starts, the PC wakes, or the screen locks or unlocks. Because it runs on your machine rather than a server, a flow reaches what a hosted tool cannot: LINE on this PC (Windows), your files, your shell, a real browser. The AI steps drive the providers' own web pages, so there is no API key and no per-token bill.
 
 <!-- demos:hero:start -->
 <p align="center"><img src="assets/demos/en-US/agent.webp" alt="Multi-step tasks with the agent" width="100%" /></p>
@@ -28,12 +28,12 @@
 
 | Feature | What it does |
 | ------- | ------------ |
-| **No-code flows** | 53 kinds of step, chained with `{{variables}}`. Add them from a menu and drag to reorder, or describe the automation and let AI build it. |
+| **No-code flows** | 60 kinds of step, chained with `{{variables}}`. Add them from a menu and drag to reorder, or describe the automation and let AI build it. |
 | **Runs on your PC** | Flows read LINE on this PC (Windows) and use your files, your shell and a browser window; the agent can also work in Thunderbird. Nothing to host. |
 | **No API key** | AI steps drive the providers' web pages, not paid APIs. Add your own key only if you want to (BYOK). |
-| **An agent that acts** | Switch chat to **Agent** (or type `/agent`) and give it a goal: it picks its own tools and asks before it changes anything. Messages to your Telegram or LINE bot run as the agent too, with the tools you grant each account. |
-| **Connectors** | For the agent: Notion, GitHub, Figma, Stripe and more, or any MCP server by URL. Built in: LINE and Thunderbird on this PC, and X. |
-| **Five ways to trigger** | Schedule, global hotkey, a command to your Telegram or LINE bot, in-app slash command, system event (Yobi starts, the PC wakes, the screen locks or unlocks). One flow can use several. |
+| **An agent that acts** | Switch chat to **Agent** (or type `/agent`) and give it a goal: it picks its own tools and asks before it changes anything. Messages to your Telegram, LINE, Discord or Slack bot run as the agent too, with the tools you grant each account. |
+| **Connectors** | For the agent: Notion, GitHub, Figma, Stripe and more, or any MCP server by URL. Built in: LINE and Thunderbird on this PC, your mailboxes, X, PTT, and Taiwan's railways and metros. |
+| **Six ways to trigger** | Schedule, global hotkey, a command to your bot, in-app slash command, a new file in a folder, system event (Yobi starts, the PC wakes, the screen locks or unlocks). One flow can use several. |
 | **Every major AI** | Gemini, Claude, ChatGPT and Perplexity. Pick the model and thinking level for Gemini, Claude and ChatGPT. Gemini and Perplexity work without signing in. |
 | **No middleman** | Yobi runs no server of its own. Prompts go to the AI site you picked. Anything else leaves your PC only through a feature that sends it, such as web search, a bot, a share link or a connector. |
 | **Multilingual** | English, 繁體中文 and 简体中文 built in, plus drop-in language packs ([guide](language/README.md)). |
@@ -108,15 +108,16 @@ You don't have to build one by hand. Describe what you want and AI assembles the
 
 > *"Every weekday at 8am, summarize my RSS feed and send it to Telegram."*
 
-The flow above also ships as a template. There are 19 templates to start from: some run on a schedule, some as a command typed in chat or sent to your bot.
+The flow above also ships as a template. There are 28 templates to start from: some run on a schedule, some on a hotkey for the text you have selected, some as a command typed in chat or sent to your bot.
 
 **The steps, by kind:**
 
-- **Pull data** — web pages, RSS, HTTP APIs, YouTube transcripts and new videos from your subscriptions, web search and deep research, Google Maps reviews, LINE chats, X posts, replies and trends (trends need an X sign-in), live stock / forex / weather / air quality
+- **Pull data** — web pages, RSS, HTTP APIs, YouTube transcripts and new videos from your subscriptions, web search and deep research, Google Maps reviews, LINE chats, Telegram group messages, X posts, replies and trends (trends need an X sign-in), PTT boards, new mail, your calendar, live stock / forex / weather / air quality, the farmer's almanac and Taiwan's receipt lottery
+- **Use a connector** — call any tool of a connector you have added, such as Notion or Jira
 - **Scrape a list** — click one headline on the real page; Yobi works out the selectors for the rest
 - **Drive a browser** — open tabs, click, fill forms, take screenshots
 - **Ask AI** — Gemini, Claude, ChatGPT, Perplexity, or BYOK
-- **Send results** — Telegram, LINE, email through your own SMTP account, a file, a PDF, image or share link, the clipboard, a desktop notification
+- **Send results** — Telegram, LINE, Discord, Slack, email from your own mailbox, a file, a PDF, image or share link, the clipboard, a desktop notification
 - **Run anything** — programs, JavaScript, shell, plus system and power controls
 - **Control flow** — loops, conditions, delays, stopping early, and "only tell me when it changes"
 
@@ -131,6 +132,10 @@ Flows are plain `.json` files. Export one to share it (your variable values and 
 - **LINE** (Windows) — list chats, search messages, pull a conversation, from the LINE desktop app while it is running. Nothing is sent to LINE and nothing is marked as read. Flows read LINE with the **LINE Messages** step.
 - **Thunderbird** — search and read mail, write, reply, forward and file it away, plus calendar, tasks and contacts. Needs the Thunderbird MCP add-on, which **Settings → Connectors** links to. The agent uses it; flows send mail with the **Send Email** step.
 
+**Mail.** Add one or more mailboxes in **Settings → Connectors → Mail**: Gmail, Yahoo or iCloud with an app password, Outlook, Hotmail or Microsoft 365 with **Sign in with Microsoft**, or any other IMAP and SMTP server. The agent searches all of them at once, reads, saves attachments, writes drafts, replies, sends, files and trashes mail; sending and trashing ask you every time. Flows read mail with the **Read new mail** step and send it with **Send Email**. Passwords and sign-ins stay on this PC.
+
+**Taiwan.** Built in and on by default for users in Taiwan: **PTT** (find a board, list its posts by push score or keyword, read a post with its pushes) and **Taiwan Rail** (Taiwan Railway and High Speed Rail timetables and fares, plus seven metro systems: trips, fares, next trains and service status), read from the operators' own sites. Flows use the **PTT Board** step.
+
 **X (Twitter).** Built in: search posts, see what's trending, read an account's latest posts and the replies under a post. Turn it on in **Settings → Connectors** and sign in there (search and trends need it); then mention X or Twitter in a message and the agent looks it up on X. Flows use the **X Accounts**, **X Post & Replies** and **X Trends** steps with the same sign-in. Signed out, they see only each account's newest few posts and a few top replies, and **X Trends** fails.
 
 **Cloud services.** Connect once (most ask you to sign in, GitHub takes a token, the Reference ones need nothing) and the agent can use the connector's tools:
@@ -141,7 +146,7 @@ Flows are plain `.json` files. Export one to share it (your variable values and 
 - **Business** — Stripe · Square · PayPal · Intercom
 - **Reference** — Context7 · DeepWiki · Microsoft Learn · Cloudflare Docs · Hugging Face
 
-Anything else that speaks MCP works too: paste its URL. Switch any of them on in **Settings → Connectors**, which also walks you through whatever a connector needs. Everything stays off until you do. Anything that writes asks you first. **Always allow this server** skips the question for edits, but sending and deleting are asked every time. From Telegram or LINE, connectors are read-only, and only for the accounts you grant them.
+Anything else that speaks MCP works too: paste its URL. Switch any of them on in **Settings → Connectors**, which also walks you through whatever a connector needs. Everything stays off until you do. Anything that writes asks you first. **Always allow this server** skips the question for edits, but sending and deleting are asked every time. From a bot, connectors work only for the accounts you grant them, and a change runs only in your own private chat, after you confirm it there.
 
 ---
 
@@ -151,8 +156,9 @@ Anything else that speaks MCP works too: paste its URL. Switch any of them on in
 | ------- | --- |
 | **Schedule** | A digest that arrives every weekday morning |
 | **Global hotkey** | A key combination you pick, pressed in any app; the flow can use the text you selected |
-| **Telegram or LINE message** | A `/command` you name, sent to your bot from your phone; you choose which paired accounts may run it |
+| **Bot message** | A `/command` you name, sent to your Telegram, LINE, Discord or Slack bot from your phone; you choose which paired accounts may run it |
 | **Slash command** | `/yourflow`, typed in the app's chat box |
+| **New file** | Each file saved, downloaded or moved into a folder you pick, once it has finished writing |
 | **System event** | When Yobi starts, after the PC wakes from sleep, or when the screen locks or unlocks (lock and unlock on Windows and macOS only) |
 
 ---
@@ -182,6 +188,8 @@ Or download it from the [Microsoft Store](https://apps.microsoft.com/detail/9nnx
 1. (Optional) Gemini (the default) and Perplexity work without an account. To use Claude or ChatGPT, click **Sign in** next to it under **Settings → AI Models**.
 2. Highlight any text, in any app.
 3. Press **`Alt+G`** (`⌘⌃G` on macOS). Yobi sends it to the AI you picked, copies the answer to your clipboard, and saves the conversation as a Markdown file you can reopen in **Chat**.
+
+**`Alt+J`** (`⌘⌃J` on macOS) works on the screen instead: drag a box around anything, and the picture lands in the chat box for your question.
 
 From there, open **Flows** and click **Templates**.
 
@@ -217,15 +225,19 @@ npm run dev
 
 ---
 
-## Run It From Telegram or LINE
+## Run It From Your Phone
 
-Connect a bot and you can use your AI and your flows from your phone. Telegram takes about two minutes to set up:
+Connect a bot on Telegram, LINE, Discord or Slack and you can use your AI and your flows from your phone. Telegram takes about two minutes to set up:
 
 1. **Create a bot** — message [@BotFather](https://t.me/BotFather) and copy the token it gives you.
 2. **Paste the token**: in **Settings → Bot Integrations**, turn on **Enable Telegram Bot**, paste the token into **Bot Token** and click **Save token**.
 3. **Pair your account**: click **Generate Code**, then send `/start <code>` to your bot, or click **Open Telegram**.
 
 LINE needs a few more steps: create a Messaging API channel in the LINE Developers Console, paste its **Channel access token** and **Channel secret** into the LINE card, and open a tunnel so LINE can reach Yobi's local webhook (the card shows the `cloudflared` command). To pair, click **Generate pairing code** and send the person the pairing link; it fills in `/pair <code>` for them.
+
+Discord and Slack connect out from this PC, so they need no tunnel: for Discord, create an application in the Developer Portal and paste its bot token; for Slack, create the app from the manifest the Slack card gives you and paste its two tokens. Then pair the same way as LINE.
+
+Someone who messages the bot privately without being paired is asking to join: the request shows up under **Settings → Bot Integrations** for you to allow, and on Telegram and LINE you also get a card on your phone with **Allow** and **Block**.
 
 | Command | Does |
 | ------- | ---- |
@@ -236,16 +248,19 @@ LINE needs a few more steps: create a Messaging API channel in the LINE Develope
 | `/output <mode>` | Set everyone's reply format: `md` · `compact` · `png` · `webp` · `pdf` (Telegram, admin) |
 | `/status` | See the work queue (Telegram, admin) |
 | `/restart` | Restart Yobi (Telegram, admin) |
+| `/users` · `/invite` · `/groups` | Allow or block requests and change each account's permissions, send an invite link that expires, and choose which groups may use the bot (Telegram admins; on LINE, only you) |
 
 Commands are optional: a plain message goes to the bot's **Default model**, and the AI decides on its own whether to look something up or use a tool. Pairing only lets an account chat and use the model commands. Everything else is added per account in the paired list: **Agent**, **Web search**, **Read this computer**, **Run commands** (each command is shown in the chat and runs only after you approve it), connectors, and **Admin** (Telegram only).
 
-A **Bot** trigger in a flow adds a command of your own, such as `/my_cmd`, on both platforms. The text after the command goes into the flow, and you choose who can use it: **Everyone paired** or **Selected people**.
+You and your admins can also ask the bot in a private chat to build or change a flow, such as "every 10 minutes, tell me about new PTT posts with more than 20 pushes". The bot asks you to approve it before saving; a flow that runs things on your PC, or one built by an admin that reads your data or acts as you (saves files, sends mail, opens pages in your signed-in browser), is saved switched off for you to check on the desktop.
+
+A **Bot** trigger in a flow adds a command of your own, such as `/my_cmd`, on every platform. The text after the command goes into the flow, and you choose who can use it: **Everyone paired** or **Selected people**.
 
 ---
 
 ## Settings
 
-General · Keyboard shortcuts · Appearance · Export · AI Models · AI Responses · Personal memory · Connectors · Bot Integrations · Statistics · Backup & Restore.
+AI Models · AI Responses · Personal memory · Connectors · Bot Integrations · General · Appearance · Notifications · Links & downloads · Export · Keyboard shortcuts · Statistics · Backup & Restore.
 
 **AI Models** is also where BYOK lives: under **Your Own API Keys (BYOK)**, click **Add key**, pick a provider from the list (OpenAI, Anthropic, Google Gemini, OpenRouter, DeepSeek and more) or **OpenAI-compatible** for any other endpoint, including a local server, and paste your key. It shows up in the chat model menu, in flow LLM steps and as a bot command. **Key groups (rotation)** bundles several keys into one provider that takes turns and moves to the next key when one fails. **Backup & Restore** packs settings (keys and passwords included), flows, saved conversations and memory into a single .zip, and you choose which parts to restore. Keys and passwords restore only on the device that made the backup.
 
@@ -267,10 +282,10 @@ Using the web pages rather than official APIs falls outside the providers' terms
 
 - **Where your prompts go** — to the AI you picked: typed into its own web page, or sent to your BYOK endpoint. In chat and agent runs, your personal memory and answer preferences go with them. That text is subject to the provider's privacy policy.
 - **No middleman, no telemetry** — Yobi has no server and no account, so nothing is proxied through us and there's zero analytics. Conversations, flows, personal memory and exports are plain files on your disk, and the automation logic is auditable in `src/main/`.
-- **What else leaves your machine** — web searches go to DuckDuckGo, and the pages they find are fetched directly. In chat the agent may search on its own unless you switch **Web** off in that conversation; flows search only in their **Web Search** and **Deep Research** steps. A share link carries the whole conversation, encrypted in the app before it's uploaded to a PrivateBin server (privatebin.net unless you set your own); the key lives in the link's `#fragment`, which browsers never send to the host. Connectors talk only to the services you add: the LINE one reads LINE's data on this PC, and the Thunderbird one talks to Thunderbird on this PC. At startup Yobi checks GitHub for a new version (the Microsoft Store build doesn't).
+- **What else leaves your machine** — web searches go to DuckDuckGo, and the pages they find are fetched directly. In chat the agent may search on its own unless you switch **Web** off in that conversation; flows search only in their **Web Search** and **Deep Research** steps. A share link carries the whole conversation, encrypted in the app before it's uploaded to a PrivateBin server (privatebin.net unless you set your own); the key lives in the link's `#fragment`, which browsers never send to the host. Connectors talk only to the services you add: the LINE one reads LINE's data on this PC, the Thunderbird one talks to Thunderbird on this PC, the mail one talks to your mail servers, and PTT and Taiwan Rail read the public pages of PTT and the rail and metro operators. At startup Yobi checks GitHub for a new version (the Microsoft Store build doesn't).
 - **The agent asks before it changes things** — reading needs no confirmation. Every shell command, every flow it saves or edits, and every connector tool that changes something needs your confirmation; sending and deleting are asked every time, even after **Always allow this server**. The agent reads files only in Yobi's output folder, Documents, Downloads and Desktop, and writes files only to the output folder, which needs no confirmation. Anything shaped like a key or token in what its tools read is masked before the model sees it.
-- **Bots get only what you grant** — pairing lets an account chat and use the model commands. **Agent**, **Web search**, **Read this computer**, **Run commands**, connectors and **Admin** are granted per account under **Settings → Bot Integrations**; marking an account as **Me** grants everything except Run commands and Admin. A command a bot wants to run is shown in the chat and runs only after you pick **Run**. Files, commands and connectors work only in private chats, and a bot can never change connector data.
-- **Encrypted credentials** — your Telegram and LINE tokens, SMTP password, BYOK and other API keys, connector sign-ins and the LINE database key are encrypted with the operating system's key store (Electron `safeStorage`) before touching disk.
+- **Bots get only what you grant** — pairing lets an account chat and use the model commands. **Agent**, **Web search**, **Read this computer**, **Run commands**, connectors and **Admin** are granted per account under **Settings → Bot Integrations**; marking an account as **Me** grants everything except Run commands and Admin. A command a bot wants to run is shown in the chat and runs only after you pick **Run**. Files, commands and connectors work only in private chats, and a connector change from a bot runs only in your own private chat, after you confirm it there.
+- **Encrypted credentials** — your Telegram, LINE, Discord and Slack tokens, mailbox passwords and Microsoft sign-ins, BYOK and other API keys, connector sign-ins and the LINE database key are encrypted with the operating system's key store (Electron `safeStorage`) before touching disk.
 
 ---
 

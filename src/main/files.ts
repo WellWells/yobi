@@ -5,10 +5,12 @@ import { existsSync } from 'node:fs';
 import { fdir } from 'fdir';
 import dayjs from 'dayjs';
 import type { OutputFile } from '../shared/types';
-import { latestTurnProvider, parseConversationDoc, visibleConversationText } from '../shared/conversationDoc';
+import { latestTurnProvider, parseConversationDoc, visibleConversationText, withoutMarkerLines } from '../shared/conversationDoc';
 import type { ConversationDoc, ConversationHeadingAliases, ConversationTurn } from '../shared/conversationDoc';
 import { notionDocParts } from '../shared/notion/notionDoc';
 import { plainNotionTitle } from '../shared/notion/notionDisplay';
+import { withoutLeadingThreadMarker } from '../shared/conversationHistory';
+import { folderOfRelativePath } from '../shared/conversationFolders';
 
 type MarkdownHeadingAliases = ConversationHeadingAliases;
 
@@ -69,11 +71,11 @@ export async function listOutputFiles(): Promise<OutputFile[]> {
             return cached.file;
           }
           const content = await fs.readFile(filePath, 'utf-8');
-          const file = buildOutputFile(filePath, content, headingAliases);
+          const file = inFolder(buildOutputFile(filePath, content, headingAliases), dir);
           outputFileCache.set(filePath, { mtimeMs: stat.mtimeMs, size: stat.size, file });
           return file;
         } catch {
-          return buildOutputFile(filePath, '', headingAliases);
+          return inFolder(buildOutputFile(filePath, '', headingAliases), dir);
         }
       }),
     );
@@ -104,7 +106,8 @@ export async function searchOutputFiles(query: string): Promise<OutputFile[]> {
       filePaths.map(async (filePath) => {
         try {
           const content = await fs.readFile(filePath, 'utf-8');
-          return matchOutputFile(filePath, content, headingAliases, keyword);
+          const match = matchOutputFile(filePath, content, headingAliases, keyword);
+          return match ? inFolder(match, dir) : null;
         } catch {
           return null;
         }
@@ -118,16 +121,24 @@ export async function searchOutputFiles(query: string): Promise<OutputFile[]> {
   }
 }
 
+/** The file with the folder in outputs it is in (its top folder when nested deeper). */
+export function inFolder(file: OutputFile, outputDir: string): OutputFile {
+  const folder = folderOfRelativePath(path.relative(outputDir, file.path));
+  return folder ? { ...file, folder } : file;
+}
+
 /**
  * Crawled off the main thread on purpose: this runs after every saved answer, on every
  * debounced search keystroke and once per flow history write, and a sync crawl blocks IPC and
  * window events for as long as it takes — which grows with the size of the archive.
+ * Dot-named folders and files are not conversations (`.git`, an editor's settings, temp files).
  */
 export async function getOutputMarkdownPaths(dir: string): Promise<string[]> {
   if (!existsSync(dir)) return [];
   const paths = await new fdir()
     .withFullPaths()
-    .filter((entryPath, isDirectory) => isDirectory || entryPath.endsWith('.md'))
+    .exclude((dirName) => dirName.startsWith('.'))
+    .filter((entryPath, isDirectory) => isDirectory || (entryPath.endsWith('.md') && !path.basename(entryPath).startsWith('.')))
     .crawl(dir)
     .withPromise();
   return paths.sort((a, b) => path.basename(b).localeCompare(path.basename(a)));
@@ -206,7 +217,9 @@ function readOutputFile(
   headingAliases: MarkdownHeadingAliases,
 ): { file: OutputFile; doc: ConversationDoc | null } {
   const name = path.basename(filePath);
-  const firstLine = content.split('\n')[0]?.trim() ?? '';
+  // A file with no title is given its id as line 1; the row still shows the file's own first words.
+  const shown = withoutLeadingThreadMarker(content);
+  const firstLine = shown.split('\n')[0]?.trim() ?? '';
   const h1Match = firstLine.match(/^#\s+(.+)$/);
   const doc = content ? parseConversationDoc(content, headingAliases) : null;
   // A Notion document has no turns: its time is when its text last changed, its tag is Notion.
@@ -222,6 +235,8 @@ function readOutputFile(
         provider: 'Notion',
         turns: 1,
         notion: true,
+        ...(doc?.thread.pinned === true ? { pinned: true as const } : {}),
+        ...withCreatedAt(extractTimestampFromFileName(name)),
       },
       doc,
     };
@@ -231,9 +246,11 @@ function readOutputFile(
   const timestamp = latestTurnTimestamp(doc?.turns ?? [])
     || extractTimestampFromContent(content, headingAliases.time)
     || extractTimestampFromFileName(name);
+  // Without a title the row previews the opening text, never a `yobi:` marker (a pinned file
+  // without an H1 carries its thread marker on line 1).
   const preview = h1Match
     ? h1Match[1]
-    : (content.slice(0, 200).replace(/\n/g, ' ').trim() || name);
+    : (withoutMarkerLines(shown).slice(0, 200).replace(/\n/g, ' ').trim() || name);
 
   return {
     file: {
@@ -243,6 +260,12 @@ function readOutputFile(
       preview,
       provider: provider || undefined,
       turns: Math.max(1, doc?.turns.length ?? 0),
+      ...(doc?.thread.pinned === true ? { pinned: true as const } : {}),
+      ...withCreatedAt(conversationCreatedAt(
+        doc?.turns ?? [],
+        extractTimestampFromContent(content, headingAliases.time),
+        extractTimestampFromFileName(name),
+      )),
     },
     doc,
   };
@@ -316,6 +339,27 @@ function latestTurnTimestamp(turns: readonly ConversationTurn[]): string {
     if (stamp > latest) latest = stamp;
   }
   return latest;
+}
+
+/**
+ * When the conversation began, for the "created" sort: the earliest time a turn recorded, else the
+ * `## Time` section (written with the first turn), else the file name's stamp. ISO, or ''.
+ */
+export function conversationCreatedAt(
+  turns: readonly Pick<ConversationTurn, 'meta'>[],
+  sectionTime: string,
+  fileNameTime: string,
+): string {
+  let earliest = '';
+  for (const turn of turns) {
+    const stamp = typeof turn.meta.t === 'string' ? toIsoTimestamp(turn.meta.t) : '';
+    if (stamp && (!earliest || stamp < earliest)) earliest = stamp;
+  }
+  return earliest || sectionTime || fileNameTime;
+}
+
+function withCreatedAt(createdAt: string): { createdAt?: string } {
+  return createdAt ? { createdAt } : {};
 }
 
 function extractTimestampFromContent(content: string, timestampHeadingAliases: Set<string>): string {

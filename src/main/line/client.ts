@@ -14,6 +14,10 @@ export interface LineClient {
   pushVideo: (userId: string, videoUrl: string, previewUrl: string) => Promise<void>;
   pushFlex: (userId: string, message: messagingApi.FlexMessage) => Promise<void>;
   replyText: (replyToken: string, text: string) => Promise<void>;
+  /** Answers the event of this token (free, once, shortly after the event); a push costs quota. */
+  replyFlex: (replyToken: string, message: messagingApi.FlexMessage) => Promise<void>;
+  /** Up to five messages in one (free) reply. */
+  replyMessages: (replyToken: string, messages: messagingApi.Message[]) => Promise<void>;
   getBotInfo: () => Promise<LineBotInfo>;
   getWebhookActive: () => Promise<boolean | undefined>;
   getDisplayName: (userId: string) => Promise<string | undefined>;
@@ -46,6 +50,12 @@ export function createLineClient(channelAccessToken: string): LineClient {
     },
     replyText: async (replyToken, text) => {
       await client.replyMessage({ replyToken, messages: [{ type: 'text', text }] });
+    },
+    replyFlex: async (replyToken, message) => {
+      await client.replyMessage({ replyToken, messages: [message] });
+    },
+    replyMessages: async (replyToken, messages) => {
+      await client.replyMessage({ replyToken, messages: messages.slice(0, 5) });
     },
     getBotInfo: async () => {
       const info = await client.getBotInfo();

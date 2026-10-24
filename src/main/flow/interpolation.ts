@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { CaptureFormat, SkillType } from '../../shared/types';
 import { isShareLinkFormat } from '../../shared/shareFormat';
+import { extractTemplateVariables } from '../../shared/templateVariables';
 
 export function interpolate(template: string, context: Map<string, string>): string {
   return template.replace(/\{\{([^}]+)\}\}/g, (_, varName: string) => {
@@ -71,15 +72,7 @@ export function getProducedFiles(context: Map<string, string>): string[] {
   }
 }
 
-export function extractTemplateVariables(template: string): string[] {
-  const vars = new Set<string>();
-  const matches = template.matchAll(/\{\{([^}]+)\}\}/g);
-  for (const match of matches) {
-    const varName = match[1]?.trim();
-    if (varName) vars.add(varName);
-  }
-  return [...vars];
-}
+export { extractTemplateVariables };
 
 async function isExistingFilePath(value: string): Promise<boolean> {
   const filePath = value.trim();

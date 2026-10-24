@@ -25,15 +25,16 @@ function summaryBranch(summaryPrompt: string | null, provider: string, reply: St
 }
 
 /**
- * The desktop chat's video menu, the bot one's twin: the cover, the title and a button per
- * quality plus "summary" (null `summaryPrompt`: no summary), the MP3 and the subtitles, answered in
- * the conversation. A quality, the MP3 or the subtitles save a file in the downloads folder (shown
- * under the answer); "summary" is the bot chat's summary, on the chat's model.
+ * The desktop chat's video menu, the bot one's twin, answered in the conversation: the cover, the
+ * title and "analyze" (null `summaryPrompt`: no summary) and "download", which answers with a
+ * button per quality, the MP3 and the subtitles (straight away for a site with no summary). A
+ * quality, the MP3 or the subtitles save a file in the downloads folder (shown under the answer);
+ * "analyze" is the bot chat's summary, on the chat's model.
  */
 export function videoMenuChatFlow(ids: VideoIds, name: string, summaryPrompt: string | null): FlowDefinition {
   return chatFlowOf(ids.desktopMenu, name, stepsOf(ids.desktopMenu, [
     ['youtube_info', { input: '{{input}}', destination: 'local', cover: 'true', emitFailFlag: 'false' }, 'info'],
-    ['stop', { value: '{{info.quality}}' }],
+    ['stop', { value: '{{info.pick}}' }],
     ...summaryBranch(summaryPrompt, CHAT_MODEL),
     ['stop', { value: '{{info.download}}' }],
     ['youtube_download', { url: '{{info.url}}', quality: '{{info.quality}}', destination: 'local', folder: '' }, 'dl'],
@@ -41,18 +42,39 @@ export function videoMenuChatFlow(ids: VideoIds, name: string, summaryPrompt: st
 }
 
 /**
- * A link alone: the cover, the title and one button per quality plus "summary" (null
- * `summaryPrompt`: no summary), the MP3 and the subtitles. A button runs this again with the link
- * and its choice: the summary, or the download sent back — a video to play, an MP3 to the music
- * player, the .srt as a document — (or, too large for a bot or on LINE, saved on this computer and
- * said so).
+ * A link alone: the cover, the title, "analyze" (null `summaryPrompt`: no summary) and
+ * "download", which answers with one button per quality, the MP3 and the subtitles (straight away
+ * for a site with no summary). With the preview grant on Telegram, a short video first comes as
+ * itself at a low quality (`info.preview`), the same buttons under it; a preview that cannot be
+ * sent leaves the menu in its place. A button runs this again with the link and its choice: the
+ * summary, or the download sent back — a video to play, an MP3 to the music player, the .srt as a
+ * document — (or, too large for a bot or on LINE, saved on this computer and said so).
  */
 export function videoMenuFlow(ids: VideoIds, name: string, summaryPrompt: string | null): FlowDefinition {
   return flowOf(ids.menu, name, ids.cmdMenu, stepsOf(ids.menu, [
-    ['youtube_info', { input: '{{input}}', destination: 'auto', emitFailFlag: 'false' }, 'info'],
-    ['if', { left: '{{info.quality}}', operator: 'is_empty', right: '' }],
-    ['bot', { ...REPLY, message: '{{info}}', attachment: '{{info.image}}', attachmentType: 'photo', buttons: '{{info.buttons}}' }, 'bot_menu'],
-    ['stop', { value: '{{info.quality}}' }],
+    // A slow read says "working" once, never which site it reads.
+    ['youtube_info', { input: '{{input}}', destination: 'auto', emitFailFlag: 'false', progress: 'brief' }, 'info'],
+    // A preview comes only with a menu, so `info.pick` is empty there: both stops end the run.
+    // It is downloaded in the background — "working" until the video itself, nothing in between —
+    // and the answer to a link pasted alone takes that message's place, the link in its caption.
+    ['if', { left: '{{info.preview}}', operator: 'is_true', right: '' }],
+    ['youtube_download', { url: '{{info.url}}', quality: '{{info.preview}}', destination: 'auto', folder: '', emitFailFlag: 'true', progress: 'brief' }, 'preview_dl'],
+    ['if', { left: '{{preview_dl.savedLocally}}', operator: 'equals', right: '0' }],
+    ['bot', {
+      ...REPLY, message: '{{info.previewCaption}}', attachment: '{{preview_dl}}', attachmentType: 'video', buttons: '{{info.buttons}}',
+      replaceTrigger: '{{info.replaceLink}}',
+    }, 'bot_preview'],
+    ['if', { left: '{{bot_preview.isFailed}}', operator: 'equals', right: '0' }],
+    ['stop', { value: '{{info.pick}}' }],
+    END_IF,
+    END_IF,
+    END_IF,
+    ['if', { left: '{{info.pick}}', operator: 'is_empty', right: '' }],
+    ['bot', {
+      ...REPLY, message: '{{info.botText}}', attachment: '{{info.menuImage}}', attachmentType: 'photo', buttons: '{{info.buttons}}',
+      replaceTrigger: '{{info.replaceLink}}',
+    }, 'bot_menu'],
+    ['stop', { value: '{{info.pick}}' }],
     END_IF,
     ...summaryBranch(summaryPrompt, BOT_MODEL, [['bot', { ...REPLY, message: '{{llm_1}}' }, 'bot_summary']]),
     ['stop', { value: '{{info.download}}' }],

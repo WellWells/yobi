@@ -8,6 +8,7 @@ import { useI18nStore } from '../../../store/i18nStore';
 import { useTranslateStore } from '../../../store/translateStore';
 import { ensureWritingModel } from '../writingToolsActions';
 import { rememberLanguage } from './translateActions';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 let sequence = 0;
 let subscribed = false;
@@ -56,7 +57,7 @@ export async function translateConversation(path: string, to: TranslateLanguage)
   if (result.ok) {
     await openFile(result.filePath);
     const message = result.keptOriginal > 0
-      ? t('chat.translate.conversation.doneKept').replace('{{count}}', String(result.keptOriginal))
+      ? fillTemplate(t('chat.translate.conversation.doneKept'), { count: String(result.keptOriginal) })
       : t('chat.translate.conversation.done');
     showAppNotice({ message, level: result.keptOriginal > 0 ? 'warning' : 'success' });
     return;
@@ -79,12 +80,12 @@ export function conversationFailureDetail(
   const turn = result.turn ? String(result.turn) : '';
   switch (result.reason) {
     case 'tooLong':
-      return t('chat.translate.conversation.tooLong').replace('{{turn}}', turn);
+      return fillTemplate(t('chat.translate.conversation.tooLong'), { turn });
     case 'busy':
       return t('chat.translate.conversation.busy');
     case 'empty':
       return turn
-        ? t('chat.translate.conversation.emptyTurn').replace('{{turn}}', turn)
+        ? fillTemplate(t('chat.translate.conversation.emptyTurn'), { turn })
         : t('chat.translate.conversation.empty');
     default:
       return result.error || t('chat.translate.error.failed');

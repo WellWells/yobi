@@ -9,7 +9,9 @@ export const AppButton = React.forwardRef<HTMLButtonElement, AppButtonProps>(({
   disabled,
   ...props
 }, ref) => {
-  if (loading && leftSection) {
+  // Mantine's own `loading` covers the whole button and hides the label. The spinner goes in the
+  // left slot instead — in place of the icon, or where one would be — and the label stays readable.
+  if (loading) {
     return (
       <Button
         ref={ref}
@@ -25,7 +27,6 @@ export const AppButton = React.forwardRef<HTMLButtonElement, AppButtonProps>(({
       ref={ref}
       {...props}
       leftSection={leftSection}
-      loading={loading}
       disabled={disabled}
     />
   );

@@ -1,11 +1,11 @@
 import React from 'react';
 import { Stack, Text } from '@mantine/core';
-import { Image as ImageIcon, ShieldAlert } from 'lucide-react';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { ToggleSwitch } from '../../../components/ToggleSwitch';
 import { SettingRow } from '../../../components/SettingRow';
 import { isValidUrlListOrVar } from './validation';
 import type { SkillConfigProps } from './types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 export const BrowserConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
   const url = step.config.url ?? '';
@@ -24,7 +24,6 @@ export const BrowserConfig: React.FC<SkillConfigProps> = ({ step, onChange, t })
       />
 
       <SettingRow
-        icon={<ImageIcon size={13} />}
         label={t('flow.skill.includeImage')}
         hint={t('flow.skill.includeImage.hint')}
         control={
@@ -36,7 +35,6 @@ export const BrowserConfig: React.FC<SkillConfigProps> = ({ step, onChange, t })
       />
 
       <SettingRow
-        icon={<ShieldAlert size={13} />}
         label={t('flow.skill.browser.emitFailFlag')}
         hint={t('flow.skill.browser.emitFailFlag.hint')}
         control={
@@ -48,7 +46,7 @@ export const BrowserConfig: React.FC<SkillConfigProps> = ({ step, onChange, t })
       />
 
       <Text fz="xs" c="dimmed">
-        {t('flow.skill.browser.outputHint').replace('{{outputKey}}', `{{${step.outputKey}}}`)}
+        {fillTemplate(t('flow.skill.browser.outputHint'), { outputKey: `{{${step.outputKey}}}` })}
       </Text>
     </Stack>
   );

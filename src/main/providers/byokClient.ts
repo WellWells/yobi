@@ -1,4 +1,4 @@
-import { byokIdFromUrl, byokGroupIdFromUrl, isByokGroupUrl } from '../../shared/types';
+import { byokIdFromUrl, byokGroupIdFromUrl, byokTypeTakesImages, isByokGroupUrl } from '../../shared/types';
 import type { ByokGroup } from '../../shared/types';
 import { config } from '../config';
 import type { ByokInstance } from '../configTypes';
@@ -60,12 +60,69 @@ export interface ByokEndpoint {
   model?: string;
   label?: string;
   id?: string;
+  /** The key's preset reads pictures (`byokTypeTakesImages`). */
+  takesImages?: true;
 }
 
 export interface ByokUsage {
   input: number;
   output: number;
   cachedInput?: number;
+}
+
+/** A picture ready to send: base64 bytes in one of the formats every image-taking preset reads. */
+export interface ByokImage {
+  mimeType: string;
+  data: string;
+}
+
+/** One turn of a multi-turn request: what `/agent` sends once a BYOK run has a conversation. */
+export interface ByokChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  /** Pictures sent with a user message; only a key that takes them is ever given one. */
+  images?: readonly ByokImage[];
+}
+
+/** A single prompt, or a whole conversation ending in the user's latest message. */
+export type ByokPrompt = string | readonly ByokChatMessage[];
+
+/** A rough per-picture input cost, for the estimate of an endpoint that reports no usage. */
+const IMAGE_TOKEN_ESTIMATE = 1_500;
+
+export const BYOK_NO_IMAGE_KEY_ERROR = 'BYOK group has no key that takes images';
+
+function byokMessages(prompt: ByokPrompt): readonly ByokChatMessage[] {
+  return typeof prompt === 'string' ? [{ role: 'user', content: prompt }] : prompt;
+}
+
+type WireContent = string | ({ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } })[];
+
+/** The OpenAI-compatible shape: a message with pictures becomes parts, pictures before the text. */
+function wireMessages(prompt: ByokPrompt): { role: string; content: WireContent }[] {
+  return byokMessages(prompt).map(({ role, content, images }) => {
+    if (!images?.length) return { role, content };
+    return {
+      role,
+      content: [
+        ...images.map((image) => ({
+          type: 'image_url' as const,
+          image_url: { url: `data:${image.mimeType};base64,${image.data}` },
+        })),
+        { type: 'text' as const, text: content },
+      ],
+    };
+  });
+}
+
+export function byokPromptImageCount(prompt: ByokPrompt): number {
+  if (typeof prompt === 'string') return 0;
+  return prompt.reduce((sum, message) => sum + (message.images?.length ?? 0), 0);
+}
+
+/** The text a request carries, for the token estimate an endpoint without usage reporting needs. */
+export function byokPromptText(prompt: ByokPrompt): string {
+  return typeof prompt === 'string' ? prompt : prompt.map((message) => message.content).join('\n\n');
 }
 
 export function findByokInstanceByUrl(url: string): ByokInstance | null {
@@ -102,7 +159,21 @@ function endpointForInstance(instance: ByokInstance): ByokEndpoint {
     model: instance.model,
     label: instance.name,
     id: instance.id,
+    ...(byokTypeTakesImages(instance.providerType) ? { takesImages: true } : {}),
   };
+}
+
+/** Whether the key behind `url` takes pictures; a group does when any of its keys does. */
+export function byokTargetTakesImages(url: string): boolean {
+  if (isByokGroupUrl(url)) {
+    const group = findByokGroupByUrl(url);
+    return group?.memberIds.some((memberId) => {
+      const member = config.byokInstances.find((instance) => instance.id === memberId);
+      return member ? byokTypeTakesImages(member.providerType) : false;
+    }) ?? false;
+  }
+  const instance = findByokInstanceByUrl(url);
+  return instance ? byokTypeTakesImages(instance.providerType) : false;
 }
 
 const groupRotation = new Map<string, number>();
@@ -499,7 +570,7 @@ function logCacheHit(usage: ByokUsage): void {
 
 export async function callByokChat(
   cfg: ByokEndpoint,
-  prompt: string,
+  prompt: ByokPrompt,
   idleTimeoutMs: number,
   signal?: AbortSignal,
 ): Promise<{ response: string; title: string; usage: ByokUsage | null }> {
@@ -516,7 +587,7 @@ export async function callByokChat(
         },
         body: JSON.stringify({
           model: cfg.model,
-          messages: [{ role: 'user', content: prompt }],
+          messages: wireMessages(prompt),
           stream: true,
           ...(includeUsage ? { stream_options: { include_usage: true } } : {}),
         }),
@@ -547,7 +618,7 @@ export async function callByokChat(
     meterReported(result.usage.input, result.usage.output);
     logCacheHit(result.usage);
   } else {
-    meterText(prompt, result.content);
+    meterText(byokPromptText(prompt), result.content);
   }
   return { response: result.content, title: '', usage: result.usage };
 }
@@ -623,12 +694,20 @@ export async function runOnByokKeys<T extends { usage: ByokUsage | null }>(
 
 export async function runByokCompletion(
   targetUrl: string,
-  prompt: string,
+  prompt: ByokPrompt,
   timeoutMs: number,
   signal?: AbortSignal,
 ): Promise<{ response: string; title: string; usage: ByokUsage | null }> {
+  const imageCount = byokPromptImageCount(prompt);
   return runOnByokKeys(targetUrl, (endpoint) => callByokChat(endpoint, prompt, timeoutMs, signal), {
     signal,
-    estimate: (result) => ({ input: estimateTokens(prompt), output: estimateTokens(result.response) }),
+    estimate: (result) => ({
+      input: estimateTokens(byokPromptText(prompt)) + imageCount * IMAGE_TOKEN_ESTIMATE,
+      output: estimateTokens(result.response),
+    }),
+    // A group may mix keys: pictures go only to the ones that read them.
+    ...(imageCount > 0
+      ? { accept: (endpoint: ByokEndpoint) => endpoint.takesImages === true, noneAccepted: BYOK_NO_IMAGE_KEY_ERROR }
+      : {}),
   });
 }

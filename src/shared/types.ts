@@ -10,6 +10,7 @@ import type { BotGrant, BotGroupGrant } from './botPermissions';
 import type { ResearchProgress } from './researchProgress';
 import type { MarkdownLabels } from './markdownLabels';
 import type { TelegramLargeUploadSnapshot } from './telegramUpload';
+import type { ConversationBusyReason } from './conversationMove';
 
 export const PROVIDER_URLS = {
   gemini: 'https://gemini.google.com/',
@@ -202,6 +203,28 @@ export function detectByokProviderType(baseUrl: string): ByokProviderType {
   }
   return 'custom';
 }
+
+/**
+ * Presets whose chat endpoint reads pictures sent as `image_url` parts, whichever model the key
+ * names. The rest either have text-only models (DeepSeek, Cerebras) or vision only on some of
+ * them (Qwen, Mistral, Groq), where a picture would fail the request instead of being read.
+ */
+const BYOK_IMAGE_PROVIDER_TYPES: ReadonlySet<ByokProviderType> = new Set([
+  'openai', 'anthropic', 'gemini', 'xai', 'openrouter',
+]);
+
+export function byokTypeTakesImages(type: ByokProviderType): boolean {
+  return BYOK_IMAGE_PROVIDER_TYPES.has(type);
+}
+
+/** The labels of those presets, for the text that says which keys take pictures. */
+export const BYOK_IMAGE_PROVIDER_LABELS = BYOK_PROVIDER_TYPES
+  .filter(byokTypeTakesImages)
+  .map((type) => BYOK_PROVIDER_TYPE_LABELS[type])
+  .join(' / ');
+
+/** Pictures per message on a key that takes them; each is re-encoded small, see `byokImages.ts`. */
+export const BYOK_IMAGE_MAX_FILES = 5;
 
 /** Google's own Gemini API host, the only BYOK endpoint that accepts a YouTube URL as video input. */
 export function isGeminiApiBaseUrl(baseUrl: string): boolean {
@@ -450,6 +473,14 @@ export const UPLOAD_CAPABLE_PROVIDER_LABELS = PROVIDERS
   .map((provider) => PROVIDER_LABELS[provider])
   .join(' / ');
 
+/**
+ * A macOS trackpad scroll gesture starting or ending in the main window (`IPC.TRACKPAD_GESTURE`).
+ * Only these two phases cross IPC; the per-frame updates stay in main.
+ */
+export interface TrackpadGestureEvent {
+  phase: 'begin' | 'end';
+}
+
 export const IPC = {
   LOG: 'log',
   STATUS: 'status',
@@ -462,6 +493,8 @@ export const IPC = {
   UI_NOTIFICATION: 'ui:notification',
   TELEGRAM_RUNTIME: 'telegram:runtime',
   LINE_RUNTIME: 'line:runtime',
+  /** A socket platform's runtime changed; the payload names the platform. */
+  SOCKET_BOT_RUNTIME: 'socket-bot:runtime',
   ACCOUNT_STATUS_CHANGED: 'account:status-changed',
   SECRET_HEALTH_CHANGED: 'secret:health-changed',
   GET_SECRET_HEALTH: 'secret:get-health',
@@ -472,6 +505,7 @@ export const IPC = {
   WINDOW_CLOSE: 'window:close',
   WINDOW_IS_MAXIMIZED: 'window:is-maximized',
   WINDOW_MAXIMIZED_CHANGED: 'window:maximized-changed',
+  TRACKPAD_GESTURE: 'window:trackpad-gesture',
   SHOW_WORKER: 'show-worker',
   SITE_VERIFICATION_OPEN: 'site-verification:open',
   GET_ACCOUNT_STATUSES: 'account:get-statuses',
@@ -489,8 +523,16 @@ export const IPC = {
   GET_FILE_CONTENT: 'file:get-content',
   DELETE_FILE: 'file:delete',
   DELETE_FILES: 'file:delete-many',
+  DELETE_FILES_PERMANENTLY: 'file:delete-permanently',
   DELETE_ALL_FILES: 'file:delete-all',
+  TRASH_LIST: 'trash:list',
+  TRASH_RESTORE: 'trash:restore',
+  TRASH_PURGE: 'trash:purge',
+  TRASH_CHANGED: 'trash:changed',
   UPDATE_FILE_H1: 'file:update-h1',
+  CONVERSATION_SET_PINNED: 'conversation:set-pinned',
+  CONVERSATION_MENU_STATE: 'conversation-menu:state',
+  CONVERSATION_MENU_COMMAND: 'conversation-menu:command',
   EDIT_TURN_RESPONSE: 'file:edit-turn-response',
   SET_TURN_TRANSLATION: 'file:set-turn-translation',
   CONVERSATION_HISTORY_LIST: 'conversation-history:list',
@@ -520,11 +562,28 @@ export const IPC = {
   START_CONVERSATION: 'file:start-conversation',
   IMPORT_CONVERSATIONS: 'file:import-conversations',
   START_FILE_DRAG: 'file:start-drag',
+  /** Renderer → main: move conversation files to the outputs folder or a folder directly in it. */
+  CONVERSATION_MOVE: 'file:conversation-move',
+  /** Main → renderer, before the refreshed list: which paths became which (`ConversationMovedEvent`). */
+  CONVERSATION_MOVED: 'file:conversation-moved',
+  /** The folders directly inside outputs (`ConversationFolder[]`). */
+  FOLDER_LIST: 'folder:list',
+  FOLDER_CREATE: 'folder:create',
+  FOLDER_RENAME: 'folder:rename',
+  /** Moves the folder's conversations to Recently Deleted, then removes it when nothing else is left. */
+  FOLDER_DELETE: 'folder:delete',
+  /** Main → renderer after a folder was made, renamed or deleted: the new `ConversationFolder[]`. */
+  FOLDER_LIST_CHANGED: 'folder:list-changed',
+  GET_SIDEBAR_VIEW: 'ui:get-sidebar-view',
+  UPDATE_SIDEBAR_VIEW: 'ui:update-sidebar-view',
   UPDATE_HOTKEY: 'hotkey:update',
   GET_HOTKEY: 'hotkey:get',
+  GET_REGION_HOTKEY: 'region-hotkey:get',
+  UPDATE_REGION_HOTKEY: 'region-hotkey:update',
+  /** main → renderer: a boxed screen region is waiting; the renderer collects it with REGION_CAPTURE_TAKE. */
+  REGION_CAPTURE_READY: 'region-capture:ready',
+  REGION_CAPTURE_TAKE: 'region-capture:take',
   SET_HOTKEY_PAUSED: 'hotkey:set-paused',
-  GET_HOTKEY_ENABLED: 'hotkey:get-enabled',
-  SET_HOTKEY_ENABLED: 'hotkey:set-enabled',
   GET_SHORTCUTS: 'shortcuts:get',
   UPDATE_SHORTCUTS: 'shortcuts:update',
   GET_AI_URL: 'ai:get-url',
@@ -543,6 +602,10 @@ export const IPC = {
   CHAT_TURN: 'chat:turn',
   GET_SYNC_SYSTEM_LANGUAGE_TO_MODEL: 'prompt:get-sync-system-language-to-model',
   UPDATE_SYNC_SYSTEM_LANGUAGE_TO_MODEL: 'prompt:update-sync-system-language-to-model',
+  GET_ONE_SHOT_TEMPORARY_CHAT: 'accounts:get-one-shot-temporary-chat',
+  UPDATE_ONE_SHOT_TEMPORARY_CHAT: 'accounts:update-one-shot-temporary-chat',
+  GET_PROVIDER_FALLBACK: 'accounts:get-provider-fallback',
+  UPDATE_PROVIDER_FALLBACK: 'accounts:update-provider-fallback',
   GET_NOTIFY_ON_COMPLETE: 'notify:get-on-complete',
   UPDATE_NOTIFY_ON_COMPLETE: 'notify:update-on-complete',
   RESET_SETTINGS: 'settings:reset',
@@ -582,8 +645,12 @@ export const IPC = {
   UPDATE_TELEGRAM_COMPACT_REPLY: 'telegram:update-compact-reply',
   /** Replaces one paired Telegram / LINE account's grants (`BotSetPermissionsRequest`). */
   BOT_SET_PERMISSIONS: 'bot:set-permissions',
+  /** Replaces what accounts are given when they pair (`BotSetDefaultGrantsRequest`). */
+  BOT_SET_DEFAULT_GRANTS: 'bot:set-default-grants',
   BOT_SET_GROUP_PERMISSIONS: 'bot:set-group-permissions',
   BOT_SET_BLOCKED: 'bot:set-blocked',
+  /** Pairs someone who asked in a private chat, without a code (`BotApprovePairingRequest`). */
+  BOT_APPROVE_PAIRING_REQUEST: 'bot:approve-pairing-request',
   BOT_GET_AUDIENCE: 'bot:get-audience',
   UPDATE_TELEGRAM_LLM_DIRECT: 'telegram:update-llm-direct',
   GET_BOT_PROVIDER_COMMANDS: 'bot:get-provider-commands',
@@ -606,10 +673,27 @@ export const IPC = {
   UNPAIR_LINE_USER: 'line:unpair-user',
   LIST_LINE_CHATS: 'line:list-chats',
   REFRESH_LINE_ACCOUNT: 'line:refresh-account',
+  // Socket platforms (Discord, Slack): every call names its platform first.
+  SOCKET_BOT_GET_SETTINGS: 'socket-bot:get-settings',
+  SOCKET_BOT_UPDATE_ENABLED: 'socket-bot:update-enabled',
+  SOCKET_BOT_UPDATE_SECRETS: 'socket-bot:update-secrets',
+  SOCKET_BOT_UPDATE_LLM_DIRECT: 'socket-bot:update-llm-direct',
+  SOCKET_BOT_GENERATE_PAIRING_CODE: 'socket-bot:generate-pairing-code',
+  SOCKET_BOT_REVOKE_PAIRING_CODE: 'socket-bot:revoke-pairing-code',
+  SOCKET_BOT_UNPAIR_USER: 'socket-bot:unpair-user',
+  SOCKET_BOT_RECONNECT: 'socket-bot:reconnect',
   GET_EMAIL_SETTINGS: 'email:get-settings',
   UPDATE_EMAIL_CREDENTIALS: 'email:update-credentials',
+  REMOVE_MAIL_ACCOUNT: 'email:remove-account',
+  MAIL_MICROSOFT_SIGN_IN: 'email:microsoft-sign-in',
+  MAIL_MICROSOFT_CANCEL: 'email:microsoft-cancel',
+  SET_DEFAULT_MAIL_ACCOUNT: 'email:set-default-account',
   GET_DATA_KEY_STATUS: 'datakey:get-status',
   UPDATE_DATA_KEY: 'datakey:update',
+  CALENDAR_LIST: 'calendar:list',
+  CALENDAR_SAVE: 'calendar:save',
+  CALENDAR_REMOVE: 'calendar:remove',
+  CALENDAR_TEST: 'calendar:test',
   GET_PROMPT_PREFERENCES: 'prompt:get-preferences',
   UPDATE_PROMPT_PREFERENCES: 'prompt:update-preferences',
   GET_YOUTUBE_PROMPT: 'youtube:get-prompt',
@@ -677,6 +761,8 @@ export const IPC = {
   MCP_DISCONNECT_SERVER: 'mcp:disconnect-server',
   MCP_SET_BUILTIN_ENABLED: 'mcp:set-builtin-enabled',
   MCP_SERVER_STATUS: 'mcp:server-status',
+  /** The tools of one connector, for the flow editor's `mcp` step (connects it without a sign-in). */
+  MCP_FLOW_TOOLS: 'mcp:flow-tools',
   NAVIGATE_SETTINGS: 'navigate:settings',
   SHOW_CLOSE_DIALOG: 'close-dialog:show',
   RESPOND_CLOSE_DIALOG: 'close-dialog:respond',
@@ -694,6 +780,9 @@ export const IPC = {
   UPDATE_LAYOUT_MODE: 'ui:update-layout-mode',
   GET_SHOW_TOKEN_USAGE: 'ui:get-show-token-usage',
   UPDATE_SHOW_TOKEN_USAGE: 'ui:update-show-token-usage',
+  GET_LINK_RECOGNITION: 'links:get-recognition',
+  SET_LINK_RECOGNITION: 'links:set-recognition',
+  LINK_RECOGNITION_CHANGED: 'links:recognition-changed',
   GET_MARKDOWN_ZOOM: 'ui:get-markdown-zoom',
   UPDATE_MARKDOWN_ZOOM: 'ui:update-markdown-zoom',
   GET_READING_PREFS: 'ui:get-reading-prefs',
@@ -736,6 +825,9 @@ export const IPC = {
   FLOW_EXECUTION_STARTED: 'flow:execution-started',
   FLOW_EXECUTION_ENDED: 'flow:execution-ended',
   FLOW_PREVIEW_SCHEDULE: 'flow:preview-schedule',
+  /** Broadcast and invoke: ids of the flows whose watched folder (file trigger) is missing. */
+  FLOW_WATCH_MISSING: 'flow:watch-missing',
+  FLOW_WATCH_MISSING_GET: 'flow:watch-missing-get',
   FLOW_EXPORT: 'flow:export',
   FLOW_EXPORT_RESULT: 'flow:export-result',
   AGENT_RUN: 'agent:run',
@@ -749,6 +841,8 @@ export const IPC = {
   RSS_HAS_CHECKPOINT: 'rss:has-checkpoint',
   RSS_CLEAR_CHECKPOINT: 'rss:clear-checkpoint',
   RSS_DISCOVER_FEED: 'rss:discover-feed',
+  RSS_PREVIEW_FEED: 'rss:preview-feed',
+  RSS_CANCEL_PREVIEW: 'rss:cancel-preview',
   SCRAPER_HAS_CHECKPOINT: 'scraper:has-checkpoint',
   SCRAPER_CLEAR_CHECKPOINT: 'scraper:clear-checkpoint',
   SCRAPER_PICK_SELECTOR: 'scraper:pick-selector',
@@ -756,6 +850,11 @@ export const IPC = {
   YT_SUBS_CLEAR_CHECKPOINT: 'youtube-subs:clear-checkpoint',
   X_POSTS_HAS_CHECKPOINT: 'x-posts:has-checkpoint',
   X_POSTS_CLEAR_CHECKPOINT: 'x-posts:clear-checkpoint',
+  PTT_BOARD_HAS_CHECKPOINT: 'ptt-board:has-checkpoint',
+  PTT_BOARD_CLEAR_CHECKPOINT: 'ptt-board:clear-checkpoint',
+  PTT_FIND_BOARDS: 'ptt-board:find-boards',
+  PTT_PREVIEW_BOARD: 'ptt-board:preview',
+  PTT_CANCEL_PREVIEW: 'ptt-board:cancel-preview',
   CAPTURE_PAGE: 'browser:capture-page',
   METRICS_GET: 'metrics:get',
   METRICS_CONVERSATION_TOKENS: 'metrics:conversation-tokens',
@@ -963,6 +1062,49 @@ export interface OutputFile {
   turns?: number;
   /** A Notion page kept in sync (`ThreadMeta.notion`), shown in the document view. */
   notion?: true;
+  /** Pinned to the top of the sidebar (`ThreadMeta.pinned`); absent when not pinned. */
+  pinned?: true;
+  /** The folder in outputs it is in (the top one, for a file nested deeper); absent at the top level. */
+  folder?: string;
+  /** When the conversation began: the first turn's time, else `## Time`, else the file name's stamp. */
+  createdAt?: string;
+}
+
+/** Pin or unpin conversations; main answers with how many files it changed. */
+export interface ConversationPinRequest {
+  paths: string[];
+  pinned: boolean;
+}
+
+/** A conversation in Recently Deleted, as the renderer sees it: addressed by `trashId` only. */
+export interface TrashedConversation {
+  trashId: string;
+  /** The H1, else the file name without `.md`. */
+  title: string;
+  /** Where restoring puts it back, relative to the outputs folder. */
+  originalRelativePath: string;
+  /** ISO time it was deleted. */
+  deletedAt: string;
+  /** ISO time the sweep deletes it for good. */
+  expiresAt: string;
+}
+
+/** What deleting conversations did. */
+export interface TrashResult {
+  /** The batch now in Recently Deleted; restoring exactly these undoes the delete. */
+  trashIds: string[];
+  /** Files that could not be moved there. They stay until the user agrees to delete them for good. */
+  failed: string[];
+  /**
+   * Files left where they are because something is writing to them (an answer on its way, a
+   * translation): deleting one mid-send would make the answer land in a new file instead.
+   */
+  busy: TrashBusyFile[];
+}
+
+export interface TrashBusyFile {
+  path: string;
+  reason: ConversationBusyReason;
 }
 
 export interface StartedConversation {
@@ -1001,7 +1143,7 @@ export interface ConversationImportResult {
 }
 
 /** Every place a secret is stored behind safeStorage. */
-export type SecretScope = 'telegram' | 'line' | 'smtp' | 'byok' | 'mcp' | 'dataKey';
+export type SecretScope = 'telegram' | 'line' | 'discord' | 'slack' | 'smtp' | 'byok' | 'mcp' | 'dataKey' | 'calendar';
 
 /**
  * Where the user goes to re-enter a scope's secret, and what to call it. The label keys are
@@ -1011,10 +1153,13 @@ export type SecretScope = 'telegram' | 'line' | 'smtp' | 'byok' | 'mcp' | 'dataK
 export const SECRET_SCOPE_META: Record<SecretScope, { category: string; labelKey: string }> = {
   telegram: { category: 'bots', labelKey: 'secret.scope.telegram' },
   line: { category: 'bots', labelKey: 'secret.scope.line' },
+  discord: { category: 'bots', labelKey: 'secret.scope.discord' },
+  slack: { category: 'bots', labelKey: 'secret.scope.slack' },
   smtp: { category: 'flow', labelKey: 'secret.scope.smtp' },
   byok: { category: 'accounts', labelKey: 'secret.scope.byok' },
   mcp: { category: 'connectors', labelKey: 'secret.scope.mcp' },
   dataKey: { category: 'flow', labelKey: 'secret.scope.dataKey' },
+  calendar: { category: 'connectors', labelKey: 'secret.scope.calendar' },
 } as const;
 
 export interface SecretFailure {
@@ -1155,6 +1300,16 @@ export interface BotContact {
   lastUsedAt?: string;
   useCount?: number;
   lastUsedChatId?: string;
+  /**
+   * An unpaired person asked in a private chat to use the bot (ISO time): a manager may let them
+   * in without a code. Cleared when they are paired or blocked.
+   */
+  pairingRequestedAt?: string;
+  /**
+   * When the managers were sent this request's card (ISO time). Unset while the request waits for
+   * a day with allowance left; cleared with the request.
+   */
+  pairingCardAt?: string;
 }
 
 /** One group or multi-person chat the bot is in, with what it grants everyone in it. */
@@ -1178,6 +1333,8 @@ export interface BotAudienceUser {
   /** A group's name, or '' for a private chat. */
   where: string;
   blocked: boolean;
+  /** Asked in a private chat to use the bot and waits for a manager to allow it. */
+  requested?: true;
 }
 
 /** The settings page's groups and "people who used the bot", for one platform. */
@@ -1248,6 +1405,8 @@ export interface TelegramSettingsSnapshot {
   compactReply: boolean;
   /** Per-account grants keyed by the stringified user id; no entry means no grants. */
   permissions: Record<string, BotGrant[]>;
+  /** What an account is given when it pairs with a code. */
+  defaultGrants: BotGrant[];
   llmDirect: BotLlmDirectConfig;
   runtime: TelegramRuntimeSnapshot;
   pairing: TelegramPairingState;
@@ -1326,6 +1485,8 @@ export interface LineSettingsSnapshot {
   pairing: LinePairingSnapshot;
   /** Per-account grants keyed by the LINE user id; no entry means no grants. */
   permissions: Record<string, BotGrant[]>;
+  /** What an account is given when it pairs with a code. */
+  defaultGrants: BotGrant[];
   webhookPath: string;
   llmDirect: BotLlmDirectConfig;
   runtime: LineRuntimeSnapshot;
@@ -1336,12 +1497,85 @@ export interface LineCredentialsUpdate {
   channelSecret: string;
 }
 
-export interface EmailSettingsSnapshot {
+/**
+ * Bot platforms this computer reaches over a socket it opens itself (Discord's gateway, Slack's
+ * Socket Mode): no public address, no webhook. They pair with a code like LINE, keep string ids,
+ * and share one settings section, one set of IPC channels and one runtime shape.
+ */
+export type SocketBotPlatform = 'discord' | 'slack';
+export const SOCKET_BOT_PLATFORMS: readonly SocketBotPlatform[] = ['discord', 'slack'] as const;
+
+export function isSocketBotPlatform(value: string): value is SocketBotPlatform {
+  return (SOCKET_BOT_PLATFORMS as readonly string[]).includes(value);
+}
+
+/** The secrets each socket platform signs in with, by config field: Slack needs its app token too. */
+export const SOCKET_BOT_SECRET_FIELDS = {
+  discord: ['botToken'],
+  slack: ['botToken', 'appToken'],
+} as const satisfies Record<SocketBotPlatform, readonly string[]>;
+
+export type SocketBotSecretField = typeof SOCKET_BOT_SECRET_FIELDS[SocketBotPlatform][number];
+
+export type SocketBotRuntimeStatus = 'idle' | 'starting' | 'running' | 'error';
+
+export interface SocketBotAccountInfo {
+  /** The bot's own user id. */
+  id: string;
+  name: string;
+  /** Discord: the link that adds the bot to a server. */
+  inviteUrl?: string;
+  /** Slack: the workspace the app is installed in. */
+  workspace?: string;
+}
+
+export interface SocketBotRuntimeSnapshot {
+  platform: SocketBotPlatform;
+  status: SocketBotRuntimeStatus;
+  errorMessage?: string;
+  account?: SocketBotAccountInfo;
+  updatedAt: string;
+}
+
+export interface SocketBotSettingsSnapshot {
+  platform: SocketBotPlatform;
+  enabled: boolean;
+  /** Each secret field: whether it is set, and a masked preview. Never the secret itself. */
+  secrets: Partial<Record<SocketBotSecretField, { has: boolean; preview: string }>>;
+  pairing: { pendingCodes: PendingPairingCode[]; pairedUsers: LinePairedUser[] };
+  /** Per-account grants keyed by the platform's user id; no entry means no grants. */
+  permissions: Record<string, BotGrant[]>;
+  /** What an account is given when it pairs with a code. */
+  defaultGrants: BotGrant[];
+  llmDirect: BotLlmDirectConfig;
+  runtime: SocketBotRuntimeSnapshot;
+}
+
+/** A settings change; a failure carries the snapshot too unless the request named no known platform. */
+export type SocketBotActionResult =
+  | { ok: true; snapshot: SocketBotSettingsSnapshot }
+  | { ok: false; message: string; snapshot?: SocketBotSettingsSnapshot };
+
+/** One mailbox as the renderer may see it: never its password. */
+export interface MailAccountView {
+  id: string;
+  /** The address, which is also the sign-in name for both servers. */
+  user: string;
+  /** `microsoft` signs in with a Microsoft account; `hasPassword` then means "still signed in". */
+  auth: 'password' | 'microsoft';
   host: string;
   port: number;
-  user: string;
   hasPassword: boolean;
-  passwordPreview: string;
+  imapHost: string;
+  imapPort: number;
+  /** The IMAP server mail is read from: the typed one or the one the address implies; '' = send only. */
+  readHost: string;
+}
+
+export interface EmailSettingsSnapshot {
+  accounts: MailAccountView[];
+  /** The account new mail goes out from; '' when there is none. */
+  defaultId: string;
 }
 
 export interface DataKeyStatus {
@@ -1361,12 +1595,25 @@ export const DATA_KEY_TDX_SECRET = 'tdx.clientSecret';
  */
 export const DATA_KEY_LINE_DB = 'line.dbKey';
 
-export interface SmtpCredentials {
+/** The Mail card's form for one account: one sign-in for sending (SMTP) and reading (IMAP). */
+export interface MailAccountInput {
+  /** The account being changed; '' adds a new one. */
+  id: string;
+  /** The address, which is also the sign-in name for both servers. */
+  user: string;
+  /** Blank keeps the saved password. */
+  password: string;
   host: string;
   port: number;
-  user: string;
-  password: string;
+  /** Blank = the server the address implies, or none (send only). */
+  imapHost: string;
+  imapPort: number;
 }
+
+/** Saving tests the account first; a failure names the server and a translated reason. */
+export type MailAccountSaveResult =
+  | { ok: true }
+  | { ok: false; stage: 'input' | 'smtp' | 'imap'; errorKey: string; vars: Record<string, string> };
 
 export interface Task {
   id: string;
@@ -1380,6 +1627,11 @@ export interface Task {
   lineReplyTarget?: LineReplyTarget;
   attachments?: string[];
   ephemeralAttachments?: boolean;
+  /**
+   * A bot's picture or file sent to a stand-in model because the bot's own takes no uploads: a
+   * failure is answered with one fixed line, its cause only logged.
+   */
+  uploadFallback?: boolean;
   requesterName?: string;
   conversationPath?: string;
   placeholderTitle?: string;
@@ -1393,6 +1645,8 @@ export interface Task {
   mapPlace?: MapPlaceRef;
   /** Clipboard digest taken right after a hotkey capture; the answer goes back on the clipboard only while it still matches. */
   clipboardFingerprint?: string;
+  /** The app picked the provider for what only it can do (Gemini watching a video link): never switched to another. */
+  providerPinned?: true;
 }
 
 export interface PromptTriggerOptions {
@@ -1575,7 +1829,7 @@ export interface CaptureSettings {
 export type QuickExportFormat = CaptureFormat | 'text';
 
 export interface QuickExportSettings {
-  enabled: boolean;
+  /** Empty = the quick-export hotkey is off; the per-reply buttons in chat work either way. */
   hotkey: string;
   format: QuickExportFormat;
   zip: boolean;
@@ -1587,6 +1841,15 @@ export function defaultQuickExportHotkey(isMac: boolean): string {
 
 export function defaultMainHotkey(isMac: boolean): string {
   return isMac ? 'Command+Ctrl+G' : 'Alt+G';
+}
+
+/**
+ * Box a screen region and ask about it. J is the next key along the home row from the other two
+ * (G, H), under the same modifiers; it stays clear of the systems' own screenshot keys
+ * (Win+Shift+S, Cmd+Shift+3/4/5) and of macOS's own Cmd+Ctrl combos (F, Q, D, Space).
+ */
+export function defaultRegionHotkey(isMac: boolean): string {
+  return isMac ? 'Command+Ctrl+J' : 'Alt+J';
 }
 
 export type HotkeyBindResult = 'ok' | 'conflict' | 'taken';
@@ -1842,7 +2105,7 @@ export interface ZipExportResult {
   error?: string;
 }
 
-export type SkillType = 'shell' | 'run' | 'js' | 'browser' | 'browser_open' | 'browser_js' | 'browser_close' | 'llm' | 'clipboard' | 'delay' | 'notify' | 'capture' | 'share' | 'bot' | 'rss' | 'stop' | 'comment' | 'scraper' | 'search' | 'research' | 'gmap_reviews' | 'line_read' | 'loop' | 'end_loop' | 'if' | 'end_if' | 'on_change' | 'sysinfo' | 'http' | 'youtube' | 'youtube_subs' | 'youtube_info' | 'youtube_download' | 'x_posts' | 'x_thread' | 'x_trends' | 'x_media' | 'power' | 'restart_app' | 'file_write' | 'file_read' | 'file_list' | 'file_delete' | 'file_download' | 'email_send' | 'text' | 'stock' | 'forex' | 'weather' | 'air_quality' | 'random' | 'break' | 'continue';
+export type SkillType = 'shell' | 'run' | 'js' | 'browser' | 'browser_open' | 'browser_js' | 'browser_close' | 'llm' | 'clipboard' | 'delay' | 'notify' | 'capture' | 'share' | 'bot' | 'rss' | 'stop' | 'comment' | 'scraper' | 'search' | 'research' | 'gmap_reviews' | 'line_read' | 'telegram_read' | 'mcp' | 'loop' | 'end_loop' | 'if' | 'end_if' | 'on_change' | 'sysinfo' | 'http' | 'youtube' | 'youtube_subs' | 'youtube_info' | 'youtube_download' | 'x_posts' | 'x_thread' | 'x_trends' | 'x_media' | 'ptt_board' | 'power' | 'restart_app' | 'file_write' | 'file_read' | 'file_list' | 'file_delete' | 'file_download' | 'email_send' | 'text' | 'stock' | 'forex' | 'weather' | 'air_quality' | 'calendar' | 'mail_fetch' | 'almanac' | 'tw_invoice' | 'random' | 'break' | 'continue';
 
 export interface SkillInstance {
   id: string;
@@ -1852,15 +2115,22 @@ export interface SkillInstance {
   outputKey: string;
 }
 
-export const TRIGGER_TYPES = ['hotkey', 'cron', 'manual', 'bot', 'chat', 'system'] as const;
+export const TRIGGER_TYPES = ['hotkey', 'cron', 'manual', 'bot', 'chat', 'system', 'file'] as const;
 export type TriggerType = typeof TRIGGER_TYPES[number];
 
 /** What the computer did: Yobi started (as at sign-in), woke from sleep, or the screen was unlocked or locked. */
 export const SYSTEM_EVENTS = ['startup', 'resume', 'unlock', 'lock'] as const;
 export type SystemEvent = typeof SYSTEM_EVENTS[number];
 
-export type BotPlatform = 'telegram' | 'line';
-export const BOT_PLATFORMS: readonly BotPlatform[] = ['telegram', 'line'] as const;
+export type BotPlatform = 'telegram' | 'line' | SocketBotPlatform;
+export const BOT_PLATFORMS: readonly BotPlatform[] = ['telegram', 'line', ...SOCKET_BOT_PLATFORMS] as const;
+/** Each platform's own name, as people know it: the same in every language. */
+export const BOT_PLATFORM_NAMES: Readonly<Record<BotPlatform, string>> = {
+  telegram: 'Telegram',
+  line: 'LINE',
+  discord: 'Discord',
+  slack: 'Slack',
+} as const;
 
 export function isBotPlatform(value: string): value is BotPlatform {
   return (BOT_PLATFORMS as readonly string[]).includes(value);
@@ -1914,6 +2184,12 @@ export interface TriggerConfig {
   chatInputVariable?: string;
   /** system: which event starts the flow. */
   systemEvent?: SystemEvent;
+  /** file: the folder watched for new files (absolute, or under the home folder with "~"). */
+  watchFolder?: string;
+  /** file: name patterns such as "*.pdf; *.png"; blank = any file. */
+  watchPattern?: string;
+  /** file: also watch the folders inside it. */
+  watchSubfolders?: boolean;
 }
 
 export interface SchedulePreview {
@@ -1967,6 +2243,12 @@ export interface FlowDefinition {
   steps: SkillInstance[];
   createdAt: string;
   updatedAt: string;
+  /**
+   * Built or last changed from a bot chat by an admin who is not the owner: every run reads the
+   * public web only, as a bot message does — never this computer or its local network. Saving the
+   * flow in the desktop editor lifts it.
+   */
+  publicWebOnly?: boolean;
 }
 
 export const FLOW_EXPORT_TYPE = 'flow-export';
@@ -2052,6 +2334,11 @@ export interface FlowButton {
    * `buttonImages` (`formatButtonImages`); never part of the `label | input` text.
    */
   image?: string;
+  /**
+   * Begins a new group of buttons: a blank line before it in `buttons`. A bot chat lays each
+   * group out on rows of its own (`flowButtonRows`); the desktop chat ignores it.
+   */
+  rowStart?: boolean;
 }
 
 export interface ChatCommandResult {
@@ -2167,12 +2454,50 @@ export type AgentCompletion =
   | { status: 'complete' }
   | { status: 'partial'; reason: 'unfinished' | 'limit'; missing?: string };
 
+/**
+ * The chat message a bot request replies to ("@bot analyse this" under someone's message). Kept
+ * apart from the goal: the goal stays the requester's own words, and this is someone else's text.
+ */
+export interface AgentReplyContext {
+  /** Who wrote it, as the chat shows them; '' when the chat does not say. */
+  from: string;
+  /** Its text, or the part the requester quoted; '' for a message with only a picture or a file. */
+  text: string;
+  /** The bot's own earlier message. */
+  self?: boolean;
+  /** What else it carries that the model is not shown (`photo`, `video`, `sticker`…). */
+  media?: string;
+}
+
+/** One message of the group talk around a bot request, oldest first. */
+export interface AgentChatLine {
+  from: string;
+  text: string;
+  /** When it was said, "MM-DD HH:MM" on this computer's clock. */
+  at?: string;
+  /** Written by the person asking. */
+  asker?: true;
+  /** The message the request replies to. */
+  replied?: true;
+}
+
 export interface AgentRunState {
   runId: string;
   goal: string;
   providerUrl: string;
   conversationPath?: string;
+  /** The id in that conversation's thread marker: finds the file again after it was moved. */
+  conversationId?: string;
   attachments?: string[];
+  /** Persisted, so the answer to a question this run asks is still about the same message. */
+  replyTo?: AgentReplyContext;
+  /** The group talk around the request (`GroupChatLog.contextFor`), persisted for the same reason. */
+  recentChat?: AgentChatLine[];
+  /**
+   * The request is about the group's talk itself ("sum up the chat above"): answered from
+   * `recentChat` alone, never from the bot's own earlier exchanges with this person.
+   */
+  chatRecap?: true;
   /**
    * The MCP servers the user disclosed for this run. Persisted, so a resume discloses the same
    * set. Read through `readRunConnectors` — a resume that silently loses its scope widens what
@@ -2225,10 +2550,21 @@ export interface AgentRunState {
    */
   evidence?: { facts: unknown[]; actions: AgentActionSummary[] };
   /**
+   * Pictures `draw_image` kept in the chat media folder, in the order drawn. They go out with the
+   * run's answer, so one drawn before a question still reaches the user after the answer to it.
+   */
+  pictures?: string[];
+  /**
    * The flows this run saved or changed, oldest first. A later "change it" in the same
    * conversation means the last of them; absent on runs written before flows could be edited.
    */
   flows?: { id: string; name: string }[];
+  /**
+   * A flow an admin's bot run built or changed and is waiting for them to approve in the chat. Kept
+   * here, not on the question: the question's config goes back into the model's prompt, and this
+   * flow holds the paired chat ids its bot steps send to. Cleared once the answer is handled.
+   */
+  pendingFlow?: AgentPendingFlow;
   turns: AgentTurnRecord[];
   result?: { title: string; content: string; completion?: AgentCompletion };
   /** What the user was told, in their language. */
@@ -2321,7 +2657,7 @@ export const FLOW_BUILD_PHASES = ['understand', 'discover', 'plan', 'build', 've
 export type FlowBuildPhase = typeof FLOW_BUILD_PHASES[number];
 
 /** An integration a step needs before it can do anything, and that the user has to set up once. */
-export type FlowSetupNeed = 'bot' | 'email' | 'line' | 'ytdl';
+export type FlowSetupNeed = 'bot' | 'email' | 'line' | 'ytdl' | 'calendar' | 'mailbox';
 
 export interface FlowBuildBlocker {
   skill: SkillType;
@@ -2405,6 +2741,28 @@ export interface AgentFlowStepRef {
   type: string;
 }
 
+/**
+ * Why a flow approved from a bot chat is still saved switched off: it acts on the computer, the
+ * person asking is not the owner and it reads the owner's data or acts as the owner, or it has
+ * something left to fill in.
+ */
+export type AgentPendingFlowHold = 'sensitive' | 'ownerData' | 'ownerActs' | 'issues';
+
+/** A flow built or changed by a bot run, exactly as it will be saved once the chat answer approves it. */
+export interface AgentPendingFlow {
+  mode: 'build' | 'edit';
+  flow: FlowDefinition;
+  issues: FlowBuildIssue[];
+  /** Absent: a new flow is switched on once saved. An edit keeps the saved flow's state unless `paused`. */
+  off?: AgentPendingFlowHold;
+  /** An edit: the saved flow's `updatedAt` the change was made against; a newer save voids the approval. */
+  baseUpdatedAt?: string;
+  /** An edit: what it adds, removes and changes. */
+  diff?: Pick<AgentFlowEditSummary, 'added' | 'removed' | 'changed' | 'renamedFrom' | 'trigger'>;
+  /** An edit to an enabled flow that is saved switched off (`off` says why). */
+  paused?: boolean;
+}
+
 /** What an agent's change to a saved flow does, for the confirmation that precedes saving over it. */
 export interface AgentFlowEditSummary {
   added: AgentFlowStepRef[];
@@ -2436,6 +2794,8 @@ export type AgentConfirmRequestData =
     serverName: string;
     toolName: string;
     argsPreview: string;
+    /** The model's plain sentence saying what will change; the dialog shows it above everything else. */
+    summary?: string;
     /** Resolved facts the user can judge (which account, which message, who receives it). */
     rows?: AgentConfirmRow[];
     /** False for sending, deleting and built-in connectors, where "always allow" cannot apply. */
@@ -2473,14 +2833,16 @@ export interface PromptPreferences {
 
 export interface SettingsSnapshot {
   hotkey: string;
-  hotkeyEnabled: boolean;
-  shortcuts: Record<string, { combo?: string; off?: true }>;
+  regionHotkey: string;
+  shortcuts: Record<string, { combo?: string }>;
   locale: string;
   theme: string;
   syncSystemLanguageToModel: boolean;
   notifyOnComplete: boolean;
   notifyEvents: NotifyEventPrefs;
   metricsEnabled: boolean;
+  oneShotTemporaryChat: boolean;
+  providerFallback: boolean;
   promptPreferences: PromptPreferences;
   youtubePrompt: string;
   responseTimeout: number;

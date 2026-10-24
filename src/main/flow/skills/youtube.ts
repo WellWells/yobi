@@ -9,6 +9,7 @@ import { sendLog } from '../../helpers';
 import { getByokLabel } from '../../providers/byokClient';
 import { transcribeYoutubeVideo } from '../../providers/geminiVideo';
 import { matchVideoRef, siteLabel } from '../../../shared/linkSites/rows';
+import { PLAYLIST_KIND } from '../../../shared/linkSites/types';
 import type { VideoRef } from '../../../shared/linkSites/types';
 import { FlowUserError } from '../userError';
 import { readAccessOf } from './readAccess';
@@ -53,10 +54,13 @@ async function transcribeWithoutCaptions(
   }
 }
 
-/** A link another video row takes (not YouTube's, which this skill reads itself), or null. */
+/**
+ * A video link another video row takes (not YouTube's, which this skill reads itself), or null.
+ * A whole playlist is no video: it is read as any other link here, as before the rows took it.
+ */
 function otherVideoSite(url: string): VideoRef | null {
   const ref = matchVideoRef(url);
-  return ref && ref.site !== 'youtube' ? ref : null;
+  return ref && ref.site !== 'youtube' && ref.kind !== PLAYLIST_KIND ? ref : null;
 }
 
 /**

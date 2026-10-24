@@ -8,6 +8,7 @@ import { SectionCard } from '../components/SectionCard';
 import { GroupHeader } from '../components/GroupHeader';
 import { GITHUB_ISSUES_URL, GITHUB_REPO_URL, howItWorksUrl } from '../config/projectLinks';
 import styles from './AboutView.module.css';
+import { fillTemplate } from '../../../shared/fillTemplate';
 
 const MICROSOFT_STORE_URL = 'https://apps.microsoft.com/detail/9nnx8prfstc9';
 
@@ -32,7 +33,7 @@ export const AboutView: React.FC = () => {
   const blogUrl = isChinese ? 'https://wellstsai.com/' : 'https://wellstsai.com/en/';
 
   const statusTitle = {
-    available: t('settings.update.available').replace('{{version}}', newVersion ?? ''),
+    available: fillTemplate(t('settings.update.available'), { version: newVersion ?? '' }),
     checking: t('settings.update.checking'),
     failed: t('settings.update.checkFailed'),
     latest: t('settings.update.latest'),

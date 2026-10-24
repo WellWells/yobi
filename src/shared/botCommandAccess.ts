@@ -1,4 +1,6 @@
-import type { SkillInstance, SkillType } from './types';
+import type { FlowDefinition, SkillInstance, SkillType } from './types';
+import { HOTKEY_SELECTION_VAR } from './flowReferenceCheck';
+import { extractTemplateVariables } from './templateVariables';
 
 /**
  * Who may run a flow's bot command, on top of the pairing check. A non-empty list narrows the
@@ -31,18 +33,73 @@ export function isBotCommandAccessMode(value: unknown): value is BotCommandAcces
   return value === 'all' || value === 'users' || value === 'admins';
 }
 
-/** Steps that read the owner's own data on this computer: LINE chats, files, the clipboard, the screen, its facts. */
+/**
+ * Steps that read the owner's own data on this computer: LINE chats, the Telegram group talk the bot
+ * kept, their calendars, their mail, files, the clipboard, the screen, its facts, and the apps reached
+ * through their connectors.
+ */
 const OWNER_DATA_STEP_TYPES: ReadonlySet<SkillType> = new Set<SkillType>([
-  'line_read', 'file_read', 'file_list', 'clipboard', 'capture', 'sysinfo',
+  'line_read', 'telegram_read', 'calendar', 'mail_fetch', 'file_read', 'file_list', 'clipboard', 'capture', 'sysinfo', 'mcp',
 ]);
+
+/**
+ * Variables every run is seeded with that hold the owner's data: the clipboard at the start of the
+ * run, and the text selected when a hotkey started it. Referenced from any step, they read it with
+ * no clipboard step at all.
+ */
+const OWNER_DATA_VARIABLES: ReadonlySet<string> = new Set(['clipboard', HOTKEY_SELECTION_VAR]);
 
 type StepShape = Pick<SkillInstance, 'type' | 'config'>;
 
-/** Whether a flow's steps read the owner's own data (a clipboard step only when it reads). */
+function referencesOwnerData(config: StepShape['config'] | undefined): boolean {
+  return Object.values(config ?? {}).some((value) => typeof value === 'string'
+    && extractTemplateVariables(value).some((name) => OWNER_DATA_VARIABLES.has(name.split('.')[0]!.trim())));
+}
+
+/**
+ * Whether a step reads the owner's own data: a step of that kind (a clipboard step only when it
+ * reads), an llm step that puts their personal memory in its prompt, or any step whose fields use
+ * `{{clipboard}}` or `{{selection}}`.
+ */
+function stepReadsOwnerData(step: StepShape): boolean {
+  if (OWNER_DATA_STEP_TYPES.has(step.type) && !(step.type === 'clipboard' && (step.config?.action ?? '').trim() === 'write')) return true;
+  // Any value but off: the run reads the interpolated one, so '{{m}}' set to 'true' counts too.
+  if (step.type === 'llm' && !['', 'false'].includes((step.config?.useUserMemory ?? '').trim())) return true;
+  return referencesOwnerData(step.config);
+}
+
+/** Whether a flow's steps read the owner's own data. */
 export function readsOwnerData(steps: readonly StepShape[] | undefined): boolean {
+  return (steps ?? []).some(stepReadsOwnerData);
+}
+
+/**
+ * Whether a whole flow reads the owner's own data: its steps, or a trigger that watches a folder —
+ * every new file there is handed to the steps and may be attached to what they send.
+ */
+export function flowReadsOwnerData(flow: Pick<FlowDefinition, 'trigger' | 'extraTriggers' | 'steps'>): boolean {
+  return readsOwnerData(flow.steps)
+    || [flow.trigger, ...(flow.extraTriggers ?? [])].some((trigger) => trigger?.type === 'file');
+}
+
+/**
+ * Steps that act as the owner: they write to this computer's disk (any folder, any extension), put
+ * text on the clipboard the owner pastes from, send mail from the owner's account, make requests
+ * of any method from the owner's machine and network, or open a page in the flows' persistent
+ * browser session (`browser_open`): signed in wherever the owner signed in there, its title and
+ * address readable without a script, and with `show` a window on the owner's screen. Fine in the
+ * owner's own flow; another admin's flow with one is kept off for the owner to review.
+ */
+export const OWNER_ACTION_STEP_TYPES: ReadonlySet<SkillType> = new Set<SkillType>([
+  'file_write', 'file_download', 'youtube_download', 'x_media', 'email_send', 'http', 'clipboard',
+  'browser_open',
+]);
+
+/** Whether a flow's steps act as the owner (a clipboard step only when it writes). */
+export function actsAsOwner(steps: readonly StepShape[] | undefined): boolean {
   return (steps ?? []).some((step) => (
-    OWNER_DATA_STEP_TYPES.has(step.type)
-    && !(step.type === 'clipboard' && (step.config?.action ?? '').trim() === 'write')
+    OWNER_ACTION_STEP_TYPES.has(step.type)
+    && !(step.type === 'clipboard' && (step.config?.action ?? '').trim() !== 'write')
   ));
 }
 

@@ -10,7 +10,8 @@ import { YtdlToolsSetup } from '../../components/ytdl/YtdlToolsSetup';
 import { GroupHeader } from '../../components/GroupHeader';
 import { useI18nStore } from '../../store/i18nStore';
 import { useAppStore } from '../../store/appStore';
-import { telegramApi, lineApi } from '../../api/electronApi';
+import { telegramApi, lineApi, socketBotApi } from '../../api/electronApi';
+import { SOCKET_BOT_PLATFORMS } from '../../../../shared/types';
 import { missingRequiredVariables } from '../../../../shared/flowVariables';
 import type { FlowTemplate } from './examples';
 import type { FlowDefinition, FlowVariable } from '../../../../shared/types';
@@ -45,8 +46,14 @@ export const FlowSetupWizard: React.FC<FlowSetupWizardProps> = ({ template, t, o
     if (!needsBot) { setBotConfigured(true); return; }
     let alive = true;
     setBotConfigured(null);
-    void Promise.all([telegramApi.getSettings(), lineApi.getSettings()]).then(([tg, ln]) => {
-      if (alive) setBotConfigured(tg.hasToken || ln.hasChannelAccessToken);
+    void Promise.all([
+      telegramApi.getSettings(),
+      lineApi.getSettings(),
+      ...SOCKET_BOT_PLATFORMS.map((platform) => socketBotApi.getSettings(platform)),
+    ]).then(([tg, ln, ...socket]) => {
+      // A socket bot counts once every secret it signs in with is saved (Slack has two).
+      const socketReady = socket.some((s) => s !== null && Object.values(s.secrets).every((secret) => secret?.has));
+      if (alive) setBotConfigured(tg.hasToken || ln.hasChannelAccessToken || socketReady);
     });
     return () => { alive = false; };
   }, [needsBot]);
@@ -116,6 +123,7 @@ export const FlowSetupWizard: React.FC<FlowSetupWizardProps> = ({ template, t, o
                 key={variable.key}
                 variable={variable}
                 allVariables={variables}
+                steps={flow.steps}
                 asQuestion
                 onChange={(value) => setVarValue(variable.key, value)}
                 onChangeMany={setVarValues}

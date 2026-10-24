@@ -7,9 +7,8 @@ import { sendLog } from '../helpers';
 import { getLangCache, t } from '../i18n';
 import { namedChats } from '../line/reader';
 import { MAX_LIMIT } from '../line/schema';
-import { issueLinePairingCode, revokeLinePairingCode, unpairLineUser } from '../line';
 import { buildLineSettingsSnapshot } from '../lineBridge';
-import { dropBotPermissions } from '../botPermissions';
+import { issueLineAccountCode, revokeLineAccountCode, unpairLineAccount } from '../lineAccounts';
 import type { IpcContext } from './context';
 
 export function registerLineHandlers(ctx: IpcContext): void {
@@ -73,25 +72,19 @@ export function registerLineHandlers(ctx: IpcContext): void {
     return { ok: true as const, snapshot: buildLineSettingsSnapshot() };
   });
 
+  // The same writes as the bot's own /invite and /users (`lineAccounts.ts`).
   ipcMain.handle(IPC.GENERATE_LINE_PAIRING_CODE, () => {
-    const issued = issueLinePairingCode(config.line.pairing);
-    config.line.pairing = issued.nextState;
-    saveConfig({ line: config.line });
-    sendLog(`LINE pairing code generated (expires at ${issued.expiresAt})`);
+    issueLineAccountCode();
     return { ok: true as const, snapshot: buildLineSettingsSnapshot() };
   });
 
   ipcMain.handle(IPC.REVOKE_LINE_PAIRING_CODE, (_event, code: unknown) => {
-    config.line.pairing = revokeLinePairingCode(config.line.pairing, String(code ?? ''));
-    saveConfig({ line: config.line });
+    revokeLineAccountCode(String(code ?? ''));
     return { ok: true as const, snapshot: buildLineSettingsSnapshot() };
   });
 
   ipcMain.handle(IPC.UNPAIR_LINE_USER, (_event, userId: unknown) => {
-    const id = String(userId ?? '').trim();
-    config.line.pairing = unpairLineUser(config.line.pairing, id);
-    dropBotPermissions('line', id);
-    saveConfig({ line: config.line });
+    unpairLineAccount(String(userId ?? ''));
     return { ok: true as const, snapshot: buildLineSettingsSnapshot() };
   });
 

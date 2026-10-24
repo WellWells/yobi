@@ -3,6 +3,8 @@
  * own bot chats remember across conversations. Shared because the renderer lists the entries and
  * re-renders the per-turn notes from a conversation file.
  */
+import { BOT_PLATFORMS } from './types';
+import type { BotPlatform } from './types';
 
 /**
  * Every entry rides in the prompt of every memory-reading send, and on a capped provider that is
@@ -36,9 +38,18 @@ export interface UserMemoryEntry {
 }
 
 /** Bot accounts that are the user themself, by platform user id. */
-export interface UserMemoryBotSelf {
-  telegram: string[];
-  line: string[];
+/** The accounts marked as "me", per bot platform. */
+export type UserMemoryBotSelf = Record<BotPlatform, string[]>;
+
+/** No account marked on any platform. */
+export function emptyBotSelf(): UserMemoryBotSelf {
+  return Object.fromEntries(BOT_PLATFORMS.map((platform) => [platform, []])) as unknown as UserMemoryBotSelf;
+}
+
+/** The marks read from an untrusted object: every platform present, each a list of trimmed ids. */
+export function botSelfFrom(raw: unknown, idList: (value: unknown) => string[]): UserMemoryBotSelf {
+  const source = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {};
+  return Object.fromEntries(BOT_PLATFORMS.map((platform) => [platform, idList(source[platform])])) as unknown as UserMemoryBotSelf;
 }
 
 /**

@@ -6,6 +6,10 @@ import { SearchPalette } from '../../components/SearchPalette';
 import { useFlowStore } from '../../store/useFlowStore';
 import { useI18nStore } from '../../store/i18nStore';
 
+function flowKey(flow: FlowDefinition): string {
+  return flow.id;
+}
+
 interface FlowSearchOverlayProps {
   opened: boolean;
   onClose: () => void;
@@ -33,6 +37,24 @@ export const FlowSearchOverlay: React.FC<FlowSearchOverlayProps> = ({ opened, on
     selectFlow(flow.id);
   }, [onClose, selectFlow]);
 
+  // Stable between renders, so the palette's memoised rows re-render only when their highlight changes.
+  const renderRow = useCallback((flow: FlowDefinition) => (
+    <Stack gap={2}>
+      <Text fz="var(--font-size-sm)" fw={500} lineClamp={1} c="var(--mantine-color-text)">
+        {flow.name || t('flow.flowName')}
+      </Text>
+      <Group gap={4}>
+        <Badge size="xs" variant="light">{t(`flow.trigger.${flow.trigger.type}`)}</Badge>
+        {flow.extraTriggers && flow.extraTriggers.length > 0 && (
+          <Badge size="xs" variant="light" color="gray">{`+${flow.extraTriggers.length}`}</Badge>
+        )}
+        <Text fz="var(--font-size-xs)" c="dimmed">
+          {flow.steps.length} {t('flow.steps').toLowerCase()}
+        </Text>
+      </Group>
+    </Stack>
+  ), [t]);
+
   return (
     <SearchPalette
       opened={opened}
@@ -40,26 +62,11 @@ export const FlowSearchOverlay: React.FC<FlowSearchOverlayProps> = ({ opened, on
       query={query}
       onQueryChange={setQuery}
       items={visibleFlows}
-      getKey={(flow) => flow.id}
+      getKey={flowKey}
       onSelect={openFlow}
       placeholder={t('flow.search.placeholder')}
       emptyLabel={t('flow.search.empty')}
-      renderRow={(flow) => (
-        <Stack gap={2}>
-          <Text fz="var(--font-size-sm)" fw={500} lineClamp={1} c="var(--mantine-color-text)">
-            {flow.name || t('flow.flowName')}
-          </Text>
-          <Group gap={4}>
-            <Badge size="xs" variant="light">{t(`flow.trigger.${flow.trigger.type}`)}</Badge>
-            {flow.extraTriggers && flow.extraTriggers.length > 0 && (
-              <Badge size="xs" variant="light" color="gray">{`+${flow.extraTriggers.length}`}</Badge>
-            )}
-            <Text fz="var(--font-size-xs)" c="dimmed">
-              {flow.steps.length} {t('flow.steps').toLowerCase()}
-            </Text>
-          </Group>
-        </Stack>
-      )}
+      renderRow={renderRow}
     />
   );
 };

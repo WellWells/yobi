@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { settingsApi } from '../../../api/electronApi';
 import { useI18nStore } from '../../../store/i18nStore';
 import { useAppStore } from '../../../store/appStore';
 import type { PromptLength, PromptPreferences, PromptTone } from '../../../../../shared/types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 export function buildCombinedPrompt(
   prefs: PromptPreferences,
@@ -10,7 +11,7 @@ export function buildCombinedPrompt(
 ): string {
   const parts: string[] = [];
   if ((prefs.nickname ?? '').trim()) {
-    parts.push(t('settings.prompt.built.nickname').replace(/\{\{name\}\}/g, prefs.nickname!.trim()));
+    parts.push(fillTemplate(t('settings.prompt.built.nickname'), { name: prefs.nickname!.trim() }));
   }
   if (prefs.tone !== 'default') {
     parts.push(t(`settings.prompt.built.tone.${prefs.tone}`));
@@ -22,6 +23,23 @@ export function buildCombinedPrompt(
     parts.push(`${t('settings.prompt.built.extra')}${prefs.customInstructions.trim()}`);
   }
   return parts.filter(Boolean).join('\n');
+}
+
+/**
+ * The instruction preview shown in Settings, in the user's words. The model-facing block (built in
+ * main) starts with `System Instruction:` and names the locale by code; the preview drops the prefix
+ * and names the language the way the language picker does.
+ */
+export function buildPromptPreview(
+  prefs: PromptPreferences,
+  syncLanguage: boolean,
+  languageName: string,
+  t: (key: string) => string,
+): string {
+  const languageLine = syncLanguage
+    ? fillTemplate(t('settings.prompt.preview.language'), { language: languageName })
+    : '';
+  return [buildCombinedPrompt(prefs, t), languageLine].filter(Boolean).join('\n');
 }
 
 /** What the YouTube prompt field stores: '' keeps the built-in default, which follows the app language. */
@@ -37,7 +55,7 @@ const DEFAULT_PREFS: PromptPreferences = {
 };
 
 export function usePromptPrefs() {
-  const { t, locale } = useI18nStore();
+  const { t } = useI18nStore();
   const [promptPrefs, setPromptPrefs] = useState<PromptPreferences>(DEFAULT_PREFS);
   const [syncSystemLanguageToModel, setSyncSystemLanguageToModel] = useState(false);
   const [youtubePrompt, setYoutubePrompt] = useState('');
@@ -83,16 +101,6 @@ export function usePromptPrefs() {
     void savePromptPrefs(next);
   }, [promptPrefs, savePromptPrefs]);
 
-  const combinedPromptPreview = useMemo(() => {
-    const base = buildCombinedPrompt(promptPrefs, t);
-    const localeLine = syncSystemLanguageToModel
-      ? t('system.localeInstruction').replace('{{locale}}', locale)
-      : '';
-    const parts = [base, localeLine].filter(Boolean);
-    if (parts.length === 0) return '';
-    return `System Instruction: ${parts.join('\n')}`;
-  }, [promptPrefs, t, syncSystemLanguageToModel, locale]);
-
   const applyPromptReset = useCallback((prefs: PromptPreferences, syncLang: boolean, ytPrompt: string) => {
     setPromptPrefs(prefs);
     setSyncSystemLanguageToModel(syncLang);
@@ -109,7 +117,6 @@ export function usePromptPrefs() {
     youtubeCustomized,
     setYoutubeDraft,
     commitYoutubePrompt,
-    combinedPromptPreview,
     savePromptPrefs,
     handleToggleSyncSystemLanguageToModel,
     handleToneChange,

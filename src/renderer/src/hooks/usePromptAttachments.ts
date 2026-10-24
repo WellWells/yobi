@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ATTACHMENT_STASH_MAX_BYTES,
+  BYOK_IMAGE_MAX_FILES,
   PROVIDER_ATTACHMENT_POLICIES,
   PROVIDER_LABELS,
   isByokTargetUrl,
@@ -8,7 +9,8 @@ import {
   type PromptAttachment,
   type StashedAttachment,
 } from '../../../shared/types';
-import { attachmentAcceptFor } from '../../../shared/attachmentFormats';
+import { BYOK_IMAGE_ACCEPT, attachmentAcceptFor, isByokImageFile } from '../../../shared/attachmentFormats';
+import { fillTemplate } from '../../../shared/fillTemplate';
 import { attachmentApi, systemApi } from '../api/electronApi';
 import { imageThumbnailDataUrl } from '../utils/imageThumbnail';
 import { useAppStore } from '../store/appStore';
@@ -67,10 +69,14 @@ export interface UsePromptAttachmentsResult {
   attachments: PromptAttachment[];
   maxFiles: number;
   unsupportedReason: string | null;
+  /** What the target takes when it takes only some files (a BYOK key: pictures); null = no limit. */
+  restriction: string | null;
   accept: string;
   notice: string | null;
   addFiles: (files: File[]) => void;
   addFromClipboard: () => void;
+  /** A file main already wrote (the region hotkey's picture), under the same rules as a paste. */
+  addStashed: (stashed: StashedAttachment) => void;
   removeAttachment: (id: string) => void;
   clearAttachments: () => void;
   dismissNotice: () => void;
@@ -87,22 +93,30 @@ export function usePromptAttachments(
   const byokGroupModels = useAppStore((s) => s.byokGroupModels);
   const isByokTarget = isByokTargetUrl(modelUrl);
   const provider = providerFromUrl(modelUrl);
-  const maxFiles = isByokTarget ? 0 : PROVIDER_ATTACHMENT_POLICIES[provider].maxFiles;
-  const providerLabel = isByokTarget
-    ? ([...byokModels, ...byokGroupModels].find((m) => m.url === modelUrl)?.label ?? 'BYOK')
-    : PROVIDER_LABELS[provider];
+  const byokOption = isByokTarget ? [...byokModels, ...byokGroupModels].find((m) => m.url === modelUrl) : undefined;
+  /** A BYOK key that reads pictures takes them and nothing else. */
+  const imagesOnly = byokOption?.imageInput === true;
+  const maxFiles = isByokTarget
+    ? (imagesOnly ? BYOK_IMAGE_MAX_FILES : 0)
+    : PROVIDER_ATTACHMENT_POLICIES[provider].maxFiles;
+  const providerLabel = isByokTarget ? byokOption?.label ?? 'BYOK' : PROVIDER_LABELS[provider];
 
   const attachmentsRef = useRef<PromptAttachment[]>([]);
   attachmentsRef.current = attachments;
 
   const limitNotice = useCallback(
-    () => t('attach.limit.reached').replace('{{max}}', String(maxFiles)),
+    () => fillTemplate(t('attach.limit.reached'), { max: maxFiles }),
     [maxFiles, t],
   );
 
   const unsupportedReason = useMemo(
-    () => (maxFiles > 0 ? null : t('attach.unsupported').replace('{{provider}}', providerLabel)),
+    () => (maxFiles > 0 ? null : fillTemplate(t('attach.unsupported'), { provider: providerLabel })),
     [maxFiles, providerLabel, t],
+  );
+
+  const restriction = useMemo(
+    () => (imagesOnly ? fillTemplate(t('attach.imagesOnly'), { provider: providerLabel }) : null),
+    [imagesOnly, providerLabel, t],
   );
 
   const commit = useCallback((accepted: PromptAttachment[]): number => {
@@ -116,10 +130,16 @@ export function usePromptAttachments(
     return kept.length;
   }, [maxFiles]);
 
-  const addFiles = useCallback((incoming: File[]) => {
-    if (incoming.length === 0) return;
+  const addFiles = useCallback((dropped: File[]) => {
+    if (dropped.length === 0) return;
     if (unsupportedReason) {
       setNotice(unsupportedReason);
+      return;
+    }
+    const incoming = imagesOnly ? dropped.filter((file) => isByokImageFile(file.type, file.name)) : dropped;
+    const refused = dropped.length - incoming.length;
+    if (incoming.length === 0) {
+      setNotice(restriction);
       return;
     }
     const room = Math.max(0, maxFiles - attachmentsRef.current.length);
@@ -134,20 +154,38 @@ export function usePromptAttachments(
       const stored = commit(accepted);
 
       const notices: string[] = [];
+      if (refused > 0 && restriction) notices.push(restriction);
       if (resolved.includes('tooLarge')) notices.push(t('attach.tooLarge'));
       if (resolved.includes('noPath')) notices.push(t('attach.noPath'));
       if (incoming.length > room || stored < accepted.length) notices.push(limitNotice());
       setNotice(notices.length > 0 ? notices.join(' ') : null);
     })();
-  }, [commit, limitNotice, maxFiles, t, unsupportedReason]);
+  }, [commit, imagesOnly, limitNotice, maxFiles, restriction, t, unsupportedReason]);
 
-  const addFromClipboard = useCallback(() => {
-    if (unsupportedReason) {
-      setNotice(unsupportedReason);
+  /** Why the composer cannot take one more file right now, or null when it can. */
+  const refusal = useCallback((): string | null => {
+    if (unsupportedReason) return unsupportedReason;
+    if (attachmentsRef.current.length >= maxFiles) return limitNotice();
+    return null;
+  }, [limitNotice, maxFiles, unsupportedReason]);
+
+  const takeStashed = useCallback((stashed: StashedAttachment) => {
+    const refused = refusal();
+    if (refused) {
+      setNotice(refused);
       return;
     }
-    if (attachmentsRef.current.length >= maxFiles) {
-      setNotice(limitNotice());
+    if (imagesOnly && !isByokImageFile(stashed.mimeType, stashed.name)) {
+      setNotice(restriction);
+      return;
+    }
+    setNotice(commit([fromStashed(stashed)]) > 0 ? null : limitNotice());
+  }, [commit, imagesOnly, limitNotice, refusal, restriction]);
+
+  const addFromClipboard = useCallback(() => {
+    const refused = refusal();
+    if (refused) {
+      setNotice(refused);
       return;
     }
     void (async () => {
@@ -161,9 +199,9 @@ export function usePromptAttachments(
         setNotice(t('attach.clipboard.empty'));
         return;
       }
-      setNotice(commit([fromStashed(stashed)]) > 0 ? null : limitNotice());
+      takeStashed(stashed);
     })();
-  }, [commit, limitNotice, maxFiles, t, unsupportedReason]);
+  }, [refusal, t, takeStashed]);
 
   const removeAttachment = useCallback((id: string) => {
     setAttachments((prev) => prev.filter((item) => item.id !== id));
@@ -184,13 +222,16 @@ export function usePromptAttachments(
       attachmentsRef.current = [];
       setAttachments([]);
       setNotice(unsupportedReason);
-    } else if (current.length > maxFiles) {
-      const kept = current.slice(0, maxFiles);
-      attachmentsRef.current = kept;
-      setAttachments(kept);
-      setNotice(limitNotice());
+      return;
     }
-  }, [limitNotice, maxFiles, unsupportedReason]);
+    // Switched to a key that takes only pictures: a PDF chosen for Gemini cannot come along.
+    const allowed = imagesOnly ? current.filter((item) => isByokImageFile(item.mimeType, item.name)) : current;
+    const kept = allowed.slice(0, maxFiles);
+    if (kept.length === current.length) return;
+    attachmentsRef.current = kept;
+    setAttachments(kept);
+    setNotice(allowed.length < current.length ? restriction : limitNotice());
+  }, [imagesOnly, limitNotice, maxFiles, restriction, unsupportedReason]);
 
   useEffect(() => {
     if (!notice) return;
@@ -202,10 +243,12 @@ export function usePromptAttachments(
     attachments,
     maxFiles,
     unsupportedReason,
-    accept: attachmentAcceptFor(provider),
+    restriction,
+    accept: imagesOnly ? BYOK_IMAGE_ACCEPT : attachmentAcceptFor(provider),
     notice,
     addFiles,
     addFromClipboard,
+    addStashed: takeStashed,
     removeAttachment,
     clearAttachments,
     dismissNotice,

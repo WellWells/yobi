@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { FlowButton } from '../../shared/types';
+import { telegramCallbackData } from './callbackRouter';
 
 /** Prefix of a flow button's `callback_data`; the export buttons use their own. */
 export const FLOW_BUTTON_CB_PREFIX = 'fb';
@@ -49,7 +50,7 @@ export function registerFlowButton(
 }
 
 export function flowButtonCallbackData(token: string): string {
-  return `${FLOW_BUTTON_CB_PREFIX}:${token}`;
+  return telegramCallbackData(FLOW_BUTTON_CB_PREFIX, token);
 }
 
 export function parseFlowButtonCallback(data: string | undefined): string | null {
@@ -104,10 +105,38 @@ function labelWidth(label: string): number {
 }
 
 /**
- * Two buttons to a row, in order. A label too wide to share gets a row of its own; in a run of
- * narrow ones with an odd count, the first stands alone — it is the menu's lead choice ("summary").
+ * A group's row on a phone: at most this many buttons (Telegram takes 8) and this much label
+ * width, so `360p … 2160p60` share one row and a seventh button splits the group in two.
  */
-export function flowButtonRows<T extends { label: string }>(buttons: readonly T[]): T[][] {
+const ROW_MAX_BUTTONS = 6;
+const ROW_MAX_WIDTH = 36;
+
+/**
+ * In order. Buttons in groups (`rowStart`, the video menu's actions and qualities) get rows of
+ * their own per group, as few as fit, split evenly. Otherwise two to a row: a label too wide to
+ * share gets a row of its own; in a run of narrow ones with an odd count, the first stands alone —
+ * it is the menu's lead choice ("summary").
+ */
+export function flowButtonRows<T extends { label: string; rowStart?: boolean }>(buttons: readonly T[]): T[][] {
+  if (!buttons.some((button) => button.rowStart)) return pairedRows(buttons);
+  const groups: T[][] = [];
+  for (const button of buttons) {
+    if (button.rowStart || groups.length === 0) groups.push([]);
+    groups[groups.length - 1].push(button);
+  }
+  return groups.flatMap(groupRows);
+}
+
+function groupRows<T extends { label: string }>(group: readonly T[]): T[][] {
+  const width = group.reduce((sum, button) => sum + labelWidth(button.label), 0);
+  const count = Math.max(1, Math.ceil(group.length / ROW_MAX_BUTTONS), Math.ceil(width / ROW_MAX_WIDTH));
+  const size = Math.ceil(group.length / count);
+  const rows: T[][] = [];
+  for (let i = 0; i < group.length; i += size) rows.push(group.slice(i, i + size));
+  return rows;
+}
+
+function pairedRows<T extends { label: string }>(buttons: readonly T[]): T[][] {
   const rows: T[][] = [];
   let run: T[] = [];
   const closeRun = (): void => {

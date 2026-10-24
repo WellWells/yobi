@@ -7,6 +7,7 @@ import { SelectDropdown } from '../../components/SelectDropdown';
 import { rssApi } from '../../api/electronApi';
 import { isValidUrlOrVar } from './skills/validation';
 import type { FeedCandidate } from '../../../../shared/types';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 type DiscoverStatus = 'idle' | 'found' | 'notfound' | 'error';
 
@@ -110,7 +111,7 @@ export const FeedUrlField: React.FC<FeedUrlFieldProps> = ({
       )}
       {status === 'error' && (
         <Text fz="xs" c="var(--mantine-color-error)">
-          {t('flow.skill.rss.discover.error').replace('{{error}}', discoverError)}
+          {fillTemplate(t('flow.skill.rss.discover.error'), { error: discoverError })}
         </Text>
       )}
 

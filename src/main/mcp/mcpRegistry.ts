@@ -12,6 +12,7 @@ import { slugifyCommandName } from '../../shared/mcpCommand';
 import { connectsOnUse } from '../../shared/mcpConnectOnUse';
 import { BUILTIN_CONNECTORS, findBuiltinConnector } from '../../shared/builtinConnectors';
 import type { McpConnectionStatus, McpServerActionResult, McpServerConfig, McpServerSaveRequest, McpServerView, McpToolInfo } from '../../shared/types';
+import { PICTURES_META_KEY } from './mcpTypes';
 import type { McpTool, McpToolResult } from './mcpTypes';
 import { McpAuthProvider } from './mcpAuthProvider';
 import { startCallbackServer } from './mcpCallbackServer';
@@ -106,7 +107,20 @@ export class McpCallNotSentError extends Error {
   readonly notSent = true;
 }
 
-function flattenResult(result: CallToolResult): McpToolResult {
+/**
+ * The pictures a built-in connector saved for the answer. Only a built-in's `_meta` is read: a
+ * remote server could name any file on the computer, and a bot sends these as photos.
+ */
+function builtinPictures(result: CallToolResult): string[] {
+  const files = result._meta?.[PICTURES_META_KEY];
+  return Array.isArray(files) ? files.filter((file): file is string => typeof file === 'string' && file.length > 0) : [];
+}
+
+/**
+ * A tool's answer as one text: its text parts joined, a placeholder for media, and the structured
+ * result as JSON when there is no text at all. `builtin` lets a built-in connector's pictures through.
+ */
+export function flattenResult(result: CallToolResult, builtin = false): McpToolResult {
   const parts: string[] = [];
   for (const item of result.content ?? []) {
     if (item.type === 'text') parts.push(item.text);
@@ -120,7 +134,8 @@ function flattenResult(result: CallToolResult): McpToolResult {
   }
   let text = parts.join('\n').trim();
   if (!text && result.structuredContent !== undefined) text = JSON.stringify(result.structuredContent);
-  return { text, isError: result.isError === true };
+  const pictures = builtin && result.isError !== true ? builtinPictures(result) : [];
+  return { text, isError: result.isError === true, ...(pictures.length > 0 ? { pictures } : {}) };
 }
 
 /**
@@ -665,7 +680,7 @@ export class McpRegistry {
     if ('denied' in verdict) return { text: verdict.denied, isError: true };
     try {
       const result = await client.callTool({ name, arguments: verdict.args }, undefined, { signal, timeout: CALL_TIMEOUT_MS });
-      return flattenResult(result as CallToolResult);
+      return flattenResult(result as CallToolResult, rt.kind === 'builtin');
     } catch (err) {
       if (signal?.aborted || !isSessionLost(rt, transport, err)) throw err;
     }
@@ -678,7 +693,7 @@ export class McpRegistry {
       throw new McpCallNotSentError(`MCP server "${serverId}" had dropped its session and has been reconnected; this call was not sent. Send it again if it is still wanted.`);
     }
     const result = await fresh.client.callTool({ name, arguments: verdict.args }, undefined, { signal, timeout: CALL_TIMEOUT_MS });
-    return flattenResult(result as CallToolResult);
+    return flattenResult(result as CallToolResult, fresh.kind === 'builtin');
   }
 
   async syncOnBoot(): Promise<void> {

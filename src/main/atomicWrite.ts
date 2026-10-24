@@ -24,10 +24,12 @@ function tempPathFor(file: string): string {
   return path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}-${seq++}.tmp`);
 }
 
-export async function writeFileAtomic(file: string, content: string): Promise<void> {
+/** Text is written as UTF-8; bytes (a picture) as they are. */
+export async function writeFileAtomic(file: string, content: string | Uint8Array): Promise<void> {
   const tmp = tempPathFor(file);
   try {
-    await fs.writeFile(tmp, content, 'utf-8');
+    if (typeof content === 'string') await fs.writeFile(tmp, content, 'utf-8');
+    else await fs.writeFile(tmp, content);
     await fs.rename(tmp, file);
   } catch (err: unknown) {
     await fs.rm(tmp, { force: true }).catch(() => undefined);

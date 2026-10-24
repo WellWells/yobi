@@ -3,10 +3,12 @@
  *
  * Pairing only lets someone chat with the bot and use the AI model commands. Everything else is
  * a grant the desktop owner adds per account, stored as a short token list in config.json
- * (`telegram.permissions` / `line.permissions`, keyed by the account id as a string). The owner's
+ * (`telegram.permissions` / `line.permissions`, keyed by the account id as a string). An account
+ * starts from the platform's `defaultGrants`, copied in when it pairs with a code. The owner's
  * own account ("me", `botSelf` in the memory file) is not a token: it implies agent, web, the
  * downloader, and local and every connector in a private chat, but never shell or admin — those
- * two are always granted by name, the owner's account included.
+ * two are always granted by name, the owner's account included — nor the video preview, which is
+ * a choice rather than a right (`ownerImpliesGrant`).
  *
  * Pure on purpose: main decides with `resolveBotRights`, and the settings page derives what it
  * shows from the same functions, so the two cannot disagree.
@@ -30,7 +32,7 @@ export const CONNECTOR_GRANT_PREFIX = 'connector:';
 export const ALL_CONNECTORS_GRANT = 'connector:*';
 
 /** The fixed, non-connector tokens. */
-export const BOT_CAPABILITY_GRANTS = ['agent', 'web', 'download', 'local', 'shell', 'admin'] as const;
+export const BOT_CAPABILITY_GRANTS = ['agent', 'web', 'download', 'preview', 'local', 'shell', 'admin'] as const;
 export type BotCapabilityGrant = typeof BOT_CAPABILITY_GRANTS[number];
 export type BotConnectorGrant = `connector:${string}`;
 export type BotGrant = BotCapabilityGrant | BotConnectorGrant;
@@ -61,6 +63,11 @@ export interface BotRights {
   web: boolean;
   /** A pasted post or video link runs the downloader's built-in flow, and its buttons work. */
   download: boolean;
+  /**
+   * A pasted video link first brings a low-quality copy of a short video (Telegram). Of use only
+   * with `download` (an account's own or its group's), which `ytdlAccessFor` checks.
+   */
+  preview: boolean;
   local: boolean;
   /** Run commands on this computer, each one approved in the chat first. Private chats only. */
   shell: boolean;
@@ -82,6 +89,7 @@ export const NO_BOT_RIGHTS: BotRights = Object.freeze({
   agent: false,
   web: false,
   download: false,
+  preview: false,
   local: false,
   shell: false,
   admin: false,
@@ -110,15 +118,16 @@ function grantRank(grant: BotGrant): number {
     case 'agent': return 0;
     case 'web': return 1;
     case 'download': return 2;
-    case 'local': return 3;
-    case 'shell': return 4;
-    case ALL_CONNECTORS_GRANT: return 5;
-    case 'admin': return 7;
-    default: return 6;
+    case 'preview': return 3;
+    case 'local': return 4;
+    case 'shell': return 5;
+    case ALL_CONNECTORS_GRANT: return 6;
+    case 'admin': return 8;
+    default: return 7;
   }
 }
 
-/** Display order: agent, web, download, local, shell, all connectors, single connectors (by id), admin. */
+/** Display order: agent, web, download, preview, local, shell, all connectors, single connectors (by id), admin. */
 export function sortBotGrants(grants: readonly BotGrant[]): BotGrant[] {
   return [...grants].sort((a, b) => grantRank(a) - grantRank(b) || (a < b ? -1 : a > b ? 1 : 0));
 }
@@ -136,6 +145,20 @@ export function normalizeGrantList(raw: unknown, platform: BotPlatform): BotGran
     seen.add(token);
   }
   return sortBotGrants([...seen]);
+}
+
+/**
+ * Whether a grant may be one the owner hands every new pairing: anything but the grants always
+ * given by name. A pairing code is passed around; shell or admin for whoever redeems it would be
+ * the computer or the bot's settings for whoever gets hold of the code.
+ */
+export function isDefaultableGrant(grant: BotGrant): boolean {
+  return !isExplicitGrant(grant);
+}
+
+/** The stored defaults for new pairings, kept to tokens the platform offers and may default. */
+export function normalizeDefaultGrantList(raw: unknown, platform: BotPlatform): BotGrant[] {
+  return normalizeGrantList(raw, platform).filter(isDefaultableGrant);
 }
 
 /** The single connectors named in a grant list (not `connector:*`). */
@@ -162,10 +185,20 @@ export function grantAllows(grants: readonly string[], capability: BotGrant): bo
 const GRANT_ROWS: Readonly<Record<BotCapabilityGrant, BotCapability>> = BOT_CAPABILITIES;
 
 /**
+ * Whether the "me" mark already gives a grant (the table's `owner`): every connector does; shell,
+ * admin and the video preview do not, so the owner's own account holds those by name.
+ */
+export function ownerImpliesGrant(grant: BotGrant): boolean {
+  return (BOT_CAPABILITY_GRANTS as readonly string[]).includes(grant) ? GRANT_ROWS[grant as BotCapabilityGrant].owner : true;
+}
+
+/**
  * One paired account's rights in one chat, from the capability table (`botCapabilities.ts`): a
  * capability counts when the owner mark implies it, every paired account has it, or the account
  * holds its grant — and only where it reaches (a private chat, or a group for what goes there).
- * Shell also needs agent; admin is Telegram only. Unpaired people never come here.
+ * Shell also needs agent; admin is Telegram only. The preview is the grant alone: the downloader
+ * it needs may be a group's, so it is checked where a preview is made (`ytdlAccessFor`). Unpaired
+ * people never come here.
  */
 export function resolveBotRights(input: BotRightsInput): BotRights {
   const grants = input.grants.filter(isBotGrant);
@@ -190,6 +223,7 @@ export function resolveBotRights(input: BotRightsInput): BotRights {
     agent: has('agent'),
     web: has('web'),
     download: has('download'),
+    preview: has('preview'),
     local: has('local'),
     shell: has('shell') && has('agent'),
     admin: input.platform === 'telegram' && has('admin'),
@@ -297,6 +331,7 @@ export function unionBotRights(a: BotRights, b: BotRights): BotRights {
     agent: a.agent || b.agent,
     web: a.web || b.web,
     download: a.download || b.download,
+    preview: a.preview || b.preview,
     local: a.local || b.local,
     shell: a.shell || b.shell,
     admin: a.admin || b.admin,
@@ -332,6 +367,7 @@ export function intersectBotRights(a: BotRights, b: BotRights): BotRights {
     agent: a.agent && b.agent,
     web: a.web && b.web,
     download: a.download && b.download,
+    preview: a.preview && b.preview,
     local: a.local && b.local,
     shell: a.shell && b.shell,
     admin: a.admin && b.admin,
@@ -347,6 +383,19 @@ export interface BotSetPermissionsRequest {
 }
 
 export type BotSetPermissionsFailure = 'invalidRequest' | 'notPaired' | 'invalidGrant' | 'adminUnavailable';
+
+/** Replaces what a platform's accounts are given the moment they pair. */
+export interface BotSetDefaultGrantsRequest {
+  platform: BotPlatform;
+  grants: BotGrant[];
+}
+
+/** `explicitGrant`: shell or admin, which are never a default. */
+export type BotSetDefaultGrantsFailure = 'invalidRequest' | 'invalidGrant' | 'explicitGrant';
+
+export type BotSetDefaultGrantsResult =
+  | { ok: true; grants: BotGrant[] }
+  | { ok: false; reason: BotSetDefaultGrantsFailure };
 
 /** Allows a group with these grants, or (`grants: null`) puts it back to waiting for approval. */
 export interface BotSetGroupPermissionsRequest {
@@ -369,6 +418,20 @@ export interface BotSetBlockedRequest {
 export type BotSetBlockedResult =
   | { ok: true; blocked: boolean }
   | { ok: false; reason: 'invalidRequest' | 'paired' };
+
+/** Pairs, without a code, someone who asked to use the bot in a private chat. */
+export interface BotApprovePairingRequest {
+  platform: BotPlatform;
+  userId: string;
+}
+
+/**
+ * `newlyPaired: false` = already paired (another manager was quicker). `noRequest`: they never
+ * asked, or the request is gone; `unavailable`: the platform cannot pair anyone right now.
+ */
+export type BotApprovePairingResult =
+  | { ok: true; newlyPaired: boolean }
+  | { ok: false; reason: 'invalidRequest' | 'noRequest' | 'blocked' | 'unavailable' };
 
 /** A chat id as Telegram (`-100…`) or LINE (`C…`, `R…`) writes it. */
 export function isBotChatId(value: string): boolean {

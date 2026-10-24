@@ -9,6 +9,7 @@ import { SITE_ACCOUNT_LABELS } from '../../../../../../shared/types';
 import { bySite } from '../../../../../../shared/siteConnectors';
 import type { SiteAccount } from '../../../../../../shared/types';
 import { AccountStatusPill, pillStateOf } from '../AccountStatusPill';
+import { fillTemplate } from '../../../../../../shared/fillTemplate';
 
 interface Props {
   site: SiteAccount;
@@ -59,7 +60,7 @@ export const SiteSignInRow: React.FC<Props> = ({ site, t }) => {
       </Group>
       {/* The button keeps its whole label; only the hint beside the pill wraps. */}
       {loggedIn === false && (
-        <AppButton variant="filled" size="compact-xs" leftSection={<LogIn size={12} />} loading={busy} onClick={() => { void login(); }} style={{ flexShrink: 0 }}>
+        <AppButton variant="default" size="compact-xs" leftSection={<LogIn size={12} />} loading={busy} onClick={() => { void login(); }} style={{ flexShrink: 0 }}>
           {t('settings.accounts.login')}
         </AppButton>
       )}
@@ -71,8 +72,8 @@ export const SiteSignInRow: React.FC<Props> = ({ site, t }) => {
 
       <WebDialog
         open={confirmLogout}
-        title={t('settings.accounts.logout.confirm.title').replace('{{provider}}', label)}
-        description={t('settings.accounts.logout.confirm.detail').replace('{{provider}}', label)}
+        title={fillTemplate(t('settings.accounts.logout.confirm.title'), { provider: label })}
+        description={fillTemplate(t('settings.accounts.logout.confirm.detail'), { provider: label })}
         confirmText={t('settings.accounts.logout')}
         cancelText={t('dialog.cancel')}
         danger

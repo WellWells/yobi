@@ -1,5 +1,5 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { BUILTIN_RAIL_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID, THUNDERBIRD_UNAVAILABLE_ERROR } from '../../shared/builtinConnectors';
+import { BUILTIN_MAIL_SERVER_ID, BUILTIN_PTT_SERVER_ID, BUILTIN_RAIL_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID, THUNDERBIRD_UNAVAILABLE_ERROR } from '../../shared/builtinConnectors';
 import { BUILTIN_LINE_SERVER_ID } from '../../shared/types';
 import { forgetStoredLineKey } from '../line/lineKeyStore';
 import { connectionFileFingerprint } from '../thunderbird/bridge';
@@ -48,6 +48,17 @@ export const BUILTIN_RUNTIMES: Readonly<Record<string, BuiltinRuntime>> = {
   },
   [BUILTIN_RAIL_SERVER_ID]: {
     connect: async (name, version) => (await import('../rail/railConnection')).connectRailMcp(name, version),
+  },
+  [BUILTIN_PTT_SERVER_ID]: {
+    connect: async (name, version) => (await import('../ptt/pttConnection')).connectPttMcp(name, version),
+  },
+  [BUILTIN_MAIL_SERVER_ID]: {
+    connect: async (name, version) => (await import('../mail/mailConnection')).connectMailMcp(name, version),
+    prepareCall: async (_toolName, args) => (await import('../mail/mailConnection')).prepareMailCall(args),
+    // Off means no IMAP session stays signed in; the account itself stays (the email step uses it).
+    onDisabled: () => {
+      void import('../mail/mailConnection').then((mail) => mail.closeMailConnection());
+    },
   },
   // The sign-in site connectors (Instagram, Facebook, …) come from their table. Switching one off
   // never signs out: flows and pasted links read with the same sign-in.

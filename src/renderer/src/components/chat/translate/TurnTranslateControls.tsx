@@ -11,6 +11,7 @@ import { LanguageMenuItems } from './LanguageMenuItems';
 import { convertTurnToTraditional, translateTurn } from './translateActions';
 import { useProviderLabel } from './useTurnTranslation';
 import { turnTranslateOffer } from './turnTranslateOffer';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 interface TurnTranslateControlsProps {
   path: string;
@@ -106,7 +107,7 @@ export const TurnTranslateControls: React.FC<TurnTranslateControlsProps> = ({
           leftSection={<Languages size={12} />}
           onClick={() => translate(suggestion)}
         >
-          {t('chat.translate.suggest').replace('{{language}}', languageDisplayName(suggestion, locale))}
+          {fillTemplate(t('chat.translate.suggest'), { language: languageDisplayName(suggestion, locale) })}
         </AppButton>
       )}
     </>

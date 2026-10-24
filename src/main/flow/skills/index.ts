@@ -6,6 +6,10 @@ import { execJs, execRandom, execRun, execText } from './compute';
 import { execHttp, execPower, execRestartApp, execSysInfo } from './system';
 import { execForex, execStock, execWeather } from './dataSources';
 import { execAirQuality } from './airQuality';
+import { execCalendar } from './calendar';
+import { execMailFetch } from './mailFetch';
+import { execAlmanac } from './almanac';
+import { execTwInvoice } from './twInvoice';
 import { execFileDelete, execFileDownload, execFileList, execFileRead, execFileWrite } from './fileOps';
 import { execShare } from './share';
 import { execEmailSend } from './email';
@@ -14,8 +18,11 @@ import { execSearch } from './search';
 import { execResearch } from './research';
 import { execGmapReviews } from './mapReviews';
 import { execLineRead } from './lineMessages';
+import { execTelegramRead } from './telegramRead';
+import { execMcp } from './mcpCall';
 import { execXPosts, execXThread, execXTrends } from './x';
 import { execXMedia } from './xMedia';
+import { execPttBoard } from './pttBoard';
 import { execYoutubeDownload, execYoutubeInfo } from './ytdl';
 import {
   execBot,
@@ -86,6 +93,10 @@ export async function executeSkill(
       return execGmapReviews(config);
     case 'line_read':
       return execLineRead(config, stepId, deps);
+    case 'telegram_read':
+      return execTelegramRead(config, deps);
+    case 'mcp':
+      return execMcp(config, signal);
     case 'youtube':
       return execYoutube(config, signal);
     case 'youtube_subs':
@@ -102,6 +113,8 @@ export async function executeSkill(
       return execXTrends(config);
     case 'x_media':
       return execXMedia(config, signal);
+    case 'ptt_board':
+      return execPttBoard(config, stepId, signal);
     case 'sysinfo':
       return execSysInfo(config);
     case 'http':
@@ -128,6 +141,14 @@ export async function executeSkill(
       return execWeather(config, timeoutMs);
     case 'air_quality':
       return execAirQuality(config, timeoutMs);
+    case 'almanac':
+      return execAlmanac(config);
+    case 'tw_invoice':
+      return execTwInvoice(config, timeoutMs);
+    case 'calendar':
+      return execCalendar(config, signal);
+    case 'mail_fetch':
+      return execMailFetch(config, stepId);
     case 'email_send':
       return execEmailSend(config);
     case 'stop':

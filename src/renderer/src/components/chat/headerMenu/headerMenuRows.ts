@@ -8,6 +8,7 @@ import { READING_FONTS } from '../../../../../shared/readingPrefs';
 import { isMac } from '../../../utils/keyLabels';
 import { threadLink } from './headerMenuModel';
 import type { HeaderMenuSearchRow } from './headerMenuSearch';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 type Translate = (key: string) => string;
 
@@ -40,7 +41,7 @@ export function headerActionSearchRows({
     translateMenuLabel !== undefined && { id: 'translate', side: 'actions', labels: translateMenuLabel },
     { id: 'copyPath', side: 'actions', labels: t('header.menu.copyPath') },
     link.available && {
-      id: 'threadUrl', side: 'actions', labels: t('header.menu.copyThreadUrl').replace('{{provider}}', link.provider),
+      id: 'threadUrl', side: 'actions', labels: fillTemplate(t('header.menu.copyThreadUrl'), { provider: link.provider }),
     },
     hasContent && { id: 'copyFull', side: 'actions', labels: t('header.copyFull') },
     hasContent && { id: 'export.card', side: 'actions', labels: t('header.menu.export.card'), parents: exportParents },

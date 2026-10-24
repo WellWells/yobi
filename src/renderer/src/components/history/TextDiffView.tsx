@@ -4,6 +4,7 @@ import { diffLines, diffRows } from '../../../../shared/lineDiff';
 import type { DiffRow } from '../../../../shared/lineDiff';
 import { diffText } from '../../utils/textDiff';
 import type { DiffPart } from '../../utils/textDiff';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 const WASH = {
   removed: 'color-mix(in srgb, var(--mantine-color-error) 10%, transparent)',
@@ -109,7 +110,7 @@ export const TextDiffView: React.FC<TextDiffViewProps> = ({ before, after, t }) 
   return (
     <Stack gap={0}>
       {rows.map((row, index) => (
-        <Row key={index} row={row} t={t} foldText={(count) => t('history.diff.folded').replace('{{count}}', String(count))} />
+        <Row key={index} row={row} t={t} foldText={(count) => fillTemplate(t('history.diff.folded'), { count: String(count) })} />
       ))}
     </Stack>
   );

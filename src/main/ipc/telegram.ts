@@ -4,10 +4,9 @@ import { config, saveConfig, markTelegramTokenResolved } from '../config';
 import { normalizeLlmDirect } from '../configNormalizers';
 import { sendLog } from '../helpers';
 import { buildTelegramSettingsSnapshot } from '../telegramBridge';
-import { forgetChannel, issuePairingCode, revokePairingCode, unpairUser } from '../telegram';
-import { clearBotConversationsForUser } from '../botConversations';
-import { forgetBotChat, revokeBotPairing } from '../botDirectory';
-import { dropBotPermissions } from '../botPermissions';
+import { forgetChannel } from '../telegram';
+import { forgetBotChat } from '../botDirectory';
+import { issueTelegramPairingCode, revokeTelegramPairingCode, unpairTelegramAccount } from '../telegramAccounts';
 import { registerTelegramLargeUploadHandlers } from './telegramLargeUpload';
 import type { IpcContext } from './context';
 
@@ -91,32 +90,17 @@ export function registerTelegramHandlers(ctx: IpcContext): void {
     return true;
   });
 
-  ipcMain.handle(IPC.GENERATE_TELEGRAM_PAIRING_CODE, () => {
-    const issued = issuePairingCode(config.telegram.pairing);
-    config.telegram.pairing = issued.nextState;
-    saveConfig({ telegram: config.telegram });
-    sendLog(`Telegram pairing code generated (expires at ${issued.expiresAt})`);
-    return { code: issued.code, expiresAt: issued.expiresAt };
-  });
+  ipcMain.handle(IPC.GENERATE_TELEGRAM_PAIRING_CODE, () => issueTelegramPairingCode());
 
   ipcMain.handle(IPC.REVOKE_TELEGRAM_PAIRING_CODE, (_event, code: string) => {
-    config.telegram.pairing = revokePairingCode(config.telegram.pairing, code);
-    saveConfig({ telegram: config.telegram });
+    revokeTelegramPairingCode(code);
     return true;
   });
 
-  ipcMain.handle(IPC.UNPAIR_TELEGRAM_USER, async (_event, userId: number) => {
-    const numericUserId = Number(userId);
-    if (!Number.isFinite(numericUserId) || numericUserId <= 0) return false;
-    config.telegram.pairing = unpairUser(config.telegram.pairing, numericUserId);
-    dropBotPermissions('telegram', String(numericUserId));
-    saveConfig({ telegram: config.telegram });
-    await clearBotConversationsForUser('telegram', numericUserId);
-    await revokeBotPairing('telegram', String(numericUserId));
-    // A chat menu listing commands only its grants allowed has to go with them.
-    void ctx.telegramRuntime.refreshBotCommands().catch(() => undefined);
-    return true;
-  });
+  // The same unpair as `/users` in Telegram (`telegramAccounts.ts`).
+  ipcMain.handle(IPC.UNPAIR_TELEGRAM_USER, async (_event, userId: number) => (
+    unpairTelegramAccount(Number(userId), () => ctx.telegramRuntime.refreshBotCommands())
+  ));
 
   ipcMain.handle(IPC.FORGET_TELEGRAM_CHANNEL, async (_event, chatId: number) => {
     const numericChatId = Number(chatId);

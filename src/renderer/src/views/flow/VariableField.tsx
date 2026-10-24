@@ -10,8 +10,11 @@ import { ChatRecipientPicker } from '../../components/ChatRecipientPicker';
 import { SelectDropdown } from '../../components/SelectDropdown';
 import { systemApi, scraperApi } from '../../api/electronApi';
 import { FeedUrlField } from './FeedUrlField';
+import { FeedPreview } from './FeedPreview';
+import { showsFeedPreview } from '../../../../shared/feedPreview';
 import { recipientPlatform, variableValuePatch } from '../../../../shared/flowVariables';
-import type { FlowVariable } from '../../../../shared/types';
+import type { FlowVariable, SkillInstance } from '../../../../shared/types';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 export interface VariableFieldProps {
   variable: FlowVariable;
@@ -21,6 +24,8 @@ export interface VariableFieldProps {
   onBeforeNavigate?: () => void;
   allVariables?: FlowVariable[];
   onChangeMany?: (patch: Record<string, string>) => void;
+  /** The flow's steps. Given, a feed address (and a URL an rss step reads as is) shows its latest items. */
+  steps?: readonly SkillInstance[];
 }
 
 function toBound(raw: string | undefined): number | undefined {
@@ -30,7 +35,7 @@ function toBound(raw: string | undefined): number | undefined {
 }
 
 export const VariableField: React.FC<VariableFieldProps> = ({
-  variable, onChange, t, asQuestion = false, onBeforeNavigate, allVariables, onChangeMany,
+  variable, onChange, t, asQuestion = false, onBeforeNavigate, allVariables, onChangeMany, steps,
 }) => {
   const label = asQuestion ? (variable.question?.trim() || variable.label) : variable.label;
   const isBlank = !variable.value.trim();
@@ -178,17 +183,24 @@ export const VariableField: React.FC<VariableFieldProps> = ({
     );
   }
 
+  const preview = steps && showsFeedPreview(variable, steps)
+    ? <FeedPreview url={variable.value} t={t} />
+    : null;
+
   if (variable.type === 'feed') {
     return (
-      <FeedUrlField
-        value={variable.value}
-        onChange={onChange}
-        label={label}
-        placeholder={variable.placeholder}
-        hint={variable.hint}
-        error={error}
-        t={t}
-      />
+      <Stack gap={6}>
+        <FeedUrlField
+          value={variable.value}
+          onChange={onChange}
+          label={label}
+          placeholder={variable.placeholder}
+          hint={variable.hint}
+          error={error}
+          t={t}
+        />
+        {preview}
+      </Stack>
     );
   }
 
@@ -239,7 +251,7 @@ export const VariableField: React.FC<VariableFieldProps> = ({
         </Group>
         {pickCount !== null && (
           <Text fz="xs" c="dimmed">
-            {t('flow.skill.scraper.matchCount').replace('{{count}}', String(pickCount))}
+            {fillTemplate(t('flow.skill.scraper.matchCount'), { count: String(pickCount) })}
           </Text>
         )}
         {variable.hint && <Text fz="xs" c="dimmed">{variable.hint}</Text>}
@@ -260,6 +272,7 @@ export const VariableField: React.FC<VariableFieldProps> = ({
         mono={variable.type !== 'text'}
       />
       {variable.hint && <Text fz="xs" c="dimmed">{variable.hint}</Text>}
+      {preview}
     </Stack>
   );
 };

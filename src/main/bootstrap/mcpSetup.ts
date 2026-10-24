@@ -6,15 +6,21 @@ import { sendLog, sendToRenderer } from '../helpers';
 import { getLangCache, t } from '../i18n';
 import { initMcpRegistry } from '../mcp';
 import { localizeServerViews } from '../mcp/mcpServerViews';
+import { decidePttConnectorDefault } from '../ptt/pttDefault';
 import { decideTaiwanRailDefault } from '../rail/railDefault';
 
 /** Connectors whose default depends on where the user is; decided once, before the registry reads the flags. */
 function applyLocaleConnectorDefaults(): void {
-  const patch = decideTaiwanRailDefault(config, app.getPreferredSystemLanguages());
-  if (!patch) return;
+  const languages = app.getPreferredSystemLanguages();
+  const rail = decideTaiwanRailDefault(config, languages);
+  const ptt = decidePttConnectorDefault(config, languages);
+  if (!rail && !ptt) return;
+  const patch = { ...rail, ...ptt };
   Object.assign(config, patch);
   saveConfig(patch);
-  sendLog(`Taiwan rail connector default: ${patch.taiwanRailEnabled ? 'on' : 'off'} (system language ${app.getPreferredSystemLanguages()[0] ?? 'unknown'})`);
+  const system = `system language ${languages[0] ?? 'unknown'}`;
+  if (rail) sendLog(`Taiwan rail connector default: ${rail.taiwanRailEnabled ? 'on' : 'off'} (${system})`);
+  if (ptt) sendLog(`PTT connector default: ${ptt.pttConnectorEnabled ? 'on' : 'off'} (${system})`);
 }
 
 export function initMcp(): void {

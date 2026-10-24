@@ -4,6 +4,15 @@ import { loadUserMemory } from '../memory/memoryStore';
 import { buildRecipientDirectory, EMPTY_RECIPIENT_DIRECTORY } from '../../shared/botRecipients';
 import type { RecipientDirectory } from '../../shared/botRecipients';
 import type { RecipientWording } from '../../shared/botRecipientQuestion';
+import { SOCKET_BOT_SECRET_FIELDS } from '../../shared/types';
+import type { SocketBotPlatform } from '../../shared/types';
+
+/** Turned on with every secret it signs in with (Slack needs both of its tokens). */
+export function isSocketBotConfigured(platform: SocketBotPlatform): boolean {
+  const section = config[platform] as unknown as Record<string, unknown> | undefined;
+  if (!section?.enabled) return false;
+  return SOCKET_BOT_SECRET_FIELDS[platform].every((field) => typeof section[field] === 'string' && Boolean((section[field] as string).trim()));
+}
 
 /**
  * The chats a flow's bot step can reach right now — the same list the step's recipient picker
@@ -13,7 +22,9 @@ import type { RecipientWording } from '../../shared/botRecipientQuestion';
 export async function loadRecipientDirectory(): Promise<RecipientDirectory> {
   const telegram = Boolean(config.telegram?.enabled && config.telegram.botToken);
   const line = Boolean(config.line?.enabled && config.line.channelAccessToken);
-  if (!telegram && !line) return EMPTY_RECIPIENT_DIRECTORY;
+  const discord = isSocketBotConfigured('discord');
+  const slack = isSocketBotConfigured('slack');
+  if (!telegram && !line && !discord && !slack) return EMPTY_RECIPIENT_DIRECTORY;
   const memory = await loadUserMemory().catch(() => null);
   return buildRecipientDirectory({
     telegram: {
@@ -22,7 +33,9 @@ export async function loadRecipientDirectory(): Promise<RecipientDirectory> {
       channels: config.telegram?.channels ?? [],
     },
     line: { connected: line, pairedUsers: config.line?.pairing?.pairedUsers ?? [] },
-    self: memory?.botSelf ?? { telegram: [], line: [] },
+    discord: { connected: discord, pairedUsers: config.discord?.pairing?.pairedUsers ?? [] },
+    slack: { connected: slack, pairedUsers: config.slack?.pairing?.pairedUsers ?? [] },
+    self: memory?.botSelf ?? {},
   });
 }
 

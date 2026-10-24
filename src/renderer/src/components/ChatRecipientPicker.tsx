@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Button, Chip, Group, Stack, Text, Tooltip } from '@mantine/core';
 import { Settings } from 'lucide-react';
 import { AppTextInput } from './AppTextInput';
-import { lineApi, telegramApi } from '../api/electronApi';
+import { lineApi, socketBotApi, telegramApi } from '../api/electronApi';
+import { SOCKET_BOT_PLATFORMS } from '../../../shared/types';
 import { useI18nStore } from '../store/i18nStore';
 import { useAppStore } from '../store/appStore';
 import { lineAccountLabel, namedTelegramRecipients, telegramAccountChoiceLabel } from '../utils/botAccountLabel';
@@ -50,7 +51,8 @@ export const ChatRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
   const [telegramUsers, setTelegramUsers] = useState<TelegramPairedUser[]>([]);
   const [telegramChannels, setTelegramChannels] = useState<TelegramChannel[]>([]);
   const [telegramContacts, setTelegramContacts] = useState<BotContact[]>([]);
-  const [lineUsers, setLineUsers] = useState<LinePairedUser[]>([]);
+  /** Paired people on the platforms with string ids (LINE, Discord, Slack). */
+  const [stringIdUsers, setStringIdUsers] = useState<Partial<Record<BotPlatform, LinePairedUser[]>>>({});
 
   useEffect(() => {
     if (currentView !== 'flow') return;
@@ -59,7 +61,12 @@ export const ChatRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
       setTelegramChannels(s.channels);
       setTelegramContacts(s.contacts);
     });
-    void lineApi.getSettings().then((s) => setLineUsers(s.pairing.pairedUsers));
+    void lineApi.getSettings().then((s) => setStringIdUsers((prev) => ({ ...prev, line: s.pairing.pairedUsers })));
+    for (const socketPlatform of SOCKET_BOT_PLATFORMS) {
+      void socketBotApi.getSettings(socketPlatform).then((s) => {
+        if (s) setStringIdUsers((prev) => ({ ...prev, [socketPlatform]: s.pairing.pairedUsers }));
+      });
+    }
   }, [currentView]);
 
   const goToSettings = (): void => {
@@ -67,11 +74,14 @@ export const ChatRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
     openSettingsCategory('bots');
   };
 
-  const isLine = platform === 'line';
+  // `auto` answers on the bot that triggered the flow and otherwise Telegram, so it offers Telegram's chats.
+  const isTelegram = platform === 'telegram' || platform === 'auto';
   const pairedUsers: RecipientChoice[] = useMemo(() => (
-    isLine ? lineUsers.map((user) => lineChoice(user, t)) : telegramUsers.map((user) => telegramChoice(user, t))
-  ), [isLine, lineUsers, telegramUsers, t]);
-  const channels = useMemo(() => (isLine ? [] : telegramChannels), [isLine, telegramChannels]);
+    isTelegram
+      ? telegramUsers.map((user) => telegramChoice(user, t))
+      : (stringIdUsers[platform] ?? []).map((user) => lineChoice(user, t))
+  ), [isTelegram, platform, stringIdUsers, telegramUsers, t]);
+  const channels = useMemo(() => (isTelegram ? telegramChannels : []), [isTelegram, telegramChannels]);
 
   const raw = value.trim();
   const knownIdSet = useMemo(
@@ -86,9 +96,9 @@ export const ChatRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
   const unknownIds = useMemo(() => parsedIds.filter((id) => !knownIdSet.has(id)), [parsedIds, knownIdSet]);
   /** Recipients the picker cannot offer as chips, named once the startup backfill has asked Telegram. */
   const namedUnknowns = useMemo(() => {
-    if (isLine) return [];
+    if (!isTelegram) return [];
     return namedTelegramRecipients(unknownIds, { contacts: telegramContacts }, t);
-  }, [isLine, unknownIds, telegramContacts, t]);
+  }, [isTelegram, unknownIds, telegramContacts, t]);
   const hasChoices = pairedUsers.length > 0 || channels.length > 0;
 
   const handleMultiple = (next: string[]) => {

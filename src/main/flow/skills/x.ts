@@ -221,7 +221,7 @@ export async function execXThread(config: Record<string, string>, signal?: Abort
   const url = (config.url ?? '').trim().split(/\s+/)[0] ?? '';
   const link = parseXMediaInput(url);
   if (!link) {
-    throw new FlowUserError('flow.error.xPostUrl', { url }, `X Thread: not an X, Threads, Instagram, Facebook, TikTok, PTT, Dcard or Reddit post URL: ${url}`);
+    throw new FlowUserError('flow.error.xPostUrl', { url }, `X Thread: not an X, Threads, Instagram, Facebook, TikTok, PTT, Dcard, Reddit or Weibo post URL: ${url}`);
   }
   const parsedMax = parseInt(config.maxReplies ?? '', 10);
   const maxReplies = Number.isFinite(parsedMax) && parsedMax >= 0 ? parsedMax : DEFAULT_MAX_REPLIES;

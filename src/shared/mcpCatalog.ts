@@ -86,8 +86,8 @@ export function connectorHoldsUserData(url: string): boolean {
   const trimmed = (url ?? '').trim().toLowerCase();
   // X and the sign-in site connectors are read as the user but hold public posts, not the user's
   // own data: "look in your own data first" would send a question about the news to a search of
-  // strangers' posts.
-  if (trimmed === 'builtin://x' || isSiteConnectorUrl(trimmed)) return false;
+  // strangers' posts. PTT is a public forum read signed out.
+  if (trimmed === 'builtin://x' || trimmed === 'builtin://ptt' || isSiteConnectorUrl(trimmed)) return false;
   if (trimmed.startsWith('builtin://')) return true;
   const entry = findCatalogEntry(trimmed);
   return entry ? entry.category !== 'docs' : false;

@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from 'react';
 import { Box, Code, Collapse, Group, Paper, Stack, Text } from '@mantine/core';
-import { BookOpen, Check, ChevronDown, ChevronUp, Copy, ShieldAlert } from 'lucide-react';
+import { BookOpen, Check, ChevronDown, ChevronUp, Copy } from 'lucide-react';
 import { AppButton } from '../../../components/AppButton';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { CodeEditor } from '../../../components/CodeEditor';
@@ -11,6 +11,7 @@ import type { SkillConfigProps } from './types';
 import { comboLabel } from '../../../../../shared/shortcuts';
 import { useResolvedCombo } from '../../../store/shortcutStore';
 import { isMac } from '../../../utils/keyLabels';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 const HELPER_ROWS: { sig: string; key: string }[] = [
   { sig: 'await waitFor(sel, ms?)', key: 'flow.skill.browser_js.help.waitFor' },
@@ -56,7 +57,7 @@ const BROWSER_JS_LLM_REFERENCE = [
 export const BrowserJsConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
   const formatKeys = comboLabel(useResolvedCombo('editor.format'), isMac);
   const formatHint = formatKeys
-    ? t('flow.skill.browser_js.formatHint').replace('{{shortcut}}', formatKeys)
+    ? fillTemplate(t('flow.skill.browser_js.formatHint'), { shortcut: formatKeys })
     : '';
   const [helpOpen, setHelpOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -125,7 +126,6 @@ export const BrowserJsConfig: React.FC<SkillConfigProps> = ({ step, onChange, t 
       </Collapse>
 
       <SettingRow
-        icon={<ShieldAlert size={13} />}
         label={t('flow.skill.browser_js.emitFailFlag')}
         hint={t('flow.skill.browser_js.emitFailFlag.hint')}
         control={
@@ -137,7 +137,7 @@ export const BrowserJsConfig: React.FC<SkillConfigProps> = ({ step, onChange, t 
       />
 
       <Text fz="xs" c="dimmed">
-        {t('flow.skill.browser_js.outputHint').split('{{outputKey}}').join(`{{${step.outputKey}}}`)}
+        {fillTemplate(t('flow.skill.browser_js.outputHint'), { outputKey: `{{${step.outputKey}}}` })}
       </Text>
     </Stack>
   );

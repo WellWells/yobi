@@ -66,6 +66,7 @@ export async function buildTelegramSettingsSnapshot(): Promise<TelegramSettingsS
     defaultReplyMode: config.telegram.defaultReplyMode,
     compactReply: config.telegram.compactReply,
     permissions: config.telegram.permissions,
+    defaultGrants: config.telegram.defaultGrants,
     llmDirect: config.telegram.llmDirect,
     runtime: _telegramRuntimeSnapshot,
     pairing: normalizedPairing,

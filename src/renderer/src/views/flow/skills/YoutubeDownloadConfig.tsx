@@ -1,6 +1,5 @@
 import React from 'react';
 import { Stack, Text } from '@mantine/core';
-import { ShieldAlert } from 'lucide-react';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { SelectDropdown } from '../../../components/SelectDropdown';
 import { SettingRow } from '../../../components/SettingRow';
@@ -8,6 +7,7 @@ import { ToggleSwitch } from '../../../components/ToggleSwitch';
 import { isValidYoutubeUrlOrVar } from './validation';
 import { YtdlToolsNotice } from './YtdlToolsNotice';
 import type { SkillConfigProps } from './types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 export const YoutubeDownloadConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
   const url = step.config.url ?? '';
@@ -50,9 +50,8 @@ export const YoutubeDownloadConfig: React.FC<SkillConfigProps> = ({ step, onChan
         size="sm"
       />
       <SettingRow
-        icon={<ShieldAlert size={13} />}
         label={t('flow.skill.browser.emitFailFlag')}
-        hint={t('flow.skill.youtube_download.emitFailFlag.hint').replace('{{flag}}', `{{${step.outputKey}.isFailed}}`)}
+        hint={fillTemplate(t('flow.skill.youtube_download.emitFailFlag.hint'), { flag: `{{${step.outputKey}.isFailed}}` })}
         control={
           <ToggleSwitch
             checked={step.config.emitFailFlag === 'true'}

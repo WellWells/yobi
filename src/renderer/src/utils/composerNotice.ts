@@ -1,3 +1,5 @@
+import { fillTemplate } from '../../../shared/fillTemplate';
+
 /**
  * The composer shows at most one notice at a time, most consequential first: a connector riding
  * on the next send costs a real agent run, so it never loses its slot to "attachments are ignored".
@@ -87,5 +89,5 @@ export function composerNoticeText(
 ): string {
   if (spec.message !== null) return spec.message;
   if (spec.messageKey === null) return '';
-  return t(spec.messageKey).replace('{{names}}', spec.names.join(', '));
+  return fillTemplate(t(spec.messageKey), { names: spec.names.join(', ') });
 }

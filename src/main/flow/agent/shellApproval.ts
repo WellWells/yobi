@@ -35,6 +35,26 @@ export const BOT_QUESTION_HINT_RESERVE = 200;
  */
 const HIDDEN_CHARACTER = /[\p{Cf}\p{Zl}\p{Zp}\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u;
 
+/** Everything that does not show as itself in a chat line: the above plus tab, line feed and carriage return. */
+const UNSEEN_CHARACTER = /[\p{Cf}\p{Zl}\p{Zp}\p{Cc}]/gu;
+
+const WRITTEN_OUT: Record<string, string> = { '\n': '\\n', '\r': '\\r', '\t': '\\t' };
+
+/**
+ * One line a person reads as exactly what it holds: a break is written `\n`, every other unseen
+ * character as its code (`‮`). An approval shows a connector call's arguments this way, so a
+ * value cannot draw a line of its own or read differently from what runs.
+ */
+export function writeOutUnseen(text: string): string {
+  return text.replace(UNSEEN_CHARACTER, (char) => WRITTEN_OUT[char]
+    ?? `\\u${(char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')}`);
+}
+
+/** Prose with the unseen characters taken out and line breaks turned into spaces (the model's own sentence). */
+export function withoutUnseen(text: string): string {
+  return text.replace(UNSEEN_CHARACTER, (char) => (char === '\n' || char === '\r' || char === '\t' ? ' ' : ''));
+}
+
 /** The shells a model may name on macOS/Linux; anything else is a program, not a shell. */
 const KNOWN_UNIX_SHELLS = new Set(['sh', 'bash', 'zsh', 'fish', 'pwsh', 'powershell', 'cmd']);
 
@@ -141,15 +161,17 @@ function readChoices(config: Record<string, string>): string[] {
 }
 
 /**
- * Whether the answer approves the command. Strict on purpose: only the first choice, typed or
- * picked by number ("1" arrives here as "1. Run"). Anything else — "2", "no", "use PowerShell
- * instead" — is not a yes, and the model reads the answer to decide what to do next.
+ * Whether the answer approves the command (or the connector change). Strict on purpose: only the
+ * first choice — pressed, typed out, or picked by number where the choices were shown numbered
+ * ("1" arrives here as "1. Run" only then, `applyAnswer`). A bare "1" never approves: under
+ * buttons the user saw no numbers, so it may be anything. Anything else — "2", "no", "use
+ * PowerShell instead" — is not a yes, and the model reads the answer to decide what to do next.
  */
 export function isShellApproved(entry: AskRecord): boolean {
   const [run] = readChoices(entry.config);
   const answer = entry.observation.trim();
   if (!run || !answer) return false;
-  return answer === run || answer === `1. ${run}` || answer === '1';
+  return answer === run || answer === `1. ${run}`;
 }
 
 /** What the model reads in place of an answer that did not approve the command. */
@@ -161,7 +183,82 @@ export function declinedShellObservation(answer: string): string {
 /** Said when the account lost the shell grant while the question was waiting. */
 export const SHELL_NO_LONGER_ALLOWED = 'The command did not run: running commands is no longer allowed for this account. Do not try shell again — answer with what you have.';
 
-/** Questions the model asked itself; a shell approval is the program's, and does not use one up. */
+/*
+ * A connector change asked about in the chat, the same way and for the same reason as a shell
+ * command: the run pauses, and the call stored on the question — server, tool and arguments as
+ * the user read them — is the one that runs when the answer approves it. Only the owner's own
+ * private chat is asked (`computeBotConnectorChanges`); anyone else's change is refused.
+ */
+export const CONNECTOR_APPROVAL_SERVER_KEY = 'mcpServerId';
+export const CONNECTOR_APPROVAL_TOOL_KEY = 'mcpTool';
+export const CONNECTOR_APPROVAL_ARGS_KEY = 'mcpArguments';
+
+export interface PendingConnectorChange {
+  /** The server's id, not the handle: handles are renumbered when the set of servers changes. */
+  serverId: string;
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+/** The change a question in the scratch asked about, or null for any other question. */
+export function connectorApprovalOf(entry: AskRecord): PendingConnectorChange | null {
+  if (entry.tool !== AGENT_ASK_TOOL) return null;
+  const serverId = entry.config[CONNECTOR_APPROVAL_SERVER_KEY];
+  const name = entry.config[CONNECTOR_APPROVAL_TOOL_KEY];
+  if (!serverId || !name) return null;
+  try {
+    const parsed: unknown = JSON.parse(entry.config[CONNECTOR_APPROVAL_ARGS_KEY] ?? '{}');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    return { serverId, name, arguments: parsed as Record<string, unknown> };
+  } catch {
+    return null;
+  }
+}
+
+export function connectorApprovalConfig(text: ShellApprovalText, pending: PendingConnectorChange): Record<string, string> {
+  return {
+    question: text.question,
+    choices: JSON.stringify(text.choices),
+    [CONNECTOR_APPROVAL_SERVER_KEY]: pending.serverId,
+    [CONNECTOR_APPROVAL_TOOL_KEY]: pending.name,
+    [CONNECTOR_APPROVAL_ARGS_KEY]: JSON.stringify(pending.arguments),
+  };
+}
+
+export function declinedConnectorObservation(answer: string): string {
+  const said = answer.trim() ? ` Their reply: "${answer.trim()}".` : '';
+  return `The user did not approve this change, so it was not made.${said} Do not propose it again — follow their reply, take a different approach, or finish.`;
+}
+
+/** Said when the connector is no longer in this run's reach (grant revoked, server removed). */
+export const CONNECTOR_CHANGE_NO_LONGER_ALLOWED = 'The change was not made: this connector is no longer available to this run. Do not try it again — answer with what you have.';
+
+/*
+ * A flow an admin's bot run built or changed, asked about in the chat for the same reason. Unlike a
+ * command, the flow itself is not stored on the question: the question's config is replayed into the
+ * model's prompt, and a resolved flow holds the paired chat ids its bot steps send to. The question
+ * carries only this marker; the flow waits on the run (`AgentRunState.pendingFlow`).
+ */
+export const FLOW_APPROVAL_KEY = 'flowApproval';
+
+/** Whether a question in the scratch asked to save a held flow. */
+export function isFlowApproval(entry: AskRecord): boolean {
+  return entry.tool === AGENT_ASK_TOOL && entry.config[FLOW_APPROVAL_KEY] === '1';
+}
+
+export function flowApprovalConfig(text: ShellApprovalText): Record<string, string> {
+  return { question: text.question, choices: JSON.stringify(text.choices), [FLOW_APPROVAL_KEY]: '1' };
+}
+
+export function declinedFlowObservation(answer: string): string {
+  const said = answer.trim() ? ` Their reply: "${answer.trim()}".` : '';
+  return `The user did not approve saving this flow, so nothing was saved.${said} Do not build it again unasked — follow their reply (change it with what they said, or finish).`;
+}
+
+/** Said when the account may no longer build flows from the chat, or the flow went missing. */
+export const FLOW_SAVE_NO_LONGER_ALLOWED = 'Nothing was saved: this account may no longer save flows from the chat. Do not try again — tell the user to save it from the desktop.';
+
+/** Questions the model asked itself; an approval is the program's, and does not use one up. */
 export function isModelQuestion(entry: AskRecord): boolean {
-  return entry.tool === AGENT_ASK_TOOL && shellApprovalOf(entry) === null;
+  return entry.tool === AGENT_ASK_TOOL && shellApprovalOf(entry) === null && connectorApprovalOf(entry) === null && !isFlowApproval(entry);
 }

@@ -36,6 +36,7 @@ import {
   withStepTimeout,
 } from './runtime';
 import { executeSkill } from './skills';
+import { resolveMcpArguments } from './skills/mcpCall';
 import { navigatePageBlank } from './skills/browserPages';
 import { signInUseOf } from './skills/readAccess';
 import { describeStepError, localizeStepError } from './userError';
@@ -44,13 +45,14 @@ import { PERPLEXITY_CLOUDFLARE_ERROR_NAME } from '../providers/perplexity';
 import { FLOW_VAR_PREFIX } from '../../shared/flowVariables';
 import { botStepTargets } from '../../shared/botRecipients';
 import { checkBlockStructure, describeBlockIssue } from '../../shared/flowBlockStructure';
+import { TRIGGER_IS_INPUT_VARIABLE } from '../../shared/builtin/steps';
 
 /**
  * Skills whose `emitFailFlag` turns a throw into `{{key.isFailed}}`="1" and sets "0" on success.
  * One list for both paths: a skill in only one of them leaves `.isFailed` unset on success.
  */
 const FAIL_SOFT_SKILLS: ReadonlySet<SkillType> = new Set<SkillType>([
-  'llm', 'browser', 'browser_js', 'bot', 'research', 'share', 'x_thread', 'youtube_download',
+  'llm', 'browser', 'browser_js', 'bot', 'research', 'share', 'x_thread', 'x_media', 'youtube_download', 'mcp', 'calendar', 'mail_fetch',
 ]);
 
 interface RunProgress {
@@ -172,7 +174,7 @@ export function unwrapStepOutput(type: SkillType, raw: string): StepOutput {
     }
     return { output: raw, subVars: {} };
   }
-  if (type === 'stock' || type === 'forex' || type === 'weather' || type === 'air_quality' || type === 'gmap_reviews' || type === 'research' || type === 'sysinfo' || type === 'share' || type === 'line_read' || type === 'x_thread' || type === 'x_media' || type === 'youtube_info' || type === 'youtube_download') {
+  if (type === 'stock' || type === 'forex' || type === 'weather' || type === 'air_quality' || type === 'calendar' || type === 'mail_fetch' || type === 'almanac' || type === 'tw_invoice' || type === 'gmap_reviews' || type === 'research' || type === 'sysinfo' || type === 'share' || type === 'line_read' || type === 'telegram_read' || type === 'mcp' || type === 'x_thread' || type === 'x_media' || type === 'youtube_info' || type === 'youtube_download') {
     try {
       const env = JSON.parse(raw) as Record<string, unknown>;
       if (env && typeof env.output === 'string') {
@@ -222,6 +224,34 @@ export const INTERACTIVE_RUN_KEY = '__run.interactive';
  */
 export const SIGNED_IN_RUN_KEY = '__run.signedIn';
 
+/**
+ * Set (to "1") on a run a Telegram or LINE message started, so a connector step refuses to change
+ * anything (`mcpStepRefusal`). `FlowManager` sets it from the run's source and drops it from anything else.
+ */
+export const BOT_RUN_KEY = '__run.bot';
+
+const RUN_KEY_PREFIX = '__run.';
+
+/**
+ * A run's variables. Once the run's own marks are in (`sealed`), no step can write a `__run.` key:
+ * a step whose output key is `__run.bot` would otherwise clear the mark that keeps a bot-started
+ * run from changing a connector's data, or forge a sign-in mark.
+ */
+class RunContext extends Map<string, string> {
+  sealed = false;
+
+  override set(key: string, value: string): this {
+    if (this.sealed && key.startsWith(RUN_KEY_PREFIX)) return this;
+    return super.set(key, value);
+  }
+}
+
+function sealedCopy(context: Map<string, string>): RunContext {
+  const copy = new RunContext(context);
+  copy.sealed = true;
+  return copy;
+}
+
 /** The steps that read a pasted link, and so may be told to leave the sign-ins alone. */
 const LINK_READING_STEPS: ReadonlySet<string> = new Set(['x_media', 'x_thread', 'youtube_info', 'youtube_download', 'youtube']);
 
@@ -255,6 +285,11 @@ export async function resolveStepConfig(
     resolvedConfig.__flowId = flowId;
     resolvedConfig.__botCommand = botCommand;
     resolvedConfig.__triggerUserId = context.get('bot.triggerUserId') ?? '';
+    // What a reply into the asking chat quotes.
+    resolvedConfig.__triggerChatId = context.get('bot.triggerChatId') ?? '';
+    resolvedConfig.__triggerMessageId = context.get('bot.triggerMessageId') ?? '';
+    // Whether that message is the input alone, so an answer may take its place.
+    resolvedConfig.__triggerIsInput = context.get(TRIGGER_IS_INPUT_VARIABLE) ?? '';
   }
   if (step.type === 'youtube_info' || step.type === 'youtube_download') {
     resolvedConfig.__triggerPlatform = context.get('bot.triggerPlatform') ?? '';
@@ -275,6 +310,11 @@ export async function resolveStepConfig(
     // Someone else's bot message reads a link through the owner's sign-ins only as far as `others` allows.
     const signIn = signInUseOf(context.get(SIGNED_IN_RUN_KEY));
     resolvedConfig.__signedIn = signIn === 'none' ? '' : signIn;
+  }
+  if (step.type === 'mcp') {
+    // Filled in from the template, not from text a variable was already spliced into (`interpolateMcpArguments`).
+    resolvedConfig.arguments = resolveMcpArguments(step.config.arguments ?? '', context);
+    resolvedConfig.__botRun = context.get(BOT_RUN_KEY) === '1' ? '1' : '';
   }
   if (step.type === 'js') {
     const entries = Object.fromEntries(context);
@@ -393,7 +433,7 @@ async function expandLoop(
     for (let j = 0; j < items.length; j++) {
       const item = items[j];
       const iterationTrace = `${trace} ▸ ${j + 1}/${items.length}`;
-      const loopContext = new Map(context);
+      const loopContext = sealedCopy(context);
       if (typeof item === 'object' && item !== null) {
         for (const [k, v] of Object.entries(item)) {
           const valStr = typeof v === 'object' ? JSON.stringify(v) : String(v);
@@ -676,7 +716,7 @@ async function runFlowSteps(
   initialContext?: Record<string, string>,
   signal?: AbortSignal,
 ): Promise<FlowExecutionResult> {
-  const context = new Map<string, string>();
+  const context = new RunContext();
 
   context.set('clipboard', await clipboard.readText());
   context.set('timestamp', new Date().toISOString());
@@ -691,6 +731,7 @@ async function runFlowSteps(
       context.set(k, v);
     }
   }
+  context.sealed = true;
 
   const progress: RunProgress = { completed: 0, stopped: false, aborted: false, softFailures: 0 };
 

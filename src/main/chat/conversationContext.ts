@@ -1,4 +1,4 @@
-import { PROVIDER_PROMPT_POLICIES, detectProvider } from '../providers';
+import { detectProvider, promptPolicyFor } from '../providers';
 import { isByokTargetUrl } from '../../shared/types';
 import { charsPlusBreaks, utf8Len } from '../../shared/textBudget';
 import { promptAsSent } from '../../shared/conversationDoc';
@@ -44,13 +44,13 @@ export function replayReplacesThread(thread: ThreadMeta, targetUrl: string): boo
 
 export function measureFor(targetUrl: string): (text: string) => number {
   if (isByokTargetUrl(targetUrl)) return (text: string) => text.length;
-  const policy = PROVIDER_PROMPT_POLICIES[detectProvider(targetUrl)];
+  const policy = promptPolicyFor(detectProvider(targetUrl));
   return typeof policy.maxCharsPlusBreaks === 'number' ? charsPlusBreaks : utf8Len;
 }
 
 export function promptCapFor(targetUrl: string): number {
   if (isByokTargetUrl(targetUrl)) return 0;
-  const policy = PROVIDER_PROMPT_POLICIES[detectProvider(targetUrl)];
+  const policy = promptPolicyFor(detectProvider(targetUrl));
   return policy.maxCharsPlusBreaks ?? policy.maxBytes ?? 0;
 }
 

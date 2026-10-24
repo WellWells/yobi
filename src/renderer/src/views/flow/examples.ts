@@ -1,19 +1,34 @@
-import { FileOutput, Sunrise, type LucideIcon } from 'lucide-react';
+import { FileOutput, Languages, Scale, ScrollText, Sunrise, WandSparkles, type LucideIcon } from 'lucide-react';
 import { buildFlowCronExpression } from '../../../../shared/flowSchedule';
 import { COMMON_CURRENCIES } from '../../../../shared/currencies';
 import { PROVIDER_URLS } from '../../../../shared/types';
 import type { FlowDefinition, FlowVariable, FlowVariableOption, SkillInstance, SkillType, TriggerConfig } from '../../../../shared/types';
 import { DEFAULT_SKILL_CONFIG } from '../../../../shared/flowSkillSchema';
 import {
+  languageDisplayName,
+  promptLanguageName,
+  sortedTranslateLanguages,
+  uiTargetLanguage,
+} from '../../../../shared/translateLanguages';
+import {
+  COUNCIL_MEMBERS,
   articleBriefingPrompt,
   askPrompt,
+  councilMemberPrompt,
+  councilSynthesisPrompt,
   lineAlertPrompt,
   lineDigestPrompt,
+  telegramDigestPrompt,
   lineTodayPrompt,
   lineTopicsPrompt,
   lineWeeklyPrompt,
-  mapReviewsPrompt,
+  mailDigestPrompt,
+  mailWatchPrompt,
   morningBriefPrompt,
+  pushesAnalyzePrompt,
+  selectionPolishPrompt,
+  selectionSummaryPrompt,
+  selectionTranslatePrompt,
   stockQuotePrompt,
   stockWatchPrompt,
   summarizeUrlPrompt,
@@ -28,7 +43,7 @@ function makeId(): string {
 
 type Translate = (key: string) => string;
 
-export type TemplateCategory = 'push' | 'command';
+export type TemplateCategory = 'hotkey' | 'push' | 'command';
 
 /**
  * Gallery identity colour: what the template is about, not what its first step does
@@ -51,6 +66,8 @@ export interface FlowTemplate {
    */
   icon?: LucideIcon;
   command?: string;
+  /** The global hotkey a `hotkey` template is created with, shown on its tile like `/command`. */
+  hotkey?: string;
   setupCount: number;
   build: (t: Translate, locale: string) => FlowDefinition;
 }
@@ -101,6 +118,19 @@ function hourlyWeekdayCron(startHour: number, endHour: number): TriggerConfig {
     repeatEveryValue: 1,
     endHour,
     endMinute: 0,
+  };
+  return { ...trigger, cronExpression: buildFlowCronExpression(trigger) };
+}
+
+/** These days of every month; a run missed while the PC was off happens at the next launch. */
+function monthlyCron(days: number[], hour: number, minute = 0): TriggerConfig {
+  const trigger: TriggerConfig = {
+    type: 'cron',
+    scheduleMode: 'monthly',
+    monthDays: days,
+    scheduleHour: hour,
+    scheduleMinute: minute,
+    catchUpMissed: true,
   };
   return { ...trigger, cronExpression: buildFlowCronExpression(trigger) };
 }
@@ -350,6 +380,38 @@ function xPostMessage(t: Translate, body: string, labelKey: string, outputKey: s
   }, t(labelKey), outputKey);
 }
 
+/**
+ * The board and the net score a PTT template watches, then the bot and the chat, as in the X
+ * template. Not required: each arrives set to the template's default, so it is usable as added
+ * and the recipient guard holds it until a chat is picked.
+ */
+function pttVariables(t: Translate, board: string, score: string): FlowVariable[] {
+  return [
+    { ...textVar('pttBoard', t, false), value: board, placeholder: board },
+    { ...numberVar('pttScore', t, score), required: false, min: '1', max: '100' },
+    { ...botPlatformVar(t), required: false },
+    { ...chatVar(t), platformKey: 'botPlatform' },
+  ];
+}
+
+function pttBoardStep(t: Translate): SkillInstance {
+  return step('ptt_board', {
+    ...DEFAULT_SKILL_CONFIG.ptt_board, board: '{{var.pttBoard}}', scoreMode: 'push', score: '{{var.pttScore}}',
+  }, t('flow.templates.ptt.step.board'), 'ptt_1');
+}
+
+function pttMessage(t: Translate, message: string, attachment: string, labelKey: string, outputKey: string, preview = ''): SkillInstance {
+  return step('bot', {
+    platform: '{{var.botPlatform}}',
+    chatIds: '{{var.chatId}}',
+    message,
+    attachment,
+    attachmentType: 'auto',
+    ...(preview ? { preview } : {}),
+    emitFailFlag: 'true',
+  }, t(labelKey), outputKey);
+}
+
 function lineChatVar(t: Translate): FlowVariable {
   return {
     key: 'lineChat',
@@ -382,7 +444,113 @@ function timestamps(): { createdAt: string; updatedAt: string } {
   return { createdAt: now, updatedAt: now };
 }
 
+/**
+ * Defaults for the selected-text templates, written as the flow hotkey recorder writes them:
+ * Ctrl+Alt on Windows, Cmd+Option on macOS. They clash with nothing Yobi ships (its own two are
+ * Alt+G and Alt+H / Cmd+Ctrl+G and Cmd+Ctrl+H). On Windows AltGr is Ctrl+Alt, so no letter here
+ * types a character with AltGr on the German, French, Spanish, Nordic or Polish layouts: S would
+ * swallow the Polish ś, and on macOS Cmd+Option+S is Save All in editors. R is for recap.
+ */
+const SELECTION_HOTKEYS = {
+  translate: 'CommandOrControl+Alt+T',
+  polish: 'CommandOrControl+Alt+P',
+  summary: 'CommandOrControl+Alt+R',
+} as const;
+
+/**
+ * Selected text in, AI result on the clipboard, one notification. The hotkey starts the flow even
+ * with nothing selected, so an empty selection says so and ends the run before the AI step.
+ * `stem` names the template's own strings: `flow.templates.<stem>.step.llm` / `.notify.title`.
+ */
+function selectionSteps(t: Translate, stem: string, prompt: string): SkillInstance[] {
+  return [
+    step('if', { left: '{{selection}}', operator: 'is_empty', right: '' }, t('flow.templates.selection.step.ifEmpty')),
+    step('notify', {
+      title: t('flow.templates.selection.notify.empty.title'),
+      body: t('flow.templates.selection.notify.empty.body'),
+    }, t('flow.templates.selection.step.tellEmpty')),
+    step('stop', { value: '{{selection}}' }, t('flow.templates.selection.step.stopEmpty')),
+    step('end_if', {}, t('flow.skill.end_if')),
+    step('llm', llmConfig(prompt), t(`flow.templates.${stem}.step.llm`), 'llm_1'),
+    step('clipboard', { action: 'write', text: '{{llm_1}}' }, t('flow.templates.selection.step.copy'), 'clip_1'),
+    step('notify', { title: t(`flow.templates.${stem}.notify.title`), body: '{{llm_1}}' }, t('flow.templates.selection.step.notify')),
+  ];
+}
+
+/**
+ * The translation target, every language the chat's translator offers, in name order. The value is
+ * the name the prompt uses ("Traditional Chinese as used in Taiwan"), so the step reads it as is.
+ */
+function targetLanguageVar(t: Translate, locale: string): FlowVariable {
+  const options = sortedTranslateLanguages(locale)
+    .map((tag) => ({ value: promptLanguageName(tag), label: languageDisplayName(tag, locale) }));
+  // Not required: it arrives set to the UI language, so the template is usable as added.
+  return { ...selectVar('targetLanguage', t, options, promptLanguageName(uiTargetLanguage(locale))), required: false };
+}
+
+interface SelectionTemplateSpec {
+  key: string;
+  /** The template's string stem: `flow.templates.<stem>`, `.desc`, `.step.llm`, `.notify.title`. */
+  stem: string;
+  hotkey: string;
+  icon: LucideIcon;
+  prompt: (locale: string) => string;
+  variables?: (t: Translate, locale: string) => FlowVariable[];
+  setupCount?: number;
+}
+
+function selectionTemplate(spec: SelectionTemplateSpec): FlowTemplate {
+  const { key, stem, hotkey, icon, prompt, variables = () => [], setupCount = 0 } = spec;
+  return {
+    key,
+    category: 'hotkey',
+    titleKey: `flow.templates.${stem}`,
+    descKey: `flow.templates.${stem}.desc`,
+    primarySkill: 'llm',
+    hue: 'pink',
+    icon,
+    hotkey,
+    setupCount,
+    build: (t, locale): FlowDefinition => {
+      const vars = variables(t, locale);
+      return {
+        id: makeId(),
+        name: t(`flow.templates.${stem}`),
+        description: t(`flow.templates.${stem}.desc`),
+        enabled: false,
+        trigger: { type: 'hotkey', keys: hotkey },
+        ...(vars.length > 0 ? { variables: vars } : {}),
+        steps: selectionSteps(t, stem, prompt(locale)),
+        ...timestamps(),
+      };
+    },
+  };
+}
+
 export const FLOW_TEMPLATES: FlowTemplate[] = [
+  selectionTemplate({
+    key: 'sel_translate',
+    stem: 'selTranslate',
+    hotkey: SELECTION_HOTKEYS.translate,
+    icon: Languages,
+    prompt: selectionTranslatePrompt,
+    variables: (t, locale) => [targetLanguageVar(t, locale)],
+    setupCount: 1,
+  }),
+  selectionTemplate({
+    key: 'sel_polish',
+    stem: 'selPolish',
+    hotkey: SELECTION_HOTKEYS.polish,
+    icon: WandSparkles,
+    prompt: selectionPolishPrompt,
+  }),
+  selectionTemplate({
+    key: 'sel_summary',
+    stem: 'selSummary',
+    hotkey: SELECTION_HOTKEYS.summary,
+    icon: ScrollText,
+    prompt: selectionSummaryPrompt,
+  }),
   {
     key: 'line_digest',
     category: 'push',
@@ -403,6 +571,31 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
         step('line_read', { chat: '{{var.lineChat}}', limit: '200', query: '', range: 'all', since: '', until: '', sinceLastRun: 'true' }, t('flow.templates.lineDigest.step.read'), 'line_1'),
         step('stop', { value: '{{line_1}}' }, t('flow.templates.step.stop_noNew')),
         step('llm', llmConfig(lineDigestPrompt(locale), { useMemory: 'true' }), t('flow.templates.lineDigest.step.llm'), 'llm_1'),
+        step('bot', { chatId: '{{var.chatId}}', message: '{{llm_1}}', attachment: '', attachmentType: 'auto', emitFailFlag: 'true' }, t('flow.templates.step.bot'), 'bot_1'),
+      ],
+      ...timestamps(),
+    }),
+  },
+  {
+    key: 'telegram_digest',
+    category: 'push',
+    titleKey: 'flow.templates.telegramDigest',
+    descKey: 'flow.templates.telegramDigest.desc',
+    primarySkill: 'telegram_read',
+    hue: 'cyan',
+    setupCount: 1,
+    build: (t, locale): FlowDefinition => ({
+      id: makeId(),
+      name: t('flow.templates.telegramDigest'),
+      description: t('flow.templates.telegramDigest.desc'),
+      enabled: false,
+      trigger: dailyCron(9),
+      variables: [chatVar(t)],
+      steps: [
+        recipientGuard(t),
+        step('telegram_read', { chat: '', range: 'last24h' }, t('flow.templates.telegramDigest.step.read'), 'tg_1'),
+        step('stop', { value: '{{tg_1}}' }, t('flow.templates.step.stop_noNew')),
+        step('llm', llmConfig(telegramDigestPrompt(locale), { emitFailFlag: 'true' }), t('flow.templates.telegramDigest.step.llm'), 'llm_1'),
         step('bot', { chatId: '{{var.chatId}}', message: '{{llm_1}}', attachment: '', attachmentType: 'auto', emitFailFlag: 'true' }, t('flow.templates.step.bot'), 'bot_1'),
       ],
       ...timestamps(),
@@ -659,6 +852,71 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
     }),
   },
   {
+    key: 'ptt_hot',
+    category: 'push',
+    titleKey: 'flow.templates.pttHot',
+    descKey: 'flow.templates.pttHot.desc',
+    primarySkill: 'ptt_board',
+    hue: 'violet',
+    setupCount: 4,
+    build: (t): FlowDefinition => ({
+      id: makeId(),
+      name: t('flow.templates.pttHot'),
+      description: t('flow.templates.pttHot.desc'),
+      enabled: false,
+      // PTT caches its search pages for three minutes, so a tighter schedule reads the same page.
+      trigger: intervalCron(10),
+      variables: pttVariables(t, 'Gossiping', '80'),
+      steps: [
+        recipientGuard(t),
+        pttBoardStep(t),
+        step('stop', { value: '{{ptt_1}}' }, t('flow.templates.step.stop_noNew')),
+        step('loop', { input: '{{ptt_1}}', loopVar: 'post', limitIterations: 'true', maxIterations: '5' }, t('flow.templates.ptt.step.loop'), 'loop_1'),
+        // The site's own forward: title, author, board, text, photos and the push tally.
+        step('x_media', { input: '{{post.link}}', destination: '{{var.botPlatform}}', folder: '', reader: '', emitFailFlag: 'true' }, t('flow.templates.pttHot.step.read'), 'xm'),
+        ...skipEmpty('flow.templates.ptt.step.skipUnread', t, '{{xm.isFailed}}', 'equals', '1'),
+        step('if', { left: '{{xm.overflow}}', operator: 'is_true', right: '' }, t('flow.templates.pttHot.step.ifLong')),
+        pttMessage(t, '{{xm.overflow}}', '', 'flow.templates.pttHot.step.sendText', 'bot_text'),
+        step('end_if', {}, t('flow.skill.end_if')),
+        pttMessage(t, '{{xm.caption}}', '{{xm}}', 'flow.templates.pttHot.step.send', 'bot_1', '{{xm.previews}}'),
+        step('end_loop', {}, t('flow.skill.end_loop')),
+      ],
+      ...timestamps(),
+    }),
+  },
+  {
+    key: 'ptt_analyze',
+    category: 'push',
+    titleKey: 'flow.templates.pttAnalyze',
+    descKey: 'flow.templates.pttAnalyze.desc',
+    primarySkill: 'ptt_board',
+    hue: 'violet',
+    setupCount: 4,
+    build: (t, locale): FlowDefinition => ({
+      id: makeId(),
+      name: t('flow.templates.pttAnalyze'),
+      description: t('flow.templates.pttAnalyze.desc'),
+      enabled: false,
+      trigger: dailyCron(12),
+      variables: pttVariables(t, 'Lifeismoney', '20'),
+      steps: [
+        recipientGuard(t),
+        pttBoardStep(t),
+        step('stop', { value: '{{ptt_1}}' }, t('flow.templates.step.stop_noNew')),
+        step('loop', { input: '{{ptt_1}}', loopVar: 'post', limitIterations: 'true', maxIterations: '5' }, t('flow.templates.ptt.step.loop'), 'loop_1'),
+        // As many pushes as fit the analysis budget; past it the step samples them.
+        step('x_thread', { url: '{{post.link}}', maxReplies: '1000', emitFailFlag: 'true' }, t('flow.templates.pttAnalyze.step.read'), 'xt'),
+        ...skipEmpty('flow.templates.ptt.step.skipUnread', t, '{{xt.isFailed}}', 'equals', '1'),
+        step('llm', llmConfig(pushesAnalyzePrompt(locale), { emitFailFlag: 'true' }), t('flow.templates.pttAnalyze.step.llm'), 'llm_1'),
+        ...skipEmpty('flow.templates.rss.step.skipFailed', t, '{{llm_1.isFailed}}', 'equals', '1'),
+        // The title is the poster's text, so it stays out of link brackets it could close early.
+        pttMessage(t, '**{{post.title}}**\n{{post.link}}\n\n{{llm_1}}', '', 'flow.templates.pttAnalyze.step.send', 'bot_1'),
+        step('end_loop', {}, t('flow.skill.end_loop')),
+      ],
+      ...timestamps(),
+    }),
+  },
+  {
     key: 'morning_brief',
     category: 'push',
     titleKey: 'flow.templates.morningBrief',
@@ -687,7 +945,63 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
           step('stock', { symbol: '{{var.symbols}}' }, t('flow.templates.step.stock'), 'stock_1')),
         ...whenSet('fxPairs', 'flow.templates.morningBrief.ifForex', t,
           step('js', { code: FX_LOOKUP_CODE }, t('flow.templates.step.forexLookup'), 'fx_1')),
+        // Blank calendar = the only one there is. Without any (or with several) it fails soft and
+        // the brief leaves the schedule out.
+        step('calendar', { ...DEFAULT_SKILL_CONFIG.calendar, range: 'today', emitFailFlag: 'true' }, t('flow.templates.step.agenda'), 'agenda'),
         step('llm', llmConfig(morningBriefPrompt(locale)), t('flow.templates.step.brief'), 'llm_1'),
+        step('bot', { chatId: '{{var.chatId}}', message: '{{llm_1}}', attachment: '', attachmentType: 'auto', emitFailFlag: 'false' }, t('flow.templates.step.bot'), 'bot_1'),
+      ],
+      ...timestamps(),
+    }),
+  },
+  {
+    key: 'mail_digest',
+    category: 'push',
+    titleKey: 'flow.templates.mailDigest',
+    descKey: 'flow.templates.mailDigest.desc',
+    primarySkill: 'mail_fetch',
+    hue: 'red',
+    setupCount: 1,
+    build: (t, locale): FlowDefinition => ({
+      id: makeId(),
+      name: t('flow.templates.mailDigest'),
+      description: t('flow.templates.mailDigest.desc'),
+      enabled: false,
+      trigger: dailyCron(8),
+      variables: [chatVar(t)],
+      steps: [
+        recipientGuard(t),
+        step('mail_fetch', { ...DEFAULT_SKILL_CONFIG.mail_fetch, limit: '20' }, t('flow.templates.step.mailNew'), 'mail_1'),
+        step('stop', { value: '{{mail_1}}' }, t('flow.templates.step.stop_noNew')),
+        step('llm', llmConfig(mailDigestPrompt(locale)), t('flow.templates.step.brief'), 'llm_1'),
+        step('bot', { chatId: '{{var.chatId}}', message: '{{llm_1}}', attachment: '', attachmentType: 'auto', emitFailFlag: 'false' }, t('flow.templates.step.bot'), 'bot_1'),
+      ],
+      ...timestamps(),
+    }),
+  },
+  {
+    key: 'mail_watch',
+    category: 'push',
+    titleKey: 'flow.templates.mailWatch',
+    descKey: 'flow.templates.mailWatch.desc',
+    primarySkill: 'mail_fetch',
+    hue: 'red',
+    setupCount: 3,
+    build: (t, locale): FlowDefinition => ({
+      id: makeId(),
+      name: t('flow.templates.mailWatch'),
+      description: t('flow.templates.mailWatch.desc'),
+      enabled: false,
+      // Every five minutes, reporting each matching mail once: as good as instant for a person.
+      trigger: intervalCron(5),
+      variables: [textVar('mailFrom', t, false), textVar('mailKeywords', t, false), chatVar(t)],
+      steps: [
+        recipientGuard(t),
+        step('mail_fetch', {
+          ...DEFAULT_SKILL_CONFIG.mail_fetch, from: '{{var.mailFrom}}', keywords: '{{var.mailKeywords}}', limit: '5',
+        }, t('flow.templates.step.mailMatching'), 'mail_1'),
+        step('stop', { value: '{{mail_1}}' }, t('flow.templates.step.stop_noNew')),
+        step('llm', llmConfig(mailWatchPrompt(locale)), t('flow.templates.step.mailAnalyze'), 'llm_1'),
         step('bot', { chatId: '{{var.chatId}}', message: '{{llm_1}}', attachment: '', attachmentType: 'auto', emitFailFlag: 'false' }, t('flow.templates.step.bot'), 'bot_1'),
       ],
       ...timestamps(),
@@ -758,6 +1072,35 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
     }),
   },
   {
+    key: 'invoice_draw',
+    category: 'push',
+    titleKey: 'flow.templates.invoiceDraw',
+    descKey: 'flow.templates.invoiceDraw.desc',
+    primarySkill: 'tw_invoice',
+    hue: 'orange',
+    setupCount: 1,
+    build: (t): FlowDefinition => ({
+      id: makeId(),
+      name: t('flow.templates.invoiceDraw'),
+      description: t('flow.templates.invoiceDraw.desc'),
+      enabled: false,
+      // The draw is on the 25th of odd months and the list updates around 14:00 Taiwan time. The
+      // schedule cannot say "odd months", so it runs on the 25th-27th of every month (a late list
+      // is still caught) and `.newThisMonth` is blank unless the latest period was drawn this
+      // month; on_change lets each period through once.
+      trigger: monthlyCron([25, 26, 27], 15),
+      variables: [chatVar(t)],
+      steps: [
+        recipientGuard(t),
+        step('tw_invoice', { ...DEFAULT_SKILL_CONFIG.tw_invoice }, t('flow.templates.invoiceDraw.step.fetch'), 'invoice_1'),
+        step('on_change', { value: '{{invoice_1.newThisMonth}}' }, t('flow.templates.invoiceDraw.step.onlyNew'), 'changed_1'),
+        step('stop', { value: '{{changed_1}}' }, t('flow.templates.step.stop_noNew')),
+        step('bot', { chatId: '{{var.chatId}}', message: '{{invoice_1.text}}', attachment: '', attachmentType: 'auto', emitFailFlag: 'false' }, t('flow.templates.step.bot'), 'bot_1'),
+      ],
+      ...timestamps(),
+    }),
+  },
+  {
     key: 'web_monitor',
     category: 'push',
     titleKey: 'flow.templates.webMonitor',
@@ -819,6 +1162,46 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
         extraTriggers,
         steps: [
           step('llm', llmConfig(askPrompt(locale)), t('flow.templates.step.answer'), 'llm_1'),
+          replyStep(t),
+        ],
+        ...timestamps(),
+      };
+    },
+  },
+  {
+    key: 'cmd_council',
+    category: 'command',
+    titleKey: 'flow.templates.cmdCouncil',
+    descKey: 'flow.templates.cmdCouncil.desc',
+    primarySkill: 'llm',
+    hue: 'violet',
+    // Not one answer but a comparison of three: the AI glyph alone reads as /ask.
+    icon: Scale,
+    command: 'council',
+    setupCount: 0,
+    build: (t, locale): FlowDefinition => {
+      const { trigger, extraTriggers } = commandTriggers('council', 'flow.templates.cmdCouncil.desc', t);
+      const memberPrompt = councilMemberPrompt(locale);
+      // One after another (the browser AIs share one window). A signed-out member is marked
+      // absent through its failure flag instead of failing the run; each step has its own
+      // response timeout and a flow run has no overall cap, so four in a row fit.
+      const members = COUNCIL_MEMBERS.map(({ key, provider }) => step(
+        'llm',
+        llmConfig(memberPrompt, { provider: PROVIDER_URLS[provider], emitFailFlag: 'true' }),
+        t(`flow.templates.cmdCouncil.step.${key}`),
+        key,
+      ));
+      return {
+        id: makeId(),
+        name: t('flow.templates.cmdCouncil'),
+        description: t('flow.templates.cmdCouncil.desc'),
+        enabled: false,
+        trigger,
+        extraTriggers,
+        steps: [
+          step('stop', { value: '{{input}}' }, t('flow.templates.cmdCouncil.step.needQuestion')),
+          ...members,
+          step('llm', llmConfig(councilSynthesisPrompt(locale)), t('flow.templates.cmdCouncil.step.compare'), 'llm_1'),
           replyStep(t),
         ],
         ...timestamps(),
@@ -900,41 +1283,6 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
         steps: [
           step('stock', { symbol: '{{input}}' }, t('flow.templates.step.stock'), 'stock_1'),
           step('llm', llmConfig(stockQuotePrompt(locale)), t('flow.templates.step.explain'), 'llm_1'),
-          replyStep(t),
-        ],
-        ...timestamps(),
-      };
-    },
-  },
-  {
-    key: 'cmd_map_reviews',
-    category: 'command',
-    titleKey: 'flow.templates.cmdMapReviews',
-    descKey: 'flow.templates.cmdMapReviews.desc',
-    primarySkill: 'gmap_reviews',
-    hue: 'pink',
-    command: 'gmr',
-    setupCount: 0,
-    build: (t, locale): FlowDefinition => {
-      const { trigger, extraTriggers } = commandTriggers('gmr', 'flow.templates.cmdMapReviews.desc', t);
-      return {
-        id: makeId(),
-        name: t('flow.templates.cmdMapReviews'),
-        description: t('flow.templates.cmdMapReviews.desc'),
-        enabled: false,
-        trigger,
-        extraTriggers,
-        steps: [
-          step('gmap_reviews', { url: '{{input}}', sort: 'mixed', count: '100' }, t('flow.templates.step.fetchReviews'), 'gmap_1'),
-          step('llm', llmConfig(mapReviewsPrompt({
-            place: '{{gmap_1.place}}',
-            reviews: '{{gmap_1}}',
-            rating: '{{gmap_1.rating}}',
-            total: '{{gmap_1.total}}',
-            positive: '{{gmap_1.positive}}',
-            distribution: '{{gmap_1.distribution}}',
-            verdict: '{{gmap_1.verdict}}',
-          }, locale)), t('flow.templates.step.analyzeReviews'), 'llm_1'),
           replyStep(t),
         ],
         ...timestamps(),

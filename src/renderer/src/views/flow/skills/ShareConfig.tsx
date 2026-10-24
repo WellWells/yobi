@@ -28,6 +28,7 @@ import {
 import type { ShareExpire, ShareSettings } from '../../../../../shared/types';
 import { buildCapturePaletteOptions } from './captureConfig';
 import type { SkillConfigProps } from './types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 export const ShareConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
   const [settings, setSettings] = useState<ShareSettings | null>(null);
@@ -92,7 +93,7 @@ export const ShareConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) =
           {settings && !settings.consentedAt && (
             <Stack gap={10}>
               <Text fz="xs" c="var(--text-primary)" lh={1.7}>
-                {t('share.consent.intro').replace('{{instance}}', settings.instanceUrl)}
+                {fillTemplate(t('share.consent.intro'), { instance: settings.instanceUrl })}
               </Text>
               <ShareConsentPoints points={SHARE_CONSENT_KEYS.map((key) => ({ key, text: t(key) }))} />
               <Group justify="flex-end">

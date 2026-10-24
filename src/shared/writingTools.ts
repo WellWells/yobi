@@ -18,6 +18,36 @@ export function isReshape(action: WritingAction): boolean {
   return RESHAPES.has(action);
 }
 
+/**
+ * What each action asks the model for. Every one says what must not change, because "make it
+ * shorter" alone reads as permission to drop the clause that carried the point. Shared so the
+ * selected-text flow templates ask for the same thing in the same words as the writing tools.
+ */
+export const WRITING_TASKS: Readonly<Record<Exclude<WritingAction, 'custom'>, string>> = {
+  proofread: 'Fix spelling, grammar and punctuation only. Change nothing else: not the wording, the tone or the structure.',
+  rewrite: 'Make it clearer and easier to read, with the smallest changes that do it: reorder or rephrase only what is hard to follow. It must say exactly the same thing, with the same facts, claims and emphasis.',
+  friendly: 'Make the tone warm and conversational, with the smallest changes that do it: adjust phrasing and particles, not the claims. The content stays exactly the same.',
+  professional: 'Make the tone polished and professional, with the smallest changes that do it: adjust register and phrasing, not the claims. The content stays exactly the same.',
+  concise: 'Make it shorter by removing repeated words and filler. A doubled intensifier becomes one (非常非常 becomes 非常), it does not disappear. Keep every clause, every reference word (這項, this) and every fact, number, condition and relation; shorten the wording inside the clauses, never drop one.',
+  summary: 'Summarise it in one short paragraph, using only what the passage says.',
+  keyPoints: 'List its key points as a short Markdown bullet list, one point per item, using only what the passage says.',
+  list: 'Restructure it as a Markdown list, one item per idea. Keep all of the content.',
+  table: 'Restructure it as a Markdown table with a header row. Keep all of the content and choose columns that fit it.',
+};
+
+/**
+ * The OUTPUT RULES lines that keep a rework saying what the passage said: meaning, minimal change,
+ * the strength of every qualifier, numbers as written, nothing added, the passage's own language.
+ */
+export const WRITING_MEANING_RULES: readonly string[] = [
+  '- Keep the meaning. Every fact, condition and relation stays (what a price includes, what applies to whom, what depends on what, what happens otherwise).',
+  '- Change as little as the task needs. Keep each original word that already works; never swap a word for a near-synonym that claims something slightly different (faster is not more efficient, 恢復原價 is not 不適用).',
+  '- Keep the strength of every condition, hedge, refusal and qualifier: only, at least, must, should, may, might, cannot, not recommended, especially, 才能, 至少, 必須, 應該, 可能, 恕無法, 不建議, 尤其, 僅 stay exactly as strong as written. A softer or warmer tone changes the wording, never how certain or firm a statement is. "Only after X" never becomes "after X you can"; "may worsen" never becomes "will".',
+  '- Write every number, price, date, unit and name exactly as the passage writes it: 九折 stays 九折 (not 9 折 or 10%), $120 stays $120.',
+  '- Add nothing the passage does not say: no new facts, assumptions, reasons, justifications, opinions or advice.',
+  '- Write in the same language as the passage, unless the task asks for another language.',
+];
+
 export interface WritingToolsRequest {
   /** Chosen by the renderer; progress events and cancel name the request by it. */
   id: string;

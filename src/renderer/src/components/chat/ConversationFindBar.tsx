@@ -8,6 +8,7 @@ import { FIND_BAR_ATTR, useConversationFind } from '../../hooks/useConversationF
 import { useConversationFindStore } from '../../store/conversationFindStore';
 import { matchesShortcut, useResolvedCombo } from '../../store/shortcutStore';
 import { isMac } from '../../utils/keyLabels';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 interface ConversationFindBarProps {
   /** The chat's scroll area; the bar sits at its top-right and searches what it shows. */
@@ -132,13 +133,13 @@ export const ConversationFindBar: React.FC<ConversationFindBarProps> = ({ contai
           />
           <ToolbarIconButton
             icon={ChevronUp}
-            label={t('chat.find.previous').replace('{{shortcut}}', previousKeys)}
+            label={fillTemplate(t('chat.find.previous'), { shortcut: previousKeys })}
             disabled={count === 0}
             onClick={previous}
           />
           <ToolbarIconButton
             icon={ChevronDown}
-            label={t('chat.find.next').replace('{{shortcut}}', nextKeys)}
+            label={fillTemplate(t('chat.find.next'), { shortcut: nextKeys })}
             disabled={count === 0}
             onClick={next}
           />

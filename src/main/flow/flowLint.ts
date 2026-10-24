@@ -45,7 +45,7 @@ function blankIssues(steps: readonly SkillInstance[]): FlowBuildIssue[] {
  * or refused request would end the whole batch after the seen-cache already marked it read, so
  * those items would never be retried.
  */
-const FAIL_SOFT_SKILLS = new Set<SkillType>(['browser', 'llm', 'bot', 'x_thread']);
+const FAIL_SOFT_SKILLS = new Set<SkillType>(['browser', 'llm', 'bot', 'x_thread', 'x_media']);
 
 function failSoftIssues(steps: readonly SkillInstance[]): FlowBuildIssue[] {
   const issues: FlowBuildIssue[] = [];

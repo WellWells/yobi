@@ -1,7 +1,12 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { Badge, Box, Checkbox, Group, Loader, Stack, Text, Tooltip } from '@mantine/core';
 import { TriangleAlert } from 'lucide-react';
 import { ToggleSwitch } from '../../components/ToggleSwitch';
+import { RowMoreButton } from '../../components/RowMoreButton';
+import type { MenuAnchor } from '../../components/RowMoreButton';
+import { SwipeRow } from '../../components/SwipeRow';
+import { menuAnchorUnderRow, swipeAnchorElement } from '../../utils/rowSwipe';
+import { flowTrailingActions } from '../../utils/rowSwipeActions';
 import type { FlowDefinition } from '../../../../shared/types';
 import type { FlowIssue } from '../../../../shared/flowIssues';
 import { describeFlowIssue } from './flowIssueText';
@@ -18,7 +23,13 @@ export interface FlowSidebarItemProps {
   onToggleSelect: () => void;
   onRowClick: (mods: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => void;
   onContextMenu: (e: React.MouseEvent) => void;
+  /** The hover "⋯" button and the swipe's "More": the same menu as a right-click, at a point. */
+  onOpenMenuAt: (at: MenuAnchor) => void;
+  /** This row's menu is open (the "⋯" stays visible). */
+  menuOpen: boolean;
   onToggleEnabled: (enabled: boolean) => void;
+  /** The context menu's delete path (asks first). */
+  onDelete: () => void;
 }
 
 function issueId(issue: FlowIssue): string {
@@ -27,13 +38,27 @@ function issueId(issue: FlowIssue): string {
 
 export const FlowSidebarItem: React.FC<FlowSidebarItemProps> = ({
   flow, selected, isRunning, issues, t, selectMode, checked, onToggleSelect,
-  onRowClick, onContextMenu, onToggleEnabled,
+  onRowClick, onContextMenu, onOpenMenuAt, menuOpen, onToggleEnabled, onDelete,
 }) => {
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  // Left swipe (macOS): More, Delete. Right is reserved for pin.
+  const trailing = flowTrailingActions({ more: t('rowSwipe.more'), delete: t('common.delete') }, {
+    onMore: () => {
+      const row = rowRef.current;
+      if (row) onOpenMenuAt(menuAnchorUnderRow(swipeAnchorElement(row).getBoundingClientRect()));
+    },
+    onDelete,
+  });
   return (
+    // The frame carries the row's margin so the swipe layer covers exactly the rounded row.
+    <Box className={styles.frame}>
+    <SwipeRow trailing={trailing} disabled={selectMode}>
     <Box
+      ref={rowRef}
       className={styles.row}
       data-flow-id={flow.id}
       data-selected={(selectMode ? checked : selected) ? 'true' : undefined}
+      data-menu-open={menuOpen || undefined}
       onClick={(e) => onRowClick({ ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey })}
       onContextMenu={selectMode ? undefined : onContextMenu}
     >
@@ -63,6 +88,15 @@ export const FlowSidebarItem: React.FC<FlowSidebarItemProps> = ({
           </Group>
         </Stack>
         <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
+          {/* Before the switch, so the switch ends the row and the hidden slot sits after the name. */}
+          {!selectMode && (
+            <RowMoreButton
+              label={t('common.moreActions')}
+              menuOpen={menuOpen}
+              onOpen={onOpenMenuAt}
+              className={styles.rowMore}
+            />
+          )}
           {issues.length > 0 && (
             <Tooltip
               position="top"
@@ -109,6 +143,8 @@ export const FlowSidebarItem: React.FC<FlowSidebarItemProps> = ({
           </Box>
         </Group>
       </Group>
+    </Box>
+    </SwipeRow>
     </Box>
   );
 };

@@ -23,6 +23,8 @@ export interface BilibiliVideoData {
   /** The id of the part's stream: what `playurl` asks for. */
   cid: number;
   part: number;
+  /** How many parts the video has: 1 for a single video. */
+  parts: number;
   /** An https URL, or "". */
   cover: string;
 }
@@ -62,6 +64,7 @@ export function readVideoData(raw: unknown, part: number): BilibiliVideoData | n
     durationS: num(page?.duration) || num(data.duration),
     cid,
     part,
+    parts: Math.max(1, pages.length),
     cover: httpsCover(str(data.pic)),
   };
 }

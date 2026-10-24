@@ -47,7 +47,6 @@ export const BotCommandsSection: React.FC<Props> = ({
           builtinCommands={botCommands.builtinCommands}
           busy={botCommands.botCommandsBusy}
           onUpdate={(key, patch) => { void botCommands.handleUpdateBuiltinCommand(key, patch); }}
-          onUpdateAskTtl={(minutes) => { void botCommands.handleUpdateAskTtl(minutes); }}
           roster={roster}
           t={t}
         />

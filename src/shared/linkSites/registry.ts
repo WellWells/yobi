@@ -6,8 +6,9 @@ import {
 import { youtubeSummaryPrompt } from '../builtin/prompts';
 import { videoMenuChatFlow, videoMenuFlow } from '../builtin/videoFlows';
 import { postIds, videoIds } from './ids';
-import { LINK_SITE_ROWS, matchLink, matchPostLink, rowById } from './rows';
+import { LINK_SITE_ROWS, isListLink, matchLink, matchPostLink, rowById } from './rows';
 import type { LinkSiteId, PostRow, VideoRow } from './types';
+import type { LinkSiteFilter } from '../linkRecognition';
 
 export { LINK_SITE_ROWS, matchLink, matchPostLink, rowById };
 
@@ -168,11 +169,13 @@ const ACTIONS: Record<BuiltinSurface, { forward: BuiltinAction; analyze: Builtin
  * The built-in a message runs on `surface`: a post link alone forwards or shows the post,
  * followed by exactly "analyze" analyzes it, by an MP3 word turns its videos into MP3s; a video
  * link alone, or with only the menu's own words, gets the menu. Anything else written beside the
- * link is a question for the agent: null.
+ * link is a question for the agent: null. A site switched off in Settings (`allows` says no) is
+ * not recognised either: its link is an ordinary message. No `allows` = every site on.
  */
-function linkEntryFor(text: string, surface: BuiltinSurface): BuiltinEntry | null {
+function linkEntryFor(text: string, surface: BuiltinSurface, allows?: LinkSiteFilter): BuiltinEntry | null {
   const match = matchLink(text);
   if (!match) return null;
+  if (allows && !allows(match.ref.site)) return null;
   const actions = ACTIONS[surface];
   if (match.ref.shape === 'video') return isVideoMenuMatch(match) ? entryFor(match.ref.site, actions.menu) : null;
   if (!match.prompt) return entryFor(match.ref.site, actions.forward);
@@ -186,8 +189,8 @@ function linkEntryFor(text: string, surface: BuiltinSurface): BuiltinEntry | nul
  * with the menu's own words) the download menu. Anything else written beside the link is a
  * question, and null.
  */
-export function desktopLinkFlowFor(text: string): string | null {
-  return linkEntryFor(text, 'desktop')?.id ?? null;
+export function desktopLinkFlowFor(text: string, allows?: LinkSiteFilter): string | null {
+  return linkEntryFor(text, 'desktop', allows)?.id ?? null;
 }
 
 /** The desktop "analyze" for a shown post's link: its own site's, or null when it is not a post. */
@@ -223,8 +226,8 @@ export interface BuiltinLinkCommand {
  * The built-in that takes this private message, or null: it goes to the agent. A built-in's
  * button is routed by its line too, so pressing it is exactly typing it.
  */
-export function linkCommandFor(text: string): BuiltinLinkCommand | null {
-  const entry = linkEntryFor(text, 'bot');
+export function linkCommandFor(text: string, allows?: LinkSiteFilter): BuiltinLinkCommand | null {
+  const entry = linkEntryFor(text, 'bot', allows);
   if (!entry) return null;
   return { flowId: entry.id, command: entry.command, description: '', inputVariable: 'input', access: 'all', allowedUserIds: [] };
 }
@@ -236,18 +239,21 @@ export const OVERHEARD_LINKS_MAX = 5;
  * The built-ins a group message that does not mention the bot runs, each with its input. The bot
  * only overhears it, so nothing goes to the agent: the message's own built-in when it has one (a
  * link alone, with "analyze", with the menu's words), else each distinct link in it alone, whatever
- * is written around them. Empty when it carries no link a built-in reads.
+ * is written around them. Empty when it carries no link a built-in reads. A link to a whole list
+ * (`isListLink`) is never run: its menu would only answer that downloads go one at a time, a reply
+ * nobody in the group asked for.
  */
-export function overheardLinkCommands(text: string): Array<{ command: BuiltinLinkCommand; input: string }> {
-  const own = linkCommandFor(text);
+export function overheardLinkCommands(text: string, allows?: LinkSiteFilter): Array<{ command: BuiltinLinkCommand; input: string }> {
+  const whole = matchLink(text);
+  const own = whole && isListLink(whole.ref) ? null : linkCommandFor(text, allows);
   if (own) return [{ command: own, input: text.trim() }];
   const seen = new Set<string>();
   const runs: Array<{ command: BuiltinLinkCommand; input: string }> = [];
   for (const token of text.split(/\s+/)) {
-    const url = matchLink(token)?.ref.url;
-    const command = url ? linkCommandFor(token) : null;
-    if (!url || !command || seen.has(url)) continue;
-    seen.add(url);
+    const ref = matchLink(token)?.ref;
+    const command = ref && !isListLink(ref) ? linkCommandFor(token, allows) : null;
+    if (!ref || !command || seen.has(ref.url)) continue;
+    seen.add(ref.url);
     runs.push({ command, input: token });
   }
   return runs.slice(0, OVERHEARD_LINKS_MAX);

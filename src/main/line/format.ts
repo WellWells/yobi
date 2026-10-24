@@ -3,7 +3,9 @@ import { promoteDisplayMath, promoteInlineMath } from '../../shared/inlineMathDe
 import { flattenFootnotes } from '../../shared/markdownFootnotes';
 import { htmlAsPlainText } from '../../shared/markdownHtmlWhitelist';
 import { mathTokenExtensions } from '../markdownMathTokens';
+import { readableTex } from '../readableTex';
 import { LINE_TEXT_MAX } from '../../shared/botMessageLimits';
+import { unfoldExpandableQuotes } from '../../shared/expandableQuote';
 
 const LINE_TEXT_LIMIT = LINE_TEXT_MAX;
 const LINE_REPLY_MAX = 4_800;
@@ -63,14 +65,15 @@ export function truncateLineText(text: string): string {
   return `${sliceWithoutSplittingSurrogates(text, LINE_REPLY_MAX)}…`;
 }
 
-// LINE cannot typeset math either: a formula goes out as the TeX the model wrote. Its own
-// instance, because `marked.use()` would register the tokens for the whole process — the
-// loose bold reading is for LINE only; Telegram and email keep CommonMark's.
+// LINE cannot typeset math either: a formula goes out as Unicode text (`readableTex`), or as
+// the TeX the model wrote when it has more than that can show. Its own instance, because
+// `marked.use()` would register the tokens for the whole process — the loose bold reading is
+// for LINE only; Telegram and email keep CommonMark's.
 const lineMarked = new Marked({
   extensions: [
     ...mathTokenExtensions({
-      display: (tex) => `${tex}\n\n`,
-      inline: (tex) => `$${tex}$`,
+      display: (tex) => `${readableTex(tex) ?? tex}\n\n`,
+      inline: (tex) => readableTex(tex) ?? `$${tex}$`,
     }),
     cjkStrong,
   ],
@@ -178,7 +181,9 @@ export function formatLineText(text: string): string {
  * cut. Null when LINE could not carry it whole — the caller must then not send it at all.
  */
 export function verbatimLineText(text: string): string | null {
-  return text.length <= LINE_TEXT_LIMIT ? text : null;
+  // LINE cannot fold, so an approval's folded arguments are shown as plain lines.
+  const shown = unfoldExpandableQuotes(text);
+  return shown.length <= LINE_TEXT_LIMIT ? shown : null;
 }
 
 export function formatLineReply(text: string, emptyFallback: string): string {

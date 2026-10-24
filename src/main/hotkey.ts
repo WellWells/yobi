@@ -1,7 +1,8 @@
 import { globalShortcut } from 'electron';
-import { canonicalise, toAccelerator } from '../shared/shortcuts';
+import { comboOverlaps, toAccelerator } from '../shared/shortcuts';
 
-export type HotkeySlot = 'main' | 'quickExport';
+/** The OS-wide hotkeys: ask about the selection, quick export, and box a screen region to ask about. */
+export type HotkeySlot = 'main' | 'quickExport' | 'region';
 
 const registered = new Map<HotkeySlot, string>();
 let _paused = false;
@@ -52,15 +53,32 @@ export function registerHotkey(slot: HotkeySlot, accelerator: string, handler: (
   return ok;
 }
 
-export function isSameAccelerator(a: string, b: string): boolean {
-  const left = canonicalise(a);
-  const right = canonicalise(b);
-  return left.length > 0 && left === right;
+/**
+ * One key press for the OS, however it is spelt: on a Mac CommandOrControl is Command, so the
+ * flow recorder's `CommandOrControl+Control+J` and the default `Command+Ctrl+J` are one combo.
+ */
+export function isSamePress(a: string, b: string): boolean {
+  return comboOverlaps(a, b, process.platform === 'darwin');
 }
 
-export function wouldCollide(next: string, currentOwn: string, otherSlot: string): boolean {
-  if (isSameAccelerator(next, currentOwn)) return false;
-  return isSameAccelerator(next, otherSlot);
+/** Whether `next` is held by another OS hotkey slot; keeping one's own combo never collides. */
+export function wouldCollide(next: string, currentOwn: string, ...otherSlots: string[]): boolean {
+  if (isSamePress(next, currentOwn)) return false;
+  return otherSlots.some((other) => isSamePress(next, other));
+}
+
+/**
+ * Lets go of all three OS hotkeys. Rebinding them one after another (a restored backup) would
+ * otherwise refuse a combo that moves from a slot not yet rebound to one bound before it.
+ */
+export function releaseHotkeySlots(): void {
+  for (const accelerator of registered.values()) {
+    try {
+      globalShortcut.unregister(accelerator);
+    } catch {
+    }
+  }
+  registered.clear();
 }
 
 export function ownsAccelerator(accelerator: string): boolean {

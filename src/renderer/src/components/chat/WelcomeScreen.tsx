@@ -49,11 +49,10 @@ export const ShortcutRow: React.FC<{ id: ShortcutId; combo: string }> = ({ id, c
 
 /** The global-hotkey hint under the composer on an empty chat; the model pill's tooltip already names Shift+Tab. */
 export const WelcomeHints: React.FC = () => {
-  const { hotkey, hotkeyEnabled } = useAppStore(
-    useShallow((s) => ({ hotkey: s.hotkey, hotkeyEnabled: s.hotkeyEnabled })),
-  );
+  // An empty combo is a switched-off hotkey.
+  const hotkey = useAppStore((s) => s.hotkey);
 
-  if (!hotkeyEnabled || !hotkey) return null;
+  if (!hotkey) return null;
   return (
     <Group justify="center" px={20} pt={10}>
       <ShortcutRow id="global.ask" combo={hotkey} />

@@ -32,7 +32,7 @@ interface ActionState {
   selectFlow: (flowId: string | null) => void;
   createFlow: () => Promise<void>;
   updateFlow: (flow: FlowDefinition) => void;
-  saveFlow: (flow: FlowDefinition, source?: FlowSaveSource) => Promise<void>;
+  saveFlow: (flow: FlowDefinition, source?: FlowSaveSource, reviewed?: boolean) => Promise<void>;
   deleteFlow: (flowId: string) => Promise<void>;
   deleteFlows: (flowIds: string[]) => Promise<void>;
   setFlowsEnabled: (flowIds: string[], enabled: boolean) => Promise<void>;
@@ -110,11 +110,11 @@ export const useFlowStore = create<ActionState>((set, get) => ({
     }));
   },
 
-  saveFlow: async (flow, source) => {
+  saveFlow: async (flow, source, reviewed) => {
     const seq = ++saveRequestSeq;
     // The editor stays live while main writes flows.json: edits made meanwhile must survive the reply.
     const sent = cloneFlow(flow);
-    const saved = await (source ? flowApi.save(flow, source) : flowApi.save(flow));
+    const saved = await (reviewed ? flowApi.save(flow, source ?? 'user', true) : source ? flowApi.save(flow, source) : flowApi.save(flow));
     if (!saved) return;
     if ((appliedSaveSeq.get(saved.id) ?? 0) > seq) return;
     appliedSaveSeq.set(saved.id, seq);

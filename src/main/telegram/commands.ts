@@ -1,6 +1,7 @@
 import { Bot } from 'grammy';
 import { conversations, createConversation } from '@grammyjs/conversations';
 import { t } from '../i18n';
+import { wholeCharsWithin } from '../../shared/textBudget';
 import { BUILTIN_NEW_COMMAND } from '../../shared/types';
 import type { BotBuiltinCommandKey } from '../../shared/types';
 import { isBotCommandAllowed, isBotCommandRestricted, normalizeAllowedUserIds } from '../../shared/botCommandAccess';
@@ -9,6 +10,7 @@ import {
   handleBuiltinCommand,
   handleDirectMessage,
   handleNewCommand,
+  handleAgentAnswer,
   handleFlowButton,
   handleFlowCommand,
   handleOutputCommand,
@@ -20,7 +22,13 @@ import {
 } from './commandHandlers';
 import { handleInitCommand, handleStartCommand, pairingConversation } from './pairing';
 import { createMediaIntake, type MediaIntake } from './mediaIntake';
-import { parseFlowButtonCallback } from './flowButtons';
+import { FLOW_BUTTON_CB_PREFIX, parseFlowButtonCallback } from './flowButtons';
+import { GROUP_ADMIN_CB_PREFIX, handleGroupAdminCallback, handleGroupsCommand } from './groupAdmin';
+import { handleAccountAdminCallback, handleUsersCommand } from './accountAdmin';
+import { ACCOUNT_ADMIN_CB_PREFIX } from './accountAdminViews';
+import { INVITE_CB_PREFIX, handleInviteCallback, handleInviteCommand } from './inviteAdmin';
+import { ASK_BUTTON_CB_PREFIX, handleAskButton } from './askButtons';
+import { handlePairingRequest, isUnpairedPrivate } from './pairingRequest';
 import type { ResolvedBuiltinCommand, ResolvedProviderCommand } from '../providerCommands';
 
 export type {
@@ -53,6 +61,10 @@ export function attachTelegramHandlers(
       return;
     }
     if (chat) pendingSeen.delete(chat.id);
+    // After the two refusals above: a blocked person's words and a pending group's talk are never
+    // kept, and nothing is while the bot does not answer in groups at all.
+    const said = ctx.message ?? ctx.editedMessage;
+    if (said && options.allowGroupCommands()) options.groupChat?.record(said);
     await next();
   });
   bot.use(conversations());
@@ -74,6 +86,15 @@ export function attachTelegramHandlers(
   });
   bot.command('restart', async (ctx) => {
     await handleRestartCommand(ctx, options);
+  });
+  bot.command('groups', async (ctx) => {
+    await handleGroupsCommand(ctx, options);
+  });
+  bot.command('users', async (ctx) => {
+    await handleUsersCommand(ctx, options);
+  });
+  bot.command('invite', async (ctx) => {
+    await handleInviteCommand(ctx, options);
   });
   bot.command(BUILTIN_NEW_COMMAND, async (ctx) => {
     if (ctx.chat && ctx.from) options.onDropAgentAsk?.(ctx.chat.id, ctx.from.id);
@@ -109,35 +130,65 @@ export function attachTelegramHandlers(
     return next();
   });
 
-  // Registered before the export buttons, which only see the presses that are not a flow's.
-  bot.on('callback_query:data', async (ctx, next) => {
-    const token = parseFlowButtonCallback(ctx.callbackQuery.data);
-    if (!token) return next();
-    await handleFlowButton(ctx, options, token);
-  });
+  // Every inline button goes through one router: each kind registers its own prefix.
+  const callbacks = options.callbacks;
+  if (callbacks) {
+    const answered = (handle: (ctx: TelegramContext, opts: TelegramCommandOptions) => Promise<boolean>) =>
+      async (ctx: TelegramContext): Promise<void> => {
+        if (!(await handle(ctx, options))) await ctx.answerCallbackQuery().catch(() => undefined);
+      };
+    callbacks.register(GROUP_ADMIN_CB_PREFIX, answered(handleGroupAdminCallback));
+    callbacks.register(ACCOUNT_ADMIN_CB_PREFIX, answered(handleAccountAdminCallback));
+    callbacks.register(INVITE_CB_PREFIX, answered(handleInviteCallback));
+    callbacks.register(FLOW_BUTTON_CB_PREFIX, async (ctx) => {
+      const token = parseFlowButtonCallback(ctx.callbackQuery?.data);
+      if (token) await handleFlowButton(ctx, options, token);
+      else await ctx.answerCallbackQuery().catch(() => undefined);
+    });
+    callbacks.register(ASK_BUTTON_CB_PREFIX, (ctx, payload) => handleAskButton(ctx, payload, {
+      getStrings: options.getStrings,
+      pendingRunId: (chatId, userId) => options.pendingAgentAskRunId?.(chatId, userId) ?? null,
+      answer: (pressed, answer) => handleAgentAnswer(pressed, options, answer),
+      onLog: options.onLog,
+    }));
+    bot.on('callback_query:data', (ctx) => callbacks.dispatch(ctx));
+  }
+
+  const media = createMediaIntake(options);
 
   bot.on('message:text', async (ctx) => {
     const hasLeadingCommand = ctx.message?.entities?.some((e) => e.type === 'bot_command' && e.offset === 0);
+    // Anything an unpaired person writes in private asks the managers to let them in.
+    if (isUnpairedPrivate(ctx, options)) {
+      await handlePairingRequest(ctx, options);
+      return;
+    }
     if (hasLeadingCommand) {
       if (ctx.chat?.type === 'private' && ctx.from && options.isPairedUser(ctx.from.id)) {
         await ctx.reply(t(options.getStrings(), 'telegram.cmd.unknownCommand'));
       }
       return;
     }
+    if (await media.handleReply(ctx)) return;
     await handleDirectMessage(ctx, options);
   });
 
-  const media = createMediaIntake(options);
-
+  const orRequest = (handle: (ctx: TelegramContext) => Promise<void>) => async (ctx: TelegramContext): Promise<void> => {
+    if (isUnpairedPrivate(ctx, options)) {
+      await handlePairingRequest(ctx, options);
+      return;
+    }
+    await handle(ctx);
+  };
   bot.on(
     ['message:animation', 'message:video', 'message:video_note', 'message:sticker'],
-    async (ctx) => { await media.handleUnsupported(ctx); },
+    orRequest((ctx) => media.handleUnsupported(ctx)),
   );
   bot.on(
     ['message:photo', 'message:document', 'message:voice', 'message:audio'],
-    async (ctx) => { await media.handle(ctx); },
+    orRequest((ctx) => media.handle(ctx)),
   );
-  bot.on('message:file', async (ctx) => { await media.handleUnsupported(ctx); });
+  bot.on('message:file', orRequest((ctx) => media.handleUnsupported(ctx)));
 
   return media;
 }
@@ -187,13 +238,16 @@ type MenuEntry = { command: string; description: string };
 /** The admin commands, in menu order; only an admin's own chat lists them. */
 const ADMIN_MENU_COMMANDS = ['output', 'status', 'restart'] as const;
 
+/** The managers' commands (the owner or an admin-grant holder), in menu order. */
+const MANAGER_MENU_COMMANDS = ['groups', 'users', 'invite'] as const;
+
 /** Private chats given their own menu by this process, so a later sync can take a stale one back. */
 const chatScopedMenus = new Set<number>();
 
 /**
  * Telegram's "/" menu is visible to every user of the bot, paired or not, so the shared menus list
  * only what every paired account can run. Commands that need a grant (`/search`, admin commands,
- * restricted flow commands) appear only in the private chats of accounts allowed to run them.
+ * `/groups`, `/users`, `/invite`, restricted flow commands) appear only in the private chats of accounts allowed to run them.
  * Groups never get one: a group menu is shared by everyone in it.
  */
 export async function syncPrivateCommands(
@@ -210,6 +264,10 @@ export async function syncPrivateCommands(
     { command: 'init', description: t(strings, 'telegram.commands.init') },
   ];
   const admin: MenuEntry[] = ADMIN_MENU_COMMANDS.map((command) => ({
+    command,
+    description: t(strings, `telegram.commands.${command}`),
+  }));
+  const manage: MenuEntry[] = MANAGER_MENU_COMMANDS.map((command) => ({
     command,
     description: t(strings, `telegram.commands.${command}`),
   }));
@@ -241,8 +299,10 @@ export async function syncPrivateCommands(
       .filter((fc) => isBotCommandAllowed(fc, String(chatId), { admin: access?.flowAdmin === true }))
       .map(toMenu);
     const isAdmin = access?.admin === true;
-    if (builtins.length === 0 && flows.length === 0 && !isAdmin) return null;
-    return [...head, ...(isAdmin ? admin : []), ...common, ...builtins, ...openFlows, ...flows];
+    // Managing groups and accounts is for the owner too, who holds no admin grant (`flowAdmin` covers both).
+    const manages = access?.flowAdmin === true;
+    if (builtins.length === 0 && flows.length === 0 && !isAdmin && !manages) return null;
+    return [...head, ...(isAdmin ? admin : []), ...(manages ? manage : []), ...common, ...builtins, ...openFlows, ...flows];
   };
   await syncChatMenus(bot, restricted, ownMenu, menuOptions);
 }
@@ -294,8 +354,9 @@ async function syncChatMenus(
   }
 }
 
-function clampDescription(raw: string): string {
+/** Telegram takes 3 to 256 characters; a long one is cut between whole characters. */
+export function clampDescription(raw: string): string {
   const text = raw.trim();
   if (text.length < 3) return `AI: ${text}`;
-  return text.slice(0, 256);
+  return wholeCharsWithin(text, 256);
 }

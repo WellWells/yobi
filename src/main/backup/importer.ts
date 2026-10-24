@@ -14,11 +14,13 @@ import {
   manifestCategories,
   orderCategories,
 } from './manifest';
-import type { CategoryDef } from './manifest';
+import type { BackupManifest, CategoryDef } from './manifest';
 import { countCategoryItems } from './fsUtils';
 import { readIncomingFiles, replaceDirFiles } from './restoreDir';
 import { resetFlowVersionCache } from '../flow/flowVersions';
 import { notionSyncRoot } from '../notion/notionSyncStore';
+import { FOLDER_STATE_FILE } from '../conversationFolderPaths';
+import { getFlowDataDir } from '../flow';
 
 interface ApplyBackupDeps {
   reloadFlows: () => Promise<void>;
@@ -37,10 +39,22 @@ function countZipCategory(zip: AdmZip, def: CategoryDef): number {
     if (entry.isDirectory) continue;
     const name = entry.entryName.replace(/\\/g, '/');
     if (!name.startsWith(prefix)) continue;
-    if (def.fileFilter && !def.fileFilter(path.basename(name))) continue;
+    if (def.fileFilter && !def.fileFilter(name.slice(prefix.length))) continue;
     count += 1;
   }
   return count;
+}
+
+function readManifest(zip: AdmZip): BackupManifest | 'no-manifest' | 'bad-manifest' {
+  const manifestEntry = zip.getEntry(MANIFEST_ENTRY);
+  if (!manifestEntry) return 'no-manifest';
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(zip.readAsText(manifestEntry));
+  } catch {
+    return 'bad-manifest';
+  }
+  return isValidManifest(manifest) ? manifest : 'bad-manifest';
 }
 
 export async function inspectBackup(zipPath: string): Promise<BackupInspectResult> {
@@ -51,16 +65,8 @@ export async function inspectBackup(zipPath: string): Promise<BackupInspectResul
     return { valid: false, error: 'not-zip', items: [] };
   }
 
-  const manifestEntry = zip.getEntry(MANIFEST_ENTRY);
-  if (!manifestEntry) return { valid: false, error: 'no-manifest', items: [] };
-
-  let manifest: unknown;
-  try {
-    manifest = JSON.parse(zip.readAsText(manifestEntry));
-  } catch {
-    return { valid: false, error: 'bad-manifest', items: [] };
-  }
-  if (!isValidManifest(manifest)) return { valid: false, error: 'bad-manifest', items: [] };
+  const manifest = readManifest(zip);
+  if (typeof manifest === 'string') return { valid: false, error: manifest, items: [] };
 
   const items: BackupInspectItem[] = [];
   for (const id of manifestCategories(manifest)) {
@@ -125,7 +131,16 @@ export async function applyBackup(
   const restored: BackupCategoryId[] = [];
   let importedConfig: Config | null = null;
 
-  for (const id of orderCategories(requested)) {
+  // The zip may have changed since it was inspected, and the request comes from the renderer:
+  // only categories the manifest still declares are restored.
+  const manifest = readManifest(zip);
+  if (typeof manifest === 'string') {
+    sendLog(`⚠️ Backup restore refused: ${manifest}`);
+    return { restored, importedConfig };
+  }
+  const declared = new Set(manifestCategories(manifest));
+
+  for (const id of orderCategories(requested).filter((id) => declared.has(id))) {
     try {
       if (id === 'config') {
         const cfg = await restoreConfig(zip);
@@ -142,6 +157,8 @@ export async function applyBackup(
         // state, their next read shows every difference as a conflict to decide, never as a change
         // of the user's to send (which would revert the page to the backup's text).
         if (id === 'outputs') await fs.rm(notionSyncRoot(), { recursive: true, force: true }).catch(() => undefined);
+        // An older backup may bring bot conversations back to the top level: file them at the next start.
+        if (id === 'outputs') await fs.rm(path.join(getFlowDataDir(), FOLDER_STATE_FILE), { force: true }).catch(() => undefined);
         restored.push(id);
       }
     } catch (err: unknown) {

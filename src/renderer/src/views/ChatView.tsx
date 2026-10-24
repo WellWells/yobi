@@ -27,6 +27,7 @@ import { NEW_CONVERSATION_KEY, selectHiddenSources, useAppStore } from '../store
 import { useI18nStore } from '../store/i18nStore';
 import { useGlobalHotkeys } from '../hooks/useGlobalHotkeys';
 import { usePromptAttachments } from '../hooks/usePromptAttachments';
+import { useRegionCaptureIntake } from '../hooks/useRegionCaptureIntake';
 import { useGlideOnSwitch } from '../hooks/useGlideOnSwitch';
 import {
   useCaptureExport,
@@ -49,6 +50,9 @@ import { useConversationTurns } from '../hooks/useConversationTurns';
 import { ConversationView } from './chat/ConversationView';
 import { DocumentView } from './document/DocumentView';
 import { quoteIntoAssistant } from './document/docAssistantActions';
+import { useDocAssistantStore } from '../store/docAssistantStore';
+import { openFocusTarget } from '../utils/openFocus';
+import type { PendingOpenFocus } from '../utils/openFocus';
 import { plainNotionTitle } from '../../../shared/notion/notionDisplay';
 import { shouldShowConversationView } from './chat/conversationViewRouting';
 import { AgentResumeBanner } from '../components/chat/AgentResumeBanner';
@@ -88,6 +92,7 @@ import {
 import type { LoginRequiredProvider } from '../../../shared/types';
 import type { ConversationDoc } from '../../../shared/conversationDoc';
 import { desktopAnalyzeIdFor, isDesktopBuiltinFlowId, xAnalyzeInput } from '../../../shared/builtinFlows';
+import { fillTemplate } from '../../../shared/fillTemplate';
 
 /** A selection longer than this is a passage, not something to search for. */
 const FIND_PREFILL_MAX = 200;
@@ -171,13 +176,14 @@ export const ChatView: React.FC = React.memo(() => {
   const sharingDocument = Boolean(fileContent && isNotionDoc(fileContent));
   const shareMarkdown = useMemo(
     () => (sharingDocument ? conversationPlainMarkdown(fileContent ?? '', { unsupported: t('notion.block.unsupported') }) : buildShareMarkdown(fileContent ?? '', conversationAliases(), {
-      question: (index) => t('share.turnHeading').replace('{{n}}', String(index)),
+      question: (index) => fillTemplate(t('share.turnHeading'), { n: String(index) }),
       answer: (provider) => (provider
-        ? t('share.answerBy').replace('{{provider}}', provider)
+        ? fillTemplate(t('share.answerBy'), { provider })
         : t('share.answer')),
-      intro: (provider, turns) => (provider
-        ? t('share.introWith').replace('{{provider}}', provider)
-        : t('share.intro')).replace('{{count}}', String(turns)),
+      intro: (provider, turns) => fillTemplate(t(provider ? 'share.introWith' : 'share.intro'), {
+        provider: provider || '',
+        count: String(turns),
+      }),
     })),
     [fileContent, sharingDocument, t],
   );
@@ -288,16 +294,18 @@ export const ChatView: React.FC = React.memo(() => {
   }, [discardAgentRun]);
 
   const handleUnknownCommand = useCallback((command: string): void => {
-    setExportToast({ message: t('chat.command.notFound').replace('{{command}}', command), level: 'warning' });
+    setExportToast({ message: fillTemplate(t('chat.command.notFound'), { command }), level: 'warning' });
   }, [t]);
 
   const {
     attachments,
     unsupportedReason: attachUnsupportedReason,
+    restriction: attachRestriction,
     accept: attachAccept,
     notice: attachmentNotice,
     addFiles,
     addFromClipboard,
+    addStashed,
     removeAttachment,
     clearAttachments,
   } = usePromptAttachments(activeModelUrl, t);
@@ -543,7 +551,7 @@ export const ChatView: React.FC = React.memo(() => {
   }, [handleAiUrlChange]);
 
   const handleUnknownModel = useCallback((query: string): void => {
-    setExportToast({ message: t('chat.model.command.notFound').replace('{{query}}', query), level: 'warning' });
+    setExportToast({ message: fillTemplate(t('chat.model.command.notFound'), { query }), level: 'warning' });
   }, [t]);
 
   const handleLoginConfirm = useCallback((provider: LoginRequiredProvider): void => {
@@ -620,6 +628,37 @@ export const ChatView: React.FC = React.memo(() => {
   const documentConversation = selectedFile && fileContent && conversation?.thread.notion && conversation.provider === 'Notion'
     ? conversation
     : null;
+  // A click in the sidebar opened a file: the caret follows to its input box once it has loaded —
+  // the composer for a conversation, the writing assistant's box for a Notion document.
+  const [pendingOpenFocus, setPendingOpenFocus] = useState<PendingOpenFocus | null>(null);
+  const handleOpenedByClick = useCallback((path: string): void => {
+    focusPromptInput();
+    setPendingOpenFocus({ path, held: document.activeElement });
+  }, [focusPromptInput]);
+  const assistantOpen = useDocAssistantStore((s) => s.open);
+  useEffect(() => {
+    const target = openFocusTarget({
+      pending: pendingOpenFocus,
+      selectedPath: selectedFile?.path,
+      loaded: fileContent !== null,
+      isDocument: documentConversation !== null,
+      assistantOpen,
+      active: document.activeElement,
+      body: document.body,
+    });
+    if (target === 'wait' || !pendingOpenFocus) return;
+    setPendingOpenFocus(null);
+    if (target === 'chat') focusPromptInput();
+    else if (target === 'assistant') useDocAssistantStore.getState().requestFocus();
+  }, [pendingOpenFocus, selectedFile?.path, fileContent, documentConversation, assistantOpen, focusPromptInput]);
+
+  useRegionCaptureIntake({
+    addStashed,
+    composerHidden: documentConversation !== null,
+    onNewConversation: handleNewConversation,
+    focusComposer: focusPromptInput,
+  });
+
   const activeConversation = documentConversation ?? (showConversationView && conversation
     ? conversation
     : (tempChatMode && (tempChatConversation?.turns.length ?? 0) > 0 ? tempChatConversation : null));
@@ -664,7 +703,7 @@ export const ChatView: React.FC = React.memo(() => {
 
   return (
     <FileDragArea>
-      <Sidebar onNewConversation={handleNewConversation} onOpenSearch={openSearch} />
+      <Sidebar onNewConversation={handleNewConversation} onOpenSearch={openSearch} onOpenedByClick={handleOpenedByClick} />
 
       {documentConversation && selectedFile && fileContent && (
         <DocumentView
@@ -697,7 +736,7 @@ export const ChatView: React.FC = React.memo(() => {
         onFiles={addFiles}
         icon={Paperclip}
         title={t('attach.drop.title')}
-        detail={attachUnsupportedReason ?? t('attach.drop.detail')}
+        detail={attachUnsupportedReason ?? attachRestriction ?? t('attach.drop.detail')}
       >
       <Stack gap={0} flex={1} pos="relative" bg="var(--mantine-color-body)" style={{ overflow: 'hidden' }}>
         {!selectedFile && (

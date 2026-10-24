@@ -80,7 +80,9 @@ export function buildGeminiModelPickerScript(target: GeminiPickerTarget | null):
         label: textOf(switchRow, '.label'),
         sublabel: textOf(switchRow, '.sublabel'),
         selected: switchRow.classList.contains('selected')
-      } : null
+      } : null,
+      // The sign-in row need not be a gem-menu-item, so look through the whole menu.
+      signedIn: modelRows().length === 0 ? null : !menu().querySelector(SIGN_IN_SEL)
     };
   }
   async function clickAndReopen(row) {

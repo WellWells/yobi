@@ -5,6 +5,7 @@ import { expandableQuoteBody } from '../../shared/expandableQuote';
 import { flattenFootnotes } from '../../shared/markdownFootnotes';
 import { htmlAsPlainText } from '../../shared/markdownHtmlWhitelist';
 import { mathTokenExtensions } from '../markdownMathTokens';
+import { readableTex } from '../readableTex';
 
 export function escapeTelegramHtml(text: string): string {
   return text
@@ -13,12 +14,18 @@ export function escapeTelegramHtml(text: string): string {
     .replace(/>/g, '&gt;');
 }
 
-// Telegram cannot typeset math, so a formula goes out as its TeX: a `$$` fence as <pre>, a
-// `$$…$$` span as <code>.
+// Telegram cannot typeset math: a formula goes out as Unicode text (`readableTex`), or, when it
+// has more than that can show, as its TeX — a `$$` fence as <pre>, a `$$…$$` span as <code>.
 const telegramMarked = new Marked({
   extensions: mathTokenExtensions({
-    display: (tex) => `<pre>${escapeTelegramHtml(tex)}</pre>\n`,
-    inline: (tex) => `<code>${escapeTelegramHtml(tex)}</code>`,
+    display: (tex) => {
+      const text = readableTex(tex);
+      return text === null ? `<pre>${escapeTelegramHtml(tex)}</pre>\n` : `${escapeTelegramHtml(text)}\n\n`;
+    },
+    inline: (tex) => {
+      const text = readableTex(tex);
+      return text === null ? `<code>${escapeTelegramHtml(tex)}</code>` : escapeTelegramHtml(text);
+    },
   }),
 });
 
@@ -70,9 +77,9 @@ export function splitMarkdownIntoChunks(
   return chunks.filter(Boolean);
 }
 
-/** A `pre` span of a plain-text message, in UTF-16 code units as Telegram counts them. */
+/** A span of a plain-text message, in UTF-16 code units as Telegram counts them. */
 export interface TelegramPreEntity {
-  type: 'pre';
+  type: 'pre' | 'expandable_blockquote';
   offset: number;
   length: number;
 }
@@ -80,22 +87,70 @@ export interface TelegramPreEntity {
 const FENCE_LINE = /^`{3,}$/;
 
 /**
- * A message sent exactly as written (a shell approval): plain text with no parse mode, so nothing
- * is escaped, linkified, flattened or cut. Its one fenced block — opened by a line of three or
- * more backticks, closed by the same line — becomes a `pre` entity in place of the two fence lines.
+ * A message sent exactly as written (an approval): plain text with no parse mode, so nothing is
+ * escaped, linkified, flattened or cut. Its first fenced block — opened by a line of three or more
+ * backticks, closed by the same line — becomes a `pre` entity in place of the two fence lines; its
+ * first folded quote (`expandableQuote`: a `> [!EXPANDABLE]` line, then `>` lines) becomes an
+ * `expandable_blockquote` holding those lines without their `>` and without the mark.
  */
 export function telegramVerbatimMessage(text: string): { text: string; entities: TelegramPreEntity[] } {
   const lines = text.split('\n');
-  const open = lines.findIndex((line) => FENCE_LINE.test(line));
-  const close = open < 0 ? -1 : lines.indexOf(lines[open], open + 1);
-  if (close < 0) return { text, entities: [] };
-  const prefix = open > 0 ? `${lines.slice(0, open).join('\n')}\n` : '';
-  const body = lines.slice(open + 1, close).join('\n');
-  const suffix = close < lines.length - 1 ? `\n${lines.slice(close + 1).join('\n')}` : '';
-  return {
-    text: `${prefix}${body}${suffix}`,
-    entities: body ? [{ type: 'pre', offset: prefix.length, length: body.length }] : [],
-  };
+  const out: string[] = [];
+  const spans: Array<{ type: TelegramPreEntity['type']; from: number; to: number }> = [];
+  let fence: string | null = null;
+  let openAt = 0;
+  let fenceDone = false;
+  let quoteFrom = -1;
+  let quoteDone = false;
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    if (quoteFrom >= 0) {
+      if (line.startsWith('>')) {
+        out.push(line.replace(/^> ?/, ''));
+        continue;
+      }
+      spans.push({ type: 'expandable_blockquote', from: quoteFrom, to: out.length });
+      quoteFrom = -1;
+      quoteDone = true;
+    }
+    if (fence !== null) {
+      if (line === fence) {
+        spans.push({ type: 'pre', from: openAt, to: out.length });
+        fence = null;
+        fenceDone = true;
+      } else {
+        out.push(line);
+      }
+      continue;
+    }
+    if (!fenceDone && FENCE_LINE.test(line) && lines.indexOf(line, index + 1) > index) {
+      fence = line;
+      openAt = out.length;
+      continue;
+    }
+    if (!quoteDone && line.startsWith('>') && expandableQuoteBody(line.replace(/^> ?/, '')) !== null) {
+      quoteFrom = out.length;
+      continue;
+    }
+    out.push(line);
+  }
+  if (quoteFrom >= 0) spans.push({ type: 'expandable_blockquote', from: quoteFrom, to: out.length });
+
+  const starts: number[] = [];
+  let position = 0;
+  for (const line of out) {
+    starts.push(position);
+    position += line.length + 1;
+  }
+  const entities = spans
+    .filter((span) => span.to > span.from)
+    .map((span) => {
+      const offset = starts[span.from];
+      const end = starts[span.to - 1] + out[span.to - 1].length;
+      return { type: span.type, offset, length: end - offset };
+    })
+    .filter((entity) => entity.length > 0);
+  return { text: out.join('\n'), entities };
 }
 
 export function telegramVisibleLength(html: string): number {

@@ -1,4 +1,27 @@
 const encoder = new TextEncoder();
+const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+/**
+ * The longest start of `text` within `max` UTF-16 units that ends between two user-perceived
+ * characters: never half an emoji (a lone surrogate), half a flag, or a joined sequence cut at
+ * its joiner. When the first character alone is longer than `max` (stacked combining marks, a
+ * long joined emoji), it is cut between code points instead, so the result is never empty.
+ */
+export function wholeCharsWithin(text: string, max: number): string {
+  if (text.length <= max) return text;
+  let end = 0;
+  for (const { index, segment } of graphemes.segment(text)) {
+    if (index + segment.length > max) break;
+    end = index + segment.length;
+  }
+  if (end > 0) return text.slice(0, end);
+  let cut = '';
+  for (const point of text) {
+    if (cut.length + point.length > max) break;
+    cut += point;
+  }
+  return cut.replace(/‍+$/u, '');
+}
 
 /**
  * One-line preview for a notification, log row or queue entry: whitespace collapsed, ellipsis past
@@ -7,7 +30,7 @@ const encoder = new TextEncoder();
  */
 export function compactPreview(text: string, limit: number): string {
   const compact = text.replace(/\s+/g, ' ').trim();
-  return compact.length > limit ? `${compact.slice(0, limit)}…` : compact;
+  return compact.length > limit ? `${wholeCharsWithin(compact, limit)}…` : compact;
 }
 
 /**
@@ -16,7 +39,7 @@ export function compactPreview(text: string, limit: number): string {
  */
 export function clipLine(text: string, limit: number): string {
   const flat = text.replace(/\s+/g, ' ').trim();
-  return flat.length > limit ? `${flat.slice(0, limit - 1)}…` : flat;
+  return flat.length > limit ? `${wholeCharsWithin(flat, limit - 1)}…` : flat;
 }
 
 export function utf8Len(text: string): number {

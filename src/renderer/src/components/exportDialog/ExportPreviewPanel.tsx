@@ -4,6 +4,7 @@ import type { MarkdownCaptureRequest } from '../../../../shared/types';
 import { checkCaptureHeight } from '../../../../shared/types';
 import { ScaledCardFrame } from '../capture/ScaledCardFrame';
 import { SectionLabel } from './SectionLabel';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 export interface ExportPreviewPanelProps {
   request: MarkdownCaptureRequest | null;
@@ -33,7 +34,7 @@ export const ExportPreviewPanel: React.FC<ExportPreviewPanelProps> = ({ request,
       {logicalHeight > 0 && (
         <Text fz="var(--font-size-sm)" c={tooTall ? 'var(--mantine-color-warning)' : 'var(--text-muted)'} ta="center">
           {[
-            turnCount > 0 ? t('capture.turnCount').replace('{{count}}', String(turnCount)) : '',
+            turnCount > 0 ? fillTemplate(t('capture.turnCount'), { count: String(turnCount) }) : '',
             `${request?.options.width ?? 0} × ${Math.round(pixelHeight)} px`,
           ].filter(Boolean).join(' · ')}
           {tooTall && ` — ${t('capture.tooTall')}`}

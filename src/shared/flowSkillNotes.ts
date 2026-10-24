@@ -53,11 +53,12 @@ export const SKILL_NOTES: Partial<Record<SkillType, string>> = {
 
   x_thread: 'Inside a loop it needs emitFailFlag="true" (a deleted or protected post fails), followed by an if on {{<outputKey>.isFailed}} + continue. Signed out, X lists only about 3 top replies (Threads its first 10, Instagram 15, Facebook and TikTok up to 40; PTT pushes sampled), so {{<outputKey>.shown}} is usually far below {{<outputKey>.replyCount}} — never tell the user a post has no other replies.',
 
-  weather: 'The geocoder matches Latin-script place names only — "Kaohsiung" works, "高雄市" / "東京" / "서울" return nothing. Never throws: an unknown place sets {{<outputKey>.isFailed}}="1", so branch on that rather than expecting an error.',
+  weather: 'Keep a Taiwan county or township in Chinese ("板橋", "台中大安"); romanised, it can match a same-named place abroad. Name other places in English — "서울" returns nothing. Never throws: an unknown place sets {{<outputKey>.isFailed}}="1", so branch on that rather than expecting an error.',
 
-  air_quality: 'The geocoder matches Latin-script place names only, same as weather. Compare {{<outputKey>.level}} numerically (1 Good … 6 Hazardous, 0 = no reading) rather than matching the .status text, which is always English.',
+  calendar: 'Hand an llm prompt {{<outputKey>.text}}, not the JSON array. An empty day gives "[]" and .text "": add a stop step on {{<outputKey>}} only when nothing should happen on a free day; a brief that should still go out says "no events" instead. The calendar field takes the name the user used, never a URL.',
+  air_quality: 'Place names work as for weather: Taiwan in Chinese, elsewhere in English. Compare {{<outputKey>.level}} numerically (1 Good … 6 Hazardous, 0 = no reading) rather than matching the .status text, which is always English.',
 
-  email_send: 'A pure sink with no outputKey. The SMTP account lives on the email step itself (shared by every email step), never in the flow config, so a flow using this is safe to export or share — but it does nothing until that account is filled in. attachments takes LOCAL PATHS ONLY, normally {{file}} from an earlier step; a URL there is rejected, so fetch it with file_download first and attach {{file}}.',
+  email_send: 'A pure sink with no outputKey. The mail account lives in Settings › Connectors › Mail (one account for every mail step), never in the flow config, so a flow using this is safe to export or share — but it does nothing until that account is filled in. attachments takes LOCAL PATHS ONLY, normally {{file}} from an earlier step; a URL there is rejected, so fetch it with file_download first and attach {{file}}.',
 
   shell: 'Runs with the user\'s full privileges and its output is whatever the command printed. Prefer a purpose-built skill when one exists (http for APIs, file_read for files) and keep shell for work that genuinely needs the system.',
 

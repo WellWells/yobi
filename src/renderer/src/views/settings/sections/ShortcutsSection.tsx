@@ -1,6 +1,6 @@
 import React from 'react';
 import { Box, Group, Stack, Text } from '@mantine/core';
-import { ExternalLink, Keyboard, RotateCcw } from 'lucide-react';
+import { ExternalLink, RotateCcw } from 'lucide-react';
 import { SectionCard, SectionTitle, SettingDivider } from '../components';
 import { AppButton } from '../../../components/AppButton';
 import { ShortcutHint } from '../../../components/ShortcutHint';
@@ -8,21 +8,32 @@ import { ShortcutRow } from '../../../components/settings/ShortcutRow';
 import type { ShortcutRowProps } from '../../../components/settings/ShortcutRow';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import { useShortcutSettings } from '../hooks/useShortcutSettings';
-import type { ShortcutId } from '../../../../../shared/shortcuts';
-import type { useHotkeyRecorder } from '../hooks/useHotkeyRecorder';
-import type { useQuickExportRecorder } from '../hooks/useQuickExportRecorder';
+import { comboOverlaps } from '../../../../../shared/shortcuts';
+import type { ShortcutGroup, ShortcutId } from '../../../../../shared/shortcuts';
+import { FLOW_TRIGGERS_ICON, SHORTCUT_GROUP_ICON } from './shortcutGroupIcons';
+import { IS_MAC } from '../hooks/useHotkeyRecorder';
+import type { HotkeyRecorder } from '../hooks/useHotkeyRecorder';
 
-type HotkeyRecorder = ReturnType<typeof useHotkeyRecorder>;
-type QuickExportRecorder = ReturnType<typeof useQuickExportRecorder>;
 type RowWiring =
-  Pick<ShortcutRowProps, 'combos' | 'enabled' | 'message'>
-  & Partial<Pick<ShortcutRowProps, 'hint' | 'modified' | 'onToggle' | 'onCommit' | 'onReset'>>;
+  Pick<ShortcutRowProps, 'combos' | 'message'>
+  & Partial<Pick<ShortcutRowProps, 'modified' | 'onCommit' | 'onReset' | 'onStartRecording'>>;
 
-type LegacySlot = Pick<HotkeyRecorder, 'currentHotkey' | 'status' | 'defaultValue' | 'commitCombo' | 'handleClearHotkey' | 'enabled' | 'setEnabled'>;
+/** Puts each changed OS hotkey back to its default, first clearing any that holds another's default. */
+export async function restoreOsHotkeyDefaults(slots: readonly LegacySlot[]): Promise<void> {
+  const changed = slots.filter((slot) => slot.modified);
+  for (const slot of changed) {
+    const blocks = changed.some((other) => other !== slot && comboOverlaps(slot.currentHotkey, other.defaultValue, IS_MAC));
+    if (blocks) await slot.commitCombo('');
+  }
+  for (const slot of changed) await slot.restoreDefault();
+}
+
+type LegacySlot = Pick<HotkeyRecorder, 'currentHotkey' | 'defaultValue' | 'modified' | 'message' | 'commitCombo' | 'restoreDefault' | 'clearStatus'>;
 
 interface Props {
   hotkey: HotkeyRecorder;
-  quickExport: QuickExportRecorder;
+  quickExport: HotkeyRecorder;
+  region: HotkeyRecorder;
   t: (key: string, fallback?: string) => string;
   showSection: (tags: readonly string[], category: 'shortcuts') => boolean;
   sectionGap: number;
@@ -30,57 +41,51 @@ interface Props {
 }
 
 export const ShortcutsSection: React.FC<Props> = ({
-  hotkey, quickExport, t, showSection, sectionGap, onOpenFlow,
+  hotkey, quickExport, region, t, showSection, sectionGap, onOpenFlow,
 }) => {
   const legacyCombos = React.useMemo(() => ({
     'global.ask': hotkey.currentHotkey,
     'global.quickExport': quickExport.currentHotkey,
-  }), [hotkey.currentHotkey, quickExport.currentHotkey]);
+    'global.regionAsk': region.currentHotkey,
+  }), [hotkey.currentHotkey, quickExport.currentHotkey, region.currentHotkey]);
   const shortcuts = useShortcutSettings(legacyCombos);
   const visible = showSection(TAG_SETS.shortcuts, 'shortcuts') || showSection(TAG_SETS.hotkey, 'shortcuts');
 
   const legacySlots: Partial<Record<string, LegacySlot>> = {
     'global.ask': hotkey,
     'global.quickExport': quickExport,
+    'global.regionAsk': region,
   };
-  const legacyModified = hotkey.currentHotkey !== hotkey.defaultValue
-    || quickExport.currentHotkey !== quickExport.defaultValue;
-
-  const resetEverything = (): void => {
+  // "Restore defaults" puts every default back, the OS hotkeys included — which also turns back on
+  // any of them that was cleared. Main checks each against the others' current combos, so a slot
+  // holding another slot's default is cleared first; otherwise a swapped pair would stay put.
+  const resetEverything = async (): Promise<void> => {
     shortcuts.resetAll();
-    void hotkey.handleClearHotkey();
-    void quickExport.handleClearHotkey();
-  };
-  const legacyMessage = (slot: LegacySlot): ShortcutRowProps['message'] => {
-    if (slot.status === 'conflict') return { level: 'refuse', text: t('settings.hotkey.conflict') };
-    if (slot.status === 'taken') return { level: 'warn', text: t('settings.hotkey.taken') };
-    return null;
+    await restoreOsHotkeyDefaults([hotkey, quickExport, region]);
   };
 
   const rowProps = (id: ShortcutId, rebindable: boolean): RowWiring => {
     if (!rebindable) {
-      return { combos: shortcuts.combosFor(id), enabled: true, message: null };
+      return { combos: shortcuts.combosFor(id), message: null };
     }
     const slot = legacySlots[id];
     if (!slot) {
       return {
         combos: shortcuts.combosFor(id),
-        enabled: shortcuts.isEnabled(id),
         message: shortcuts.messages[id] ?? null,
         modified: shortcuts.isModified(id),
-        onToggle: (next) => shortcuts.toggle(id, next),
         onCommit: (combo) => shortcuts.commit(id, combo),
         onReset: () => shortcuts.resetOne(id),
+        onStartRecording: () => shortcuts.clearMessage(id),
       };
     }
     return {
       combos: slot.currentHotkey ? [slot.currentHotkey] : [],
-      enabled: slot.enabled,
-      message: legacyMessage(slot),
-      modified: slot.currentHotkey !== slot.defaultValue,
-      onToggle: (next) => { void slot.setEnabled(next); },
+      message: slot.message,
+      modified: slot.modified,
       onCommit: (combo) => { void slot.commitCombo(combo); },
-      onReset: () => { void slot.handleClearHotkey(); },
+      onReset: () => { void slot.restoreDefault(); },
+      onStartRecording: slot.clearStatus,
     };
   };
 
@@ -92,7 +97,7 @@ export const ShortcutsSection: React.FC<Props> = ({
 
       {shortcuts.groups.map(([group, defs]) => (
         <SectionCard key={group} style={{ marginBottom: sectionGap }}>
-          <SectionTitle icon={<Keyboard size={15} />} label={t(`settings.shortcut.group.${group}`)} />
+          <SectionTitle icon={React.createElement(SHORTCUT_GROUP_ICON[group as ShortcutGroup], { size: 15 })} label={t(`settings.shortcut.group.${group}`)} />
           <Stack gap={0}>
             {defs.map((def, index) => (
               <React.Fragment key={def.id}>
@@ -102,7 +107,6 @@ export const ShortcutsSection: React.FC<Props> = ({
                   label={t(`settings.shortcut.${def.id}`)}
                   hint={def.hintKey ? t(def.hintKey) : undefined}
                   t={t}
-                  onStartRecording={() => shortcuts.clearMessage(def.id as ShortcutId)}
                   {...rowProps(def.id as ShortcutId, def.rebindable)}
                 />
               </React.Fragment>
@@ -112,7 +116,7 @@ export const ShortcutsSection: React.FC<Props> = ({
       ))}
 
       <SectionCard style={{ marginBottom: sectionGap }}>
-        <SectionTitle icon={<Keyboard size={15} />} label={t('settings.shortcut.group.flowTriggers')} />
+        <SectionTitle icon={<FLOW_TRIGGERS_ICON size={15} />} label={t('settings.shortcut.group.flowTriggers')} />
         {shortcuts.flowHotkeys.length === 0 ? (
           <Text fz="var(--font-size-sm)" c="dimmed">{t('settings.shortcut.flowTriggers.empty')}</Text>
         ) : (
@@ -148,8 +152,8 @@ export const ShortcutsSection: React.FC<Props> = ({
           variant="subtle"
           size="xs"
           leftSection={<RotateCcw size={12} />}
-          disabled={!shortcuts.hasChanges && !legacyModified}
-          onClick={resetEverything}
+          disabled={!shortcuts.hasChanges && !hotkey.modified && !quickExport.modified && !region.modified}
+          onClick={() => { void resetEverything(); }}
         >
           {t('settings.shortcut.resetAll')}
         </AppButton>

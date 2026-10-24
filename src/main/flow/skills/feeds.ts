@@ -1,5 +1,6 @@
 import { load } from 'cheerio';
-import { fetchAndParse, fetchRawResponse, fetchRawText, parseRssFeed, type RssFeedItem } from '../../urlParser';
+import { fetchAndParse, fetchRawText, parseRssFeed, type RssFeedItem } from '../../urlParser';
+import { feedItemTitle, readFeed, RSS_BURST_CAP } from './rssRead';
 import { pageFetchLane, Semaphore } from '../lanes';
 import { extractYoutubeVideoId, youtubeThumbnailUrl } from '../../youtubeTranscript';
 import { sendLog } from '../../helpers';
@@ -49,15 +50,13 @@ export async function execRss(
   }
 
   const FIRST_RUN_COUNT = 1;
-  const BURST_CAP = 5;
+  const BURST_CAP = RSS_BURST_CAP;
 
   sendLog(`📡 [Flow] RSS step — fetching feed: ${url}`);
 
-  const { status, text: rawXml } = await fetchRawResponse(url);
-  const allItems = parseRssFeed(rawXml);
+  const { items: allItems } = await readFeed(url);
 
   if (allItems.length === 0) {
-    if (status >= 400) throw new Error(`HTTP ${status}`);
     sendLog('📡 [Flow] RSS: feed returned 0 items');
     return '[]';
   }
@@ -83,10 +82,10 @@ export async function execRss(
 
   if (newLinks.length === 0) return '[]';
 
-  const items = newLinks.map((link) => ({
-    title: byLink.get(link)?.title?.trim() || link,
-    link,
-  }));
+  const items = newLinks.map((link) => {
+    const item = byLink.get(link);
+    return { title: item ? feedItemTitle(item) : link, link };
+  });
   return JSON.stringify(items);
 }
 

@@ -2,10 +2,11 @@ import { useCallback } from 'react';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import { flowApi } from '../api/electronApi';
-import { isDesktopBuiltinFlowId } from '../../../shared/builtinFlows';
+import { isUntypedBuiltinCommand } from '../../../shared/imageRequest';
 import { useCommandTurn } from './useCommandTurn';
 import type { ChatCommand } from './useChatCommands';
 import type { ExportToast } from './useCaptureExport';
+import { fillTemplate } from '../../../shared/fillTemplate';
 
 export function useChatCommandRunner(setToast: (toast: ExportToast) => void) {
   const { t } = useI18nStore();
@@ -14,22 +15,23 @@ export function useChatCommandRunner(setToast: (toast: ExportToast) => void) {
   // A pasted link's built-in was never typed as a command: its failure is said in its own words.
   const failToast = useCallback((command: string, error: string): void => {
     setToast({
-      message: isDesktopBuiltinFlowId(command)
+      message: isUntypedBuiltinCommand(command)
         ? error
-        : t('chat.command.error').replace('{{command}}', command).replace('{{error}}', error),
+        : fillTemplate(t('chat.command.error'), { command, error }),
       level: 'error',
     });
   }, [setToast, t]);
 
   const doneToast = useCallback((command: string): void => {
-    setToast({ message: t('chat.command.done').replace('{{command}}', command), level: 'success' });
+    setToast({ message: fillTemplate(t('chat.command.done'), { command }), level: 'success' });
   }, [setToast, t]);
 
   const runCommand = useCallback(async (cmd: ChatCommand, input: string): Promise<void> => {
     const { selectedFile, aiUrl } = useAppStore.getState();
     const conversationPath = selectedFile?.path;
-    // A pasted link's built-in (analyze, a video summary) answers on the model the chat has picked.
-    const modelUrl = isDesktopBuiltinFlowId(cmd.flowId) ? aiUrl : undefined;
+    // A pasted link's built-in (analyze, a video summary) answers on the model the chat has picked;
+    // a picture is drawn on it when it is a page that draws.
+    const modelUrl = isUntypedBuiltinCommand(cmd.flowId) ? aiUrl : undefined;
 
     const sendId = begin(input, undefined, undefined, true);
     const stopProgress = flowApi.onChatCommandProgress(({ progressId, progress }) => {
@@ -43,7 +45,7 @@ export function useChatCommandRunner(setToast: (toast: ExportToast) => void) {
         return;
       }
       await finish(sendId, filePath);
-      if (!filePath && !isDesktopBuiltinFlowId(cmd.flowId)) doneToast(cmd.command);
+      if (!filePath && !isUntypedBuiltinCommand(cmd.flowId)) doneToast(cmd.command);
     } catch (err: unknown) {
       fail(sendId);
       failToast(cmd.command, err instanceof Error ? err.message : String(err));

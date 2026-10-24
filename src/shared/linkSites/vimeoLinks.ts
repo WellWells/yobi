@@ -2,9 +2,10 @@
  * Vimeo video links: `vimeo.com/<id>`, an unlisted video's `vimeo.com/<id>/<hash>`, the embed
  * player's `player.vimeo.com/video/<id>` (its hash in `?h=`), and a video inside a channel, group,
  * showcase or album (`vimeo.com/channels/<name>/<id>`, `/groups/<name>/videos/<id>`,
- * `/showcase/<n>/video/<id>`, `/album/<n>/video/<id>`). Accounts, showcases and channels as a
- * whole, Vimeo On Demand (`ondemand/`, paid), live events (`event/`) and review pages are not this
- * row's, so such a link reaches the agent like any other.
+ * `/showcase/<n>/video/<id>`, `/album/<n>/video/<id>`). Accounts, channels as a whole, Vimeo On
+ * Demand (`ondemand/`, paid), live events (`event/`) and review pages are not this row's, so such
+ * a link reaches the agent like any other. A whole showcase (album, its old name) is read apart
+ * (`parseVimeoListUrl`): taken only to answer that downloads go one at a time.
  *
  * The link is rebuilt as `https://vimeo.com/<id>` (+ `/<hash>`): every other query parameter
  * (`share=copy`, `fl`, `fe`, a time) and the fragment are dropped. The hash is kept: an unlisted
@@ -56,6 +57,23 @@ function link(id: string, rawHash: string | undefined): VimeoLink | null {
   if (!ID.test(id)) return null;
   const hash = rawHash && HASH.test(rawHash) ? rawHash.toLowerCase() : '';
   return { id, hash, url: vimeoVideoUrl(id, hash) };
+}
+
+const SHOWCASE_PATH = /^\/(showcase|album)\/(\d{1,12})\/?$/i;
+
+/** A whole showcase (`vimeo.com/showcase/<n>`, or `album/<n>`): its number and page; null for anything else. */
+export function parseVimeoListUrl(text: string): { id: string; url: string } | null {
+  let url: URL;
+  try {
+    url = new URL(text.trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+  if (url.username || url.password || url.port) return null;
+  if (!SITE_HOSTS.has(url.hostname.toLowerCase())) return null;
+  const found = SHOWCASE_PATH.exec(url.pathname);
+  return found ? { id: found[2], url: `https://vimeo.com/${found[1].toLowerCase()}/${found[2]}` } : null;
 }
 
 /**

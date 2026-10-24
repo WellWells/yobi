@@ -1,6 +1,10 @@
 import React from 'react';
 import { Box, Stack, Text } from '@mantine/core';
-import { Aperture, Eye, FileDown, Frame, Image as ImageIcon, Layers, Link2, Maximize, Palette, Server, Sparkles } from 'lucide-react';
+import { Link2, Palette, Sparkles } from 'lucide-react';
+import {
+  ShortcutNoteLine, ShortcutRecorderControl, shortcutNote, useShortcutRecorder,
+} from '../../../components/settings/ShortcutRecorder';
+import { shortcutById } from '../../../../../shared/shortcuts';
 import {
   SectionCard, SettingRow, SettingField, SelectDropdown, ToggleSwitch, SectionTitle, AppTextInput,
 } from '../components';
@@ -34,6 +38,40 @@ interface Props {
   sectionGap: number;
 }
 
+const QUICK_EXPORT_SHORTCUT = shortcutById('global.quickExport');
+
+/**
+ * The quick-export hotkey, with the same recorder and store as Keyboard shortcuts: an empty combo
+ * (Backspace while recording) switches the hotkey off, ↺ restores the default. The format and ZIP
+ * defaults below stay usable either way — the per-reply buttons in chat read them too.
+ */
+export const QuickExportShortcutRow: React.FC<{ quickExport: QuickExportRecorder; t: (key: string) => string }> = ({
+  quickExport, t,
+}) => {
+  const recorder = useShortcutRecorder((combo) => { void quickExport.commitCombo(combo); });
+  const label = t('settings.quickExport.shortcut');
+  return (
+    <Box>
+      <SettingRow
+        label={label}
+        control={(
+          <ShortcutRecorderControl
+            def={QUICK_EXPORT_SHORTCUT}
+            label={label}
+            combos={quickExport.currentHotkey ? [quickExport.currentHotkey] : []}
+            modified={quickExport.modified}
+            recorder={recorder}
+            t={t}
+            onStartRecording={quickExport.clearStatus}
+            onReset={() => { void quickExport.restoreDefault(); }}
+          />
+        )}
+      />
+      <ShortcutNoteLine note={shortcutNote(recorder, quickExport.message, t)} />
+    </Box>
+  );
+};
+
 export const ExportSection: React.FC<Props> = ({
   quickExport, preferences, share, t, showSection, sectionGap,
 }) => (
@@ -49,8 +87,8 @@ export const ExportSection: React.FC<Props> = ({
         {t('settings.quickExport.hint')}
       </Text>
       <Stack gap={14}>
+        <QuickExportShortcutRow quickExport={quickExport} t={t} />
         <SettingRow
-          icon={<ImageIcon size={13} />}
           label={t('settings.quickExport.format')}
           hint={t('settings.quickExport.format.hint')}
           control={(
@@ -64,7 +102,6 @@ export const ExportSection: React.FC<Props> = ({
         />
         <Box display={quickExport.format === 'text' ? 'none' : 'block'}>
           <SettingRow
-            icon={<FileDown size={13} />}
             label={t('settings.quickExport.zip')}
             hint={t('settings.quickExport.zip.hint')}
             control={(
@@ -84,7 +121,20 @@ export const ExportSection: React.FC<Props> = ({
         {t('settings.cardStyle.hint')}
       </Text>
       <Stack gap={14}>
-        <SettingField icon={<Palette size={13} />} label={t('common.background')}>
+        {/* The sample comes first, so every choice below shows its effect without scrolling down to it. */}
+        <SettingField label={t('capture.preview')}>
+          <CardStyleSample
+            palette={preferences.palette}
+            backgroundStyle={preferences.backgroundStyle}
+            direction={preferences.direction}
+            cardLayout={preferences.cardLayout}
+            width={preferences.width}
+            margin={preferences.margin}
+            hiDpi={preferences.hiDpi}
+            t={t}
+          />
+        </SettingField>
+        <SettingField label={t('common.background')}>
           <Stack gap={10}>
             <BackgroundStylePicker
               value={preferences.backgroundStyle}
@@ -101,12 +151,11 @@ export const ExportSection: React.FC<Props> = ({
           </Stack>
         </SettingField>
         {preferences.backgroundStyle === 'gradient' && (
-          <SettingField icon={<Palette size={13} />} label={t('capture.direction')}>
+          <SettingField label={t('capture.direction')}>
             <DirectionGrid value={preferences.direction} onChange={preferences.setDirection} t={t} />
           </SettingField>
         )}
         <SettingRow
-          icon={<Layers size={13} />}
           label={t('capture.layout')}
           control={(
             <SelectDropdown
@@ -121,7 +170,6 @@ export const ExportSection: React.FC<Props> = ({
           )}
         />
         <SettingRow
-          icon={<Maximize size={13} />}
           label={t('capture.size')}
           control={(
             <SelectDropdown
@@ -133,7 +181,6 @@ export const ExportSection: React.FC<Props> = ({
           )}
         />
         <SettingRow
-          icon={<Frame size={13} />}
           label={t('capture.margin')}
           hint={t('capture.margin.desc')}
           control={(
@@ -146,29 +193,16 @@ export const ExportSection: React.FC<Props> = ({
           )}
         />
         <SettingRow
-          icon={<Aperture size={13} />}
           label={t('capture.hiDpi')}
           hint={t('capture.hiDpi.desc')}
           control={<ToggleSwitch checked={preferences.hiDpi} onChange={(e) => preferences.setHiDpi(e.currentTarget.checked)} />}
         />
-        <SettingField icon={<Eye size={13} />} label={t('capture.preview')}>
-          <CardStyleSample
-            palette={preferences.palette}
-            backgroundStyle={preferences.backgroundStyle}
-            direction={preferences.direction}
-            cardLayout={preferences.cardLayout}
-            width={preferences.width}
-            margin={preferences.margin}
-            hiDpi={preferences.hiDpi}
-            t={t}
-          />
-        </SettingField>
       </Stack>
     </SectionCard>
 
     <SectionCard style={{ marginBottom: sectionGap, display: showSection(TAG_SETS.shareLink, 'export') ? 'block' : 'none' }}>
       <SectionTitle icon={<Link2 size={15} />} label={t('settings.share.title')} />
-      <SettingField icon={<Server size={13} />} label={t('settings.share.instance')} hint={t('settings.share.instanceHint')}>
+      <SettingField label={t('settings.share.instance')} hint={t('settings.share.instanceHint')}>
         <AppTextInput
           value={share.draft}
           mono

@@ -10,6 +10,7 @@ import {
   StepNumber,
   type ProgressState,
 } from './ProgressMark';
+import { fillTemplate } from '../../../shared/fillTemplate';
 
 const HIDDEN_CONFIG_KEYS = new Set(['provider']);
 
@@ -25,9 +26,9 @@ export function subLines(turn: AgentTraceTurn, t: (key: string) => string): stri
   const lines: string[] = [];
   if (turn.thought) lines.push(turn.thought);
   if (turn.stage) {
-    lines.push(t(`agent.stage.${turn.stage.label}`).replace('{{detail}}', turn.stage.detail ?? ''));
+    lines.push(fillTemplate(t(`agent.stage.${turn.stage.label}`), { detail: turn.stage.detail ?? '' }));
   }
-  if (turn.preview) lines.push(t('agent.trace.result').replace('{{preview}}', turn.preview));
+  if (turn.preview) lines.push(fillTemplate(t('agent.trace.result'), { preview: turn.preview }));
   return lines;
 }
 
@@ -46,7 +47,7 @@ export function AgentTraceRow({ turn }: { turn: AgentTraceTurn }) {
   const lines = subLines(turn, t);
   const label = turn.tool
     ?? (turn.provider
-      ? t('agent.trace.asking').replace('{{provider}}', turn.provider)
+      ? fillTemplate(t('agent.trace.asking'), { provider: turn.provider })
       : t('agent.trace.thinking'));
 
   return (

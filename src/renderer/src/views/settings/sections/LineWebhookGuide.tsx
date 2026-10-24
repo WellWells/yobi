@@ -15,7 +15,8 @@ interface Props {
   t: (key: string) => string;
 }
 
-const StepBox: React.FC<{ step: number; label: string; children: React.ReactNode }> = ({ step, label, children }) => (
+/** One numbered step of a setup guide (LINE's webhook, Discord's and Slack's apps). */
+export const StepBox: React.FC<{ step: number; label: string; children: React.ReactNode }> = ({ step, label, children }) => (
   <Box
     p="10px 12px"
     bg="var(--mantine-color-bg-tertiary)"

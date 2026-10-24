@@ -1,7 +1,6 @@
 import React from 'react';
 import { Box } from '@mantine/core';
 import { useShallow } from 'zustand/react/shallow';
-import { MessageCircle } from 'lucide-react';
 import { SelectDropdown, SettingRow } from '../components';
 import { PROVIDER_DROPDOWN_MAX_HEIGHT, providerSectionsToSelectData } from '../../../config/models';
 import { useProviderModels } from '../../../hooks/useProviderModels';
@@ -31,7 +30,6 @@ export const BotDefaultModelSetting: React.FC<Props> = ({ value, busy, hint, onU
 
   return (
     <SettingRow
-      icon={<MessageCircle size={13} />}
       label={t('settings.bot.defaultModel.label')}
       hint={hint}
       alignStart

@@ -1,6 +1,6 @@
 import { defineConfig, type Plugin } from 'vite';
-import { builtinModules } from 'node:module';
-import { resolve, join } from 'node:path';
+import { builtinModules, createRequire } from 'node:module';
+import { dirname, resolve, join } from 'node:path';
 import { copyFileSync, mkdirSync, readdirSync } from 'node:fs';
 
 function copyLanguageFilesPlugin(): Plugin {
@@ -41,6 +41,17 @@ function copyEntryStubPlugin(): Plugin {
   };
 }
 
+/**
+ * cheerio's root entry also wires up loadBuffer/fromURL, which top-level-import undici; bundled,
+ * that executed a whole HTTP client on every boot. Main only ever calls `load`, so bare `cheerio`
+ * resolves straight to the module that defines it: the same parse5 parser, none of the rest.
+ * Not `cheerio/slim` — that is htmlparser2, which repairs broken HTML differently.
+ */
+const CHEERIO_LOAD_ONLY = join(
+  dirname(createRequire(import.meta.url).resolve('cheerio/package.json')),
+  'dist/esm/load-parse.js',
+);
+
 const EXTERNALIZED = [
   'electron',
   // Native module (LINE wxSQLite3 driver): keep as a runtime require, never bundle its .node.
@@ -56,6 +67,7 @@ export default defineConfig({
   assetsInclude: ['**/*.wasm'],
   resolve: {
     conditions: ['node'],
+    alias: [{ find: /^cheerio$/, replacement: CHEERIO_LOAD_ONLY }],
   },
   ssr: {
     external: EXTERNALIZED,

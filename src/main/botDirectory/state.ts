@@ -11,6 +11,7 @@ import type {
   BotReachability,
   TelegramChatKind,
 } from '../../shared/types';
+import { isBotPlatform } from '../../shared/types';
 
 export type { BotContact, BotContactKind, BotReachability };
 
@@ -59,8 +60,40 @@ export function upsertContact(map: BotContactMap, input: BotContactInput, now: s
     ...(existing?.lastUsedAt ? { lastUsedAt: existing.lastUsedAt } : {}),
     ...(existing?.useCount ? { useCount: existing.useCount } : {}),
     ...(existing?.lastUsedChatId ? { lastUsedChatId: existing.lastUsedChatId } : {}),
+    // Pairing answers the request; anything else leaves it waiting.
+    ...(existing?.pairingRequestedAt && !input.pairedAt ? { pairingRequestedAt: existing.pairingRequestedAt } : {}),
+    ...(existing?.pairingRequestedAt && existing.pairingCardAt && !input.pairedAt ? { pairingCardAt: existing.pairingCardAt } : {}),
   };
   return { ...map, [key]: next };
+}
+
+/** An unpaired person asked in a private chat to use the bot: their entry, with when. */
+export function setPairingRequest(map: BotContactMap, input: BotContactInput, now: string): BotContactMap {
+  const { pairedAt: _ignored, ...profile } = input;
+  const withContact = upsertContact(map, { ...profile, kind: 'user' }, now);
+  const key = contactKey(input.platform, 'user', input.id.trim());
+  const entry = withContact[key];
+  if (!entry) return map;
+  // A new request: its card is still to be sent.
+  const { pairingCardAt: _old, ...rest } = entry;
+  return { ...withContact, [key]: { ...rest, pairingRequestedAt: now } };
+}
+
+/** The managers were sent the waiting request's card; nothing changes without a waiting request. */
+export function markPairingCard(map: BotContactMap, platform: BotPlatform, id: string, now: string): BotContactMap {
+  const key = contactKey(platform, 'user', id.trim());
+  const existing = map[key];
+  if (!existing?.pairingRequestedAt) return map;
+  return { ...map, [key]: { ...existing, pairingCardAt: now } };
+}
+
+/** The request was answered (paired or blocked): the entry stays, the request goes. */
+export function clearPairingRequest(map: BotContactMap, platform: BotPlatform, id: string): BotContactMap {
+  const key = contactKey(platform, 'user', id.trim());
+  const existing = map[key];
+  if (!existing?.pairingRequestedAt && !existing?.pairingCardAt) return map;
+  const { pairingRequestedAt: _dropped, pairingCardAt: _card, ...rest } = existing;
+  return { ...map, [key]: rest };
 }
 
 /**
@@ -120,10 +153,12 @@ export function revokePairing(map: BotContactMap, platform: BotPlatform, id: str
   return { ...map, [key]: rest };
 }
 
+/** A factory reset: no account stays paired, and no one's request to pair is left waiting. */
 export function revokeAllPairings(map: BotContactMap): BotContactMap {
   let next = map;
   for (const entry of Object.values(map)) {
-    if (entry.kind === 'user') next = revokePairing(next, entry.platform, entry.id);
+    if (entry.kind !== 'user') continue;
+    next = clearPairingRequest(revokePairing(next, entry.platform, entry.id), entry.platform, entry.id);
   }
   return next;
 }
@@ -223,7 +258,7 @@ const REACHABILITY_VALUES: BotReachability[] = ['ok', 'blocked', 'deactivated', 
 function normalizeContact(raw: unknown): BotContact | null {
   if (!raw || typeof raw !== 'object') return null;
   const entry = raw as Record<string, unknown>;
-  const platform = entry.platform === 'telegram' || entry.platform === 'line' ? entry.platform : null;
+  const platform = typeof entry.platform === 'string' && isBotPlatform(entry.platform) ? entry.platform : null;
   const kind = entry.kind === 'user' || entry.kind === 'chat' ? entry.kind : null;
   const id = pickString(entry.id);
   if (!platform || !kind || !id) return null;
@@ -249,7 +284,16 @@ function normalizeContact(raw: unknown): BotContact | null {
     ...optional('lastUsedAt', pickString(entry.lastUsedAt)),
     ...optional('useCount', typeof entry.useCount === 'number' && Number.isInteger(entry.useCount) && entry.useCount > 0 ? entry.useCount : undefined),
     ...optional('lastUsedChatId', pickString(entry.lastUsedChatId)),
+    // A person's request only; a time that does not parse is a hand edit and is dropped.
+    ...optional('pairingRequestedAt', kind === 'user' ? pickTime(entry.pairingRequestedAt) : undefined),
+    // Only beside a request it belongs to.
+    ...optional('pairingCardAt', kind === 'user' && pickTime(entry.pairingRequestedAt) ? pickTime(entry.pairingCardAt) : undefined),
   };
+}
+
+function pickTime(value: unknown): string | undefined {
+  const text = pickString(value);
+  return text && Number.isFinite(Date.parse(text)) ? text : undefined;
 }
 
 function optional<K extends string, V>(key: K, value: V | undefined): Record<K, V> | Record<string, never> {

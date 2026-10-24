@@ -15,6 +15,8 @@ import { activeCombos, fromElectronInput, matchesCombo, shortcutById } from '../
 import { isHotkeyPaused } from './hotkey';
 import { restoredWindowOptions, shouldStartMaximized, trackWindowBounds } from './windowBounds';
 import { llmLane } from './flow/lanes';
+import { forwardTrackpadGestures } from './trackpadGesture';
+import { deferSignInPrompt } from './deferredSignIn';
 
 const WORKER_PARTITION = 'persist:gemini';
 type WorkerWindowMode = 'automation' | 'interactive';
@@ -161,6 +163,7 @@ export function createMainWindow(options?: MainWindowOptions): void {
     event.preventDefault();
     toggleTempChatMode();
   });
+  forwardTrackpadGestures(mainWin.webContents);
 
   mainWin.on('close', (event) => {
     if (isAppQuitting) return;
@@ -371,6 +374,11 @@ export async function showLoginWindowIfNeeded(
   /** Runs on the loaded page when targetUrl is only where the sign-in starts. */
   startSignIn?: (contents: WebContents) => Promise<void>,
 ): Promise<void> {
+  // A send that may still go to another provider decides afterwards whether this window opens.
+  if (deferSignInPrompt(() => showLoginWindowIfNeeded(providerLabel, targetUrl, startSignIn))) {
+    sendLog(`🔐 ${providerLabel} requires login — the sign-in window waits until the other signed-in AIs have been tried`);
+    return;
+  }
   const win = await showInteractiveWorkerWindow(targetUrl);
   if (!win) return;
   if (startSignIn) await startSignIn(win.webContents);

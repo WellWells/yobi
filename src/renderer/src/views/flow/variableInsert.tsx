@@ -4,6 +4,7 @@ import { FLOW_VAR_PREFIX } from '../../../../shared/flowVariables';
 import { resolveSysInfoSelection } from '../../../../shared/sysinfoFields';
 import { isShareLinkFormat } from '../../../../shared/shareFormat';
 import type { FlowVariable, SkillInstance, SkillType, TriggerConfig } from '../../../../shared/types';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 export interface LoopVarHint {
   name: string;
@@ -14,11 +15,14 @@ function loopSubfields(sourceType?: SkillType): string[] {
   switch (sourceType) {
     case 'youtube_subs': return ['title', 'link', 'image'];
     case 'x_posts': return ['title', 'link', 'author', 'name', 'date', 'text', 'image', 'replies', 'likes'];
+    case 'ptt_board': return ['title', 'link', 'board', 'author', 'score', 'date'];
     case 'x_trends': return ['title', 'link', 'context', 'volume', 'rank', 'posts'];
     // Only {{thread.replies}} is a list; the step's own output is text.
     case 'x_thread': return ['author', 'name', 'date', 'text', 'link', 'likes'];
     case 'search': return ['title', 'link', 'snippet'];
     case 'gmap_reviews': return ['author', 'rating', 'date', 'text', 'reply'];
+    case 'calendar': return ['title', 'start', 'end', 'allDay', 'location', 'link'];
+    case 'mail_fetch': return ['from', 'subject', 'date', 'body', 'attachments', 'id'];
     case 'rss':
     case 'scraper':
     case 'research':
@@ -78,13 +82,15 @@ export const AvailableVarsHint: React.FC<{
   prevSteps: SkillInstance[];
   flowTrigger?: TriggerConfig;
   hasHotkeyTrigger?: boolean;
+  /** A file trigger seeds {{file}} and {{file.name}} from the first step on. */
+  hasFileTrigger?: boolean;
   loopVars?: LoopVarHint[];
   allPrevSteps?: SkillInstance[];
   flowVariables?: FlowVariable[];
   onInsert: (token: string) => void;
   t: (k: string) => string;
 }> = ({
-  prevSteps, flowTrigger, hasHotkeyTrigger = false, loopVars = [], allPrevSteps = [],
+  prevSteps, flowTrigger, hasHotkeyTrigger = false, hasFileTrigger = false, loopVars = [], allPrevSteps = [],
   flowVariables = [], onInsert, t,
 }) => {
   const insertHint = t('flow.availableVars.insert');
@@ -100,7 +106,7 @@ export const AvailableVarsHint: React.FC<{
   const stepNo = new Map(allPrevSteps.map((s, i) => [s.id, i + 1]));
   const stepHint = (s: SkillInstance): string => {
     const n = stepNo.get(s.id);
-    return n ? t('flow.availableVars.stepHint').replace('{{step}}', String(n)) : insertHint;
+    return n ? fillTemplate(t('flow.availableVars.stepHint'), { step: String(n) }) : insertHint;
   };
 
   return (
@@ -119,7 +125,13 @@ export const AvailableVarsHint: React.FC<{
           onInsert={onInsert}
         />
       ))}
-      {hasFileOutput && (
+      {hasFileTrigger && (
+        <>
+          <VarChip token="file" insertHint={t('flow.availableVars.triggerFileHint')} onInsert={onInsert} />
+          <VarChip token="file.name" insertHint={t('flow.availableVars.triggerFileNameHint')} onInsert={onInsert} />
+        </>
+      )}
+      {hasFileOutput && !hasFileTrigger && (
         <VarChip token="file" insertHint={t('flow.availableVars.fileHint')} onInsert={onInsert} />
       )}
       {inputVar && (
@@ -145,7 +157,7 @@ export const AvailableVarsHint: React.FC<{
         return (
           <React.Fragment key={s.id}>
             <VarChip token={s.outputKey} insertHint={hint} onInsert={onInsert} />
-            {(s.type === 'llm' || s.type === 'browser' || s.type === 'research') && s.config.emitFailFlag === 'true' && (
+            {(s.type === 'llm' || s.type === 'browser' || s.type === 'research' || s.type === 'calendar' || s.type === 'mail_fetch') && s.config.emitFailFlag === 'true' && (
               <VarChip token={`${s.outputKey}.isFailed`} insertHint={hint} onInsert={onInsert} />
             )}
             {s.type === 'research' && ['sources', 'count'].map((sub) => (
@@ -194,6 +206,18 @@ export const AvailableVarsHint: React.FC<{
               <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
             ))}
             {s.type === 'air_quality' && ['aqi', 'level', 'status', 'statusLocal', 'pollutant', 'pm2_5', 'station', 'isFailed'].map((sub) => (
+              <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
+            ))}
+            {s.type === 'almanac' && ['text', 'lunar', 'date', 'yi', 'ji', 'dayType', 'count'].map((sub) => (
+              <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
+            ))}
+            {s.type === 'tw_invoice' && ['text', 'won', 'count', 'period', 'label', 'drawnAt', 'claimUntil', 'newThisMonth'].map((sub) => (
+              <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
+            ))}
+            {s.type === 'calendar' && ['text', 'count', 'calendar', 'from', 'to'].map((sub) => (
+              <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
+            ))}
+            {s.type === 'mail_fetch' && ['text', 'count'].map((sub) => (
               <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
             ))}
             {s.type === 'sysinfo' && resolveSysInfoSelection(s.config).map((sub) => (

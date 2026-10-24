@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Box, Group, Stack, Button as MButton } from '@mantine/core';
-import { DatabaseBackup, Download, FolderOpen, History, RotateCcw, ShieldAlert, Trash2, Upload } from 'lucide-react';
+import { Download, FolderOpen, RotateCcw, ShieldAlert, Trash2, Upload } from 'lucide-react';
 import { SectionCard, GroupHeader, SectionTitle, SettingRow, SettingDivider } from '../components';
 import { WebDialog } from '../../../components/WebDialog';
 import { BackupExportModal } from '../backup/BackupExportModal';
@@ -36,11 +36,10 @@ export const SystemSection: React.FC<Props> = ({
   return (
     <Box>
       <Box display={showSection(TAG_SETS.config, 'system') ? 'block' : 'none'}>
+        {/* The page title already says Backup & Restore. */}
         <SectionCard style={{ marginBottom: sectionGap }}>
-          <SectionTitle icon={<DatabaseBackup size={15} />} label={t('settings.group.system')} />
           <Stack gap={12}>
             <SettingRow
-              icon={<FolderOpen size={13} />}
               label={t('settings.config.openDir')}
               hint={t('settings.config.openDirHint')} control={
                 <MButton
@@ -53,7 +52,6 @@ export const SystemSection: React.FC<Props> = ({
               }
             />
             <SettingRow
-              icon={<DatabaseBackup size={13} />}
               label={t('settings.config.backupRestore')}
               hint={t('settings.backup.row.hint')}
               control={
@@ -86,7 +84,6 @@ export const SystemSection: React.FC<Props> = ({
           <SectionTitle icon={<ShieldAlert size={15} />} label={t('settings.danger.title')} c="var(--mantine-color-error)" />
           <Stack gap={12}>
             <SettingRow
-              icon={<History size={13} />}
               label={t('settings.danger.clearHistory')}
               hint={t('settings.danger.clearHistoryHint')} control={
                 <MButton
@@ -103,7 +100,6 @@ export const SystemSection: React.FC<Props> = ({
             />
             <SettingDivider danger />
             <SettingRow
-              icon={<RotateCcw size={13} />}
               label={t('settings.reset')}
               hint={t('settings.reset.hint')} control={
                 <MButton

@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
-import { IPC } from '../../shared/types';
-import { normalizeMemoryNotes } from '../../shared/userMemory';
+import { IPC, isBotPlatform } from '../../shared/types';
+import { botSelfFrom, normalizeMemoryNotes } from '../../shared/userMemory';
 import type { BotSelfChange, MemoryEditFailure, MemoryEditResult, UserMemoryBotSelf, UserMemorySnapshot } from '../../shared/userMemory';
 import { sendLog, sendToRenderer } from '../helpers';
 import {
@@ -85,7 +85,7 @@ export function registerMemoryHandlers(onBotSelfChanged?: () => void): void {
   // Read-modify-write of one account's mark inside the store's lock: the other marks are
   // whatever the file holds now, never what the renderer last saw.
   ipcMain.handle(IPC.MEMORY_SET_BOT_SELF, async (_event, raw: Partial<BotSelfChange>): Promise<UserMemorySnapshot> => {
-    const platform = raw?.platform === 'telegram' || raw?.platform === 'line' ? raw.platform : null;
+    const platform = typeof raw?.platform === 'string' && isBotPlatform(raw.platform) ? raw.platform : null;
     const userId = String(raw?.userId ?? '').trim();
     if (!platform || !userId || typeof raw?.self !== 'boolean') return memorySnapshot(await loadUserMemory());
     const self = raw.self;
@@ -93,11 +93,7 @@ export function registerMemoryHandlers(onBotSelfChanged?: () => void): void {
       const ids = idList(current.botSelf?.[platform]);
       if (ids.includes(userId) === self) return null;
       const nextIds = self ? [...ids, userId] : ids.filter((id) => id !== userId);
-      const botSelf: UserMemoryBotSelf = {
-        telegram: idList(current.botSelf?.telegram),
-        line: idList(current.botSelf?.line),
-        [platform]: nextIds,
-      };
+      const botSelf: UserMemoryBotSelf = { ...botSelfFrom(current.botSelf, idList), [platform]: nextIds };
       return { state: { ...current, botSelf }, result: true };
     });
     if (result) onBotSelfChanged?.();

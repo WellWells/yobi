@@ -1,12 +1,14 @@
 import type { BrowserWindow } from 'electron';
 import type {
   CaptureFormat, CardTheme, FlowButton, FlowExecutionLog, MarkdownCapturePayload,
-  ShareExpire, ShareSettings,
+  ShareExpire, ShareSettings, SocketBotPlatform,
 } from '../../shared/types';
+import type { SocketBotOutgoing } from '../botChat/socketRuntime';
 import type { ResearchProgress } from '../../shared/researchProgress';
 import type { RecipientDirectory } from '../../shared/botRecipients';
 import type { StepProgress } from '../../shared/stepProgress';
 import type { LineCarouselItem } from '../line/pickCarousel';
+import type { LineFlowMenu } from '../line/flowMenu';
 
 export type LogCallback = (log: FlowExecutionLog) => void;
 
@@ -27,13 +29,20 @@ export interface FlowExecutorDeps {
   getResponseTimeoutMs?: () => number;
   onSaveHistory?: (info: SaveHistoryInfo) => Promise<void>;
   sendTelegramMessage?: (chatId: number, text: string, extras?: BotSendExtras) => Promise<void>;
+  /** Deletes one Telegram message; false when Telegram refuses (no right to in that chat, too old). */
+  deleteTelegramMessage?: (chatId: number, messageId: number) => Promise<boolean>;
   getPairedUsers?: () => Array<{ userId: number; username?: string; firstName?: string }>;
   sendLineMessage?: (userId: string, text: string) => Promise<void>;
   sendLineImage?: (userId: string, imageUrl: string) => Promise<void>;
   sendLineVideo?: (userId: string, videoUrl: string, previewUrl: string) => Promise<void>;
   /** A menu's items as cards to tap, each sending its own line (`line/pickCarousel.ts`). */
   sendLineCarousel?: (userId: string, items: readonly LineCarouselItem[], altText: string) => Promise<void>;
+  /** A picture, its text and buttons to tap as one card (`line/flowMenu.ts`). */
+  sendLineMenu?: (userId: string, menu: LineFlowMenu) => Promise<void>;
   getLinePairedUsers?: () => Array<{ userId: string; displayName?: string }>;
+  /** Discord's and Slack's sends: one message (text, the run's files, buttons standing for lines) to a chat id. */
+  sendSocketBot?: (platform: SocketBotPlatform, chatId: string, message: SocketBotOutgoing) => Promise<void>;
+  getSocketBotPairedUsers?: (platform: SocketBotPlatform) => Array<{ userId: string; displayName?: string }>;
   /** The chats a bot step may name instead of giving an id ("me", a person, a channel). */
   getBotRecipients?: () => Promise<RecipientDirectory>;
   captureMarkdown?: (
@@ -75,6 +84,8 @@ export interface FlowExecutorDeps {
     filePaths: string[],
     caption?: string,
     authorizedPaths?: string[],
+    /** The message the album answers (`BotSendExtras.replyTo`). */
+    replyTo?: number,
   ) => Promise<void>;
 }
 
@@ -88,4 +99,9 @@ export interface BotSendExtras {
     userId?: number;
     items: FlowButton[];
   };
+  /**
+   * The message this answers, quoted above it: the one that started the run, in the chat it was
+   * sent in. In a group, an answer that quotes nothing reads as said to no one.
+   */
+  replyTo?: number;
 }

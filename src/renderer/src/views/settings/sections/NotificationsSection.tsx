@@ -1,29 +1,34 @@
 import React from 'react';
 import { Box, Stack } from '@mantine/core';
-import { Bell, CheckCircle2, MessageSquare, MessageSquareX, XCircle } from 'lucide-react';
-import { SectionCard, SettingRow, ToggleSwitch, SectionTitle, SettingDivider } from '../components';
+import { SectionCard, SettingRow, ToggleSwitch, SettingDivider } from '../components';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import type { useSystemSettings } from '../hooks/useSystemSettings';
 
 type SystemSettings = ReturnType<typeof useSystemSettings>;
+type NotifyEvent = keyof SystemSettings['notifyEvents'];
+
+const EVENTS: readonly NotifyEvent[] = ['chatComplete', 'chatFailure', 'flowSuccess', 'flowFailure'];
 
 interface Props {
   system: SystemSettings;
   t: (key: string) => string;
-  showSection: (tags: readonly string[], category: 'general') => boolean;
+  showSection: (tags: readonly string[], category: 'notifications') => boolean;
   sectionGap: number;
 }
 
+/*
+ * The page title already says Notifications, so the card has no title of its own. With the master
+ * switch off every event switch reads off and is disabled: a dimmed but green switch looked like
+ * "on". The saved per-event choices stay and come back when the master switch is turned on again.
+ */
 export const NotificationsSection: React.FC<Props> = ({ system, t, showSection, sectionGap }) => {
   const enabled = system.notifyOnComplete;
 
   return (
-    <Box display={showSection(TAG_SETS.notify, 'general') ? 'block' : 'none'}>
+    <Box display={showSection(TAG_SETS.notify, 'notifications') ? 'block' : 'none'}>
       <SectionCard style={{ marginBottom: sectionGap }}>
-        <SectionTitle icon={<Bell size={15} />} label={t('settings.notifications')} />
         <Stack gap={14}>
           <SettingRow
-            icon={<Bell size={13} />}
             label={t('settings.notifications.master')}
             hint={t('settings.notifications.master.hint')}
             control={<ToggleSwitch checked={enabled} onChange={() => { void system.handleToggleNotification(); }} />}
@@ -31,54 +36,20 @@ export const NotificationsSection: React.FC<Props> = ({ system, t, showSection, 
           <SettingDivider />
           <Box style={{ opacity: enabled ? 1 : 0.45, pointerEvents: enabled ? 'auto' : 'none' }}>
             <Stack gap={14}>
-              <SettingRow
-                icon={<MessageSquare size={13} />}
-                label={t('settings.notifications.chatComplete')}
-                hint={t('settings.notifications.chatComplete.hint')}
-                control={(
-                  <ToggleSwitch
-                    checked={system.notifyEvents.chatComplete}
-                    disabled={!enabled}
-                    onChange={() => { void system.handleToggleNotifyEvent('chatComplete'); }}
-                  />
-                )}
-              />
-              <SettingRow
-                icon={<MessageSquareX size={13} />}
-                label={t('settings.notifications.chatFailure')}
-                hint={t('settings.notifications.chatFailure.hint')}
-                control={(
-                  <ToggleSwitch
-                    checked={system.notifyEvents.chatFailure}
-                    disabled={!enabled}
-                    onChange={() => { void system.handleToggleNotifyEvent('chatFailure'); }}
-                  />
-                )}
-              />
-              <SettingRow
-                icon={<CheckCircle2 size={13} />}
-                label={t('settings.notifications.flowSuccess')}
-                hint={t('settings.notifications.flowSuccess.hint')}
-                control={(
-                  <ToggleSwitch
-                    checked={system.notifyEvents.flowSuccess}
-                    disabled={!enabled}
-                    onChange={() => { void system.handleToggleNotifyEvent('flowSuccess'); }}
-                  />
-                )}
-              />
-              <SettingRow
-                icon={<XCircle size={13} />}
-                label={t('settings.notifications.flowFailure')}
-                hint={t('settings.notifications.flowFailure.hint')}
-                control={(
-                  <ToggleSwitch
-                    checked={system.notifyEvents.flowFailure}
-                    disabled={!enabled}
-                    onChange={() => { void system.handleToggleNotifyEvent('flowFailure'); }}
-                  />
-                )}
-              />
+              {EVENTS.map((event) => (
+                <SettingRow
+                  key={event}
+                  label={t(`settings.notifications.${event}`)}
+                  hint={t(`settings.notifications.${event}.hint`)}
+                  control={(
+                    <ToggleSwitch
+                      checked={enabled && system.notifyEvents[event]}
+                      disabled={!enabled}
+                      onChange={() => { void system.handleToggleNotifyEvent(event); }}
+                    />
+                  )}
+                />
+              ))}
             </Stack>
           </Box>
         </Stack>

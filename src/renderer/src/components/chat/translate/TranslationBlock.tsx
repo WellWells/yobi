@@ -14,6 +14,7 @@ import {
   cancelTurnTranslation, convertTurnToTraditional, removeTurnTranslation, translateTurn,
 } from './translateActions';
 import { useProviderLabel } from './useTurnTranslation';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 interface TranslationBlockProps {
   path: string;
@@ -91,7 +92,7 @@ export const TranslationBlock: React.FC<TranslationBlockProps> = ({
   const language = isTranslateLanguage(translation.to) ? languageDisplayName(translation.to, locale) : translation.to;
   const source = translation.by === 'opencc'
     ? t('chat.translate.byLocal')
-    : t('chat.translate.byProvider').replace('{{provider}}', translation.p ?? '');
+    : fillTemplate(t('chat.translate.byProvider'), { provider: translation.p ?? '' });
 
   const copy = (): void => {
     void clipboardApi.copyText(translation.text).then(() => {
@@ -111,7 +112,7 @@ export const TranslationBlock: React.FC<TranslationBlockProps> = ({
         <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
           <Languages size={14} color="var(--accent)" style={{ flexShrink: 0 }} />
           <Text component="div" fz="var(--font-size-sm)" fw={600} c="var(--text-secondary)" truncate>
-            {t('chat.translate.title').replace('{{language}}', language)}
+            {fillTemplate(t('chat.translate.title'), { language })}
           </Text>
           <Tooltip
             label={translation.by === 'opencc' ? t('chat.translate.byLocal.hint') : t('chat.translate.providerHint')}

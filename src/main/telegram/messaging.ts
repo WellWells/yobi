@@ -14,10 +14,12 @@ import {
   truncateText,
 } from './formatter';
 import { TELEGRAM_MESSAGE_MAX } from '../../shared/botMessageLimits';
-import type { BotBuiltinRunResult } from '../botBuiltinCommands';
+import type { AgentAskShown, BotBuiltinRunResult } from '../botBuiltinCommands';
+import { numberedQuestion } from '../flow/agent/shellApproval';
 import { buildExportCallbackData, type ExportTokenRegistry } from './exporter';
 import { fetchOptimizedImage } from './remoteImage';
 import { flowButtonKeyboard } from './flowButtons';
+import { askKeyboard, clearRetiredButtons, noteAskMessage, retireAskButtons } from './askButtons';
 import type { BotSendExtras, TelegramSendAs } from '../flow/types';
 import { probeMedia } from '../youtubeDownload';
 import type { MediaProbe } from '../youtubeDownload';
@@ -43,6 +45,10 @@ export interface TelegramMessagingContext extends TelegramSendContext {
   getDefaultReplyMode: () => TelegramReplyMode;
   getCompactReply: () => boolean;
   registry: ExportTokenRegistry;
+  /** A run's question reached the chat: its message, and whether its choices were numbered. */
+  onAgentAskShown?: (target: TelegramReplyTarget, shown: AgentAskShown) => void;
+  /** The run whose question this person still has to answer in this chat, or null. */
+  pendingAgentAskRunId?: (chatId: number, userId: number) => string | null;
 }
 
 export interface TelegramTaskSuccessPayload {
@@ -59,6 +65,13 @@ function replyMarkupFor(chatId: number, extras?: BotSendExtras): { reply_markup?
   const buttons = extras?.buttons;
   if (!buttons || buttons.items.length === 0) return {};
   return { reply_markup: flowButtonKeyboard(buttons.items, { flowId: buttons.flowId, chatId, userId: buttons.userId }) };
+}
+
+type ReplyQuote = { reply_parameters?: { message_id: number; allow_sending_without_reply: true } };
+
+/** Quotes the message a send answers (`BotSendExtras.replyTo`); it still goes out if that message is gone. */
+function quoteOf(replyTo: number | undefined): ReplyQuote {
+  return replyTo ? { reply_parameters: { message_id: replyTo, allow_sending_without_reply: true } } : {};
 }
 
 export async function sendProactive(
@@ -78,7 +91,7 @@ export async function sendProactive(
     const body = formatResponseForTelegramHtml(responseText);
     const fallbackBody = `<i>${escapeTelegramHtml(t(s, 'telegram.msg.emptyResponse'))}</i>`;
     const message = body || fallbackBody;
-    const markup = replyMarkupFor(chatId, extras);
+    const markup = { ...replyMarkupFor(chatId, extras), ...quoteOf(extras?.replyTo) };
 
     if (message.length > TELEGRAM_MSG_LIMIT) {
       const buffer = Buffer.from(responseSection || text, 'utf8');
@@ -187,7 +200,7 @@ function overUploadLimit(sizeBytes: number): boolean {
   return sizeBytes > TELEGRAM_UPLOAD_LIMIT_BYTES;
 }
 
-type CaptionedOpts = { caption?: string; parse_mode?: 'HTML'; reply_markup?: ReturnType<typeof flowButtonKeyboard> };
+type CaptionedOpts = { caption?: string; parse_mode?: 'HTML'; reply_markup?: ReturnType<typeof flowButtonKeyboard> } & ReplyQuote;
 
 /**
  * `sendProactiveFile` for a local file over the upload limit: the same choice of video, audio or
@@ -238,6 +251,7 @@ export async function sendProactiveFile(
   const captionOpts = {
     ...(captionHtml ? { caption: captionHtml, parse_mode: 'HTML' as const } : {}),
     ...replyMarkupFor(chatId, extras),
+    ...quoteOf(extras?.replyTo),
   };
   try {
     const isRemote = /^https?:\/\//i.test(filePath);
@@ -368,6 +382,7 @@ async function sendAlbumByFileId(
   chatId: number,
   group: readonly AlbumFile[],
   caption: CaptionOpts,
+  quote: ReplyQuote = {},
 ): Promise<void> {
   const staged: Array<{ messageId: number | null; fileId: string | undefined }> = [];
   for (const [index, file] of group.entries()) {
@@ -376,7 +391,8 @@ async function sendAlbumByFileId(
       staged.push({ messageId: null, fileId });
       continue;
     }
-    const opts = { ...(index === 0 ? caption : {}), disable_notification: true };
+    // The first carries the caption and the quote, for when it stays as a message of its own.
+    const opts = { ...(index === 0 ? { ...caption, ...quote } : {}), disable_notification: true };
     const upload = new InputFile(file.path);
     let fileId: string | undefined;
     let messageId: number;
@@ -405,7 +421,7 @@ async function sendAlbumByFileId(
   const sendLargeAlone = async (): Promise<void> => {
     for (const [index, entry] of staged.entries()) {
       if (entry.messageId !== null || !entry.fileId) continue;
-      await sendByFileId(bot, chatId, group[index], entry.fileId, index === 0 ? caption : {});
+      await sendByFileId(bot, chatId, group[index], entry.fileId, index === 0 ? { ...caption, ...quote } : {});
     }
   };
   const fileIds = staged.map((entry) => entry.fileId);
@@ -415,7 +431,7 @@ async function sendAlbumByFileId(
     return;
   }
   try {
-    await bot.api.sendMediaGroup(chatId, albumMedia(group, fileIds, caption));
+    await bot.api.sendMediaGroup(chatId, albumMedia(group, fileIds, caption), quote);
   } catch (err: unknown) {
     mctx.onLog(`[telegram] album of uploaded files failed (${String(err)}); leaving them as separate messages`);
     await sendLargeAlone();
@@ -442,6 +458,7 @@ export async function sendProactiveAlbum(
   filePaths: readonly string[],
   caption?: string,
   authorizedPaths?: string[],
+  replyTo?: number,
 ): Promise<void> {
   const bot = mctx.getBot();
   if (!bot || !mctx.isPollerActive()) {
@@ -453,6 +470,7 @@ export async function sendProactiveAlbum(
     captionHtml = formatResponseForTelegramHtml(truncateText(captionSource, TELEGRAM_CAPTION_LIMIT));
   }
   const captionOpts: CaptionOpts = captionHtml ? { caption: captionHtml, parse_mode: 'HTML' } : {};
+  const quote = quoteOf(replyTo);
   const paths = await Promise.all(filePaths.map((p) => resolveSafeLocalAttachment(p, authorizedPaths)));
   const asMedia = paths.every((file) => ALBUM_VIDEO_RE.test(file) || ALBUM_PHOTO_RE.test(file));
   const asAudio = paths.every((file) => AUDIO_FILE_RE.test(file));
@@ -467,30 +485,33 @@ export async function sendProactiveAlbum(
     for (let start = 0; start < files.length; start += TELEGRAM_ALBUM_MAX) {
       const group = files.slice(start, start + TELEGRAM_ALBUM_MAX);
       const groupCaption = start === 0 ? captionOpts : {};
+      // Only the first album quotes the asking message; the rest follow it.
+      const groupQuote = start === 0 ? quote : {};
       if (group.length === 1) {
         // `auto` for a photo: it falls back to a document when Telegram refuses the photo.
         const sendAs = group[0].kind === 'photo' ? 'auto' : group[0].kind;
-        await sendProactiveFile(mctx, chatId, group[0].path, sendAs, start === 0 ? caption : undefined, authorizedPaths);
+        const extras = start === 0 && replyTo ? { replyTo } : undefined;
+        await sendProactiveFile(mctx, chatId, group[0].path, sendAs, start === 0 ? caption : undefined, authorizedPaths, extras);
         continue;
       }
       const totalBytes = group.reduce((sum, file) => sum + file.sizeBytes, 0);
       if (totalBytes > TELEGRAM_UPLOAD_LIMIT_BYTES) {
-        await sendAlbumByFileId(mctx, bot, chatId, group, groupCaption);
+        await sendAlbumByFileId(mctx, bot, chatId, group, groupCaption, groupQuote);
         continue;
       }
       try {
-        await bot.api.sendMediaGroup(chatId, albumMedia(group, group.map((file) => new InputFile(file.path)), groupCaption));
+        await bot.api.sendMediaGroup(chatId, albumMedia(group, group.map((file) => new InputFile(file.path)), groupCaption), groupQuote);
       } catch (err: unknown) {
         if (isPhotoRefused(err) && group.some((file) => file.kind === 'photo')) {
           // A tall capture is past a photo's size rules; as documents the same files go through.
           mctx.onLog(`[telegram] album photos refused (${String(err)}); sending the album as documents`);
           const asDocuments = group.map((file): AlbumFile => ({ path: file.path, sizeBytes: file.sizeBytes, kind: 'document' }));
-          await bot.api.sendMediaGroup(chatId, albumMedia(asDocuments, asDocuments.map((file) => new InputFile(file.path)), groupCaption));
+          await bot.api.sendMediaGroup(chatId, albumMedia(asDocuments, asDocuments.map((file) => new InputFile(file.path)), groupCaption), groupQuote);
           continue;
         }
         if (!isTooLargeError(err)) throw err;
         mctx.onLog(`[telegram] album refused as too large; uploading its ${group.length} files one at a time`);
-        await sendAlbumByFileId(mctx, bot, chatId, group, groupCaption);
+        await sendAlbumByFileId(mctx, bot, chatId, group, groupCaption, groupQuote);
       }
     }
   } catch (err: unknown) {
@@ -580,10 +601,58 @@ export async function sendTaskSuccess(
 }
 
 /**
+ * Drawn pictures as the reply itself: a photo (several: an album) answering the request, the
+ * caption under it (an album: under the first), no title, saved-file or export lines. Returns
+ * false, having sent nothing, when the caption does not fit one or Telegram refuses the pictures;
+ * the caller then sends the text and the pictures apart.
+ */
+export async function sendPictureReply(
+  mctx: TelegramMessagingContext,
+  target: TelegramReplyTarget,
+  files: readonly string[],
+  caption: string,
+): Promise<boolean> {
+  const bot = mctx.getBot();
+  if (!bot || !mctx.isPollerActive() || files.length === 0 || files.length > TELEGRAM_ALBUM_MAX) return false;
+  const captionSource = extractResponseSection(caption, mctx.getStrings()).trim();
+  const captionHtml = captionSource ? formatResponseForTelegramHtml(captionSource) : '';
+  if (telegramVisibleLength(captionHtml) > TELEGRAM_CAPTION_LIMIT) return false;
+  const captionOpts: CaptionOpts = captionHtml ? { caption: captionHtml, parse_mode: 'HTML' } : {};
+  const reply = target.requestMessageId
+    ? { reply_parameters: { message_id: target.requestMessageId, allow_sending_without_reply: true } }
+    : {};
+  try {
+    const paths = await Promise.all(files.map((file) => resolveSafeLocalAttachment(file, [...files])));
+    if (paths.length === 1) {
+      await bot.api.sendPhoto(target.chatId, new InputFile(paths[0]), { ...captionOpts, ...reply });
+    } else {
+      const media = paths.map((file, index) => InputMediaBuilder.photo(new InputFile(file), index === 0 ? captionOpts : {}));
+      await bot.api.sendMediaGroup(target.chatId, media, reply);
+    }
+  } catch (err: unknown) {
+    mctx.onLog(`[telegram] pictures not sent as the reply: ${getErrorMessage(err)}`);
+    return false;
+  }
+  await deleteQueuedMessage(mctx, target);
+  return true;
+}
+
+/**
+ * The buttons of every question of this person's that no longer waits come off, before a reply that
+ * puts up no question of its own: a request that ran and failed, or answered with pictures, dropped
+ * the question too. One refused before it ran dropped nothing, so the waiting run's buttons stay.
+ */
+export async function clearStaleAskButtons(mctx: TelegramMessagingContext, target: TelegramReplyTarget): Promise<void> {
+  if (!mctx.pendingAgentAskRunId) return;
+  const waiting = mctx.pendingAgentAskRunId(target.chatId, target.userId) ?? undefined;
+  await clearRetiredButtons(mctx.getBot()?.api, retireAskButtons(target.chatId, target.userId, waiting), mctx.getStrings());
+}
+
+/**
  * A bot run's reply. A question marked `verbatim` (a shell approval) goes out as plain text exactly
  * as written, whatever the reply mode: compact, Markdown, PNG, WebP and PDF all rewrite, cut or
  * picture the text, and the user must read the whole command that "1" would run. Returns false
- * when such a question could not be shown whole; the caller then withdraws it.
+ * when a question could not be shown (an approval: not whole); the caller then withdraws it.
  */
 export async function sendBuiltinReply(
   mctx: TelegramMessagingContext,
@@ -592,10 +661,16 @@ export async function sendBuiltinReply(
   result: BotBuiltinRunResult,
 ): Promise<boolean> {
   if (!result.ok) {
+    await clearStaleAskButtons(mctx, target);
     await sendTaskError(mctx, target, { providerLabel: result.providerLabel, message: result.text });
     return true;
   }
+  // Whatever ran (a new request, an answer, a newer question), the question this person had waiting
+  // no longer is: its buttons come off rather than stay looking answerable.
+  await clearRetiredButtons(mctx.getBot()?.api, retireAskButtons(target.chatId, target.userId), mctx.getStrings());
+  if (result.question) return sendQuestionReply(mctx, target, result, result.question);
   if (result.verbatim) return sendVerbatimReply(mctx, target, result);
+  if (result.awaitingAnswer) return sendPlainQuestion(mctx, target, result.text);
   await sendTaskSuccess(mctx, target, {
     providerLabel: result.providerLabel,
     savedFileName: result.savedFileName,
@@ -604,6 +679,120 @@ export async function sendBuiltinReply(
     title: result.title,
     elapsedSeconds: result.elapsedSeconds,
   });
+  return true;
+}
+
+/**
+ * A question with choices: its words, then one button per choice (`askButtons.ts`) in place of the
+ * numbered list. Always one text message, whatever the reply mode — a question pictured as a PNG or
+ * cut into chunks has nowhere to put the buttons. An approval is shown exactly as written, the
+ * model's own question keeps its formatting. Typing an answer still works.
+ */
+async function sendQuestionReply(
+  mctx: TelegramMessagingContext,
+  target: TelegramReplyTarget,
+  result: BotBuiltinRunResult,
+  question: NonNullable<BotBuiltinRunResult['question']>,
+): Promise<boolean> {
+  const bot = mctx.getBot();
+  if (!bot || !mctx.isPollerActive()) return false;
+  const hint = t(mctx.getStrings(), 'telegram.ask.hint');
+  const verbatim = result.verbatim ? telegramVerbatimMessage(`${question.text}\n\n${hint}`) : null;
+  // Never clipped: an approval too long to read whole is not sent at all (as `sendVerbatimReply`).
+  if (verbatim && verbatim.text.length > TELEGRAM_MSG_LIMIT) return sendVerbatimReply(mctx, target, result);
+  const text = verbatim
+    ? verbatim.text
+    : `${formatResponseForTelegramHtml(truncateText(question.text.trim(), TELEGRAM_RESULT_MAX))}\n\n<i>${escapeTelegramHtml(hint)}</i>`;
+  let messageId: number;
+  try {
+    const sent = await bot.api.sendMessage(target.chatId, text, {
+      ...(verbatim ? (verbatim.entities.length > 0 ? { entities: verbatim.entities } : {}) : { parse_mode: 'HTML' as const }),
+      reply_markup: askKeyboard({ runId: question.runId, chatId: target.chatId, userId: target.userId }, question.choices),
+      reply_parameters: target.requestMessageId ? { message_id: target.requestMessageId } : undefined,
+      link_preview_options: { is_disabled: true },
+    });
+    messageId = sent.message_id;
+  } catch (err: unknown) {
+    mctx.onLog(`[telegram] failed to send a question with buttons: ${getErrorMessage(err)}`);
+    retireAskButtons(target.chatId, target.userId);
+    if (verbatim) {
+      await deleteQueuedMessage(mctx, target);
+      return false;
+    }
+    return sendNumberedQuestion(mctx, target, question);
+  }
+  noteAskMessage(target.chatId, target.userId, messageId);
+  // Buttons show no numbers, so a typed "1" is not a choice (and never an approval) here.
+  mctx.onAgentAskShown?.(target, { messageId, numbered: false });
+  await deleteQueuedMessage(mctx, target);
+  return true;
+}
+
+/**
+ * A question without choices: one message whatever the reply mode, as a question with buttons is,
+ * so the message that carries it is known and only one sent after it answers (`sentAfterAsk`).
+ * Through the reply mode its id was never kept, and Telegram's whole-second `date` was weighed
+ * against this computer's clock: a message sent in the same second, before the question, answered
+ * it (review 2026-10-20). HTML Telegram refuses is sent again as plain text.
+ */
+async function sendPlainQuestion(mctx: TelegramMessagingContext, target: TelegramReplyTarget, text: string): Promise<boolean> {
+  const bot = mctx.getBot();
+  if (!bot || !mctx.isPollerActive()) return false;
+  const s = mctx.getStrings();
+  const hint = t(s, 'bot.builtin.answerHint');
+  const whole = extractResponseSection(text, s).trim();
+  const question = truncateText((whole.endsWith(hint) ? whole.slice(0, -hint.length) : whole).trim(), TELEGRAM_RESULT_MAX);
+  const quote = target.requestMessageId ? { reply_parameters: { message_id: target.requestMessageId, allow_sending_without_reply: true } } : {};
+  const send = (body: string, html: boolean) => bot.api.sendMessage(target.chatId, body, {
+    ...(html ? { parse_mode: 'HTML' as const } : {}),
+    ...quote,
+    link_preview_options: { is_disabled: true },
+  });
+  let messageId: number;
+  try {
+    messageId = (await send(`${formatResponseForTelegramHtml(question)}\n\n<i>${escapeTelegramHtml(hint)}</i>`, true)
+      .catch(() => send(`${question}\n\n${hint}`, false))).message_id;
+  } catch (err: unknown) {
+    mctx.onLog(`[telegram] failed to send a question: ${getErrorMessage(err)}`);
+    await deleteQueuedMessage(mctx, target);
+    return false;
+  }
+  mctx.onAgentAskShown?.(target, { messageId, numbered: true });
+  await deleteQueuedMessage(mctx, target);
+  return true;
+}
+
+/**
+ * The model's question when its buttons could not be sent: one plain-text message, the choices
+ * numbered so a typed "2" answers — never through the reply mode (a card, compact chunks or export
+ * buttons are no place for a question). Measured before it goes out, as the button message is.
+ */
+async function sendNumberedQuestion(
+  mctx: TelegramMessagingContext,
+  target: TelegramReplyTarget,
+  question: NonNullable<BotBuiltinRunResult['question']>,
+): Promise<boolean> {
+  const bot = mctx.getBot();
+  if (!bot) return false;
+  const hint = t(mctx.getStrings(), 'bot.builtin.answerHint');
+  const text = `${numberedQuestion(truncateText(question.text.trim(), TELEGRAM_RESULT_MAX), question.choices)}\n\n${hint}`;
+  if (text.length > TELEGRAM_MSG_LIMIT) {
+    mctx.onLog(`[telegram] a ${text.length}-character question does not fit one message — withdrawn`);
+    await sendTaskError(mctx, target, { providerLabel: '', message: t(mctx.getStrings(), 'bot.builtin.failed') });
+    return false;
+  }
+  try {
+    const sent = await bot.api.sendMessage(target.chatId, text, {
+      reply_parameters: target.requestMessageId ? { message_id: target.requestMessageId, allow_sending_without_reply: true } : undefined,
+      link_preview_options: { is_disabled: true },
+    });
+    mctx.onAgentAskShown?.(target, { messageId: sent.message_id, numbered: true });
+  } catch (err: unknown) {
+    mctx.onLog(`[telegram] failed to send a question: ${getErrorMessage(err)}`);
+    await deleteQueuedMessage(mctx, target);
+    return false;
+  }
+  await deleteQueuedMessage(mctx, target);
   return true;
 }
 
@@ -622,11 +811,12 @@ async function sendVerbatimReply(
     return false;
   }
   try {
-    await bot.api.sendMessage(target.chatId, message.text, {
+    const sent = await bot.api.sendMessage(target.chatId, message.text, {
       ...(message.entities.length > 0 ? { entities: message.entities } : {}),
       reply_parameters: target.requestMessageId ? { message_id: target.requestMessageId } : undefined,
       link_preview_options: { is_disabled: true },
     });
+    if (result.awaitingAnswer) mctx.onAgentAskShown?.(target, { messageId: sent.message_id, numbered: true });
   } catch (err: unknown) {
     mctx.onLog(`[telegram] failed to send a question: ${getErrorMessage(err)}`);
     await deleteQueuedMessage(mctx, target);

@@ -1,9 +1,11 @@
-export type Category = 'general' | 'shortcuts' | 'appearance' | 'export' | 'ai' | 'memory' | 'accounts' | 'connectors' | 'bots' | 'stats' | 'system';
+export type Category =
+  | 'accounts' | 'ai' | 'memory' | 'connectors' | 'bots' | 'general' | 'appearance'
+  | 'notifications' | 'links' | 'export' | 'shortcuts' | 'stats' | 'system';
 
 const BOT_ACCOUNT_KEYS = [
-  'settings.bot.account', 'settings.bot.defaultModel',
+  'settings.bot.account', 'settings.bot.defaultModel', 'settings.bot.askTtl',
   'settings.bot.perm.add', 'settings.bot.perm.none', 'settings.bot.perm.owner',
-  'settings.bot.perm.pairedHint', 'settings.bot.perm.remove', 'settings.bot.perm.group',
+  'settings.bot.perm.pairedHint', 'settings.bot.perm.defaults', 'settings.bot.perm.remove', 'settings.bot.perm.group',
   'settings.bot.perm.limit', 'settings.bot.perm.grant.agent', 'settings.bot.perm.grant.web',
   'settings.bot.perm.grant.download', 'settings.bot.perm.grant.local', 'settings.bot.perm.grant.shell',
   'settings.bot.perm.grant.allConnectors', 'settings.bot.perm.grant.connector',
@@ -16,7 +18,9 @@ export const TAG_SETS = {
   notify: ['settings.notifications', 'settings.search.alias.notify'],
   tray: ['settings.tray', 'settings.search.alias.tray'],
   editor: ['settings.editor', 'settings.search.alias.editor'],
+  links: ['settings.linkRecognition', 'settings.search.alias.links'],
   ytdl: ['settings.ytdl', 'ytdl.tools', 'settings.bot.perm.who.downloader', 'settings.search.alias.ytdl'],
+  calendars: ['settings.calendars', 'settings.search.alias.calendars'],
   theme: ['settings.theme', 'settings.search.alias.theme'],
   reading: [
     'settings.appearance', 'layout.stacked', 'layout.sideBySide',
@@ -38,26 +42,35 @@ export const TAG_SETS = {
   bots: ['settings.bot.commands', 'settings.bot.builtin', 'settings.bot.perm.who.command', 'settings.search.alias.bots'],
   telegram: ['settings.telegram', ...BOT_ACCOUNT_KEYS, 'settings.bot.perm.grant.admin', 'settings.search.alias.telegram'],
   line: ['settings.line', ...BOT_ACCOUNT_KEYS, 'settings.search.alias.line'],
+  discord: ['settings.discord', ...BOT_ACCOUNT_KEYS, 'settings.search.alias.discord'],
+  slack: ['settings.slack', ...BOT_ACCOUNT_KEYS, 'settings.search.alias.slack'],
   stats: ['settings.stats', 'settings.search.alias.stats'],
   config: ['settings.config', 'settings.backup', 'settings.search.alias.config'],
   danger: ['settings.danger', 'settings.reset', 'settings.group.danger', 'settings.search.alias.danger'],
 } as const;
 
+// Key order is the nav order (what a first-time user needs first) and the stacking order of
+// search results; SettingsView renders its category blocks in the same order.
 export const CATEGORY_TAG_MAP: Record<Category, (keyof typeof TAG_SETS)[]> = {
-  general: ['language', 'tray', 'editor', 'ytdl', 'notify'],
-  shortcuts: ['shortcuts', 'hotkey'],
-  appearance: ['theme', 'reading'],
-  export: ['quickExport', 'cardStyle', 'shareLink'],
   accounts: ['accounts', 'byok'],
   ai: ['timeout', 'prompt', 'youtube'],
   memory: ['memory'],
-  connectors: ['mcp'],
-  bots: ['telegram', 'line', 'bots'],
+  connectors: ['mcp', 'calendars'],
+  bots: ['telegram', 'line', 'discord', 'slack', 'bots'],
+  general: ['language', 'tray', 'editor'],
+  appearance: ['theme', 'reading'],
+  notifications: ['notify'],
+  links: ['links', 'ytdl'],
+  export: ['quickExport', 'cardStyle', 'shareLink'],
+  shortcuts: ['shortcuts', 'hotkey'],
   stats: ['stats'],
   system: ['config', 'danger'],
 };
 
 export const CATEGORY_IDS = Object.keys(CATEGORY_TAG_MAP) as Category[];
+
+/** The page Settings opens on until the user picks another (the view stays mounted after that). */
+export const DEFAULT_SETTINGS_CATEGORY: Category = 'accounts';
 
 export function ownsKey(prefixes: readonly string[], key: string): boolean {
   return prefixes.some((prefix) => key === prefix || key.startsWith(`${prefix}.`));

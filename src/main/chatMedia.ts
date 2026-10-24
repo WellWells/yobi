@@ -3,6 +3,9 @@ import * as path from 'node:path';
 import { app } from 'electron';
 import { sendLog } from './helpers';
 import { saveIntoFolder } from './flow/skills/savedDownloads';
+import { writeFileAtomic } from './atomicWrite';
+import { generatedImageFileName } from './providers/generatedImages';
+import type { GeneratedImage } from './providers/generatedImages';
 
 /**
  * Photos and videos the desktop chat shows without the person having asked to keep them: a
@@ -19,6 +22,30 @@ export function chatMediaDir(): string {
 /** Moves `file` into the chat media folder under `fileName` (numbered when taken). */
 export async function keepForChat(file: string, fileName: string): Promise<string> {
   const kept = await saveIntoFolder(file, chatMediaDir(), fileName);
+  void pruneChatMedia().catch(() => {});
+  return kept;
+}
+
+/**
+ * Pictures a provider drew for an answer, written into the chat media folder; the paths in the
+ * answer's order. One that cannot be written is logged and left out, so the answer still lands.
+ */
+export async function keepImagesForChat(images: readonly GeneratedImage[], prefix: string): Promise<string[]> {
+  if (images.length === 0) return [];
+  const dir = chatMediaDir();
+  await fs.mkdir(dir, { recursive: true });
+  const now = new Date();
+  const kept: string[] = [];
+  for (const [index, image] of images.entries()) {
+    const file = path.join(dir, generatedImageFileName(prefix, image, index, now));
+    try {
+      if (await fs.stat(file).then(() => true, () => false)) throw new Error(`${path.basename(file)} already exists`);
+      await writeFileAtomic(file, image.bytes);
+      kept.push(file);
+    } catch (err) {
+      sendLog(`⚠️ [Chat media] Picture not kept: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
   void pruneChatMedia().catch(() => {});
   return kept;
 }

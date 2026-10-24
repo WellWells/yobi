@@ -1,5 +1,6 @@
 import type { TelegramChannel, TelegramPairingState } from '../../shared/types';
 import type { BotContactInput } from '../botDirectory';
+import { isChannelDirectMessages } from './channelDirectMessages';
 
 export type DirectoryChatType = 'private' | 'group' | 'supergroup' | 'channel';
 
@@ -205,6 +206,8 @@ export interface DirectoryBackfillSinks {
   getPairing: () => TelegramPairingState;
   savePairing: (next: TelegramPairingState) => void;
   recordContact: (input: BotContactInput) => void;
+  /** Drops a chat recorded as a group that turns out to be a channel's direct messages. */
+  forgetChat?: (chatId: number) => void;
   onLog: (message: string) => void;
 }
 
@@ -230,7 +233,13 @@ export async function runDirectoryBackfill(
   const resolvedUsers = new Map<number, ResolvedIdentity>();
 
   for (const chatId of candidates.chatIds.slice(0, MAX_LOOKUPS)) {
-    const identity = parseIdentity(chatId, await safeCall(() => api.getChat(chatId)));
+    const chat = await safeCall(() => api.getChat(chatId));
+    if (isChannelDirectMessages(chat)) {
+      sinks.forgetChat?.(chatId);
+      sinks.onLog(`[telegram] chat ${chatId} is a channel's direct messages, not a group — dropped from the directory`);
+      continue;
+    }
+    const identity = parseIdentity(chatId, chat);
     if (!identity || identity.type === 'private') continue;
     const member = parseMember(await safeCall(() => api.getChatMember(chatId, botId)));
     /*

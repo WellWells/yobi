@@ -1,6 +1,6 @@
 # Yobi AI — Privacy Policy
 
-_Last updated: 9 October 2026_
+_Last updated: 23 October 2026_
 
 Yobi AI ("Yobi", "the app") is a desktop application published by wellstsai.com. This policy explains what data the app handles and where it goes.
 
@@ -14,9 +14,9 @@ Yobi has no backend. We operate no servers, require no account, and collect no d
 - **AI replies and workflow outputs.** These are stored as files on your device (in your local app data folder). You can delete them at any time.
 - **Personal memory.** On by default; switch off **Remember things about me** in Settings → Personal memory to stop it. In the chat, `/agent`, and private chats with bot accounts you marked as **Me**, the AI may save short facts about you — things like your city or what you are working on — on its own or when you ask, and the reply shows a line when it does. Entries are stored locally on your device and added to the prompts you send from those places, so they reach the AI service you chose in the same way the rest of your text does. A flow LLM step reads them only if you tick **Include personal memory** on that step, and never writes. You can read, edit, or delete every entry on the same page. Hotkeys, group chats, and temporary conversations never read or write it.
 - **Web search.** The app sends search queries to DuckDuckGo from your device, and fetches the pages it finds, only when web search is in use: you turn on **Web** in the chat, your message asks to search the web, or the Agent decides to look something up (not in a conversation where you switched **Web** off). Bot accounts need the **Web search** permission.
-- **Settings.** Stored locally on your device. Sensitive values — your Telegram bot token, LINE channel secret and access token, SMTP passwords, Bring-Your-Own-Key API keys, connector (MCP) authorizations and data source keys, if you configure them — are encrypted at rest using the operating system's credential protection (Windows DPAPI / macOS Keychain).
-- **Optional Telegram and LINE integrations.** If you connect your own Telegram or LINE bot, messages and results flow between your device and that platform's API using your own token. Pairing only lets an account chat with the AI. Everything else — web search, reading this computer (files, clipboard, system info), connectors, running commands — is a permission you grant per account in Settings → Bot Integrations; reading this computer, connectors and commands work in private chats only. Each command is shown in the chat and runs only after it is approved there, and a bot can never change data in a connector. Off by default.
-- **Optional email (SMTP) step.** If you configure an SMTP account, emails are sent directly from your device through that account. Off by default.
+- **Settings.** Stored locally on your device. Sensitive values — your Telegram bot token, LINE channel secret and access token, mail passwords and Microsoft sign-in tokens, Bring-Your-Own-Key API keys, connector (MCP) authorizations and data source keys, if you configure them — are encrypted at rest using the operating system's credential protection (Windows DPAPI / macOS Keychain).
+- **Optional Telegram and LINE integrations.** If you connect your own Telegram or LINE bot, messages and results flow between your device and that platform's API using your own token. Pairing only lets an account chat with the AI. Everything else — web search, reading this computer (files, clipboard, system info), connectors, running commands — is a permission you grant per account in Settings → Bot Integrations; reading this computer, connectors and commands work in private chats only. Each command is shown in the chat and runs only after it is approved there, and a bot can never change data in a connector. In a Telegram group you allow the bot into, it keeps the messages it receives on your device for 3 days, then deletes them (a factory reset deletes them at once; they are not part of a backup). When someone addresses the bot, the messages around that request are sent to the AI with it, and a flow you set up can send a day's messages to the AI to summarize. Off by default.
+- **Optional mailboxes (IMAP / SMTP).** If you add a mailbox in Settings → Connectors → Mail, Yobi connects from your device directly to your mail provider to read and send mail. It signs in with an app password, or for Outlook.com and Microsoft 365, with Microsoft sign-in. The sign-in token stays on your device, encrypted as above. The developer has no access to your mailbox or token. Mail is sent to an AI service only when you ask the AI to work with it. Off by default.
 - **Optional Bring Your Own Key (BYOK).** If you add your own API key (OpenAI, Anthropic, Google Gemini, OpenRouter and others, or any OpenAI-compatible endpoint), prompts you send to that key go directly from your device to that endpoint, over HTTPS (or HTTP for a server on your own network). Used only when you pick one of your keys.
 - **Optional share links.** If you create a share link for a conversation, the app encrypts that conversation on your device (AES-256-GCM, key derived with PBKDF2-SHA256) and uploads only the ciphertext to a PrivateBin host — `privatebin.net` by default, changeable to any instance you prefer. The decryption key is placed in the link's `#fragment`, which browsers never send to the server, so the host cannot read the content; anyone you give the full link to can. Links expire (one week by default) and can be set to burn after reading. Off until you create a link, and the app asks for your consent the first time.
 - **Optional MCP servers.** If you add a remote Model Context Protocol server, the agent can call its tools — the request content it sends goes from your device to that server over HTTPS, using credentials you supply (stored encrypted, as above). You choose which servers to add, and any tool call that writes asks you to confirm first, unless you chose **Always allow this server** for it (deleting and sending still ask every time). Off by default; no servers are preconfigured.
@@ -35,7 +35,7 @@ Yobi has no backend. We operate no servers, require no account, and collect no d
 
 ## Third-party services
 
-Your use of each outside service Yobi contacts for you is governed by that service's own terms and privacy policy: the AI services (Google, Anthropic, OpenAI, Perplexity), any API endpoint you add your own key for, DuckDuckGo, X, the data sources above, Telegram, LINE, your email provider, the PrivateBin host you publish a share link to, any MCP server you add, and GitHub for the update check. Yobi acts only as an automation layer on your device.
+Your use of each outside service Yobi contacts for you is governed by that service's own terms and privacy policy: the AI services (Google, Anthropic, OpenAI, Perplexity), any API endpoint you add your own key for, DuckDuckGo, X, the data sources above, Telegram, LINE, your email provider and Microsoft sign-in, the PrivateBin host you publish a share link to, any MCP server you add, and GitHub for the update check. Yobi acts only as an automation layer on your device.
 
 ## Updates to this policy
 
@@ -49,7 +49,7 @@ Questions or issues: https://github.com/WellWells/yobi/issues
 
 # Yobi AI — 隱私權政策（中文版）
 
-_最後更新：2026 年 10 月 9 日_
+_最後更新：2026 年 10 月 23 日_
 
 Yobi AI（下稱「Yobi」、「本 App」）是由 wellstsai.com 發行的桌面應用程式。本政策說明 App 處理哪些資料、資料流向何處。
 
@@ -63,9 +63,9 @@ Yobi 沒有後端。我們不營運任何伺服器、不要求帳號、不收集
 - **AI 回覆與流程輸出**：以檔案形式存在你裝置的本機資料夾，可隨時刪除。
 - **個人化記憶**：預設開啟，可在「設定 → 個人化記憶」關閉「記住關於我的事」。在聊天、`/agent`，以及你標為「本人」的 Bot 帳號私訊中，AI 可能主動或依你的要求記下關於你的短句（例如你在哪個城市、正在忙什麼），記下時回答會附上一行提示。這些條目存在你的本機裝置，並在你從上述地方送出提示時一併帶上，因此會和你其餘的文字一樣抵達你選擇的 AI 服務。流程的 LLM 步驟只有勾選「帶入個人化記憶」時才會讀取，而且不會寫入。所有條目都可在同一頁查看、編輯或刪除。熱鍵、群組對話與臨時對話一律不讀也不寫。
 - **網路搜尋**：只有在用到網路搜尋時，App 才會從你的裝置把查詢字串送往 DuckDuckGo，並抓取找到的頁面：你在聊天中開啟「**網頁**」、訊息明講要上網查，或 Agent 判斷需要查資料時（你在該對話關掉「網頁」就不會）。Bot 帳號需要「網路搜尋」權限。
-- **設定**：存於本機。敏感值（Telegram Bot Token、LINE Channel Secret 與 Channel Access Token、SMTP 密碼、BYOK API 金鑰、連接器（MCP）授權與資料來源金鑰，凡你有設定的）以作業系統的憑證保護機制（Windows DPAPI／macOS Keychain）加密存放。
-- **選用的 Telegram 與 LINE 整合**：若連接自己的 Telegram 或 LINE Bot，訊息與結果經由你自己的 token 在你的裝置與該平台 API 之間傳輸。配對只讓對方能和 AI 對話；其他能力——網路搜尋、讀取這台電腦（檔案、剪貼簿、系統資訊）、連接器、執行指令——都要你在「設定 → Bot 整合」逐個帳號授予，其中讀取這台電腦、連接器與執行指令只限私訊。每個指令都會先顯示在聊天中，經同意後才執行；Bot 一律不能改動連接器裡的資料。預設關閉。
-- **選用的 Email（SMTP）步驟**：若設定 SMTP 帳號，郵件由你的裝置直接經該帳號寄出。預設關閉。
+- **設定**：存於本機。敏感值（Telegram Bot Token、LINE Channel Secret 與 Channel Access Token、信箱密碼與 Microsoft 登入憑證、BYOK API 金鑰、連接器（MCP）授權與資料來源金鑰，凡你有設定的）以作業系統的憑證保護機制（Windows DPAPI／macOS Keychain）加密存放。
+- **選用的 Telegram 與 LINE 整合**：若連接自己的 Telegram 或 LINE Bot，訊息與結果經由你自己的 token 在你的裝置與該平台 API 之間傳輸。配對只讓對方能和 AI 對話；其他能力——網路搜尋、讀取這台電腦（檔案、剪貼簿、系統資訊）、連接器、執行指令——都要你在「設定 → Bot 整合」逐個帳號授予，其中讀取這台電腦、連接器與執行指令只限私訊。每個指令都會先顯示在聊天中，經同意後才執行；Bot 一律不能改動連接器裡的資料。在你允許 Bot 加入的 Telegram 群組裡，它收到的訊息會在你的裝置上保留 3 天後刪除（原廠重置會立即刪除，也不會進入備份）。有人叫 Bot 時，該請求前後的訊息會一併送給 AI；你設定的流程也可以把一天的訊息送給 AI 統整。預設關閉。
+- **選用的信箱（IMAP／SMTP）**：若你在「設定 → 連接器 → 信箱」加入信箱，Yobi 會從你的裝置直接連到你的郵件服務收寄信件。登入方式為應用程式密碼；Outlook.com 與 Microsoft 365 則使用 Microsoft 登入。登入憑證存於你的裝置並依上述方式加密。開發者無法存取你的信箱或憑證。只有在你請 AI 處理信件時，信件內容才會送往 AI 服務。預設關閉。
 - **選用的 BYOK（自帶金鑰）**：若你加入自己的 API 金鑰（OpenAI、Anthropic、Google Gemini、OpenRouter 等，或任何 OpenAI 相容端點），送往該金鑰的提示會從你的裝置直接送到該端點（HTTPS，或你自己網路上的伺服器用 HTTP）。只有你選用自己的金鑰時才會使用。
 - **選用的分享連結**：若你為某段對話建立分享連結，App 會在你的裝置上先加密該對話（AES-256-GCM，金鑰以 PBKDF2-SHA256 導出），只把密文上傳到 PrivateBin 主機——預設為 `privatebin.net`，可自行改成任何你偏好的站台。解密金鑰放在連結的 `#fragment`，瀏覽器不會把它送到伺服器，因此主機無法讀取內容；但拿到完整連結的人可以。連結會過期（預設一週），也可設定為閱後即焚。未建立連結前不啟用，且首次使用時會先徵詢你的同意。
 - **選用的 MCP 伺服器**：若你加入遠端 Model Context Protocol 伺服器，代理可呼叫其工具——送出的請求內容會從你的裝置經 HTTPS 傳到該伺服器，使用你自行提供的憑證（比照上述加密存放）。要加入哪些伺服器由你決定，且任何會寫入的工具呼叫都會先請你確認，除非你對該伺服器選了「永遠允許這個伺服器」（刪除與寄出仍每次確認）。預設關閉，不預先設定任何伺服器。
@@ -84,7 +84,7 @@ Yobi 沒有後端。我們不營運任何伺服器、不要求帳號、不收集
 
 ## 第三方服務
 
-Yobi 替你連線的每個外部服務，你的使用都受該服務自身的條款與隱私權政策約束：AI 服務（Google、Anthropic、OpenAI、Perplexity）、你加入自己金鑰的 API 端點、DuckDuckGo、X、上述資料來源、Telegram、LINE、你的郵件供應商、你發布分享連結所使用的 PrivateBin 主機、你自行加入的 MCP 伺服器，以及更新檢查用的 GitHub。Yobi 僅是在你裝置上運作的自動化層。
+Yobi 替你連線的每個外部服務，你的使用都受該服務自身的條款與隱私權政策約束：AI 服務（Google、Anthropic、OpenAI、Perplexity）、你加入自己金鑰的 API 端點、DuckDuckGo、X、上述資料來源、Telegram、LINE、你的郵件供應商與 Microsoft 登入、你發布分享連結所使用的 PrivateBin 主機、你自行加入的 MCP 伺服器，以及更新檢查用的 GitHub。Yobi 僅是在你裝置上運作的自動化層。
 
 ## 政策更新
 

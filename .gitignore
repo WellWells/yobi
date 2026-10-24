@@ -44,9 +44,15 @@ user-memory/
 /history/
 # What each Notion document last agreed on with its page (same flow data dir)
 /notion-sync/
+# Recently Deleted conversations (same flow data dir)
+/trash/
+# Done-flag of the one-time move of bot conversations into their folders (same flow data dir)
+/conversation-folders.json
 flow-schedule-state.json
 data-keys.json
 secret-health.json
+# Calendar subscriptions — encrypted private .ics addresses (the dev config dir is the repo root)
+calendars.json
 # writeFileAtomic temp files left behind when a dev run is killed mid-write
 .*.tmp
 

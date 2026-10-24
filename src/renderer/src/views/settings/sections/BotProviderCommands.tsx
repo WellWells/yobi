@@ -96,11 +96,13 @@ const ByokCommandRow: React.FC<{
         </Text>
       </Group>
       <Group gap={8} align="center" wrap="nowrap">
-        {info.hidden ? (
+        {/* An off switch already says the command is not offered, so a hidden key whose switch
+            is off gets no second "hidden" label; one switched on still says why it is missing. */}
+        {info.hidden ? (info.enabled && (
           <Text fz="var(--font-size-sm)" c="dimmed" w={162} ta="right">
             {t('settings.modelSources.hidden')}
           </Text>
-        ) : info.command ? (
+        )) : info.command ? (
           <Text fz="var(--font-size-base)" c="dimmed" ff="monospace" w={162} ta="right">
             /{info.command}
           </Text>

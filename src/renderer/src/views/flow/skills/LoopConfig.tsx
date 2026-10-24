@@ -4,8 +4,8 @@ import { AppTextInput } from '../../../components/AppTextInput';
 import { ToggleSwitch } from '../../../components/ToggleSwitch';
 import { SettingRow } from '../../../components/SettingRow';
 import { AppNumberInput } from '../../../components/AppNumberInput';
-import { SlidersHorizontal } from 'lucide-react';
 import type { SkillConfigProps } from './types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 export const LoopConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
   const input = step.config.input ?? '';
@@ -32,7 +32,6 @@ export const LoopConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) =>
       />
 
       <SettingRow
-        icon={<SlidersHorizontal size={13} />}
         label={t('flow.skill.loop.limitIterations')}
         control={
           <ToggleSwitch
@@ -54,7 +53,7 @@ export const LoopConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) =>
       )}
 
       <Text fz="xs" c="dimmed">
-        {t('flow.skill.loop.hint').replace('{{var}}', loopVar ? `{{${loopVar}.title}}` : '{{item.title}}')}
+        {fillTemplate(t('flow.skill.loop.hint'), { var: loopVar ? `{{${loopVar}.title}}` : '{{item.title}}' })}
       </Text>
     </Stack>
   );

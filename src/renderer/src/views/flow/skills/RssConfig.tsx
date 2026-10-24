@@ -4,6 +4,7 @@ import { BookmarkCheck, Trash2 } from 'lucide-react';
 import { rssApi, ipcEvents } from '../../../api/electronApi';
 import { FeedUrlField } from '../FeedUrlField';
 import type { SkillConfigProps } from './types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 export const RssConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
   const url = step.config.url ?? '';
@@ -67,7 +68,7 @@ export const RssConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
       </Button>
 
       <Text fz="xs" c="dimmed">
-        {t('flow.skill.rss.outputHint').replace('{{outputKey}}', `{{${step.outputKey}}}`)}
+        {fillTemplate(t('flow.skill.rss.outputHint'), { outputKey: `{{${step.outputKey}}}` })}
       </Text>
     </Stack>
   );

@@ -36,6 +36,8 @@ interface Loaded {
   state: UserMemoryState;
   /** The file exists but could not be read as memory; it must be moved aside before anything is written. */
   corrupt: boolean;
+  /** The file exists but reading it failed (not "there is none"): the empty state stands in for it. */
+  unreadable?: boolean;
 }
 
 async function readState(): Promise<Loaded> {
@@ -43,16 +45,25 @@ async function readState(): Promise<Loaded> {
   try {
     raw = await fs.readFile(userMemoryPath(), 'utf-8');
   } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-      sendLog(`⚠️ [Memory] could not read the memory file: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    return { state: emptyMemoryState(), corrupt: false };
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { state: emptyMemoryState(), corrupt: false };
+    sendLog(`⚠️ [Memory] could not read the memory file: ${err instanceof Error ? err.message : String(err)}`);
+    return { state: emptyMemoryState(), corrupt: false, unreadable: true };
   }
   try {
     return { state: normalizeMemoryState(JSON.parse(raw)), corrupt: false };
   } catch {
     return { state: emptyMemoryState(), corrupt: true };
   }
+}
+
+/**
+ * The memory plus whether it is the real file: `trusted: false` when the file exists but could
+ * not be read or parsed, so the empty state is a stand-in. A decision that must not fail open on
+ * the "me" mark (who the owner is) refuses then instead of treating everyone as not the owner.
+ */
+export async function loadUserMemoryChecked(): Promise<{ state: UserMemoryState; trusted: boolean }> {
+  const loaded = await readState();
+  return { state: loaded.state, trusted: !loaded.corrupt && !loaded.unreadable };
 }
 
 /**

@@ -1,10 +1,10 @@
 import React from 'react';
 import { Stack, Text } from '@mantine/core';
-import { Eye } from 'lucide-react';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { ToggleSwitch } from '../../../components/ToggleSwitch';
 import { SettingRow } from '../../../components/SettingRow';
 import type { SkillConfigProps } from './types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 export const BrowserOpenConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => (
   <Stack gap="xs">
@@ -17,7 +17,6 @@ export const BrowserOpenConfig: React.FC<SkillConfigProps> = ({ step, onChange, 
     />
 
     <SettingRow
-      icon={<Eye size={13} />}
       label={t('flow.skill.browser_open.show')}
       hint={t('flow.skill.browser_open.show.hint')}
       control={
@@ -29,7 +28,7 @@ export const BrowserOpenConfig: React.FC<SkillConfigProps> = ({ step, onChange, 
     />
 
     <Text fz="xs" c="dimmed">
-      {t('flow.skill.browser_open.hint').split('{{outputKey}}').join(`{{${step.outputKey}}}`)}
+      {fillTemplate(t('flow.skill.browser_open.hint'), { outputKey: `{{${step.outputKey}}}` })}
     </Text>
   </Stack>
 );

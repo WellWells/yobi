@@ -17,6 +17,7 @@ import { useKatexPlugins } from './katexRuntime';
 import { rehypeTightTableColumns } from './markdownTableColumns';
 import { remarkHtmlTags } from './markdownHtmlTags';
 import { remarkAlerts } from './markdownAlerts';
+import { fillTemplate } from '../../../shared/fillTemplate';
 
 type RemarkRehypeOptions = NonNullable<Options['remarkRehypeOptions']>;
 
@@ -52,7 +53,7 @@ function footnoteOptions(labels: MarkdownLabels | null, prefix: string): RemarkR
     footnoteLabelProperties: { className: labels ? ['md-footnotes-label'] : ['md-footnotes-label', 'md-hidden'] },
     ...(labels && {
       footnoteBackLabel: (referenceIndex: number, rereferenceIndex: number) =>
-        labels.footnoteBack.replace('{{n}}', `${referenceIndex + 1}${rereferenceIndex > 1 ? `-${rereferenceIndex}` : ''}`),
+        fillTemplate(labels.footnoteBack, { n: `${referenceIndex + 1}${rereferenceIndex > 1 ? `-${rereferenceIndex}` : ''}` }),
     }),
   };
 }

@@ -23,6 +23,7 @@ import {
 import { MacWindowControls, WindowsControls } from './titlebar/WindowControls';
 import { QueuePopover } from './titlebar/QueuePopover';
 import styles from './TitleBar.module.css';
+import { fillTemplate } from '../../../shared/fillTemplate';
 
 const NAV_META: Record<View, { labelKey: string; icon: React.ReactNode }> = {
   chat: { labelKey: 'nav.chat', icon: <MessageSquare size={13} /> },
@@ -185,8 +186,8 @@ export const TitleBar: React.FC = () => {
 
   // The pill exists only while something is queued or running; an idle state tells the user nothing.
   const statusLabel = isProcessing
-    ? t('status.processing').replace('{{count}}', String(queue.total))
-    : t('status.queuePending').replace('{{count}}', String(queuePending));
+    ? fillTemplate(t('status.processing'), { count: String(queue.total) })
+    : fillTemplate(t('status.queuePending'), { count: String(queuePending) });
   const statusColor = isProcessing ? 'var(--mantine-color-warning)' : 'var(--mantine-color-accent)';
 
   const workerIcon = <AppWindow size={15} />;

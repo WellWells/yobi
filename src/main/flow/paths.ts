@@ -26,8 +26,10 @@ export const CHECKPOINT_KINDS = [
   'youtube_subs',
   'youtube_channels',
   'x_posts',
+  'ptt_board',
   'on_change',
   'line_read',
+  'mail_fetch',
 ] as const;
 
 export type CheckpointKind = (typeof CHECKPOINT_KINDS)[number];

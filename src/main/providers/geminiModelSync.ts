@@ -21,6 +21,7 @@ import type {
 } from '../../shared/geminiModels';
 import { GEMINI_MODE_BUTTON_SELECTOR, buildGeminiModelPickerScript } from './geminiModelScript';
 import type { GeminiPickerResult } from './geminiModelScript';
+import { GEMINI_SIGNED_OUT_PROMPT_CAP, geminiPromptCap, noteGeminiPageSignIn } from './geminiSignInState';
 
 /** Opening, switching twice and re-reading takes well under two seconds; this only stops a hang. */
 const PICKER_TIMEOUT_MS = 15_000;
@@ -77,6 +78,14 @@ function matches(snapshot: GeminiPickerSnapshot, target: GeminiPickerTarget): bo
   return modelOk && thinkingOk;
 }
 
+/** The picker shows whether Gemini is signed in; that decides how long a prompt the page keeps. */
+function notePageSignIn(snapshot: GeminiPickerSnapshot): void {
+  if (typeof snapshot.signedIn !== 'boolean' || !noteGeminiPageSignIn(snapshot.signedIn)) return;
+  sendLog(geminiPromptCap() > GEMINI_SIGNED_OUT_PROMPT_CAP
+    ? `Gemini signed in; prompts up to ${geminiPromptCap().toLocaleString('en-US')}`
+    : `Gemini looks signed out on the page; prompts are capped at ${geminiPromptCap().toLocaleString('en-US')}`);
+}
+
 /**
  * Makes Gemini's picker match Yobi's Gemini setting, refreshing the cached model list on the way.
  *
@@ -90,6 +99,7 @@ export async function syncGeminiModel(wc: WebContents): Promise<void> {
       sendLog(`⚠️ Gemini model picker unavailable (${read.reason}) — sending with the page's current model`);
       return;
     }
+    notePageSignIn(read.snapshot);
     if (read.snapshot.models.length === 0) {
       // The menu opened and listed nothing: a page change, not an account without models.
       sendLog('⚠️ Gemini\'s model menu listed no models — Gemini may have changed it; keeping the cached list');
@@ -111,6 +121,7 @@ export async function syncGeminiModel(wc: WebContents): Promise<void> {
         return;
       }
       snapshot = applied.snapshot;
+      notePageSignIn(snapshot);
       sendLog(matches(snapshot, target)
         ? `🧠 Gemini switched to ${describe(snapshot)}`
         : `⚠️ Gemini did not take the switch — sending with ${describe(snapshot)}`);

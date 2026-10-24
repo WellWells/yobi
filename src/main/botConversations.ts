@@ -4,9 +4,18 @@ import { writeFileAtomic } from './atomicWrite';
 import { getFlowDataDir } from './flow/paths';
 import { sendLog } from './helpers';
 import { extractTurnMetas } from '../shared/conversationDoc';
+import { isConversationId } from '../shared/conversationHistory';
+import { conversationPathKey } from './conversationPaths';
+import { conversationIdAt, resolveConversationPath } from './conversationIndex';
 import type { BotPlatform } from '../shared/types';
 
-type SessionMap = Record<string, string>;
+/** Where a chat's conversation is, and its id so a file moved into a folder is found again. */
+export interface BotSession {
+  path: string;
+  id?: string;
+}
+
+type SessionMap = Record<string, BotSession>;
 
 let cache: SessionMap | null = null;
 let writeChain: Promise<void> = Promise.resolve();
@@ -15,25 +24,44 @@ function storePath(): string {
   return path.join(getFlowDataDir(), 'bot-conversations.json');
 }
 
+/**
+ * One saved value. Files written before ids kept a bare path string; both shapes load, and a value
+ * of any other shape is dropped as before.
+ */
+export function parseBotSession(value: unknown): BotSession | null {
+  if (typeof value === 'string') return value ? { path: value } : null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const { path: filePath, id } = value as Record<string, unknown>;
+  if (typeof filePath !== 'string' || !filePath) return null;
+  return isConversationId(id) ? { path: filePath, id } : { path: filePath };
+}
+
 async function load(): Promise<SessionMap> {
   if (cache) return cache;
   try {
     const raw = await fs.readFile(storePath(), 'utf-8');
     const parsed: unknown = JSON.parse(raw);
-    cache = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? Object.fromEntries(
-        Object.entries(parsed as Record<string, unknown>)
-          .filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
-      )
-      : {};
+    const sessions: SessionMap = {};
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+        const session = parseBotSession(value);
+        if (session) sessions[key] = session;
+      }
+    }
+    cache = sessions;
   } catch {
     cache = {};
   }
   return cache;
 }
 
+/** A value without an id stays the bare path older versions wrote. */
+function storedValue(session: BotSession): string | BotSession {
+  return session.id ? { path: session.path, id: session.id } : session.path;
+}
+
 function persist(): Promise<void> {
-  const snapshot = { ...(cache ?? {}) };
+  const snapshot = Object.fromEntries(Object.entries(cache ?? {}).map(([key, session]) => [key, storedValue(session)]));
   writeChain = writeChain
     .then(async () => {
       const file = storePath();
@@ -63,15 +91,22 @@ async function lastActivityAt(conversationPath: string): Promise<number> {
 
 export async function getBotConversation(chatKey: string, now = Date.now()): Promise<string | null> {
   const sessions = await load();
-  const conversationPath = sessions[chatKey];
-  if (!conversationPath) return null;
+  const session = sessions[chatKey];
+  if (!session) return null;
+  // Moved into a folder (in Yobi or in Explorer/Finder): found again by its id.
+  const conversationPath = await resolveConversationPath(session);
   let lastAt: number;
   try {
+    if (!conversationPath) throw new Error('conversation file is gone');
     lastAt = await lastActivityAt(conversationPath);
   } catch {
     delete sessions[chatKey];
     await persist();
     return null;
+  }
+  if (conversationPath !== session.path) {
+    sessions[chatKey] = { ...session, path: conversationPath };
+    await persist();
   }
   if (now - lastAt < BOT_CONVERSATION_IDLE_MS) return conversationPath;
   // The entry stays until the new file replaces it: the private-chat keys double as the record of
@@ -83,9 +118,33 @@ export async function getBotConversation(chatKey: string, now = Date.now()): Pro
 export async function setBotConversation(chatKey: string, conversationPath: string): Promise<void> {
   if (!chatKey || !conversationPath) return;
   const sessions = await load();
-  if (sessions[chatKey] === conversationPath) return;
-  sessions[chatKey] = conversationPath;
+  const current = sessions[chatKey];
+  const id = (await conversationIdAt(conversationPath)) ?? undefined;
+  if (current?.path === conversationPath && current.id === id) return;
+  sessions[chatKey] = id ? { path: conversationPath, id } : { path: conversationPath };
   await persist();
+}
+
+/**
+ * Points every chat whose conversation was just moved at the file's new place. Keys are never
+ * removed here: they double as the record of who was once paired.
+ */
+export async function repointBotConversations(
+  moves: ReadonlyArray<{ from: string; to: string; id?: string }>,
+): Promise<number> {
+  if (moves.length === 0) return 0;
+  const sessions = await load();
+  const byOldPath = new Map(moves.map((move) => [conversationPathKey(move.from), move]));
+  let changed = 0;
+  for (const [key, session] of Object.entries(sessions)) {
+    const move = byOldPath.get(conversationPathKey(session.path));
+    if (!move) continue;
+    const id = move.id ?? session.id;
+    sessions[key] = id ? { path: move.to, id } : { path: move.to };
+    changed += 1;
+  }
+  if (changed > 0) await persist();
+  return changed;
 }
 
 export async function clearBotConversation(chatKey: string): Promise<boolean> {

@@ -63,7 +63,8 @@ export interface QueuedTranslation {
 
 /**
  * One translation request, in line behind the others. `onPhase` follows it from queued to
- * running. A request cancelled before its turn never reaches main.
+ * running. A request cancelled before its turn never reaches main. `filePath` names the saved
+ * conversation an answer belongs to: main keeps it from being moved or deleted while it runs.
  */
 export function queueTranslation(
   text: string,
@@ -71,12 +72,13 @@ export function queueTranslation(
   providerUrl: string,
   onPhase: (phase: 'waiting' | 'running') => void,
   id: string = nextId('t'),
+  filePath?: string,
 ): QueuedTranslation {
   ensureSubscribed();
   phaseListeners.set(id, onPhase);
   const result = enqueue(async (): Promise<TranslateResult> => {
     if (!phaseListeners.has(id)) return { ok: false, reason: 'cancelled' };
-    return translateApi.run({ id, providerUrl, text, to }).catch(() => ({ ok: false as const, reason: 'failed' as const }));
+    return translateApi.run({ id, providerUrl, text, to, ...(filePath ? { filePath } : {}) }).catch(() => ({ ok: false as const, reason: 'failed' as const }));
   }).finally(() => phaseListeners.delete(id));
   return { id, result };
 }
@@ -151,7 +153,7 @@ export async function translateTurn(args: {
   if (useTranslateStore.getState().jobs[key]?.id !== id) return;
   const queued = queueTranslation(args.response, args.to, providerUrl, (phase) => {
     useTranslateStore.getState().patchJob(id, { status: phase });
-  }, id);
+  }, id, isTemp(args.path) ? undefined : args.path);
   const result = await queued.result;
   const store = useTranslateStore.getState();
   if (store.jobs[key]?.id !== id) return;

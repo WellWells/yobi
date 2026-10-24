@@ -6,6 +6,8 @@ import {
   MEMORY_ENTRY_MAX_CHARS,
   MEMORY_MAX_OPS_PER_TURN,
   MEMORY_TOTAL_MAX_CHARS,
+  botSelfFrom,
+  emptyBotSelf,
 } from '../../shared/userMemory';
 import type {
   MemoryEditFailure,
@@ -27,7 +29,7 @@ export interface UserMemoryState {
 }
 
 export function emptyMemoryState(): UserMemoryState {
-  return { version: 1, enabled: true, nextId: 1, entries: [], botSelf: { telegram: [], line: [] } };
+  return { version: 1, enabled: true, nextId: 1, entries: [], botSelf: emptyBotSelf() };
 }
 
 const SOURCES: readonly UserMemorySource[] = ['chat', 'agent', 'bot', 'manual'];
@@ -63,13 +65,12 @@ export function normalizeMemoryState(raw: unknown): UserMemoryState {
   entries.sort((a, b) => memoryIdNumber(a.id) - memoryIdNumber(b.id));
   const highest = entries.reduce((max, entry) => Math.max(max, memoryIdNumber(entry.id)), 0);
   const storedNext = Number(obj.nextId);
-  const botSelf = (obj.botSelf && typeof obj.botSelf === 'object') ? obj.botSelf as Record<string, unknown> : {};
   return {
     version: 1,
     enabled: obj.enabled !== false,
     nextId: Math.max(highest + 1, Number.isFinite(storedNext) ? Math.floor(storedNext) : 1, 1),
     entries,
-    botSelf: { telegram: idList(botSelf.telegram), line: idList(botSelf.line) },
+    botSelf: botSelfFrom(obj.botSelf, idList),
   };
 }
 
@@ -77,7 +78,7 @@ export function memorySnapshot(state: UserMemoryState): UserMemorySnapshot {
   return {
     enabled: state.enabled,
     entries: state.entries.map((entry) => ({ ...entry })),
-    botSelf: { telegram: [...state.botSelf.telegram], line: [...state.botSelf.line] },
+    botSelf: botSelfFrom(state.botSelf, idList),
     usedChars: memoryUsedChars(state.entries),
     maxChars: MEMORY_TOTAL_MAX_CHARS,
     entryMaxChars: MEMORY_ENTRY_MAX_CHARS,

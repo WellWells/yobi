@@ -10,6 +10,7 @@ import { MessageMarkdown } from '../MessageMarkdown';
 import { LanguageMenuItems } from './LanguageMenuItems';
 import type { SelectionTranslation } from './useSelectionTranslate';
 import { useProviderLabel } from './useTurnTranslation';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 /** Tall enough for a few lines of result; the selection bar uses it to choose above or below. */
 export const SELECTION_TRANSLATE_HEIGHT = 460;
@@ -36,7 +37,7 @@ export const SelectionTranslatePanel: React.FC<SelectionTranslatePanelProps> = (
         <Menu position="bottom-start" withinPortal shadow="md" withInitialFocusPlaceholder={false}>
           <Menu.Target>
             <AppButton variant="subtle" size="compact-sm" c="var(--text-primary)" rightSection={<ChevronDown size={12} />}>
-              {t('chat.translate.into').replace('{{language}}', languageDisplayName(state.to, locale))}
+              {fillTemplate(t('chat.translate.into'), { language: languageDisplayName(state.to, locale) })}
             </AppButton>
           </Menu.Target>
           <Menu.Dropdown miw={200}>

@@ -2,7 +2,9 @@ import type { BrowserWindow } from 'electron';
 import { BUILTIN_AGENT_COMMAND, IPC } from '../../shared/types';
 import type {
   AgentCommandResult,
+  AgentPendingFlow,
   AgentRunState,
+  BotPlatform,
   AgentTraceEvent,
   AgentTracePayload,
   AgentTurnRecord,
@@ -35,17 +37,21 @@ import type { GoalIntent } from '../flow/agent/actionGate';
 import type { Fact } from '../flow/agent/toolContracts';
 import { loadConversation } from './conversationStore';
 import {
-  AgentRunError, AgentScopeError, BOT_TOOL_SCOPE, FULL_TOOL_SCOPE, isAllowedTool, isWebTool, withWebCapability,
+  AgentRunError, AgentScopeError, BOT_TOOL_SCOPE, FULL_TOOL_SCOPE, isAllowedTool, isWebTool, withPictureCapability,
+  withWebCapability,
 } from '../flow/agent/agentTools';
 import { isBuiltinTool } from '../flow/agent/agentBuiltins';
-import type { AgentBuiltinTool } from '../flow/agent/agentBuiltins';
+import type { AgentBuiltinTool, FlowSaveRequest } from '../flow/agent/agentBuiltins';
 import type { AgentToolScope } from '../flow/agent/agentTools';
 import type { AgentRunFailure, AgentScopeFailure } from '../flow/agent/agentTools';
-import { buildAgentConfirm, shellApprovalText } from './agentConfirm';
+import { buildAgentConfirm, connectorApprovalText, shellApprovalText } from './agentConfirm';
+import { flowApprovalText } from './flowApprovalText';
+import { loadRecipientDirectory } from '../flow/botRecipientDirectory';
+import { directorySeenBy, EMPTY_RECIPIENT_DIRECTORY } from '../../shared/botRecipients';
 import { numberedQuestion } from '../flow/agent/shellApproval';
 import { measureTokens } from '../tokenMeter';
 import type { TokenUsage } from '../../shared/tokenEstimate';
-import type { AgentProgress, ShellConfirmRequest } from '../flow/agent/agentEngine';
+import type { AgentProgress, McpConfirmRequest, ShellConfirmRequest } from '../flow/agent/agentEngine';
 import {
   deleteRunState, isBotRun, loadRunState, readRunConnectors, registerRun, saveRunState, unregisterRun,
 } from '../flow/agent/agentRunStore';
@@ -57,6 +63,10 @@ import type { AgentMemoryContext } from './agentMemory';
 import { agentMemoryBlock, resolveAgentMemory, settleAgentMemory } from './agentMemory';
 import { noteRunOutcome, runInMetricDomain } from '../llmMeter';
 import { agentRunMetricOutcome } from './agentRunMetrics';
+import { busyUntilSettled, markConversationBusy } from '../conversationBusy';
+import { conversationIdAt, resolveConversationPath } from '../conversationIndex';
+import { config } from '../config';
+import { agentPictureDrawer, agentPictureKeeper, runPictures } from './agentPictures';
 
 type Strings = Record<string, string>;
 
@@ -111,6 +121,17 @@ export interface AgentRunRequest {
    * chat and runs when the answer approves it. Without this a bot run never runs one.
    */
   shellInChat?: boolean;
+  /**
+   * The owner in their own private bot chat: a connector change is put to them as a question in the
+   * chat and made when the answer approves it. Without this a bot run's changes are refused.
+   */
+  connectorChangesInChat?: boolean;
+  /**
+   * A bot admin in their own private chat (the owner, or a Telegram admin-grant holder): the scope
+   * carries the flow builders, and a flow they build or change is put to them as a question in the
+   * chat and saved when the answer approves it. "Me" in a recipient is `requester`.
+   */
+  flowsInChat?: { owner: boolean; requester: { platform: BotPlatform; userId: string } };
   /** Name prefix for the file the answer starts when there is no conversation yet (a bot chat's). */
   fileLabel?: string;
 }
@@ -120,8 +141,10 @@ export interface AgentRunOutcome extends AgentCommandResult {
   title?: string;
   /** What the answer changed in the user's memory; a bot appends these to its message. */
   memoryNotes?: MemoryNote[];
-  /** The question asks to approve a shell command: a bot sends it word for word (see `BotBuiltinRunResult.verbatim`). */
+  /** The question asks to approve a shell command or a connector change: a bot sends it word for word (see `BotBuiltinRunResult.verbatim`). */
   shellApproval?: boolean;
+  /** Pictures `draw_image` drew for the answer, in the chat media folder; a bot sends them as photos. */
+  files?: string[];
 }
 
 function summarizeGoal(goal: string): string {
@@ -133,6 +156,7 @@ const BUILTIN_PROGRESS_KEYS: Record<AgentBuiltinTool, string> = {
   build_flow: 'agent.progress.buildFlow',
   edit_flow: 'agent.progress.editFlow',
   delegate: 'agent.progress.delegate',
+  draw_image: 'agent.progress.drawImage',
 };
 
 /**
@@ -224,6 +248,8 @@ interface DeliverArgs {
   fileLabel?: string;
   /** `Date.now()` when this run (or its resumption) started, for the turn's duration. */
   startedAt?: number;
+  /** Pictures shown under the answer (the turn's `mv`) and returned for a bot to send. */
+  pictures?: string[];
 }
 
 /**
@@ -236,9 +262,11 @@ function isEphemeralDelivery(origin: CommandOrigin): boolean {
 async function deliverResult(args: DeliverArgs): Promise<AgentRunOutcome> {
   const {
     prompt, title, answer, resolvedTarget, strings, origin, command,
-    conversationPath, usage, attachments, runId, choices, memoryNotes, recap, fileLabel, startedAt,
+    conversationPath, usage, attachments, runId, choices, memoryNotes, recap, fileLabel, startedAt, pictures,
   } = args;
   const conversationTitle = pickConversationTitle({ resolved: title, prompt });
+  const drawn = pictures?.length ? { chatMedia: pictures } : {};
+  const sent = pictures?.length ? { files: pictures } : {};
   const attached = attachmentMetaNames(attachments ?? []);
   const markdownOptions = {
     prompt,
@@ -272,8 +300,9 @@ async function deliverResult(args: DeliverArgs): Promise<AgentRunOutcome> {
       ...(memoryNotes?.length ? { memoryNotes } : {}),
       ...(recap !== undefined ? { recap } : {}),
       ...(startedAt !== undefined ? { startedAt } : {}),
+      ...drawn,
     });
-    return { success: true, answer, title: conversationTitle, ...(memoryNotes?.length ? { memoryNotes } : {}) };
+    return { success: true, answer, title: conversationTitle, ...(memoryNotes?.length ? { memoryNotes } : {}), ...sent };
   }
 
   const filePath = await saveCommandOutput({
@@ -290,10 +319,11 @@ async function deliverResult(args: DeliverArgs): Promise<AgentRunOutcome> {
     ...(recap !== undefined ? { recap } : {}),
     ...(fileLabel ? { fileLabel } : {}),
     ...(startedAt !== undefined ? { startedAt } : {}),
+    ...drawn,
     usage,
   });
   sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
-  return { success: true, filePath, answer, title: conversationTitle, ...(memoryNotes?.length ? { memoryNotes } : {}) };
+  return { success: true, filePath, answer, title: conversationTitle, ...(memoryNotes?.length ? { memoryNotes } : {}), ...sent };
 }
 
 export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): Promise<AgentRunOutcome> {
@@ -332,7 +362,14 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
 
   const attempt = async (taskId?: string): Promise<AgentRunOutcome> => {
     startedAt = Date.now();
+    let releaseFound = (): void => {};
     try {
+      // A conversation moved since the run was saved (an answer days later) is found by its id.
+      const before = state.conversationPath;
+      await adoptRunConversation(state);
+      if (state.conversationPath && state.conversationPath !== before) {
+        releaseFound = markConversationBusy(state.conversationPath, 'agent');
+      }
       const report = (progress: AgentProgress): void => {
         const text = progressText(progress, strings);
         if (taskId) flowManager.setQueueTaskProgress(taskId, text);
@@ -352,7 +389,8 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
       // a URL" shortcut — which fetches a web page instead — would quietly answer a different
       // question. `web === false` rules it out for the same reason it removes `browser`:
       // fetching the page IS going online, whoever typed the URL.
-      if (state.web !== false && connectors.length === 0 && !resumeFrom?.length && !state.attachments?.length) {
+      // A message replied to is part of the question, so a link typed under it is not the whole of it.
+      if (state.web !== false && connectors.length === 0 && !resumeFrom?.length && !state.attachments?.length && !state.replyTo) {
         report({ stage: 'thinking' });
         const { result: shortcut, usage: shortcutUsage } = await measureTokens(
           () => runUrlShortcut(goal, providerUrl, flowManager.getExecutorDeps(), strings, controller.signal, {
@@ -403,6 +441,15 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
       const persistEvidence = (evidence: EvidenceSnapshot, actions: readonly ActionRecord[]): void => {
         state.evidence = { facts: evidence.facts, actions: [...previousActions, ...actions] };
       };
+      const flowsInChat = origin === 'bot' ? request.flowsInChat : undefined;
+      // Read once for the run: whom "me" and a name in a flow the admin builds resolve to.
+      const flowRecipients = flowsInChat
+        ? directorySeenBy(
+          await loadRecipientDirectory().catch(() => EMPTY_RECIPIENT_DIRECTORY),
+          flowsInChat.requester.platform,
+          flowsInChat.requester.userId,
+        )
+        : undefined;
       const memory = await resolveAgentMemory(origin, request.memory);
       const userMemory = agentMemoryBlock(memory);
       const prefsBlock = answerPrefs ? renderAgentPrefsBlock(answerPrefs) : '';
@@ -437,10 +484,34 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
           // Only the desktop composer's run is the temporary chat; a bot run never reads it.
           ...(isEphemeralDelivery(origin) ? { temporaryChat: true } : {}),
           ...(state.attachments?.length ? { attachments: state.attachments } : {}),
+          ...(state.replyTo ? { replyTo: state.replyTo } : {}),
+          ...(state.recentChat?.length ? { recentChat: state.recentChat } : {}),
+          ...(state.chatRecap ? { chatRecap: true as const } : {}),
           signal: controller.signal,
           onConfirm: buildAgentConfirm(deps.getMainWin, strings, origin),
           ...(origin === 'bot' && request.shellInChat
             ? { shellApproval: (req: ShellConfirmRequest) => shellApprovalText(req, strings) }
+            : {}),
+          ...(origin === 'bot' && request.connectorChangesInChat
+            ? { connectorApproval: (req: McpConfirmRequest) => connectorApprovalText(req, strings) }
+            : {}),
+          ...(flowsInChat
+            ? {
+              flowApproval: { hold: { owner: flowsInChat.owner }, text: (req: FlowSaveRequest) => flowApprovalText(req, strings) },
+              ...(flowRecipients ? { recipients: flowRecipients } : {}),
+              onEnableFlow: (flowId: string) => flowManager.enableFlowFromAgent(flowId),
+            }
+            : {}),
+          // Every bot run gets these, admin or not now: an answer to a held flow clears it either way.
+          ...(origin === 'bot'
+            ? {
+              ...(state.pendingFlow ? { pendingFlow: state.pendingFlow } : {}),
+              onPendingFlow: (pending: AgentPendingFlow | undefined) => {
+                if (pending) state.pendingFlow = pending;
+                else delete state.pendingFlow;
+                void saveRunState(state);
+              },
+            }
             : {}),
           onStepBudget: (ceiling) => {
             state.maxTurns = ceiling;
@@ -451,10 +522,19 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
           // removed from its vocabulary rather than offered and then refused, which would burn a
           // turn and a queue slot per attempt. On top of that, `state.web === false` is the
           // composer's "web" checkbox, which takes the three online tools out of every scope.
-          toolScope: withWebCapability(
-            request.toolScope ?? (origin === 'bot' ? BOT_TOOL_SCOPE : FULL_TOOL_SCOPE),
-            state.web !== false,
+          // `draw_image` goes wherever a picture can reach the user — the desktop chat; a bot's
+          // scope says whether this account may draw — never on the wording: the model reads what
+          // was meant (2026-10-22, two picture requests the patterns missed met "no image tool").
+          toolScope: withPictureCapability(
+            withWebCapability(
+              request.toolScope ?? (origin === 'bot' ? BOT_TOOL_SCOPE : FULL_TOOL_SCOPE),
+              state.web !== false,
+            ),
+            request.toolScope ? request.toolScope.pictures === true : origin !== 'bot',
           ),
+          // ChatGPT draws only in a normal chat, deleted afterwards as the image command does.
+          drawImage: agentPictureDrawer(state, config.oneShotTemporaryChat || isEphemeralDelivery(origin)),
+          keepPictures: agentPictureKeeper(state),
           onSaveFlow: async (flow) => recordFlow(await flowManager.saveGeneratedFlow(flow)),
           onReplaceFlow: async (flow) => recordFlow(await flowManager.replaceFlowFromAgent(flow)),
           listFlows: () => flowManager.getAll(),
@@ -497,7 +577,10 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
         });
         state.status = 'awaiting';
         state.updatedAt = new Date().toISOString();
-        if (delivered.filePath) state.conversationPath = delivered.filePath;
+        if (delivered.filePath) {
+          state.conversationPath = delivered.filePath;
+          await adoptRunConversation(state);
+        }
         await saveRunState(state);
         emit({ kind: 'question', question: outcome.question, ...(choices.length > 0 ? { choices } : {}) });
         return {
@@ -567,6 +650,7 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
         ...(ephemeral || state.turns.length === 0 ? {} : { runId }),
         ...(memoryNotes.length > 0 ? { memoryNotes } : {}),
         recap: recapFor(recapLine),
+        pictures: runPictures(state),
       });
       return usedWeb ? { ...delivered, usedWeb } : delivered;
     } catch (err: unknown) {
@@ -586,6 +670,7 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
       sendLog(`❌ [Agent] ${message}${detail ? ` — ${detail}` : ''}`);
       return { success: false, error: message };
     } finally {
+      releaseFound();
       unregisterRun(runId);
     }
   };
@@ -610,7 +695,8 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
     return result;
   }));
 
-  return flowManager.enqueueExternalTask(
+  // Busy from queued to delivered: the answer (or the question) is written into this conversation.
+  return busyUntilSettled(state.conversationPath, 'agent', flowManager.enqueueExternalTask(
     `/${command} ${summarizeGoal(goal)}`,
     run,
     (err) => {
@@ -618,5 +704,15 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
       return { success: false, error: agentFailureText(err, strings, command, providerUrl) };
     },
     runId,
-  );
+  ));
+}
+
+/** Where the run's conversation is now, and its id, so a later answer finds it after a move. */
+async function adoptRunConversation(state: AgentRunState): Promise<void> {
+  if (!state.conversationPath) return;
+  const found = await resolveConversationPath({ path: state.conversationPath, id: state.conversationId });
+  if (!found) return;
+  state.conversationPath = found;
+  const id = await conversationIdAt(found);
+  if (id) state.conversationId = id;
 }

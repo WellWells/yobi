@@ -14,6 +14,7 @@ import {
   ASSISTANT_MAX_ATTEMPTS, applyAssistantEdits, cancelAssistant, highlightEdit, revealEdit, revertAssistantEdits, sendAssistantMessage,
   skipAssistantEdits, subscribeAssistantProgress,
 } from './docAssistantActions';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 
 interface DocAssistantPanelProps {
   path: string;
@@ -73,6 +74,14 @@ export const DocAssistantPanel: React.FC<DocAssistantPanelProps> = ({ path, cont
   useEffect(() => {
     if (selection) inputRef.current?.focus();
   }, [selection]);
+  // A click in the sidebar opened this document: the box is the document view's composer.
+  const focusRequested = useDocAssistantStore((s) => s.focusRequested);
+  const consumeFocusRequest = useDocAssistantStore((s) => s.consumeFocusRequest);
+  useEffect(() => {
+    if (!focusRequested) return;
+    inputRef.current?.focus();
+    consumeFocusRequest();
+  }, [focusRequested, consumeFocusRequest]);
   // The newest turn in view, as in a chat.
   useEffect(() => {
     const list = listRef.current;
@@ -98,7 +107,7 @@ export const DocAssistantPanel: React.FC<DocAssistantPanelProps> = ({ path, cont
     ? job.phase === 'waiting'
       ? t('notion.assistant.phase.waiting')
       : job.phase === 'retrying'
-        ? t('notion.assistant.phase.retrying').replace('{{attempt}}', String(job.attempt)).replace('{{max}}', String(ASSISTANT_MAX_ATTEMPTS))
+        ? fillTemplate(t('notion.assistant.phase.retrying'), { attempt: String(job.attempt), max: String(ASSISTANT_MAX_ATTEMPTS) })
         : t('notion.assistant.phase.running')
     : '';
 

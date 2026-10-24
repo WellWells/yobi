@@ -11,12 +11,16 @@ import { refreshClaudeModelList } from './ipc/claudeModel';
 import { clearChatgptModels } from './providers/chatgptModelSync';
 import { refreshChatgptModelList } from './ipc/chatgptModel';
 import { refreshGeminiModelList } from './ipc/geminiModel';
+import { noteGeminiCookieRead, noteGeminiSessionChanged, refreshGeminiSignIn } from './providers/geminiSignInState';
 
 const WORKER_PARTITION = 'persist:gemini';
 
 function broadcastStatus(provider: AuthProvider, loggedIn: boolean): void {
   const status: AccountStatus = { provider, loggedIn };
   sendToRenderer(IPC.ACCOUNT_STATUS_CHANGED, status);
+  // Every sign-in runs in persist:gemini, and "Continue with Google" for another provider sets
+  // the Google cookies Gemini's check reads, so any provider's change can sign Gemini in or out.
+  void refreshGeminiSignIn();
 }
 
 /** A model list depends on the account (its plan, or signed in at all), so a sign-in reads it again. */
@@ -45,11 +49,14 @@ export async function openAccountLoginWindow(provider: AuthProvider): Promise<bo
     },
     isSignedIn: () => getAccountStatus(provider),
     onSignedIn: () => {
+      if (provider === 'gemini') noteGeminiSessionChanged(true);
       broadcastStatus(provider, true);
       afterSignIn(provider);
       sendWebNotification(t(strings, 'notify.signedIn.title'), providerLabel, 'success');
     },
     onClosed: (loggedIn) => {
+      // A plain read: closing a window that changed nothing must not wipe what a send learned.
+      if (provider === 'gemini') noteGeminiCookieRead(loggedIn);
       broadcastStatus(provider, loggedIn);
       if (loggedIn) afterSignIn(provider);
     },
@@ -62,6 +69,7 @@ export async function clearProviderData(provider: Provider): Promise<boolean> {
     await clearProviderSession(provider);
     if (provider === 'claude') clearClaudeModels();
     if (provider === 'chatgpt') clearChatgptModels();
+    if (provider === 'gemini') noteGeminiSessionChanged(false);
     // Every Provider is an AuthProvider today. If one ever is not, this stops
     // type-checking rather than silently skipping the status broadcast.
     broadcastStatus(provider, false);

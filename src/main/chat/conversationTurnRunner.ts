@@ -1,6 +1,7 @@
 import { config } from '../config';
 import { detectProvider } from '../providers';
 import type { ByokUsage } from '../providers/byokClient';
+import type { GeneratedImage } from '../providers/generatedImages';
 import { isByokTargetUrl } from '../../shared/types';
 import { readMapPlaceRef } from '../../shared/conversationDoc';
 import { currentRecap } from '../../shared/recap';
@@ -165,6 +166,8 @@ export interface ConversationalSendResult {
   plan: ConversationSendPlan | null;
   outgoingPrompt: string;
   usage: ByokUsage | null;
+  /** Pictures a web provider drew for the answer. */
+  images?: GeneratedImage[];
 }
 
 export async function executeConversationalSend(args: {
@@ -180,7 +183,7 @@ export async function executeConversationalSend(args: {
   withNativeReminder?: (prompt: string) => string;
   runBrowser: (prompt: string, expectThreadUrl?: string) => Promise<{
     response: string; title: string; threadUrl: string | null; threadLost?: true;
-    sentPrompt?: string;
+    sentPrompt?: string; images?: GeneratedImage[];
   }>;
   runByok: (prompt: string) => Promise<{ response: string; title: string; usage: ByokUsage | null }>;
   onThreadLost: () => void;
@@ -215,6 +218,7 @@ export async function executeConversationalSend(args: {
     plan,
     outgoingPrompt: result.sentPrompt ?? outgoingPrompt,
     usage: null,
+    ...(result.images?.length ? { images: result.images } : {}),
   };
 }
 

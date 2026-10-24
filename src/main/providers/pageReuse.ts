@@ -6,7 +6,11 @@ import type { WebContents } from 'electron';
 import { navigateAndWait, sleep } from './common';
 import { providerFromUrl } from '../../shared/types';
 import type { Provider } from '../../shared/types';
-import { GEMINI_INPUT_SELECTOR, GEMINI_STOP_SELECTOR } from './geminiReadScript';
+import {
+  GEMINI_INPUT_SELECTOR,
+  GEMINI_STOP_SELECTOR,
+  GEMINI_TEMPORARY_CHAT_ACTIVE_SELECTOR,
+} from './geminiReadScript';
 import { GEMINI_CHIP_SELECTOR } from './geminiUpload';
 import {
   CHATGPT_ASSISTANT_TURN_SELECTOR,
@@ -41,6 +45,11 @@ export interface PageReusePolicy {
    * client-side afterwards, so the URL alone proves nothing at `load`.
    */
   threadSettledExpression?: string;
+  /**
+   * Evaluated in the page: true while it is the provider's temporary chat. Origin and path
+   * cannot tell `chatgpt.com/` from its temporary twin. Absent where Yobi never opens one.
+   */
+  temporaryExpression?: string;
 }
 
 export interface PageTarget {
@@ -49,6 +58,18 @@ export interface PageTarget {
    * supposed to be full of answers; a one-shot send must never inherit them.
    */
   continuingThread: boolean;
+  /** A new conversation that has to be the provider's temporary chat. */
+  temporary?: boolean;
+}
+
+/** The query that turns a provider's new-chat page into its temporary chat; it survives the send. */
+export const TEMPORARY_CHAT_QUERY: Partial<Record<Provider, { name: string; value: string }>> = {
+  chatgpt: { name: 'temporary-chat', value: 'true' },
+  claude: { name: 'incognito', value: '' },
+};
+
+function temporaryQueryExpression(provider: 'chatgpt' | 'claude'): string {
+  return `new URLSearchParams(location.search).has(${JSON.stringify(TEMPORARY_CHAT_QUERY[provider]?.name)})`;
 }
 
 export function parseHttpUrl(url: string): URL | null {
@@ -164,15 +185,18 @@ export const PAGE_REUSE: Record<Provider, PageReusePolicy> = {
   gemini: {
     readyExpression: GEMINI_READY,
     emptyExpression: emptyOf('model-response'),
+    temporaryExpression: `!!document.querySelector(${JSON.stringify(GEMINI_TEMPORARY_CHAT_ACTIVE_SELECTOR)})`,
   },
   chatgpt: {
     readyExpression: CHATGPT_READY,
     emptyExpression: emptyOf(`${CHATGPT_USER_TURN_SELECTOR}, ${CHATGPT_ASSISTANT_TURN_SELECTOR}`),
+    temporaryExpression: temporaryQueryExpression('chatgpt'),
   },
   claude: {
     readyExpression: CLAUDE_READY,
     emptyExpression: emptyOf(`${CLAUDE_USER_TURN_SELECTOR}, ${CLAUDE_ASSISTANT_TURN_SELECTOR}`),
     threadSettledExpression: `!(${emptyOf(`${CLAUDE_USER_TURN_SELECTOR}, ${CLAUDE_ASSISTANT_TURN_SELECTOR}`)})`,
+    temporaryExpression: temporaryQueryExpression('claude'),
   },
   perplexity: {
     readyExpression: PERPLEXITY_READY,
@@ -196,7 +220,9 @@ async function canReusePage(
     if (!isSamePage(wc.getURL(), url)) return false;
     if (!(await probe(wc, policy.readyExpression))) return false;
     if (target.continuingThread) return true;
-    return await probe(wc, policy.emptyExpression);
+    if (!(await probe(wc, policy.emptyExpression))) return false;
+    if (!policy.temporaryExpression) return true;
+    return (await probe(wc, policy.temporaryExpression)) === Boolean(target.temporary);
   } catch {
     // A page that cannot answer the probe cannot be trusted to hold the next prompt either.
     return false;

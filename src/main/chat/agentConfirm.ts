@@ -6,9 +6,11 @@ import { sendLog } from '../helpers';
 import { t } from '../i18n';
 import { getMcpRegistry } from '../mcp';
 import type { AgentConfirmRequest, McpConfirmRequest, ShellConfirmRequest } from '../flow/agent/agentEngine';
-import { SHELL_COMMAND_MAX, fencedCommand } from '../flow/agent/shellApproval';
+import { SHELL_COMMAND_MAX, fencedCommand, writeOutUnseen } from '../flow/agent/shellApproval';
+import { expandableQuote } from '../../shared/expandableQuote';
 import type { ShellApprovalText } from '../flow/agent/shellApproval';
 import type { FlowWriteConfirmRequest } from '../flow/agent/agentBuiltins';
+import { toolDisplayName } from '../flow/agent/actionOutcome';
 import { askRenderer } from './agentConfirmBridge';
 import type { CommandOrigin } from './commandOrigin';
 
@@ -39,12 +41,12 @@ async function confirmMcpWrite(
 
   // A built-in connector is not in config.mcpServers, so "always allow" has nowhere to be saved: hide it.
   const allowAlways = !req.forceAsk && !findBuiltinConnector(req.serverId);
-  const argsPreview = JSON.stringify(req.args, null, 2);
   const choice = await askRenderer(getMainWin(), {
     kind: 'mcp',
     serverName: req.serverName,
     toolName: req.toolName,
-    argsPreview: argsPreview.length > ARGS_PREVIEW_LIMIT ? `${argsPreview.slice(0, ARGS_PREVIEW_LIMIT)}…` : argsPreview,
+    argsPreview: readableArgs(req.args),
+    ...(req.summary ? { summary: req.summary } : {}),
     ...(req.rows?.length ? { rows: req.rows.map((row) => ({ ...row })) } : {}),
     allowAlways,
     danger: req.risk === 'external' || req.risk === 'destructive',
@@ -133,6 +135,78 @@ export function shellApprovalText(req: ShellConfirmRequest, strings: Strings): S
   return {
     question: `${lead}\n\n${fencedCommand(req.command)}`,
     choices: [t(strings, 'agent.shell.approve.run'), t(strings, 'agent.shell.approve.cancel')],
+  };
+}
+
+/**
+ * One `name: value` line. Both parts are written out (`writeOutUnseen`): a break in either becomes
+ * `\n`, a direction override its code, and a name cannot open with `>` — the mark a fold starts with.
+ */
+function argLine(key: string, value: string): string {
+  return `${writeOutUnseen(key).replace(/^>/, '\\>')}: ${writeOutUnseen(value)}`;
+}
+
+function flattenArg(value: unknown, key: string, out: string[]): void {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length === 0) out.push(argLine(key, '{}'));
+    for (const [inner, innerValue] of entries) flattenArg(innerValue, key ? `${key}.${inner}` : inner, out);
+    return;
+  }
+  if (Array.isArray(value)) {
+    const plain = value.every((item) => item === null || typeof item !== 'object');
+    out.push(argLine(key, plain ? value.map(String).join(', ') : JSON.stringify(value)));
+    return;
+  }
+  out.push(argLine(key, String(value)));
+}
+
+/**
+ * A call's arguments as a person reads them: one `name: value` line each, nested ones dotted
+ * (`transition.id: 31`), instead of a JSON block. Every argument is there — it is what runs —
+ * clipped at the dialog's length.
+ */
+export function readableArgs(args: Record<string, unknown>): string {
+  const lines: string[] = [];
+  flattenArg(args, '', lines);
+  const text = lines.join('\n');
+  return text.length > ARGS_PREVIEW_LIMIT ? `${text.slice(0, ARGS_PREVIEW_LIMIT)}…` : text;
+}
+
+/**
+ * A contract row's value as the chat shows it. It comes from the call's arguments or from what a
+ * connector read (a mail's subject), so it is written out like an argument: it cannot draw a line
+ * of its own or read differently from what runs. An `items` row is a list, one item per line.
+ */
+function rowValue(key: string, value: string): string {
+  return key === 'items' ? value.split('\n').map(writeOutUnseen).join('\n') : writeOutUnseen(value);
+}
+
+/**
+ * The chat question that stands in for the change dialog on the owner's bot chat (2026-10-19, user:
+ * 「指令一般使用者看不懂…按鈕寫的應該是允許或是取消」). It opens with the model's own sentence saying
+ * what will change, by name — only the model knows that transition "31" is "Done" — and under it
+ * what the program read off the call itself (connector, operation, the contract's rows, a warning
+ * when it sends or deletes), so a sentence that does not match is visible. Every argument follows,
+ * folded when there is something readable above it; what it shows is what is stored to run.
+ */
+export function connectorApprovalText(req: McpConfirmRequest, strings: Strings): ShellApprovalText {
+  const translate = (key: string, vars: Record<string, string>) => t(strings, key, vars);
+  const action = toolDisplayName({ serverId: req.serverId, tool: req.toolName, title: req.toolTitle }, translate);
+  const rows = (req.rows ?? []).map((row) => `${t(strings, `agent.mcp.confirm.row.${row.key}`)}: ${row.valueKey ? t(strings, row.valueKey, row.vars) : rowValue(row.key, row.value)}`);
+  const danger = req.risk === 'external' || req.risk === 'destructive';
+  const args = readableArgs(req.args);
+  const readable = Boolean(req.summary) || rows.length > 0;
+  const blocks = [
+    t(strings, 'agent.mcp.approve.question', { server: req.serverName }),
+    ...(req.summary ? [req.summary] : []),
+    [t(strings, 'agent.mcp.approve.operation', { action }), ...rows].join('\n'),
+    ...(danger ? [t(strings, 'agent.mcp.approve.danger')] : []),
+    ...(args ? [readable ? expandableQuote(`${t(strings, 'agent.mcp.approve.details')}\n${args}`) : args] : []),
+  ];
+  return {
+    question: blocks.join('\n\n'),
+    choices: [t(strings, 'agent.mcp.approve.run'), t(strings, 'agent.mcp.approve.cancel')],
   };
 }
 

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Box, Group, Stack, Text } from '@mantine/core';
-import { Check, TriangleAlert } from 'lucide-react';
+import { Group, Stack, Text } from '@mantine/core';
+import { Check } from 'lucide-react';
 import { AppButton } from '../../../components/AppButton';
+import { StatusLine } from '../../../components/StatusLine';
 import { AppTextarea } from '../../../components/AppTextarea';
 import type { MemoryEditFailure } from '../../../../../shared/userMemory';
 
@@ -51,10 +52,7 @@ export const MemoryEntryForm: React.FC<Props> = ({
         }}
       />
       {error && (
-        <Group gap={6} wrap="nowrap" align="flex-start">
-          <Box c="var(--mantine-color-warning)" mt={2} style={{ flexShrink: 0 }}><TriangleAlert size={13} /></Box>
-          <Text fz="var(--font-size-sm)" c="var(--mantine-color-warning)">{t(`settings.memory.error.${error}`)}</Text>
-        </Group>
+        <StatusLine tone="warning">{t(`settings.memory.error.${error}`)}</StatusLine>
       )}
       <Group justify="space-between" gap={8}>
         <Text fz="var(--font-size-sm)" c={tooLong ? 'var(--mantine-color-error)' : 'dimmed'}>

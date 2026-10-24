@@ -2,6 +2,7 @@ import React from 'react';
 import { Stack, Text } from '@mantine/core';
 import { AppTextarea } from '../../../components/AppTextarea';
 import type { SkillConfigProps } from './types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 export const JsConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => (
   <Stack gap="xs">
@@ -17,7 +18,7 @@ export const JsConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => (
     />
     <Text fz="xs" c="dimmed">{t('flow.skill.js.hint')}</Text>
     <Text fz="xs" c="dimmed">
-      {t('flow.skill.browser.outputHint').replace('{{outputKey}}', `{{${step.outputKey}}}`)}
+      {fillTemplate(t('flow.skill.browser.outputHint'), { outputKey: `{{${step.outputKey}}}` })}
     </Text>
   </Stack>
 );

@@ -14,6 +14,8 @@ import {
 import type { YtdlJobRecord } from '../../youtubeDownload';
 import { largeUploadReady, telegramSendLimitBytes } from '../../telegram/largeUpload';
 import {
+  DOWNLOAD_MENU,
+  buildVideoEntryButtons,
   buildYtdlButtons,
   createYtdlProgress,
   exceedsLimit,
@@ -24,11 +26,13 @@ import {
   mp3Choice,
   parseQualityToken,
   parseVideoInput,
+  previewQuality,
   safeVideoFileName,
   ytdlDownloadReady,
+  ytdlSizeList,
 } from '../../../shared/ytdl';
 import type {
-  DownloadKind, SizeLimit, YtdlChoice, YtdlDestination, YtdlFailureCategory, YtdlPick, YtdlProgressSample,
+  DownloadKind, SizeLimit, YtdlChoice, YtdlDestination, YtdlFailureCategory, YtdlMenuLabels, YtdlPick, YtdlProgressSample,
 } from '../../../shared/ytdl';
 import { matchVideoRef, siteLabel, videoHasSubtitles, videoHasSummary, videoIsAudioOnly } from '../../../shared/linkSites/rows';
 import { siteChangedAt } from '../../../shared/linkSites/siteChanged';
@@ -42,6 +46,7 @@ import { readAccessOf } from './readAccess';
 import { saveIntoFolder } from './savedDownloads';
 import { VIDEO_SITES, downloadSiteVideo } from './videoSites';
 import type { VideoInfo } from './videoSites';
+import { PLAYLIST_KIND } from '../../../shared/linkSites/types';
 import type { VideoRef, VideoSiteId } from '../../../shared/linkSites/types';
 import { choicesWithinCap, downloadLimitBytes, menuChoicesWithinCap, overCap, ytdlAccessFor } from './ytdlAccess';
 import type { YtdlAccess } from './ytdlAccess';
@@ -75,14 +80,26 @@ export const READING_NOTICE_MS = 3_000;
  * going after `READING_NOTICE_MS` reports a `reading` phase, so a slow page does not look like a
  * paste that did nothing. `config` is the step's: whether the run may use a sign-in (`readAccessOf`).
  */
-function readVideo(
+async function readVideo(
   ref: VideoRef,
   config: Readonly<Record<string, string>>,
   signal?: AbortSignal,
   onProgress?: (progress: StepProgress) => void,
 ): Promise<VideoInfo> {
+  if (isPlaylist(ref)) throw playlistRefused(ref.site);
   const { signIn } = readAccessOf(config);
   return withReadingNotice(ref.site, onProgress, () => VIDEO_SITES[ref.site].info(ref, signal, { signIn }));
+}
+
+/** A link to a whole playlist or collection (`PLAYLIST_KIND`), which the rows take only to turn away. */
+function isPlaylist(ref: VideoRef | undefined): boolean {
+  return ref?.kind === PLAYLIST_KIND;
+}
+
+/** The answer to a playlist link: downloads go one video at a time; nothing is read. */
+function playlistRefused(site: VideoSiteId): FlowUserError {
+  const label = siteLabel(site);
+  return new FlowUserError('flow.error.videoPlaylist', { site: label }, `The link is a ${label} playlist; downloads take one video at a time`);
 }
 
 /** Runs a read of `site`'s pages, reporting `reading` once if it is still going after `READING_NOTICE_MS`. */
@@ -125,6 +142,8 @@ function overCapError(label: string | null, sizeBytes: number | null, allowed: r
  * says whether this video's menu has "summary" (`VideoInfo.summary`) and "subtitles"
  * (`VideoInfo.subtitles`); `needsSignIn` that it has neither only because the read was signed out
  * (`VideoInfo.summaryNeedsSignIn`); `hiddenOverCap` the person's limit when it left choices out, else null.
+ * `scope` says when the link holds more than this one video: opened inside a playlist
+ * (`VideoRef.inList`), or one part of several (`VideoInfo.part`) — only this one is downloaded.
  */
 function menuNotice(
   site: VideoSiteId,
@@ -132,9 +151,12 @@ function menuNotice(
   downloadReady: boolean,
   hint: string,
   hiddenOverCap: SizeLimit,
+  scope: { inList: boolean; part?: VideoInfo['part'] },
 ): string {
   const strings = getLangCache();
   const lines: string[] = [];
+  if (scope.inList) lines.push(t(strings, 'ytdl.notice.playlistOne'));
+  if (scope.part) lines.push(t(strings, 'ytdl.notice.part', { part: String(scope.part.index), total: String(scope.part.total) }));
   if (hint === 'ambiguous2k') lines.push(t(strings, 'ytdl.notice.ambiguous2k'));
   if (offers.needsSignIn) lines.push(t(strings, 'ytdl.notice.summaryNeedsSignIn', { site: siteLabel(site) }));
   if (downloadReady && hiddenOverCap !== null) lines.push(t(strings, 'ytdl.notice.overCap', { limit: formatLimit(hiddenOverCap) }));
@@ -164,10 +186,12 @@ export async function execYoutubeInfo(
 ): Promise<string> {
   const failSoft = config.emitFailFlag === 'true';
   try {
-    return await youtubeInfo(config, signal, onProgress);
+    return await youtubeInfo(config, signal, briefly(config, onProgress));
   } catch (err) {
-    const site = parseVideoInput(config.input ?? '')?.ref.site;
-    countDownloadFailure(site, err, signal);
+    const ref = parseVideoInput(config.input ?? '')?.ref;
+    const site = ref?.site;
+    // A playlist turned away is the person's link, not a failed download.
+    if (!isPlaylist(ref)) countDownloadFailure(site, err, signal);
     if (!failSoft || signal?.aborted) throw err;
     sendLog(`⚠️ [${site ? siteLabel(site) : 'Video'}] ${err instanceof Error ? err.message : String(err)}`);
     return failedEnvelope();
@@ -203,23 +227,60 @@ async function youtubeInfo(
   // The row says the site can sum up at all; this read says whether this video can now.
   const summary = videoHasSummary(site) && info.summary;
   const subtitles = videoHasSubtitles(site) && info.subtitles !== undefined;
-  const buttons = buildYtdlButtons(url, choices, limit, {
-    ...(summary ? { summary: t(strings, 'ytdl.menu.summary') } : {}),
-    ...(subtitles ? { subtitles: t(strings, 'ytdl.menu.subtitles') } : {}),
+  // A link alone: a Telegram user with the preview grant gets a short video at a low quality first.
+  const preview = !input.quality && access.preview && destination === 'telegram' && downloadReady && !videoIsAudioOnly(site)
+    ? previewQuality(allChoices, info.durationS, limit)
+    : null;
+  const menu = menuStage(input.quality, summary || preview !== null);
+  // A bot chat's menu: short buttons on two rows, the sizes in its text.
+  const compact = config.__triggerPlatform === 'telegram' || config.__triggerPlatform === 'line';
+  const labels: YtdlMenuLabels = {
+    ...(subtitles ? { subtitles: t(strings, compact ? 'ytdl.menu.subtitlesShort' : 'ytdl.menu.subtitles') } : {}),
     size: t(strings, 'ytdl.menu.size'),
     sizeSavedOnly: t(strings, 'ytdl.menu.sizeSavedOnly'),
     unknownSize: t(strings, 'ytdl.menu.unknownSize'),
-  }, downloadReady, audio);
+  };
+  // The download menu has something only with the tools, or with subtitles that need none.
+  const downloads = downloadReady || subtitles;
+  const buttons = menu === 'entry'
+    ? buildVideoEntryButtons(url, {
+      ...(summary ? { analyze: t(strings, 'ytdl.menu.analyze') } : {}),
+      ...(downloads ? { download: t(strings, 'ytdl.menu.download') } : {}),
+    })
+    : buildYtdlButtons(url, choices, limit, labels, downloadReady, audio, compact);
+  // An audio-only site's menu is the MP3 alone: its size still needs the line.
+  const sizedAudio = downloadReady ? audio : null;
+  const qualityLine = menu === 'entry'
+    ? ''
+    : compact
+      ? (choices.length > 0 || sizedAudio ? t(strings, 'ytdl.info.sizes', { list: ytdlSizeList(choices, sizedAudio, limit, labels) }) : '')
+      : (choices.length > 0 ? t(strings, 'ytdl.info.qualities', { list: qualityList(choices) }) : '');
   const byline = [info.channel, duration].filter(Boolean).join(' · ');
-  const needsSignIn = videoHasSummary(site) && info.summaryNeedsSignIn === true;
+  // Said once, under the link's first answer.
+  const needsSignIn = !input.quality && videoHasSummary(site) && info.summaryNeedsSignIn === true;
   const hidden = choicesWithinCap(allChoices, access, limit).length < allChoices.length || audio === null;
-  const notice = menuNotice(site, { summary, subtitles, needsSignIn }, downloadReady, input.hint, hidden ? limit : null);
+  const notice = menuNotice(
+    // "Summary still works" only where its button is: the first menu.
+    site, { summary: summary && menu === 'entry', subtitles, needsSignIn }, downloadReady, input.hint,
+    hidden && menu !== 'entry' ? limit : null,
+    { inList: input.ref.inList === true, part: info.part },
+  );
   const text = [
     info.title,
     byline,
-    choices.length > 0 ? t(strings, 'ytdl.info.qualities', { list: qualityList(choices) }) : '',
+    qualityLine,
     notice,
   ].filter(Boolean).join('\n');
+  // A link pasted alone in a Telegram chat: the answer takes its message's place (the bot step
+  // deletes it), so the answer carries the link (user, 2026-10-23: 「刪除原PO 的網址 / 然後把網址直接
+  // 附著在 output 上面」) — the site's own form of it, without the tracking parameters.
+  const replaceLink = !input.quality && config.__triggerPlatform === 'telegram';
+  const link = replaceLink ? url : '';
+  const previewLabel = preview === null ? '' : allChoices.find((c) => c.quality === preview)?.label ?? `${preview}p`;
+  const previewCaption = preview === null
+    ? ''
+    : [info.title, byline, link, t(strings, 'ytdl.preview.caption', { quality: previewLabel }), notice].filter(Boolean).join('\n');
+  const botText = [info.title, byline, link, qualityLine, notice].filter(Boolean).join('\n');
   // The desktop chat's menu shows the cover as a bot chat's does; a bot step sends `image` itself.
   const cover = config.cover === 'true' && !input.quality ? (await VIDEO_SITES[site].chatCover?.(info)) ?? '' : '';
   return JSON.stringify({
@@ -231,15 +292,37 @@ async function youtubeInfo(
     channel: info.channel,
     duration,
     image: info.cover,
+    // The cover goes with the link's first answer only, not with the download menu asked for after it.
+    menuImage: input.quality ? '' : info.cover,
     quality: input.quality,
+    // What this run carries out — a summary, a download — or empty when it answers with a menu.
+    pick: menu ? '' : input.quality,
     // Set only for a download, so a stop step on it ends the menu and summary branches.
-    download: input.quality && input.quality !== 'summary' ? input.quality : '',
+    download: menu || input.quality === 'summary' ? '' : input.quality,
+    // The quality a preview downloads (`480`), or empty for none.
+    preview: preview === null ? '' : String(preview),
+    previewCaption,
+    // What a bot chat's menu says: the text, with the link when the menu takes the link's place.
+    botText,
+    // "1" when the answer takes the place of the pasted link's message (`replaceTrigger`).
+    replaceLink: replaceLink ? '1' : '',
     buttons: formatFlowButtons(buttons),
     available: choices.map((c) => String(c.quality)).join(','),
     downloadReady: downloadReady ? '1' : '0',
     notice,
     isFailed: '0',
   });
+}
+
+/**
+ * Which menu a run answers with, or '' when it carries out a choice: a link alone gets the first
+ * menu ("analyze", "download") when there is more than the download to offer — a summary, or a
+ * preview above it — and the download menu straight away otherwise; "download" gets the download menu.
+ */
+function menuStage(quality: string, firstMenu: boolean): '' | 'entry' | 'download' {
+  if (quality === DOWNLOAD_MENU) return 'download';
+  if (quality) return '';
+  return firstMenu ? 'entry' : 'download';
 }
 
 export const FAILURE_KEYS: Record<YtdlFailureCategory, string> = {
@@ -263,7 +346,7 @@ export function asFlowError(err: unknown, site: VideoSiteId): unknown {
 function requestedQuality(raw: string | undefined): YtdlPick {
   const quality = parseQualityToken(raw ?? '');
   if (quality === 'best' || quality === 'mp3') return quality;
-  if (quality && quality !== 'summary') return Number(quality);
+  if (quality && quality !== 'summary' && quality !== DOWNLOAD_MENU) return Number(quality);
   throw new FlowUserError('flow.error.ytdlNoQuality', {}, 'No video quality was given (e.g. 720 or best)');
 }
 
@@ -474,8 +557,28 @@ export async function execYoutubeDownload(
   signal?: AbortSignal,
   onProgress?: (progress: StepProgress) => void,
 ): Promise<string> {
-  const site = matchVideoRef(config.url ?? '')?.site;
-  return countDownload(site, signal, () => youtubeDownload(config, signal, onProgress));
+  const ref = matchVideoRef(config.url ?? '');
+  // A playlist turned away is no use of the downloader, nor a failure of it.
+  const site = ref && !isPlaylist(ref) ? ref.site : null;
+  return countDownload(site, signal, () => youtubeDownload(config, signal, briefly(config, onProgress)));
+}
+
+/**
+ * A step with `progress: "brief"` (a link pasted alone, answered in the background — user
+ * 2026-10-23: "寫好處理中，然後下次更新就是出現result") says "working" once, the first time it has
+ * anything to report, and nothing after: no reading, no quality, no bar, no sending.
+ */
+function briefly(
+  config: Readonly<Record<string, string>>,
+  onProgress: ((progress: StepProgress) => void) | undefined,
+): ((progress: StepProgress) => void) | undefined {
+  if (!onProgress || config.progress !== 'brief') return onProgress;
+  let told = false;
+  return () => {
+    if (told) return;
+    told = true;
+    onProgress(phaseOnly('working', ''));
+  };
 }
 
 async function youtubeDownload(
@@ -485,6 +588,7 @@ async function youtubeDownload(
 ): Promise<string> {
   const asked = matchVideoRef(config.url ?? '');
   if (!asked) throw new FlowUserError('flow.error.ytdlNotYoutube', {}, 'The url is not a YouTube video link');
+  if (isPlaylist(asked)) throw playlistRefused(asked.site);
   if (parseQualityToken(config.quality ?? '') === 'srt') return subtitlesDownload(asked, config, signal, onProgress);
   const requested = requestedQuality(config.quality);
   // A site with sound only (SoundCloud) has its MP3 alone: any quality asked for is that.

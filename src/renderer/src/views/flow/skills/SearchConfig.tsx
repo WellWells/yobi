@@ -3,6 +3,7 @@ import { Stack, Text } from '@mantine/core';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { AppNumberInput } from '../../../components/AppNumberInput';
 import type { SkillConfigProps } from './types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 function todayCompact(): string {
   const now = new Date();
@@ -18,7 +19,7 @@ export const SearchConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) 
     <Stack gap="xs">
       <AppTextInput
         label={t('flow.skill.search.query')}
-        placeholder={t('flow.skill.search.query.placeholder').replace('{{date}}', todayCompact())}
+        placeholder={fillTemplate(t('flow.skill.search.query.placeholder'), { date: todayCompact() })}
         value={query}
         onChange={(e) => onChange({ ...step.config, query: e.currentTarget.value })}
         size="sm"
@@ -37,7 +38,7 @@ export const SearchConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) 
       />
 
       <Text fz="xs" c="dimmed">
-        {t('flow.skill.search.outputHint').replaceAll('{{outputKey}}', `{{${step.outputKey}}}`)}
+        {fillTemplate(t('flow.skill.search.outputHint'), { outputKey: `{{${step.outputKey}}}` })}
       </Text>
     </Stack>
   );

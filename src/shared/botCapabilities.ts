@@ -9,7 +9,7 @@
  */
 import { PUBLIC_DATA_CONNECTOR_IDS } from './builtinConnectors';
 
-export type BotCapabilityKey = 'chat' | 'web' | 'download' | 'agent' | 'local' | 'shell' | 'admin' | 'connectors';
+export type BotCapabilityKey = 'chat' | 'web' | 'download' | 'preview' | 'agent' | 'local' | 'shell' | 'admin' | 'connectors';
 
 export interface BotCapability {
   /** The "me" mark implies it. */
@@ -31,6 +31,9 @@ export interface BotCapability {
  * - chat: talking to the bot at all, on the chat kit of public lookups (YouTube, Maps reviews,
  *   weather, air quality, stocks, exchange rates, random). Pairing is chat.
  * - web, download: reach the internet for whoever asks — fine for a group, off until granted.
+ * - preview: a pasted video link brings a low-quality copy of a short video before the menu (with
+ *   download only). A choice even for "me", so never implied; a group cannot grant it, while an
+ *   account's own grant still works in one.
  * - agent: the full kit acts on the owner's computer and accounts (LLM steps, notifications,
  *   connector calls), so a group never grants it; a paired account's own grant still works there.
  * - local, shell: this computer; private chats only. shell is never implied, not even by "me".
@@ -42,6 +45,7 @@ export const BOT_CAPABILITIES: Readonly<Record<BotCapabilityKey, BotCapability>>
   chat: { owner: true, paired: true, inGroups: true, groupGrantable: true, groupPreselected: true },
   web: { owner: true, paired: false, inGroups: true, groupGrantable: true, groupPreselected: false },
   download: { owner: true, paired: false, inGroups: true, groupGrantable: true, groupPreselected: false },
+  preview: { owner: false, paired: false, inGroups: true, groupGrantable: false, groupPreselected: false },
   agent: { owner: true, paired: false, inGroups: true, groupGrantable: false, groupPreselected: false },
   local: { owner: true, paired: false, inGroups: false, groupGrantable: false, groupPreselected: false },
   shell: { owner: false, paired: false, inGroups: false, groupGrantable: false, groupPreselected: false },
