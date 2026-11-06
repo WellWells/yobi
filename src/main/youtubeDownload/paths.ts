@@ -29,6 +29,15 @@ export function ytdlToolsRoot(): string {
   return path.join(ytdlDataDir(), 'tools', 'ytdl');
 }
 
+/**
+ * The managed tools' folders under the tools root. Fixed, never one per version: Windows Firewall
+ * remembers "allow" per program path, so a new path asked the user again after every update.
+ */
+export const MANAGED_DIRS = { ytdlp: 'yt-dlp', ffmpeg: 'ffmpeg' } as const;
+
+/** Each managed folder's own record of the version it holds. */
+export const VERSION_FILE = 'version.txt';
+
 /** `child` is `root` itself or somewhere below it, after resolving `..` segments. */
 export function isInsideDir(root: string, child: string): boolean {
   const rel = path.relative(path.resolve(root), path.resolve(child));

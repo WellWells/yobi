@@ -296,13 +296,17 @@ export function matchOutputFile(
   return visible.includes(keyword) ? file : null;
 }
 
-export function buildSafeFileNameFromTitle(title: string): string {
-  const sanitized = title
+/** A title as a file name stem, every character a file system refuses turned to a space; '' when none is left. */
+export function safeFileStem(title: string): string {
+  return title
     .replace(/[<>:"/\\|?*\u0000-\u001F]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 80);
-  return sanitized || 'untitled';
+}
+
+export function buildSafeFileNameFromTitle(title: string): string {
+  return safeFileStem(title) || 'untitled';
 }
 
 export async function getUniquePath(desiredPath: string, originalPath: string): Promise<string> {

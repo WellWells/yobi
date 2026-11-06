@@ -3,18 +3,19 @@
  * are done, which failed, and how far the counted ones have got. Main builds it from the search
  * pipeline's events and sends a whole snapshot each time; the renderer only draws it.
  */
-export type ResearchPhaseId = 'plan' | 'search' | 'read' | 'summarize' | 'write';
+/** `analyze` and `review` belong to a deep research: findings per sub-question, then the gap check. */
+export type ResearchPhaseId = 'plan' | 'search' | 'read' | 'summarize' | 'analyze' | 'review' | 'write';
 
 export type ResearchPhaseStatus = 'pending' | 'running' | 'done' | 'failed';
 
 export interface ResearchPhase {
   id: ResearchPhaseId;
   status: ResearchPhaseStatus;
-  /** plan: the queries it settled on. */
+  /** plan: the queries it settled on (a deep research: its sub-questions). review: the gaps it researches. */
   queries?: string[];
   /** search: how many results came back. */
   hits?: number;
-  /** read, summarize: how many are finished out of `total`. */
+  /** read, summarize, analyze, review: how many are finished out of `total`. */
   done?: number;
   total?: number;
   /** read: pages that could not be read, and the hosts they were on. */
@@ -30,14 +31,14 @@ export interface ResearchProgress {
   sources?: number;
 }
 
-export const RESEARCH_PHASE_ORDER: readonly ResearchPhaseId[] = ['plan', 'search', 'read', 'summarize', 'write'];
+export const RESEARCH_PHASE_ORDER: readonly ResearchPhaseId[] = ['plan', 'search', 'read', 'summarize', 'analyze', 'review', 'write'];
 
 /*
- * Rough shares of a standard run's wall time. Reading and summarizing are counted page by page, so
- * they carry the bar; planning, searching and writing are one call each and cannot say how far
- * along they are.
+ * Rough shares of a run's wall time, over the phases it has. Reading, summarizing and a deep
+ * research's findings are counted one by one, so they carry the bar; planning, searching and
+ * writing are one call each and cannot say how far along they are.
  */
-const PHASE_WEIGHT: Record<ResearchPhaseId, number> = { plan: 5, search: 5, read: 35, summarize: 35, write: 20 };
+const PHASE_WEIGHT: Record<ResearchPhaseId, number> = { plan: 5, search: 5, read: 35, summarize: 35, analyze: 35, review: 15, write: 20 };
 
 export interface ResearchFraction {
   /** 0-100. */

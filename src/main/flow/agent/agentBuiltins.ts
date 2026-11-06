@@ -16,10 +16,13 @@ import type { FlowHold, FlowSaveRequest, FlowWriteConfirmRequest } from './agent
 import { runEditFlowTool } from './agentFlowEdit';
 import { DRAW_IMAGE_BRIEF, DRAW_IMAGE_LINE, runDrawImage } from './agentDrawImage';
 import type { DrawImage } from './agentDrawImage';
+import { AGODA_REVIEWS_BRIEF, AGODA_REVIEWS_LINE, runAgodaReviews } from './agentAgoda';
+import { EXPORT_FILE_BRIEF, EXPORT_FILE_LINE, runExportFile } from './agentExportFile';
+import type { ExportFile } from './agentExportFile';
 
 export type { FlowSaveRequest, FlowWriteConfirmRequest } from './agentFlowShared';
 
-export const AGENT_BUILTIN_TOOLS = ['assess_flow', 'build_flow', 'edit_flow', 'delegate', 'draw_image'] as const;
+export const AGENT_BUILTIN_TOOLS = ['assess_flow', 'build_flow', 'edit_flow', 'delegate', 'draw_image', 'agoda_reviews', 'export_file'] as const;
 
 export type AgentBuiltinTool = typeof AGENT_BUILTIN_TOOLS[number];
 
@@ -71,6 +74,10 @@ export interface BuiltinDeps {
   drawImage?: DrawImage;
   /** Drawings made so far; `draw_image` counts them. */
   drawCalls?: number;
+  /** Renders an answer as a file and keeps it for the answer. Absent = this run cannot send files. */
+  exportFile?: ExportFile;
+  /** Files made so far; `export_file` counts them. */
+  exportCalls?: number;
 }
 
 const MIN_BUILTIN_TIMEOUT_MS = 30_000;
@@ -99,17 +106,27 @@ const FLOW_TOOL_LINES = [
   '- "edit_flow": Change a flow the user has (never build a copy); saves over it once they approve. Yobi already holds bot tokens and chat IDs — never ask for them. config keys: "change" (user\'s words; REQUIRED), "flow" (its name; omit for the one made earlier in this chat) → returns: what changed.',
 ];
 
-export function buildBuiltinCatalog(includeDelegate = false, includeFlows = true, includePictures = false): string {
+export function buildBuiltinCatalog(
+  includeDelegate = false,
+  includeFlows = true,
+  includePictures = false,
+  includeHotelReviews = false,
+  includeDocuments = false,
+): string {
   return [
     ...(includeFlows ? FLOW_TOOL_LINES : []),
     ...(includeDelegate ? [DELEGATE_LINE] : []),
     ...(includePictures ? [DRAW_IMAGE_BRIEF] : []),
+    ...(includeHotelReviews ? [AGODA_REVIEWS_BRIEF] : []),
+    ...(includeDocuments ? [EXPORT_FILE_BRIEF] : []),
   ].join('\n');
 }
 
 /** A builtin's full entry, what `tool_help` returns for it. */
 export function builtinToolEntry(tool: AgentBuiltinTool): string {
   if (tool === 'draw_image') return DRAW_IMAGE_LINE;
+  if (tool === 'agoda_reviews') return AGODA_REVIEWS_LINE;
+  if (tool === 'export_file') return EXPORT_FILE_LINE;
   if (tool === 'delegate') return DELEGATE_LINE;
   return FLOW_TOOL_LINES.find((line) => line.startsWith(`- "${tool}"`)) ?? '';
 }
@@ -118,12 +135,16 @@ export function builtinRequiredFields(tool: AgentBuiltinTool): string[] {
   if (tool === 'delegate') return ['task'];
   if (tool === 'edit_flow') return ['change'];
   if (tool === 'draw_image') return ['prompt'];
+  if (tool === 'agoda_reviews') return ['url'];
+  if (tool === 'export_file') return ['format'];
   return tool === 'assess_flow' || tool === 'build_flow' ? ['goal'] : [];
 }
 
 /** Every key a builtin reads — the required ones plus the optional, which the validator would otherwise drop. */
 export function builtinConfigKeys(tool: AgentBuiltinTool): string[] {
   if (tool === 'draw_image') return ['prompt', 'provider'];
+  if (tool === 'agoda_reviews') return ['url', 'question'];
+  if (tool === 'export_file') return ['format', 'content', 'title'];
   return tool === 'edit_flow' ? ['change', 'flow'] : builtinRequiredFields(tool);
 }
 
@@ -339,6 +360,10 @@ export async function runBuiltinTool(
   }
   // The context itself, so the drawing count carries from one call to the next.
   if (tool === 'draw_image') return runDrawImage(config, ctx);
+  if (tool === 'export_file') return runExportFile(config, ctx);
+  if (tool === 'agoda_reviews') {
+    return runAgodaReviews(config, { deps: budgetedDeps(ctx), providerUrl: ctx.providerUrl, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+  }
   if (tool === 'edit_flow') {
     return runEditFlowTool(config, {
       deps: budgetedDeps(ctx),

@@ -29,7 +29,7 @@ export const SKILL_NOTES: Partial<Record<SkillType, string>> = {
 
   youtube: 'Captions fail often — private videos, no subtitles, a bad URL. Always branch on {{<outputKey>.isFailed}} with an if + continue before the summarizing step. {{<outputKey>.image}} is derived from the URL, so it is still usable as a bot attachment even when the transcript failed.',
 
-  on_change: 'An edge trigger, not a comparison. Feed it a small marker ("hit" or "") from a js step, not a whole page, and follow it with stop: the flow then fires once when the condition starts holding instead of every run it keeps holding. Dropping back below the threshold stores "" and re-arms it. State is keyed to this step, so replacing the step resets it.',
+  on_change: 'For a threshold, feed it a small marker ("hit" or "") from a js step, then stop: the flow fires once when the condition starts holding, and "" re-arms it. To watch a page for edits, feed it the page text with withDiff="true" and give the llm step {{<outputKey>.diff}}, not the whole page. The first run passes the value through with .isFirstRun="1" and no diff: have the llm say tracking started rather than summarise. Replacing the step resets its memory.',
 
   gmap_reviews: 'The place-level fields ({{<outputKey>.rating}}, .total, .distribution, .verdict) are read from the rendered place page and are "" if it could not be read — they are NOT present in the individual reviews. Feed the whole array plus those fields into one llm step for analysis; looping over hundreds of reviews one at a time is almost never what is wanted.',
 
@@ -53,7 +53,7 @@ export const SKILL_NOTES: Partial<Record<SkillType, string>> = {
 
   x_thread: 'Inside a loop it needs emitFailFlag="true" (a deleted or protected post fails), followed by an if on {{<outputKey>.isFailed}} + continue. Signed out, X lists only about 3 top replies (Threads its first 10, Instagram 15, Facebook and TikTok up to 40; PTT pushes sampled), so {{<outputKey>.shown}} is usually far below {{<outputKey>.replyCount}} — never tell the user a post has no other replies.',
 
-  weather: 'Keep a Taiwan county or township in Chinese ("板橋", "台中大安"); romanised, it can match a same-named place abroad. Name other places in English — "서울" returns nothing. Never throws: an unknown place sets {{<outputKey>.isFailed}}="1", so branch on that rather than expecting an error.',
+  weather: 'Keep a Taiwan county or township in Chinese ("板橋", "台中大安"); romanised, it can match a same-named place abroad. Name other places in English — "서울" returns nothing. An unknown place sets {{<outputKey>.isFailed}}="1" (branch on that); an unreadable or out-of-range date or hours fails the step. In a scheduled flow write "tomorrow" or "+N", never a fixed date: a fixed date drifts out of range and the step starts failing.',
 
   calendar: 'Hand an llm prompt {{<outputKey>.text}}, not the JSON array. An empty day gives "[]" and .text "": add a stop step on {{<outputKey>}} only when nothing should happen on a free day; a brief that should still go out says "no events" instead. The calendar field takes the name the user used, never a URL.',
   air_quality: 'Place names work as for weather: Taiwan in Chinese, elsewhere in English. Compare {{<outputKey>.level}} numerically (1 Good … 6 Hazardous, 0 = no reading) rather than matching the .status text, which is always English.',

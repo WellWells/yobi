@@ -72,6 +72,21 @@ const VarChip: React.FC<{
   );
 };
 
+/** The history sub-vars a stock or forex step adds once it has a period or a date. */
+function historyChips(config: Record<string, string>): string[] {
+  const date = (config.date ?? '').trim();
+  if (!(config.period ?? '').trim() && !date) return [];
+  return ['periodChangePct', 'endClose', ...(date ? ['dateClose'] : [])];
+}
+
+/** A dated forecast has no current conditions: its sub-vars describe the first day. */
+function weatherChips(config: Record<string, string>): string[] {
+  const dated = (config.date ?? '').trim() || (config.hours ?? '').trim();
+  return dated
+    ? ['high', 'low', 'rainChance', 'condition', 'precipitation', 'isFailed']
+    : ['temp', 'condition', 'high', 'low', 'isFailed'];
+}
+
 function isFileProducerStep(s: SkillInstance): boolean {
   return s.type === 'file_write' || s.type === 'capture' || s.type === 'file_download'
     || (s.type === 'share' && !isShareLinkFormat(s.config.format))
@@ -185,7 +200,7 @@ export const AvailableVarsHint: React.FC<{
             {s.type === 'x_thread' && ['text', 'author', 'date', 'link', 'replyText', 'replies', 'shown', 'replyCount', 'image', 'platform'].map((sub) => (
               <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
             ))}
-            {s.type === 'x_media' && ['count', 'kind', 'message', 'caption', 'overflow', 'previews', 'text', 'author', 'name', 'date', 'link', 'prompt', 'videoText', 'savedLocally', 'summary', 'notice'].map((sub) => (
+            {s.type === 'x_media' && ['count', 'kind', 'message', 'caption', 'overflow', 'lead', 'rest', 'previews', 'text', 'author', 'name', 'date', 'link', 'prompt', 'videoText', 'savedLocally', 'summary', 'notice'].map((sub) => (
               <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
             ))}
             {s.type === 'x_thread' && s.config.emitFailFlag === 'true' && (
@@ -195,14 +210,14 @@ export const AvailableVarsHint: React.FC<{
               <VarChip token={`${s.outputKey}.image`} insertHint={hint} onInsert={onInsert} />
             )}
             {s.type === 'stock' && !/[,\n]/.test(s.config.symbol ?? '') && (
-              ['price', 'changePct', 'name', 'currency', 'isFailed'].map((sub) => (
+              ['price', 'changePct', 'name', 'currency', ...historyChips(s.config), 'isFailed'].map((sub) => (
                 <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
               ))
             )}
-            {s.type === 'forex' && ['rate', 'converted', 'asOf', 'previousClose', 'changePct', 'isFailed'].map((sub) => (
+            {s.type === 'forex' && ['rate', 'converted', 'asOf', 'previousClose', 'changePct', ...historyChips(s.config), 'isFailed'].map((sub) => (
               <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
             ))}
-            {s.type === 'weather' && ['temp', 'condition', 'high', 'low', 'isFailed'].map((sub) => (
+            {s.type === 'weather' && weatherChips(s.config).map((sub) => (
               <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
             ))}
             {s.type === 'air_quality' && ['aqi', 'level', 'status', 'statusLocal', 'pollutant', 'pm2_5', 'station', 'isFailed'].map((sub) => (
@@ -218,6 +233,9 @@ export const AvailableVarsHint: React.FC<{
               <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
             ))}
             {s.type === 'mail_fetch' && ['text', 'count'].map((sub) => (
+              <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
+            ))}
+            {s.type === 'on_change' && s.config.withDiff === 'true' && ['diff', 'added', 'removed', 'isFirstRun', 'hasDiff', 'truncated', 'previous', 'previousAt', 'checkedAt'].map((sub) => (
               <VarChip key={sub} token={`${s.outputKey}.${sub}`} insertHint={hint} onInsert={onInsert} />
             ))}
             {s.type === 'sysinfo' && resolveSysInfoSelection(s.config).map((sub) => (

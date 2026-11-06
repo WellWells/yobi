@@ -52,8 +52,8 @@ export function entriesChangedSince(entries: readonly UserMemoryEntry[], sinceIs
 
 /**
  * For the agent's turn and finish prompts. The answer goes into "content", so that is where the lines go.
- * The header says what the facts are for: 2026-10-20, for a goal of just "1", the agent turned two
- * of them (a trip, trip plans kept in Notion) into the choices of a question, then into the task.
+ * The header says what the facts are for: without it, a goal of just "1" gets turned into a
+ * question whose choices are the facts, then into the task.
  */
 export function renderAgentMemoryBlock(entries: readonly UserMemoryEntry[]): string {
   return [

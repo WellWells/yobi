@@ -16,6 +16,7 @@ import { isHotkeyPaused } from './hotkey';
 import { restoredWindowOptions, shouldStartMaximized, trackWindowBounds } from './windowBounds';
 import { llmLane } from './flow/lanes';
 import { forwardTrackpadGestures } from './trackpadGesture';
+import { pinPageZoom } from './pageZoom';
 import { deferSignInPrompt } from './deferredSignIn';
 
 const WORKER_PARTITION = 'persist:gemini';
@@ -111,6 +112,9 @@ export function createMainWindow(options?: MainWindowOptions): void {
   if (isDev && process.env['YOBI_DEVTOOLS']) {
     mainWin.webContents.openDevTools({ mode: 'detach' });
   }
+  // A zoom key the page leaves alone falls through to the menu (Electron's hidden default one on
+  // Windows and Linux) and would shrink the whole app for good. The reading size is the only zoom.
+  pinPageZoom(mainWin.webContents);
 
   if (isDev) {
     mainWin.loadURL(process.env['ELECTRON_RENDERER_URL'] as string);

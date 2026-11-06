@@ -43,7 +43,8 @@ export interface XPost {
   card?: PostCard;
   /**
    * Who the site shows it to, where its reader reads a marker (`postAudience.ts`): X on every
-   * post, Facebook and Instagram on the post a link opens. A thread's is its `focal`'s. Absent:
+   * post, Instagram on the post a link opens, Facebook on what only the sign-in read for someone
+   * else. A thread's is its `focal`'s. Absent:
    * the reader marks none (a site Yobi never signs in to, a comment that follows its post's).
    */
   audience?: PostAudience;

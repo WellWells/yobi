@@ -1,16 +1,19 @@
 import { app, BrowserWindow, dialog, nativeTheme, screen, shell } from 'electron';
 import * as path from 'node:path';
 import { config } from './config';
-import { getLangCache, t } from './i18n';
+import { getLangCache, localizeUserFacingError, t } from './i18n';
 import { effectiveTheme, themeBackground } from '../shared/themes';
 import {
   CAPTURE_WIDTHS, SHARE_CONSENT_KEYS, clampShareExpire,
   captureWidthLabelKey, clampCaptureMargin, normalizeExportChoice, snapCaptureWidth,
 } from '../shared/types';
+import { CAPTURE_BACKGROUND_STYLES } from '../shared/capturePalettes';
+import type { CaptureBackgroundStyle } from '../shared/capturePalettes';
 import { effectiveExpires } from './share/instanceExpires';
+import { pinPageZoom } from './pageZoom';
 import type {
-  ExportPromptChoice, ExportPromptPayload, PanelHeight, QuickExportFormat,
-  ShareResultAction, ShareResultState,
+  ExportNameRequest, ExportNameResult, ExportNaming, ExportPromptChoice, ExportPromptPayload, PanelHeight,
+  QuickExportFormat, ShareResultAction, ShareResultState,
 } from '../shared/types';
 
 const PROMPT_TIMEOUT_MS = 300_000;
@@ -128,7 +131,48 @@ function panelHandle(win: BrowserWindow): ExportPanel {
   };
 }
 
-function buildPayload(defaults: ExportPromptDefaults): ExportPromptPayload {
+/**
+ * The panel has no preload, so it cannot call main: main waits on `window.nextNameRequest()`
+ * the way it waits on the panel's height, runs each request, and hands the answer back with
+ * `window.deliverName()`. One at a time — the panel's button stays busy until its answer comes.
+ */
+export interface ExportNamer {
+  /** The models the panel's menu lists, read again each time the panel is drawn. */
+  offer: () => ExportNaming;
+  /** null: cancelled because the panel closed, nothing to hand back. */
+  name: (providerUrl: string, signal: AbortSignal) => Promise<{ name: string } | { error: string } | null>;
+}
+
+export function parseNameRequest(raw: unknown): ExportNameRequest | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const { id, providerUrl } = raw as Partial<ExportNameRequest>;
+  return typeof id === 'number' && typeof providerUrl === 'string' && providerUrl ? { id, providerUrl } : null;
+}
+
+function serveNameRequests(win: BrowserWindow, namer: ExportNamer, signal: AbortSignal): void {
+  void (async () => {
+    while (!win.isDestroyed()) {
+      let request: ExportNameRequest | null;
+      try {
+        request = parseNameRequest(await win.webContents.executeJavaScript('window.nextNameRequest()', true));
+      } catch {
+        return;
+      }
+      if (!request) continue;
+      const outcome = await namer.name(request.providerUrl, signal).catch((err: unknown) => ({
+        error: localizeUserFacingError(err instanceof Error ? err.message : String(err), getLangCache()),
+      }));
+      if (!outcome || win.isDestroyed()) continue;
+      const result: ExportNameResult = { id: request.id, ...outcome };
+      await (win.webContents.executeJavaScript(
+        `window.deliverName(JSON.parse(${JSON.stringify(JSON.stringify(result))}))`,
+        true,
+      ) as Promise<unknown>).catch(() => undefined);
+    }
+  })();
+}
+
+function buildPayload(defaults: ExportPromptDefaults, naming: ExportNaming | null): ExportPromptPayload {
   const strings = getLangCache();
   const share = config.share;
   const capture = config.captureSettings;
@@ -141,7 +185,7 @@ function buildPayload(defaults: ExportPromptDefaults): ExportPromptPayload {
     width: snapCaptureWidth(defaults.width),
     margin: clampCaptureMargin(defaults.margin),
     palette: defaults.palette ?? capture.palette,
-    backgroundStyle: capture.backgroundStyle,
+    backgroundStyle: defaults.backgroundStyle ?? (capture.backgroundStyle as CaptureBackgroundStyle),
     direction: capture.direction,
     theme: effectiveTheme(config.theme, nativeTheme.shouldUseDarkColors),
     strings: {
@@ -154,6 +198,8 @@ function buildPayload(defaults: ExportPromptDefaults): ExportPromptPayload {
       cancel: t(strings, 'quickExport.panel.cancel'),
       theme: t(strings, 'capture.palette'),
       margin: t(strings, 'capture.margin'),
+      aiName: t(strings, 'quickExport.panel.aiName'),
+      aiNameMenu: t(strings, 'quickExport.panel.aiNameMenu'),
       share: {
         format: t(strings, 'quickExport.panel.format.text'),
         instance: t(strings, 'share.settings.instance'),
@@ -169,6 +215,11 @@ function buildPayload(defaults: ExportPromptDefaults): ExportPromptPayload {
       value,
       label: t(strings, captureWidthLabelKey(value)),
     })),
+    backgroundStyles: CAPTURE_BACKGROUND_STYLES.map((value) => ({
+      value,
+      label: t(strings, `capture.background.${value}`),
+    })),
+    naming,
     share: {
       consented: Boolean(share.consentedAt),
       instanceHost: instanceHost(share.instanceUrl),
@@ -192,6 +243,7 @@ interface ExportPromptDefaults {
   width: number;
   margin: number;
   palette?: string;
+  backgroundStyle?: CaptureBackgroundStyle;
 }
 
 /** `'reopen'` keeps the panel up for another attempt; the object form also shows a reason above the controls. */
@@ -206,12 +258,14 @@ export function retryDefaults(choice: ExportPromptChoice, previous: ExportPrompt
     width: choice.width,
     margin: choice.margin,
     palette: choice.palette,
+    backgroundStyle: choice.backgroundStyle,
   };
 }
 
 export async function runWithExportPrompt(
   defaults: ExportPromptDefaults,
   perform: (choice: ExportPromptChoice, panel: ExportPanel) => Promise<PerformOutcome | void>,
+  namer?: ExportNamer,
 ): Promise<ExportPromptChoice | null> {
   if (activePanel && !activePanel.isDestroyed()) {
     activePanel.show();
@@ -237,6 +291,8 @@ export async function runWithExportPrompt(
       backgroundThrottling: false,
     },
   });
+  // A zoomed panel would measure its height in zoomed pixels and size the window wrong.
+  pinPageZoom(win.webContents);
   activePanel = win;
   win.on('closed', () => { if (activePanel === win) activePanel = null; });
 
@@ -249,11 +305,14 @@ export async function runWithExportPrompt(
 
   let attempt = defaults;
   let shown = false;
+  // A name still being written when the panel goes is dropped, not typed into a closed window.
+  const naming = new AbortController();
   try {
     await loadPromptPage(win);
+    if (namer) serveNameRequests(win, namer, naming.signal);
 
     while (!win.isDestroyed()) {
-      const payload = buildPayload(attempt);
+      const payload = buildPayload(attempt, namer?.offer() ?? null);
       const answered = (win.webContents.executeJavaScript(
         `window.renderExportPrompt(JSON.parse(${JSON.stringify(JSON.stringify(payload))}))`,
         true,
@@ -284,6 +343,7 @@ export async function runWithExportPrompt(
         width: attempt.width,
         margin: attempt.margin,
         palette: attempt.palette ?? config.captureSettings.palette,
+        backgroundStyle: attempt.backgroundStyle ?? (config.captureSettings.backgroundStyle as CaptureBackgroundStyle),
         expire: clampShareExpire(config.share.expire, effectiveExpires(config.share)),
         burnAfterReading: config.share.burnAfterReading,
       });
@@ -297,6 +357,7 @@ export async function runWithExportPrompt(
     }
     return null;
   } finally {
+    naming.abort();
     if (timeoutId) clearTimeout(timeoutId);
     if (!win.isDestroyed()) win.destroy();
   }

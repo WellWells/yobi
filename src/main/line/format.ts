@@ -1,4 +1,5 @@
 import { Marked, Renderer, type Token, type TokenizerExtension } from 'marked';
+import { isCitationLabel } from '../../shared/citations';
 import { promoteDisplayMath, promoteInlineMath } from '../../shared/inlineMathDelimiters';
 import { flattenFootnotes } from '../../shared/markdownFootnotes';
 import { htmlAsPlainText } from '../../shared/markdownHtmlWhitelist';
@@ -6,11 +7,12 @@ import { mathTokenExtensions } from '../markdownMathTokens';
 import { readableTex } from '../readableTex';
 import { LINE_TEXT_MAX } from '../../shared/botMessageLimits';
 import { unfoldExpandableQuotes } from '../../shared/expandableQuote';
+import { labelledCell } from '../../shared/tableCellText';
 
 const LINE_TEXT_LIMIT = LINE_TEXT_MAX;
 const LINE_REPLY_MAX = 4_800;
 
-/** A table header written in CJK takes a full-width colon before its value. */
+/** A CJK letter. */
 const CJK_LABEL = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 const PUNCTUATION = /\p{P}/u;
 const LAST_ASCII = 0x7f;
@@ -65,6 +67,14 @@ export function truncateLineText(text: string): string {
   return `${sliceWithoutSplittingSurrogates(text, LINE_REPLY_MAX)}…`;
 }
 
+/** `text` with `tail` under it, one message: past the limit the text gives way, never the tail. */
+export function lineTextAbove(text: string, tail: string): string {
+  const words = text.trim();
+  const whole = [words, tail].filter(Boolean).join('\n\n');
+  if (whole.length <= LINE_TEXT_LIMIT) return whole;
+  return `${sliceWithoutSplittingSurrogates(words, Math.max(0, LINE_REPLY_MAX - tail.length))}…\n\n${tail}`;
+}
+
 // LINE cannot typeset math either: a formula goes out as Unicode text (`readableTex`), or as
 // the TeX the model wrote when it has more than that can show. Its own instance, because
 // `marked.use()` would register the tokens for the whole process — the loose bold reading is
@@ -79,12 +89,6 @@ const lineMarked = new Marked({
   ],
 });
 
-function tableCell(header: string, value: string): string {
-  if (!value) return '';
-  if (!header) return value;
-  return CJK_LABEL.test(header) ? `${header}：${value}` : `${header}: ${value}`;
-}
-
 function indentContinuation(text: string, marker: string): string {
   const [first = '', ...rest] = text.split('\n');
   return [`${marker}${first}`, ...rest.map((line) => (line ? `  ${line}` : line))].join('\n');
@@ -96,16 +100,26 @@ function indentContinuation(text: string, marker: string): string {
  * against CJK punctuation included, see `cjkStrong`), a list
  * keeps its bullets and numbers, a link is its words then its address (LINE makes a bare address
  * tappable), and each table row becomes one line that carries its own column labels — LINE has
- * no monospace to line columns up in.
+ * no monospace to line columns up in. A citation (`[1]`) is only its number where the message
+ * writes its address anyway — the source list, or an earlier citation — so cited prose never
+ * reads as a run of addresses; the list keeps the numbers that match them.
  *
  * Nothing is HTML-escaped: the result is never parsed as HTML, so marked's default `&amp;` would
  * reach the user as typed.
  */
 export function markdownToLineText(markdown: string): string {
   const source = (markdown ?? '').replace(/\r\n?/g, '\n');
+  // The app's own `$`/`$$` repair, so what renders as a formula there arrives as one here.
+  const prepared = promoteInlineMath(promoteDisplayMath(flattenFootnotes(source)));
   const renderer = new Renderer();
   const inline = (tokens: Token[]): string => renderer.parser.parseInline(tokens);
   const block = (tokens: Token[]): string => renderer.parser.parse(tokens);
+
+  const writtenByWords = new Set<string>();
+  lineMarked.walkTokens(lineMarked.lexer(prepared, { gfm: true, breaks: true }), (token) => {
+    if (token.type === 'link' && !isCitationLabel(token.text)) writtenByWords.add(token.href);
+  });
+  const cited = new Set<string>();
 
   renderer.strong = ({ tokens }) => inline(tokens);
   renderer.em = ({ tokens }) => inline(tokens);
@@ -113,9 +127,13 @@ export function markdownToLineText(markdown: string): string {
   renderer.del = ({ raw }) => raw;
   renderer.codespan = ({ text }) => text;
   renderer.text = (token) => ('tokens' in token && token.tokens?.length ? inline(token.tokens) : token.text);
-  renderer.link =({ href, tokens, autolink, text }) => {
+  renderer.link = ({ href, tokens, autolink, text }) => {
     if (autolink) return text;
     const label = inline(tokens).trim();
+    if (isCitationLabel(text)) {
+      if (writtenByWords.has(href) || cited.has(href)) return label;
+      cited.add(href);
+    }
     return !label || label === href ? href : `${label} ${href}`;
   };
   renderer.image = ({ href, text }) => (text.trim() ? `${text.trim()} ${href}` : href);
@@ -152,15 +170,14 @@ export function markdownToLineText(markdown: string): string {
     const labels = header.map((cell) => inline(cell.tokens).trim());
     const lines = rows.length > 0
       ? rows.map((row) => row
-        .map((cell, index) => tableCell(labels[index] ?? '', inline(cell.tokens).trim()))
+        .map((cell, index) => labelledCell(labels[index] ?? '', inline(cell.tokens).trim()))
         .filter(Boolean)
         .join(' · '))
       : [labels.filter(Boolean).join(' · ')];
     return `${lines.filter(Boolean).join('\n')}\n\n`;
   };
 
-  // The app's own `$`/`$$` repair, so what renders as a formula there arrives as one here.
-  const parsed = lineMarked.parse(promoteInlineMath(promoteDisplayMath(flattenFootnotes(source))), {
+  const parsed = lineMarked.parse(prepared, {
     renderer,
     gfm: true,
     breaks: true,

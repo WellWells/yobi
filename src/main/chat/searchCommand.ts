@@ -14,8 +14,8 @@ import { buildSearchHistory, runWebSearch, SearchPipelineError } from '../search
 import { measureTokens } from '../tokenMeter';
 import { publicWebOnlyIf } from '../net/publicWebScope';
 import { busyUntilSettled } from '../conversationBusy';
-import { mdLinkDestination } from '../search/synthesize';
-import type { SearchProgress, SourceDoc } from '../search';
+import { formatSourcesSection } from '../../shared/citations';
+import type { SearchProgress } from '../search';
 import type { TokenUsage } from '../../shared/tokenEstimate';
 import type { CommandOrigin } from './commandOrigin';
 import type { FlowManager } from '../flow';
@@ -40,17 +40,6 @@ export interface SearchRunRequest {
   fileLabel?: string;
 }
 
-function mdLabel(title: string): string {
-  return title.replace(/[[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-}
-
-function buildSourcesSection(sources: SourceDoc[], heading: string): string {
-  const list = sources
-    .map((s) => `${s.id}. [${mdLabel(s.title)}](${mdLinkDestination(s.url)})`)
-    .join('\n');
-  return `---\n\n**${heading}**\n\n${list}`;
-}
-
 function summarizeQuery(query: string): string {
   return compactPreview(query, 96);
 }
@@ -73,6 +62,13 @@ function progressText(progress: SearchProgress, strings: Strings): string | null
     case 'searched':
     case 'readFailed':
     case 'summarized':
+    // A deep research's own phases; the bot's `/search` never runs one.
+    case 'finding':
+    case 'found':
+    case 'reviewing':
+    case 'followups':
+    case 'followedUp':
+    case 'fetchingMore':
       return null;
   }
 }
@@ -172,7 +168,7 @@ export function runSearchCommand(
         () => runWebSearch(query, resolvedTarget, config.locale, onProgress, searchMode, undefined, history),
       );
 
-      const sourcesSection = buildSourcesSection(outcome.sources, t(strings, 'search.output.sources'));
+      const sourcesSection = formatSourcesSection(outcome.sources, t(strings, 'search.output.sources'));
       return await deliver(
         outcome.answer.trim(),
         pickConversationTitle({ prompt: query }),

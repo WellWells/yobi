@@ -56,6 +56,8 @@ const EXTERNALIZED = [
   'electron',
   // Native module (LINE wxSQLite3 driver): keep as a runtime require, never bundle its .node.
   'better-sqlite3-multiple-ciphers',
+  // Native FFI loader for the LINE send core; lazy-imported on win32 only.
+  'koffi',
   ...builtinModules,
   ...builtinModules.map((m) => `node:${m}`),
 ];

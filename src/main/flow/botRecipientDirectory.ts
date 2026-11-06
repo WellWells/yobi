@@ -24,7 +24,8 @@ export async function loadRecipientDirectory(): Promise<RecipientDirectory> {
   const line = Boolean(config.line?.enabled && config.line.channelAccessToken);
   const discord = isSocketBotConfigured('discord');
   const slack = isSocketBotConfigured('slack');
-  if (!telegram && !line && !discord && !slack) return EMPTY_RECIPIENT_DIRECTORY;
+  const lineSelf = isSocketBotConfigured('lineSelf');
+  if (!telegram && !line && !discord && !slack && !lineSelf) return EMPTY_RECIPIENT_DIRECTORY;
   const memory = await loadUserMemory().catch(() => null);
   return buildRecipientDirectory({
     telegram: {
@@ -35,6 +36,7 @@ export async function loadRecipientDirectory(): Promise<RecipientDirectory> {
     line: { connected: line, pairedUsers: config.line?.pairing?.pairedUsers ?? [] },
     discord: { connected: discord, pairedUsers: config.discord?.pairing?.pairedUsers ?? [] },
     slack: { connected: slack, pairedUsers: config.slack?.pairing?.pairedUsers ?? [] },
+    lineSelf: { connected: lineSelf, pairedUsers: config.lineSelf?.pairing?.pairedUsers ?? [] },
     self: memory?.botSelf ?? {},
   });
 }

@@ -13,22 +13,24 @@ export type AttachmentPathGuard = (raw: string) => Promise<{ path: string } | { 
 
 export type CallVerdict = { args: Record<string, unknown> } | { denied: string };
 
+/** `key` names the argument holding the paths (`attachments` for mail, `file` for line_send). */
 export async function applyAttachmentPolicy(
   args: Record<string, unknown>,
   guard: AttachmentPathGuard,
+  key = 'attachments',
 ): Promise<CallVerdict> {
-  const list = args.attachments;
+  const list = args[key];
   if (!Array.isArray(list)) return { args };
-  const attachments: unknown[] = [];
+  const checked: unknown[] = [];
   for (const entry of list) {
     // Inline `{ name, contentType, base64 }` data holds no path to check.
     if (typeof entry !== 'string') {
-      attachments.push(entry);
+      checked.push(entry);
       continue;
     }
     const verdict = await guard(entry);
     if ('denied' in verdict) return verdict;
-    attachments.push(verdict.path);
+    checked.push(verdict.path);
   }
-  return { args: { ...args, attachments } };
+  return { args: { ...args, [key]: checked } };
 }

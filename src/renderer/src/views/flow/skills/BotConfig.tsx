@@ -30,6 +30,7 @@ export const BotConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
           { value: 'auto', label: t('flow.skill.bot.platform.auto') },
           { value: 'telegram', label: t('flow.skill.bot.platform.telegram') },
           { value: 'line', label: t('flow.skill.bot.platform.line') },
+          { value: 'lineSelf', label: t('flow.skill.bot.platform.lineSelf') },
           { value: 'discord', label: t('flow.skill.bot.platform.discord') },
           { value: 'slack', label: t('flow.skill.bot.platform.slack') },
         ]}

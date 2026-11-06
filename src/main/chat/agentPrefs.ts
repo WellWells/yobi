@@ -51,6 +51,15 @@ export function agentPromptPrefs(owner: boolean): PromptPreferences | null {
   return owner ? prefs : { ...prefs, nickname: '', customInstructions: '' };
 }
 
+/**
+ * Whether the preferences change how an answer reads. A nickname does not — it only changes how
+ * the user is greeted — so it alone never stops a research answer from going out as written.
+ */
+export function prefsReshapeAnswers(prefs: PromptPreferences | null): boolean {
+  if (!prefs) return false;
+  return prefs.tone !== 'default' || prefs.length !== 'auto' || cappedInstructions(prefs.customInstructions) !== '';
+}
+
 /** For the agent's turn and finish prompts; empty when every setting is left at its default. */
 export function renderAgentPrefsBlock(prefs: PromptPreferences): string {
   const lines: string[] = [];

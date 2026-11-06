@@ -11,6 +11,7 @@ import type { AddressObject } from 'mailparser';
 import { config } from '../config';
 import { yobiDownloadsDir } from '../downloadsCache';
 import { declaredExtension, isRunnableName, looksLikeProgram, PROGRAM_SNIFF_BYTES } from '../executableFiles';
+import { markFromInternet } from '../internetMark';
 import { sanitizeDownloadName } from '../flow/skills/fileOps';
 import { saveIntoFolder } from '../flow/skills/savedDownloads';
 import { setMailAccountAddress } from '../flow/agent/connectors/mailContract';
@@ -103,15 +104,6 @@ export async function parseMail(raw: Buffer): Promise<ParsedMail> {
 const MAIL_BLOCKED_EXTENSIONS: ReadonlySet<string> = new Set([
   'docm', 'dotm', 'xlsm', 'xltm', 'xlam', 'pptm', 'potm', 'ppam', 'one', 'onepkg', 'hta', 'wsc', 'sct',
 ]);
-
-/**
- * Windows' "came from the internet" mark (Mark of the Web): Office opens such a file in Protected
- * View and SmartScreen checks it before it runs. Best effort; other systems have no such stream.
- */
-async function markFromInternet(file: string): Promise<void> {
-  if (process.platform !== 'win32') return;
-  await fs.writeFile(`${file}:Zone.Identifier`, '[ZoneTransfer]\r\nZoneId=3\r\n').catch(() => {});
-}
 
 /**
  * Same rules as `file_download` — no programs, scripts or archives, judged by the name it will be

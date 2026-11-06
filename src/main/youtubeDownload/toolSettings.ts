@@ -20,7 +20,6 @@ export function removeYtdlTools(): Promise<YtdlToolsState> {
     }
     return updateYtdlState((s) => {
       s.ytdlp = undefined;
-      s.previousYtdlp = undefined;
       s.ffmpeg = undefined;
       s.testedOk = false;
       clearSiteChanged(s);

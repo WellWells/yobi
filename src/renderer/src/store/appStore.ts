@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { AUTH_PROVIDERS } from '../../../shared/types';
-import type { AccountStatus, AuthProvider, HiddenSources, OutputFile, Provider, QueueState } from '../../../shared/types';
+import type { AccountStatus, AuthProvider, HiddenSources, OutputFile, Provider, QueueState, ReadingZoomCommand } from '../../../shared/types';
 import type { GeminiModelState } from '../../../shared/geminiModels';
 import type { ClaudeModelState } from '../../../shared/claudeModels';
 import type { ChatgptModelState } from '../../../shared/chatgptModels';
@@ -34,10 +34,26 @@ export interface PendingTurn {
   prompt: string;
   runId?: string;
   attachments?: string[];
+  /** Where each of them is, so the bubble shows the pictures from the moment it is sent. */
+  attachmentFiles?: string[];
   /** A flow command: no model is thinking, so the bubble says it is running. */
   command?: boolean;
   /** Where a step of that flow is, as it last reported (a download's percentage). */
   progress?: StepProgress;
+  /** A `!` command: its output as it runs, then the model reading it. */
+  shell?: PendingShell;
+}
+
+export interface PendingShell {
+  command: string;
+  /** The latest lines while it runs. */
+  output: string;
+  running: boolean;
+  /** Known once main has picked them. */
+  shellLabel?: string;
+  folder?: string;
+  exitCode?: number | null;
+  stopped?: boolean;
 }
 
 export type View = 'chat' | 'settings' | 'about' | 'logs' | 'flow';
@@ -136,6 +152,7 @@ interface AppState {
   addPendingTurn: (conversationPath: string, turn: PendingTurn) => void;
   clearPendingTurn: (sendId: string) => void;
   setPendingTurnProgress: (sendId: string, progress: StepProgress) => void;
+  updatePendingShell: (sendId: string, patch: Partial<PendingShell>) => void;
   setTempChatMode: (enabled: boolean) => void;
   setTempChatResult: (content: string) => void;
   setView: (view: View) => void;
@@ -147,6 +164,8 @@ interface AppState {
   zoomInMarkdown: () => void;
   zoomOutMarkdown: () => void;
   resetMarkdownZoom: () => void;
+  /** The macOS View menu's reading-size items, sent over from main. */
+  applyReadingZoomCommand: (command: ReadingZoomCommand) => void;
   setShowTokenUsage: (show: boolean) => void;
   setHotkey: (hotkey: string) => void;
   setRegionHotkey: (hotkey: string) => void;
@@ -161,7 +180,7 @@ interface AppState {
   setHiddenSources: (next: HiddenSources) => void;
 }
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>((set, get) => ({
   status: 'idle',
   queue: { total: 0, current: 0, status: 'idle', items: [] },
   accountStatuses: initAccountStatuses(),
@@ -296,6 +315,18 @@ export const useAppStore = create<AppState>((set) => ({
     }
     return changed ? { pendingTurns } : state;
   }),
+  updatePendingShell: (sendId, patch) => set((state) => {
+    let changed = false;
+    const pendingTurns: Record<string, PendingTurn[]> = {};
+    for (const [key, turns] of Object.entries(state.pendingTurns)) {
+      pendingTurns[key] = turns.map((turn) => {
+        if (turn.sendId !== sendId || !turn.shell) return turn;
+        changed = true;
+        return { ...turn, shell: { ...turn.shell, ...patch } };
+      });
+    }
+    return changed ? { pendingTurns } : state;
+  }),
   setTempChatMode: (tempChatMode) => set(tempChatMode
     ? { tempChatMode }
     : { tempChatMode, tempChatContent: null, tempChatBlocks: null, tempChatConversation: null }),
@@ -320,6 +351,12 @@ export const useAppStore = create<AppState>((set) => ({
   zoomInMarkdown: () => set((state) => createMarkdownZoomUpdate(state.markdownZoom + MD_ZOOM_STEP)),
   zoomOutMarkdown: () => set((state) => createMarkdownZoomUpdate(state.markdownZoom - MD_ZOOM_STEP)),
   resetMarkdownZoom: () => set(createMarkdownZoomUpdate(100)),
+  applyReadingZoomCommand: (command) => {
+    const store = get();
+    if (command === 'in') return store.zoomInMarkdown();
+    if (command === 'out') return store.zoomOutMarkdown();
+    if (command === 'reset') store.resetMarkdownZoom();
+  },
   setShowTokenUsage: (showTokenUsage) => {
     window.electronAPI.updateShowTokenUsage(showTokenUsage).catch(() => {});
     set({ showTokenUsage });

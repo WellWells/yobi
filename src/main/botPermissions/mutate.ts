@@ -1,6 +1,6 @@
 import { config, saveConfig } from '../config';
 import {
-  groupGrantsOf,
+  botGroupGrantsOf,
   isBotChatId,
   isBotGrant,
   isBotGroupGrant,
@@ -146,7 +146,7 @@ export function setBotGroupPermissions(request: unknown): BotSetGroupPermissions
   }
   target.groupPermissions = map;
   savePlatform(platform);
-  const grants = groupGrantsOf(map, chatId);
+  const grants = botGroupGrantsOf(platform, map, chatId);
   return { ok: true, grants: grants ?? [], pending: grants === null };
 }
 

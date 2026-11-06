@@ -8,14 +8,15 @@ import { BotDefaultModelSetting } from './BotDefaultModelSetting';
 import { BotAskTtlSetting } from './BotAskTtlSetting';
 import type { BotCommandsControls } from './BotAskTtlSetting';
 import { fillTemplate } from '../../../../../shared/fillTemplate';
-import { BOT_PLATFORM_NAMES, SOCKET_BOT_SECRET_FIELDS } from '../../../../../shared/types';
+import { BOT_PLATFORM_NAMES, SOCKET_BOT_SECRET_FIELDS, hasSocketBotSecrets } from '../../../../../shared/types';
+import type { SocketBotPlatform } from '../../../../../shared/types';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import { SecretHealthAlert } from '../../../components/SecretHealthAlert';
 import { LinePairedUsers } from './LinePairedUsers';
 import { BotDefaultGrants } from './BotUserPermissions';
 import { BotAudienceSection } from './BotAudienceSection';
 import { SocketBotPairingPanel } from './SocketBotPairingPanel';
-import { SocketBotSetupGuide } from './SocketBotSetupGuide';
+import { SocketBotSetupGuide, hasSocketBotSetupGuide } from './SocketBotSetupGuide';
 import { ExternalLink } from './lineLinks';
 import type { SocketBotSettingsControls } from '../hooks/useSocketBotSettings';
 import type { BotAccessControls } from '../hooks/useBotAccessControls';
@@ -38,6 +39,31 @@ function runtimeLabel(t: (k: string) => string, status?: string): string {
   }
 }
 
+interface PlatformCopy {
+  /** How the platform connects. */
+  hint: string;
+  /** Where a pairing code is sent; null = the platform pairs without codes. */
+  pairingHint: string | null;
+  /** Who starts with the defaults; absent = those pairing with a code. */
+  defaultsHint?: string;
+  /**
+   * The bot runs as the user's own account (LINE PC): it is the first paired row, which it cannot
+   * leave, so its name is not repeated above the list.
+   */
+  ownAccount?: true;
+}
+
+/**
+ * What the card says per platform. Discord and Slack are bots the user made, each person pairing
+ * with a code sent to it. LINE PC is the user's own account, paired as them when it connects, and
+ * anyone else asks by saying "Yobi", with no pairing code.
+ */
+const PLATFORM_COPY: Readonly<Record<SocketBotPlatform, PlatformCopy>> = {
+  discord: { hint: 'settings.discord.hint', pairingHint: 'settings.socketBot.pairing.hint' },
+  slack: { hint: 'settings.slack.hint', pairingHint: 'settings.socketBot.pairing.hint' },
+  lineSelf: { hint: 'settings.lineSelf.hint', pairingHint: null, defaultsHint: 'settings.lineSelf.defaults.hint', ownAccount: true },
+};
+
 interface Props {
   bot: SocketBotSettingsControls;
   /** Each paired account's grants and owner mark, edited under its row. */
@@ -51,9 +77,9 @@ interface Props {
 }
 
 /**
- * Discord's or Slack's card: connect with the platform's token(s), pair accounts with a code, then
- * the same grants, groups and reply settings as the other bots. Only the token fields and the setup
- * guide differ between the two.
+ * A socket platform's card (Discord, Slack, LINE PC): connect with the platform's token(s) — LINE PC
+ * has none — pair with a code (LINE PC: none, see `PLATFORM_COPY`), then the same grants, groups and
+ * reply settings as the other bots. Only the token fields, the copy and the setup guide differ.
  */
 export const SocketBotSection: React.FC<Props> = ({ bot, access, botCommands, t, showSection, isSearching, sectionGap }) => {
   const { platform, settings } = bot;
@@ -63,6 +89,7 @@ export const SocketBotSection: React.FC<Props> = ({ bot, access, botCommands, t,
   const expanded = (settings?.enabled ?? false) || isSearching;
   const fields = SOCKET_BOT_SECRET_FIELDS[platform];
   const typed = fields.some((field) => bot.secretInputs[field]?.trim());
+  const copy = PLATFORM_COPY[platform];
 
   return (
     <Box display={showSection(TAG_SETS[platform], 'bots') ? 'block' : 'none'}>
@@ -80,17 +107,19 @@ export const SocketBotSection: React.FC<Props> = ({ bot, access, botCommands, t,
 
         <SettingDivider my={16} />
 
-        <SecretHealthAlert scopes={[platform]} />
+        {hasSocketBotSecrets(platform) && <SecretHealthAlert scopes={[platform]} />}
 
         {expanded && (
           <>
             <SectionTitle icon={<Plug size={15} />} label={t('settings.socketBot.section.connection')} />
             <Text fz="var(--font-size-base)" c="dimmed" lh={1.6} mb={12}>
-              {platform === 'discord' ? t('settings.discord.hint') : t('settings.slack.hint')}
+              {t(copy.hint)}
             </Text>
-            <Box mb={12}>
-              <SocketBotSetupGuide platform={platform} t={t} />
-            </Box>
+            {hasSocketBotSetupGuide(platform) && (
+              <Box mb={12}>
+                <SocketBotSetupGuide platform={platform} t={t} />
+              </Box>
+            )}
           </>
         )}
 
@@ -129,14 +158,16 @@ export const SocketBotSection: React.FC<Props> = ({ bot, access, botCommands, t,
                     {t('settings.socketBot.reconnect')}
                   </AppButton>
                 )}
-                <MButton
-                  variant="default"
-                  leftSection={<KeyRound size={13} />}
-                  onClick={() => { void bot.saveSecrets(); }}
-                  disabled={bot.busy || !typed}
-                >
-                  {t('settings.socketBot.saveSecrets')}
-                </MButton>
+                {fields.length > 0 && (
+                  <MButton
+                    variant="default"
+                    leftSection={<KeyRound size={13} />}
+                    onClick={() => { void bot.saveSecrets(); }}
+                    disabled={bot.busy || !typed}
+                  >
+                    {t('settings.socketBot.saveSecrets')}
+                  </MButton>
+                )}
               </Group>
 
               {runtime?.errorMessage && (
@@ -154,25 +185,30 @@ export const SocketBotSection: React.FC<Props> = ({ bot, access, botCommands, t,
 
             <SectionTitle icon={<Users size={15} />} label={t('settings.socketBot.section.access')} />
             <Stack gap={12}>
-              <Group justify="space-between" align="center" gap={8}>
-                <Text fz="var(--font-size-sm)" c="var(--mantine-color-default-color)">
-                  {account
-                    ? [account.name, account.workspace].filter(Boolean).join(' · ')
-                    : t('settings.socketBot.account.unknown')}
-                </Text>
-                {account?.inviteUrl && <ExternalLink url={account.inviteUrl} label={t('settings.discord.invite')} />}
-              </Group>
+              {!copy.ownAccount && (
+                <Group justify="space-between" align="center" gap={8}>
+                  <Text fz="var(--font-size-sm)" c="var(--mantine-color-default-color)">
+                    {account
+                      ? [account.name, account.workspace].filter(Boolean).join(' · ')
+                      : t('settings.socketBot.account.unknown')}
+                  </Text>
+                  {account?.inviteUrl && <ExternalLink url={account.inviteUrl} label={t('settings.discord.invite')} />}
+                </Group>
+              )}
 
-              <SocketBotPairingPanel
-                pendingCodes={settings?.pairing.pendingCodes ?? []}
-                connected={runtime?.status === 'running'}
-                busy={bot.busy}
-                onGenerate={() => { void bot.generatePairingCode(); }}
-                onRevoke={(code) => { void bot.revokePairingCode(code); }}
-                t={t}
-              />
+              {copy.pairingHint !== null && (
+                <SocketBotPairingPanel
+                  pendingCodes={settings?.pairing.pendingCodes ?? []}
+                  connected={runtime?.status === 'running'}
+                  busy={bot.busy}
+                  onGenerate={() => { void bot.generatePairingCode(); }}
+                  onRevoke={(code) => { void bot.revokePairingCode(code); }}
+                  hint={t(copy.pairingHint)}
+                  t={t}
+                />
+              )}
 
-              <BotDefaultGrants access={access} t={t} />
+              <BotDefaultGrants access={access} t={t} {...(copy.defaultsHint ? { hint: t(copy.defaultsHint) } : {})} />
 
               <SettingDivider my={4} />
 
@@ -182,6 +218,7 @@ export const SocketBotSection: React.FC<Props> = ({ bot, access, botCommands, t,
                 pairedUsers={settings?.pairing.pairedUsers ?? []}
                 access={access}
                 onUnpair={(userId) => { void bot.unpairUser(userId); }}
+                {...(copy.ownAccount && account ? { fixedUserId: account.id } : {})}
                 t={t}
                 copy={{
                   empty: t('settings.socketBot.paired.empty'),

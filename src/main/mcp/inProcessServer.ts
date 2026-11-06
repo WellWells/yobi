@@ -16,6 +16,28 @@ export class ToolResultWithPictures {
   constructor(readonly value: unknown, readonly files: readonly string[]) {}
 }
 
+/**
+ * A dispatch result with notes for the model, like a CLI's stderr next to its JSON stdout: paging
+ * hints, how a name was resolved, what could not be read. The notes go in their own text block
+ * BEFORE the JSON, so a long result cut short at the end still shows them; the JSON block itself
+ * stays exactly what `value` serialises to.
+ */
+export class ToolResultWithNotes {
+  constructor(readonly value: unknown, readonly notes: readonly string[]) {}
+}
+
+/** A thrown error whose JSON body carries more than `error` and `message` (e.g. `candidates`). */
+export class ToolError extends Error {
+  constructor(name: string, message: string, readonly extra: Readonly<Record<string, unknown>> = {}) {
+    super(message);
+    this.name = name;
+  }
+}
+
+function notesBlock(notes: readonly string[]): CallToolResult['content'] {
+  return notes.length > 0 ? [{ type: 'text', text: notes.join('\n') }] : [];
+}
+
 export interface ToolServerSpec {
   name: string;
   tools: Tool[];
@@ -39,9 +61,16 @@ export function createToolServer(spec: ToolServerSpec): Server {
           ...(result.files.length > 0 ? { _meta: { [PICTURES_META_KEY]: [...result.files] } } : {}),
         };
       }
+      if (result instanceof ToolResultWithNotes) {
+        return { content: [...notesBlock(result.notes), { type: 'text', text: JSON.stringify(result.value) }] };
+      }
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     } catch (err) {
-      const body = { error: err instanceof Error ? err.name : 'Error', message: err instanceof Error ? err.message : String(err) };
+      const body = {
+        error: err instanceof Error ? err.name : 'Error',
+        message: err instanceof Error ? err.message : String(err),
+        ...(err instanceof ToolError ? err.extra : {}),
+      };
       return { content: [{ type: 'text', text: JSON.stringify(body) }], isError: true };
     }
   });

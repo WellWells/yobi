@@ -1,4 +1,5 @@
 import { BUILTIN_LINE_SERVER_ID, builtinLineServerConfig, builtinServerConfig } from './types';
+import { asksAboutLink } from './linkQuestion';
 import { mentionsXPlatform } from './xHandles';
 import { SITE_CONNECTOR_ROWS, siteConnectorServerId } from './siteConnectors';
 import type { SiteConnectorFlag, SiteConnectorSite } from './siteConnectors';
@@ -25,9 +26,19 @@ export const BUILTIN_PTT_SERVER_ID = 'builtin-ptt';
 /** Stable id/command of the in-process connector for the user's own mailbox (IMAP + the shared SMTP account). */
 export const BUILTIN_MAIL_SERVER_ID = 'builtin-mail';
 
+/** Stable id/command of the in-process connector for the user's calendars (.ics read, CalDAV read and write). */
+export const BUILTIN_CALENDAR_SERVER_ID = 'builtin-calendar';
+
+/** Stable id/command of the in-process connector for free machine translation (no key, no model tokens). */
+export const BUILTIN_TRANSLATE_SERVER_ID = 'builtin-translate';
+
+/** Stable id/command of the in-process connector that reads a web page's text by link. */
+export const BUILTIN_PAGE_SERVER_ID = 'builtin-page';
+
 /** The config flag that records the user's opt-in for each built-in connector. */
 export type BuiltinConnectorFlag =
-  | 'lineReaderEnabled' | 'thunderbirdEnabled' | 'xConnectorEnabled' | 'taiwanRailEnabled' | 'pttConnectorEnabled' | 'mailEnabled' | SiteConnectorFlag;
+  | 'lineReaderEnabled' | 'thunderbirdEnabled' | 'xConnectorEnabled' | 'taiwanRailEnabled' | 'pttConnectorEnabled' | 'mailEnabled'
+  | 'calendarEnabled' | 'translateConnectorEnabled' | 'pageConnectorEnabled' | SiteConnectorFlag;
 
 export interface BuiltinConnector {
   id: string;
@@ -45,6 +56,14 @@ export interface BuiltinConnector {
    * chats only: its answers would show the owner's data to the whole group.
    */
   publicData?: true;
+  /**
+   * Reads any public address the model names, which is what the web switch stands for. It leaves a
+   * desktop run with web switched off, goes to a group only when the owner turns it on there, and
+   * `mentionedIn` brings it into the one message that matched, not the conversation: that test
+   * fires on any link with words around it, and holding a connector makes every later turn an
+   * agent run.
+   */
+  anyPage?: true;
 }
 
 /**
@@ -88,7 +107,7 @@ export const BUILTIN_CONNECTORS: readonly BuiltinConnector[] = [
     flag: 'pttConnectorEnabled',
     descriptor: () => builtinServerConfig('ptt', 'PTT'),
     // The display name already matches "PTT" in any case as a whole word ("ptt.cc" too, not
-    // "HTTPTTL"); only the Chinese name needs saying. No board names (user, 2026-10-24).
+    // "HTTPTTL"); only the Chinese name needs saying. No board names.
     keywords: ['批踢踢'],
     // Public boards and posts, read signed out.
     publicData: true,
@@ -101,6 +120,36 @@ export const BUILTIN_CONNECTORS: readonly BuiltinConnector[] = [
     // email to the client" is a writing request, and a match turns the message into an agent run
     // with the mailbox open.
     keywords: ['信箱', '收件匣', '收件箱', '邮箱', 'Gmail', 'inbox'],
+  },
+  {
+    id: BUILTIN_CALENDAR_SERVER_ID,
+    flag: 'calendarEnabled',
+    descriptor: () => builtinServerConfig('calendar', 'Calendar'),
+    // The display name already matches "calendar". "行程" and "schedule" are out: travel plans and
+    // timetables use them, and a match turns the message into an agent run with the calendar open.
+    keywords: ['行事曆', '日曆', '行事历', '日历'],
+  },
+  {
+    id: BUILTIN_TRANSLATE_SERVER_ID,
+    flag: 'translateConnectorEnabled',
+    // Not plain "Translate", and no "翻譯" below: a name is a keyword, and a match turns "translate
+    // this sentence" into an agent run, for everyone, since this one is on by default. The extensions
+    // stand in for "SRT", which also answers for a question about the format. It is in every run's
+    // catalog anyway, for the agent to reach for by itself.
+    descriptor: () => builtinServerConfig('translate', 'Free Translate'),
+    keywords: ['免費翻譯', '免费翻译', 'free translation', '字幕檔', '字幕文件', 'subtitle file', '.srt', '.vtt'],
+  },
+  {
+    id: BUILTIN_PAGE_SERVER_ID,
+    flag: 'pageConnectorEnabled',
+    descriptor: () => builtinServerConfig('page', 'Get Page Text'),
+    // No bare 內文 or 新聞: a match turns the message into an agent run, and it is on by default. Its
+    // title counts as a keyword too, so it is not a phrase people say either. A link is what names it.
+    keywords: ['取得內文', '获取正文', '網頁內文', '网页内文', '新聞內文', '新聞全文', '文章全文'],
+    mentionedIn: asksAboutLink,
+    // Public pages, read signed out, public addresses only.
+    publicData: true,
+    anyPage: true,
   },
   ...SITE_CONNECTOR_ROWS.map((row): BuiltinConnector => ({
     id: siteConnectorServerId(row.site),
@@ -119,6 +168,9 @@ export const BUILTIN_CONNECTOR_TITLES: Readonly<Record<string, string>> = {
   [BUILTIN_RAIL_SERVER_ID]: 'settings.mcp.rail.title',
   [BUILTIN_PTT_SERVER_ID]: 'settings.mcp.ptt.title',
   [BUILTIN_MAIL_SERVER_ID]: 'settings.mcp.mail.title',
+  [BUILTIN_CALENDAR_SERVER_ID]: 'settings.mcp.calendar.title',
+  [BUILTIN_TRANSLATE_SERVER_ID]: 'settings.mcp.translate.title',
+  [BUILTIN_PAGE_SERVER_ID]: 'settings.mcp.page.title',
   ...Object.fromEntries(SITE_CONNECTOR_ROWS.map((row) => [siteConnectorServerId(row.site), row.keys.title])),
 };
 
@@ -127,6 +179,13 @@ export const PUBLIC_DATA_CONNECTOR_IDS: readonly string[] = BUILTIN_CONNECTORS.f
 
 export function findBuiltinConnector(id: string): BuiltinConnector | undefined {
   return BUILTIN_CONNECTORS.find((connector) => connector.id === id);
+}
+
+/** The connectors that read any public address (see `anyPage`). */
+export const ANY_PAGE_CONNECTOR_IDS: readonly string[] = BUILTIN_CONNECTORS.filter((c) => c.anyPage).map((c) => c.id);
+
+export function readsAnyPage(id: string): boolean {
+  return ANY_PAGE_CONNECTOR_IDS.includes(id);
 }
 
 /** The built-in a `builtin://…` URL names; the chat surfaces know a connector by its URL. */

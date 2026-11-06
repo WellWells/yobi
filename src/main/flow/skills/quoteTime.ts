@@ -21,7 +21,8 @@ export function formatExchangeTime(epochSec: number, offsetSec: number): string 
   return `${iso.slice(0, 10)} ${iso.slice(11, 16)} (${utcOffsetLabel(offsetSec)})`;
 }
 
-function offsetFromZone(zone: string, epochSec: number): number | null {
+/** A named zone's UTC offset at that instant, so a daylight-saving change is honoured per timestamp. */
+export function offsetFromZone(zone: string, epochSec: number): number | null {
   try {
     const part = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'longOffset' })
       .formatToParts(new Date(epochSec * 1_000))
@@ -42,6 +43,17 @@ export function exchangeOffsetSec(meta: YahooMeta, epochSec: number): number {
   if (direct !== null) return direct;
   const zone = typeof meta.exchangeTimezoneName === 'string' ? meta.exchangeTimezoneName : '';
   return (zone && offsetFromZone(zone, epochSec)) || 0;
+}
+
+/**
+ * The exchange-local calendar date of a timestamp. Unlike `exchangeOffsetSec` the zone name comes
+ * first: Yahoo's gmtoffset is today's, and a summer FX bar at 23:00Z read with winter's +0 lands
+ * on the previous London day.
+ */
+export function exchangeDateOf(meta: YahooMeta, epochSec: number): string {
+  const zone = typeof meta.exchangeTimezoneName === 'string' ? meta.exchangeTimezoneName : '';
+  const offset = (zone ? offsetFromZone(zone, epochSec) : null) ?? parseNumberField(meta.gmtoffset) ?? 0;
+  return new Date((epochSec + offset) * 1_000).toISOString().slice(0, 10);
 }
 
 /** The last trade's time in the exchange's own clock, or '' when the source gave none. */

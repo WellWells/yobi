@@ -4,7 +4,10 @@
  * store and never crosses to the renderer or into a flow: steps name a calendar by id or name.
  */
 
-/** What Settings and the step editor see of one subscription. */
+/** An .ics subscription (read only) or a calendar of a CalDAV account. */
+export type CalendarKind = 'ics' | 'caldav';
+
+/** What Settings and the step editor see of one calendar. */
 export interface CalendarSummary {
   id: string;
   name: string;
@@ -12,6 +15,11 @@ export interface CalendarSummary {
   host: string;
   /** The stored address can no longer be decrypted; it has to be entered again. */
   unreadable: boolean;
+  kind: CalendarKind;
+  /** A CalDAV calendar's account (its user name); '' for a subscription. */
+  account: string;
+  /** Events can be added and changed here: a CalDAV calendar the account may write. */
+  writable: boolean;
 }
 
 export interface CalendarSaveRequest {

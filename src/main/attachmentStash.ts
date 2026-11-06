@@ -68,7 +68,7 @@ export function stashFileName(safeName: string, token: string): string {
   return `${path.basename(safeName, ext)}-${token}${ext}`;
 }
 
-function stashRoot(): string {
+export function stashRoot(): string {
   return path.join(app.getPath('temp'), STASH_DIR);
 }
 

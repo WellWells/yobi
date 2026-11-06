@@ -5,6 +5,9 @@ import { sendToRenderer, sendWebNotification } from './helpers';
 import { getLangCache, localizeUserFacingError, t } from './i18n';
 import { TaskHardTimeoutError, TaskSkippedError } from './queueManager';
 import { deleteTempAttachments } from './telegram/fileDownload';
+import { keepUnansweredShellTurn } from './chat/shellTurns';
+import { resolveTaskChatContext } from './chat/taskChatContext';
+import { isTempChatMode } from './tempChat';
 import { IPC } from '../shared/types';
 import type { ChatTurnEvent, Task } from '../shared/types';
 import type { TelegramRuntime } from './telegram';
@@ -39,8 +42,39 @@ export function claimLocalNotification(task: Task): boolean {
   return true;
 }
 
+/**
+ * A `!` command whose output got no answer still keeps its turn: written first, then the error
+ * says the file changed, so the chat reloads it rather than dropping the command.
+ */
+async function reportUnansweredShellTurn(task: Task, message: string): Promise<void> {
+  const kept = task.shell
+    ? await keepUnansweredShellTurn({
+      prompt: task.displayPrompt ?? '',
+      sent: task.prompt,
+      shell: task.shell,
+      conversationPath: task.conversationPath,
+      temporary: resolveTaskChatContext(task, isTempChatMode()).temporary,
+    })
+    : null;
+  sendToRenderer(IPC.CHAT_TURN, {
+    sendId: task.sendId ?? '',
+    conversationPath: kept ?? task.conversationPath ?? '',
+    phase: 'error',
+    error: message,
+    ...(kept !== null ? { kept: true as const } : {}),
+  } satisfies ChatTurnEvent);
+  if (kept) sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
+  else if (kept === null && task.conversationPath && await discardEmptyConversation(task.conversationPath)) {
+    sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
+  }
+}
+
 export function reportChatTurnFailure(task: Task, message: string): void {
   if (!claimChatTurnReport(task)) return;
+  if (task.shell) {
+    void reportUnansweredShellTurn(task, message);
+    return;
+  }
   sendToRenderer(IPC.CHAT_TURN, {
     sendId: task.sendId ?? '',
     conversationPath: task.conversationPath ?? '',

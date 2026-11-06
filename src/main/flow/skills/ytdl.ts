@@ -12,7 +12,7 @@ import {
   writeYtdlJobRecord,
 } from '../../youtubeDownload';
 import type { YtdlJobRecord } from '../../youtubeDownload';
-import { largeUploadReady, telegramSendLimitBytes } from '../../telegram/largeUpload';
+import { largeUploadReady } from '../../telegram/largeUpload';
 import {
   DOWNLOAD_MENU,
   buildVideoEntryButtons,
@@ -23,6 +23,7 @@ import {
   formatFlowButtons,
   formatLimit,
   formatMegabytes,
+  isChatDestination,
   mp3Choice,
   parseQualityToken,
   parseVideoInput,
@@ -44,19 +45,24 @@ import { FlowUserError } from '../userError';
 import { downloadsFolder } from './fileOps';
 import { readAccessOf } from './readAccess';
 import { saveIntoFolder } from './savedDownloads';
-import { VIDEO_SITES, downloadSiteVideo } from './videoSites';
+import { VIDEO_SITES, downloadSiteVideo, pausesForYtdlp, videoPageHeldBack } from './videoSites';
 import type { VideoInfo } from './videoSites';
 import { PLAYLIST_KIND } from '../../../shared/linkSites/types';
 import type { VideoRef, VideoSiteId } from '../../../shared/linkSites/types';
-import { choicesWithinCap, downloadLimitBytes, menuChoicesWithinCap, overCap, ytdlAccessFor } from './ytdlAccess';
+import { chatSendLimitBytes, choicesWithinCap, downloadLimitBytes, menuChoicesWithinCap, overCap, ytdlAccessFor } from './ytdlAccess';
+import { parseBotPlatform } from '../../../shared/types';
 import type { YtdlAccess } from './ytdlAccess';
 import { readVideoSubtitles, saveSubtitles } from './ytdlSubtitles';
 
-/** `auto` follows whoever started the run: a Telegram command gets Telegram, anything else this computer. */
+/**
+ * `auto` follows whoever started the run: a Telegram or LINE PC message gets the file sent back
+ * there, anything else this computer (LINE's Messaging API cannot be sent a file from it).
+ */
 export function resolveYtdlDestination(raw: string | undefined, triggerPlatform: string | undefined): YtdlDestination {
   const choice = (raw ?? '').trim().toLowerCase();
   if (choice === 'telegram' || choice === 'local') return choice;
-  return (triggerPlatform ?? '').trim().toLowerCase() === 'telegram' ? 'telegram' : 'local';
+  const platform = parseBotPlatform(triggerPlatform);
+  return platform === 'telegram' || platform === 'lineSelf' ? platform : 'local';
 }
 
 function failedEnvelope(): string {
@@ -80,15 +86,22 @@ export const READING_NOTICE_MS = 3_000;
  * going after `READING_NOTICE_MS` reports a `reading` phase, so a slow page does not look like a
  * paste that did nothing. `config` is the step's: whether the run may use a sign-in (`readAccessOf`).
  */
+/**
+ * The video's details. A `partial` read (the site held the page back) is refused unless `partialOk`:
+ * only a link alone (its menu cut to "analyze" and "download") and a summary do without the qualities.
+ */
 async function readVideo(
   ref: VideoRef,
   config: Readonly<Record<string, string>>,
   signal?: AbortSignal,
   onProgress?: (progress: StepProgress) => void,
+  partialOk = false,
 ): Promise<VideoInfo> {
   if (isPlaylist(ref)) throw playlistRefused(ref.site);
   const { signIn } = readAccessOf(config);
-  return withReadingNotice(ref.site, onProgress, () => VIDEO_SITES[ref.site].info(ref, signal, { signIn }));
+  const info = await withReadingNotice(ref.site, onProgress, () => VIDEO_SITES[ref.site].info(ref, signal, { signIn }));
+  if (info.partial && !partialOk) throw videoPageHeldBack(ref.site, 'only the link card was readable');
+  return info;
 }
 
 /** A link to a whole playlist or collection (`PLAYLIST_KIND`), which the rows take only to turn away. */
@@ -161,7 +174,7 @@ function menuNotice(
   if (offers.needsSignIn) lines.push(t(strings, 'ytdl.notice.summaryNeedsSignIn', { site: siteLabel(site) }));
   if (downloadReady && hiddenOverCap !== null) lines.push(t(strings, 'ytdl.notice.overCap', { limit: formatLimit(hiddenOverCap) }));
   if (!downloadReady) {
-    lines.push(siteChangedAt(getYtdlToolsState(), site)
+    lines.push(pausesForYtdlp(site) && siteChangedAt(getYtdlToolsState(), site)
       ? t(strings, 'ytdl.notice.youtubeChanged', { site: siteLabel(site) })
       : t(strings, 'ytdl.notice.toolsMissing'));
     // Only "summary" and the subtitles need no download tools: say which of them still work.
@@ -207,7 +220,8 @@ async function youtubeInfo(
   if (!input) {
     throw new FlowUserError('flow.error.ytdlNotYoutube', {}, 'The input has no YouTube video link');
   }
-  const info = await readVideo(input.ref, config, signal, onProgress);
+  // A link alone or a summary does without the qualities: a held-back page still answers them.
+  const info = await readVideo(input.ref, config, signal, onProgress, !input.quality || input.quality === 'summary');
   const site = info.ref.site;
   const url = info.ref.url;
   const destination = resolveYtdlDestination(config.destination, config.__triggerPlatform);
@@ -221,20 +235,21 @@ async function youtubeInfo(
   const mp3 = mp3Choice(info.durationS, destination);
   // A capped person's menu offers the MP3 only when it fits, as it does each quality.
   const audio = access.capped && exceedsLimit(mp3, limit) ? null : mp3;
-  const downloadReady = ytdlDownloadReady(getYtdlToolsState(), site);
+  const downloadReady = ytdlDownloadReady(getYtdlToolsState(), site, pausesForYtdlp(site));
   const strings = getLangCache();
   const duration = formatDuration(info.durationS);
   // The row says the site can sum up at all; this read says whether this video can now.
   const summary = videoHasSummary(site) && info.summary;
   const subtitles = videoHasSubtitles(site) && info.subtitles !== undefined;
-  // A link alone: a Telegram user with the preview grant gets a short video at a low quality first.
-  const preview = !input.quality && access.preview && destination === 'telegram' && downloadReady && !videoIsAudioOnly(site)
+  // A link alone: a Telegram or LINE PC user with the preview grant gets a short video at a low quality first.
+  const preview = !input.quality && access.preview && isChatDestination(destination) && downloadReady && !videoIsAudioOnly(site)
     ? previewQuality(allChoices, info.durationS, limit)
     : null;
-  const menu = menuStage(input.quality, summary || preview !== null);
-  // A bot chat's menu: short buttons on two rows, the sizes in its text.
+  const menu = menuStage(input.quality, info.partial === true);
+  // A bot chat's menu: short buttons in rows of a kind, the sizes in its text.
   const compact = config.__triggerPlatform === 'telegram' || config.__triggerPlatform === 'line';
   const labels: YtdlMenuLabels = {
+    ...(summary && menu === 'full' ? { analyze: t(strings, 'ytdl.menu.analyze') } : {}),
     ...(subtitles ? { subtitles: t(strings, compact ? 'ytdl.menu.subtitlesShort' : 'ytdl.menu.subtitles') } : {}),
     size: t(strings, 'ytdl.menu.size'),
     sizeSavedOnly: t(strings, 'ytdl.menu.sizeSavedOnly'),
@@ -260,8 +275,8 @@ async function youtubeInfo(
   const needsSignIn = !input.quality && videoHasSummary(site) && info.summaryNeedsSignIn === true;
   const hidden = choicesWithinCap(allChoices, access, limit).length < allChoices.length || audio === null;
   const notice = menuNotice(
-    // "Summary still works" only where its button is: the first menu.
-    site, { summary: summary && menu === 'entry', subtitles, needsSignIn }, downloadReady, input.hint,
+    // "Summary still works" only where its button is: a link's own menu, not the download menu.
+    site, { summary: summary && menu !== 'download', subtitles, needsSignIn }, downloadReady, input.hint,
     hidden && menu !== 'entry' ? limit : null,
     { inList: input.ref.inList === true, part: info.part },
   );
@@ -272,14 +287,15 @@ async function youtubeInfo(
     notice,
   ].filter(Boolean).join('\n');
   // A link pasted alone in a Telegram chat: the answer takes its message's place (the bot step
-  // deletes it), so the answer carries the link (user, 2026-10-23: 「刪除原PO 的網址 / 然後把網址直接
-  // 附著在 output 上面」) — the site's own form of it, without the tracking parameters.
+  // deletes it), so the answer carries the link — the site's own form of it, without the
+  // tracking parameters.
   const replaceLink = !input.quality && config.__triggerPlatform === 'telegram';
   const link = replaceLink ? url : '';
   const previewLabel = preview === null ? '' : allChoices.find((c) => c.quality === preview)?.label ?? `${preview}p`;
+  // The preview carries the whole menu's buttons, so the sizes their labels leave out too.
   const previewCaption = preview === null
     ? ''
-    : [info.title, byline, link, t(strings, 'ytdl.preview.caption', { quality: previewLabel }), notice].filter(Boolean).join('\n');
+    : [info.title, byline, link, t(strings, 'ytdl.preview.caption', { quality: previewLabel }), qualityLine, notice].filter(Boolean).join('\n');
   const botText = [info.title, byline, link, qualityLine, notice].filter(Boolean).join('\n');
   // The desktop chat's menu shows the cover as a bot chat's does; a bot step sends `image` itself.
   const cover = config.cover === 'true' && !input.quality ? (await VIDEO_SITES[site].chatCover?.(info)) ?? '' : '';
@@ -315,14 +331,15 @@ async function youtubeInfo(
 }
 
 /**
- * Which menu a run answers with, or '' when it carries out a choice: a link alone gets the first
- * menu ("analyze", "download") when there is more than the download to offer — a summary, or a
- * preview above it — and the download menu straight away otherwise; "download" gets the download menu.
+ * Which menu a run answers with, or '' when it carries out a choice. A link alone gets every
+ * button at once: "analyze" above the download menu's. Only a read that got no qualities
+ * (`VideoInfo.partial`, YouTube's bot check) keeps "analyze" and "download", which asks again.
+ * "download" (a button already sent, or the word) gets the download menu alone.
  */
-function menuStage(quality: string, firstMenu: boolean): '' | 'entry' | 'download' {
+function menuStage(quality: string, partial: boolean): '' | 'entry' | 'full' | 'download' {
   if (quality === DOWNLOAD_MENU) return 'download';
   if (quality) return '';
-  return firstMenu ? 'entry' : 'download';
+  return partial ? 'entry' : 'full';
 }
 
 export const FAILURE_KEYS: Record<YtdlFailureCategory, string> = {
@@ -369,7 +386,7 @@ function requireTools(site: VideoSiteId): void {
   if (state.status !== 'ready' && state.status !== 'custom') {
     throw new FlowUserError('flow.error.ytdlToolsMissing', {}, 'The video download tools are not installed');
   }
-  if (siteChangedAt(state, site)) {
+  if (pausesForYtdlp(site) && siteChangedAt(state, site)) {
     throw new FlowUserError('flow.error.ytdlBroken', { site: siteLabel(site) }, `${siteLabel(site)} changed and yt-dlp has no fix yet`);
   }
 }
@@ -496,8 +513,8 @@ function readySummary(video: DownloadedVideo): string {
 }
 
 /**
- * Where a file that stays on this computer is. For a Telegram chat it was over what the bot can
- * send: the line names that limit and, while large uploads are not set up, where to set them up.
+ * Where a file that stays on this computer is. For a chat it was over what the chat is sent: the
+ * line names that limit and, for Telegram while large uploads are not set up, where to set them up.
  */
 export function savedSummary(
   files: { filePath: string; sizeBytes: number },
@@ -509,10 +526,15 @@ export function savedSummary(
   // The whole path, so the person knows where to look; as code, since Markdown would read the
   // backslashes of a Windows path as escapes.
   const file = files.filePath.includes('`') ? files.filePath : `\`${files.filePath}\``;
-  if (destination !== 'telegram') {
+  if (destination === 'local') {
     return showPath ? t(strings, 'ytdl.summary.saved', { size, file }) : t(strings, 'ytdl.summary.savedNoPath', { size });
   }
-  const limit = formatLimit(telegramSendLimitBytes());
+  const limit = formatLimit(chatSendLimitBytes(destination));
+  if (destination === 'lineSelf') {
+    return showPath
+      ? t(strings, 'ytdl.summary.tooLargeLine', { size, limit, file })
+      : t(strings, 'ytdl.summary.tooLargeLineNoPath', { size, limit });
+  }
   const line = showPath
     ? t(strings, 'ytdl.summary.tooLarge', { size, limit, file })
     : t(strings, 'ytdl.summary.tooLargeNoPath', { size, limit });
@@ -564,9 +586,9 @@ export async function execYoutubeDownload(
 }
 
 /**
- * A step with `progress: "brief"` (a link pasted alone, answered in the background — user
- * 2026-10-23: "寫好處理中，然後下次更新就是出現result") says "working" once, the first time it has
- * anything to report, and nothing after: no reading, no quality, no bar, no sending.
+ * A step with `progress: "brief"` (a link pasted alone, answered in the background) says
+ * "working" once, the first time it has anything to report, and nothing after: no reading, no
+ * quality, no bar, no sending.
  */
 function briefly(
   config: Readonly<Record<string, string>>,
@@ -608,7 +630,7 @@ async function youtubeDownload(
     : videoTarget(quality, choices, allowed, access, limit);
   // Whether a file of this size goes to the bot step, or only stays on the computer: decided now,
   // for a reused file too — large uploads may have been set up (or taken away) since.
-  const handedOver = (sizeBytes: number): boolean => destination === 'telegram' && sizeBytes <= telegramSendLimitBytes();
+  const handedOver = (sizeBytes: number): boolean => isChatDestination(destination) && sizeBytes <= chatSendLimitBytes(destination);
   const sending = (sizeBytes: number): void => {
     onProgress?.(phaseOnly('sending', target.label, sizeBytes, target.kind));
   };

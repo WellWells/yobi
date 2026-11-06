@@ -1,45 +1,30 @@
 import { randomUUID } from 'node:crypto';
-import type Store from 'electron-store';
-import { openStoreWithRecovery } from '../configStore';
-import { getConfigDir } from '../configPaths';
 import { decryptToken, decryptTokenChecked, encryptToken } from '../configEncryption';
 import { clearSecretFailures, recordSecretFailure } from '../secretHealth';
+import { calendarFile } from './calendarFile';
+import type { StoredCalendar } from './calendarFile';
+import {
+  clearAllDavAccounts, clearDavPassword, davAccountUsable, davCalendarEntries, isDavAccountId, probeDavAccounts, reEncryptDavAccounts,
+} from './calDavStore';
 import { CALENDAR_NAME_MAX, calendarNameKey, normalizeCalendarUrl } from '../../shared/calendars';
 import type { CalendarSaveRequest, CalendarSaveResult, CalendarSummary } from '../../shared/calendars';
 
 /**
  * Calendar subscriptions, in their own file next to config.json (like the data-source keys and
  * MCP tokens): the .ics address is encrypted with the OS key, the name and id are not. Flows
- * hold only the id or the name, so an exported or shared flow carries no address.
+ * hold only the id or the name, so an exported or shared flow carries no address. The calendars
+ * of CalDAV accounts (`calDavStore.ts`) share the file and join the list every reader sees.
  */
-interface StoredCalendar {
-  id: string;
-  name: string;
-  urlEncrypted: string;
-}
-
-interface CalendarStoreShape {
-  calendars: StoredCalendar[];
-}
-
-let store: Store<CalendarStoreShape> | null = null;
-
-function getStore(): Store<CalendarStoreShape> {
-  if (!store) {
-    store = openStoreWithRecovery<CalendarStoreShape>('calendars', getConfigDir(), { calendars: [] });
-  }
-  return store;
-}
 
 function stored(): StoredCalendar[] {
-  const list = getStore().store.calendars;
+  const list = calendarFile().store.calendars;
   if (!Array.isArray(list)) return [];
   return list.filter((entry): entry is StoredCalendar => Boolean(entry)
     && typeof entry.id === 'string' && typeof entry.name === 'string' && typeof entry.urlEncrypted === 'string');
 }
 
 function write(list: StoredCalendar[]): void {
-  getStore().set('calendars', list);
+  calendarFile().set('calendars', list);
 }
 
 function decryptUrl(entry: StoredCalendar): { url: string; failed: boolean } {
@@ -59,53 +44,78 @@ function hostOf(url: string): string {
 
 function summaryOf(entry: StoredCalendar): CalendarSummary {
   const { url, failed } = decryptUrl(entry);
-  return { id: entry.id, name: entry.name, host: hostOf(url), unreadable: failed || !url };
+  return { id: entry.id, name: entry.name, host: hostOf(url), unreadable: failed || !url, kind: 'ics', account: '', writable: false };
 }
 
+/** Subscriptions first, then each CalDAV account's calendars in Settings order. */
 export function listCalendars(): CalendarSummary[] {
-  return stored().map(summaryOf);
+  return [
+    ...stored().map(summaryOf),
+    ...davCalendarEntries().map(({ account, calendar }): CalendarSummary => ({
+      id: calendar.id,
+      name: calendar.name,
+      host: hostOf(calendar.url),
+      unreadable: !davAccountUsable(account),
+      kind: 'caldav',
+      account: account.username,
+      writable: calendar.writable,
+    })),
+  ];
 }
 
-/** How many calendars are subscribed, without opening their addresses. */
+/** How many calendars there are, without opening an address or a password. */
 export function calendarCount(): number {
-  return stored().length;
+  return stored().length + davCalendarEntries().length;
 }
 
-export interface ResolvedCalendar {
-  id: string;
-  name: string;
-  url: string;
-  unreadable: boolean;
-}
+export type ResolvedCalendar =
+  | { kind: 'ics'; id: string; name: string; url: string; unreadable: boolean }
+  | { kind: 'caldav'; id: string; name: string; accountId: string; account: string; url: string; writable: boolean; unreadable: false };
 
 export type CalendarLookup =
-  | { kind: 'found'; calendar: ResolvedCalendar }
+  /** The one named, or every calendar for a blank field. */
+  | { kind: 'found'; calendars: ResolvedCalendar[] }
   | { kind: 'none' }
-  | { kind: 'pick' }
+  /** The name is shared by calendars of different accounts ("Home"); the id tells them apart. */
+  | { kind: 'ambiguous' }
   | { kind: 'unknown' };
+
+function resolveIcs(entry: StoredCalendar): ResolvedCalendar {
+  const { url, failed } = decryptUrl(entry);
+  return { kind: 'ics', id: entry.id, name: entry.name, url, unreadable: failed || !url };
+}
+
+function allResolved(): ResolvedCalendar[] {
+  return [
+    ...stored().map(resolveIcs),
+    ...davCalendarEntries().map(({ account, calendar }): ResolvedCalendar => ({
+      kind: 'caldav', id: calendar.id, name: calendar.name, accountId: account.id, account: account.username, url: calendar.url, writable: calendar.writable, unreadable: false,
+    })),
+  ];
+}
 
 /**
  * What a step's `calendar` field points at: an id (what the editor stores), else a name as the
- * person or the AI wrote it. Blank picks the only calendar there is; with several it asks.
+ * person or the AI wrote it. Blank reads every calendar there is: a morning summary wants the
+ * whole day, and an iCloud account alone brings several calendars.
  */
 export function findCalendar(ref: string): CalendarLookup {
-  const list = stored();
-  if (list.length === 0) return { kind: 'none' };
+  if (calendarCount() === 0) return { kind: 'none' };
+  const all = allResolved();
   const wanted = ref.trim();
-  let entry: StoredCalendar | undefined;
-  if (!wanted) {
-    if (list.length > 1) return { kind: 'pick' };
-    entry = list[0];
-  } else {
-    entry = list.find((item) => item.id === wanted)
-      ?? list.find((item) => calendarNameKey(item.name) === calendarNameKey(wanted));
-  }
-  if (!entry) return { kind: 'unknown' };
-  const { url, failed } = decryptUrl(entry);
-  return { kind: 'found', calendar: { id: entry.id, name: entry.name, url, unreadable: failed || !url } };
+  if (!wanted) return { kind: 'found', calendars: all };
+  const byId = all.find((item) => item.id === wanted);
+  if (byId) return { kind: 'found', calendars: [byId] };
+  const key = calendarNameKey(wanted);
+  const named = all.filter((item) => calendarNameKey(item.name) === key);
+  if (named.length === 0) return { kind: 'unknown' };
+  // A subscription's name is unique among subscriptions and wins over an account's calendar.
+  const icsNamed = named.filter((item) => item.kind === 'ics');
+  if (icsNamed.length === 1) return { kind: 'found', calendars: icsNamed };
+  return named.length === 1 ? { kind: 'found', calendars: named } : { kind: 'ambiguous' };
 }
 
-/** The decrypted address of one stored calendar ('' when unknown or unreadable). */
+/** The decrypted address of one stored subscription ('' when unknown or unreadable). */
 export function calendarUrl(id: string): string {
   const entry = stored().find((item) => item.id === id);
   return entry ? decryptUrl(entry).url : '';
@@ -151,15 +161,23 @@ export function clearCalendarUrl(id: string): void {
   clearSecretFailures('calendar', id);
 }
 
+/** The settings warning's "remove": a subscription loses its address, an account its password. */
+export function clearBrokenCalendarSecret(id: string): void {
+  if (isDavAccountId(id)) clearDavPassword(id);
+  else clearCalendarUrl(id);
+}
+
 /** Factory reset only: the file sits beside config.json, so resetting config alone leaves it. */
 export function clearAllCalendars(): void {
   for (const item of stored()) clearSecretFailures('calendar', item.id);
   write([]);
+  clearAllDavAccounts();
 }
 
-/** Decrypts every address at startup purely to file failures, before a morning flow needs one. */
+/** Decrypts every secret at startup purely to file failures, before a morning flow needs one. */
 export function probeCalendars(): void {
   for (const item of stored()) decryptUrl(item);
+  probeDavAccounts();
 }
 
 export function reEncryptCalendars(): void {
@@ -167,4 +185,6 @@ export function reEncryptCalendars(): void {
     const plaintext = decryptToken(item.urlEncrypted, `calendar.url (${item.id})`);
     return plaintext ? { ...item, urlEncrypted: encryptToken(plaintext) } : item;
   }));
+  reEncryptDavAccounts();
 }
+

@@ -652,6 +652,26 @@ export function canonicalEnumArguments(tool: McpTool, args: Record<string, unkno
 }
 
 /**
+ * The arguments with "true" and "false" given to a boolean turned into booleans. Models write them
+ * as strings (`dry_run: "true"`), and a tool that checks `=== true`
+ * then reads a preview as the real call, in the gate and on the server alike. The same object comes
+ * back when nothing changed.
+ */
+export function canonicalBooleanArguments(tool: McpTool, args: Record<string, unknown>): Record<string, unknown> {
+  const props = asSchema(tool.inputSchema?.properties);
+  if (!props || !args) return args;
+  let out: Record<string, unknown> | null = null;
+  for (const [key, value] of Object.entries(args)) {
+    if (typeof value !== 'string' || asSchema(props[key])?.type !== 'boolean') continue;
+    const word = value.trim().toLowerCase();
+    if (word !== 'true' && word !== 'false') continue;
+    out ??= { ...args };
+    out[key] = word === 'true';
+  }
+  return out ?? args;
+}
+
+/**
  * A value outside an argument's enum, caught before the action gate so the model gets the real
  * values from the schema instead of a gate verdict on a call the server would refuse anyway.
  */

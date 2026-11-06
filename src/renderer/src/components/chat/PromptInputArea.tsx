@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { ActionIcon, Box, Flex, Paper, Stack, Tooltip } from '@mantine/core';
-import { ArrowUp, Globe, SquarePen } from 'lucide-react';
+import { ArrowUp, Globe, SquarePen, Terminal } from 'lucide-react';
 import { AppTextarea } from '../AppTextarea';
 import { ModelDropdown } from './ModelDropdown';
 import { ModeDropdown } from './ModeDropdown';
@@ -48,9 +48,13 @@ import {
   BUILTIN_MODEL_FLOW_ID,
   BUILTIN_RECAP_FLOW_ID,
   type PromptAttachment,
+  type ShellInfo,
 } from '../../../../shared/types';
+import { shellBangCommand } from '../../../../shared/shellBang';
+import { shellApi } from '../../api/electronApi';
+import { composerFrameStyle, SHELL_COLOR } from './composerFrame';
 import { mcpCommandFlowId, parseMcpCommandFlowId } from '../../../../shared/mcpCommand';
-import { matchConnectorKeywords, type KeywordCandidate } from '../../../../shared/connectorKeywords';
+import { composerConnectors, type KeywordCandidate } from '../../../../shared/connectorKeywords';
 import { desktopLinkFlowFor } from '../../../../shared/builtinFlows';
 import { currentLinkSiteFilter } from '../../store/linkRecognitionStore';
 import { useResolvedCombo } from '../../store/shortcutStore';
@@ -68,6 +72,8 @@ interface PromptInputAreaProps {
   /** `/model <words>` sent with nothing matching them. */
   onUnknownModel: (query: string) => void;
   onSend: (text: string) => boolean;
+  /** A draft starting with `!`: the command runs on this computer. Absent where nothing may run. */
+  onRunShell?: (command: string) => boolean;
   attachments: PromptAttachment[];
   notice: string | null;
   onAddFiles: (files: File[]) => void;
@@ -96,6 +102,8 @@ interface PromptInputAreaProps {
   /** The user picked a mode themself (menu, `/agent`, `/chat`): also what a new chat starts in. */
   onPickMode?: (mode: ChatMode) => void;
   web: boolean;
+  /** The user switched web off for this conversation; `web` is also false in the untouched default. */
+  webOff: boolean;
   onToggleWeb: () => void;
   onSetWeb: (on: boolean) => void;
   /** Bumped when an agent run went online on its own; shows the same undo notice as a typed search. */
@@ -125,6 +133,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
   onPickModel,
   onUnknownModel,
   onSend,
+  onRunShell,
   attachments,
   notice,
   onAddFiles,
@@ -139,6 +148,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
   onChangeMode,
   onPickMode,
   web,
+  webOff,
   onToggleWeb,
   onSetWeb,
   autoWebSignal = 0,
@@ -341,9 +351,28 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     setAutoAttached({ ids: [], from: 'chat' });
   }, [autoAttached, autoWeb, undoAutoWeb, onRemoveConnectors, handleChangeMode]);
 
+  // A `!` draft says where it will run before it is sent: the shell and folder can change between
+  // commands (a `cd`, a new default terminal), so they are asked for each time the draft turns into one.
+  const shellDraft = onRunShell !== undefined && shellBangCommand(promptInput) !== null;
+  const [shellInfo, setShellInfo] = useState<ShellInfo | null>(null);
+  useEffect(() => {
+    if (!shellDraft) {
+      setShellInfo(null);
+      return;
+    }
+    let current = true;
+    void shellApi.info(selectedPath || undefined)
+      .then((info) => { if (current) setShellInfo(info); })
+      .catch(() => undefined);
+    return () => { current = false; };
+  }, [shellDraft, selectedPath]);
+
   // One strip, one notice. The mode pill already names every disclosed connector, so this line
   // only carries what the pill cannot: that nobody chose it, and how to take it back.
   const composerNotice = pickComposerNotice({
+    shell: shellDraft && shellInfo
+      ? fillTemplate(t('chat.shell.notice'), { shell: shellInfo.shell, folder: shellInfo.folder })
+      : null,
     autoAttachedNames: autoAttachedConnectors.map((c) => c.name),
     autoFlowActive: autoFlow.active,
     // Only while it is still on: switching it off in the pill has already answered the notice.
@@ -360,7 +389,8 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     : composerNotice?.kind === 'flow'
       ? <AgentGlyph size={15} />
       : composerNotice?.kind === 'web' ? <Globe size={15} />
-        : composerNotice?.kind === 'editor' ? <SquarePen size={15} /> : null;
+        : composerNotice?.kind === 'editor' ? <SquarePen size={15} />
+          : composerNotice?.kind === 'shell' ? <Terminal size={15} color={SHELL_COLOR} /> : null;
   const finishExternalEdit = useCallback((): void => { void finishEditor(true); }, [finishEditor]);
   const noticeAction = composerNotice?.kind === 'editor'
     ? finishExternalEdit
@@ -385,6 +415,17 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     const text = promptInput.trim();
     if (!text) return;
     const keepFocus = (): void => { promptInputRef.current?.focus(); };
+    // Ahead of everything else: a `!` line is a command for this computer in any mode. Quotes and
+    // attachments stay for the next message, since nothing here would carry them.
+    const shellCommand = onRunShell ? shellBangCommand(text) : null;
+    if (onRunShell && shellCommand !== null) {
+      if (shellCommand && onRunShell(shellCommand)) {
+        setPromptInput('');
+        void finishEditor(false);
+      }
+      keepFocus();
+      return;
+    }
     const parsed = parseSlashCommand(text);
     // Handled before the notices are cleared: switching models is not a send, so it leaves the
     // one about the last send standing.
@@ -493,8 +534,8 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     // Naming a connector in an ordinary sentence discloses it and makes this an agent turn.
     // Disclosure, not instruction: the model still decides the connector is not the right
     // instrument for this question, exactly as it does for one the user typed a slash for.
-    const named = matchConnectorKeywords(text, connectors);
-    const attached = named.filter((id) => !activeConnectorIds.includes(id));
+    const { named, attached, forThisMessage } = composerConnectors(text, connectors, activeConnectorIds, webOff);
+    const messageScope = forThisMessage.length > 0 ? [...activeConnectorIds, ...forThisMessage] : undefined;
     const agentCommand = chatCommands.find((c) => c.flowId === BUILTIN_AGENT_FLOW_ID);
     // Decided up front but applied only on the branch that runs as an agent: a flow request below
     // is routed on its own terms.
@@ -518,7 +559,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
       const disclosed = onDiscloseConnectors(attached);
       setAutoAttached({ ids: attached, from: chatMode });
       if (wantsWeb) enableWeb();
-      if (onRunCommand(agentCommand, withQuotes(text), disclosed, wantsWeb ? true : undefined)) clearComposer();
+      if (onRunCommand(agentCommand, withQuotes(text), [...disclosed, ...forThisMessage], wantsWeb ? true : undefined)) clearComposer();
       keepFocus();
       return;
     }
@@ -534,29 +575,30 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     }
     if (wantsWeb && agentCommand) {
       enableWeb();
-      if (onRunCommand(agentCommand, withQuotes(text), undefined, true)) clearComposer();
+      if (onRunCommand(agentCommand, withQuotes(text), messageScope, true)) clearComposer();
       keepFocus();
       return;
     }
-    // A question an agent lookup answers (weather, stock price, exchange rate) runs as an agent turn for
-    // this message only; the mode stays plain chat, which is faster and keeps the provider's thread.
-    if (!modeCommand && agentCommand && looksLikeToolRequest(text)) {
-      if (onRunCommand(agentCommand, withQuotes(text))) clearComposer();
+    // A question an agent lookup answers (weather, stock price, exchange rate, a linked page) runs as an
+    // agent turn for this message only; the mode stays plain chat, which is faster and keeps the provider's thread.
+    if (!modeCommand && agentCommand && (messageScope || looksLikeToolRequest(text))) {
+      if (onRunCommand(agentCommand, withQuotes(text), messageScope)) clearComposer();
       keepFocus();
       return;
     }
     if (modeCommand) {
-      if (onRunCommand(modeCommand, withQuotes(text))) clearComposer();
+      if (onRunCommand(modeCommand, withQuotes(text), messageScope)) clearComposer();
       keepFocus();
       return;
     }
     if (onSend(withQuotes(text))) clearComposer();
     keepFocus();
   }, [
-    promptInput, chatCommands, chatMode, connectors, activeConnectorIds, web, quotes, attachments,
+    promptInput, chatCommands, chatMode, connectors, activeConnectorIds, web, webOff, quotes, attachments,
     activeModelUrl, tempChatMode,
     modeCommand, handleChangeMode, pickMode, onDiscloseConnectors, onRunCommand, onUnknownCommand,
     onSetWeb, onSend, withQuotes, clearComposer, modelStops, pickModel, onUnknownModel,
+    onRunShell, finishEditor,
   ]);
 
   const handlePaste = useCallback((event: React.ClipboardEvent<HTMLElement>) => {
@@ -676,19 +718,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
         onBlurCapture={() => setInputFocused(false)}
         onClick={() => promptInputRef.current?.focus()}
         onPaste={handlePaste}
-        style={tempChatMode ? {
-          borderStyle: 'dashed',
-          borderColor: inputFocused ? 'var(--mantine-color-violet-4)' : 'var(--mantine-color-violet-6)',
-          boxShadow: inputFocused ? '0 0 0 2px color-mix(in srgb, var(--mantine-color-violet-5) 25%, transparent)' : 'none',
-          background: 'color-mix(in srgb, var(--mantine-color-default) 82%, transparent)',
-          transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
-          cursor: 'text',
-        } : {
-          borderColor: inputFocused ? 'var(--mantine-color-accent)' : 'var(--mantine-color-default-border)',
-          boxShadow: inputFocused ? '0 0 0 2px var(--mantine-color-accent-dim)' : 'none',
-          transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
-          cursor: 'text',
-        }}
+        style={composerFrameStyle({ temporary: tempChatMode, shell: shellDraft, focused: inputFocused })}
       >
         {composerNotice && (
           <ComposerNotice

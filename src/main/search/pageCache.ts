@@ -4,7 +4,7 @@ import type { SourceDoc } from './types';
 export type ReadPage = Omit<SourceDoc, 'id'>;
 
 /**
- * A follow-up question reads the same pages again within a minute or two (dev log 2026-10). Kept
+ * A follow-up question reads the same pages again within a minute or two. Kept
  * short so a flow on a frequent schedule still reads a page that changes (a status or price page),
  * and so a page that failed for a moment is tried again soon.
  */

@@ -2,6 +2,18 @@ const YOUTUBE_HOSTS = ['youtube.com', 'youtu.be', 'm.youtube.com', 'music.youtub
 
 const VIDEO_ID = /^[\w-]{11}$/;
 
+/** The pages that show a whole playlist rather than one video of it. */
+const PLAYLIST_PATHS = new Set(['/playlist', '/watch', '/embed/videoseries']);
+
+/** A mix built around one video: `RD<video>`, your own `RDMM<video>`, YouTube Music's `RDAMVM<video>`. */
+const MIX_LIST_ID = /^RD(?:MM|AMVM)?([\w-]{11})$/;
+
+/** The video a mix link plays. YouTube's app shares a mix with no `v=`; only its list id names the video. */
+function mixVideoId(parsed: URL): string | null {
+  if (!PLAYLIST_PATHS.has(parsed.pathname.replace(/\/+$/, ''))) return null;
+  return MIX_LIST_ID.exec(parsed.searchParams.get('list') ?? '')?.[1] ?? null;
+}
+
 export function extractYoutubeVideoId(url: string): string | null {
   let parsed: URL;
   try {
@@ -22,6 +34,7 @@ export function extractYoutubeVideoId(url: string): string | null {
     const match = parsed.pathname.match(/^\/(?:shorts|embed|live)\/([\w-]{11})/);
     // `embed/videoseries?list=…` is a playlist's player, its 11 letters no video id.
     if (match && match[1] !== 'videoseries') return match[1];
+    return mixVideoId(parsed);
   }
 
   return null;
@@ -65,9 +78,6 @@ export function strictYoutubeVideoId(text: string): string | null {
 
 /** A playlist id as YouTube writes it: `PL…`, a mix `RD…`, an album `OLAK5uy_…`, `WL`, `LL`. */
 const LIST_ID = /^[\w-]{2,64}$/;
-
-/** The pages that show a whole playlist rather than one video of it. */
-const PLAYLIST_PATHS = new Set(['/playlist', '/watch', '/embed/videoseries']);
 
 /**
  * The playlist a link names (`list=`), under the same rules as `strictYoutubeVideoId`; null when

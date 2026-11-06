@@ -218,10 +218,11 @@ export const BotUserPermissions: React.FC<Props> = ({ access, userId, t }) => {
 };
 
 /**
- * What a platform's accounts are given the moment they pair with a code, above the paired list.
- * Shell and admin are never offered; accounts already paired keep their own grants.
+ * What a platform's accounts are given the moment they pair (with a code, or let in), above the
+ * paired list; `hint` says who that is where it is not a code. Shell and admin are never offered;
+ * accounts already paired keep their own grants.
  */
-export const BotDefaultGrants: React.FC<{ access: BotAccessControls; t: (key: string) => string }> = ({ access, t }) => {
+export const BotDefaultGrants: React.FC<{ access: BotAccessControls; t: (key: string) => string; hint?: string }> = ({ access, t, hint }) => {
   const grants = access.defaultGrants;
   const view = useMemo(
     () => ({ platform: access.platform, isOwner: false, connectors: access.connectors, t }),
@@ -237,7 +238,7 @@ export const BotDefaultGrants: React.FC<{ access: BotAccessControls; t: (key: st
           {t('settings.bot.perm.defaults.title')}
         </Text>
         <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>
-          {t('settings.bot.perm.defaults.hint')}
+          {hint ?? t('settings.bot.perm.defaults.hint')}
         </Text>
       </Stack>
       <BotGrantEditor grants={grants} chips={chips} groups={groups} onChange={access.setDefaultGrants} t={t} />

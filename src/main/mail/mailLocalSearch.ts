@@ -1,7 +1,6 @@
 /**
  * Yobi's own search for the text terms a server would not match. Outlook.com / Exchange answer a
- * UTF-8 IMAP SEARCH with nothing (2026-10-23: a draft saved with the Chinese subject 「JLCPCB 專案進度
- * 回報」 was in Drafts, yet searching Drafts for that subject found none), so a non-ASCII query that
+ * UTF-8 IMAP SEARCH with nothing, so a non-ASCII query that
  * finds nothing is checked here against the newest messages: sender, recipients and subject from
  * the headers already fetched, the body only for the newest few, since each needs a download.
  */

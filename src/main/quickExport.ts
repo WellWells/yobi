@@ -1,23 +1,28 @@
 import { clipboard } from 'electron';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { config, saveConfig, normalizeShareSettings } from './config';
+import { config, getHiddenSources, saveConfig, normalizeShareSettings } from './config';
 import { CaptureTooTallError, captureMarkdownDocument } from './capture';
 import { writeCaptureToClipboard, zipSingleFile } from './captureClipboard';
 import type { ClipboardCopyOutcome } from './captureClipboard';
 import { instanceHost, runWithExportPrompt } from './exportPrompt';
-import type { ExportPanel } from './exportPrompt';
+import type { ExportNamer, ExportPanel } from './exportPrompt';
 import { buildSafeFileNameFromTitle, buildSnapshotFileName, getOutputDir, getUniquePath } from './files';
 import { sendLog, sendWebNotification } from './helpers';
 import { getLangCache, t } from './i18n';
 import { normalizeCaptureSettings, normalizeQuickExport } from './configNormalizers';
 import { ShareError, createPaste, revokePaste } from './share/privatebin';
+import { oneShotIo, quickActionModelUrl, rememberQuickActionModel } from './chat/oneShotRequest';
+import { nameMaterial, suggestExportName } from './quickExportName';
 import { extractMarkdownTitle, splitLeadingTitle } from '../shared/markdownTitle';
 import { stripConversationMarkers } from '../shared/conversationDoc';
 import { captureBackgroundCss, paletteCardTheme } from '../shared/capturePalettes';
-import type { CaptureBackgroundStyle, CaptureDirection } from '../shared/capturePalettes';
+import type { CaptureDirection } from '../shared/capturePalettes';
+import {
+  PROVIDERS, PROVIDER_LABELS, PROVIDER_URLS, buildByokGroupUrl, buildByokUrl, isModelUrlHidden,
+} from '../shared/types';
 import type {
-  CaptureExportChoice, MarkdownCaptureRequest, ShareExportChoice, ShareResultState,
+  CaptureExportChoice, ExportNameModel, ExportNaming, MarkdownCaptureRequest, ShareExportChoice, ShareResultState,
 } from '../shared/types';
 
 type LangStrings = ReturnType<typeof getLangCache>;
@@ -68,7 +73,7 @@ export function buildQuickExportRequest(markdown: string, choice: CaptureExportC
       margin: choice.margin,
       background: captureBackgroundCss(
         choice.palette,
-        settings.backgroundStyle as CaptureBackgroundStyle,
+        choice.backgroundStyle,
         settings.direction as CaptureDirection,
       ),
       cardTheme: paletteCardTheme(choice.palette),
@@ -89,14 +94,83 @@ export function buildQuickShareMarkdown(raw: string): string {
   return stripConversationMarkers(raw).trim();
 }
 
-function rememberCaptureChoice(choice: CaptureExportChoice): void {
+/**
+ * The menu behind the panel's name button: the same sources as the chat model menu, in the same
+ * order (web providers, keys, key groups), each left out when Settings hides it.
+ */
+export function exportNaming(): ExportNaming {
+  const strings = getLangCache();
+  const hidden = getHiddenSources();
+  const shown = (model: ExportNameModel): boolean => !isModelUrlHidden(model.url, hidden);
+  const sections: ExportNaming['sections'] = [
+    {
+      label: null,
+      models: PROVIDERS.map((provider) => ({ url: PROVIDER_URLS[provider], label: PROVIDER_LABELS[provider] })),
+    },
+    {
+      label: t(strings, 'settings.byok.title'),
+      models: config.byokInstances.map((instance) => ({
+        url: buildByokUrl(instance.id), label: instance.name, byokType: instance.providerType,
+      })),
+    },
+    {
+      label: t(strings, 'settings.byok.group.title'),
+      models: config.byokGroups
+        .filter((group) => group.memberIds.length > 0)
+        .map((group) => ({ url: buildByokGroupUrl(group.id), label: group.name })),
+    },
+  ];
+  return {
+    sections: sections
+      .map((section) => ({ ...section, models: section.models.filter(shown) }))
+      .filter((section) => section.models.length > 0),
+    modelUrl: quickActionModelUrl(),
+  };
+}
+
+function offeredNameModel(providerUrl: string): ExportNameModel | null {
+  for (const section of exportNaming().sections) {
+    const model = section.models.find((entry) => entry.url === providerUrl);
+    if (model) return model;
+  }
+  return null;
+}
+
+export function quickExportNamer(markdown: string): ExportNamer {
+  return {
+    offer: exportNaming,
+    name: async (providerUrl, signal) => {
+      const strings = getLangCache();
+      const emptyReply = t(strings, 'quickExport.panel.aiNameEmpty');
+      const model = offeredNameModel(providerUrl);
+      if (!model) return { error: emptyReply };
+      rememberQuickActionModel(providerUrl);
+      const material = nameMaterial(markdown);
+      sendLog(
+        `🏷️ Quick export: asking ${model.label} for a file name `
+        + `(${material.headings.length + material.opening.length} chars of outline)`,
+      );
+      const outcome = await suggestExportName(material, providerUrl, oneShotIo(signal, () => undefined), emptyReply);
+      if (outcome && 'error' in outcome) sendLog(`⚠️ Quick export: no file name from ${model.label} — ${outcome.error}`);
+      return outcome;
+    },
+  };
+}
+
+export function rememberCaptureChoice(choice: CaptureExportChoice): void {
   const capture = config.captureSettings;
-  if (choice.width !== capture.width || choice.margin !== capture.margin || choice.palette !== capture.palette) {
+  if (
+    choice.width !== capture.width
+    || choice.margin !== capture.margin
+    || choice.palette !== capture.palette
+    || choice.backgroundStyle !== capture.backgroundStyle
+  ) {
     config.captureSettings = normalizeCaptureSettings({
       ...capture,
       width: choice.width,
       margin: choice.margin,
       palette: choice.palette,
+      backgroundStyle: choice.backgroundStyle,
     });
     saveConfig({ captureSettings: config.captureSettings });
   }
@@ -269,6 +343,7 @@ export async function runQuickExport(): Promise<void> {
         rememberCaptureChoice(chosen);
         return 'done';
       },
+      quickExportNamer(markdown),
     );
 
     if (!choice) {

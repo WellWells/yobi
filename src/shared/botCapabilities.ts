@@ -7,7 +7,7 @@
  * The audiences: the owner ("me"), a paired account with no grants, and a group — where a group's
  * own grants reach everyone in it, paired or not, once the owner has allowed that group.
  */
-import { PUBLIC_DATA_CONNECTOR_IDS } from './builtinConnectors';
+import { PUBLIC_DATA_CONNECTOR_IDS, readsAnyPage } from './builtinConnectors';
 
 export type BotCapabilityKey = 'chat' | 'web' | 'download' | 'preview' | 'agent' | 'local' | 'shell' | 'admin' | 'connectors';
 
@@ -37,7 +37,7 @@ export interface BotCapability {
  * - agent: the full kit acts on the owner's computer and accounts (LLM steps, notifications,
  *   connector calls), so a group never grants it; a paired account's own grant still works there.
  * - local, shell: this computer; private chats only. shell is never implied, not even by "me".
- * - admin: /status, /restart, /output — the outputs are the owner's, so private chats only.
+ * - admin: /status, /restart — the owner's queue and app, so private chats only.
  * - connectors: the owner's own data; private chats only. A connector of public data alone
  *   (`publicDataConnector`) is the exception.
  */
@@ -56,9 +56,13 @@ export const BOT_CAPABILITIES: Readonly<Record<BotCapabilityKey, BotCapability>>
 /** A connector that reads only public data: everything a group may have of it, preselected too. */
 const PUBLIC_DATA_CONNECTOR: BotCapability = { owner: true, paired: false, inGroups: true, groupGrantable: true, groupPreselected: true };
 
+/** Allowing a group gives it `chat`, not `web`: a connector that reads any public page is the owner's to turn on there. */
+const ANY_PAGE_CONNECTOR: BotCapability = { ...PUBLIC_DATA_CONNECTOR, groupPreselected: false };
+
 /** One connector's row: the public-data exception, or the connectors row. */
 export function connectorCapability(serverId: string): BotCapability {
-  return PUBLIC_DATA_CONNECTOR_IDS.includes(serverId) ? PUBLIC_DATA_CONNECTOR : BOT_CAPABILITIES.connectors;
+  if (!PUBLIC_DATA_CONNECTOR_IDS.includes(serverId)) return BOT_CAPABILITIES.connectors;
+  return readsAnyPage(serverId) ? ANY_PAGE_CONNECTOR : PUBLIC_DATA_CONNECTOR;
 }
 
 /** The capabilities (besides public-data connectors) a group may grant — the table's `groupGrantable`. */

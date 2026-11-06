@@ -675,11 +675,12 @@ export class McpRegistry {
     if (!rt?.client || rt.status !== 'connected') throw notConnectedError(serverId);
     const client = rt.client;
     const transport = rt.transport;
-    const prepare = rt.kind === 'builtin' ? this.builtinRuntime(serverId)?.prepareCall : undefined;
-    const verdict = prepare ? await prepare(name, args) : { args };
+    const builtin = rt.kind === 'builtin' ? this.builtinRuntime(serverId) : undefined;
+    const verdict = builtin?.prepareCall ? await builtin.prepareCall(name, args) : { args };
     if ('denied' in verdict) return { text: verdict.denied, isError: true };
+    const timeout = builtin?.callTimeoutMs ?? CALL_TIMEOUT_MS;
     try {
-      const result = await client.callTool({ name, arguments: verdict.args }, undefined, { signal, timeout: CALL_TIMEOUT_MS });
+      const result = await client.callTool({ name, arguments: verdict.args }, undefined, { signal, timeout });
       return flattenResult(result as CallToolResult, rt.kind === 'builtin');
     } catch (err) {
       if (signal?.aborted || !isSessionLost(rt, transport, err)) throw err;
@@ -692,7 +693,7 @@ export class McpRegistry {
       // Worded so the action gate does not read it as a final failure of this exact call.
       throw new McpCallNotSentError(`MCP server "${serverId}" had dropped its session and has been reconnected; this call was not sent. Send it again if it is still wanted.`);
     }
-    const result = await fresh.client.callTool({ name, arguments: verdict.args }, undefined, { signal, timeout: CALL_TIMEOUT_MS });
+    const result = await fresh.client.callTool({ name, arguments: verdict.args }, undefined, { signal, timeout });
     return flattenResult(result as CallToolResult, fresh.kind === 'builtin');
   }
 

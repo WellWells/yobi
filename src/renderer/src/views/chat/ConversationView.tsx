@@ -16,6 +16,8 @@ import { UserBubble } from '../../components/chat/UserBubble';
 import { PromptBody } from '../../components/chat/PromptBody';
 import { AssistantTurn } from '../../components/chat/AssistantTurn';
 import { PendingTurnBubble } from '../../components/chat/PendingTurnBubble';
+import { ShellBubble } from '../../components/chat/ShellBubble';
+import { parseShellTurnPrompt, readTurnShell } from '../../../../shared/shellBang';
 import { TokenUsageLabel } from '../../components/chat/TokenUsageLabel';
 import { readingMaxWidth, useReadingStore } from '../../store/readingStore';
 import { READING_FACE } from '../../styles/readingText';
@@ -68,6 +70,31 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
     }),
     [conversation.turns, conversation.provider],
   );
+  // A `!` command's turn: its record split back into the command and what it printed.
+  const shellTurns = useMemo(
+    () => conversation.turns.map((turn) => {
+      const shell = readTurnShell(turn.meta);
+      const record = shell ? parseShellTurnPrompt(turn.prompt) : null;
+      return shell && record ? { shell, ...record } : null;
+    }),
+    [conversation.turns],
+  );
+  const shellBubble = (index: number, bare: boolean): React.ReactNode => {
+    const entry = shellTurns[index];
+    if (!entry) return null;
+    return (
+      <ShellBubble
+        command={entry.command}
+        output={entry.output}
+        shellLabel={entry.shell.s}
+        folder={entry.shell.w}
+        exitCode={entry.shell.x}
+        stopped={entry.shell.k === 1}
+        bare={bare}
+        t={t}
+      />
+    );
+  };
 
   // The temporary chat lives in memory only; there is no file to write an edit into.
   const editPath = conversationPath && conversationPath !== NEW_CONVERSATION_KEY ? conversationPath : undefined;
@@ -192,7 +219,7 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
                   paddingBottom: 20,
                 }}
               >
-                <Box data-find-scope><PromptBody prompt={turn.prompt} fw={500} /></Box>
+                {shellBubble(index, true) ?? <Box data-find-scope><PromptBody prompt={turn.prompt} fw={500} /></Box>}
               </Box>
               <Box style={{ flex: 1, minWidth: 0, borderLeft: '1px solid var(--border)', padding: '20px 4px 20px 20px' }}>
                 {turn.response ? (
@@ -231,7 +258,7 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
               className={turnEnterClass(index)}
               onAnimationEnd={handleTurnAnimationEnd}
             >
-              <UserBubble prompt={turn.prompt} t={t} attachments={turn.meta.a} />
+              {shellBubble(index, false) ?? <UserBubble prompt={turn.prompt} t={t} attachments={turn.meta.a} attachmentFiles={turn.meta.af} />}
               {turn.response
                 ? (
                   <AssistantTurn

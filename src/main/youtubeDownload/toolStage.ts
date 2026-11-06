@@ -3,25 +3,25 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { errorText } from '../../shared/errorText';
 import type { YtdlInstallProgress } from '../../shared/ytdl';
+import { writeFileAtomic } from '../atomicWrite';
 import { sendLog } from '../helpers';
-import { ytdlToolsRoot } from './paths';
+import { VERSION_FILE, ytdlToolsRoot } from './paths';
 import type { ToolResult } from './processTree';
 import { spawnTool, toolEnv } from './processTree';
 import type { ToolFetcher } from './toolFetch';
 import { electronToolFetcher } from './toolFetch';
 import type { PlatformTools } from './toolManifest';
 import {
-  YTDLP_SIG_FILE, YTDLP_SUMS_FILE, executableName, ffmpegAssetUrl, platformTools, ytdlpLatestUrl, ytdlpReleaseUrl,
+  FFMPEG_VERSION, YTDLP_SIG_FILE, YTDLP_SUMS_FILE, executableName, ffmpegAssetUrl, platformTools, ytdlpLatestUrl, ytdlpReleaseUrl,
 } from './toolManifest';
-import type { PersistedYtdlState } from './toolState';
 import { setYtdlProgress } from './toolState';
 import { extractZipSafely, gunzipFile, parseSums, sha256File, verifySumsSignature } from './toolVerify';
 import { YTDLP_SIGNING_KEY } from './ytdlpSigningKey';
 
 /*
- * The steps of an install: fetch and verify a release, stage each tool in a hidden folder and run
- * it, then rename the staged folder into place. The installer decides what to stage and when the
- * active version changes.
+ * The steps of an install: fetch and verify a release, stage each tool in a hidden folder, run it
+ * and label it with its version, then swap the staged folder in for the tool's fixed folder. The
+ * installer decides what to stage and when the active version changes.
  */
 
 export interface YtdlInstallerDeps {
@@ -133,6 +133,11 @@ async function makeExecutable(file: string): Promise<void> {
   if (process.platform !== 'win32') await fs.chmod(file, 0o755);
 }
 
+/** Labels a staged folder with the version it holds; the fixed path no longer says. */
+async function writeVersionFile(dir: string, version: string): Promise<void> {
+  await writeFileAtomic(path.join(dir, VERSION_FILE), `${version}\n`);
+}
+
 interface StagedYtdlp {
   dir: string;
   exe: string;
@@ -161,6 +166,7 @@ export async function stageYtdlp(staging: string, tools: PlatformTools, release:
   await makeExecutable(exe);
   reportProgress({ component: 'yt-dlp', phase: 'test', receivedBytes: 0, totalBytes: 0 });
   await selfTest('yt-dlp', exe, '--version');
+  await writeVersionFile(dir, release.version);
   return { dir, exe: asset.exe };
 }
 
@@ -183,6 +189,7 @@ export async function stageFfmpeg(dir: string, tools: PlatformTools): Promise<vo
     reportProgress({ component, phase: 'test', receivedBytes: 0, totalBytes: 0 });
     await selfTest(component, exe, '-version');
   }
+  await writeVersionFile(dir, FFMPEG_VERSION);
 }
 
 const RENAME_LOCKED_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
@@ -211,48 +218,77 @@ export async function renameWhenUnlocked(
   }
 }
 
-/** Renames a staged folder to `<parent>/<version>`, or `<version>-<random>` when that is taken. */
-export async function promote(staged: string, parent: string, version: string): Promise<string> {
-  await fs.mkdir(parent, { recursive: true });
-  let target = path.join(parent, version);
+const STAGING_PREFIX = '.staging-';
+const REPLACED_PREFIX = '.old-';
+
+/**
+ * Puts a staged folder at `<tools root>/<name>`, replacing what is there, so the program's path is
+ * the same for every version. Call it only inside `withToolsIdle`. The old folder is moved aside
+ * (deleted by `pruneLeftovers`) and put back when the staged one cannot move in. An install from
+ * before the fixed folders kept its versions inside `<name>/`; they go aside with it.
+ */
+export async function replaceFolder(staged: string, name: string): Promise<string> {
+  const target = path.join(ytdlToolsRoot(), name);
+  const aside = await moveAside(target);
   try {
-    await fs.access(target);
-    target = path.join(parent, `${version}-${randomBytes(3).toString('hex')}`);
-  } catch {
-    // Free.
+    await renameWhenUnlocked(staged, target);
+  } catch (err) {
+    if (aside) {
+      await renameWhenUnlocked(aside, target).catch((restoreErr) => deps.log(`[Ytdl] could not put ${name} back: ${errorText(restoreErr)}`));
+    }
+    throw err;
   }
-  await renameWhenUnlocked(staged, target);
   return target;
 }
 
-export function relativeToRoot(dir: string): string {
-  return path.relative(ytdlToolsRoot(), dir).split(path.sep).join('/');
+/** Renames `dir` to a `.old-*` folder for `pruneLeftovers`; null when there is no `dir`. */
+async function moveAside(dir: string): Promise<string | null> {
+  const aside = path.join(ytdlToolsRoot(), `${REPLACED_PREFIX}${randomBytes(3).toString('hex')}`);
+  try {
+    await renameWhenUnlocked(dir, aside);
+    return aside;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err;
+  }
 }
 
-/** Deletes version folders state.json no longer points at, and leftover staging folders. */
-export async function pruneVersions(state: PersistedYtdlState): Promise<void> {
-  const root = ytdlToolsRoot();
-  const keep = new Set([state.ytdlp?.dir, state.previousYtdlp?.dir, state.ffmpeg?.dir].filter(Boolean).map((d) => path.resolve(root, d as string)));
-  for (const tool of ['yt-dlp', 'ffmpeg']) {
-    const parent = path.join(root, tool);
-    const names = await fs.readdir(parent).catch(() => [] as string[]);
-    for (const name of names) {
-      const dir = path.join(parent, name);
-      if (keep.has(path.resolve(dir))) continue;
-      // A folder a running download still uses is locked on Windows; the next prune gets it.
-      await fs.rm(dir, { recursive: true, force: true }).catch((err) => deps.log(`[Ytdl] could not remove ${dir}: ${errorText(err)}`));
-    }
+/**
+ * Turns `<name>/` from before the fixed folders, which held one folder per version, into the fixed
+ * folder without downloading again: `keep` (the version in use, inside it) becomes `<name>/`
+ * itself, labelled with its version, and the other versions go aside; with no `keep`, all of it
+ * goes. Call it only inside `withToolsIdle`.
+ */
+export async function adoptLegacyFolder(name: string, keep: { dir: string; version: string } | null): Promise<void> {
+  if (!keep) {
+    await moveAside(path.join(ytdlToolsRoot(), name));
+    return;
   }
+  const moving = path.join(ytdlToolsRoot(), `${STAGING_PREFIX}${randomBytes(3).toString('hex')}`);
+  await renameWhenUnlocked(keep.dir, moving);
+  try {
+    await writeVersionFile(moving, keep.version);
+    await replaceFolder(moving, name);
+  } catch (err) {
+    await renameWhenUnlocked(moving, keep.dir).catch((restoreErr) => deps.log(`[Ytdl] could not put ${keep.dir} back: ${errorText(restoreErr)}`));
+    throw err;
+  }
+}
+
+/** Deletes what installs leave behind: staging folders and the folders `replaceFolder` moved aside. */
+export async function pruneLeftovers(): Promise<void> {
+  const root = ytdlToolsRoot();
   const entries = await fs.readdir(root).catch(() => [] as string[]);
-  for (const name of entries.filter((n) => n.startsWith('.staging-'))) {
-    await fs.rm(path.join(root, name), { recursive: true, force: true }).catch(() => undefined);
+  for (const name of entries.filter((n) => n.startsWith(STAGING_PREFIX) || n.startsWith(REPLACED_PREFIX))) {
+    // A folder an antivirus scan still holds is locked on Windows; the next prune gets it.
+    await fs.rm(path.join(root, name), { recursive: true, force: true }).catch((err) => deps.log(`[Ytdl] could not remove ${name}: ${errorText(err)}`));
   }
 }
 
 export async function withStaging<T>(fn: (staging: string) => Promise<T>): Promise<T> {
   const root = ytdlToolsRoot();
   await fs.mkdir(root, { recursive: true });
-  const staging = await fs.mkdtemp(path.join(root, '.staging-'));
+  const staging = await fs.mkdtemp(path.join(root, STAGING_PREFIX));
   try {
     return await fn(staging);
   } finally {

@@ -6,10 +6,11 @@ import type { TelegramReplyTarget } from '../../shared/types';
 
 type Strings = Record<string, string>;
 
-/** What Telegram needs to send pictures: the runtime's own senders. */
+/** What Telegram needs to send pictures and files: the runtime's own senders. */
 export interface PictureSender {
   sendPictureReply(target: TelegramReplyTarget, files: readonly string[], caption: string): Promise<boolean>;
-  sendProactiveFile(chatId: number, filePath: string, sendAs: 'auto', caption?: string, authorizedPaths?: string[]): Promise<void>;
+  sendDocumentReply(target: TelegramReplyTarget, file: string, caption: string): Promise<boolean>;
+  sendProactiveFile(chatId: number, filePath: string, sendAs: 'auto' | 'document', caption?: string, authorizedPaths?: string[]): Promise<void>;
   sendProactiveAlbum(chatId: number, filePaths: string[], caption?: string, authorizedPaths?: string[]): Promise<void>;
 }
 
@@ -36,8 +37,10 @@ export function pictureCaption(text: string, pictures: number, strings: Strings)
 /**
  * An answer to a Telegram request. With pictures it is one message: the pictures replying to the
  * request, the provider's own words as their caption (none when it only drew — "1 picture made"
- * above the picture is noise; user 2026-10-19). When that cannot go (words longer than a caption,
- * pictures refused) the text goes as usual (`sendText`) and the pictures after it.
+ * above the picture is noise). When that cannot go (words longer than a caption,
+ * pictures refused) the text goes as usual (`sendText`) and the pictures after it. A file made for
+ * the answer (`documents`, a PDF of it) is the same: alone, it is the reply with the words as its
+ * caption; otherwise it follows the answer as a file.
  */
 export async function sendAnswerToTelegram(
   sender: PictureSender,
@@ -46,10 +49,25 @@ export async function sendAnswerToTelegram(
   files: readonly string[],
   strings: Strings,
   sendText: () => Promise<void>,
+  documents: readonly string[] = [],
 ): Promise<void> {
-  if (files.length > 0 && await sender.sendPictureReply(target, files, pictureCaption(text, files.length, strings))) return;
-  await sendText();
-  await sendPicturesToTelegram(sender, target.chatId, files);
+  if (files.length === 0 && documents.length === 1 && await sender.sendDocumentReply(target, documents[0], text)) return;
+  if (!(files.length > 0 && await sender.sendPictureReply(target, files, pictureCaption(text, files.length, strings)))) {
+    await sendText();
+    await sendPicturesToTelegram(sender, target.chatId, files);
+  }
+  await sendDocumentsToTelegram(sender, target.chatId, documents);
+}
+
+/** Files made for the answer, after it, each as a document; one that fails is logged. */
+async function sendDocumentsToTelegram(sender: PictureSender, chatId: number, documents: readonly string[]): Promise<void> {
+  for (const file of documents) {
+    try {
+      await sender.sendProactiveFile(chatId, file, 'document', undefined, [...documents]);
+    } catch (err) {
+      sendLog(`⚠️ [Bot] File not sent to chat ${chatId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 }
 
 /**

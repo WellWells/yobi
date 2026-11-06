@@ -9,6 +9,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { LineError } from './errors';
+import { FIND_LINE_PROCESS_PS } from './lineProcess';
 
 const execFileAsync = promisify(execFile);
 
@@ -55,7 +56,7 @@ export function parseKeyCandidates(stdout: string): string[] {
 // PowerShell scanner: prints "<count> <hex>" for each distinct 32-char hex token in LINE.exe's private memory.
 const SCAN_SCRIPT = `
 $ErrorActionPreference = 'Stop'
-$proc = Get-Process -Name LINE -ErrorAction SilentlyContinue | Select-Object -First 1
+${FIND_LINE_PROCESS_PS}
 if (-not $proc) { Write-Output 'ERR:LINE_NOT_RUNNING'; exit 0 }
 $src = @'
 using System;

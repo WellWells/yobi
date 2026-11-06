@@ -96,8 +96,7 @@ const NOTICES_PER_OPERATOR = 3;
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 
 /**
- * "2026-10-24 (Sat) 07:00": the weekday is given, not left to the model — live eval 2026-10-22,
- * a model called Saturday 10/24 a Friday.
+ * "2026-10-24 (Sat) 07:00": the weekday is given, not left to the model.
  */
 function askedFor(date: string, time?: string): string {
   const weekday = WEEKDAYS[new Date(`${date}T00:00:00Z`).getUTCDay()];
@@ -229,7 +228,7 @@ export function createMetroService(deps: MetroServiceDeps) {
     if (!operators) throw new Error(`system must be one of ${STATUS_SYSTEM_NAMES.join(', ')}, got "${args.system}"`);
     const sources = catalog.statusSources.filter((source) => operators.includes(source.operator));
     // The banner says how service is now; a change announced for tomorrow (a typhoon) is only in
-    // the notices — on 2026-10-22 every banner read 正常營運 under four operators' 10/23 notices.
+    // the notices.
     const noticesOf = catalog.notices;
     const [settled, noticed] = await Promise.all([
       Promise.allSettled(sources.map((source) => source.status(sourceDeps(signal)))),

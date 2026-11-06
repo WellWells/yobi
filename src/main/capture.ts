@@ -13,6 +13,7 @@ import { getLangCache, t } from './i18n';
 import { config } from './config';
 import { exportReadingFont } from '../shared/readingPrefs';
 import { SILENT_WEB_PREFERENCES, muteWindow, parkWindowOffscreen } from './silentWindow';
+import { pinPageZoom } from './pageZoom';
 
 const CAPTURE_TIMEOUT_MS = 30_000;
 
@@ -162,6 +163,8 @@ export async function captureMarkdownDocument(
     },
   });
   muteWindow(captureWin);
+  // A zoomed page would lay the card out wider than the window and leave black bands in the export.
+  pinPageZoom(captureWin.webContents);
   attachCaptureConsoleForwarder(captureWin);
   // A never-shown window stalls Chromium's rendering, so map it invisibly: transparent, shown
   // inactive, then parked offscreen (macOS pulls a window shown at an offscreen origin back

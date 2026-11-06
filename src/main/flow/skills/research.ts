@@ -1,5 +1,8 @@
 import { runWebSearch, SearchPipelineError } from '../../search';
-import { SEARCH_BLOCKED_KEY, SEARCH_PARTIAL_BLOCK_NOTE, SearchBlockedError } from '../../search/blocked';
+import {
+  RESEARCH_FOREIGN_LANGUAGE_NOTE, SEARCH_BLOCKED_KEY, SEARCH_PARTIAL_BLOCK_NOTE, SearchBlockedError,
+} from '../../search/blocked';
+import { answeredInAnotherLanguage } from '../../../shared/answerLanguage';
 import { config } from '../../config';
 import { getLangCache, t } from '../../i18n';
 import { sendLog } from '../../helpers';
@@ -14,7 +17,8 @@ const MIN_SOURCES = 1;
 const MAX_SOURCES = 8;
 
 function resolveMode(raw: string): SearchMode {
-  return raw.trim() === 'quick' ? 'quick' : 'standard';
+  const mode = raw.trim();
+  return mode === 'quick' || mode === 'deep' ? mode : 'standard';
 }
 
 function resolveSources(raw: string): number | undefined {
@@ -58,9 +62,17 @@ export async function execResearch(
   sendLog(`🔬 [Flow] Research step — "${query}" (depth=${mode}${scope}${given})`);
   const progress = progressReporter(deps);
   try {
-    const outcome = await runWebSearch(query, providerUrl, config.locale, progress.onProgress, mode, maxSources, '', urls);
+    // Set by the agent, never by a flow: its question was already worked out from the user's goal.
+    const plannedQuestion = skillConfig.plannedQuestion === 'true';
+    const outcome = await runWebSearch(
+      query, providerUrl, config.locale, progress.onProgress, mode, maxSources, '', urls, plannedQuestion, deps.researchAsker,
+    );
     sendLog(`🔬 [Flow] Research: ${outcome.sources.length} source(s) → ${outcome.answer.length} chars`);
     progress.finish(outcome.sources.length);
+    const asker = deps.researchAsker;
+    const foreign = asker !== undefined
+      && answeredInAnotherLanguage(outcome.answer, asker.words, config.locale, asker.uiLanguage === true);
+    if (foreign) sendLog('🔬 [Flow] Research: the answer came back in another language than the request — the agent writes it');
     return JSON.stringify({
       output: outcome.answer,
       sources: JSON.stringify(outcome.sources.map((doc) => ({ title: doc.title, link: doc.url }))),
@@ -68,6 +80,7 @@ export async function execResearch(
       // A field, not part of the answer: a flow may send `output` straight to the user, while the
       // agent reads every field beside it.
       ...(outcome.partiallyBlocked ? { note: SEARCH_PARTIAL_BLOCK_NOTE } : {}),
+      ...(foreign ? { languageNote: RESEARCH_FOREIGN_LANGUAGE_NOTE } : {}),
     });
   } catch (err) {
     progress.fail();

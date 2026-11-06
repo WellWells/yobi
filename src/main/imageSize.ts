@@ -16,11 +16,34 @@ export function sniffImageFormat(raw: Buffer): ImageFormat | null {
   return null;
 }
 
-/** The size a PNG or JPEG header declares, read before decoding so a pixel bomb is never decoded. */
+/** A WebP's size from its first chunk: lossy (`VP8 `), lossless (`VP8L`) or extended (`VP8X`). */
+function webpSize(raw: Buffer): { width: number; height: number } | null {
+  if (raw.length < 30 || sniffImageFormat(raw) !== 'webp') return null;
+  const chunk = raw.toString('ascii', 12, 16);
+  if (chunk === 'VP8 ' && raw[23] === 0x9d && raw[24] === 0x01 && raw[25] === 0x2a) {
+    return { width: raw.readUInt16LE(26) & 0x3fff, height: raw.readUInt16LE(28) & 0x3fff };
+  }
+  if (chunk === 'VP8L' && raw[20] === 0x2f) {
+    const bits = raw.readUInt32LE(21);
+    return { width: (bits & 0x3fff) + 1, height: ((bits >>> 14) & 0x3fff) + 1 };
+  }
+  if (chunk === 'VP8X') return { width: raw.readUIntLE(24, 3) + 1, height: raw.readUIntLE(27, 3) + 1 };
+  return null;
+}
+
+/** width × height shrunk to fit `maxEdge` on its long side; never enlarged. */
+export function fitLongEdge(width: number, height: number, maxEdge: number): [number, number] {
+  const scale = Math.min(1, maxEdge / Math.max(width, height));
+  return [Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale))];
+}
+
+/** The size a PNG, JPEG or WebP header declares, read before decoding so a pixel bomb is never decoded. */
 export function parseImageSize(raw: Buffer): { width: number; height: number } | null {
   if (raw.length >= 24 && raw[0] === 0x89 && raw.toString('ascii', 1, 4) === 'PNG') {
     return { width: raw.readUInt32BE(16), height: raw.readUInt32BE(20) };
   }
+  const webp = webpSize(raw);
+  if (webp) return webp;
   if (raw.length >= 4 && raw[0] === 0xff && raw[1] === 0xd8) {
     let offset = 2;
     while (offset + 9 < raw.length) {

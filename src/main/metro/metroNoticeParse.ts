@@ -1,7 +1,6 @@
 /**
  * Reading each metro operator's own announcement list. Pure functions over what the sites serve
- * (captures 2026-10-22, the evening every status banner still said 正常營運 while every list below
- * already carried typhoon 薔琵's service changes for 10/23):
+ * (captures 2026-10-22):
  *
  * - Taipei Metro: 新聞稿 (`News.aspx?n=30CCEFD2A45592BF&sms=72544237BBE4C5F6`), the first tab of the
  *   home page's 最新消息 and where its 營運速報 go; a CCMS table, 20 rows a page, ROC dates

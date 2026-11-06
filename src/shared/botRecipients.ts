@@ -1,7 +1,7 @@
 import type {
   AgentFlowRecipient, BotPlatform, FlowDefinition, LinePairedUser, TelegramChannel, TelegramPairedUser, TriggerType,
 } from './types';
-import { BOT_PLATFORMS, isBotPlatform } from './types';
+import { BOT_PLATFORMS, parseBotPlatform } from './types';
 import { escapeRegExp } from './regex';
 
 /**
@@ -48,7 +48,7 @@ interface PairedPeopleSource {
 }
 
 type StringIdPlatform = Exclude<BotPlatform, 'telegram'>;
-const STRING_ID_PLATFORMS: readonly StringIdPlatform[] = ['line', 'discord', 'slack'];
+const STRING_ID_PLATFORMS: readonly StringIdPlatform[] = ['line', 'discord', 'slack', 'lineSelf'];
 
 export interface RecipientSources extends Partial<Record<Exclude<StringIdPlatform, 'line'>, PairedPeopleSource>> {
   telegram: { connected: boolean; pairedUsers: readonly TelegramPairedUser[]; channels: readonly TelegramChannel[] };
@@ -134,8 +134,15 @@ const LINE_ID_RE = /^[UCR][0-9a-f]{32}$/i;
 const DISCORD_ID_RE = /^\d{17,20}$/;
 /** A Slack user (their DM) or a channel: an uppercase letter and 8–12 more. */
 const SLACK_ID_RE = /^[UWCGD][A-Z0-9]{8,12}$/;
+/** LINE PC: the user's own account (their paired chats) or a paired group, as LINE PC stores them. */
+const LINE_PC_ID_RE = /^[uc][0-9a-f]{32}$/;
 
-const RECIPIENT_ID_PATTERNS: Readonly<Record<StringIdPlatform, RegExp>> = { line: LINE_ID_RE, discord: DISCORD_ID_RE, slack: SLACK_ID_RE };
+const RECIPIENT_ID_PATTERNS: Readonly<Record<StringIdPlatform, RegExp>> = {
+  line: LINE_ID_RE,
+  discord: DISCORD_ID_RE,
+  slack: SLACK_ID_RE,
+  lineSelf: LINE_PC_ID_RE,
+};
 const SELF_TOKENS = new Set(['me', 'myself', 'self', '我', '我自己', '自己', '本人', '我本人']);
 const ALL_TOKENS = new Set(['all', 'everyone', '*', '所有人', '全部', '大家']);
 
@@ -249,8 +256,7 @@ export interface RecipientIssue {
 }
 
 function platformChoice(config: Record<string, string>): BotPlatform | 'auto' {
-  const value = (config.platform ?? '').trim().toLowerCase();
-  return isBotPlatform(value) ? value : 'auto';
+  return parseBotPlatform(config.platform) ?? 'auto';
 }
 
 function withTargets(config: Record<string, string>, platform: BotPlatform | 'auto', ids: string): Record<string, string> {

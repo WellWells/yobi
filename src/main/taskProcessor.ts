@@ -1,4 +1,3 @@
-import * as path from 'node:path';
 import { getProviderLabel, isLoginRequiredError } from './providers';
 import { answerTextWithPictures, keepAnswerPictures, sendAnswerToTelegram } from './chat/answerPictures';
 import { providerNamesItsThread, sendTaskTo } from './chat/taskSend';
@@ -49,6 +48,7 @@ import {
   isMainWindowFocused,
 } from './helpers';
 import { setBotConversation } from './botConversations';
+import { keptAttachmentPaths } from './chat/turnAttachments';
 import { deleteTempAttachments } from './telegram/fileDownload';
 import { backupClipboard, handAnswerToClipboard, restoreClipboardAfterTask } from './clipboard';
 import { classifyFailure, recordTaskOutcome } from './metrics';
@@ -172,12 +172,13 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
       ? (task.attachments ?? []).slice(0, byokImages?.length ?? 0)
       : task.attachments ?? [];
     const attachedNames = attachmentMetaNames(sentAttachments);
+    const attachedFiles = await keptAttachmentPaths(sentAttachments, chatContext.temporary);
     const turnMeta: TurnMeta = {
       ...(sent.plan?.turnMeta ?? {}),
       p: providerLabel,
       t: new Date().toISOString(),
       d: Date.now() - t0,
-      ...(attachedNames.length > 0 ? { a: attachedNames } : {}),
+      ...(attachedNames.length > 0 ? { a: attachedNames, af: attachedFiles } : {}),
       ti: usage.input,
       to: usage.output,
       ...(usage.exact ? { tx: 1 as const } : {}),
@@ -188,6 +189,7 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
       ...(recap ? { rc: recap } : recapWanted ? {} : { rc: '' }),
       ...(pictures.length > 0 ? { mv: pictures } : {}),
       ...(providerSwitch ? { sw: providerSwitch } : {}),
+      ...(task.shell ? { sh: task.shell } : {}),
     };
 
     const outputDir = await getOutputDir();
@@ -218,7 +220,6 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
     };
 
     const temporaryReply = chatContext.temporary;
-    let savedFileName = '';
     let conversationPath = '';
     if (temporaryReply) {
       deliverTempChatResult({
@@ -243,8 +244,6 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
         ...(task.mapPlace ? { map: task.mapPlace } : {}),
         ...(task.fileLabel ? { fileLabel: task.fileLabel } : {}),
       });
-      savedFileName = path.basename(conversationPath);
-
       if (plan?.previousTurnCount === 0) {
         await upgradeConversationTitle(
           conversationPath,
@@ -311,14 +310,7 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
       const remoteResponse = withMemoryNotes(response, memoryNotes, (key, vars) => t(getLangCache(), key, vars));
       const replyTarget = task.replyTarget;
       if (replyTarget) {
-        const sendText = (): Promise<void> => telegramRuntime.sendTaskSuccess(replyTarget, {
-          providerLabel,
-          savedFileName,
-          response: remoteResponse,
-          prompt: promptForOutput,
-          title: finalTitle,
-          elapsedSeconds: elapsed,
-        });
+        const sendText = (): Promise<void> => telegramRuntime.sendTaskSuccess(replyTarget, remoteResponse);
         await sendAnswerToTelegram(telegramRuntime, replyTarget, remoteResponse, pictures, getLangCache(), sendText);
       }
       if (task.lineReplyTarget) {

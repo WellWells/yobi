@@ -1,15 +1,16 @@
 import { expandableQuote } from './expandableQuote';
 import { isAccountPost, isMediaOnlyPost, matchPostLink } from './linkSites/rows';
 import type { PostSiteId } from './linkSites/types';
-import { isGeminiApiBaseUrl, buildByokGroupUrl, buildByokUrl } from './types';
-import { TELEGRAM_UPLOAD_LIMIT_BYTES } from './ytdl';
+import { isGeminiApiBaseUrl, buildByokGroupUrl, buildByokUrl, parseBotPlatform } from './types';
+import { LINE_VIDEO_SEND_BYTES, TELEGRAM_UPLOAD_LIMIT_BYTES } from './ytdl';
 
 /**
  * Where an `x_media` step puts what it fetched. `preview` is the desktop chat's own: the version a
  * Telegram chat would get, kept where the chat shows it rather than in the Downloads folder —
- * saving it there is a button.
+ * saving it there is a button. `line` (the Messaging API) is handed URLs LINE fetches itself;
+ * `lineSelf` (LINE PC) is sent files from this computer, as Telegram is.
  */
-export type XMediaDestination = 'telegram' | 'line' | 'local' | 'preview';
+export type XMediaDestination = 'telegram' | 'lineSelf' | 'line' | 'local' | 'preview';
 
 /** LINE fetches a video from its URL itself, up to 200 MB. */
 export const LINE_VIDEO_LIMIT_BYTES = 200_000_000;
@@ -60,21 +61,25 @@ export function parseXMediaInput(text: string): XMediaInput | null {
   return { source: site, url, id, author, prompt: match.prompt };
 }
 
-/** `auto` follows whoever started the run: a Telegram or LINE chat gets that chat, anything else this computer. */
+/**
+ * `auto` follows whoever started the run: a Telegram, LINE or LINE PC chat gets that chat,
+ * anything else this computer.
+ */
 export function resolveXMediaDestination(raw: string | undefined, triggerPlatform: string | undefined): XMediaDestination {
   const choice = (raw ?? '').trim().toLowerCase();
   if (choice === 'telegram' || choice === 'line' || choice === 'local' || choice === 'preview') return choice;
-  const platform = (triggerPlatform ?? '').trim().toLowerCase();
-  return platform === 'telegram' || platform === 'line' ? platform : 'local';
+  const platform = parseBotPlatform(triggerPlatform);
+  return platform === 'telegram' || platform === 'line' || platform === 'lineSelf' ? platform : 'local';
 }
 
 /**
- * The largest file each destination takes; null means no limit. A Telegram chat takes what main
- * works out for the person (`telegramLimitBytes`: their cap, and what the bot can send now),
- * else the Bot API's own limit; the desktop preview keeps to that one.
+ * The largest file each destination takes; null means no limit. A chat a file is sent to takes
+ * what main works out for the person (`chatLimitBytes`: their cap, and what the chat takes now),
+ * else the chat's own limit; the desktop preview keeps to Telegram's.
  */
-export function destinationLimitBytes(destination: XMediaDestination, telegramLimitBytes = TELEGRAM_UPLOAD_LIMIT_BYTES): number | null {
-  if (destination === 'telegram') return telegramLimitBytes;
+export function destinationLimitBytes(destination: XMediaDestination, chatLimitBytes?: number): number | null {
+  if (destination === 'telegram') return chatLimitBytes ?? TELEGRAM_UPLOAD_LIMIT_BYTES;
+  if (destination === 'lineSelf') return chatLimitBytes ?? LINE_VIDEO_SEND_BYTES;
   if (destination === 'preview') return TELEGRAM_UPLOAD_LIMIT_BYTES;
   if (destination === 'line') return LINE_VIDEO_LIMIT_BYTES;
   return null;
@@ -211,9 +216,11 @@ export function xPostMessage(post: XMessageParts, fold = false): string {
 
 /**
  * The message for under the media and what does not fit there. Telegram captions stop at 1,024
- * characters: a longer post goes out as its own message first and the caption keeps only who and
- * the link. With no media there is no caption — the message goes as text — and LINE and the
- * computer have no caption limit worth the name. Telegram gets a long text folded.
+ * characters: for a longer post the caption keeps only who and the link and the rest goes as its
+ * own message first, which is what a person's own flow may send. The built-in forward keeps the
+ * start of the text under the media instead (`.lead`, `.rest`). With no media there is no caption
+ * — the message goes as text — and LINE and the computer have no caption limit worth the name.
+ * Telegram gets a long text folded.
  */
 export function splitCaption(post: XMessageParts, destination: XMediaDestination, hasMedia: boolean): { caption: string; overflow: string } {
   const message = xPostMessage(post, destination === 'telegram');

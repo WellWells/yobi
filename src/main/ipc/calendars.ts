@@ -3,7 +3,15 @@ import { IPC } from '../../shared/types';
 import type {
   CalendarSaveRequest, CalendarSaveResult, CalendarSummary, CalendarTestRequest, CalendarTestResult,
 } from '../../shared/calendars';
+import type {
+  CalDavAccountInput, CalDavRefreshResult, CalDavSaveResult, CalDavSnapshot,
+} from '../../shared/calDav';
 import { calendarUrl, listCalendars, removeCalendar, saveCalendar } from '../calendar/calendarStore';
+import { defaultClient, refreshCalDavAccount, saveCalDavAccount } from '../calendar/calDavAccounts';
+import type { CalDavAccountDeps } from '../calendar/calDavAccounts';
+import { listDavAccounts, removeDavAccount } from '../calendar/calDavStore';
+import { calendarFreshness } from '../calendar/calendarFreshness';
+import { linkableMailboxes, mailboxForCalendar, wireMailboxSignIn } from '../calendar/mailboxLink';
 import { fetchIcs, readFeedEvents } from '../calendar/calendarFetch';
 import { DEFAULT_CALENDAR_DAYS, calendarWindow } from '../calendar/calendarFormat';
 import { FlowUserError, localizeStepError } from '../flow/userError';
@@ -28,7 +36,30 @@ export async function testCalendar(request: CalendarTestRequest, now: Date = new
   }
 }
 
+const ACCOUNT_DEPS: CalDavAccountDeps = { client: defaultClient, mailbox: mailboxForCalendar, log: sendLog };
+
+function calDavSnapshot(): CalDavSnapshot {
+  return { accounts: listDavAccounts(), mailboxes: linkableMailboxes() };
+}
+
 export function registerCalendarHandlers(): void {
+  wireMailboxSignIn();
+  ipcMain.handle(IPC.CALDAV_LIST, (): CalDavSnapshot => calDavSnapshot());
+  ipcMain.handle(IPC.CALDAV_SAVE, async (_event, input: CalDavAccountInput): Promise<CalDavSaveResult> => {
+    const result = await saveCalDavAccount(input ?? { provider: 'custom', server: '', username: '', password: '' }, ACCOUNT_DEPS);
+    if (result.ok) calendarFreshness().markFresh(result.id);
+    return result;
+  });
+  ipcMain.handle(IPC.CALDAV_REFRESH, async (_event, id: unknown): Promise<CalDavRefreshResult> => {
+    const accountId = String(id ?? '');
+    const result = await refreshCalDavAccount(accountId, ACCOUNT_DEPS);
+    if (result.ok) calendarFreshness().markFresh(accountId);
+    return result;
+  });
+  ipcMain.handle(IPC.CALDAV_REMOVE, (_event, id: unknown): CalDavSnapshot => {
+    removeDavAccount(String(id ?? ''));
+    return calDavSnapshot();
+  });
   ipcMain.handle(IPC.CALENDAR_LIST, (): CalendarSummary[] => listCalendars());
   ipcMain.handle(IPC.CALENDAR_SAVE, (_event, request: CalendarSaveRequest): CalendarSaveResult => {
     const result = saveCalendar(request ?? { name: '', url: '' });

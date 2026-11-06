@@ -1,11 +1,13 @@
 import { lookup } from 'node:dns/promises';
 import { loadPageHtml } from '../pageLoader';
-import { parseHtml } from '../urlParser';
+import { readPageText } from './pageText';
 import { extractPublishedAt } from './publishedAt';
 import { readRawPage } from './rawPageRead';
 import { webHostPolicy } from '../net/hostPolicyStore';
 import type { HostPolicy } from '../net/hostPolicy';
+import { isVerificationWall } from '../net/verificationWall';
 import { searchRenderLane } from './renderLane';
+import { hitKey } from './fuse';
 import { recalledPage, rememberFailure, rememberPage } from './pageCache';
 import type { ReadPage } from './pageCache';
 import { sendLog } from '../helpers';
@@ -18,7 +20,7 @@ const MAX_PER_HOST = 2;
 const MIN_TEXT_CHARS = 400;
 const PER_PAGE_TIMEOUT_MS = 35_000;
 
-/** The dev log's p95 for reading a search's pages (2026-10): slower than this is the tail, not the norm. */
+/** About the p95 for reading a search's pages: slower than this is the tail, not the norm. */
 export const HEDGE_DELAY_MS = 5_000;
 
 /** The page is not there; any other error status may still render (a 403 to a plain request). */
@@ -182,12 +184,12 @@ async function readPage(hit: SerpHit, signal: AbortSignal, recall: boolean): Pro
   const recalled = recall ? recalledPage(hit.url) : undefined;
   if (recalled) {
     if ('failure' in recalled) throw new Error(`${recalled.failure} (failed moments ago)`);
-    return { page: withTitle(recalled.page, hit), recalled: true };
+    return { page: withHitFallbacks(recalled.page, hit), recalled: true };
   }
   try {
     const { page, cacheable } = await fetchClean(hit, signal);
     if (cacheable) rememberPage(hit.url, page);
-    return { page: withTitle(page, hit), recalled: false };
+    return { page: withHitFallbacks(page, hit), recalled: false };
   } catch (err) {
     // Only the page's own failures: a cancel, a timeout or the network says nothing about the page.
     if (err instanceof PageUnreadableError && !signal.aborted) rememberFailure(hit.url, err.message);
@@ -195,12 +197,20 @@ async function readPage(hit: SerpHit, signal: AbortSignal, recall: boolean): Pro
   }
 }
 
-function withTitle(page: ReadPage, hit: SerpHit): ReadPage {
-  return page.title ? page : { ...page, title: hit.title };
+/**
+ * What the page did not say about itself, taken from its search result: the title, and the date the
+ * engine showed beside it. The page's own date wins; the remembered page keeps only what it said.
+ */
+export function withHitFallbacks(page: ReadPage, hit: SerpHit): ReadPage {
+  return {
+    ...page,
+    ...(page.title ? {} : { title: hit.title }),
+    ...(!page.publishedAt && hit.date ? { publishedAt: hit.date } : {}),
+  };
 }
 
 function dedupeHits(hits: SerpHit[]): SerpHit[] {
-  const seenUrls = new Set<string>();
+  const seenPages = new Set<string>();
   const hostCounts = new Map<string, number>();
   const unique: SerpHit[] = [];
   for (const hit of hits) {
@@ -213,13 +223,19 @@ function dedupeHits(hits: SerpHit[]): SerpHit[] {
     if (SKIPPED_EXTENSIONS.test(parsed.pathname)) continue;
     parsed.hash = '';
     const key = parsed.href;
-    if (seenUrls.has(key)) continue;
+    const page = hitKey(key);
+    if (seenPages.has(page)) continue;
     const host = parsed.hostname.toLowerCase();
     const count = hostCounts.get(host) ?? 0;
     if (count >= MAX_PER_HOST) continue;
-    seenUrls.add(key);
+    seenPages.add(page);
     hostCounts.set(host, count + 1);
-    unique.push(hit.snippet ? { title: hit.title, url: key, snippet: hit.snippet } : { title: hit.title, url: key });
+    unique.push({
+      title: hit.title,
+      url: key,
+      ...(hit.snippet ? { snippet: hit.snippet } : {}),
+      ...(hit.date ? { date: hit.date } : {}),
+    });
   }
   return unique;
 }
@@ -230,6 +246,9 @@ function dedupeHits(hits: SerpHit[]): SerpHit[] {
  * moment, not the page's.
  */
 class PageUnreadableError extends Error {}
+
+/** What the log says of a page that was a human-verification wall even in the window. */
+export const VERIFICATION_WALL_FAILURE = 'human-verification wall — skipped';
 
 /**
  * `title` is the page's own, or empty: the caller falls back to its own search result's title.
@@ -253,6 +272,12 @@ async function fetchClean(hit: SerpHit, signal: AbortSignal): Promise<{ page: Re
     try {
       const raw = await readRawPage(hit.url, host, policy, assertPublicHost, signal);
       ({ status, scripted, text, title, publishedAt } = raw);
+      // A wall to a plain request is no source; the window may still pass it silently.
+      if (raw.walled) {
+        text = '';
+        title = '';
+        publishedAt = '';
+      }
     } catch {
     }
   }
@@ -280,7 +305,11 @@ async function fetchClean(hit: SerpHit, signal: AbortSignal): Promise<{ page: Re
     } finally {
       searchRenderLane.release();
     }
-    const rendered = parseHtml(html, hit.url, { blockBreaks: true });
+    const rendered = await readPageText(html, hit.url);
+    // Nobody answers the wall on a search: the page is skipped and the next result read instead.
+    if (isVerificationWall(html, rendered.cleanedText.length)) {
+      throw new PageUnreadableError(VERIFICATION_WALL_FAILURE);
+    }
     if (rendered.cleanedText.length > text.length) {
       text = rendered.cleanedText;
       if (rendered.title && rendered.title !== hit.url) title = rendered.title;

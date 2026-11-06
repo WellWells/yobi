@@ -299,6 +299,24 @@ export function groupGrantsOf(map: Readonly<Record<string, readonly string[]>> |
   return stored === undefined ? null : normalizeGroupGrantList(stored);
 }
 
+/**
+ * Whether a platform's groups wait for the owner to allow them before the bot does anything there.
+ * LINE PC's do not: the bot is the user's own account, already in every group they are in, and anyone else there who
+ * says "Yobi" asks to be let in, one person at a time.
+ */
+export function botGroupsNeedApproval(platform: BotPlatform): boolean {
+  return platform !== 'lineSelf';
+}
+
+/** One group's grants on a platform: no entry is pending where groups need approval, else nothing for everyone. */
+export function botGroupGrantsOf(
+  platform: BotPlatform,
+  map: Readonly<Record<string, readonly string[]>> | undefined,
+  chatId: string,
+): BotGroupGrant[] | null {
+  return groupGrantsOf(map, chatId) ?? (botGroupsNeedApproval(platform) ? null : []);
+}
+
 /** Whether a group still waits for the owner to allow it in settings. */
 export function isGroupPending(map: Readonly<Record<string, readonly string[]>> | undefined, chatId: string): boolean {
   return groupGrantsOf(map, chatId) === null;

@@ -245,13 +245,10 @@ textarea:disabled {
 }
 
 /* ── Scrollbar ───────────────────────────────────────────────────────────── */
-/* Single source of truth: update --scrollbar-width to resize all native scrollbars */
-:root { --scrollbar-width: 6px; }
-* { scrollbar-width: thin; scrollbar-color: rgba(128, 128, 128, 0.3) transparent; }
-::-webkit-scrollbar { width: var(--scrollbar-width); height: var(--scrollbar-width); }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(128, 128, 128, 0.28); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(128, 128, 128, 0.46); }
+/* The platform draws every scrollbar. Windows: its thin variant, always shown, with a faint thumb
+   (arrows follow it) on a transparent track; `data-platform` comes from markHostPlatform().
+   :where() keeps it at zero specificity, so a class's `scrollbar-width: none` still wins. */
+:where(html[data-platform='win32']) * { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--text-muted) 35%, transparent) transparent; }
 
 /* ── Shiki code block container ─────────────────────────────────────────── */
 /* Override Shiki's inline background so the wrapper's --code-bg controls it */

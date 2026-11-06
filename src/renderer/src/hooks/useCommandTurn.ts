@@ -1,4 +1,5 @@
 import { startTransition, useCallback, useRef } from 'react';
+import { attachmentMetaNames } from '../../../shared/conversationDoc';
 import { fileApi } from '../api/electronApi';
 import { NEW_CONVERSATION_KEY, useAppStore } from '../store/appStore';
 import { remapPathValues, useConversationMoves } from '../store/conversationMoves';
@@ -17,6 +18,7 @@ export function useCommandTurn() {
   const begin = useCallback((prompt: string, runId?: string, attachments?: string[], command?: boolean): string => {
     const conversationPath = useAppStore.getState().selectedFile?.path ?? '';
     const sendId = nextCommandSendId();
+    const attached = attachmentMetaNames(attachments ?? []);
     originBySendId.current.set(sendId, conversationPath);
     useAppStore.getState().addPendingTurn(
       conversationPath || NEW_CONVERSATION_KEY,
@@ -24,7 +26,7 @@ export function useCommandTurn() {
         sendId,
         prompt,
         ...(runId ? { runId } : {}),
-        ...(attachments?.length ? { attachments } : {}),
+        ...(attached.length > 0 ? { attachments: attached, attachmentFiles: attachments } : {}),
         ...(command ? { command } : {}),
       },
     );

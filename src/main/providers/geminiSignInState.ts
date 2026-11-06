@@ -1,7 +1,7 @@
 /*
  * How long a prompt Gemini's web composer keeps depends on whether Gemini is signed in: signed
  * out it keeps the first 32,000 characters and silently drops the rest; signed in it took every
- * length measured up to 1,000,000. Both caps here are in Yobi's chars+breaks unit, which never
+ * length tried up to 1,000,000. Both caps here are in Yobi's chars+breaks unit, which never
  * under-counts against the page ('\n' is 2 here, 1 there).
  *
  * A leaf on purpose: providers/index.ts imports gemini.ts, and both read this.

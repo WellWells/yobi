@@ -1,8 +1,9 @@
 import type { ChatgptPickerSnapshot, ChatgptPickerTarget } from '../../shared/chatgptModels';
 
 /*
- * Model and reasoning-effort controls in chatgpt.com's composer (a toggle on Free, a menu on Plus):
- * a `__composer-pill` button, or in the redesigned composer form the only button with `aria-pressed`.
+ * Model and reasoning-effort controls in chatgpt.com's composer (a toggle on Free, a menu on paid
+ * plans): a `__composer-pill` button, or in the redesigned composer form a button with `aria-pressed`
+ * or `aria-haspopup="menu"`.
  */
 const PILL_SCOPES = ['form button.__composer-pill', 'form[data-chatgpt-composer] button'];
 function pillSelector(attr: string): string {
@@ -19,9 +20,10 @@ export function buildChatgptModelPickerScript(target: ChatgptPickerTarget | null
   return `
 (async function chatgptModelPicker() {
   var TARGET = ${JSON.stringify(target)};
-  var CONTENT_SEL = '[data-testid="composer-intelligence-picker-content"]';
-  var SLIDER_SEL = '[data-model-reasoning-effort-slider] [role="slider"]';
-  var ADVANCED_SEL = '[data-testid="composer-model-picker-slider-advanced-view"]';
+  // A slider is what tells the picker's menu from a tool's.
+  var SLIDER_SEL = '[role="menuitem"] [role="slider"]';
+  var VIEW_SEL = '[data-model-picker-view], [data-view]';
+  var VIEW_TOGGLE_SEL = '[data-model-picker-view-toggle], [role="menuitem"][aria-expanded]';
   var MODELS_URL = '/backend-api/models?history_and_training_disabled=false';
 
   function sleep(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
@@ -58,6 +60,20 @@ export function buildChatgptModelPickerScript(target: ChatgptPickerTarget | null
       clearTimeout(timer);
     }
   }
+  // A step's place on the slider is its place in this list, locked ones included, not its id.
+  function readPresets(list) {
+    var presets = [];
+    list.forEach(function(p, position) {
+      if (!p || typeof p.id !== 'number' || !p.lane || (p.preset_type && p.preset_type !== 'available')) return;
+      presets.push({
+        step: position,
+        id: p.thinking_effort ? p.lane + ':' + p.thinking_effort : String(p.lane),
+        label: String(p.title || p.selected_display_title || p.lane),
+        shown: String(p.selected_display_title || p.title || ''),
+      });
+    });
+    return presets;
+  }
   // Versions don't change within a document, so one fetch serves every send on a kept page.
   async function loadVersions() {
     if (window.__yobiChatgptVersions) return window.__yobiChatgptVersions;
@@ -67,18 +83,9 @@ export function buildChatgptModelPickerScript(target: ChatgptPickerTarget | null
     var data = await getJson(MODELS_URL, token);
     if (!data || !Array.isArray(data.versions)) return null;
     var versions = data.versions.map(function(version) {
-      var presets = (Array.isArray(version && version.intelligence_presets) ? version.intelligence_presets : [])
-        .filter(function(p) { return p && typeof p.id === 'number' && p.lane && (!p.preset_type || p.preset_type === 'available'); })
-        .map(function(p) {
-          return {
-            step: p.id,
-            id: p.thinking_effort ? p.lane + ':' + p.thinking_effort : String(p.lane),
-            label: String(p.title || p.selected_display_title || p.lane),
-            shown: String(p.selected_display_title || p.title || ''),
-          };
-        });
+      var listed = Array.isArray(version && version.intelligence_presets) ? version.intelligence_presets : [];
       var name = version && (version.display_text_for_intelligence || version.display_text);
-      return { id: String(version && version.id), label: String(name || ''), presets: presets };
+      return { id: String(version && version.id), label: String(name || ''), presets: readPresets(listed), listed: listed.length };
     }).filter(function(version) { return version.label && version.presets.length > 0; });
     if (versions.length === 0) return null;
     window.__yobiChatgptVersions = versions;
@@ -93,16 +100,21 @@ export function buildChatgptModelPickerScript(target: ChatgptPickerTarget | null
     var open = byId && byId.getAttribute('data-state') !== 'closed'
       ? byId
       : document.querySelector('[role="menu"][data-state="open"]');
-    return open ? open.querySelector(CONTENT_SEL) : null;
+    return open && open.querySelector(SLIDER_SEL) ? open : null;
   }
   function press(button) {
     button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, pointerType: 'mouse' }));
   }
+  function gone(button) { return !button.isConnected || !button.matches(MENU_PILLS); }
+  // A freshly loaded page shows the button before it reacts, and may be about to replace it.
   async function openMenu(button) {
     trigger = button;
     if (menu()) return true;
-    press(button);
-    return waitUntil(function() { return !!menu(); }, 3000);
+    for (var attempt = 0; attempt < 3 && !gone(button); attempt++) {
+      if (button.getAttribute('aria-expanded') !== 'true') press(button);
+      if (await waitUntil(function() { return !!menu() || gone(button); }, 1000) && menu()) return true;
+    }
+    return false;
   }
   async function closeMenu() {
     if (!trigger || trigger.getAttribute('aria-expanded') !== 'true') return;
@@ -120,8 +132,13 @@ export function buildChatgptModelPickerScript(target: ChatgptPickerTarget | null
   }
   function slider() { var m = menu(); return m ? m.querySelector(SLIDER_SEL) : null; }
   function step() { var s = slider(); return s ? Number(s.getAttribute('aria-valuenow')) : NaN; }
-  function view() { var m = menu(); var el = m && m.querySelector('[data-view]'); return el ? el.getAttribute('data-view') : ''; }
-  function rows() { var m = menu(); var adv = m && m.querySelector(ADVANCED_SEL); return adv ? slice(adv.querySelectorAll('[role="menuitemradio"]')) : []; }
+  function stepCount() { var s = slider(); return s ? Number(s.getAttribute('aria-valuemax')) + 1 : 0; }
+  function view() {
+    var m = menu();
+    var el = m && m.querySelector(VIEW_SEL);
+    return el ? el.getAttribute('data-model-picker-view') || el.getAttribute('data-view') : '';
+  }
+  function rows() { var m = menu(); return m ? slice(m.querySelectorAll('[role="menuitemradio"]')) : []; }
   function rowFor(version) {
     return rows().filter(function(row) { return lines(row)[0] === version.label; })[0] || null;
   }
@@ -140,18 +157,21 @@ export function buildChatgptModelPickerScript(target: ChatgptPickerTarget | null
   function readSlider(versions) {
     var list = offered(versions);
     var now = step();
+    var steps = stepCount();
     var label = currentLabel();
     return list.map(function(entry, index) {
       var selected = entry.row ? entry.row.getAttribute('aria-checked') === 'true' : index === 0;
       var text = entry.row ? lines(entry.row) : [];
+      var fits = entry.version.listed <= steps;
       return {
         id: entry.version.id,
         label: entry.version.label,
         sublabel: text[1] || '',
         selected: selected,
-        // The step is only trusted when the page names it the same way the list does.
+        // The step is only trusted when the slider has room for the list and, on the menu that
+        // names it in the list's own language, the names agree.
         efforts: entry.version.presets.map(function(p) {
-          var here = selected && p.step === now && (label === null || label === p.shown || label === p.label);
+          var here = selected && fits && p.step === now && (label === null || label === p.shown || label === p.label);
           return { id: p.id, label: p.label, sublabel: '', selected: here };
         }),
       };
@@ -161,7 +181,7 @@ export function buildChatgptModelPickerScript(target: ChatgptPickerTarget | null
     var row = rowFor(version);
     var open = menu();
     if (!open || !row || row.getAttribute('aria-checked') === 'true') return false;
-    var header = open.querySelector('[role="menuitem"][aria-expanded]');
+    var header = open.querySelector(VIEW_TOGGLE_SEL);
     if (header && view() !== 'advanced') {
       header.click();
       await waitUntil(function() { return view() === 'advanced'; }, 1500);
@@ -235,16 +255,18 @@ export function buildChatgptModelPickerScript(target: ChatgptPickerTarget | null
     window.__yobiChatgptNoPicker = true;
     return { ok: false, reason: 'no-picker' };
   }
+  var slid = { ok: false, reason: 'no-picker' };
+  if (pills(MENU_PILLS).length > 0) {
+    slid = await runSlider();
+    // 'no-catalog' means the Plus menu opened but its model list could not be read: falling back
+    // to a lone toggle would report a Free page and wipe the cached Plus list.
+    if (slid.ok || slid.reason === 'no-catalog') return slid;
+    // A fresh Free page shows a model button first and swaps it for the toggle.
+    await waitUntil(function() { return pills(TOGGLE_PILLS).length > 0; }, 1000);
+  }
   // More than one toggle means the page grew something new; flipping the wrong one would change
   // an unrelated setting, so none is touched.
   var toggles = pills(TOGGLE_PILLS);
-  if (pills(MENU_PILLS).length > 0) {
-    var slid = await runSlider();
-    // 'no-catalog' means the Plus menu opened but its model list could not be read: falling back
-    // to a lone toggle would report a Free page and wipe the cached Plus list.
-    if (slid.ok || slid.reason === 'no-catalog' || toggles.length !== 1) return slid;
-  }
-  if (toggles.length !== 1) return { ok: false, reason: 'no-picker' };
-  return runToggle(toggles[0]);
+  return toggles.length === 1 ? runToggle(toggles[0]) : slid;
 })()`;
 }

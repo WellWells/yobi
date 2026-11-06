@@ -40,6 +40,19 @@ export function phaseText(phase: ResearchPhase, t: Translate): string {
         : t('agent.research.phase.summarize');
       return phase.dropped ? `${base} · ${fill(t('agent.research.dropped'), { count: phase.dropped })}` : base;
     }
+    case 'analyze':
+      return counted
+        ? fill(t('agent.research.phase.analyzeCount'), { done: phase.done ?? 0, total: phase.total ?? 0 })
+        : t('agent.research.phase.analyze');
+    case 'review':
+      if (phase.queries?.length) {
+        return fill(t('agent.research.phase.reviewCount'), {
+          done: phase.done ?? 0,
+          total: phase.total ?? phase.queries.length,
+          questions: phase.queries.join('  ·  '),
+        });
+      }
+      return phase.queries && phase.status === 'done' ? t('agent.research.phase.reviewEnough') : t('agent.research.phase.review');
     case 'write':
       return t('agent.research.phase.write');
   }

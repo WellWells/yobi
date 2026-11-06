@@ -1,3 +1,5 @@
+import { UPLOADABLE_EXTENSIONS } from './attachmentFormats';
+
 /**
  * Photos, videos and audio a turn saved on this computer (`fl`), shown in the conversation. The
  * renderer cannot read a local file (its CSP allows only `'self'` and `data:`), so main serves them
@@ -11,6 +13,9 @@ const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'webm', 'mov', 'm4v']);
 // What Yobi's own downloads write: MP3 from every site, M4A from a stream's audio track.
 const AUDIO_EXTENSIONS = new Set(['mp3', 'm4a']);
+
+// Documents that open in a viewer or an editor, never in an interpreter.
+const OPENABLE_TEXT_EXTENSIONS = new Set(['txt', 'md', 'markdown', 'csv', 'tsv', 'log', 'json']);
 
 const MIME_TYPES: Record<string, string> = {
   jpg: 'image/jpeg',
@@ -44,6 +49,31 @@ export function turnMediaMimeType(filePath: string): string {
   return MIME_TYPES[extensionOf(filePath)] ?? 'application/octet-stream';
 }
 
+/**
+ * An absolute path on this computer. Not a network share (`\\host\x`, `//host/x`): these paths ride
+ * in a file that can be imported or edited by hand, and just reading a share hands its host this
+ * Windows account's credentials. Not an NTFS stream either (`x.exe:y.pdf`), whose extension says
+ * nothing about what opens.
+ */
+export function isLocalFilePath(filePath: string): boolean {
+  if (filePath.includes('\0')) return false;
+  if (/^[A-Za-z]:[\\/]/.test(filePath)) return !filePath.slice(2).includes(':');
+  return /^\/(?![\\/])/.test(filePath);
+}
+
+/**
+ * Whether a click may hand this file to the system's default app. A list of what is safe, not of
+ * what is not: the path may come from a hand-edited conversation, a click must never run a
+ * program, and no blocklist knows what an installed interpreter adds (`.py` runs once Python is in).
+ */
+export function turnFileOpens(filePath: string): boolean {
+  if (!isLocalFilePath(filePath)) return false;
+  const extension = extensionOf(filePath);
+  return turnMediaKind(filePath) !== null
+    || UPLOADABLE_EXTENSIONS.has(extension)
+    || OPENABLE_TEXT_EXTENSIONS.has(extension);
+}
+
 /** The URL the renderer loads a saved photo, video or audio file from. */
 export function turnMediaUrl(filePath: string): string {
   return `${TURN_MEDIA_SCHEME}://file/${encodeURIComponent(filePath)}`;
@@ -59,7 +89,5 @@ export function turnMediaPath(url: string): string | null {
   } catch {
     return null;
   }
-  const absolute = /^[A-Za-z]:[\\/]/.test(filePath) || filePath.startsWith('/');
-  if (!absolute || filePath.includes('\0') || !turnMediaKind(filePath)) return null;
-  return filePath;
+  return isLocalFilePath(filePath) && turnMediaKind(filePath) ? filePath : null;
 }

@@ -9,8 +9,9 @@
   gap: 8px;
   overflow-x: auto;
   overflow-y: hidden;
-  /* globals.css sets `scrollbar-width: thin`, which makes Chromium ignore ::-webkit-scrollbar
-     rules; hide it instead. The half-visible edge tile and the wheel handler stand in for it. */
+  /* Scrollbars are the platform's own and are never restyled; on Windows that is a bar with end
+     arrows, heavy under a short rail. Hide it instead: the half-visible edge tile and the wheel
+     handler stand in for it. */
   scrollbar-width: none;
   /* Dragging the rail with a mouse would otherwise sweep a text selection across the tiles.
      `touch-action` is left at its default: the browser already pans this axis on touch, and

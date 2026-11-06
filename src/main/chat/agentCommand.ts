@@ -1,4 +1,5 @@
 import type { BrowserWindow } from 'electron';
+import { ANY_PAGE_CONNECTOR_IDS, readsAnyPage } from '../../shared/builtinConnectors';
 import { BUILTIN_AGENT_COMMAND, IPC } from '../../shared/types';
 import type {
   AgentCommandResult,
@@ -16,11 +17,12 @@ import { attachmentMetaNames } from '../../shared/conversationDoc';
 import { compactPreview } from '../../shared/textBudget';
 import { listOutputFiles } from '../files';
 import { deliverCommandResultToTempChat, saveCommandOutput } from './commandOutput';
+import { keptAttachmentPaths } from './turnAttachments';
 import { runUrlShortcut } from './urlShortcut';
 import { getTempChatConversation, isTempChatMode } from '../tempChat';
 import { sendLog, sendToRenderer } from '../helpers';
 import { buildCombinedPromptFromPrefs, localizeUserFacingError, t } from '../i18n';
-import { agentPromptPrefs, agentRunIsOwner, renderAgentPrefsBlock } from './agentPrefs';
+import { agentPromptPrefs, agentRunIsOwner, prefsReshapeAnswers, renderAgentPrefsBlock } from './agentPrefs';
 import { getProviderLabel } from '../providers';
 import { runAgent } from '../flow/agent/agentEngine';
 import { sendBuildEvent } from '../flow/flowBuildBroadcast';
@@ -29,17 +31,20 @@ import { withWriteFailureNotice, writesAllFailed } from '../flow/agent/writeOutc
 import { buildActionFooter, withActionFooter } from '../flow/agent/actionOutcome';
 import { completionNotice, withCompletionNotice } from '../flow/agent/completion';
 import { extractRecapLine } from './recapLine';
+import { withSourcesSection } from '../flow/agent/agentCitations';
 import { agentRecapBlock } from './recapPrompt';
 import { currentRecap } from '../../shared/recap';
+import { researchLabel } from '../../shared/researchIntent';
 import { mergeSnapshots } from '../flow/agent/evidenceLedger';
 import type { ActionRecord, EvidenceSnapshot } from '../flow/agent/evidenceLedger';
 import type { GoalIntent } from '../flow/agent/actionGate';
 import type { Fact } from '../flow/agent/toolContracts';
 import { loadConversation } from './conversationStore';
 import {
-  AgentRunError, AgentScopeError, BOT_TOOL_SCOPE, FULL_TOOL_SCOPE, isAllowedTool, isWebTool, withPictureCapability,
-  withWebCapability,
+  AgentRunError, AgentScopeError, BOT_TOOL_SCOPE, FULL_TOOL_SCOPE, isAllowedTool, isWebTool, withDocumentCapability,
+  withHotelReviewCapability, withPictureCapability, withWebCapability,
 } from '../flow/agent/agentTools';
+import { agentFileExporter, runDocuments } from './agentDocuments';
 import { isBuiltinTool } from '../flow/agent/agentBuiltins';
 import type { AgentBuiltinTool, FlowSaveRequest } from '../flow/agent/agentBuiltins';
 import type { AgentToolScope } from '../flow/agent/agentTools';
@@ -66,6 +71,7 @@ import { agentRunMetricOutcome } from './agentRunMetrics';
 import { busyUntilSettled, markConversationBusy } from '../conversationBusy';
 import { conversationIdAt, resolveConversationPath } from '../conversationIndex';
 import { config } from '../config';
+import { languageForLocale } from '../../shared/localeLanguage';
 import { agentPictureDrawer, agentPictureKeeper, runPictures } from './agentPictures';
 
 type Strings = Record<string, string>;
@@ -145,6 +151,8 @@ export interface AgentRunOutcome extends AgentCommandResult {
   shellApproval?: boolean;
   /** Pictures `draw_image` drew for the answer, in the chat media folder; a bot sends them as photos. */
   files?: string[];
+  /** Files `export_file` made for the answer, in the chat media folder; a bot sends them as files. */
+  documents?: string[];
 }
 
 function summarizeGoal(goal: string): string {
@@ -157,6 +165,8 @@ const BUILTIN_PROGRESS_KEYS: Record<AgentBuiltinTool, string> = {
   edit_flow: 'agent.progress.editFlow',
   delegate: 'agent.progress.delegate',
   draw_image: 'agent.progress.drawImage',
+  agoda_reviews: 'agent.progress.agodaReviews',
+  export_file: 'agent.progress.exportFile',
 };
 
 /**
@@ -170,7 +180,8 @@ export function progressText(progress: AgentProgress, strings: Strings): string 
   if (progress.server) return t(strings, 'agent.progress.tool', { tool: progress.server });
   if (isBuiltinTool(progress.tool)) return t(strings, BUILTIN_PROGRESS_KEYS[progress.tool]);
   if (!isAllowedTool(progress.tool)) return t(strings, 'agent.progress.connector');
-  return t(strings, 'agent.progress.tool', { tool: t(strings, `flow.skill.${progress.tool}`) });
+  const research = progress.tool === 'research' ? researchLabel(progress.depth, (key) => t(strings, key)) : null;
+  return t(strings, 'agent.progress.tool', { tool: research ?? t(strings, `flow.skill.${progress.tool}`) });
 }
 
 /** How far back a conversation's earlier runs are read for what they really did. */
@@ -250,6 +261,8 @@ interface DeliverArgs {
   startedAt?: number;
   /** Pictures shown under the answer (the turn's `mv`) and returned for a bot to send. */
   pictures?: string[];
+  /** Files made for the answer (the turn's `fl`) and returned for a bot to send. */
+  documents?: string[];
 }
 
 /**
@@ -262,12 +275,19 @@ function isEphemeralDelivery(origin: CommandOrigin): boolean {
 async function deliverResult(args: DeliverArgs): Promise<AgentRunOutcome> {
   const {
     prompt, title, answer, resolvedTarget, strings, origin, command,
-    conversationPath, usage, attachments, runId, choices, memoryNotes, recap, fileLabel, startedAt, pictures,
+    conversationPath, usage, attachments, runId, choices, memoryNotes, recap, fileLabel, startedAt, pictures, documents,
   } = args;
   const conversationTitle = pickConversationTitle({ resolved: title, prompt });
-  const drawn = pictures?.length ? { chatMedia: pictures } : {};
-  const sent = pictures?.length ? { files: pictures } : {};
+  const drawn = {
+    ...(pictures?.length ? { chatMedia: pictures } : {}),
+    ...(documents?.length ? { files: documents } : {}),
+  };
+  const sent = {
+    ...(pictures?.length ? { files: pictures } : {}),
+    ...(documents?.length ? { documents } : {}),
+  };
   const attached = attachmentMetaNames(attachments ?? []);
+  const attachmentFiles = await keptAttachmentPaths(attachments ?? [], isEphemeralDelivery(origin));
   const markdownOptions = {
     prompt,
     turnMeta: {
@@ -293,7 +313,7 @@ async function deliverResult(args: DeliverArgs): Promise<AgentRunOutcome> {
       response: answer,
       providerLabel: markdownOptions.provider,
       command,
-      ...(attachments?.length ? { attachments } : {}),
+      ...(attachments?.length ? { attachments, attachmentFiles } : {}),
       ...(usage ? { usage } : {}),
       ...(runId ? { runId } : {}),
       ...(choices?.length ? { choices } : {}),
@@ -312,7 +332,7 @@ async function deliverResult(args: DeliverArgs): Promise<AgentRunOutcome> {
     response: markdownOptions.response,
     providerLabel: markdownOptions.provider,
     command,
-    ...(attachments?.length ? { attachments } : {}),
+    ...(attachments?.length ? { attachments, attachmentFiles } : {}),
     ...(runId ? { runId } : {}),
     ...(choices?.length ? { choices } : {}),
     ...(memoryNotes?.length ? { memoryNotes } : {}),
@@ -334,7 +354,11 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
   if (!flowManager) return Promise.resolve({ success: false, error: t(strings, 'agent.error.unavailable') });
 
   const { runId, goal, providerUrl } = state;
-  const connectors = readRunConnectors(state);
+  // The web switch stands for reading any public page, whichever tool does it, so a connector that
+  // does leaves with `browser`. A bot's `web: false` is a missing grant instead, and the connector's
+  // own grant answers for it there.
+  const pageReadersOff = state.web === false && origin !== 'bot';
+  const connectors = readRunConnectors(state).filter((id) => !pageReadersOff || !readsAnyPage(id));
   const command = state.mcpCommandName?.trim() || BUILTIN_AGENT_COMMAND;
   const emit = (event: AgentTraceEvent): void => {
     if (event.kind === 'plan') {
@@ -395,6 +419,7 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
         const { result: shortcut, usage: shortcutUsage } = await measureTokens(
           () => runUrlShortcut(goal, providerUrl, flowManager.getExecutorDeps(), strings, controller.signal, {
             mapQuestions: request.linkQuestions === true,
+            ...(origin !== 'bot' ? { hotelReviews: true } : {}),
             ...(answerPrefs ? { instruction: buildCombinedPromptFromPrefs(answerPrefs, strings) } : {}),
           }),
         );
@@ -471,6 +496,9 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
           runId,
           ...(origin === 'bot' ? { unattended: true } : {}),
           ...(prefsBlock ? { answerPrefs: prefsBlock } : {}),
+          ...(prefsReshapeAnswers(answerPrefs) ? { prefsReshapeAnswers: true } : {}),
+          // The same switch the chat honours: the UI language unless the user asks for another.
+          ...(config.syncSystemLanguageToModel ? { answerLanguage: languageForLocale(config.locale) } : {}),
           ...(userMemory ? { userMemory } : {}),
           ...(recapRule ? { recapRule } : {}),
           ...(priorEvidence ? { priorEvidence } : {}),
@@ -524,17 +552,26 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
           // composer's "web" checkbox, which takes the three online tools out of every scope.
           // `draw_image` goes wherever a picture can reach the user — the desktop chat; a bot's
           // scope says whether this account may draw — never on the wording: the model reads what
-          // was meant (2026-10-22, two picture requests the patterns missed met "no image tool").
-          toolScope: withPictureCapability(
-            withWebCapability(
-              request.toolScope ?? (origin === 'bot' ? BOT_TOOL_SCOPE : FULL_TOOL_SCOPE),
-              state.web !== false,
+          // was meant.
+          // `agoda_reviews` is the desktop's alone for now, and goes with the web checkbox.
+          // `export_file` only where the caller can send a file (a bot whose platform takes one); the
+          // desktop has its own export.
+          toolScope: withDocumentCapability(
+            withPictureCapability(
+              withWebCapability(
+                withHotelReviewCapability(
+                  request.toolScope ?? (origin === 'bot' ? BOT_TOOL_SCOPE : FULL_TOOL_SCOPE),
+                  request.toolScope ? request.toolScope.hotelReviews === true : origin !== 'bot',
+                ),
+                state.web !== false,
+              ),
+              request.toolScope ? request.toolScope.pictures === true : origin !== 'bot',
             ),
-            request.toolScope ? request.toolScope.pictures === true : origin !== 'bot',
+            request.toolScope?.documents === true,
           ),
-          // ChatGPT draws only in a normal chat, deleted afterwards as the image command does.
-          drawImage: agentPictureDrawer(state, config.oneShotTemporaryChat || isEphemeralDelivery(origin)),
+          drawImage: agentPictureDrawer(state),
           keepPictures: agentPictureKeeper(state),
+          exportFile: agentFileExporter(state),
           onSaveFlow: async (flow) => recordFlow(await flowManager.saveGeneratedFlow(flow)),
           onReplaceFlow: async (flow) => recordFlow(await flowManager.replaceFlowFromAgent(flow)),
           listFlows: () => flowManager.getAll(),
@@ -549,6 +586,7 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
           // The restriction the run was started with, read off the saved state so a resume keeps it.
           ...(state.connectors === 'none' ? { noConnectors: true } : {}),
           ...(request.allowedMcpServerIds ? { allowedMcpServerIds: request.allowedMcpServerIds } : {}),
+          ...(pageReadersOff ? { deniedMcpServerIds: ANY_PAGE_CONNECTOR_IDS } : {}),
         },
       ));
 
@@ -617,7 +655,10 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
       const footer = buildActionFooter(actions, (key, vars) => t(strings, key, vars));
       // Same guarantee for the goal as a whole: an answer the run knows is partial says so in a line
       // the model did not write, ahead of the footer about what each change really did.
-      const answered = withCompletionNotice(answer, completionNotice(outcome.completion, (key, vars) => t(strings, key, vars)));
+      // The sources go on only now: the recap and memory lines are read off the reply's tail, and a
+      // list after them hid both.
+      const sourced = withSourcesSection(answer, outcome.sources, t(strings, 'search.output.sources'));
+      const answered = withCompletionNotice(sourced, completionNotice(outcome.completion, (key, vars) => t(strings, key, vars)));
       const finalAnswer = writesAllFailed(outcome.writes) && !footer
         ? withWriteFailureNotice(
           answered,
@@ -651,6 +692,7 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
         ...(memoryNotes.length > 0 ? { memoryNotes } : {}),
         recap: recapFor(recapLine),
         pictures: runPictures(state),
+        documents: runDocuments(state),
       });
       return usedWeb ? { ...delivered, usedWeb } : delivered;
     } catch (err: unknown) {

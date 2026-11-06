@@ -1,5 +1,5 @@
 export { getYtdlToolsState, onYtdlToolsState, reloadYtdlState } from './toolState';
-export { installYtdlTools, checkYtdlUpdate } from './toolInstaller';
+export { installYtdlTools, checkYtdlUpdate, migrateLegacyToolFolders } from './toolInstaller';
 export {
   removeYtdlTools, setYtdlCustomPaths, setYtdlNightly, startYtdlUpdateSchedule, stopYtdlUpdateSchedule,
 } from './toolSettings';

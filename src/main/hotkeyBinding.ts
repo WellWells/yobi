@@ -71,6 +71,7 @@ export function bindHotkey(deps: HotkeyDeps): boolean {
       youtubePrompt: config.youtubePrompt,
       targetUrl: config.targetUrl,
       onLog: sendLog,
+      hotelReviews: true,
     });
     const prompt = resolved.prompt;
     const targetUrl = resolved.forceProviderUrl ?? config.targetUrl;

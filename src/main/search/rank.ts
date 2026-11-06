@@ -54,17 +54,14 @@ export function bm25Scores(texts: string[], query: string): number[] {
   });
 }
 
-export function rankHits(hits: SerpHit[], query: string, freshnessOrdered: boolean): SerpHit[] {
+/**
+ * The engines' order stands — fused across engines and queries it carries far more than BM25 over a
+ * two-line snippet can — except that a hit sharing no word with the query goes behind every hit that does.
+ */
+export function rankHits(hits: SerpHit[], query: string): SerpHit[] {
   if (hits.length <= 1) return hits;
   const scores = bm25Scores(hits.map((hit) => `${hit.title}\n${hit.snippet ?? ''}`), query);
-  const indexed = hits.map((hit, index) => ({ hit, score: scores[index], index }));
-  if (freshnessOrdered) {
-    return [...indexed.filter((e) => e.score > 0), ...indexed.filter((e) => e.score <= 0)]
-      .map((e) => e.hit);
-  }
-  return indexed
-    .sort((a, b) => b.score - a.score || a.index - b.index)
-    .map((e) => e.hit);
+  return [...hits.filter((_, index) => scores[index] > 0), ...hits.filter((_, index) => scores[index] <= 0)];
 }
 
 export interface ScoredSource {

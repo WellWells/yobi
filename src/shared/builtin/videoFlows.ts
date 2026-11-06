@@ -26,10 +26,9 @@ function summaryBranch(summaryPrompt: string | null, provider: string, reply: St
 
 /**
  * The desktop chat's video menu, the bot one's twin, answered in the conversation: the cover, the
- * title and "analyze" (null `summaryPrompt`: no summary) and "download", which answers with a
- * button per quality, the MP3 and the subtitles (straight away for a site with no summary). A
- * quality, the MP3 or the subtitles save a file in the downloads folder (shown under the answer);
- * "analyze" is the bot chat's summary, on the chat's model.
+ * title and every button at once — "analyze" (null `summaryPrompt`: no summary), a button per
+ * quality, the MP3 and the subtitles. A quality, the MP3 or the subtitles save a file in the
+ * downloads folder (shown under the answer); "analyze" is the bot chat's summary, on the chat's model.
  */
 export function videoMenuChatFlow(ids: VideoIds, name: string, summaryPrompt: string | null): FlowDefinition {
   return chatFlowOf(ids.desktopMenu, name, stepsOf(ids.desktopMenu, [
@@ -42,13 +41,13 @@ export function videoMenuChatFlow(ids: VideoIds, name: string, summaryPrompt: st
 }
 
 /**
- * A link alone: the cover, the title, "analyze" (null `summaryPrompt`: no summary) and
- * "download", which answers with one button per quality, the MP3 and the subtitles (straight away
- * for a site with no summary). With the preview grant on Telegram, a short video first comes as
- * itself at a low quality (`info.preview`), the same buttons under it; a preview that cannot be
- * sent leaves the menu in its place. A button runs this again with the link and its choice: the
- * summary, or the download sent back — a video to play, an MP3 to the music player, the .srt as a
- * document — (or, too large for a bot or on LINE, saved on this computer and said so).
+ * A link alone: the cover, the title, the sizes and every button at once — "analyze" (null
+ * `summaryPrompt`: no summary), one per quality, the MP3 and the subtitles. With the preview grant
+ * on Telegram, a short video first comes as itself at a low quality (`info.preview`), the same
+ * buttons under it; a preview that cannot be sent leaves the menu in its place. A button runs
+ * this again with the link and its choice ("download", on a menu sent before, gets the download
+ * menu): the summary, or the download sent back — a video to play, an MP3 to the music player,
+ * the .srt as a document — (or, too large for a bot or on LINE, saved on this computer and said so).
  */
 export function videoMenuFlow(ids: VideoIds, name: string, summaryPrompt: string | null): FlowDefinition {
   return flowOf(ids.menu, name, ids.cmdMenu, stepsOf(ids.menu, [

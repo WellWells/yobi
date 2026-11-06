@@ -25,6 +25,8 @@ import {
   mailDigestPrompt,
   mailWatchPrompt,
   morningBriefPrompt,
+  NO_CHANGE_MARK,
+  pageChangePrompt,
   pushesAnalyzePrompt,
   selectionPolishPrompt,
   selectionSummaryPrompt,
@@ -341,6 +343,22 @@ const FOREX_GATE_CODE = [
   'if (!isFinite(rate) || !isFinite(target)) return "";',
   'return (risingAlert ? rate >= target : rate <= target) ? "hit" : "";',
 ].join('\n');
+
+/**
+ * The page change alert's message: the summary, "" when the model found only noise (its marker
+ * may come back escaped, bold or with a full stop), or a fixed line when the model failed — the
+ * change gate has already moved on, so a failure must still say the page changed. On a first
+ * capture a failure stays silent: there is no change to report.
+ */
+function pageChangeGateCode(failedText: string): string {
+  return [
+    "if (String(vars['llm_1.isFailed'] || '') === '1') {",
+    `  return String(vars['changed_1.isFirstRun'] || '') === '1' ? '' : ${JSON.stringify(failedText)};`,
+    '}',
+    "const reply = String(vars['llm_1'] || '').trim();",
+    `return reply.replace(/[^A-Za-z]/g, '').toUpperCase() === ${JSON.stringify(NO_CHANGE_MARK.replace(/[^A-Za-z]/g, ''))} ? '' : reply;`,
+  ].join('\n');
+}
 
 function skipEmpty(condKey: string, t: Translate, left: string, operator: string, right = ''): SkillInstance[] {
   return [
@@ -1096,6 +1114,55 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
         step('on_change', { value: '{{invoice_1.newThisMonth}}' }, t('flow.templates.invoiceDraw.step.onlyNew'), 'changed_1'),
         step('stop', { value: '{{changed_1}}' }, t('flow.templates.step.stop_noNew')),
         step('bot', { chatId: '{{var.chatId}}', message: '{{invoice_1.text}}', attachment: '', attachmentType: 'auto', emitFailFlag: 'false' }, t('flow.templates.step.bot'), 'bot_1'),
+      ],
+      ...timestamps(),
+    }),
+  },
+  {
+    key: 'page_change',
+    category: 'push',
+    titleKey: 'flow.templates.pageChange',
+    descKey: 'flow.templates.pageChange.desc',
+    primarySkill: 'on_change',
+    hue: 'blue',
+    setupCount: 2,
+    build: (t, locale): FlowDefinition => ({
+      id: makeId(),
+      name: t('flow.templates.pageChange'),
+      description: t('flow.templates.pageChange.desc'),
+      enabled: false,
+      // A page read is cheap; the AI runs only when the page changed.
+      trigger: intervalCron(3, 'hours'),
+      variables: [
+        textVar('pageUrl', t),
+        { ...chatVar(t), hint: t('flow.templates.pageChange.var.chatId.hint') },
+      ],
+      // No recipient guard: a blank chat means a desktop notification. The page read fails the
+      // run rather than failing soft, since "" would be remembered as the page and the next read
+      // would report the whole page as new. The URL is part of the watched text, so a changed
+      // setting reads as a new page instead of a list of unrelated edits.
+      steps: [
+        step('browser', { url: '{{var.pageUrl}}', includeImage: 'false', emitFailFlag: 'false' }, t('flow.templates.step.fetchPage'), 'page_1'),
+        step('stop', { value: '{{page_1}}' }, t('flow.templates.pageChange.step.stopEmpty')),
+        step('on_change', { value: 'URL: {{var.pageUrl}}\n{{page_1}}', withDiff: 'true' }, t('flow.templates.pageChange.step.compare'), 'changed_1'),
+        step('stop', { value: '{{changed_1}}' }, t('flow.templates.pageChange.step.stopSame')),
+        step('llm', llmConfig(pageChangePrompt(locale), { emitFailFlag: 'true' }), t('flow.templates.pageChange.step.llm'), 'llm_1'),
+        step('js', { code: pageChangeGateCode(t('flow.templates.pageChange.llmFailed')) }, t('flow.templates.pageChange.step.filter'), 'msg'),
+        step('stop', { value: '{{msg}}' }, t('flow.templates.pageChange.step.stopNoise')),
+        step('if', { left: '{{var.chatId}}', operator: 'is_empty', right: '' }, t('flow.templates.pageChange.step.ifDesktop')),
+        step('notify', {
+          title: `${t('flow.templates.pageChange.notify.title')} · {{var.pageUrl}}`,
+          body: '{{msg}}',
+        }, t('flow.templates.pageChange.step.notify')),
+        step('stop', { value: '{{var.chatId}}' }, t('flow.templates.pageChange.step.stopDesktop')),
+        step('end_if', {}, t('flow.skill.end_if')),
+        step('bot', {
+          chatId: '{{var.chatId}}',
+          message: '{{msg}}\n\n{{var.pageUrl}}',
+          attachment: '',
+          attachmentType: 'auto',
+          emitFailFlag: 'false',
+        }, t('flow.templates.step.bot'), 'bot_1'),
       ],
       ...timestamps(),
     }),

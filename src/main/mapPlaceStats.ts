@@ -74,6 +74,27 @@ export function parsePlaceStats(raw: string | null): PlaceStats | null {
   }
 }
 
+/**
+ * The place page in English: the reading parses aria-labels such as "4.5 stars" and "1,234
+ * reviews", which other languages write as "4,5" and "1.234". An existing `hl` is replaced; the
+ * path, the other parameters and the fragment are kept as written.
+ */
+export function statsPageUrl(placeUrl: string): string {
+  try {
+    new URL(placeUrl);
+  } catch {
+    return placeUrl;
+  }
+  const hashAt = placeUrl.indexOf('#');
+  const fragment = hashAt < 0 ? '' : placeUrl.slice(hashAt);
+  const beforeHash = hashAt < 0 ? placeUrl : placeUrl.slice(0, hashAt);
+  const queryAt = beforeHash.indexOf('?');
+  const base = queryAt < 0 ? beforeHash : beforeHash.slice(0, queryAt);
+  const query = queryAt < 0 ? '' : beforeHash.slice(queryAt + 1);
+  const kept = query.split('&').filter((part) => part && part.split('=')[0].toLowerCase() !== 'hl');
+  return `${base}?${[...kept, 'hl=en'].join('&')}${fragment}`;
+}
+
 function safeDestroy(win: BrowserWindow): void {
   if (!win.isDestroyed()) win.destroy();
 }
@@ -159,7 +180,7 @@ export async function fetchPlaceStats(
     });
 
     const run = async (): Promise<void> => {
-      win.loadURL(placeUrl).catch(() => {});
+      win.loadURL(statsPageUrl(placeUrl)).catch(() => {});
       const loaded = await waitForLoad();
       if (settled || !loaded) return finish(null);
       await new Promise((r) => setTimeout(r, JS_SETTLE_MS));

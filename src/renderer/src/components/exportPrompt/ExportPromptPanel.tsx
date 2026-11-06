@@ -11,11 +11,13 @@ import { AppSegmentedControl } from '../AppSegmentedControl';
 import { ToggleSwitch } from '../ToggleSwitch';
 import { PromptShell } from './PromptShell';
 import { ShareConsent } from './ShareConsent';
+import { ExportNameButton } from './ExportNameButton';
 import { clampCaptureMargin } from '../../../../shared/types';
 import { CAPTURE_PALETTES } from '../../../../shared/capturePalettes';
 import type { CaptureBackgroundStyle, CaptureDirection } from '../../../../shared/capturePalettes';
 import type {
-  CaptureExportAction, ExportPromptChoice, ExportPromptPayload, PanelHeight, QuickExportFormat, ShareExpire,
+  CaptureExportAction, ExportNameResult, ExportPromptChoice, ExportPromptPayload, PanelHeight, QuickExportFormat,
+  ShareExpire,
 } from '../../../../shared/types';
 
 const CAPTURE_FORMATS: { value: QuickExportFormat; label: string }[] = [
@@ -31,9 +33,10 @@ interface Props {
   onSubmit: (choice: ExportPromptChoice) => void;
   onCancel: () => void;
   onHeight: (height: PanelHeight) => void;
+  onRequestName: (providerUrl: string) => Promise<ExportNameResult>;
 }
 
-export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel, onHeight }) => {
+export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel, onHeight, onRequestName }) => {
   const share = payload.share;
   const shareStrings = payload.strings.share;
 
@@ -42,7 +45,11 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
   const [zip, setZip] = React.useState(payload.zip);
   const [width, setWidth] = React.useState(payload.width);
   const [palette, setPalette] = React.useState(payload.palette);
+  const [backgroundStyle, setBackgroundStyle] = React.useState<CaptureBackgroundStyle>(payload.backgroundStyle);
   const [margin, setMargin] = React.useState(clampCaptureMargin(payload.margin));
+  const [nameModelUrl, setNameModelUrl] = React.useState(payload.naming?.modelUrl ?? '');
+  const [naming, setNaming] = React.useState(false);
+  const [nameError, setNameError] = React.useState('');
   const [hoveredPalette, setHoveredPalette] = React.useState<string | null>(null);
   const [expire, setExpire] = React.useState<ShareExpire>(share.expire);
   const [burn, setBurn] = React.useState(share.burnAfterReading);
@@ -86,7 +93,17 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
       return;
     }
     setPending(action);
-    onSubmit({ kind: 'capture', fileName: trimmed, format, zip, width, margin, palette, action });
+    onSubmit({ kind: 'capture', fileName: trimmed, format, zip, width, margin, palette, backgroundStyle, action });
+  };
+
+  const suggestName = async (providerUrl: string): Promise<void> => {
+    setNameModelUrl(providerUrl);
+    setNameError('');
+    setNaming(true);
+    const result = await onRequestName(providerUrl);
+    setNaming(false);
+    if ('name' in result) setName(result.name);
+    else setNameError(result.error);
   };
 
   if (asking) {
@@ -142,14 +159,23 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
           <Group align="stretch" gap={12} wrap="nowrap">
             <Stack gap={10} flex={1} miw={0} onMouseLeave={() => setHoveredPalette(null)}>
               <Stack gap={6}>
-                <Text fz="var(--font-size-sm)" c="dimmed">{payload.strings.theme}</Text>
+                <Group justify="space-between" wrap="nowrap" gap={8}>
+                  <Text fz="var(--font-size-sm)" c="dimmed" style={{ flexShrink: 0 }}>{payload.strings.theme}</Text>
+                  <AppSegmentedControl
+                    value={backgroundStyle}
+                    options={payload.backgroundStyles}
+                    onChange={(value) => setBackgroundStyle(value as CaptureBackgroundStyle)}
+                    fullWidth={false}
+                    size="xs"
+                  />
+                </Group>
                 <Group gap={5} wrap="wrap">
                   {CAPTURE_PALETTES.map((item) => (
                     <PaletteSwatch
                       key={item.key}
                       palette={item}
                       active={palette === item.key}
-                      style={payload.backgroundStyle as CaptureBackgroundStyle}
+                      style={backgroundStyle}
                       direction={payload.direction as CaptureDirection}
                       size={24}
                       onSelect={setPalette}
@@ -168,7 +194,7 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
             <Box w={PREVIEW_WIDTH} style={{ flexShrink: 0 }}>
               <CardSchematic
                 palette={hoveredPalette ?? palette}
-                backgroundStyle={payload.backgroundStyle as CaptureBackgroundStyle}
+                backgroundStyle={backgroundStyle}
                 direction={payload.direction as CaptureDirection}
                 width={width}
                 margin={margin}
@@ -179,19 +205,37 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
 
           <Stack gap={6}>
             <Text fz="var(--font-size-sm)" c="dimmed">{payload.strings.fileName}</Text>
-            <AppTextInput
-              value={name}
-              disabled={!named}
-              onChange={(event) => setName(event.currentTarget.value)}
-              spellCheck={false}
-              ref={(node) => {
-                if (node && document.activeElement !== node) { node.focus(); node.select(); }
-              }}
-              rightSection={
-                <Text fz="var(--font-size-sm)" c="var(--text-muted)" pr={4}>{`.${extension}`}</Text>
-              }
-              rightSectionWidth={56}
-            />
+            <Group gap={8} wrap="nowrap" align="flex-start">
+              <AppTextInput
+                flex={1}
+                miw={0}
+                value={name}
+                disabled={!named}
+                onChange={(event) => { setName(event.currentTarget.value); setNameError(''); }}
+                spellCheck={false}
+                ref={(node) => {
+                  if (node && document.activeElement !== node) { node.focus(); node.select(); }
+                }}
+                rightSection={
+                  <Text fz="var(--font-size-sm)" c="var(--text-muted)" pr={4}>{`.${extension}`}</Text>
+                }
+                rightSectionWidth={56}
+              />
+              {payload.naming && payload.naming.sections.length > 0 && (
+                <ExportNameButton
+                  naming={{ ...payload.naming, modelUrl: nameModelUrl }}
+                  label={payload.strings.aiName}
+                  menuLabel={payload.strings.aiNameMenu}
+                  busy={naming}
+                  onPick={(providerUrl) => { void suggestName(providerUrl); }}
+                />
+              )}
+            </Group>
+            {nameError && (
+              <Text fz="var(--font-size-sm)" c="var(--mantine-color-error)" style={{ wordBreak: 'break-word' }}>
+                {nameError}
+              </Text>
+            )}
           </Stack>
 
           <Stack gap={6}>

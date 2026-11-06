@@ -2,7 +2,7 @@ import type { BrowserWindow } from 'electron';
 import { isCloudflareChallengeActive, waitForPageLoad, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
 import { ensureOnPage, landingMayStillRender, PAGE_REUSE } from './pageReuse';
 import { anchorCounts, executeAutomationWithTimeout, dispatchFocusEvents } from './automationExecutor';
-import { INJECTED_PPLX_READ_JS, PPLX_RESPONSE_SELECTOR } from './perplexityReadScript';
+import { INJECTED_PPLX_READ_JS, PPLX_INPUT_SELECTORS, PPLX_RESPONSE_SELECTOR } from './perplexityReadScript';
 import { PPLX_SUBMIT_JS } from './perplexitySendScript';
 import { forgetPerplexityVisitor, isPerplexitySignInWall, PERPLEXITY_SIGN_IN_WALL_ERROR } from './perplexityVisitor';
 import { isPerplexitySignedIn } from './perplexitySession';
@@ -63,7 +63,7 @@ async function askPerplexity(
   const reused = landing === 'reused';
   if (reused) sendLog('♻️ Perplexity page kept open — typing straight into it, no reload');
 
-  if (await isCloudflareChallengeActive(wc)) {
+  if (await isCloudflareChallengeActive(wc, PPLX_INPUT_SELECTORS.join(', '))) {
     await showInteractiveWorkerWindow(targetUrl);
     throw raiseVerificationChallenge({
       titleKey: 'cloudflare.notify.title',

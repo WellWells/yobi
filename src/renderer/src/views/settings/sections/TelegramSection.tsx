@@ -3,7 +3,7 @@ import { Box, Group, Stack, Text, Button as MButton } from '@mantine/core';
 import { KeyRound, Link, MessageSquare, Plug, Send, Users, UsersRound } from 'lucide-react';
 import dayjs from 'dayjs';
 import { AppPasswordInput } from '../../../components/AppPasswordInput';
-import { SectionCard, SettingRow, SettingField, SettingDivider, SelectDropdown, ToggleSwitch, SectionTitle, StatusLine } from '../components';
+import { SectionCard, SettingRow, SettingField, SettingDivider, ToggleSwitch, SectionTitle, StatusLine } from '../components';
 import { SecretHealthAlert } from '../../../components/SecretHealthAlert';
 import { fillTemplate } from '../../../../../shared/fillTemplate';
 import { BotDefaultModelSetting } from './BotDefaultModelSetting';
@@ -212,41 +212,7 @@ export const TelegramSection: React.FC<Props> = ({
 
             <SectionTitle icon={<MessageSquare size={15} />} label={t('settings.telegram.section.reply')} />
             <Stack gap={12}>
-              <SettingRow
-                label={t('settings.telegram.compactReply')}
-                hint={t('settings.telegram.compactReply.hint')}
-                control={
-                  <ToggleSwitch
-                    checked={settings?.compactReply ?? false}
-                    onChange={() => { void telegram.handleToggleTelegramCompactReply(); }}
-                  />
-                }
-              />
-
-              {!settings?.compactReply && (
-                <Box maw={300}>
-                  <Text fz="var(--font-size-base)" c="var(--mantine-color-default-color)" mb={6}>
-                    {t('settings.telegram.defaultReply')}
-                  </Text>
-                  <SelectDropdown
-                    value={settings?.defaultReplyMode ?? 'markdown'}
-                    options={[
-                      { value: 'markdown', label: t('settings.telegram.reply.markdown') },
-                      { value: 'png', label: t('settings.telegram.reply.png') },
-                      { value: 'webp', label: t('settings.telegram.reply.webp') },
-                      { value: 'pdf', label: t('settings.telegram.reply.pdf') },
-                    ]}
-                    onChange={(v) => { void telegram.handleTelegramDefaultReplyMode(v as 'markdown' | 'png' | 'webp' | 'pdf'); }}
-                    disabled={telegram.telegramBusy}
-                  />
-                </Box>
-              )}
-
-              <BotReplyPreview
-                compactReply={settings?.compactReply ?? false}
-                mode={settings?.defaultReplyMode ?? 'markdown'}
-                t={t}
-              />
+              <BotReplyPreview note={t('settings.telegram.preview.note')} t={t} />
 
               <SettingDivider my={4} />
 

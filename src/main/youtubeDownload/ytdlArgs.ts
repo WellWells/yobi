@@ -1,4 +1,4 @@
-import { LOW_AAC_MAX_KBPS, MP3_BITRATE_KBPS } from '../../shared/ytdl';
+import { LOW_AAC_MAX_KBPS, MP3_BITRATE_KBPS, isChatDestination } from '../../shared/ytdl';
 import type { YtdlDestination, YtdlPick } from '../../shared/ytdl';
 import { mp3Args } from '../downloader/ytdlpArgs';
 
@@ -13,19 +13,20 @@ export type { YtdlProgressLine } from '../downloader/ytdlpArgs';
 const CANONICAL_WATCH_URL = /^https:\/\/www\.youtube\.com\/watch\?v=[\w-]{11}$/;
 
 /**
- * Telegram plays only H.264 + AAC inline, so it asks for those first; a local file takes the best
- * codec at that quality. A quality is matched by YouTube's own label (`1080p`, `1080p60`) and
- * then by height, never quietly lowered. `lowAudio` (Telegram only) asks for the low AAC first, by
- * bitrate among the stereo m4a tracks: `ba`, never `wa` — yt-dlp's ranking puts the original
- * language first, and "worst" would take an auto-dubbed track. Without one the usual chain follows.
+ * A chat (Telegram, LINE PC) plays only H.264 + AAC inline on every phone, so it asks for those
+ * first; a local file takes the best codec at that quality. A quality is matched by YouTube's own
+ * label (`1080p`, `1080p60`) and then by height, never quietly lowered. `lowAudio` (Telegram only)
+ * asks for the low AAC first, by bitrate among the stereo m4a tracks: `ba`, never `wa` — yt-dlp's
+ * ranking puts the original language first, and "worst" would take an auto-dubbed track. Without
+ * one the usual chain follows.
  */
 export function ytdlFormatSelector(quality: number | 'best', destination: YtdlDestination, lowAudio = false): string {
   const q = quality;
   const video = q === 'best' ? 'bv*' : `bv*[format_note^=${q}p]`;
   const common = q === 'best' ? 'bv*+ba/b' : `bv*[format_note^=${q}p]+ba/b[format_note^=${q}p]/bv*[height=${q}]+ba/b[height=${q}]`;
-  if (destination !== 'telegram') return common;
+  if (!isChatDestination(destination)) return common;
   // yt-dlp ranks more channels higher and would pick a 5.1 AAC track, about three times the size
-  // of stereo; the Telegram size estimate assumes stereo.
+  // of stereo; the chat's size estimate assumes stereo.
   const h264 = `${video}[vcodec^=avc1]`;
   const usual = `${h264}+ba[ext=m4a][audio_channels<=2]/${h264}+ba[ext=m4a]/${common}`;
   return lowAudio ? `${h264}+ba[ext=m4a][audio_channels<=2][abr<=${LOW_AAC_MAX_KBPS}]/${usual}` : usual;
@@ -48,6 +49,6 @@ export function youtubeSiteArgs(url: string, quality: YtdlPick, destination: Ytd
     '-f',
     ytdlFormatSelector(quality, destination, lowAudio),
     '--merge-output-format',
-    destination === 'telegram' ? 'mp4' : 'mp4/mkv',
+    isChatDestination(destination) ? 'mp4' : 'mp4/mkv',
   ];
 }

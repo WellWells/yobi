@@ -21,10 +21,12 @@ interface Props {
   t: (key: string) => string;
   /** Absent = LINE's wording. */
   copy?: PairedUsersCopy;
+  /** The account the bot runs as (LINE PC: the user's own), listed with no unpair button. */
+  fixedUserId?: string;
 }
 
 /** The paired accounts of a platform with string ids (LINE, Discord, Slack), each with its grants. */
-export const LinePairedUsers: React.FC<Props> = ({ pairedUsers, access, onUnpair, t, copy }) => {
+export const LinePairedUsers: React.FC<Props> = ({ pairedUsers, access, onUnpair, t, copy, fixedUserId }) => {
   // Confirmed like other permanent removals: unpairing revokes the account's bot access.
   const [pending, setPending] = useState<LinePairedUser | null>(null);
   const words: PairedUsersCopy = copy ?? {
@@ -60,7 +62,7 @@ export const LinePairedUsers: React.FC<Props> = ({ pairedUsers, access, onUnpair
                 {user.userId}
               </Text>
             </Stack>
-            <UnpairButton label={words.remove} onClick={() => setPending(user)} />
+            {user.userId !== fixedUserId && <UnpairButton label={words.remove} onClick={() => setPending(user)} />}
           </Group>
           <Box mt={6}>
             <BotUserPermissions access={access} userId={user.userId} t={t} />

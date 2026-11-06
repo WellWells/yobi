@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActionIcon, Badge, Button, Group, Menu, Pill, Stack, Text, Tooltip } from '@mantine/core';
-import { Check, Plus, ShieldOff, Trash2 } from 'lucide-react';
+import { Check, ContactRound, Plus, ShieldOff, Trash2 } from 'lucide-react';
 import { botApi } from '../../../api/electronApi';
 import { WebDialog } from '../../../components/WebDialog';
 import { Z_POPOVER } from '../../../config/zLayers';
 import { useFormatTime } from '../../../hooks/useFormatTime';
 import { showAppNotice } from '../../../hooks/useUiNotifications';
+import { botGroupsNeedApproval } from '../../../../../shared/botPermissions';
 import type { BotGroupGrant } from '../../../../../shared/botPermissions';
+import { SectionTitle, SettingDivider } from '../components';
 import type { BotAudienceSnapshot, BotAudienceUser, BotContact, BotPlatform, TelegramChannel } from '../../../../../shared/types';
 import type { BotConnectorOption } from './botPermissionsView';
 import { GRANT_MENU_DROPDOWN_STYLE, GRANT_MENU_MIDDLEWARES } from './BotUserPermissions';
@@ -33,12 +35,23 @@ interface Props {
 
 const ROW_STYLE = { border: '1px solid var(--mantine-color-default-border)', borderRadius: 'var(--radius-sm)' } as const;
 
+/**
+ * The group list's words. LINE PC's groups wait for nobody (`botGroupsNeedApproval`): there the
+ * list is the groups Yobi was used in, and what it grants is for everyone, so nobody has to ask.
+ */
+function groupCopy(platform: BotPlatform): { hint: string; none: string; nothing: string } {
+  return botGroupsNeedApproval(platform)
+    ? { hint: 'settings.bot.group.hint', none: 'settings.bot.group.none', nothing: 'settings.bot.group.nothing' }
+    : { hint: 'settings.lineSelf.group.hint', none: 'settings.lineSelf.group.none', nothing: 'settings.lineSelf.group.nothing' };
+}
+
 const GrantChips: React.FC<{
   grants: BotGroupGrant[];
   connectors: readonly BotConnectorOption[];
   onChange: (grants: BotGroupGrant[]) => void;
+  nothing: string;
   t: (key: string) => string;
-}> = ({ grants, connectors, onChange, t }) => {
+}> = ({ grants, connectors, onChange, nothing, t }) => {
   const chips = groupGrantChips(grants, connectors, t);
   const menu = groupGrantMenu(grants, connectors, t);
   return (
@@ -60,7 +73,7 @@ const GrantChips: React.FC<{
           </Pill>
         </Tooltip>
       ))}
-      {chips.length === 0 && <Text fz="var(--font-size-sm)" c="dimmed">{t('settings.bot.group.nothing')}</Text>}
+      {chips.length === 0 && <Text fz="var(--font-size-sm)" c="dimmed">{nothing}</Text>}
       {menu.length > 0 && (
         <Menu position="bottom-start" withinPortal zIndex={Z_POPOVER} shadow="md" middlewares={GRANT_MENU_MIDDLEWARES}>
           <Menu.Target>
@@ -90,8 +103,11 @@ const ChatRow: React.FC<{
   /** `null` puts the group back to waiting for approval. */
   onChange: (grants: BotGroupGrant[] | null) => void;
   onForget?: () => void;
+  /** Whether a group can be put back to waiting (the platform's groups wait for approval). */
+  revocable: boolean;
+  nothing: string;
   t: (key: string) => string;
-}> = ({ row, connectors, onChange, onForget, t }) => {
+}> = ({ row, connectors, onChange, onForget, revocable, nothing, t }) => {
   const { group } = row;
   const detail = chatDetail(row, t);
   const badge = (label: string, color?: string) => (
@@ -119,7 +135,7 @@ const ChatRow: React.FC<{
               {t('settings.bot.group.allow')}
             </Button>
           )}
-          {group && !group.pending && (
+          {group && !group.pending && revocable && (
             <Tooltip label={t('settings.bot.group.revoke.tooltip')} position="top">
               <Button variant="subtle" size="compact-xs" leftSection={<ShieldOff size={12} />} onClick={() => onChange(null)}>
                 {t('settings.bot.group.revoke')}
@@ -136,7 +152,7 @@ const ChatRow: React.FC<{
         </Group>
       </Group>
       {group?.pending && <Text fz="var(--font-size-sm)" c="var(--text-muted)">{t('settings.bot.group.pending.desc')}</Text>}
-      {group && !group.pending && <GrantChips grants={group.grants} connectors={connectors} onChange={onChange} t={t} />}
+      {group && !group.pending && <GrantChips grants={group.grants} connectors={connectors} onChange={onChange} nothing={nothing} t={t} />}
     </Stack>
   );
 };
@@ -224,38 +240,48 @@ export const BotAudienceSection: React.FC<Props> = ({
   const rows = mergeBotChats(audience?.groups ?? [], channels, contacts);
   const users = audience?.users ?? [];
   const recipients = onForgetChannel !== undefined;
+  const copy = groupCopy(platform);
   return (
-    <Stack gap={10}>
-      {header}
-      <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>
-        {joinSentences(t('settings.bot.group.hint'), recipients && rows.length > 0 ? t('settings.telegram.channels.hintShort') : '')}
-      </Text>
-      {rows.length === 0
-        ? <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>{t(recipients ? 'settings.telegram.channels.howto' : 'settings.bot.group.none')}</Text>
-        : rows.map((row) => (
-          <ChatRow
-            key={row.id}
-            row={row}
-            connectors={connectors}
-            onChange={(grants) => { void setGroup(row.id, grants); }}
-            onForget={row.channel && onForgetChannel ? () => setForgetting(row) : undefined}
-            t={t}
-          />
-        ))}
+    <>
+      <Stack gap={10}>
+        {header}
+        <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>
+          {joinSentences(t(copy.hint), recipients && rows.length > 0 ? t('settings.telegram.channels.hintShort') : '')}
+        </Text>
+        {rows.length === 0
+          ? <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>{t(recipients ? 'settings.telegram.channels.howto' : copy.none)}</Text>
+          : rows.map((row) => (
+            <ChatRow
+              key={row.id}
+              row={row}
+              connectors={connectors}
+              onChange={(grants) => { void setGroup(row.id, grants); }}
+              onForget={row.channel && onForgetChannel ? () => setForgetting(row) : undefined}
+              revocable={botGroupsNeedApproval(platform)}
+              nothing={t(copy.nothing)}
+              t={t}
+            />
+          ))}
+      </Stack>
 
-      <Text fz="var(--font-size-sm)" fw={600} c="var(--mantine-color-default-color)" mt={6}>{t('settings.bot.users.title')}</Text>
-      <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>{t('settings.bot.users.hint')}</Text>
-      {users.length === 0
-        ? <Text fz="var(--font-size-sm)" c="dimmed">{t('settings.bot.users.none')}</Text>
-        : users.map((user) => (
-          <UserRow
-            key={user.id}
-            user={user}
-            onBlock={(blocked) => { void setBlocked(user.id, blocked); }}
-            onApprove={() => { void approve(user.id); }}
-            t={t}
-          />
-        ))}
+      <SettingDivider my={16} />
+
+      {/* Its own section, with its icon: it was a bold line under the groups that read as a heading without one. */}
+      <SectionTitle icon={<ContactRound size={15} />} label={t('settings.bot.users.title')} />
+      <Stack gap={10}>
+        <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>{t('settings.bot.users.hint')}</Text>
+        {users.length === 0
+          ? <Text fz="var(--font-size-sm)" c="dimmed">{t('settings.bot.users.none')}</Text>
+          : users.map((user) => (
+            <UserRow
+              key={user.id}
+              user={user}
+              onBlock={(blocked) => { void setBlocked(user.id, blocked); }}
+              onApprove={() => { void approve(user.id); }}
+              t={t}
+            />
+          ))}
+      </Stack>
 
       <WebDialog
         open={forgetting !== null}
@@ -271,6 +297,6 @@ export const BotAudienceSection: React.FC<Props> = ({
         }}
         onCancel={() => setForgetting(null)}
       />
-    </Stack>
+    </>
   );
 };

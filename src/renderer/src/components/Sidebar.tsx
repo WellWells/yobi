@@ -6,6 +6,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import { noteConversationOpened } from '../store/recapStore';
+import { dropQuestionOfRemovedConversation } from '../store/useAgentRunStore';
 import type { BatchCaptureFormat, OutputFile } from '../../../shared/types';
 import { folderKey } from '../../../shared/conversationFolders';
 import { PanelToolbar, ToolbarSearchButton } from './PanelToolbar';
@@ -103,6 +104,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
     void loadFiles().finally(() => setFilesLoaded(true));
     const unsub = window.electronAPI.onFileListUpdate((nextFiles) => {
       setFiles(nextFiles, { markUnread: true });
+      dropQuestionOfRemovedConversation(nextFiles.map((file) => file.path));
     });
     return unsub;
   }, [loadFiles, setFiles]);

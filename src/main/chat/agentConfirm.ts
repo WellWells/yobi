@@ -183,8 +183,7 @@ function rowValue(key: string, value: string): string {
 }
 
 /**
- * The chat question that stands in for the change dialog on the owner's bot chat (2026-10-19, user:
- * 「指令一般使用者看不懂…按鈕寫的應該是允許或是取消」). It opens with the model's own sentence saying
+ * The chat question that stands in for the change dialog on the owner's bot chat. It opens with the model's own sentence saying
  * what will change, by name — only the model knows that transition "31" is "Done" — and under it
  * what the program read off the call itself (connector, operation, the contract's rows, a warning
  * when it sends or deletes), so a sentence that does not match is visible. Every argument follows,

@@ -1,10 +1,34 @@
 import { loadConversation } from '../../chat/conversationStore';
 import { measureFor, packReplayPrompt, promptCapFor } from '../../chat/conversationContext';
-import type { ConversationDoc } from '../../../shared/conversationDoc';
+import { readTurnFiles, readTurnMedia } from '../../../shared/conversationDoc';
+import type { ConversationDoc, ConversationTurn } from '../../../shared/conversationDoc';
 import { isByokTargetUrl } from '../../../shared/types';
 import { getTempChatConversation } from '../../tempChat';
 import { sendLog } from '../../helpers';
 import { INSTRUCTION_EST } from './agentPrompts';
+import { agentReadPathFor } from './agentSandbox';
+
+export const SHOWN_FILES_HEADING = 'FILES SHOWN WITH THIS ANSWER (on this computer; a tool that takes a file path can use them):';
+
+/** A turn as the agent replays it: its answer, then the files it showed under that heading. */
+export function withShownFiles(turn: ConversationTurn, paths: readonly string[]): ConversationTurn {
+  if (paths.length === 0) return turn;
+  const list = paths.map((file) => `- ${file}`).join('\n');
+  return { ...turn, response: `${turn.response.trim()}\n\n${SHOWN_FILES_HEADING}\n${list}`.trim() };
+}
+
+/**
+ * The turns with the pictures and files each one showed (a picture a provider drew, a saved
+ * video), named by the paths the agent's tools read; a file outside them is left out.
+ */
+export async function turnsWithShownFiles(turns: readonly ConversationTurn[]): Promise<ConversationTurn[]> {
+  return Promise.all(turns.map(async (turn) => {
+    const files = [...readTurnMedia(turn.meta), ...readTurnFiles(turn.meta)];
+    if (files.length === 0) return turn;
+    const paths = await Promise.all(files.map((file) => agentReadPathFor(file)));
+    return withShownFiles(turn, [...new Set(paths.filter((file): file is string => file !== null))]);
+  }));
+}
 
 export const SAFETY_MARGIN = 1_200;
 export const AGENT_HISTORY_MIN = 800;
@@ -77,7 +101,7 @@ export async function buildAgentHistory(args: {
   const doc = await conversationDocFor(conversationPath, temporaryChat);
   if (!doc) return '';
 
-  const history = historyFromDoc(doc, budget, measureFor(providerUrl));
+  const history = historyFromDoc({ ...doc, turns: await turnsWithShownFiles(doc.turns) }, budget, measureFor(providerUrl));
   if (history) sendLog(`🧠 [Agent] Carrying earlier conversation (${historyPromptCost(history, providerUrl)}/${budget} of the history budget)`);
   return history;
 }

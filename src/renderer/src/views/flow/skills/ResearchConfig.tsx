@@ -9,7 +9,7 @@ import { SettingRow } from '../../../components/SettingRow';
 import type { SkillConfigProps } from './types';
 import { fillTemplate } from '../../../../../shared/fillTemplate';
 
-const DEPTH_OPTIONS = ['standard', 'quick'] as const;
+const DEPTH_OPTIONS = ['standard', 'quick', 'deep'] as const;
 
 export const ResearchConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
   const query = step.config.query ?? '';

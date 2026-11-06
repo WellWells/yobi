@@ -55,7 +55,6 @@ import { useSocketBotSettings } from './settings/hooks/useSocketBotSettings';
 import { anyBotEnabled as anyRosterBotEnabled } from './settings/sections/botPermissionsView';
 import { StatsSection } from './settings/sections/StatsSection';
 import { SystemSection } from './settings/sections/SystemSection';
-import { CalendarsSetting } from './settings/sections/CalendarsSetting';
 import { LinkRecognitionSetting } from './settings/sections/LinkRecognitionSetting';
 import { YtdlToolsSetting } from './settings/sections/YtdlToolsSetting';
 import type { DangerAction } from './settings/sections/SystemSection';
@@ -92,7 +91,8 @@ export const SettingsView: React.FC = () => {
   const userMemory = useUserMemory();
   const discord = useSocketBotSettings('discord');
   const slack = useSocketBotSettings('slack');
-  const botAccess = useBotAccess({ telegram, line, discord, slack, memory: userMemory, mcp, t });
+  const lineSelf = useSocketBotSettings('lineSelf');
+  const botAccess = useBotAccess({ telegram, line, discord, slack, lineSelf, memory: userMemory, mcp, t });
   const nav = useSettingsNav();
 
   // Back to the top when the category changes: the view never unmounts, so any entry point would
@@ -294,16 +294,13 @@ export const SettingsView: React.FC = () => {
           ))}
 
           {categoryBlock('connectors', (
-            <>
-              <McpSection
-                mcp={mcp}
-                roster={botAccess.roster}
-                t={t}
-                showSection={(tags) => nav.showSection(tags, 'connectors')}
-                sectionGap={SECTION_GAP}
-              />
-              <CalendarsSetting t={t} visible={nav.showSection(TAG_SETS.calendars, 'connectors')} sectionGap={SECTION_GAP} />
-            </>
+            <McpSection
+              mcp={mcp}
+              roster={botAccess.roster}
+              t={t}
+              showSection={(tags) => nav.showSection(tags, 'connectors')}
+              sectionGap={SECTION_GAP}
+            />
           ))}
 
           {categoryBlock('bots', (
@@ -326,7 +323,7 @@ export const SettingsView: React.FC = () => {
                 isSearching={nav.isSearching}
                 sectionGap={SECTION_GAP}
               />
-              {([discord, slack] as const).map((bot) => (
+              {([lineSelf, discord, slack] as const).map((bot) => (
                 <SocketBotSection
                   key={bot.platform}
                   bot={bot}

@@ -20,6 +20,8 @@ export interface CommandResult {
   providerLabel: string;
   command?: string;
   attachments?: string[];
+  /** Where each of `attachments` can be opened later (`keptAttachmentPaths`). */
+  attachmentFiles?: string[];
   usage?: TokenUsage;
   /** Agent run id, so the saved turn can reopen the reasoning that produced it. */
   runId?: string;
@@ -58,6 +60,7 @@ export function turnMetaFor(args: CommandResult): TurnMeta {
     ...(args.startedAt !== undefined ? { d: Math.max(0, Date.now() - args.startedAt) } : {}),
     ...(args.command ? { c: args.command } : {}),
     ...(attached.length > 0 ? { a: attached } : {}),
+    ...(args.attachmentFiles?.length ? { af: args.attachmentFiles } : {}),
     ...(args.runId ? { r: args.runId } : {}),
     ...(choices.length > 0 ? { ch: choices } : {}),
     ...(args.memoryNotes?.length ? { mem: args.memoryNotes } : {}),

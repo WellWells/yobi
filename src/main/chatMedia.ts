@@ -9,9 +9,9 @@ import type { GeneratedImage } from './providers/generatedImages';
 
 /**
  * Photos and videos the desktop chat shows without the person having asked to keep them: a
- * pasted post's media and a video's cover. They live here, not in the Downloads
- * folder — "download" is a button — and the oldest go once the folder passes its cap, so a
- * conversation opened much later may show the post without its media.
+ * pasted post's media, a video's cover, a file sent to a bot or pasted into the composer. They
+ * live here, not in the Downloads folder — "download" is a button — and the oldest go once the
+ * folder passes its cap, so a conversation opened much later may show the post without its media.
  */
 export const CHAT_MEDIA_MAX_BYTES = 1_000_000_000;
 
@@ -24,6 +24,23 @@ export async function keepForChat(file: string, fileName: string): Promise<strin
   const kept = await saveIntoFolder(file, chatMediaDir(), fileName);
   void pruneChatMedia().catch(() => {});
   return kept;
+}
+
+/**
+ * A copy of `file` in the chat media folder under its own name, already unique (a temp file's);
+ * null when it cannot be written, so what asked for it carries on without.
+ */
+export async function copyForChat(file: string): Promise<string | null> {
+  const dir = chatMediaDir();
+  try {
+    await fs.mkdir(dir, { recursive: true });
+    const kept = path.join(dir, path.basename(file));
+    await writeFileAtomic(kept, await fs.readFile(file));
+    return kept;
+  } catch (err) {
+    sendLog(`⚠️ [Chat media] File not kept: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
 }
 
 /**

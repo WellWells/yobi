@@ -10,9 +10,21 @@ export interface SocketBotOutgoing {
   text: string;
   /** Absolute paths, already checked to be this run's own files. */
   files?: readonly string[];
+  /**
+   * Pictures on the web the step sends as photos (a video menu's cover). Discord and Slack show a
+   * link as its picture, so they get the links after the text (`withPictureLinks`); LINE PC shows
+   * the address, so it sends the picture itself.
+   */
+  pictures?: readonly string[];
   buttons?: ReadonlyArray<{ label: string; line: string; rowStart?: boolean }>;
   /** A message in the same chat to quote (the request the run answers). */
   replyTo?: string;
+}
+
+/** The message with its pictures as links after the text, for a chat that shows a link as its picture. */
+export function withPictureLinks(message: SocketBotOutgoing): SocketBotOutgoing {
+  const pictures = message.pictures ?? [];
+  return pictures.length === 0 ? message : { ...message, text: [message.text, ...pictures].filter(Boolean).join('\n') };
 }
 
 type RouterOwned = 'platform' | 'output' | 'pace' | 'ownerCommands';
@@ -31,10 +43,12 @@ export interface SocketBotRuntimeDeps<E extends BotChatEvent> extends Omit<BotCh
   /** A pending group was addressed for the first time this run: the owner hears about it once. */
   onPendingGroupAddressed?: (group: { chatId: string; title?: string }) => void;
   /**
-   * An unpaired person wrote in their private chat: a request to use the bot, recorded so the
-   * settings page can allow it (the owner gets a desktop notification). They are told so.
+   * An unpaired person wrote in their private chat — or, where the platform has no private chat
+   * for them (`groupPairingRequests`), addressed the bot in a group that lets them do nothing: a
+   * request to use the bot, recorded so the settings page can allow it. Resolves true when the
+   * owner was told (a desktop notification); `group` names where they asked.
    */
-  notePairingRequest?: (user: BotPairingProfileInput) => Promise<void>;
+  notePairingRequest?: (user: BotPairingProfileInput, group?: { title: string }) => Promise<boolean>;
 }
 
 /**
@@ -66,11 +80,16 @@ export abstract class SocketBotRuntime<E extends BotChatEvent> {
       output,
       ...(notePairingRequest ? {
         onPairingRequest: async (event: E) => {
+          const inGroup = event.chatKind !== 'user';
           const displayName = await output.displayName(event).catch(() => undefined);
-          await notePairingRequest({ userId: event.userId, ...(displayName ? { displayName } : {}) }).catch((err: unknown) => {
+          const group = inGroup ? { title: (await output.groupName?.(event.chatId, event.chatKind).catch(() => undefined)) || event.chatId } : undefined;
+          const told = await notePairingRequest({ userId: event.userId, ...(displayName ? { displayName } : {}) }, group).catch((err: unknown) => {
             deps.onLog(`[${platform}] could not record ${event.userId}'s request: ${err instanceof Error ? err.message : String(err)}`);
+            return false;
           });
-          await output.reply(event, t(deps.getStrings(), 'bot.socket.pairingRequested'));
+          // Everyone in a group reads the reply: it is said once, when the owner heard of the request.
+          if (inGroup && !told) return;
+          await output.reply(event, t(deps.getStrings(), inGroup ? 'bot.socket.groupPairingRequested' : 'bot.socket.pairingRequested'));
         },
       } : {}),
     });
@@ -199,11 +218,15 @@ export abstract class SocketBotRuntime<E extends BotChatEvent> {
     if (!this.deps.pairWithoutCode({ ...user, userId })) return 'alreadyPaired';
     this.deps.onLog(`[${this.platform}] ${userId} paired by the owner, without a code`);
     if (this.isRunning()) {
-      const s = this.deps.getStrings();
       void (async () => {
-        await this.sendToChat(userId, { text: `${t(s, 'bot.socket.approved')}\n\n${await this.router.helpText(userId)}` });
+        await this.sendToChat(userId, { text: await this.approvalText(userId) });
       })().catch((err: unknown) => this.deps.onLog(`[${this.platform}] could not tell ${userId} they were let in: ${err instanceof Error ? err.message : String(err)}`));
     }
     return 'paired';
+  }
+
+  /** What someone the owner let in is told, where `sendToChat(theirId)` reaches them: their command list. */
+  protected async approvalText(userId: string): Promise<string> {
+    return `${t(this.deps.getStrings(), 'bot.socket.approved')}\n\n${await this.router.helpText(userId)}`;
   }
 }

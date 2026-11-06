@@ -17,6 +17,8 @@ const FB_WATCH_PATH = /^\/([A-Za-z0-9_-]{4,40})\/?$/;
 const REEL_PATH = new RegExp(`^/reels?/(${NUMERIC})(?:/|$)`);
 /** `/<page>/videos/<id>/`, also with a title slug or a `vb.<page>` segment in between. */
 const VIDEOS_PATH = new RegExp(`^/(${NAME})/videos/(?:[^/]+/)*?(${NUMERIC})/?$`);
+/** `/<page>/photos/<id>/`, also with an album (`a.<id>`), a post (`pcb.<id>`) or a title slug in between. */
+const PHOTOS_PATH = new RegExp(`^/(${NAME})/photos/(?:[^/]+/)*?(${NUMERIC})/?$`);
 const POSTS_PATH = new RegExp(`^/(${NAME})/posts/(${POST_ID})(?:/|$)`);
 const GROUP_POST_PATH = new RegExp(`^/groups/(${NAME})/(?:posts|permalink)/(${NUMERIC})(?:/|$)`);
 /** `/stories/<bucket>/` and `/stories/<bucket>/<card>/`: a person's stories, opened at one card. */
@@ -28,10 +30,11 @@ const STORY_CARD = /^[A-Za-z0-9+/=]{8,512}$/;
 const RESERVED = new Set(['groups', 'share', 'watch', 'reel', 'reels', 'photo', 'photos', 'events', 'marketplace', 'gaming', 'stories', 'login', 'pages']);
 
 /**
- * What a link names: a reel; any other video; a post (a page's, a person's or a group's); a share
- * link, which names one of those only after Facebook redirects it; or a person's stories.
+ * What a link names: a reel; any other video; a post (a page's, a person's or a group's); one
+ * photo; a share link, which names one of those only after Facebook redirects it; or a person's
+ * stories.
  */
-export type FacebookLinkKind = 'reel' | 'video' | 'post' | 'share' | 'story';
+export type FacebookLinkKind = 'reel' | 'video' | 'post' | 'photo' | 'share' | 'story';
 
 /**
  * Which of a person's stories a story link takes. "" (the link as Facebook gives it): a menu of
@@ -83,6 +86,15 @@ export function facebookVideoLink(id: string): string {
 }
 
 /**
+ * A photo's page, the one that opens for a visitor: `/photo.php`, `/photo/?fbid=` and a link with
+ * the album in it send them to the sign-in wall even for a public photo. Facebook finds the photo
+ * by its id, whatever name stands before it.
+ */
+export function facebookPhotoLink(id: string, name = 'facebook'): string {
+  return `https://www.facebook.com/${name}/photos/${id}/`;
+}
+
+/**
  * A story link: the page to read is the same for every pick (`pick` ""), the choice rides along
  * as Yobi's own parameter. `/` and `+` in a card's base64 are escaped so it stays one path segment.
  */
@@ -126,6 +138,10 @@ function postRef(url: string, id: string, author: string): FacebookRef {
   return { kind: 'post', url, id, author };
 }
 
+function photoRef(id: string, author = ''): FacebookRef {
+  return { kind: 'photo', url: facebookPhotoLink(id, author || undefined), id, author };
+}
+
 function readPath(url: URL): FacebookRef | null {
   const path = url.pathname;
   if (url.hostname.toLowerCase().replace(/^www\./, '') === 'fb.watch') {
@@ -145,15 +161,23 @@ function readPath(url: URL): FacebookRef | null {
     const id = url.searchParams.get('v') ?? '';
     return new RegExp(`^${NUMERIC}$`).test(id) ? videoRef(id) : null;
   }
+  if (path === '/photo.php' || /^\/photo\/?$/.test(path)) {
+    const id = url.searchParams.get('fbid') ?? '';
+    return new RegExp(`^${NUMERIC}$`).test(id) ? photoRef(id) : null;
+  }
   const video = VIDEOS_PATH.exec(path);
   if (video && !RESERVED.has(video[1].toLowerCase())) return videoRef(video[2], video[1]);
+  const photo = PHOTOS_PATH.exec(path);
+  if (photo && !RESERVED.has(photo[1].toLowerCase())) return photoRef(photo[2], photo[1]);
   const group = GROUP_POST_PATH.exec(path);
   if (group) return postRef(`https://www.facebook.com/groups/${group[1]}/posts/${group[2]}/`, group[2], '');
   if (path === '/permalink.php' || path === '/story.php') {
     const story = idParam(url, 'story_fbid');
     const owner = url.searchParams.get('id') ?? '';
     if (!story || !new RegExp(`^${NUMERIC}$`).test(owner)) return null;
-    return postRef(`https://www.facebook.com/permalink.php?story_fbid=${story}&id=${owner}`, story, '');
+    // Facebook sends a visitor of either page to its sign-in wall, even for a public post; the
+    // owner's `/posts/` page shows it to them.
+    return postRef(`https://www.facebook.com/${owner}/posts/${story}/`, story, '');
   }
   const post = POSTS_PATH.exec(path);
   if (post && !RESERVED.has(post[1].toLowerCase())) {
@@ -165,8 +189,9 @@ function readPath(url: URL): FacebookRef | null {
 /**
  * A Facebook reel (`/reel/<id>`), video (`/watch?v=`, `/<page>/videos/…/<id>`, `/video.php?v=`),
  * post (`/<page>/posts/<id|pfbid…>`, `/permalink.php`, `/story.php`, a group's
- * `/groups/<group>/posts/<id>`), share link (`/share/r|p|v/<code>`, `fb.watch/<code>`), or a
- * person's stories (`/stories/<bucket>/`, `/stories/<bucket>/<card>/`).
+ * `/groups/<group>/posts/<id>`), photo (`/photo.php?fbid=`, `/photo/?fbid=`, `/<page>/photos/…/<id>`),
+ * share link (`/share/r|p|v/<code>`, `fb.watch/<code>`), or a person's stories
+ * (`/stories/<bucket>/`, `/stories/<bucket>/<card>/`).
  */
 export function parseFacebookUrl(raw: string): FacebookRef | null {
   const trimmed = raw.trim();

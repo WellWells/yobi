@@ -64,7 +64,8 @@ function fitPlacePrompt(
   return { text: build(refsWith(JSON.stringify(reviews))), kept: reviews.length };
 }
 
-function firstTurnLimit(targetUrl: string, measure: (text: string) => number): number {
+/** What a first turn's prompt may take on `targetUrl`, after the instruction the task prepends. */
+export function firstTurnLimit(targetUrl: string, measure: (text: string) => number): number {
   const cap = isByokTargetUrl(targetUrl) ? config.byokContextBudgetChars : promptCapFor(targetUrl);
   return cap - instructionReserve(measure);
 }

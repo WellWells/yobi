@@ -120,7 +120,7 @@ export function botChatDeps<E extends BotChatEvent>(
         'bot.triggerChatId': chatId,
         'bot.triggerUserId': userId,
         'bot.triggerPlatform': platform,
-        // The send step quotes it (Discord) or answers in its thread (Slack), as chat replies do.
+        // The send step quotes it (Discord, LINE PC) or answers in its thread (Slack), as chat replies do.
         ...(messageId ? { 'bot.triggerMessageId': messageId } : {}),
         [BOT_MODEL_VARIABLE]: resolveLlmDirectTarget(config[platform].llmDirect, getHiddenSources()).targetUrl,
       };

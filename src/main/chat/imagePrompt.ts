@@ -2,15 +2,12 @@ import { fenceUntrusted } from '../../shared/promptFencing';
 import type { ConversationTurn } from '../../shared/conversationDoc';
 
 /*
- * A picture asked for in the middle of a conversation leans on it: "分析他的美術風格，幫我產生一張
- * 貓咪為主題的照片" came right after a turn about the game Clair Obscur: Expedition 33 (2026-10-19,
- * a Telegram chat). The image command sent the page only that sentence, so Gemini guessed who
- * "他" was and painted a Gaston Chaissac cat. The last few turns now go along, fenced, as what the
- * request may refer to; the request itself stays last and unfenced, since it is the instruction.
+ * A picture asked for in the middle of a conversation leans on it ("draw him as a cat" needs to
+ * know who "him" is). The last few turns go along, fenced, as what the request may refer to; the
+ * request itself stays last and unfenced, since it is the instruction.
  *
- * Only when the request points back, though: a request that names everything it wants
- * ("吉伊卡哇討伐史萊姆…", right after a hatted shiba and that cat) came back with both mixed in.
- * The page does not leave out text it is told is only context.
+ * Only when the request points back, though: a request that names everything it wants gets the
+ * earlier subjects mixed in. The page does not leave out text it is told is only context.
  */
 
 // 其他 / 吉他 hold 他 without meaning anyone; the pronoun is the rest.

@@ -220,7 +220,7 @@ function rank(index: MetroIndex, key: string, allowed: readonly MetroNetwork[]):
 
 /**
  * The tools' own station labels, when a model passes one back: "A1 台北車站",
- * "BL12/R10 台北車站（台北捷運）", "103a 北屯總站（台中捷運）" (live eval 2026-10-22: two calls failed on it).
+ * "BL12/R10 台北車站（台北捷運）", "103a 北屯總站（台中捷運）".
  */
 const STATION_LABEL = /^((?:[A-Za-z]{0,2}\d+[A-Za-z]?\/)*[A-Za-z]{0,2}\d+[A-Za-z]?)\s+(.+?)\s*(?:[（(]([^）)]+)[）)])?$/u;
 

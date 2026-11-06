@@ -3,12 +3,11 @@
  * (`src/main/conversationMove.ts`); the renderer only re-keys what it holds by path. Pure.
  */
 
-/** Why a conversation cannot be moved right now: something is about to write to it, or waits on it. */
+/** Why a conversation cannot be moved right now: something is about to write to it. */
 export type ConversationBusyReason =
   | 'sending'
   | 'search'
   | 'agent'
-  | 'agentAwaiting'
   | 'flowCommand'
   | 'translating'
   | 'notion';

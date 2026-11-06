@@ -9,7 +9,7 @@ import type { XThread } from './xPosts';
  */
 
 /**
- * How far a run may use the site sign-ins in Settings (X, Instagram, Facebook, bilibili) — the
+ * How far a run may use the site sign-ins in Settings (X, Instagram, Facebook, bilibili, Threads) — the
  * owner's own accounts (`botPermissions/signedInReads.ts`):
  * - `full`: runs not started by a bot (the desktop, schedules), and an admin of the bot (the owner,
  *   or a Telegram account with the admin grant) in their own private chat.

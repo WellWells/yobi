@@ -20,11 +20,14 @@ import {
 } from '../../../../../shared/botPermissions';
 import type { BotGrant } from '../../../../../shared/botPermissions';
 import {
+  BUILTIN_CALENDAR_SERVER_ID,
   BUILTIN_CONNECTOR_TITLES,
   BUILTIN_MAIL_SERVER_ID,
+  BUILTIN_PAGE_SERVER_ID,
   BUILTIN_PTT_SERVER_ID,
   BUILTIN_RAIL_SERVER_ID,
   BUILTIN_THUNDERBIRD_SERVER_ID,
+  BUILTIN_TRANSLATE_SERVER_ID,
   BUILTIN_X_SERVER_ID,
   PUBLIC_DATA_CONNECTOR_IDS,
 } from '../../../../../shared/builtinConnectors';
@@ -52,7 +55,7 @@ export interface BotConnectorOption {
 
 const BUILTIN_ORDER: readonly string[] = [
   BUILTIN_LINE_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID, BUILTIN_RAIL_SERVER_ID, BUILTIN_PTT_SERVER_ID,
-  BUILTIN_MAIL_SERVER_ID,
+  BUILTIN_MAIL_SERVER_ID, BUILTIN_CALENDAR_SERVER_ID, BUILTIN_TRANSLATE_SERVER_ID, BUILTIN_PAGE_SERVER_ID,
   ...SITE_CONNECTOR_ROWS.map((row) => siteConnectorServerId(row.site)),
 ];
 
@@ -323,6 +326,7 @@ export function buildBotRoster({ telegram, line, socket, botSelf, t }: BotRoster
     line: line?.enabled ?? false,
     discord: false,
     slack: false,
+    lineSelf: false,
   };
   for (const platform of SOCKET_BOT_PLATFORMS) {
     const snapshot = socket?.[platform];

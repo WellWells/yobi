@@ -52,7 +52,7 @@ export interface GateReason {
 
 /** One row of the confirmation dialog: a fact the user can judge, not a JSON key. */
 export interface DescribedRow {
-  key: 'action' | 'account' | 'target' | 'recipients' | 'content' | 'items';
+  key: 'action' | 'account' | 'target' | 'recipients' | 'replyTo' | 'mentions' | 'content' | 'items';
   value: string;
   valueKey?: string;
   vars?: Record<string, string>;
@@ -180,8 +180,18 @@ export function classifyFailure(text: string): FailureClass {
   return 'unknown';
 }
 
+/**
+ * A built-in connector may put note lines before its JSON (see `ToolResultWithNotes`); the JSON is
+ * the first line that opens an object or array. Text with no such line is returned unchanged.
+ */
+function skipLeadingNotes(text: string): string {
+  if (text.startsWith('{') || text.startsWith('[')) return text;
+  const at = text.search(/\n[[{]/);
+  return at < 0 ? text : text.slice(at + 1);
+}
+
 export function parseJsonValue(text: string): unknown {
-  const trimmed = text.trim();
+  const trimmed = skipLeadingNotes(text.trim());
   if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return undefined;
   try {
     return JSON.parse(trimmed);

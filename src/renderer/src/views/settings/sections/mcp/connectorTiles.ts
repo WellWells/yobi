@@ -1,6 +1,6 @@
+import { findBuiltinConnector } from '../../../../../../shared/builtinConnectors';
 import { findCatalogEntry, MCP_CATALOG, normalizeMcpUrl } from '../../../../../../shared/mcpCatalog';
 import type { McpCatalogCategory, McpCatalogEntry } from '../../../../../../shared/mcpCatalog';
-import { findBuiltinConnector } from '../../../../../../shared/builtinConnectors';
 import type { McpServerView } from '../../../../../../shared/types';
 
 export interface ConnectorTile {

@@ -42,6 +42,7 @@ import { registerFlowHandlers } from './flow';
 import { registerFeedPreviewHandlers } from './feedPreview';
 import { registerPttBoardHandlers } from './pttBoard';
 import { registerAgentHandlers } from './agent';
+import { registerShellHandlers } from './shell';
 import { registerAccountHandlers } from './account';
 import { registerEmailHandlers } from './email';
 import { registerDataKeyHandlers } from './dataKeys';
@@ -106,6 +107,7 @@ export function setupIpcHandlers(deps: IpcContext): void {
       youtubePrompt: config.youtubePrompt,
       targetUrl: resolvedTargetUrl,
       onLog: sendLog,
+      hotelReviews: true,
     });
     const finalTargetUrl = resolved.forceProviderUrl ?? resolvedTargetUrl;
 
@@ -255,6 +257,7 @@ export function setupIpcHandlers(deps: IpcContext): void {
   registerFeedPreviewHandlers();
   registerPttBoardHandlers();
   registerAgentHandlers(ctx);
+  registerShellHandlers(ctx);
   registerAccountHandlers();
   registerEmailHandlers();
   registerDataKeyHandlers();

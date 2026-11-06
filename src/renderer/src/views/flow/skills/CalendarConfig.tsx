@@ -12,10 +12,13 @@ import {
 import type { CalendarSummary } from '../../../../../shared/calendars';
 import type { SkillConfigProps } from './types';
 
+/** The option that stores a blank field: every calendar, merged. */
+const ALL_CALENDARS = '*all';
+
 /**
- * The calendar step: which subscribed calendar (stored by id; the address stays in Settings),
- * which days, how many events. A name the AI wrote, or an id from another machine, stays
- * selectable as itself until the person picks one of theirs.
+ * The calendar step: which calendar (stored by id; the address and sign-in stay in Settings) or
+ * all of them, which days, how many events. A name the AI wrote, or an id from another machine,
+ * stays selectable as itself until the person picks one of theirs.
  */
 export const CalendarConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
   const currentView = useAppStore((s) => s.currentView);
@@ -28,12 +31,17 @@ export const CalendarConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }
 
   const value = (step.config.calendar ?? '').trim();
   const options = useMemo(() => {
-    const known = calendars.map((calendar) => ({ value: calendar.id, label: calendar.name }));
+    const known = calendars.map((calendar) => ({
+      value: calendar.id,
+      label: calendar.account ? fillTemplate(t('flow.skill.calendar.calendar.ofAccount'), { name: calendar.name, account: calendar.account }) : calendar.name,
+    }));
+    const all = calendars.length > 1 ? [{ value: ALL_CALENDARS, label: t('flow.skill.calendar.calendar.all') }] : [];
     const matches = calendars.some((calendar) => calendar.id === value || calendarNameKey(calendar.name) === calendarNameKey(value));
-    return value && !matches ? [...known, { value, label: value }] : known;
-  }, [calendars, value]);
+    return value && !matches ? [...all, ...known, { value, label: value }] : [...all, ...known];
+  }, [calendars, value, t]);
   // A name that matches a calendar shows as that calendar.
-  const selected = calendars.find((calendar) => calendarNameKey(calendar.name) === calendarNameKey(value))?.id ?? value;
+  const selected = calendars.find((calendar) => calendarNameKey(calendar.name) === calendarNameKey(value))?.id
+    ?? (value || (calendars.length > 1 ? ALL_CALENDARS : ''));
   const range = step.config.range || 'today';
 
   return (
@@ -44,7 +52,7 @@ export const CalendarConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }
           placeholder={calendars.length === 0 ? t('flow.skill.calendar.calendar.none') : t('flow.skill.calendar.calendar.placeholder')}
           options={options}
           value={selected || null}
-          onChange={(next) => onChange({ ...step.config, calendar: next })}
+          onChange={(next) => onChange({ ...step.config, calendar: next === ALL_CALENDARS ? '' : next })}
           size="sm"
         />
         <Text fz="xs" c="dimmed">{t('flow.skill.calendar.calendar.hint')}</Text>

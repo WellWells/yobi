@@ -1,5 +1,5 @@
 import type {
-  ActionOutcome, Fact, FailureClass, LedgerView, OutcomeNotice, ToolRisk, VerificationResult,
+  ActionBoundary, ActionOutcome, Fact, FailureClass, LedgerView, OutcomeNotice, ToolRisk, VerificationResult,
 } from './toolContracts';
 
 /**
@@ -22,6 +22,8 @@ export interface ActionRecord {
   label: string;
   at: string;
   verdict: 'ready' | 'blocked';
+  /** On a call held back for crossing what the run may change: the boundary it would have crossed. */
+  boundary?: ActionBoundary;
   reasons?: { code: string; message: string }[];
   confirmed?: 'auto' | 'approved' | 'denied';
   outcome?: ActionOutcome;

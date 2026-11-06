@@ -34,8 +34,7 @@ function toFolder(entry: ListResponse): MailFolder {
 /**
  * Gmail marks a draft with its `\Draft` label rather than the IMAP flag when the message is opened
  * outside the Drafts folder (All Mail, where every Gmail id is looked up): the label is turned into
- * the flag here, because system labels are dropped from `labels` (2026-10-23, live: a real Gmail
- * draft sent with `draft_id` was left behind as "not a draft").
+ * the flag here, because system labels are dropped from `labels`.
  */
 export function toRaw(message: FetchMessageObject): RawMessage {
   const envelope = message.envelope;

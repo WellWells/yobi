@@ -72,9 +72,9 @@ function readAskChoices(turn: AgentTurnRecord): string[] {
 }
 
 /**
- * Said with a bare number typed under buttons. Review 2026-10-20: left as "1" beside the ordered
- * choices the run had saved, the model read it as the first choice — the very pick the user could
- * not have meant, since the buttons showed no numbers.
+ * Said with a bare number typed under buttons. Left as "1" beside the ordered choices the run had
+ * saved, the model would read it as the first choice — a pick the user could not have meant, since
+ * the buttons showed no numbers.
  */
 const UNNUMBERED_PICK_NOTE = '(typed; the choices were shown as buttons without numbers, so this number picks none of them)';
 
@@ -192,21 +192,42 @@ export async function listResumableRuns(): Promise<AgentRunSummary[]> {
 }
 
 /**
- * The conversations a run is waiting in for the user's answer — after a restart too. The answer
- * is written there, so such a conversation is not moved. A stale run is never offered again.
+ * A run that will not go on: it finished, or it was cancelled — stopped, or its question let go
+ * when the conversation it waited in was deleted. An answer to it starts nothing.
  */
-export async function awaitingRunConversations(nowMs: number): Promise<string[]> {
+export function runHasEnded(state: AgentRunState): boolean {
+  return state.status === 'done' || state.status === 'cancelled';
+}
+
+/**
+ * Lets go of the questions runs left waiting in conversations that were just deleted: each such
+ * run is cancelled. Nobody is asked to answer first, and an answer arriving later — the desktop's, or a
+ * bot chat's that still holds the question — would otherwise bring the conversation back as a new
+ * file. A run in progress is skipped, as in `repointRunConversations`.
+ */
+export async function cancelAwaitingRunsIn(filePaths: readonly string[], now = new Date()): Promise<number> {
+  if (filePaths.length === 0) return 0;
+  const gone = new Set(filePaths.map(conversationPathKey));
   const states = await readAllStates().catch((): AgentRunState[] => []);
-  return states
-    .filter((state) => state.status === 'awaiting' && !isStale(state, nowMs))
-    .map((state) => state.conversationPath ?? '')
-    .filter(Boolean);
+  let cancelled = 0;
+  for (const state of states) {
+    if (state.status !== 'awaiting' || !state.conversationPath || activeRuns.has(state.runId)) continue;
+    if (!gone.has(conversationPathKey(state.conversationPath))) continue;
+    const next: AgentRunState = { ...state, status: 'cancelled', updatedAt: now.toISOString() };
+    try {
+      await writeFileAtomic(runFile(state.runId), JSON.stringify(next));
+      cancelled += 1;
+    } catch {
+      // Left waiting; its answer finds the conversation gone and starts a new file, as before.
+    }
+  }
+  return cancelled;
 }
 
 /**
  * Points the saved runs of conversations that were just moved at the files' new place, so an
- * answer, "Continue" and the trace still find them. A run in progress is skipped: it saves its own
- * state in place, and a conversation with one is never moved.
+ * answer, "Continue" and the trace still find them — a run waiting for an answer too. A run in
+ * progress is skipped: it saves its own state in place, and a conversation with one is never moved.
  */
 export async function repointRunConversations(
   moves: ReadonlyArray<{ from: string; to: string; id?: string }>,

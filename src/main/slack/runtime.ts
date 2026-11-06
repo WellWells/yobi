@@ -1,8 +1,8 @@
 import type { SocketBotAccountInfo } from '../../shared/types';
 import { t } from '../i18n';
-import { botChatKey } from '../botBuiltinCommands';
+import { botChatKey, withAnswerFiles } from '../botBuiltinCommands';
 import type { BotBuiltinRunResult } from '../botBuiltinCommands';
-import { SocketBotRuntime, type SocketBotOutgoing, type SocketBotRuntimeDeps } from '../botChat/socketRuntime';
+import { SocketBotRuntime, withPictureLinks, type SocketBotOutgoing, type SocketBotRuntimeDeps } from '../botChat/socketRuntime';
 import type { BotChatOutput } from '../botChat/types';
 import { readUploadFiles } from '../botChat/files';
 import type { BotWebSocketFactory } from '../botChat/webSocket';
@@ -204,7 +204,7 @@ export class SlackRuntime extends SocketBotRuntime<SlackTextEvent> {
     }
     await this.post(event.channel, {
       text: result.text.trim() ? result.text : t(s, 'bot.chat.emptyResponse'),
-      ...(result.files?.length ? { files: result.files } : {}),
+      ...withAnswerFiles(result),
     }, { markdown: true, threadTs: event.threadTs });
     return true;
   }
@@ -240,7 +240,7 @@ export class SlackRuntime extends SocketBotRuntime<SlackTextEvent> {
     if (!api) throw new Error('Slack bot is not running');
     // A paired person's id is their DM (opened on first use); anything else is a channel the app was added to.
     const channel = this.deps.isPairedUser(chatId) ? await api.openDm(chatId) : chatId;
-    await this.post(channel, message, { markdown: true, ...(message.replyTo && !isSlackDm(channel) ? { threadTs: message.replyTo } : {}) });
+    await this.post(channel, withPictureLinks(message), { markdown: true, ...(message.replyTo && !isSlackDm(channel) ? { threadTs: message.replyTo } : {}) });
   }
 
   /**

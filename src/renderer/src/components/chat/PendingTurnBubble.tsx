@@ -1,10 +1,12 @@
-import React, { useMemo } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { Box, Group, Loader, Stack, Text } from '@mantine/core';
 import { useShallow } from 'zustand/react/shallow';
 import { useAppStore, type PendingTurn } from '../../store/appStore';
 import { useAgentRunStore, type AgentTraceTurn } from '../../store/useAgentRunStore';
 import { queueProgressForRun, queueWaitAhead } from '../../utils/queueProgress';
 import { UserBubble } from './UserBubble';
+import { ShellBubble } from './ShellBubble';
+import { shellApi } from '../../api/electronApi';
 import { StepProgressCard } from './StepProgressCard';
 import { AgentTraceRows } from '../AgentTraceRows';
 import { FlowBuildProgressView } from '../FlowBuildProgress';
@@ -67,9 +69,35 @@ function PendingTurnBubbleInner({ turn, t }: PendingTurnBubbleProps) {
           ? t('agent.pending.verifying')
           : t('chat.thinking');
 
+  const { shell, sendId } = turn;
+  const stopShell = useCallback((): void => { void shellApi.stop(sendId); }, [sendId]);
+  if (shell) {
+    return (
+      <Stack gap={20}>
+        <ShellBubble
+          command={shell.command}
+          output={shell.output}
+          shellLabel={shell.shellLabel}
+          folder={shell.folder}
+          exitCode={shell.exitCode}
+          stopped={shell.stopped}
+          running={shell.running}
+          onStop={stopShell}
+          t={t}
+        />
+        {!shell.running && !shell.stopped && (
+          <Group gap={HEADER_GAP} c="dimmed">
+            <Loader size={HEADER_LOADER} />
+            <Text fz="var(--font-size-md)">{t('chat.thinking')}</Text>
+          </Group>
+        )}
+      </Stack>
+    );
+  }
+
   return (
     <Stack gap={20}>
-      <UserBubble prompt={turn.prompt} t={t} attachments={turn.attachments} />
+      <UserBubble prompt={turn.prompt} t={t} attachments={turn.attachments} attachmentFiles={turn.attachmentFiles} />
       <Stack gap={6}>
         {turn.progress ? (
           <StepProgressCard progress={turn.progress} t={t} />

@@ -8,10 +8,10 @@ import { config } from '../config';
 import { listOutputFiles } from '../files';
 import { sendLog, sendToRenderer } from '../helpers';
 import { localizeUserFacingError, t } from '../i18n';
+import { nextFallbackProviders } from '../providerFallback';
 import { detectProvider, getProviderLabel, preparePromptForProvider, runAutomation } from '../providers';
 import { chatgptConversationId, discardChatgptConversation } from '../providers/chatgptDiscard';
 import { withAnswerSvgPictures } from '../providers/generatedImages';
-import type { GeneratedImage } from '../providers/generatedImages';
 import { getTempChatConversation, isTempChatMode } from '../tempChat';
 import type { ConversationTurn } from '../../shared/conversationDoc';
 import { loadConversation } from './conversationStore';
@@ -82,15 +82,16 @@ export function imageMissMessage(miss: ImageMiss, providerLabel: string, reply: 
 interface Drawn {
   response: string;
   title: string;
-  images: GeneratedImage[];
+  /** The pictures kept with the chat's media. */
+  files: string[];
 }
 
 /**
  * One send that draws. Gemini follows the temporary-chat setting like any one-shot send (its
- * temporary chat draws). ChatGPT's temporary chat cannot draw, so it gets a normal chat — deleted
- * as soon as it has been read when the send should not stay in its history.
+ * temporary chat draws). ChatGPT's temporary chat cannot draw, so it gets a normal chat, deleted
+ * once the picture is saved: the picture is what was asked for, not the conversation.
  */
-async function drawOnWeb(prompt: string, providerUrl: string, discard: boolean): Promise<Drawn> {
+async function drawOnWeb(prompt: string, providerUrl: string): Promise<Drawn> {
   return llmLane.runExclusive(async () => {
     // The request ends the prompt: refused rather than cut, at the cap that holds once it is our turn.
     const prepared = preparePromptForProvider(prompt, providerUrl, { refuseCut: true });
@@ -110,12 +111,15 @@ async function drawOnWeb(prompt: string, providerUrl: string, discard: boolean):
       chatgpt ? false : undefined,
     );
     const pictured = await withAnswerSvgPictures(worker, result);
-    // Only the conversation this send started, read off its own answer; a failed send deletes nothing.
+    const images = pictured.images ?? [];
+    const files = await keepAnswerPictures(images, getProviderLabel(providerUrl));
+    // Only the conversation this send started, read off its own answer; a failed send deletes
+    // nothing, and neither does a picture not yet on disk: the page holds its only copy.
     const created = chatgptConversationId(result.threadUrl);
-    if (chatgpt && discard && created && created !== parkedOn) {
+    if (chatgpt && created && created !== parkedOn && files.length >= images.length) {
       await discardChatgptConversation(worker.webContents, result.threadUrl);
     }
-    return { response: pictured.response, title: pictured.title, images: pictured.images ?? [] };
+    return { response: pictured.response, title: pictured.title, files };
   });
 }
 
@@ -126,6 +130,8 @@ export interface AgentDrawing {
   reply: string;
   /** Set when no picture came back. */
   miss?: ImageMiss;
+  /** The page that was asked first and had used up its pictures, when this one stood in for it. */
+  instead?: string;
 }
 
 /**
@@ -134,12 +140,12 @@ export interface AgentDrawing {
  * is written from everything it read, which is what `buildImagePrompt` stands in for here. Not
  * queued: the run asking is already a queue task, and the page itself is behind `llmLane`.
  */
-export async function drawPicturesForAgent(prompt: string, provider: ImageProvider | null, discard: boolean): Promise<AgentDrawing> {
+async function drawOnceForAgent(prompt: string, provider: ImageProvider | null): Promise<AgentDrawing> {
   const providerUrl = imageProviderUrl(provider);
   const providerLabel = getProviderLabel(providerUrl);
   sendLog(`🖼️ [Agent] Drawing on ${providerLabel}: "${compactPreview(prompt, 80)}"`);
-  const drawn = await drawOnWeb(prompt, providerUrl, discard);
-  const files = await keepAnswerPictures(drawn.images, providerLabel);
+  const drawn = await drawOnWeb(prompt, providerUrl);
+  const { files } = drawn;
   if (files.length === 0) {
     const miss = classifyImageMiss(drawn.response);
     sendLog(`⚠️ [Agent] ${providerLabel} drew nothing (${miss}): ${compactPreview(drawn.response, 160)}`);
@@ -147,6 +153,35 @@ export async function drawPicturesForAgent(prompt: string, provider: ImageProvid
   }
   sendLog(`✅ [Agent] ${files.length} picture(s) from ${providerLabel}`);
   return { files, providerLabel, reply: drawn.response };
+}
+
+/** Whether ChatGPT can take over from Gemini: the candidates a chat send moves on to, for a picture. */
+async function chatgptCanStandIn(): Promise<boolean> {
+  if (!config.providerFallback) return false;
+  const [next] = await nextFallbackProviders(['gemini'], {
+    hidden: config.hiddenProviders,
+    attachmentCount: 0,
+    imageRequest: true,
+    temporary: false,
+  });
+  return next === 'chatgpt';
+}
+
+/**
+ * Draws for `/agent`. Gemini with its pictures used up hands over to a signed-in ChatGPT when nobody
+ * named who draws (a name is the user's choice). Only that miss moves on: a refusal would be the same
+ * request to the next page. A send to ChatGPT that fails leaves Gemini's limit as the reason.
+ */
+export async function drawPicturesForAgent(prompt: string, provider: ImageProvider | null): Promise<AgentDrawing> {
+  const first = await drawOnceForAgent(prompt, provider);
+  if (provider !== null || first.miss !== 'limit' || !(await chatgptCanStandIn())) return first;
+  sendLog(`🔁 [Agent] ${first.providerLabel} has used up its pictures — drawing on ChatGPT instead`);
+  try {
+    return { ...await drawOnceForAgent(prompt, 'chatgpt'), instead: first.providerLabel };
+  } catch (err: unknown) {
+    sendLog(`⚠️ [Agent] ChatGPT could not take the drawing: ${err instanceof Error ? err.message : String(err)}`);
+    return first;
+  }
 }
 
 /**
@@ -167,8 +202,6 @@ export function runImageCommand(flowManager: FlowManager | undefined, request: I
   const pagePrompt = asked?.prompt || prompt;
   const providerLabel = getProviderLabel(providerUrl);
   const tempChat = origin === 'app' && isTempChatMode();
-  // Not kept in ChatGPT's history when no one-shot send is (the setting), nor from Yobi's temporary chat.
-  const discard = config.oneShotTemporaryChat || tempChat;
   let startedAt = Date.now();
 
   const deliver = async (drawn: Drawn, files: string[]): Promise<ImageRunOutcome> => {
@@ -211,13 +244,13 @@ export function runImageCommand(flowManager: FlowManager | undefined, request: I
 
   const run = async (): Promise<ImageRunOutcome> => {
     startedAt = Date.now();
-    sendLog(`🖼️ [Image] Drawing on ${providerLabel}${discard && detectProvider(providerUrl) === 'chatgpt' ? ' (conversation deleted afterwards)' : ''}: "${compactPreview(prompt, 80)}"`);
+    sendLog(`🖼️ [Image] Drawing on ${providerLabel}${detectProvider(providerUrl) === 'chatgpt' ? ' (conversation deleted afterwards)' : ''}: "${compactPreview(prompt, 80)}"`);
     try {
       // Read now, not when it was asked: a turn that landed while this one waited is context too.
       const earlier = await earlierTurns(conversationPath, tempChat);
       if (earlier.length > 0 && pointsBack(pagePrompt)) sendLog(`🧵 [Image] Sending the last ${Math.min(earlier.length, IMAGE_CONTEXT_TURNS)} turn(s) along as context`);
-      const drawn = await drawOnWeb(buildImagePrompt(pagePrompt, earlier), providerUrl, discard);
-      const files = await keepAnswerPictures(drawn.images, providerLabel);
+      const drawn = await drawOnWeb(buildImagePrompt(pagePrompt, earlier), providerUrl);
+      const { files } = drawn;
       if (files.length === 0) {
         const miss = classifyImageMiss(drawn.response);
         sendLog(`⚠️ [Image] ${providerLabel} drew nothing (${miss}): ${compactPreview(drawn.response, 160)}`);

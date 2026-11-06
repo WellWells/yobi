@@ -1,6 +1,6 @@
 /**
  * Built-in connectors that read one website with the user's own sign-in (Instagram, Facebook,
- * bilibili). One row per site drives
+ * bilibili, Threads). One row per site drives
  * everything such a connector needs: the sign-in (`SITE_ACCOUNTS`, `siteAccounts.ts`), the
  * connector entry and its opt-in flag (`builtinConnectors.ts`, `Config`), the settings card, the
  * bot permission label, the icon and the chat keywords. The main process adds the MCP server and
@@ -98,6 +98,27 @@ export const SITE_CONNECTOR_ROWS = [
       toggle: 'settings.mcp.bilibili.toggle',
       signedIn: 'settings.mcp.bilibili.signedIn',
       signedOut: 'settings.mcp.bilibili.signedOut',
+    },
+  },
+  {
+    site: 'threads',
+    label: 'Threads',
+    flag: 'threadsConnectorEnabled',
+    // Its two domains beside its name. Not 脆, what Taiwan calls it: a single CJK character has no
+    // word edge to fence, and it sits inside everyday words (乾脆, 脆弱).
+    keywords: ['threads.com', 'threads.net'],
+    partition: 'persist:threads',
+    loginUrl: 'https://www.threads.com/login',
+    cookieUrl: 'https://www.threads.com/',
+    // Threads web runs on Instagram's stack, whose sign-in cookie this is.
+    sessionCookie: 'sessionid',
+    hex: '#000000',
+    keys: {
+      title: 'settings.mcp.threads.title',
+      desc: 'settings.mcp.threads.desc',
+      toggle: 'settings.mcp.threads.toggle',
+      signedIn: 'settings.mcp.threads.signedIn',
+      signedOut: 'settings.mcp.threads.signedOut',
     },
   },
 ] as const satisfies readonly SiteConnectorRow[];

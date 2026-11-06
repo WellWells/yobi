@@ -85,6 +85,22 @@ export function reduceResearchProgress(progress: ResearchProgress, event: Search
       }));
     case 'synthesizing':
       return start(progress, 'write');
+    case 'finding':
+      return start(progress, 'analyze', { done: 0, total: event.total });
+    case 'found':
+      return update(progress, 'analyze', (phase) => ({ done: (phase.done ?? 0) + 1 }));
+    case 'reviewing':
+      return start(progress, 'review');
+    case 'followups':
+      // No gaps: the check is all the review does. Gaps: each is counted as it is researched.
+      return event.questions.length === 0
+        ? finishPhase(progress, 'review', { queries: [] })
+        : update(progress, 'review', () => ({ queries: event.questions, done: 0, total: event.questions.length }));
+    case 'followedUp':
+      return update(progress, 'review', (phase) => ({ done: (phase.done ?? 0) + 1 }));
+    case 'fetchingMore':
+      // The read phase has finished once; its counts grow without starting it again.
+      return update(progress, 'read', (phase) => ({ total: (phase.total ?? 0) + event.count }));
   }
 }
 

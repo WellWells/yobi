@@ -18,6 +18,8 @@ export interface UrlShortcutOutcome {
 export interface UrlShortcutOptions {
   /** Also take a Maps link with a question around it; only for callers whose words cannot be a task. */
   mapQuestions?: boolean;
+  /** A bare Agoda hotel link is its reviews, as in the desktop chat; the agent's `agoda_reviews` takes one with a question. */
+  hotelReviews?: boolean;
   /** The "AI responses" settings, sent ahead of the prompt the way a chat send carries them. */
   instruction?: string;
 }
@@ -44,6 +46,7 @@ export async function runUrlShortcut(
     youtubePrompt: config.youtubePrompt,
     targetUrl,
     onLog: sendLog,
+    ...(options.hotelReviews ? { hotelReviews: true } : {}),
   });
 
   if (resolved.prompt.trim() === text) return null;

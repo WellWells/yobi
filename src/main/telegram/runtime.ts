@@ -3,9 +3,7 @@ import type {
   BotLlmDirectConfig,
   FlowExecutionResult,
   TelegramChannel,
-  TelegramOutputChoice,
   TelegramPairingState,
-  TelegramReplyMode,
   TelegramReplyTarget,
   TelegramRuntimeSnapshot,
   TelegramRuntimeStatus,
@@ -45,9 +43,6 @@ import type { BotCommandAccessMode } from '../../shared/botCommandAccess';
 import type { AgentAskShown, BotBuiltinRunResult, BotMessageSent } from '../botBuiltinCommands';
 import { t } from '../i18n';
 import { getErrorMessage } from './errors';
-import { ExportTokenRegistry, TELEGRAM_EXPORT_CB_PREFIX } from './exporter';
-import type { TelegramExportContext, TelegramExportFormat } from './exporter';
-import { handleExportCallback } from './exportHandlers';
 import * as messaging from './messaging';
 import type { BotSendExtras, TelegramSendAs } from '../flow/types';
 import { clearFlowButtons } from './flowButtons';
@@ -58,7 +53,7 @@ import type { GroupAdminDeps, GroupAdminSource } from './groupAdmin';
 import type { AccountAdminDeps } from './accountAdmin';
 import type { InviteDeps } from './inviteAdmin';
 import { InviteIssuers, tellInviteIssuer } from './inviteIssuers';
-import type { TelegramMessagingContext, TelegramTaskSuccessPayload } from './messaging';
+import type { TelegramMessagingContext } from './messaging';
 import { telegramFetchCompat } from './fetchCompat';
 import { sendAnswerToTelegram } from '../chat/answerPictures';
 import { queuedMessageProgress } from './progressMessage';
@@ -69,8 +64,6 @@ export interface TelegramRuntimeDeps {
   getToken: () => string;
   getAllowGroupCommands: () => boolean;
   getLlmDirect: () => BotLlmDirectConfig;
-  getDefaultReplyMode: () => TelegramReplyMode;
-  getCompactReply: () => boolean;
   getPairing: () => TelegramPairingState;
   savePairing: (next: TelegramPairingState) => void;
   /** An id has just paired with a code: give it the default grants (saved with the pairing). */
@@ -108,10 +101,6 @@ export interface TelegramRuntimeDeps {
   onTaskRequest: (request: TelegramTaskRequest) => Promise<{ taskId: string }>;
   onStatusRequest: () => string;
   onRestartApp?: () => void;
-  onUpdateOutputChoice: (choice: TelegramOutputChoice) => boolean;
-  onExportRequest: (
-    request: TelegramExportContext & { format: TelegramExportFormat },
-  ) => Promise<{ ok: boolean; filePath?: string; error?: string }>;
   onLog: (message: string) => void;
   onRuntime: (snapshot: TelegramRuntimeSnapshot) => void;
   getStrings: () => Record<string, string>;
@@ -181,7 +170,6 @@ export class TelegramRuntime {
   private pollerActive = false;
   private readonly lock = new Mutex();
   private mediaIntake: MediaIntake | null = null;
-  private readonly registry = new ExportTokenRegistry();
   private readonly msgCtx: TelegramMessagingContext;
 
   constructor(private readonly deps: TelegramRuntimeDeps) {
@@ -189,13 +177,14 @@ export class TelegramRuntime {
       getBot: () => this.bot,
       isPollerActive: () => this.pollerActive,
       getStrings: () => this.deps.getStrings(),
-      getDefaultReplyMode: () => this.deps.getDefaultReplyMode(),
-      getCompactReply: () => this.deps.getCompactReply(),
-      registry: this.registry,
-      onExportRequest: (request) => this.deps.onExportRequest(request),
       onLog: (message) => this.deps.onLog(message),
       onAgentAskShown: (target, shown) => this.deps.markAgentAskShown?.(target.chatId, target.userId, shown),
       pendingAgentAskRunId: (chatId, userId) => this.deps.pendingAgentAskRunId(chatId, userId),
+      // The platform's WebP decoder, loaded on first use: it pulls in Electron.
+      webpToJpeg: async (bytes, width, height, quality) => {
+        const { webpAsJpeg } = await import('../line/lineImageCodec');
+        return webpAsJpeg(bytes, width, height, quality);
+      },
     };
     this.pairingBridge = createPairingBridge(
       () => this.deps.getPairing(),
@@ -297,6 +286,10 @@ export class TelegramRuntime {
     return this.tracked(target.chatId, () => messaging.sendPictureReply(this.msgCtx, target, files, caption));
   }
 
+  async sendDocumentReply(target: TelegramReplyTarget, file: string, caption: string): Promise<boolean> {
+    return this.tracked(target.chatId, () => messaging.sendDocumentReply(this.msgCtx, target, file, caption));
+  }
+
   /**
    * A negative id is a group or channel, a positive one a user — the directory keeps them apart so
    * "blocked" is never reported against a channel, nor "kicked" against a person.
@@ -384,11 +377,8 @@ export class TelegramRuntime {
     });
   }
 
-  async sendTaskSuccess(
-    target: TelegramReplyTarget,
-    payload: TelegramTaskSuccessPayload,
-  ): Promise<void> {
-    await this.tracked(target.chatId, () => messaging.sendTaskSuccess(this.msgCtx, target, payload));
+  async sendTaskSuccess(target: TelegramReplyTarget, response: string): Promise<void> {
+    await this.tracked(target.chatId, () => messaging.sendTaskSuccess(this.msgCtx, target, response));
   }
 
   async sendTaskError(
@@ -398,21 +388,19 @@ export class TelegramRuntime {
     await this.tracked(target.chatId, () => messaging.sendTaskError(this.msgCtx, target, payload));
   }
 
-  private async deliverBuiltinResult(
-    target: TelegramReplyTarget,
-    prompt: string,
-    result: BotBuiltinRunResult,
-  ): Promise<void> {
+  private async deliverBuiltinResult(target: TelegramReplyTarget, result: BotBuiltinRunResult): Promise<void> {
     const sendText = async (): Promise<void> => {
-      const shown = await messaging.sendBuiltinReply(this.msgCtx, target, prompt, result);
+      const shown = await messaging.sendBuiltinReply(this.msgCtx, target, result);
       // A question the user never saw whole cannot be answered: no "1" may approve it.
       if (!shown) this.dropAgentAsk(target.chatId, target.userId);
     };
     // A picture reply sends no text: the buttons of the question the request dropped come off here.
     await messaging.clearStaleAskButtons(this.msgCtx, target);
-    // A drawn picture is the reply itself, its words the caption (`sendAnswerToTelegram`).
-    const files = result.ok && !result.question && !result.verbatim ? result.files ?? [] : [];
-    await sendAnswerToTelegram(this, target, result.text, files, this.deps.getStrings(), sendText);
+    // A drawn picture or a made file is the reply itself, its words the caption (`sendAnswerToTelegram`).
+    const answered = result.ok && !result.question && !result.verbatim;
+    const files = answered ? result.files ?? [] : [];
+    const documents = answered ? result.documents ?? [] : [];
+    await sendAnswerToTelegram(this, target, result.text, files, this.deps.getStrings(), sendText, documents);
   }
 
   /** The question stops waiting, and its buttons come off with it (best effort, not awaited). */
@@ -460,7 +448,6 @@ export class TelegramRuntime {
     this.botUsername = me.username || '';
     this.readsAllGroupMessages = me.can_read_all_group_messages;
     this.pollerActive = true;
-    this.registry.startPeriodicPrune();
 
     candidate.start().catch((err: unknown) => {
       if (this.bot !== candidate) return;
@@ -602,7 +589,6 @@ export class TelegramRuntime {
     });
     // One router per bot; the handlers register their own kinds of button on it.
     const callbacks = new TelegramCallbackRouter(this.deps.onLog);
-    callbacks.register(TELEGRAM_EXPORT_CB_PREFIX, (ctx) => handleExportCallback(ctx, this.registry, this.msgCtx));
     const intake = attachTelegramHandlers(bot, {
       groupChat: this.groupChat,
       pace: this.pace,
@@ -640,7 +626,6 @@ export class TelegramRuntime {
       onTaskRequest: (request) => this.deps.onTaskRequest(request),
       onStatusRequest: () => this.deps.onStatusRequest(),
       onRestartApp: this.deps.onRestartApp,
-      onUpdateOutputMode: (choice) => this.deps.onUpdateOutputChoice(choice),
       getLlmDirect: () => this.deps.getLlmDirect(),
       onLog: this.deps.onLog,
       getStrings: () => this.deps.getStrings(),
@@ -669,7 +654,7 @@ export class TelegramRuntime {
           // can only fail quietly, and a hung edit must not hold the answer back.
           void progress.close();
         }
-        await this.deliverBuiltinResult(request.replyTarget, request.input, result);
+        await this.deliverBuiltinResult(request.replyTarget, result);
       },
       hasPendingAgentAsk: (chatId, userId, sent) => this.deps.hasPendingAgentAsk(chatId, userId, sent),
       pendingAgentAskRunId: (chatId, userId) => this.deps.pendingAgentAskRunId(chatId, userId),
@@ -696,7 +681,7 @@ export class TelegramRuntime {
           });
           return;
         }
-        await this.deliverBuiltinResult(request.replyTarget, request.answer, result);
+        await this.deliverBuiltinResult(request.replyTarget, result);
       },
       getFlowCommands: this.deps.getFlowCommands,
       onFlowCommand: this.deps.onFlowCommand,
@@ -722,7 +707,6 @@ export class TelegramRuntime {
       this.pollerActive = false;
       this.currentToken = '';
       this.currentAllowGroupCommands = false;
-      this.registry.clear();
       return;
     }
     this.updateStatus('stopping');
@@ -733,7 +717,6 @@ export class TelegramRuntime {
     this.currentAllowGroupCommands = false;
     this.botUsername = '';
     this.readsAllGroupMessages = undefined;
-    this.registry.clear();
     try {
       await Promise.race([
         Promise.resolve(current.stop()),

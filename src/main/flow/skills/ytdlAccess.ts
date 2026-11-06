@@ -1,16 +1,17 @@
-import { getBotRights } from '../../botPermissions/rights';
+import { botFlowAdminAllowed, getBotRights } from '../../botPermissions/rights';
 import { telegramSendLimitBytes } from '../../telegram/largeUpload';
 import { NO_BOT_RIGHTS } from '../../../shared/botPermissions';
-import { exceedsLimit } from '../../../shared/ytdl';
-import type { SizeLimit, YtdlChoice } from '../../../shared/ytdl';
-import { isBotPlatform } from '../../../shared/types';
+import { LINE_VIDEO_SEND_BYTES, exceedsLimit } from '../../../shared/ytdl';
+import type { SizeLimit, YtdlChoice, YtdlDestination } from '../../../shared/ytdl';
+import { parseBotPlatform } from '../../../shared/types';
 
 /**
  * What the person who started the run may get from a download. Someone at the computer (the app,
  * a schedule) gets everything. A bot user without the admin grant is capped (`BOT_USER_CAP_BYTES`)
- * and never told where a file sits on this computer; an admin is told only in their own private
- * chat, since a group would read the path too. A bot user with the preview grant gets a short
- * video at a low quality before its menu (`preview`).
+ * and never told where a file sits on this computer; an admin — and on LINE PC, which answers as
+ * the owner from their own computer, the owner — is told only in their own private chat, since a
+ * group would read the path too. A bot user with the preview grant gets a short video at a low
+ * quality before its menu (`preview`).
  */
 export interface YtdlAccess {
   capped: boolean;
@@ -19,8 +20,8 @@ export interface YtdlAccess {
 }
 
 /**
- * The most a bot user without the admin right may download, Telegram or LINE.
- * An admin has no cap of Yobi's: only what Telegram itself takes (`telegramSendLimitBytes`).
+ * The most a bot user without the admin right may download, whatever the chat.
+ * An admin has no cap of Yobi's: only what the chat itself takes (`chatSendLimitBytes`).
  */
 export const BOT_USER_CAP_BYTES = 100_000_000;
 
@@ -28,31 +29,43 @@ const AT_THE_COMPUTER: YtdlAccess = { capped: false, showPath: true, preview: fa
 
 /** Read live from the config, like every other bot right: a grant taken back applies at once. */
 export async function ytdlAccessFor(config: Record<string, string>): Promise<YtdlAccess> {
-  const platform = (config.__triggerPlatform ?? '').trim().toLowerCase();
-  if (!isBotPlatform(platform)) return AT_THE_COMPUTER;
+  const platform = parseBotPlatform(config.__triggerPlatform);
+  if (!platform) return AT_THE_COMPUTER;
   const userId = (config.__triggerUserId ?? '').trim();
   const chatId = (config.__triggerChatId ?? '').trim();
   const rights = await getBotRights(platform, userId, chatId).catch(() => NO_BOT_RIGHTS);
   // The preview grant is the account's own; the downloader it needs may be its group's.
   const preview = rights.preview && rights.download;
-  if (!rights.admin) return { capped: true, showPath: false, preview };
+  const uncapped = rights.admin || (platform === 'lineSelf' && (await botFlowAdminAllowed(platform, userId, chatId).catch(() => false)));
+  if (!uncapped) return { capped: true, showPath: false, preview };
   return { capped: false, showPath: Boolean(chatId) && chatId === userId, preview };
 }
 
-/** The largest file this person gets in a Telegram chat: their cap, and never more than the bot can send right now. */
-export function telegramLimitBytes(access: YtdlAccess): number {
-  const send = telegramSendLimitBytes();
+/**
+ * What a chat takes of one file right now: Telegram's bot (`telegramSendLimitBytes`, 50 MB unless
+ * large uploads are set up), LINE PC the largest video LINE sends as a video.
+ */
+export function chatSendLimitBytes(destination: 'telegram' | 'lineSelf'): number {
+  return destination === 'telegram' ? telegramSendLimitBytes() : LINE_VIDEO_SEND_BYTES;
+}
+
+/**
+ * The largest file this person gets in a chat: their cap, and never more than the chat takes (for
+ * Telegram, what the bot can send right now).
+ */
+export function chatLimitBytes(access: YtdlAccess, destination: 'telegram' | 'lineSelf'): number {
+  const send = chatSendLimitBytes(destination);
   return access.capped ? Math.min(BOT_USER_CAP_BYTES, send) : send;
 }
 
 /**
  * The largest file this person gets for `destination`, all limits taken together: a capped
- * person's `BOT_USER_CAP_BYTES` (Telegram or LINE) — and for Telegram never more than the bot can
- * send right now. Over it, a capped person gets nothing (`overCap`); anyone else gets the file
- * saved on the computer only. Null = no limit (this computer, for someone at it or an admin).
+ * person's `BOT_USER_CAP_BYTES` — and for a chat never more than it takes. Over it, a capped person
+ * gets nothing (`overCap`); anyone else gets the file saved on the computer only. Null = no limit
+ * (this computer, for someone at it or an admin).
  */
-export function downloadLimitBytes(access: YtdlAccess, destination: 'telegram' | 'local'): SizeLimit {
-  if (destination === 'telegram') return telegramLimitBytes(access);
+export function downloadLimitBytes(access: YtdlAccess, destination: YtdlDestination): SizeLimit {
+  if (destination !== 'local') return chatLimitBytes(access, destination);
   return access.capped ? BOT_USER_CAP_BYTES : null;
 }
 

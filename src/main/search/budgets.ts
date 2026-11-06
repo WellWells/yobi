@@ -3,10 +3,12 @@ import { charsPlusBreaks, utf8Len } from '../../shared/textBudget';
 import { detectProvider, promptPolicyFor } from '../providers';
 
 const BYOK_BUDGET_BYTES = 360_000;
-export const PROMPT_OVERHEAD_BYTES = 4_800;
-export const PROMPT_OVERHEAD_CPB = 4_800;
-export const LEAN_PROMPT_OVERHEAD_BYTES = 2_900;
-export const LEAN_PROMPT_OVERHEAD_CPB = 2_900;
+// Covers the purpose line, the result-summary rule and the gap said in the user's terms.
+export const PROMPT_OVERHEAD_BYTES = 5_300;
+export const PROMPT_OVERHEAD_CPB = 5_300;
+// Covers the language rule restated after the sources and the gap wording.
+export const LEAN_PROMPT_OVERHEAD_BYTES = 3_100;
+export const LEAN_PROMPT_OVERHEAD_CPB = 3_100;
 const MIN_BUDGET = 4_000;
 
 const LEAN_CAP_THRESHOLD = 20_000;
@@ -65,12 +67,21 @@ export function reserveForHistory(budget: SynthesisBudget, history: string): Syn
 
 const QUICK_BUDGET_BYTES = 24_000;
 const QUICK_BUDGET_CPB = 8_000;
+/** BYOK has no shared page window: the cap is only how much a quick answer reads (3 bytes a CJK char). */
+const QUICK_BYOK_BUDGET_BYTES = 60_000;
+const QUICK_BYOK_BUDGET_CPB = 20_000;
 
-export function quickSynthesisBudget(targetUrl: string): SynthesisBudget {
-  const full = synthesisBudget(targetUrl);
+/**
+ * Quick mode's cap is how much a quick answer reads, not the model's input window, so the
+ * conversation is paid for out of the window and the cap applies after. Taking it out of the cap
+ * would leave a long follow-up too little room for its sources.
+ */
+export function quickSynthesisBudget(targetUrl: string, history = ''): SynthesisBudget {
+  const window = reserveForHistory(synthesisBudget(targetUrl), history);
+  const byok = isByokTargetUrl(targetUrl);
   return {
-    bytes: Math.min(full.bytes, QUICK_BUDGET_BYTES),
-    charsPlusBreaks: Math.min(full.charsPlusBreaks, QUICK_BUDGET_CPB),
+    bytes: Math.min(window.bytes, byok ? QUICK_BYOK_BUDGET_BYTES : QUICK_BUDGET_BYTES),
+    charsPlusBreaks: Math.min(window.charsPlusBreaks, byok ? QUICK_BYOK_BUDGET_CPB : QUICK_BUDGET_CPB),
   };
 }
 

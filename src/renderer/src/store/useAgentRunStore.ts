@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import type { AgentCommandResult, AgentRunSummary, AgentStageLabel, AgentTracePayload } from '../../../shared/types';
 import type { ResearchProgress } from '../../../shared/researchProgress';
+import { conversationMoveKey } from '../../../shared/conversationMove';
+import { readsAnyPage } from '../../../shared/builtinConnectors';
 
 export interface AgentTraceTurn {
   turn: number;
@@ -22,13 +24,18 @@ export interface AgentPendingQuestion {
   mcpServerIds?: readonly string[];
 }
 
+/** A connector that comes for one message says nothing about what the answer to a question is for. */
+function connectorsThatStay(ids: readonly string[] | undefined): Set<string> {
+  return new Set((ids ?? []).filter((id) => !readsAnyPage(id)));
+}
+
 /** Set equality, order-independent — the ids arrive in whatever order the composer built them. */
 export function sameConnectorScope(
   a: readonly string[] | undefined,
   b: readonly string[] | undefined,
 ): boolean {
-  const left = new Set(a ?? []);
-  const right = new Set(b ?? []);
+  const left = connectorsThatStay(a);
+  const right = connectorsThatStay(b);
   if (left.size !== right.size) return false;
   for (const id of left) if (!right.has(id)) return false;
   return true;
@@ -65,6 +72,26 @@ export function pendingQuestionFrom(
     question: res.question,
     ...(mcpServerIds?.length ? { mcpServerIds } : {}),
   };
+}
+
+/**
+ * The pending question once the conversation list changed: let go when its conversation is no
+ * longer listed (deleted — main cancels the run whose question waited in it), so a send in a
+ * conversation that comes back starts a new run. A temporary chat's question has no file and stays.
+ */
+export function pendingQuestionAfterListChange(
+  pending: AgentPendingQuestion | null,
+  listedPaths: readonly string[],
+): AgentPendingQuestion | null {
+  if (!pending?.conversationPath) return pending;
+  const key = conversationMoveKey(pending.conversationPath);
+  return listedPaths.some((listed) => conversationMoveKey(listed) === key) ? pending : null;
+}
+
+/** Lets the pending question go when the new conversation list no longer has its conversation. */
+export function dropQuestionOfRemovedConversation(listedPaths: readonly string[]): void {
+  const { pendingQuestion, setPendingQuestion } = useAgentRunStore.getState();
+  if (pendingQuestionAfterListChange(pendingQuestion, listedPaths) === null && pendingQuestion) setPendingQuestion(null);
 }
 
 /** A choice button, addressed to the run whose question offered it. */

@@ -40,6 +40,15 @@ export async function navigateAndWait(
   });
 }
 
+/** The tab title, or '' when the page cannot be read. */
+export async function readDocumentTitle(wc: WebContents): Promise<string> {
+  try {
+    return String(await wc.executeJavaScript('document.title', false) ?? '');
+  } catch {
+    return '';
+  }
+}
+
 /** Waits out a navigation already in flight; `navigateAndWait` starts one instead. */
 export async function waitForPageLoad(wc: WebContents, timeoutMs: number): Promise<void> {
   if (!wc.isLoading()) return;
@@ -52,23 +61,32 @@ export async function waitForPageLoad(wc: WebContents, timeoutMs: number): Promi
   });
 }
 
-export async function isCloudflareChallengeActive(wc: WebContents): Promise<boolean> {
+/** Longer than any challenge page: past it the words are a chat that quotes one, not the check. */
+export const CHALLENGE_PAGE_MAX_TEXT_CHARS = 1_500;
+
+/*
+ * Cloudflare's interstitial, told by structure only, never by its title or words (they follow
+ * the visitor's language). `appSelector` is the site's own composer: present means past the
+ * challenge, whatever marks linger. The challenge form counts anywhere; the challenge variable and
+ * its `/orchestrate/` script (not the detection script every Cloudflare page loads) only on a page
+ * as short as a challenge. A chat is page text too: a verification wall typed into Claude as a
+ * tool result would make every later turn fail as "Claude wants a Cloudflare check".
+ * Turnstile is no mark: it also sits in sign-in forms.
+ */
+export function cloudflareChallengeProbe(appSelector: string): string {
+  return `(function() {
+    if (document.querySelector(${JSON.stringify(appSelector)})) return false;
+    if (document.querySelector('#challenge-form, .cf-browser-verification')) return true;
+    var text = document.body ? document.body.innerText : '';
+    if (text.length >= ${CHALLENGE_PAGE_MAX_TEXT_CHARS}) return false;
+    return Boolean(window._cf_chl_opt) ||
+      Boolean(document.querySelector('script[src*="/cdn-cgi/challenge-platform/"][src*="/orchestrate/"]'));
+  })()`;
+}
+
+export async function isCloudflareChallengeActive(wc: WebContents, appSelector: string): Promise<boolean> {
   try {
-    return (await wc.executeJavaScript(
-      `!!(
-          document.querySelector('#challenge-form') ||
-          document.querySelector('.cf-browser-verification') ||
-          document.querySelector('[id*="cf-chl"]') ||
-          document.title.includes('Just a moment') ||
-          (document.body && (
-            document.body.innerText.includes('\u6b63\u5728\u57f7\u884c\u5b89\u5168\u9a57\u8b49') ||
-            document.body.innerText.includes('Checking your browser') ||
-            document.body.innerText.includes('checking your browser') ||
-            document.body.innerText.includes('Verify you are human')
-          ))
-        )`,
-      false,
-    )) as boolean;
+    return (await wc.executeJavaScript(cloudflareChallengeProbe(appSelector), false)) as boolean;
   } catch {
     return false;
   }

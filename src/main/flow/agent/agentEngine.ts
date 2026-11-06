@@ -4,7 +4,8 @@ import type {
 import { AGENT_ASK_TOOL, isByokTargetUrl } from '../../../shared/types';
 import { isDeliverableSkill } from '../../../shared/flowSkillSchema';
 import type { ResearchProgress } from '../../../shared/researchProgress';
-import { asksForDeepResearch } from '../../../shared/researchIntent';
+import { asksForDeepResearch, researchDepthFor } from '../../../shared/researchIntent';
+import type { ResearchDepth } from '../../../shared/researchIntent';
 import type { FlowExecutorDeps } from '../types';
 import { FlowAbortError } from '../runtime';
 import { sendLog } from '../../helpers';
@@ -48,10 +49,13 @@ import { NO_WRITES, writesAllFailed } from './writeOutcome';
 import type { AgentWriteOutcome } from './writeOutcome';
 import type { BuiltinDeps, BuiltinOutcome } from './agentBuiltins';
 import type { DrawImage } from './agentDrawImage';
+import type { ExportFile } from './agentExportFile';
 import type { FlowRef } from '../flowEdit';
 import type { RecipientDirectory } from '../../../shared/botRecipients';
 import { runCall } from './agentCall';
 import type { AgentConfirmRequest, CallContext, ShellConfirmRequest } from './agentCall';
+import { createCitationPool, relinkCitations, withSourcesSection } from './agentCitations';
+import type { CitationSource } from '../../../shared/citations';
 import {
   CONNECTOR_CHANGE_NO_LONGER_ALLOWED, FLOW_SAVE_NO_LONGER_ALLOWED, SHELL_NO_LONGER_ALLOWED, connectorApprovalConfig,
   connectorApprovalOf, declinedConnectorObservation, declinedFlowObservation, declinedShellObservation, flowApprovalConfig,
@@ -95,9 +99,46 @@ interface CallResult {
   research?: ResearchProgress;
   /** A shell command, change or held flow that did not run: it waits for the user's answer (`shellApproval`, `connectorApproval`, `flowApproval`). */
   deferred?: ShellConfirmRequest | McpConfirmRequest | FlowSaveRequest;
+  /** research: the cited answer alone, whether some of its searches were refused, whether it is in another language than the user's, and whether it cites no page (`CallOutcome`). */
+  answer?: string;
+  partial?: boolean;
+  foreign?: boolean;
+  unsourced?: boolean;
 }
 
 const DEFAULT_MAX_TURNS = 8;
+
+export interface ResearchAnswerContext {
+  batched: boolean;
+  readOnly: boolean;
+  prefsReshape: boolean;
+  /** The run's first tool call: nothing gathered before it needs combining with it. */
+  firstCall: boolean;
+  /** The goal changes something (a write, a send): the research is a step toward it, not the answer. */
+  changesSomething: boolean;
+  /** Items in the model's plan; two or more means more work follows. */
+  planItems: number;
+}
+
+/**
+ * A research answer goes to the user as written, without the turn that would only rewrite it.
+ * The model asked for it with `answer: "true"`; or — since models rarely say so — it is the run's
+ * first call, on a goal that changes nothing and plans at most one item, and the model did not say
+ * `"false"`. Never on a goal that changes something, whatever the model wrote (else "look it up,
+ * then save it" ends on the research and nothing is saved). Never when the research came
+ * back partly blocked, or in another language than the user wrote in, or cites none of the pages
+ * it read (the model never gets a turn to search differently), or the user's preferences change how an answer reads: then the model decides.
+ */
+export function answersAsResearched(result: CallResult, ctx: ResearchAnswerContext): boolean {
+  if (ctx.batched || ctx.readOnly || ctx.prefsReshape || ctx.changesSomething) return false;
+  if (result.label !== 'research' || result.status !== 'ok') return false;
+  if (result.partial === true || result.foreign === true || result.unsourced === true) return false;
+  if (!result.answer?.trim()) return false;
+  const said = result.config.answer;
+  if (said === 'true') return true;
+  if (said === 'false') return false;
+  return ctx.firstCall && ctx.planItems <= 1;
+}
 const DEFAULT_REASONING_TIMEOUT_MS = 120_000;
 /**
  * Sized so a browser run (~10 s per round trip plus the tool call) can reach the self-assessed
@@ -138,9 +179,8 @@ const MAX_STALE_READS = 2;
 const MAX_ASKS_PER_RUN = 2;
 
 /**
- * Whether the run has anything to ask about. 2026-10-20: a bot message of just "1" was asked a
- * question built from saved memory, and the user's next "1" picked its first choice. A goal with
- * no letter in it holds no request; a message it replies to or a file sent with it carries one.
+ * Whether the run has anything to ask about. A goal with no letter in it (a bare "1") holds no
+ * request; a message it replies to or a file sent with it carries one.
  * The conversation does not: a "2" answering a numbered list there is resolved from it with no
  * question needed, and nearly every bot chat has history, so counting it would undo the gate.
  */
@@ -187,7 +227,8 @@ export function planTurnCeiling(steps: number): number {
  */
 export type AgentProgress =
   | { stage: 'thinking' }
-  | { stage: 'tool'; tool: string; server?: string }
+  /** `depth`: the depth a research call runs at, which names it (a quick one is a web search). */
+  | { stage: 'tool'; tool: string; server?: string; depth?: string }
   /** Connecting the connectors this run uses before its first turn; `server` is their names. */
   | { stage: 'connecting'; server: string };
 
@@ -265,6 +306,8 @@ export interface AgentRunOptions {
    * per-connector grants, never by the model. An empty list reaches no server.
    */
   allowedMcpServerIds?: readonly string[];
+  /** A RESTRICTION too, the other way round: these MCP servers do not exist for this run or its helpers. */
+  deniedMcpServerIds?: readonly string[];
   toolScope?: AgentToolScope;
   /**
    * A delegated helper: read-only tools, no questions, no further delegation. Every change stays
@@ -322,6 +365,17 @@ export interface AgentRunOptions {
    */
   answerPrefs?: string;
   /**
+   * The preferences change how an answer reads (a tone, a length, standing instructions — not just
+   * a nickname), so a research answer cannot go to the user as written: the model writes it.
+   */
+  prefsReshapeAnswers?: boolean;
+  /**
+   * The UI language's name, set by the caller when the "reply in the UI language" switch is on: every
+   * answer is in it unless the user asks for another, whatever language they paste or quote. Unset,
+   * the answer follows the user's own words. Never a helper's: its goal is the model's own wording.
+   */
+  answerLanguage?: string;
+  /**
    * What `draw_image` calls: draws on a web page and keeps the pictures for the answer. Only used
    * when the scope offers `draw_image` (`AgentToolScope.pictures`); a helper never gets either.
    */
@@ -331,6 +385,11 @@ export interface AgentRunOptions {
    * to `draw_image`'s scope: nothing is drawn, the picture is the operator's own; a helper never gets it.
    */
   keepPictures?: (files: readonly string[]) => Promise<void>;
+  /**
+   * What `export_file` calls: renders an answer as a file and keeps it for the answer. Only used
+   * when the scope offers `export_file` (`AgentToolScope.documents`); a helper never gets either.
+   */
+  exportFile?: ExportFile;
 }
 
 interface RunEvidence {
@@ -342,6 +401,11 @@ interface RunEvidence {
 export type AgentRunResult =
   | ({
     kind: 'answer'; title: string; answer: string; toolCalls: number; turns: number; writes: AgentWriteOutcome;
+    /**
+     * The research pages the answer cites, numbered as its links show them. The caller lists them
+     * after the answer once the recap and memory lines are off its tail.
+     */
+    sources?: CitationSource[];
     /** Whether the answer covers the whole goal — decided by the model's own claim and how the run ended. */
     completion: AgentCompletion;
   } & RunEvidence)
@@ -361,11 +425,17 @@ interface PlannedCall {
   config: Record<string, string>;
 }
 
-/**
- * `deepResearch`: the user's own words asked for depth, so every research call of this run is
- * standard whatever the model wrote.
- */
-function planCall(action: BatchCall, providerUrl: string, deepResearch: boolean): PlannedCall {
+/** The progress line's event for one call: a research carries the depth it runs at, which names it. */
+export function toolProgress(tool: string, config: Record<string, string>, server: string | undefined): AgentProgress {
+  return {
+    stage: 'tool',
+    tool,
+    ...(server ? { server } : {}),
+    ...(tool === 'research' && config.depth ? { depth: config.depth } : {}),
+  };
+}
+
+function planCall(action: BatchCall, providerUrl: string, depth: ResearchDepth): PlannedCall {
   if (action.action === 'call_mcp') {
     return {
       label: `mcp:${action.name}`,
@@ -380,7 +450,7 @@ function planCall(action: BatchCall, providerUrl: string, deepResearch: boolean)
   for (const [key, value] of Object.entries(AGENT_FIELD_DEFAULTS[tool] ?? {})) {
     if (!(config[key] ?? '').trim()) config[key] = value;
   }
-  if (tool === 'research' && deepResearch) config.depth = 'standard';
+  if (tool === 'research') config.depth = researchDepthFor(depth, config.depth ?? '');
   return { label: tool, config };
 }
 
@@ -395,8 +465,8 @@ export function callSignature(tool: string, config: Record<string, string>): str
 
 /**
  * `earlier` is that step's own observation, handed back with the refusal. Saying "its result is in
- * the steps above" was false once the step had been condensed or scrolled away, and the model then
- * retyped the arguments to get past the guard (2026-10-17). Absent only when the earlier call is in
+ * the steps above" is false once the step has been condensed or scrolled away, and the model then
+ * retypes the arguments to get past the guard. Absent only when the earlier call is in
  * the same batch and has not been filed yet.
  */
 export function repeatObservation(tool: string, step: number, earlier?: string): string {
@@ -444,6 +514,7 @@ async function synthesizeFinal(
   actions: string,
   userMemory: string,
   chat: ChatContext,
+  answerLanguage: string | undefined,
   signal?: AbortSignal,
 ): Promise<FinalAnswer> {
   const ceiling = lean ? SYNTH_SCRATCH_BUDGET_LEAN : SCRATCH_TOTAL_BUDGET;
@@ -460,6 +531,7 @@ async function synthesizeFinal(
       actions,
       userMemory,
       ...chat,
+      answerLanguage,
       ...(over.fit ? { scratchFit: over.fit } : {}),
     });
   // History first, then the observations against whatever the history decision left — the same
@@ -511,6 +583,7 @@ export async function runAgent(
   const pinnedMaxTurns = options.maxTurns === undefined ? undefined : Math.max(1, options.maxTurns);
   let maxTurns = pinnedMaxTurns ?? DEFAULT_MAX_TURNS;
   const readOnly = options.readOnly === true;
+  const answerLanguage = readOnly ? undefined : options.answerLanguage;
   const askable = goalIsAskable(trimmedGoal, options);
   const baseScope = options.toolScope ?? FULL_TOOL_SCOPE;
   // A helper never delegates again.
@@ -536,6 +609,7 @@ export async function runAgent(
     // provider's cap does not have and the tail — the action instruction — comes off the end.
     userDataSources: true,
     userMemory,
+    answerLanguage,
     // Same reason: a run the user watches may be shown the batch shape, so the baseline carries it.
     batchGrammar: !readOnly,
     ...over,
@@ -561,6 +635,7 @@ export async function runAgent(
   // phantom set. The named servers are a view of that one index (`subIndex`), same handles.
   const noConnectors = options.noConnectors === true;
   const allowedIds = options.allowedMcpServerIds;
+  const deniedIds = options.deniedMcpServerIds;
   // A helper's servers were connected by the run that delegated to it.
   if (mcpRegistry && !noConnectors && !readOnly) {
     await connectServersForRun(mcpRegistry, {
@@ -572,6 +647,7 @@ export async function runAgent(
   }
   const mcpServers =(noConnectors ? [] : mcpRegistry?.getAgentTools() ?? [])
     .filter((server) => !allowedIds || allowedIds.includes(server.serverId))
+    .filter((server) => !deniedIds?.includes(server.serverId))
     // A helper is shown the reads only, so a change is not even a shape it can propose.
     .map((server) => (readOnly
       ? { ...server, tools: server.tools.filter((tool) => resolveToolContract(server.serverId, tool).risk({}) === 'read') }
@@ -582,9 +658,7 @@ export async function runAgent(
   // Declared = the user named these connectors themselves (a `/notion`-style disclosure that then
   // sticks to the conversation), as opposed to plain `/agent` sweeping up everything connected.
   const declared = (scopedIds?.length ?? 0) > 0;
-  // Naming one puts it first, in full; it does not take the others away (2026-10-22: a keyword
-  // match decided what the agent could reach, and once Notion was named, Jira was gone for the rest
-  // of the conversation with nothing the model could do). The others stay one line each, as in an
+  // Naming one puts it first, in full; it does not take the others away. The others stay one line each, as in an
   // undeclared run's summary, and open with `tool_help`. Only those already connected: the wait
   // for a connection is spent on the servers the user named.
   const shownIndex = declared ? subIndex(mcpIndex, (id) => scopedIds?.includes(id) === true) : mcpIndex;
@@ -607,7 +681,13 @@ export async function runAgent(
     .map((entry) => entry.observation);
   const runWords = [trimmedGoal, ...askAnswers].join('\n');
   // A helper's goal is the model's own wording, so it never decides depth on the user's behalf.
-  const deepResearch = !readOnly && asksForDeepResearch(runWords);
+  const deepAsked = !readOnly && asksForDeepResearch(runWords);
+  let deepUsed = false;
+  const researchDepth = (): ResearchDepth => ({ asked: deepAsked, deepAvailable: !deepUsed });
+  /** A research that runs deep spends the run's one deep research; planning it for a log line does not. */
+  const noteDepth = (config: Record<string, string>): void => {
+    if (config.depth === 'deep') deepUsed = true;
+  };
   const ledger = createLedger(runWords, options.priorEvidence);
   const evidenceOut = (): RunEvidence => ({ actions: [...ledger.actions], evidence: ledger.snapshot(true) });
   const earlierActions = readOnly ? '' : renderActionLines(ledger.priorActions);
@@ -630,7 +710,7 @@ export async function runAgent(
 
   const { buildAgentHistory, historyPromptCost, MCP_CATALOG_RESERVE } = await import('./agentContext');
   // A question about the group's talk is answered from that talk: the bot's own earlier answers to
-  // this person were taken for "the discussion above" and summarised instead (2026-10-17).
+  // this person would be taken for "the discussion above" and summarised instead.
   const history = chat.chatRecap ? '' : await buildAgentHistory({
     ...(options.conversationPath ? { conversationPath: options.conversationPath } : {}),
     ...(options.temporaryChat ? { temporaryChat: true } : {}),
@@ -716,13 +796,29 @@ export async function runAgent(
   // Offered to the run the user is watching, never to a helper: fan-out below fan-out multiplies
   // every rate limit, and a helper exists to do one reading job.
   const batchGrammar = !readOnly;
-  const validateDecision = (allowAsk: AskGate) => (json: unknown): Validation<AgentDecision> => {
+  const parseDecision = (allowAsk: AskGate, json: unknown): Validation<AgentDecision> => {
     const obj = json && typeof json === 'object' && !Array.isArray(json) ? json as Record<string, unknown> : null;
     if (batchGrammar && obj?.action === 'call_tools') {
       return validateBatchAction(obj, { scope: toolScope, mcpIndex: mcpEnabled ? mcpIndex : null });
     }
     if (mcpEnabled && obj?.action === 'call_mcp') return validateMcpAction(obj, mcpIndex);
     return validateAgentAction(json, allowAsk, toolScope, [...deliverables.keys()], batchGrammar);
+  };
+  // A first action without "intent" leaves the run to reads and edits for good, so plain goals
+  // end held back as things nobody asked for. It can
+  // be asked for once more only here: no tool result is in the prompt yet, so nothing but the GOAL
+  // can have shaped the answer. Once, so a model that never sends it still runs.
+  let intentReasked = false;
+  // An unattended run has every change refused anyway, so what it declares changes nothing.
+  const changesCanRun = !options.unattended || options.connectorApproval !== undefined;
+  const missesIntent = (decision: AgentDecision): boolean => changeTools && changesCanRun && intentOpen && !intentReasked
+    && intent === null && decision.intent === undefined && plan.steps.length === 0 && scratch.length === 0
+    && (decision.action === 'call_mcp' || decision.action === 'call_tools');
+  const validateDecision = (allowAsk: AskGate) => (json: unknown): Validation<AgentDecision> => {
+    const parsed = parseDecision(allowAsk, json);
+    if (!parsed.ok || !parsed.value || !missesIntent(parsed.value)) return parsed;
+    intentReasked = true;
+    return { ok: false, error: 'This first action must also include "intent": {"change": [...], "content": ...}, as the rules say.', otherwise: parsed.value };
   };
 
   const reasoningTimeoutMs = deps.getResponseTimeoutMs?.() ?? DEFAULT_REASONING_TIMEOUT_MS;
@@ -807,6 +903,7 @@ export async function runAgent(
         ...(scopedIds ? { mcpServerIds: scopedIds } : {}),
         ...(noConnectors ? { noConnectors } : {}),
         ...(allowedIds ? { allowedMcpServerIds: allowedIds } : {}),
+        ...(deniedIds ? { deniedMcpServerIds: deniedIds } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
         onTrace: (event) => {
           if (event.kind !== 'tool') return;
@@ -823,7 +920,9 @@ export async function runAgent(
       const gap = helper.completion.status === 'partial'
         ? `\nINCOMPLETE — ${helper.completion.missing ?? 'the helper stopped at its step limit'}.`
         : '';
-      return { observation: `Helper findings${tools}:\n${helper.title ? `${helper.title}\n` : ''}${helper.answer}${gap}`, status: 'ok' };
+      // The helper's links point at its own pages; its list goes along so the main run can name them.
+      const findings = withSourcesSection(helper.answer, helper.sources, 'Sources');
+      return { observation: `Helper findings${tools}:\n${helper.title ? `${helper.title}\n` : ''}${findings}${gap}`, status: 'ok' };
     } catch (err) {
       if (err instanceof FlowAbortError) throw err;
       return { observation: `ERROR: The helper failed: ${err instanceof Error ? err.message : String(err)}`, status: 'error' };
@@ -856,8 +955,13 @@ export async function runAgent(
     ...(options.onEnableFlow ? { enableFlow: options.onEnableFlow } : {}),
     ...(toolScope.delegate ? { runSubtask } : {}),
     ...(toolScope.pictures && options.drawImage ? { drawImage: options.drawImage } : {}),
+    ...(toolScope.documents && options.exportFile ? { exportFile: options.exportFile } : {}),
   };
+  const citations = createCitationPool();
   const callCtx: CallContext = {
+    citations,
+    // A helper's goal is the model's own wording: its research answers in the UI language as before.
+    ...(readOnly ? {} : { asker: { words: runWords, history, ...(answerLanguage ? { uiLanguage: true } : {}) } }),
     deps,
     mcpIndex,
     mcpRegistry,
@@ -945,7 +1049,10 @@ export async function runAgent(
     if (completion.status === 'partial') {
       sendLog(`🏁 [Agent] answered as partial (${completion.reason})${completion.missing ? ` — missing: ${completion.missing}` : ''}`);
     }
-    return { kind: 'answer', title, answer, toolCalls, turns, writes, completion, ...evidenceOut() };
+    // Every way out — finish, deliver, a research answer as is, the final synthesis — gets its
+    // citations linked and renumbered the same way.
+    const { text, sources } = relinkCitations(answer, citations);
+    return { kind: 'answer', title, answer: text, sources, toolCalls, turns, writes, completion, ...evidenceOut() };
   };
 
   /**
@@ -962,12 +1069,13 @@ export async function runAgent(
   ): Promise<void> => {
     const step = scratch.length + 1;
     activeStep = step;
-    const { label, config } = planCall(call, providerUrl, deepResearch);
+    const { label, config } = planCall(call, providerUrl, researchDepth());
+    noteDepth(config);
     const signature = callSignature(label, config);
     const startedAt = Date.now();
     toolCalls++;
     const serverName = call.action === 'call_mcp' ? findMcpServer(mcpIndex, call.server)?.serverName : undefined;
-    options.onProgress?.({ stage: 'tool', tool: label, ...(serverName ? { server: serverName } : {}) });
+    options.onProgress?.(toolProgress(label, config, serverName));
     options.onTrace?.({ kind: 'tool', turn: step, tool: label, config });
     sendLog(`🤖 [Agent] running the approved ${label} ${maskSecrets(JSON.stringify(config), true)}`);
     const approvedCtx: CallContext = approvedInChat
@@ -1087,6 +1195,7 @@ export async function runAgent(
       webTools,
       ...(held ? { held } : {}),
       ...chat,
+      answerLanguage,
     };
     const capAtBuild = promptCapFor(providerUrl);
     const buildTurn = (h: string): string => buildTurnPrompt({ ...turnOptions, history: h });
@@ -1223,8 +1332,10 @@ export async function runAgent(
     if (planWasEmpty && plan.steps.length > 0) {
       sendLog(`🗂️ [Agent] plan: ${plan.steps.map((step, i) => `${i + 1}. ${step}`).join(' | ')}`);
     }
-    // Read once, from the first action of this invocation: before any tool result is in the
-    // prompt, and — on a resume — right after the user's own answer.
+    // Read once, from the first action of this invocation, before any tool result is in the prompt.
+    // A resume does not ask for it again (the prompt only asks while the plan is empty), and must
+    // not be made to: by then the prompt holds tool results that may carry injected text. What the
+    // user's own answer allows beyond it is decided in the gate (`decideAction`), from the answer.
     if (intentOpen) {
       intentOpen = false;
       if (action.intent) {
@@ -1304,7 +1415,7 @@ export async function runAgent(
     const batched = calls.length > 1;
     const firstStep = scratch.length + 1;
     if (batched) {
-      sendLog(`🧺 [Agent] turn ${turn}: ${calls.length} calls at once — ${calls.map((call) => planCall(call, providerUrl, deepResearch).label).join(', ')}`);
+      sendLog(`🧺 [Agent] turn ${turn}: ${calls.length} calls at once — ${calls.map((call) => planCall(call, providerUrl, researchDepth()).label).join(', ')}`);
     }
 
     /**
@@ -1313,7 +1424,8 @@ export async function runAgent(
      * their own row, their own repeat-guard reference and their own `deliver` number.
      */
     const executeCall = async (call: BatchCall, step: number): Promise<CallResult> => {
-      const { label: toolLabel, config: recordConfig } = planCall(call, providerUrl, deepResearch);
+      const { label: toolLabel, config: recordConfig } = planCall(call, providerUrl, researchDepth());
+      noteDepth(recordConfig);
       const signature = callSignature(toolLabel, recordConfig);
       const repeatedAt = signatures.get(signature);
       if (repeatedAt === undefined) signatures.set(signature, step);
@@ -1322,7 +1434,7 @@ export async function runAgent(
 
       toolCalls++;
       const serverName = call.action === 'call_mcp' ? findMcpServer(mcpIndex, call.server)?.serverName : undefined;
-      options.onProgress?.({ stage: 'tool', tool: toolLabel, ...(serverName ? { server: serverName } : {}) });
+      options.onProgress?.(toolProgress(toolLabel, recordConfig, serverName));
       options.onTrace?.({ kind: 'tool', turn: step, tool: toolLabel, config: recordConfig, ...(thought ? { thought } : {}) });
       // Masked: `sendLog` appends to yobi.log in plaintext, and a shell command is the one config
       // that routinely carries a token (`curl -H "Authorization: ..."`, `gh auth token`).
@@ -1391,7 +1503,13 @@ export async function runAgent(
         for (const read of readsBeforeChange) signatures.delete(read);
         readsBeforeChange.clear();
       }
-      return settle(outcome.observation, outcome.status, outcome.research);
+      return {
+        ...settle(outcome.observation, outcome.status, outcome.research),
+        ...(outcome.answer ? { answer: outcome.answer } : {}),
+        ...(outcome.partial ? { partial: true } : {}),
+        ...(outcome.foreign ? { foreign: true } : {}),
+        ...(outcome.unsourced ? { unsourced: true } : {}),
+      };
     };
 
     const results = batched
@@ -1457,8 +1575,10 @@ export async function runAgent(
       const forDelta = truncate(result.observation, deltaObservationLimit);
       // Recorded BEFORE truncation, and only for a tool whose output is a finished answer. The
       // step number matches the one `renderScratch` prints, which is what the model names.
-      if (result.status === 'ok' && isDeliverableSkill(result.label) && result.observation.trim()) {
-        deliverables.set(step, result.observation);
+      // A research answer is kept without its SOURCES and fields lines: those are for the model.
+      // One in another language than the user's is not deliverable: `deliver` would hand it over as is.
+      if (result.status === 'ok' && isDeliverableSkill(result.label) && result.observation.trim() && !result.foreign) {
+        deliverables.set(step, result.answer ?? result.observation);
       }
       scratch.push({
         thought: result.thought,
@@ -1482,6 +1602,18 @@ export async function runAgent(
       });
     });
     lastBatchSize = results.length;
+
+    if (answersAsResearched(results[0], {
+      batched,
+      readOnly,
+      prefsReshape: options.prefsReshapeAnswers === true,
+      firstCall: firstStep === 1,
+      changesSomething: (intent?.change.length ?? 0) > 0,
+      planItems: plan.steps.length,
+    })) {
+      sendLog(`📤 [Agent] research step ${firstStep} answers the goal as written — no rewrite turn`);
+      return answered('', results[0].answer ?? '', turn, COMPLETE);
+    }
   }
 
   if (heldFinish && scratch.length === heldFinish.steps) {
@@ -1501,7 +1633,7 @@ export async function runAgent(
   }
   const final = await synthesizeFinal(
     promptGoal, scratch, providerUrl, deps, synthTimeoutMs, lean, scratchSlots, session, history, plan,
-    writesAllFailed(writes), renderActionLines(ledger.actions, 8), userMemory, chat, options.signal,
+    writesAllFailed(writes), renderActionLines(ledger.actions, 8), userMemory, chat, answerLanguage, options.signal,
   );
   return answered(final.title, final.content, turnsUsed, synthesisCompletion(final.done, final.missing));
 }

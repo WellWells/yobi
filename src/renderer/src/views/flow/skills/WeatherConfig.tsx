@@ -1,5 +1,5 @@
 import React from 'react';
-import { Stack, Text } from '@mantine/core';
+import { Group, Stack, Text } from '@mantine/core';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { SelectDropdown } from '../../../components/SelectDropdown';
 import type { SkillConfigProps } from './types';
@@ -24,6 +24,23 @@ export const WeatherConfig: React.FC<SkillConfigProps> = ({ step, onChange, t })
       onChange={(value) => onChange({ ...step.config, units: value })}
       size="sm"
     />
+    <Group grow gap="xs">
+      <AppTextInput
+        label={t('flow.skill.weather.date')}
+        placeholder={t('flow.skill.weather.date.placeholder')}
+        value={step.config.date ?? ''}
+        onChange={(e) => onChange({ ...step.config, date: e.currentTarget.value })}
+        size="sm"
+      />
+      <AppTextInput
+        label={t('flow.skill.weather.hours')}
+        placeholder={t('flow.skill.weather.hours.placeholder')}
+        value={step.config.hours ?? ''}
+        onChange={(e) => onChange({ ...step.config, hours: e.currentTarget.value })}
+        size="sm"
+      />
+    </Group>
+    <Text fz="xs" c="dimmed">{t('flow.skill.weather.date.hint')}</Text>
     <Text fz="xs" c="dimmed">{t('flow.skill.weather.source')}</Text>
   </Stack>
 );

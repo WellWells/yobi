@@ -5,10 +5,13 @@ import { turnMediaKind, turnMediaUrl } from '../../../../shared/turnMedia';
 import { formatDuration } from '../../../../shared/ytdl';
 import { MediaViewer } from './mediaViewer/MediaViewer';
 import { TurnAudio } from './TurnAudio';
+import { useTurnFileMenu } from './TurnFileMenu';
 import styles from './TurnMedia.module.css';
 
 const SINGLE_MAX_HEIGHT = 360;
 const TILE = 150;
+const COMPACT_SINGLE_MAX_HEIGHT = 240;
+const COMPACT_TILE = 96;
 const GAP = 6;
 
 /** How many square tiles fit on one row; all of them while the width is not known yet. */
@@ -25,21 +28,25 @@ function posterUrl(file: string): string {
 const MediaTile: React.FC<{
   file: string;
   single: boolean;
+  compact: boolean;
   more: number;
   onOpen: () => void;
+  onOpenMenu: (event: React.MouseEvent) => void;
   onError: () => void;
-}> = ({ file, single, more, onOpen, onError }) => {
+}> = ({ file, single, compact, more, onOpen, onOpenMenu, onError }) => {
   const [duration, setDuration] = useState('');
   const video = turnMediaKind(file) === 'video';
+  const tile = compact ? COMPACT_TILE : TILE;
   const fill: React.CSSProperties = single
-    ? { display: 'block', maxWidth: '100%', maxHeight: SINGLE_MAX_HEIGHT, width: 'auto', height: 'auto' }
+    ? { display: 'block', maxWidth: '100%', maxHeight: compact ? COMPACT_SINGLE_MAX_HEIGHT : SINGLE_MAX_HEIGHT, width: 'auto', height: 'auto' }
     : { display: 'block', width: '100%', height: '100%', objectFit: 'cover' };
 
   return (
     <UnstyledButton
       onClick={onOpen}
+      onContextMenu={onOpenMenu}
       className={styles.tile}
-      style={single ? { maxWidth: '100%' } : { width: TILE, height: TILE, flexShrink: 0 }}
+      style={single ? { maxWidth: '100%' } : { width: tile, height: tile, flexShrink: 0 }}
     >
       {video ? (
         <Box
@@ -73,12 +80,19 @@ const MediaTile: React.FC<{
  * says how many more there are. Any of them opens Yobi's viewer, which walks all of them.
  * Audio (a downloaded MP3) is a player of its own under them, not a tile.
  * A file that is gone since — moved or deleted — is left out rather than shown broken.
+ * `compact` is the size for inside a prompt's bubble, which is as wide as what it holds: nothing
+ * to measure a row against, so smaller tiles wrap and all of them show.
  */
-export const TurnMedia: React.FC<{ files: readonly string[] }> = ({ files }) => {
+export const TurnMedia: React.FC<{
+  files: readonly string[];
+  compact?: boolean;
+  onMissing?: (file: string) => void;
+}> = ({ files, compact = false, onMissing }) => {
   const [missing, setMissing] = useState<ReadonlySet<string>>(() => new Set());
   const [viewing, setViewing] = useState<number | null>(null);
   const [width, setWidth] = useState(0);
   const rowRef = useRef<HTMLDivElement>(null);
+  const { openMenu, menu } = useTurnFileMenu();
   const present = files.filter((file) => !missing.has(file));
   const shown = present.filter((file) => {
     const kind = turnMediaKind(file);
@@ -89,30 +103,35 @@ export const TurnMedia: React.FC<{ files: readonly string[] }> = ({ files }) => 
 
   useEffect(() => {
     const row = rowRef.current;
-    if (!row || !several) return;
+    if (!row || !several || compact) return;
     const measure = (): void => setWidth(row.clientWidth);
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(row);
     return () => observer.disconnect();
-  }, [several]);
+  }, [several, compact]);
 
   if (shown.length === 0 && sounds.length === 0) return null;
-  const drop = (file: string): void => setMissing((prev) => new Set(prev).add(file));
-  const fit = stripFit(shown.length, width);
+  const drop = (file: string): void => {
+    setMissing((prev) => new Set(prev).add(file));
+    onMissing?.(file);
+  };
+  const fit = compact ? shown.length : stripFit(shown.length, width);
   const hidden = shown.length - fit;
 
   return (
     <>
       {shown.length > 0 && (
-        <Group ref={rowRef} gap={GAP} mt={10} wrap="nowrap" style={{ overflow: 'hidden' }}>
+        <Group ref={rowRef} gap={GAP} mt={compact ? 0 : 10} wrap={compact ? 'wrap' : 'nowrap'} style={{ overflow: 'hidden' }}>
           {shown.slice(0, fit).map((file, index) => (
             <MediaTile
               key={file}
               file={file}
               single={!several}
+              compact={compact}
               more={index === fit - 1 ? hidden : 0}
               onOpen={() => setViewing(index)}
+              onOpenMenu={(event) => openMenu(file, event)}
               onError={() => drop(file)}
             />
           ))}
@@ -124,6 +143,7 @@ export const TurnMedia: React.FC<{ files: readonly string[] }> = ({ files }) => 
         </Stack>
       )}
       <MediaViewer files={shown} index={viewing} onIndexChange={setViewing} onClose={() => setViewing(null)} />
+      {menu}
     </>
   );
 };

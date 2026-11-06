@@ -3,17 +3,95 @@ import * as path from 'node:path';
 import { app } from 'electron';
 import type { SkillType } from '../../../shared/types';
 import { getOutputDir } from '../../files';
-import { resolveUserPath, resolveWritePath } from '../skills/fileOps';
+import { expandHome, resolveUserPath, resolveWritePath } from '../skills/fileOps';
 import { sensitivePathReason } from './sensitivePaths';
+import { chatMediaDir } from '../../chatMedia';
+
+interface ReadFolder {
+  /** How the agent writes the folder at the start of a relative path. */
+  name: string;
+  dir: () => string;
+}
+
+/**
+ * The folders the agent may read besides the output folder, keyed by the lower-case name a
+ * relative path starts with. `chat-media` holds the pictures the chat shows (one a provider drew, a
+ * pasted post's photos): the agent's conversation history names them that way.
+ */
+const userFolder = (key: 'documents' | 'downloads' | 'desktop') => (): string => app.getPath(key);
+
+const READ_FOLDERS: Readonly<Record<string, ReadFolder>> = {
+  documents: { name: 'Documents', dir: userFolder('documents') },
+  downloads: { name: 'Downloads', dir: userFolder('downloads') },
+  desktop: { name: 'Desktop', dir: userFolder('desktop') },
+  'chat-media': { name: 'chat-media', dir: chatMediaDir },
+};
+
+function folderDir(folder: ReadFolder): string | null {
+  try {
+    return folder.dir() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Where the agent's read tools look for a path. The tool docs promise `Documents/notes.txt`, so a
+ * relative path that starts with one of the folders the agent may read means that folder — not a
+ * folder of that name inside the output folder. Everything else resolves the way flows do. The sandbox check, the read itself and the mail
+ * attachment guard all go through here, so they always agree on the file.
+ */
+export async function resolveAgentReadPath(raw: string): Promise<string> {
+  const expanded = expandHome(raw.trim());
+  if (!path.isAbsolute(expanded)) {
+    const [head, ...rest] = expanded.split(/[\\/]+/);
+    const folder = READ_FOLDERS[head.toLowerCase()];
+    const dir = folder ? folderDir(folder) : null;
+    if (dir) return path.join(dir, ...rest);
+  }
+  return resolveUserPath(raw);
+}
+
+function inside(dir: string, file: string): string | null {
+  const rel = path.relative(path.resolve(dir), path.resolve(file));
+  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return null;
+  return rel.split(path.sep).join('/');
+}
+
+/**
+ * How the agent is told about a file on this computer: the relative path `resolveAgentReadPath`
+ * maps back to that file (`chat-media/x.png`, `Downloads/Yobi/v.mp4`, `reports/q3.md` in the
+ * output folder) — never the absolute path, which would carry the account name to a third-party
+ * web UI. A file outside every folder the agent may read is null: naming it would only earn a denial.
+ */
+export async function agentReadPathFor(file: string): Promise<string | null> {
+  for (const folder of Object.values(READ_FOLDERS)) {
+    const dir = folderDir(folder);
+    const rel = dir ? inside(dir, file) : null;
+    if (rel) return `${folder.name}/${rel}`;
+  }
+  const rel = inside(await getOutputDir(), file);
+  // `Documents/x` in the output folder would be read from the user's Documents instead.
+  if (!rel || READ_FOLDERS[rel.split('/')[0].toLowerCase()]) return null;
+  return rel;
+}
+
+/** The config a read tool runs with: its path already resolved, exactly as the sandbox checked it. */
+export async function withAgentReadPath(
+  tool: SkillType,
+  config: Record<string, string>,
+): Promise<Record<string, string>> {
+  const field = tool === 'file_read' ? 'path' : tool === 'file_list' ? 'directory' : undefined;
+  const raw = field ? (config[field] ?? '').trim() : '';
+  if (!field || !raw) return config;
+  return { ...config, [field]: await resolveAgentReadPath(raw) };
+}
 
 export async function getAgentFileRoots(): Promise<string[]> {
   const roots: string[] = [await getOutputDir()];
-  for (const key of ['documents', 'downloads', 'desktop'] as const) {
-    try {
-      const dir = app.getPath(key);
-      if (dir) roots.push(dir);
-    } catch {
-    }
+  for (const folder of Object.values(READ_FOLDERS)) {
+    const dir = folderDir(folder);
+    if (dir) roots.push(dir);
   }
   return roots;
 }
@@ -85,11 +163,11 @@ async function targetPathForTool(
 ): Promise<string | undefined> {
   if (tool === 'file_read') {
     const raw = (config.path ?? '').trim();
-    return raw ? resolveUserPath(raw) : undefined;
+    return raw ? resolveAgentReadPath(raw) : undefined;
   }
   if (tool === 'file_list') {
     const raw = (config.directory ?? '').trim();
-    return raw ? resolveUserPath(raw) : undefined;
+    return raw ? resolveAgentReadPath(raw) : undefined;
   }
   if (tool === 'file_write') {
     // No early-out on a blank field: blank `folder` + blank `filename` is a legitimate call that
@@ -99,7 +177,7 @@ async function targetPathForTool(
   return undefined;
 }
 
-const READ_DENIAL = 'access denied: "%s" is outside the folders this agent may read (the app output folder, Documents, Downloads, Desktop). Do not retry it or a variation of it — ask the user to place the file in one of those folders, or use another tool.';
+const READ_DENIAL = 'access denied: "%s" is outside the folders this agent may read (the app output folder, Documents, Downloads, Desktop, and chat-media for the chat\'s pictures). Do not retry it or a variation of it — ask the user to place the file in one of those folders, or use another tool.';
 const WRITE_DENIAL = 'access denied: this would write to "%s". You may only write inside the app output folder — you can READ from Documents, Downloads and Desktop, but not write there. Do not retry it or a variation of it: leave "folder" blank to write to the output folder, and tell the user the path so they can move the file where they want it.';
 
 export async function denyReasonForFileTool(

@@ -62,6 +62,25 @@ export interface AgentToolScope {
    * for a run whose request asks for a picture and whose answer can carry one (`withPictureCapability`).
    */
   pictures?: boolean;
+  /**
+   * Offer `agoda_reviews`, with or without `builtins`. Never set by a scope constant: the caller
+   * sets it for the desktop (`withHotelReviewCapability`). A bot waits until a read that meets a
+   * human check with nobody at the screen has an answer.
+   */
+  hotelReviews?: boolean;
+  /**
+   * Offer `export_file`, with or without `builtins`. Never set by a scope constant: the caller sets
+   * it for a bot run whose platform can send a file (`withDocumentCapability`); the desktop has its
+   * own export.
+   */
+  documents?: boolean;
+}
+
+/** `export_file` in or out of a scope; a helper never gets it (`readOnlyScope`). */
+export function withDocumentCapability(scope: AgentToolScope, enabled: boolean): AgentToolScope {
+  if (enabled === (scope.documents === true)) return scope;
+  const { documents: _documents, ...rest } = scope;
+  return enabled ? { ...rest, documents: true } : rest;
 }
 
 /** `draw_image` in or out of a scope; a helper never gets it (`readOnlyScope`). */
@@ -69,6 +88,13 @@ export function withPictureCapability(scope: AgentToolScope, enabled: boolean): 
   if (enabled === (scope.pictures === true)) return scope;
   const { pictures: _pictures, ...rest } = scope;
   return enabled ? { ...rest, pictures: true } : rest;
+}
+
+/** `agoda_reviews` in or out of a scope; a helper never gets it (`readOnlyScope`), nor a run with the web off. */
+export function withHotelReviewCapability(scope: AgentToolScope, enabled: boolean): AgentToolScope {
+  if (enabled === (scope.hotelReviews === true)) return scope;
+  const { hotelReviews: _hotelReviews, ...rest } = scope;
+  return enabled ? { ...rest, hotelReviews: true } : rest;
 }
 
 /**
@@ -113,16 +139,16 @@ const WEB_SKILL_SET = new Set<SkillType>(WEB_SKILLS);
 
 /** A recorded step went online — what tells the composer the run used the web. */
 export function isWebTool(tool: string): boolean {
-  return WEB_SKILL_SET.has(tool as SkillType);
+  return WEB_SKILL_SET.has(tool as SkillType) || tool === 'agoda_reviews';
 }
 
 /**
  * Dropping these also shortens the built-in catalog, leaving more of the MCP catalog budget for
- * connectors.
+ * connectors. `agoda_reviews` reads a web page too, so it goes with them.
  */
 export function withWebCapability(scope: AgentToolScope, enabled: boolean): AgentToolScope {
   if (enabled) return scope;
-  return { ...scope, skills: scope.skills.filter((skill) => !WEB_SKILL_SET.has(skill)) };
+  return withHotelReviewCapability({ ...scope, skills: scope.skills.filter((skill) => !WEB_SKILL_SET.has(skill)) }, false);
 }
 
 /**
@@ -219,10 +245,11 @@ export function isHelpTool(name: string): name is AgentHelpTool {
 }
 
 // `shell` and `file_write` are tier 1 because their full entries can push a tight provider's repair
-// prompt past its cap, cutting off the closing fence and the action instruction.
+// prompt past its cap, cutting off the closing fence and the action instruction. `search` paid for
+// `agoda_reviews`: its one option is a result count, and research is what answers.
 export const AGENT_BRIEF_ONLY_TOOLS: readonly SkillType[] = [
   'sysinfo', 'air_quality', 'almanac', 'tw_invoice', 'gmap_reviews', 'youtube', 'llm', 'forex', 'random', 'stock', 'weather',
-  'file_read', 'file_list', 'file_write', 'shell', 'clipboard', 'notify',
+  'file_read', 'file_list', 'file_write', 'shell', 'clipboard', 'notify', 'search',
 ];
 
 const BRIEF_ONLY_SET = new Set<SkillType>(AGENT_BRIEF_ONLY_TOOLS);
@@ -230,9 +257,16 @@ const BRIEF_ONLY_SET = new Set<SkillType>(AGENT_BRIEF_ONLY_TOOLS);
 // SECURITY: the workspace/sandbox wording must survive into these tier-1 briefs. A model
 // that guesses a path has to be refused rather than corrected, and only the brief tells it so.
 const AGENT_TOOL_BRIEFS: Partial<Record<SkillType, string>> = {
+  search: 'Web search: a ranked JSON list of {title, link, snippet}, no page content. Use it for a link to open or pass on; for an answer, research.',
   file_read: 'Read a local text or PDF file in your workspace only (app output folder, Documents, Downloads, Desktop); a guessed path is refused, so call file_list first.',
   file_list: 'List the files in a local folder (non-recursive). Only your workspace is allowed (app output folder, Documents, Downloads, Desktop). Use it to learn a file name before reading it.',
-  stock: 'Get stock / equity / index quotes, several comma-separated symbols at once. The suffix picks the market: US as-is (AAPL), Taiwan .TW (2330.TW) or .TWO, indices ^ (^TWII).',
+  // Every optional field of these three opens something a user asks for, so each is named in the
+  // spelling the config takes. Terse on purpose: together they cost what the three briefs did
+  // before history and the hourly forecast existed (Gemini's MCP room has no slack); the rest is
+  // in tool_help.
+  stock: 'Stock/index quotes, several comma-separated symbols: AAPL, Taiwan 2330.TW/.TWO, ^TWII. "period" (6mo, ytd) adds history; "date" a day\'s close.',
+  forex: 'Exchange rate + converted amount; "period" (3mo) adds history, "date" a day\'s rate.',
+  weather: 'Weather now and today\'s range; "date" (tomorrow, +N, A..B) = hourly rain, feels-like, wind; "hours" 13-18. Taiwan places in Chinese, others English.',
   // Optional fields are opt-in by key and unknown keys are dropped, so the brief names them as
   // `fields` spells them.
   sysinfo: "This computer's OS, CPU, memory, GPU, local IP. Only when named in fields: publicIp, disks, displays, printers, bios, macAddress, dns and other hardware/network details.",
@@ -268,14 +302,14 @@ const AGENT_TOOL_DOCS: Partial<Record<SkillType, { summary: string; output?: str
     output: "the page's visible text (multiple URLs are joined with a '---' separator).",
   },
   search: {
-    summary: 'Search the web (DuckDuckGo) and return a ranked list of results — titles, links and snippets only, NO page content. Use this only when you want the raw links yourself (e.g. to pick one specific page for browser). If you want an ANSWER from the web, use research instead.',
+    summary: 'Search the web and return a ranked list of results — titles, links and snippets only, NO page content. Use this only when you want the raw links yourself (e.g. to pick one specific page for browser). If you want an ANSWER from the web, use research instead.',
     output: "a JSON array of {title, link, snippet} ranked by relevance ('[]' if nothing matched); snippet is the result-page summary and may be empty.",
   },
   research: {
     summary: 'Research a focused QUESTION and return a cited answer in ONE step. Prefer this for evidence. Repeat only for a distinct missing fact; after weak results change keywords or read a specific source with browser/urls, rather than rephrasing the same request.',
-    output: "a written answer in prose with [n] citation markers; also provides sources (a JSON array of the {title, link} pages actually read) and count (how many).",
+    output: 'a written answer with [n] source numbers and a SOURCES line naming their pages.',
     fields: {
-      depth: '"quick" (default: reads 2 pages, fast) or "standard" (several query angles, up to 12 pages, slow) — standard only when the user asks for depth, detail, a comparison or a check, or quick came back thin',
+      depth: '"quick" (default: 3 pages + result summaries, fast) or "standard" (several query angles, up to 12 pages, slow) — standard only when the user asks for depth, detail, a comparison or a check, or quick came back thin',
     },
   },
   youtube: {
@@ -307,8 +341,8 @@ const AGENT_TOOL_DOCS: Partial<Record<SkillType, { summary: string; output?: str
     output: "one string (key:value lines for format='text', or a JSON document for format='json'); each collected field is also provided as an individual sub-field (e.g. locale, cpu, publicIp). cpuCores counts logical processors (threads), not physical cores.",
   },
   weather: {
-    summary: 'Get the current weather for a place NAME (Open-Meteo, no API key); returns current conditions plus today\'s high/low and rain chance. Keep a Taiwan place in Chinese as given (e.g. "高雄鳳山"); name other places in English.',
-    output: 'a JSON object {location, temp, feelsLike, condition, humidity, windSpeed, unit, isDay, high, low, rainChance}; the same values are also provided as individual fields. rainChance is the DAILY MAX precipitation %, not the chance for a given part of the day; condition is English — translate it.',
+    summary: 'Get the weather for a place NAME (Open-Meteo, no API key). Without date/hours: current conditions plus today\'s high/low and rain chance. With "date" and/or "hours": per-day summaries and an hourly table in the place\'s local time — forecast up to 14 days ahead, model data up to 92 days back, at most 16 days per call. Keep a Taiwan place in Chinese as given (e.g. "高雄鳳山"); name other places in English.',
+    output: 'without date/hours: a JSON object {location, temp, feelsLike, condition, humidity, windSpeed, unit, isDay, high, low, rainChance}; the same values are also provided as individual fields. rainChance is the DAILY MAX precipitation %, not the chance for a given part of the day. With date/hours: {location, source, timezone, from, to, hours, units, dayCols, days, step, hourCols, hourly, codes}: days rows follow dayCols (condition = the most significant weather in those hours; kind past/today/forecast); hourly maps each date to rows following hourCols, the code explained in codes; step = how often rows appear. Compare the hours the user asked about from the rows. Conditions are English — translate them.',
   },
   air_quality: {
     summary: 'Get the current air quality (AQI) for a place NAME (Open-Meteo, no API key); a location in Taiwan reads the nearest Ministry of Environment ground station instead when the user has saved a MOENV key. Keep a Taiwan place in Chinese as given (e.g. "高雄鳳山"); name other places in English.',
@@ -316,11 +350,11 @@ const AGENT_TOOL_DOCS: Partial<Record<SkillType, { summary: string; output?: str
   },
   stock: {
     summary: 'Get a stock / equity quote (Yahoo Finance, no API key). Market is set by the symbol suffix: US tickers as-is (AAPL), Taiwan .TW (2330.TW) or .TWO (OTC), indices with ^ (^TWII).',
-    output: 'a JSON quote object; a single symbol also provides fields symbol, name, currency, price, open, high, low, volume, previousClose, change, changePct, marketTime, session. Several comma/newline symbols give a JSON array. marketTime is exchange-local time with its UTC offset; session "open" means price is intraday, NOT a close ("closed", or "" when unknown).',
+    output: 'a JSON quote object; a single symbol also provides fields symbol, name, currency, price, open, high, low, volume, previousClose, change, changePct, marketTime, session. Several comma/newline symbols give a JSON array. marketTime is exchange-local time with its UTC offset; session "open" means price is intraday, NOT a close ("closed", or "" when unknown). With "period" or "date" each quote also has history {source, from, to, timezone, points, values, start, end, change, changePct, high, low, volume, at, series}: start/end/high/low are [date, close] of daily closes in the exchange\'s timezone, start being the close on or before from; at = the close on the requested date or the nearest trading day before it, with changeToEnd/changePctToEnd (a date outside the period leaves the period\'s figures alone); no trading day in the window (weekend, holiday, before the open) = points 0, a note, and start/end = the latest value before it; series = up to 30 [date, close] points incl. the high and low. With several symbols, a source/from/to/timezone/values equal to the first symbol\'s appears on the first only. Quote the computed change rather than your own arithmetic.',
   },
   forex: {
-    summary: 'Get a near-live foreign-exchange rate, and an optional converted amount (Yahoo Finance, falling back to a once-daily rate table; no API key).',
-    output: 'a JSON object {base, target, rate, amount, converted, asOf, previousClose, changePct, session}; the values are also provided as individual fields. asOf carries its UTC offset. previousClose and changePct are empty when only the daily fallback source answered.',
+    summary: 'Get a near-live foreign-exchange rate, and an optional converted amount (Yahoo Finance, falling back to a once-daily rate table; no API key). With "period" or "date" it adds the rate history from Yahoo only: if Yahoo is unreachable the call fails rather than using the daily table.',
+    output: 'a JSON object {base, target, rate, amount, converted, asOf, previousClose, changePct, session}; the values are also provided as individual fields. asOf carries its UTC offset. previousClose and changePct are empty when only the daily fallback source answered. With period/date also history (same shape as stock\'s, no volume; at.converted with an amount). History values are TARGET per 1 BASE (see quote): a falling USD/TWD means the TWD strengthened; state changePct with that direction.',
   },
   almanac: {
     summary: "The Chinese farmer's almanac (農民曆) for a date, computed locally: lunar date, stems and branches, zodiac, 黃道/黑道 and duty god, 宜/忌, lucky hours, clash and evil direction, 建除 officer, lunar mansion, god directions, Na Yin, spirits, Peng Zu taboos, fetus god, solar term, lunar festival. Use it for any lunar date or almanac question instead of recalling one; with a lunar date it gives the Gregorian day (中秋 = lunar \"YYYY-08-15\").",
@@ -357,8 +391,18 @@ function sanitizeFieldDesc(desc: string): string {
     .trim();
 }
 
+/**
+ * Fields only the agent has: they steer the run, not the skill, so a flow step never shows them
+ * (the skill ignores them). `answer` lets a research end the run with its own cited answer.
+ */
+const AGENT_EXTRA_FIELDS: Partial<Record<SkillType, SkillSpec['fields']>> = {
+  research: [
+    { key: 'answer', desc: '"false" if more steps follow it; "true" if it alone answers the GOAL (its answer goes to the user as is)' },
+  ],
+};
+
 export function visibleFieldsOf(spec: SkillSpec) {
-  return spec.fields.filter((f) => !AGENT_HIDDEN_FIELDS.has(f.key));
+  return [...spec.fields.filter((f) => !AGENT_HIDDEN_FIELDS.has(f.key)), ...(AGENT_EXTRA_FIELDS[spec.type] ?? [])];
 }
 
 /**
@@ -433,13 +477,21 @@ function builtinNames(scope: AgentToolScope): AgentBuiltinTool[] {
   const flows = scopeHasFlowTools(scope);
   return AGENT_BUILTIN_TOOLS.filter((tool) => {
     if (tool === 'draw_image') return scope.pictures === true;
+    if (tool === 'agoda_reviews') return scope.hotelReviews === true;
+    if (tool === 'export_file') return scope.documents === true;
     if (!scope.builtins) return false;
     return tool === 'delegate' ? scope.delegate === true : flows;
   });
 }
 
 function builtinCatalogFor(scope: AgentToolScope): string {
-  return buildBuiltinCatalog(scope.builtins && scope.delegate === true, scopeHasFlowTools(scope), scope.pictures === true);
+  return buildBuiltinCatalog(
+    scope.builtins && scope.delegate === true,
+    scopeHasFlowTools(scope),
+    scope.pictures === true,
+    scope.hotelReviews === true,
+    scope.documents === true,
+  );
 }
 
 function toolNames(scope: AgentToolScope): string[] {
@@ -490,6 +542,12 @@ export function describeToolSpec(name: string, scope: AgentToolScope = FULL_TOOL
  * the agent has no business setting them; none of them is required, so nothing
  * `requiredFieldsFor` demands can be filtered away here.
  */
+/** The one step number a string names ("step 1", "#1", "1"), or NaN when it names none or several. */
+export function stepNumberIn(text: string): number {
+  const numbers = text.match(/\d+/g) ?? [];
+  return numbers.length === 1 ? Number(numbers[0]) : Number.NaN;
+}
+
 function allowedConfigKeys(type: string): Set<string> {
   if (isHelpTool(type)) return new Set(['tool']);
   if (isBuiltinTool(type)) return new Set(builtinConfigKeys(type));
@@ -523,7 +581,7 @@ export interface AgentAction {
   choices?: string[];
   /** `finish` only: the model's own word on whether the GOAL is fully achieved. Absent = not said. */
   done?: boolean;
-  /** `finish` only, with `done: false`: what is still left, in the goal's language. */
+  /** `finish` only, with `done: false`: what is still left, in the answer language. */
   missing?: string;
 }
 
@@ -651,7 +709,8 @@ export function validateAgentAction(
         error: 'There is no step whose observation is a finished answer, so "deliver" is not available. Output a "finish" action and write the answer yourself.',
       };
     }
-    const from = typeof obj.from === 'number' ? obj.from : Number.parseInt(String(obj.from ?? ''), 10);
+    // "step 1", "#1", "1" are all the step the model means; only a string naming one number counts.
+    const from = typeof obj.from === 'number' ? obj.from : stepNumberIn(String(obj.from ?? ''));
     if (!deliverable.includes(from)) {
       return {
         ok: false,
@@ -688,7 +747,7 @@ export function validateAgentAction(
 
   if (action === 'finish') {
     const answer = validateFinalAnswer(obj);
-    if (!answer.ok) return answer;
+    if (!answer.ok) return { ok: false, error: answer.error };
     return {
       ok: true,
       value: {

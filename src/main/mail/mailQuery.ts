@@ -132,9 +132,8 @@ function isAscii(value: string): boolean {
 
 /**
  * Splits a query into what every IMAP server matches (dates, flags, ASCII text) and the non-ASCII
- * text terms. Outlook.com / Exchange answer a UTF-8 SEARCH with nothing at all (2026-10-23: a draft
- * saved with a Chinese subject could not be found by that subject), so those terms can be checked
- * by Yobi itself; `local` is null when there are none.
+ * text terms. Outlook.com / Exchange answer a UTF-8 SEARCH with nothing at all, so those terms can
+ * be checked by Yobi itself; `local` is null when there are none.
  */
 export function splitNonAsciiTerms(query: MailQuery): { server: MailQuery; local: LocalTerms | null } {
   const local: LocalTerms = { from: [], to: [], subject: [], words: [] };

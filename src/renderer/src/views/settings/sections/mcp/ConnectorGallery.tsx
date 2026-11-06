@@ -17,10 +17,11 @@ import { addedFirst, builtinTile, buildTiles, matchesFilter, matchesQuery } from
 import { connectorBotAccess } from './connectorBotAccess';
 import { MCP_CATEGORIES } from '../../../../../../shared/mcpCatalog';
 import {
-  BUILTIN_MAIL_SERVER_ID, BUILTIN_PTT_SERVER_ID, BUILTIN_RAIL_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID,
-  THUNDERBIRD_UNAVAILABLE_ERROR,
+  BUILTIN_CALENDAR_SERVER_ID, BUILTIN_MAIL_SERVER_ID, BUILTIN_PAGE_SERVER_ID, BUILTIN_PTT_SERVER_ID, BUILTIN_RAIL_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID,
+  BUILTIN_TRANSLATE_SERVER_ID, BUILTIN_X_SERVER_ID, THUNDERBIRD_UNAVAILABLE_ERROR,
 } from '../../../../../../shared/builtinConnectors';
 import { MailAccountSetup } from './MailAccountSetup';
+import { CalendarAccountSetup } from './CalendarAccountSetup';
 import { RailKeySetup } from './RailKeySetup';
 import { SITE_CONNECTOR_ROWS, siteConnectorServerId } from '../../../../../../shared/siteConnectors';
 import { BUILTIN_LINE_SERVER_ID } from '../../../../../../shared/types';
@@ -72,6 +73,8 @@ export const ConnectorGallery: React.FC<Props> = ({ mcp, roster, t, sectionGap }
   const [query, setQuery] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<McpServerView | null>(null);
   const [toolsFor, setToolsFor] = useState<string | null>(null);
+  // A CalDAV account can sign in as a mailbox, so the calendar card re-reads them when they change.
+  const [mailboxesVersion, setMailboxesVersion] = useState(0);
 
   const tiles = useMemo(() => buildTiles(mcp.servers, t), [mcp.servers, t]);
   // Read-only: who may use each connector through the bots. Shown only while a bot is on.
@@ -121,11 +124,30 @@ export const ConnectorGallery: React.FC<Props> = ({ mcp, roster, t, sectionGap }
       toggleLabel: t('settings.mcp.ptt.toggle'),
     },
     {
+      id: BUILTIN_TRANSLATE_SERVER_ID,
+      title: t('settings.mcp.translate.title'),
+      description: t('settings.mcp.translate.desc'),
+      toggleLabel: t('settings.mcp.translate.toggle'),
+    },
+    {
+      id: BUILTIN_PAGE_SERVER_ID,
+      title: t('settings.mcp.page.title'),
+      description: t('settings.mcp.page.desc'),
+      toggleLabel: t('settings.mcp.page.toggle'),
+    },
+    {
       id: BUILTIN_MAIL_SERVER_ID,
       title: t('settings.mcp.mail.title'),
       description: t('settings.mcp.mail.desc'),
       toggleLabel: t('settings.mcp.mail.toggle'),
-      footer: <MailAccountSetup t={t} />,
+      footer: <MailAccountSetup t={t} onSaved={() => setMailboxesVersion((n) => n + 1)} />,
+    },
+    {
+      id: BUILTIN_CALENDAR_SERVER_ID,
+      title: t('settings.mcp.calendar.title'),
+      description: t('settings.mcp.calendar.desc'),
+      toggleLabel: t('settings.mcp.calendar.toggle'),
+      footer: <CalendarAccountSetup t={t} mailboxesVersion={mailboxesVersion} />,
     },
     ...SITE_CONNECTOR_ROWS.map((row) => ({
       id: siteConnectorServerId(row.site),

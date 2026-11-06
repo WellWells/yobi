@@ -26,8 +26,8 @@ const SHORT_HOSTS = new Set(['b23.tv', 'www.b23.tv']);
 /** `BV1` and nine base58 characters. */
 const BV_ID = /^BV1[1-9A-HJ-NP-Za-km-z]{9}$/;
 /**
- * A language segment may come first: since 2026-10 the site sends a video page to `/zh-Hant/video/…`
- * for visitors in Taiwan, so that is also what such a visitor copies from the address bar.
+ * A language segment may come first: the site sends a video page to `/zh-Hant/video/…` for
+ * visitors in Taiwan, so that is also what such a visitor copies from the address bar.
  */
 const VIDEO_PATH = /^\/(?:[a-z]{2}(?:-[a-z]{2,4})?\/)?video\/(BV1[1-9A-HJ-NP-Za-km-z]{9}|av\d{1,12})\/?$/i;
 const SHORT_PATH = /^\/([A-Za-z0-9]{4,16})\/?$/;

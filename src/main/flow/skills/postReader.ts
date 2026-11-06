@@ -34,7 +34,7 @@ export interface SiteReadOptions {
    */
   interactive?: boolean;
   /**
-   * Whether the sign-in in Settings may be used (X, Instagram, Facebook). Without it a site reads
+   * Whether the sign-in in Settings may be used (X, Instagram, Facebook, Threads). Without it a site reads
    * as a visitor, never asks about the sign-in, and fails what only it shows: stories and
    * profiles with `notForOthersError`, a post with `signedInOnlyError`.
    */
@@ -66,7 +66,11 @@ export interface SiteReader {
  */
 export const SITE_READERS: Record<PostSiteId, SiteReader> = {
   x: { read: (link, { signal, signedIn }) => readPostThread(link, signal, signedIn), account: 'x' },
-  threads: { read: (link, { signal }) => readThreadsPostThread(link.url, signal) },
+  // A post Threads does not show to everyone is read with the sign-in; its replies are on its page.
+  threads: {
+    read: (link, { signal, signedIn, forOthers }) => readThreadsPostThread(link.url, { signal, signedIn, forOthers }),
+    account: 'threads',
+  },
   // A profile's analysis reads comments under its top posts; its menu and "all" read none.
   instagram: {
     read: (link, { comments, signal, signedIn, forOthers }) => readInstagramLink(link.url, signal, comments, signedIn, forOthers),

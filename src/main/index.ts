@@ -49,7 +49,7 @@ import { startDownloadsSweep } from './downloadsCache';
 import { startTrashSweep } from './conversationTrash';
 import { broadcastTrashChanged } from './ipc/conversationTrash';
 import { fileBotConversationsOnce } from './conversationFolderMigration';
-import { cleanupYtdlJobs, startYtdlUpdateSchedule, stopYtdlUpdateSchedule } from './youtubeDownload';
+import { cleanupYtdlJobs, migrateLegacyToolFolders, startYtdlUpdateSchedule, stopYtdlUpdateSchedule } from './youtubeDownload';
 import { startPerplexityVisitorWipe } from './providers/perplexityVisitor';
 import { refreshGeminiSignIn, setGeminiCookieReader } from './providers/geminiSignInState';
 import { getAccountStatus } from './providers/authStatus';
@@ -81,7 +81,7 @@ app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 /*
  * Fixed at 9333, away from Chrome's default 9222, so attaching to "the dev app" can never land on a
  * browser instead. YOBI_CDP_PORT is only for throwaway instances (screenshots, demos) that must run
- * next to `npm run dev`.
+ * next to the dev app.
  */
 const DEV_CDP_PORT = '9333';
 
@@ -233,6 +233,8 @@ app.whenReady().then(async () => {
   void lineRuntime.syncWithConfig();
   for (const runtime of Object.values(socketBots)) void runtime.syncWithConfig();
   startModelCatalogRefresh();
+  // The download tools' dated folders from before become the fixed ones a firewall rule can name.
+  void migrateLegacyToolFolders().catch((err) => sendLog(`⚠️ Could not move the download tools into fixed folders: ${err instanceof Error ? err.message : String(err)}`));
   startYtdlUpdateSchedule();
   // Records of downloads already cleaned up, or scratch left by a run the app closed on.
   void cleanupYtdlJobs().catch(() => {});

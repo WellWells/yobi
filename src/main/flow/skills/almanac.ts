@@ -101,7 +101,7 @@ async function parseSpan(raw: string, lunar: LunarReading): Promise<Span | null>
 /**
  * Where the lookup starts and, when the request names a span, how long it is. Models write the
  * span wherever it fits their sentence — "date": "2026-11", or "days": "2027" / "2027-01-01 to
- * 2027-06-30" (2026-10-22 live eval) — so a span is read from either field rather than refused.
+ * 2027-06-30" — so a span is read from either field rather than refused.
  * With a day in "date" as well, the span holds: a day before it is where the model stood, a day
  * inside it starts the span there, a day after it contradicts it. "lunar" reads every form.
  */
@@ -211,7 +211,7 @@ export async function resolveActivity(raw: string, script: AlmanacScript): Promi
 
 /**
  * What people call an activity, mapped to the almanac's name for it. Models pass the user's own
- * word (結婚, 搬家, 開店) about half the time — 2026-10-22 live eval — and each miss cost a call.
+ * word (結婚, 搬家, 開店) often, and each miss would cost a call.
  */
 export const ACTIVITY_WORDS: Readonly<Record<string, string>> = {
   結婚: '嫁娶', 婚禮: '嫁娶', 成婚: '嫁娶', 娶親: '嫁娶', 出嫁: '嫁娶', 辦婚禮: '嫁娶', 婚嫁: '嫁娶',
@@ -299,9 +299,9 @@ function hourLines(hour: AlmanacHour, strings: Record<string, string>): string {
 const isWeekend = (day: AlmanacDay): boolean => /[六日]$/.test(day.weekday);
 
 /**
- * What a filtered list already accounts for, in English for the model. 2026-10-22 eval: given
- * days kept for 屬虎, the model read a day's 「沖猴（申）」 as bad for the tiger and warned against
- * days the filter had already judged — `clash` is the sign the day is bad FOR, not the day's own.
+ * What a filtered list already accounts for, in English for the model. `clash` is the sign the
+ * day is bad FOR, not the day's own; without this the model warns against days the filter has
+ * already judged.
  */
 function describeFilters(from: string, to: string, activity: string, zodiac: string[], weekends: boolean): string {
   return [

@@ -41,6 +41,7 @@ const RUNTIME_BROADCASTS: Readonly<Record<BotPlatform, () => void>> = {
   line: () => sendToRenderer(IPC.LINE_RUNTIME, getLineRuntimeSnapshot()),
   discord: () => announceSocketBotRuntime('discord'),
   slack: () => announceSocketBotRuntime('slack'),
+  lineSelf: () => announceSocketBotRuntime('lineSelf'),
 };
 
 export function registerBotPermissionsHandlers(ctx: IpcContext): void {

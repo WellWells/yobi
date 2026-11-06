@@ -7,7 +7,7 @@ import type { TurnPostCard } from './postCard';
 import type { TurnProviderSwitch } from './providerFallback';
 import { turnButtonCommands } from './builtinFlows';
 import { isStoryLink, parseXMediaInput } from './xMedia';
-import { turnMediaKind } from './turnMedia';
+import { isLocalFilePath, turnMediaKind } from './turnMedia';
 
 export interface ThreadMeta {
   v: 1;
@@ -96,6 +96,12 @@ export interface TurnMeta {
   sw?: TurnProviderSwitch;
   c?: string;
   a?: string[];
+  /**
+   * Where each of `a` can be opened, in the same order; `''` for one that could not be kept. A
+   * person's own file stays where it is, a bot's upload or a paste is a copy in the chat's media
+   * cache. Read through `readTurnAttachments`, which checks the shape.
+   */
+  af?: string[];
   dropped?: number;
   summarized?: number;
   ti?: number;
@@ -156,6 +162,24 @@ export interface TurnMeta {
    * opening block. Read through `readPostCard`, which checks the shape and that block.
    */
   pc?: TurnPostCard;
+  /**
+   * A `!` command the user ran on this computer: the prompt is the command line and its output.
+   * Read through `readTurnShell`, which checks the shape.
+   */
+  sh?: TurnShell;
+}
+
+export interface TurnShell {
+  /** The shell's name as shown: pwsh, PowerShell, cmd, zsh. */
+  s: string;
+  /** The folder the command ran in. */
+  w: string;
+  /** The folder the command left the shell in, when it differs (a `cd`). */
+  to?: string;
+  /** The exit code; absent when the run was stopped. */
+  x?: number;
+  /** Stopped by the user before it finished. */
+  k?: 1;
 }
 
 /** Every item "all" takes of a person's stories (`MAX_STORY_ITEMS`), so the turn shows them all. */
@@ -200,8 +224,30 @@ export function readTurnMedia(meta: TurnMeta | undefined): string[] {
 function absolutePaths(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
   return raw
-    .filter((f): f is string => typeof f === 'string' && (/^[A-Za-z]:[\\/]/.test(f) || f.startsWith('/')))
+    .filter((f): f is string => typeof f === 'string' && isLocalFilePath(f))
     .slice(0, MAX_TURN_FILES);
+}
+
+export interface TurnAttachment {
+  name: string;
+  /** The file on this computer; absent on a turn from before `af`, or when it could not be kept. */
+  path?: string;
+}
+
+/**
+ * What a turn attached, each with its file when there is one: an attachment without a path is
+ * still shown by name. The same shape check as `readTurnFiles`.
+ */
+export function readTurnAttachments(meta: Pick<TurnMeta, 'a' | 'af'> | undefined): TurnAttachment[] {
+  const names: unknown = meta?.a;
+  if (!Array.isArray(names)) return [];
+  const files: unknown = meta?.af;
+  const paths: unknown[] = Array.isArray(files) ? files : [];
+  return names.flatMap((name: unknown, index): TurnAttachment[] => {
+    if (typeof name !== 'string' || !name) return [];
+    const [file] = absolutePaths([paths[index]]);
+    return [file ? { name, path: file } : { name }];
+  });
 }
 
 export interface TurnButton {

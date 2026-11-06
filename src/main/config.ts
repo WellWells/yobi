@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { openStoreWithRecovery } from './configStore';
 import { repairStoredShape } from './configShapeRepair';
-import { PROVIDER_URLS, SOCKET_BOT_PLATFORMS, SOCKET_BOT_SECRET_FIELDS, byokIdFromUrl, byokGroupIdFromUrl, isSocketBotPlatform } from '../shared/types';
+import { PROVIDER_URLS, SOCKET_BOT_PLATFORMS, SOCKET_BOT_SECRET_FIELDS, byokIdFromUrl, byokGroupIdFromUrl, hasSocketBotSecrets, isSocketBotPlatform } from '../shared/types';
 import type { HiddenSources, SecretFailure, SecretScope, SocketBotPlatform } from '../shared/types';
 import { defaultStored } from './configTypes';
 import type {
@@ -26,6 +26,7 @@ import {
   normalizeLine,
   normalizeDiscord,
   normalizeSlack,
+  normalizeLineSelf,
   normalizeMailAccounts,
   migrateLegacyMailAccount,
   sameMailSignIn,
@@ -163,6 +164,7 @@ function liveSocketSection(target: Config, platform: SocketBotPlatform): SecretR
 
 function initSocketSecrets(stored: StoredConfig): void {
   for (const platform of SOCKET_BOT_PLATFORMS) {
+    if (!hasSocketBotSecrets(platform)) continue;
     const section = storedSocketSection(stored, platform);
     for (const field of socketSecrets(platform)) {
       liveSocketSection(config, platform)[field] = readSecret(section[`${field}Encrypted`] ?? '', { scope: platform, id: '', field, label: '' });
@@ -173,6 +175,7 @@ function initSocketSecrets(stored: StoredConfig): void {
 /** One platform's section as stored: its secrets encrypted (or kept, see `writeSecret`), the rest as is. */
 function storedSocketConfig<P extends SocketBotPlatform>(platform: P, merged: Config[P], previous: StoredConfig | undefined): StoredConfig[P] {
   const plain = { ...(merged as unknown as Record<string, unknown>) };
+  if (!hasSocketBotSecrets(platform)) return plain as unknown as StoredConfig[P];
   const before = storedSocketSection(previous, platform);
   for (const field of socketSecrets(platform)) {
     const plaintext = typeof plain[field] === 'string' ? plain[field] as string : '';
@@ -336,7 +339,7 @@ function writeSecret(plaintext: string, previousEncrypted: string, at: SecretFai
 
 function saveConfig(cfg: Partial<Config>): void {
   const {
-    telegram: partialTelegram, line: partialLine, discord: partialDiscord, slack: partialSlack,
+    telegram: partialTelegram, line: partialLine, discord: partialDiscord, slack: partialSlack, lineSelf: partialLineSelf,
     byokInstances: partialByok, mailAccounts: partialMail, ...nonSensitivePartial
   } = cfg;
 
@@ -348,17 +351,19 @@ function saveConfig(cfg: Partial<Config>): void {
     line: config.line,
     discord: config.discord,
     slack: config.slack,
+    lineSelf: config.lineSelf,
     byokInstances: config.byokInstances,
     // The default id is checked against the accounts being saved, not the ones being replaced.
     mailAccounts: mergedMail,
   });
   const {
-    telegram: _ignoredTelegram, line: _ignoredLine, discord: _ignoredDiscord, slack: _ignoredSlack,
+    telegram: _ignoredTelegram, line: _ignoredLine, discord: _ignoredDiscord, slack: _ignoredSlack, lineSelf: _ignoredLineSelf,
     byokInstances: _ignoredByok, mailAccounts: _ignoredMail, ...storedBase
   } = mergedBase;
 
   const mergedDiscord = partialDiscord !== undefined ? normalizeDiscord({ ...config.discord, ...partialDiscord }) : config.discord;
   const mergedSlack = partialSlack !== undefined ? normalizeSlack({ ...config.slack, ...partialSlack }) : config.slack;
+  const mergedLineSelf = partialLineSelf !== undefined ? normalizeLineSelf({ ...config.lineSelf, ...partialLineSelf }) : config.lineSelf;
 
   const mergedTelegram = partialTelegram !== undefined
     ? deserializePairingConfig({ ...config.telegram, ...partialTelegram })
@@ -435,6 +440,7 @@ function saveConfig(cfg: Partial<Config>): void {
     line: storedLine,
     discord: storedSocketConfig('discord', mergedDiscord, store.store),
     slack: storedSocketConfig('slack', mergedSlack, store.store),
+    lineSelf: storedSocketConfig('lineSelf', mergedLineSelf, store.store),
     byokInstances: storedByok,
     mailAccounts: storedMail,
   } as StoredConfig;
@@ -445,6 +451,7 @@ function saveConfig(cfg: Partial<Config>): void {
     line: mergedLine,
     discord: mergedDiscord,
     slack: mergedSlack,
+    lineSelf: mergedLineSelf,
     byokInstances: mergedByok,
     mailAccounts: mergedMail,
   });

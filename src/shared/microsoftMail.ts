@@ -1,7 +1,7 @@
 /**
  * Signing in to Outlook.com / Hotmail / Microsoft 365 mail with a Microsoft account (OAuth 2.0 with
  * PKCE, Yobi as a public client). Microsoft stopped taking passwords: an Outlook.com app password
- * was refused with `535 5.7.3 Authentication unsuccessful` (2026-10-23).
+ * is refused with `535 5.7.3 Authentication unsuccessful`.
  *
  * One token serves both servers: its scopes are IMAP and SMTP on `outlook.office.com`, signed in
  * with XOAUTH2 — the way Thunderbird reaches the same mailboxes.

@@ -5,6 +5,7 @@ import * as fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { IPC } from '../../shared/types';
 import { withLeadingBom } from '../../shared/conversationDoc';
+import { turnFileOpens } from '../../shared/turnMedia';
 import type {
   AttachmentStashRequest,
   ConversationImportResult,
@@ -251,6 +252,18 @@ export function registerFileHandlers(): void {
   ipcMain.handle(IPC.OPEN_FILE_WITH, async (_event, filePath: unknown) => {
     if (typeof filePath !== 'string' || !await isAllowedFilePath(filePath) || !existsSync(filePath)) return false;
     return openWithChooser(path.resolve(filePath));
+  });
+  // A file a conversation shows can sit anywhere, and its path comes from a file that can be
+  // imported or edited by hand: what it is decides, not where. False when it is gone.
+  ipcMain.handle(IPC.TURN_FILE_ACTION, async (_event, action: unknown, filePath: unknown): Promise<boolean> => {
+    if (typeof filePath !== 'string' || !turnFileOpens(filePath)) return false;
+    const file = path.resolve(filePath);
+    if (!(await fs.stat(file).catch(() => null))?.isFile()) return false;
+    if (action === 'open') return await shell.openPath(file) === '';
+    if (action === 'openWith') return openWithChooser(file);
+    if (action !== 'copy') return false;
+    await writeFilesToClipboard([file]);
+    return true;
   });
   // Returns how many files landed on the clipboard: missing or outside files are skipped silently,
   // so the renderer's "N files copied" counts this, not what it asked for.

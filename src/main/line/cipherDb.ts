@@ -73,6 +73,8 @@ export function openEncryptedQueryable(dbPath: string, key: string): EncryptedHa
   const queryable: Queryable = {
     all: (sql, params = []) => db.prepare(sql).all(...(params as [])) as Record<string, unknown>[],
     get: (sql, params = []) => db.prepare(sql).get(...(params as [])) as Record<string, unknown> | undefined,
+    // better-sqlite3-multiple-ciphers ships the function() method but omits it from its types.
+    register: (name, fn) => { (db as unknown as { function: (n: string, f: (...a: unknown[]) => unknown) => void }).function(name, fn); },
   };
   return { queryable, close: () => db.close() };
 }

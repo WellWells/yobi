@@ -43,6 +43,23 @@ export const ForexConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) =
         allowNegative={false}
       />
     </Group>
+    <Group grow gap="xs">
+      <AppTextInput
+        label={t('flow.skill.forex.period')}
+        placeholder={t('flow.skill.forex.period.placeholder')}
+        value={step.config.period ?? ''}
+        onChange={(e) => onChange({ ...step.config, period: e.currentTarget.value })}
+        size="sm"
+      />
+      <AppTextInput
+        label={t('flow.skill.forex.date')}
+        placeholder={t('flow.skill.forex.date.placeholder')}
+        value={step.config.date ?? ''}
+        onChange={(e) => onChange({ ...step.config, date: e.currentTarget.value })}
+        size="sm"
+      />
+    </Group>
+    <Text fz="xs" c="dimmed">{t('flow.skill.forex.period.hint')}</Text>
     <Text fz="xs" c="dimmed">{t('flow.skill.forex.source')}</Text>
   </Stack>
 );

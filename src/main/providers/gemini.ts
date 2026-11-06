@@ -17,6 +17,7 @@ import {
   INJECTED_GEMINI_TEMPORARY_JS,
   INJECTED_GEMINI_WAIT_AND_READ_JS,
 } from './geminiReadScript';
+import { restoreListNesting, type ListMark } from './geminiListNesting';
 import { decodePageImages } from './generatedImages';
 import type { ProviderRunResult } from './generatedImages';
 import { GEMINI_SIGNED_OUT_PROMPT_CAP, geminiPromptCap, noteGeminiComposerCut } from './geminiSignInState';
@@ -28,6 +29,7 @@ interface PageRunResult {
   response: string;
   title: string;
   images?: unknown;
+  listOutline?: ListMark[];
 }
 
 const MAX_BOUNCE_ATTEMPTS = 5;
@@ -150,7 +152,7 @@ async function runGeminiAttempt(
     }
 
     return {
-      response: (result.response || '').trim(),
+      response: restoreListNesting((result.response || '').trim(), result.listOutline ?? []),
       title: (result.title || '').trim(),
       ...(images.length > 0 ? { images } : {}),
     };

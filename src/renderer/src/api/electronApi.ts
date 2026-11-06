@@ -106,8 +106,13 @@ import type {
   StartedConversation,
   ConversationImportResult,
   StashedAttachment,
+  TurnFileAction,
   PromptPreferences,
   ChatTurnEvent,
+  ShellInfo,
+  ShellOutputEvent,
+  ShellRunReply,
+  ShellRunRequest,
   PromptTriggerOptions,
   Provider,
   QueueState,
@@ -140,9 +145,10 @@ import type {
   UiNotificationPayload,
   HotkeyBindResult,
 } from '../../../shared/types';
-import type { BotAudienceSnapshot, BotPlatform, TrackpadGestureEvent } from '../../../shared/types';
+import type { BotAudienceSnapshot, BotPlatform, ReadingZoomCommand, TrackpadGestureEvent } from '../../../shared/types';
 import type { StepProgress } from '../../../shared/stepProgress';
 import type { CalendarSaveRequest, CalendarSaveResult, CalendarSummary, CalendarTestRequest, CalendarTestResult } from '../../../shared/calendars';
+import type { CalDavAccountInput, CalDavRefreshResult, CalDavSaveResult, CalDavSnapshot } from '../../../shared/calDav';
 import type { FlowMetricsSnapshot } from '../../../shared/flowMetrics';
 import type { ConversationTokenStats } from '../../../shared/tokenEstimate';
 import type { FeedPreviewRequest, FeedPreviewResult } from '../../../shared/feedPreview';
@@ -233,6 +239,9 @@ export const fileApi = {
   openPath: (filePath: string): Promise<boolean> => window.electronAPI.openPath(filePath),
   /** The OS "Open with" chooser (Windows) or the default text editor (macOS). */
   openWith: (filePath: string): Promise<boolean> => window.electronAPI.openFileWith(filePath),
+  /** A file a conversation shows, wherever it is: false when it is gone or may not be opened. */
+  turnFileAction: (action: TurnFileAction, filePath: string): Promise<boolean> =>
+    window.electronAPI.turnFileAction(action, filePath),
   /** Puts the files themselves on the clipboard, ready to paste into a folder or a chat app. */
   /** Resolves to how many of the files were put on the clipboard. */
   copyFiles: (filePaths: string[]): Promise<number> => window.electronAPI.copyFilesToClipboard(filePaths),
@@ -331,6 +340,7 @@ export const settingsApi = {
     window.electronAPI.setLinkRecognition(target, on),
   onLinkRecognitionChanged: (cb: (state: LinkRecognitionState) => void) => window.electronAPI.onLinkRecognitionChanged(cb),
   getMarkdownZoom: (): Promise<number> => window.electronAPI.getMarkdownZoom(),
+  onReadingZoomCommand: (cb: (command: ReadingZoomCommand) => void) => window.electronAPI.onReadingZoomCommand(cb),
   getCaptureSettings: (): Promise<CaptureSettings> => window.electronAPI.getCaptureSettings(),
   updateCaptureSettings: (settings: CaptureSettings): Promise<boolean> => window.electronAPI.updateCaptureSettings(settings),
   getQuickExport: (): Promise<QuickExportSettings> => window.electronAPI.getQuickExport(),
@@ -365,10 +375,6 @@ export const telegramApi = {
     window.electronAPI.testTelegramLargeUpload(input),
   updateAllowGroupCommands: (enabled: boolean): Promise<boolean> =>
     window.electronAPI.updateTelegramAllowGroupCommands(enabled),
-  updateDefaultReplyMode: (mode: 'markdown' | 'png' | 'webp' | 'pdf'): Promise<boolean> =>
-    window.electronAPI.updateTelegramDefaultReplyMode(mode),
-  updateCompactReply: (enabled: boolean): Promise<boolean> =>
-    window.electronAPI.updateTelegramCompactReply(enabled),
   updateLlmDirect: (config: BotLlmDirectConfig): Promise<boolean> =>
     window.electronAPI.updateTelegramLlmDirect(config),
   generatePairingCode: () => window.electronAPI.generateTelegramPairingCode(),
@@ -468,6 +474,10 @@ export const calendarApi = {
   save: (request: CalendarSaveRequest): Promise<CalendarSaveResult> => window.electronAPI.saveCalendar(request),
   remove: (id: string): Promise<CalendarSummary[]> => window.electronAPI.removeCalendar(id),
   test: (request: CalendarTestRequest): Promise<CalendarTestResult> => window.electronAPI.testCalendar(request),
+  listCalDav: (): Promise<CalDavSnapshot> => window.electronAPI.listCalDav(),
+  saveCalDav: (input: CalDavAccountInput): Promise<CalDavSaveResult> => window.electronAPI.saveCalDav(input),
+  removeCalDav: (id: string): Promise<CalDavSnapshot> => window.electronAPI.removeCalDav(id),
+  refreshCalDav: (id: string): Promise<CalDavRefreshResult> => window.electronAPI.refreshCalDav(id),
 };
 
 export const emailApi = {
@@ -596,6 +606,14 @@ export const secretApi = {
 export const promptApi = {
   triggerWithOptions: (options: PromptTriggerOptions): Promise<string | null> =>
     window.electronAPI.triggerPromptWithOptions(options),
+};
+
+/** A chat line starting with `!`: run on this computer, then read by the model. */
+export const shellApi = {
+  info: (conversationPath?: string): Promise<ShellInfo> => window.electronAPI.getShellInfo(conversationPath),
+  run: (request: ShellRunRequest): Promise<ShellRunReply> => window.electronAPI.runShellCommand(request),
+  stop: (sendId: string): Promise<boolean> => window.electronAPI.stopShellCommand(sendId),
+  onOutput: (cb: (event: ShellOutputEvent) => void) => window.electronAPI.onShellOutput(cb),
 };
 
 /** Ctrl+G in the composer: the draft in the user's own editor, saves coming back as they land. */

@@ -1,21 +1,14 @@
 import type {
-  CaptureSettings,
-  MarkdownCaptureRequest,
   QueueState,
   TelegramRuntimeSnapshot,
   TelegramSettingsSnapshot,
 } from '../shared/types';
-import { cardStyleFromSettings, formatCardTime, mustShowPrompt } from '../shared/captureCard';
 import { normalizePairingState } from './telegram';
 import { listBotContacts } from './botDirectory';
 import { isTelegramAdminGrant, telegramAdminMirror } from './botPermissions';
 import { config, saveConfig } from './config';
-import { maskToken, sendLog } from './helpers';
-import { getLangCache, localizeUserFacingError, t } from './i18n';
-import { captureMarkdownDocument } from './capture';
-import { buildSafeFileNameFromTitle, getOutputDir, getUniquePath } from './files';
-import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
+import { maskToken } from './helpers';
+import { getLangCache, t } from './i18n';
 
 let _telegramRuntimeSnapshot: TelegramRuntimeSnapshot = {
   status: 'idle',
@@ -63,8 +56,6 @@ export async function buildTelegramSettingsSnapshot(): Promise<TelegramSettingsS
       apiHashPreview: maskToken(config.telegram.apiHash),
     },
     allowGroupCommands: config.telegram.allowGroupCommands,
-    defaultReplyMode: config.telegram.defaultReplyMode,
-    compactReply: config.telegram.compactReply,
     permissions: config.telegram.permissions,
     defaultGrants: config.telegram.defaultGrants,
     llmDirect: config.telegram.llmDirect,
@@ -94,84 +85,4 @@ export function buildTelegramStatusText(state: QueueState): string {
     ...runningLines,
     t(s, 'telegram.status.queued', { count: `${queuedCount}` }),
   ].join('\n');
-}
-
-export interface TelegramExportRequest {
-  format: 'png' | 'webp' | 'pdf';
-  providerLabel: string;
-  savedFileName: string;
-  prompt: string;
-  response: string;
-  title: string;
-}
-
-/**
- * The card a bot export renders, in the user's Card style (the same one the shortcut, the export
- * dialog and a flow's capture step use). The answer goes in as one turn, with no
- * "Prompt"/"Content" section labels.
- */
-export function buildTelegramCaptureRequest(
-  request: TelegramExportRequest,
-  settings: CaptureSettings,
-  exportedAt: string,
-  locale: string,
-): MarkdownCaptureRequest {
-  const timestamp = formatCardTime(exportedAt, locale);
-  const style = cardStyleFromSettings(settings);
-  return {
-    payload: {
-      title: request.title || request.savedFileName.replace(/\.md$/i, ''),
-      prompt: request.prompt,
-      content: request.response,
-      summary: '',
-      provider: request.providerLabel,
-      timestamp,
-      turns: [{ prompt: request.prompt, response: request.response, provider: request.providerLabel, timestamp }],
-    },
-    options: {
-      mode: 'save',
-      format: request.format,
-      fileName: request.savedFileName.replace(/\.md$/i, '') || buildSafeFileNameFromTitle(request.title),
-      showPrompt: mustShowPrompt(settings.cardLayout, 1) || settings.showPrompt,
-      showContent: true,
-      showProvider: settings.showProvider,
-      showTimestamp: settings.showTimestamp,
-      showTokens: false,
-      width: style.width,
-      margin: style.margin,
-      background: style.background,
-      cardTheme: style.cardTheme,
-      cardLayout: settings.cardLayout,
-      pixelRatio: style.pixelRatio,
-      zip: false,
-    },
-  };
-}
-
-export async function exportTelegramResultDocument(
-  request: TelegramExportRequest,
-): Promise<{ ok: boolean; filePath?: string; error?: string }> {
-  try {
-    const captureRequest = buildTelegramCaptureRequest(
-      request,
-      config.captureSettings,
-      new Date().toISOString(),
-      config.locale,
-    );
-    const baseName = captureRequest.options.fileName ?? '';
-    const captureResult = await captureMarkdownDocument(captureRequest);
-
-    const outputDir = await getOutputDir();
-    await fs.mkdir(outputDir, { recursive: true });
-    const desiredPath = path.join(outputDir, `${baseName}.${captureResult.ext}`);
-    const filePath = await getUniquePath(desiredPath, '');
-    await fs.writeFile(filePath, captureResult.buffer);
-    sendLog(`[telegram] ${request.format.toUpperCase()} export saved: ${path.basename(filePath)}`);
-    return { ok: true, filePath };
-  } catch (err: unknown) {
-    const rawMessage = err instanceof Error ? err.message : 'export failed';
-    const message = localizeUserFacingError(rawMessage, getLangCache());
-    sendLog(`[telegram] export failed: ${rawMessage}`);
-    return { ok: false, error: message };
-  }
 }

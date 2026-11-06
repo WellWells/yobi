@@ -1,3 +1,5 @@
+import { tokenize } from './rank';
+
 const LEAD_PATTERNS: readonly RegExp[] = [
   /^(?:請問|請你|請|麻煩你|麻煩|幫我(?:查詢|查|搜尋|找|看|問)一下|幫我(?:查詢|查|搜尋|找|看|問)|我想(?:知道|問|查|了解|瞭解)|我想|告訴我|查一下|搜尋一下|給我|想請教|想問)\s*/,
   /^(?:please|can you|could you|would you|tell me about|tell me|i want to know|i'd like to know|i wanna know|search for|look up|find me|find|show me|give me)\s+/i,
@@ -43,4 +45,20 @@ export function normalizeQuery(query: string): string {
 
 export function queriesFor(query: string): string[] {
   return [normalizeQuery(query)];
+}
+
+/**
+ * A plan's queries with the near-duplicates dropped: the same words in another order, spacing or
+ * case would cost a request for the same results. A query of symbols only is compared as typed.
+ */
+export function distinctQueries(queries: readonly string[]): string[] {
+  const seen = new Set<string>();
+  return queries.filter((query) => {
+    const raw = query.trim().toLowerCase();
+    if (!raw) return false;
+    const key = [...new Set(tokenize(query))].sort().join(' ') || `raw:${raw}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }

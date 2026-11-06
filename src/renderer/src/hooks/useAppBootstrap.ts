@@ -120,6 +120,7 @@ export function useAppBootstrap() {
       claudeModelApi.onChanged(setClaudeModels),
       chatgptModelApi.onChanged(setChatgptModels),
       settingsApi.onLinkRecognitionChanged(useLinkRecognitionStore.getState().apply),
+      settingsApi.onReadingZoomCommand(useAppStore.getState().applyReadingZoomCommand),
     ];
     return () => unsubs.forEach((fn) => fn());
   }, [appendLog, setStatus, setQueue, setAccountStatus, setView, setTempChatMode, setTempChatResult, setGeminiModels, setClaudeModels, setChatgptModels]);

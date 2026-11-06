@@ -20,7 +20,9 @@ import type { ReadAccess } from './readAccess';
 import { resolveShortLink } from './siteFetch';
 import { cuesFromBilibili } from './srt';
 import type { SubtitleCue } from './srt';
-import type { TimedSubtitles, VideoInfo, VideoSite } from './videoSiteTypes';
+import { downloadBilibiliStreams } from './bilibiliStreams';
+import type { DirectDownloadRequest, TimedSubtitles, VideoInfo, VideoSite } from './videoSiteTypes';
+import type { YtdlDownloadResult } from '../../youtubeDownload';
 
 /*
  * A bilibili video, read the way its own page reads it: the page in a hidden window
@@ -36,7 +38,7 @@ import type { TimedSubtitles, VideoInfo, VideoSite } from './videoSiteTypes';
  * The page's video, or `{ missing }` once the page shows none: bilibili sends a gone video to
  * its home page (`selfDef.errorpage`). `{ notVideo }` (the path it went to) when the video link
  * turned out to be something else: the page moved off `/video/` (a language segment before it, as
- * in `/zh-Hant/video/…` for visitors in Taiwan since 2026-10, is still the video), or its data points elsewhere
+ * in `/zh-Hant/video/…` for visitors in Taiwan, is still the video), or its data points elsewhere
  * (`redirect_url`, a series episode the page is about to move to). While the page has not
  * opened or the script check runs there is no state yet: null, keep waiting.
  */
@@ -294,6 +296,9 @@ function mayReadSubtitles(access?: Pick<ReadAccess, 'signIn'>): boolean {
   return (access?.signIn ?? 'full') !== 'none';
 }
 
+/** The quality list each menu's read found, for the download that follows it (`DirectDownloadRequest.info`). */
+const playurls = new WeakMap<VideoInfo, unknown>();
+
 async function bilibiliInfo(ref: VideoRef, signal?: AbortSignal, access?: Pick<ReadAccess, 'signIn'>): Promise<VideoInfo> {
   const { id, part } = await resolveLink(ref, signal);
   const { data, playurl } = await readVideo(withSitePage, id, part, { qualities: true, subtitles: false, words: false }, signal);
@@ -310,7 +315,7 @@ async function bilibiliInfo(ref: VideoRef, signal?: AbortSignal, access?: Pick<R
   };
   // Subtitles are given only to a signed-in account: a summary and an .srt need one, and a track to read.
   const words = subtitles.signedIn === true && pickSubtitle(subtitles.tracks) !== null;
-  return {
+  const info: VideoInfo = {
     ref: video,
     title: data.title,
     channel: data.owner,
@@ -323,6 +328,19 @@ async function bilibiliInfo(ref: VideoRef, signal?: AbortSignal, access?: Pick<R
     // Every quality is H.264 with AAC; Telegram may price one with the low AAC so it fits whole.
     choices: (destination, includeSmall = false, limitBytes) => bilibiliChoices(playurl, includeSmall, data.durationS, destination, limitBytes),
   };
+  playurls.set(info, playurl);
+  return info;
+}
+
+/**
+ * Yobi's own download, before yt-dlp: the streams of the quality list this menu read (read again,
+ * signed out, for an `info` this module did not make), each from its backup addresses when a host
+ * refuses (`bilibiliStreams.ts`).
+ */
+async function bilibiliDirect(request: DirectDownloadRequest): Promise<YtdlDownloadResult> {
+  const held = playurls.get(request.info);
+  const playurl = held ?? playurls.get(await bilibiliInfo(request.info.ref, request.signal, { signIn: 'none' }));
+  return downloadBilibiliStreams(request, playurl);
 }
 
 /**
@@ -380,6 +398,9 @@ async function refreshToken(ref: VideoRef, signal?: AbortSignal): Promise<boolea
 
 export const bilibiliVideo: VideoSite = {
   info: bilibiliInfo,
+  // Yobi's own download first, yt-dlp (below) when it fails: yt-dlp asks only a stream's first
+  // address, which bilibili's EdgeOne host refuses it (HTTP 567) where the backups answer.
+  directDownload: bilibiliDirect,
   // Every quality is H.264 with AAC: where it goes changes the MP3's bitrate and, for a Telegram
   // quality priced with the low AAC, the audio.
   downloadArgs: (ref, quality, destination, lowAudio) => bilibiliSiteArgs(ref, quality, destination, lowAudio),

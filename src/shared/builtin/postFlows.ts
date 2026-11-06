@@ -6,21 +6,31 @@ import { BOT_MODEL, CHAT_MODEL, END_IF, REPLY, chatFlowOf, flowOf, llmStep, step
 
 /**
  * The post's text with its video or photos under it (one album for several), the text alone when
- * there are none; a post over Telegram's caption limit goes out as its own message first. Under
- * it, "analyze": the link and the word, which runs the analyze flow — none under a story, where
- * `x_media` leaves the line empty and the button drops out — and "MP3" when the post has a video
- * (`{{xm.mp3}}`, empty otherwise). A link offering several items (a person's Facebook stories)
- * gets their menu instead: the items' pictures (Telegram's album, LINE's cards from
+ * there are none. A post over Telegram's caption limit keeps the start of its text under the media
+ * and the rest follows; should the media not go, the whole text does, so nothing goes missing with
+ * it. At the very end, "analyze": the link and the word, which runs the analyze flow — none under a
+ * story, where `x_media` leaves the line empty and the button drops out — and "MP3" when the post
+ * has a video (`{{xm.mp3}}`, empty otherwise). A link offering several items (a person's Facebook
+ * stories) gets their menu instead: the items' pictures (Telegram's album, LINE's cards from
  * `buttonImages`) and a button per item.
  */
 export function postForwardFlow(ids: PostIds, name: string, analyzeLabel: string): FlowDefinition {
-  const button = `${analyzeLabel} | {{xm.analyze}}\n${MP3_LABEL} | {{xm.mp3}}\n{{xm.buttons}}`;
+  const media = { ...REPLY, attachment: '{{xm}}', preview: '{{xm.previews}}' };
+  const closing = { buttons: `${analyzeLabel} | {{xm.analyze}}\n${MP3_LABEL} | {{xm.mp3}}\n{{xm.buttons}}`, buttonImages: '{{xm.buttonImages}}' };
   return flowOf(ids.forward, name, ids.cmdForward, stepsOf(ids.forward, [
     ['x_media', { input: '{{input}}', destination: 'auto', folder: '', reader: '' }, 'xm'],
-    ['if', { left: '{{xm.overflow}}', operator: 'is_true', right: '' }],
-    ['bot', { ...REPLY, message: '{{xm.overflow}}' }, 'bot_text'],
+    ['if', { left: '{{xm.rest}}', operator: 'is_false', right: '' }],
+    ['bot', { ...media, ...closing, message: '{{xm.caption}}' }, 'bot_media'],
     END_IF,
-    ['bot', { ...REPLY, message: '{{xm.caption}}', attachment: '{{xm}}', preview: '{{xm.previews}}', buttons: button, buttonImages: '{{xm.buttonImages}}' }, 'bot_media'],
+    ['if', { left: '{{xm.rest}}', operator: 'is_true', right: '' }],
+    ['bot', { ...media, message: '{{xm.lead}}' }, 'bot_lead'],
+    ['if', { left: '{{bot_lead.isFailed}}', operator: 'equals', right: '1' }],
+    ['bot', { ...REPLY, ...closing, message: '{{xm.overflow}}' }, 'bot_text'],
+    END_IF,
+    ['if', { left: '{{bot_lead.isFailed}}', operator: 'not_equals', right: '1' }],
+    ['bot', { ...REPLY, ...closing, message: '{{xm.rest}}' }, 'bot_rest'],
+    END_IF,
+    END_IF,
   ]));
 }
 

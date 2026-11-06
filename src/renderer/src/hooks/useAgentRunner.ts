@@ -1,6 +1,5 @@
 import { startTransition, useCallback } from 'react';
 import type { AgentCommandResult, AgentRunSummary } from '../../../shared/types';
-import { attachmentMetaNames } from '../../../shared/conversationDoc';
 import { useAppStore } from '../store/appStore';
 import { agentApi, fileApi } from '../api/electronApi';
 import { answeringRun, choiceAnswer, pendingQuestionFrom, useAgentRunStore } from '../store/useAgentRunStore';
@@ -53,7 +52,7 @@ export function useAgentRunner(
     call: () => Promise<AgentCommandResult>,
     mcpServerIds?: readonly string[],
   ): Promise<void> => {
-    const sendId = begin(goal, runId, attachmentMetaNames(attachments));
+    const sendId = begin(goal, runId, attachments);
     try {
       const res = await call();
       if (res.usedWeb) onUsedWeb?.();

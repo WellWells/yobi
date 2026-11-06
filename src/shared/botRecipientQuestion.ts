@@ -15,9 +15,11 @@ const BOT_COMMAND_TRIGGER: TriggerType = 'bot';
 /** How a request names each platform. */
 const PLATFORM_WORDS: Readonly<Record<BotPlatform, RegExp>> = {
   telegram: /telegram|電報|电报|(?<![a-z])tg(?![a-z])/i,
-  line: /(?<![a-z])line(?![a-z])/i,
+  // "LINE PC" is the user's own account (lineSelf), not the LINE bot.
+  line: /(?<![a-z])line(?![a-z])(?!\s*(?:pc|電腦版|电脑版))/i,
   discord: /discord/i,
   slack: /slack/i,
+  lineSelf: /(?<![a-z])line\s*(?:pc|電腦版|电脑版)/i,
 };
 
 /** Which platforms the words point at: one named alone, otherwise every connected one. */

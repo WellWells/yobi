@@ -50,7 +50,13 @@ export interface SiteDownloadHooks {
   refreshBlocked?: (signal?: AbortSignal) => Promise<boolean>;
 }
 
-export type VideoDownloadOptions = Omit<YtdlpDownloadRun, 'label'> & SiteDownloadHooks;
+export type VideoDownloadOptions = Omit<YtdlpDownloadRun, 'label'> & SiteDownloadHooks & {
+  /**
+   * False for a site Yobi downloads itself before yt-dlp (bilibili): a yt-dlp that cannot read it
+   * never pauses its downloads, and a pause left from before does not refuse this one.
+   */
+  pausable?: boolean;
+};
 
 async function recordFailure(site: LinkSiteId, category: YtdlFailureCategory, siteChanged = false): Promise<void> {
   const at = new Date().toISOString();
@@ -72,7 +78,7 @@ async function clearLastFailure(): Promise<void> {
 }
 
 async function downloadWithRetries(site: LinkSiteId, label: string, options: VideoDownloadOptions): Promise<YtdlpDownloadResult> {
-  const { refreshBlocked, ...run } = options;
+  const { refreshBlocked, pausable = true, ...run } = options;
   let networkRetried = false;
   let updated = false;
   let refreshed = false;
@@ -104,7 +110,7 @@ async function downloadWithRetries(site: LinkSiteId, label: string, options: Vid
           continue;
         }
         // Copies the user installed are never updated by Yobi, so a pause would never lift.
-        await recordFailure(site, SITE_CHANGED, getYtdlToolsState().status !== 'custom');
+        await recordFailure(site, SITE_CHANGED, pausable && getYtdlToolsState().status !== 'custom');
         throw err;
       }
       await recordFailure(site, err.category);
@@ -122,7 +128,7 @@ export async function downloadVideo(site: LinkSiteId, options: VideoDownloadOpti
   const label = siteLabel(site);
   const state = getYtdlToolsState();
   if (state.status !== 'ready' && state.status !== 'custom') throw new YtdlError('other', 'tools not ready');
-  if (siteChangedAt(state, site)) {
+  if (options.pausable !== false && siteChangedAt(state, site)) {
     throw new YtdlError(SITE_CHANGED, `waiting for a yt-dlp that handles the latest ${label} change`);
   }
   return withDownloadSlot(label, options.signal, () => downloadWithRetries(site, label, options));

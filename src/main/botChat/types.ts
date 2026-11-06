@@ -56,6 +56,11 @@ export interface BotChatOutput<E extends BotChatEvent> {
   reply: (event: E, text: string) => Promise<void>;
   push: (event: E, text: string) => Promise<void>;
   /**
+   * True = a run starts without the "queued" line: the answer is the only message. For a platform
+   * whose every message is the owner's own, read by everyone in the chat (LINE PC).
+   */
+  quietStart?: boolean;
+  /**
    * An agent run's answer, written the platform's way. False only for a verbatim question (a shell
    * or connector approval) that does not fit one message whole: it must not be clipped, so the
    * router withdraws the question instead.
@@ -66,8 +71,8 @@ export interface BotChatOutput<E extends BotChatEvent> {
   /** A group's name, for the settings page; undefined when it has none or cannot be read. */
   groupName?: (chatId: string, chatKind: BotChatKind) => Promise<string | undefined>;
   /**
-   * The message a flow's result answers, the way this platform's replies do (Discord: the asking
-   * message, quoted; Slack: the channel thread). Undefined when replies there do not (a Slack DM).
+   * The message a flow's result answers, the way this platform's replies do (Discord, LINE PC: the
+   * asking message, quoted; Slack: the channel thread). Undefined when replies there do not (a Slack DM).
    */
   replyRef?: (event: E) => string | undefined;
 }
@@ -132,6 +137,18 @@ export interface BotChatRouterDeps<E extends BotChatEvent> {
    * use the bot, answered by the handler. Absent = the pairing tip.
    */
   onPairingRequest?: (event: E) => Promise<void>;
+  /**
+   * Someone unpaired addressing the bot in an allowed group that lets them do nothing is a request
+   * too (`onPairingRequest`, from the group): the platform gives them no private chat with the bot
+   * to ask in (LINE PC). Absent = they are ignored there, as where they can ask in private.
+   */
+  groupPairingRequests?: boolean;
+  /**
+   * A paired account's command addressed to the bot in a group runs as in its private chat (a
+   * model, `/new`, `/search`, a flow command; each checked as there): the platform gives them no
+   * private chat with the bot to type it in (LINE PC). Absent = a group takes no commands.
+   */
+  groupCommands?: boolean;
   /** A pairing code was just used by this person. */
   onCodePaired?: (code: string, userId: string) => void;
   onAgentAnswer: (answer: string, chatId: string, userId: string) => Promise<BotBuiltinRunResult | null>;

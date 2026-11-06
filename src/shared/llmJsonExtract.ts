@@ -1,4 +1,5 @@
 import { jsonrepair } from 'jsonrepair';
+import { escapeLiteralBackslashes } from './llmJsonLiteralEscapes';
 
 function tryParse(text: string): unknown | undefined {
   try {
@@ -92,7 +93,10 @@ interface Parsed {
   repaired: boolean;
 }
 
-function attemptParse(text: string): Parsed | undefined {
+function attemptParse(raw: string): Parsed | undefined {
+  // Before the first parse: a TeX command parses cleanly as a control character, so no later
+  // repair would ever see it (see escapeLiteralBackslashes).
+  const text = escapeLiteralBackslashes(raw);
   const direct = tryParse(text);
   if (direct !== undefined) return { value: direct, repaired: false };
   const noTrailing = tryParse(stripTrailingCommas(text));

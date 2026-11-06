@@ -2,7 +2,7 @@ import { flagEmoji, pttRegionCode } from '../../../shared/linkSites/pttRegions';
 import { formatPostTime, type PostCard } from '../../../shared/postCard';
 import { escapePostMarkdown } from '../../../shared/xMedia';
 import { decodeHtmlEntities } from '../../htmlEntities';
-import { imagesIn, tidy, withoutImageLinks, type PttImage } from './pttImages';
+import { imagesIn, quotedLine, tidy, withoutImageLinks, type PttImage } from './pttImages';
 import type { PushLine, XMedia, XPost } from './xPosts';
 
 /* Reads a PTT article page: its header pairs, its text up to the system lines or the first push, and the pushes. */
@@ -15,6 +15,8 @@ const TAIPEI_OFFSET_MS = 8 * 3_600_000;
 const DAY_MS = 86_400_000;
 /** PTT signatures are six lines at most; with the pictures they link, a little more. */
 const SIGNATURE_MAX_LINES = 12;
+/** A quoted line, marks off, that starts what sat under the quoted text: signature, system lines, pushes. */
+const QUOTED_TAIL = /^(?:--\s*$|※ (?:發信站|文章網址|編輯)|[推噓→] ?[A-Za-z0-9]+ *:)/;
 
 export interface PttArticle {
   /** The author's id, without the nickname. */
@@ -112,6 +114,32 @@ function withoutSignature(text: string): string {
   return lines.join('\n');
 }
 
+/**
+ * The text with what sat under each quoted article gone, from the first such line until the quote
+ * comes back out a level. The quoted words stay, the empty quoted lines just above the cut do not.
+ */
+function withoutQuotedTails(text: string): string {
+  const kept: string[] = [];
+  let cutDepth = 0;
+  for (const line of text.split('\n')) {
+    const { depth, words } = quotedLine(line);
+    if (cutDepth > 0 && depth >= cutDepth) continue;
+    cutDepth = 0;
+    if (depth > 0 && QUOTED_TAIL.test(words.trimStart())) {
+      cutDepth = depth;
+      while (kept.length > 0 && isEmptyQuotedLine(kept[kept.length - 1])) kept.pop();
+      continue;
+    }
+    kept.push(line);
+  }
+  return kept.join('\n');
+}
+
+function isEmptyQuotedLine(line: string): boolean {
+  const { depth, words } = quotedLine(line);
+  return depth > 0 && !words.trim();
+}
+
 function spanText(html: string, name: string, until: RegExp | null = null): string {
   const start = new RegExp(`<span class="[^"]*\\b${name}\\b[^"]*">`).exec(html);
   if (!start) return '';
@@ -177,7 +205,7 @@ export function readPttArticle(html: string): PttArticle | null {
   const from = open.index + open[0].length;
   const { meta, end } = readMeta(html, from);
   const stop = bodyEnd(html, end);
-  const text = tidy(withoutSignature(htmlText(withoutRichContent(html.slice(end, stop)))));
+  const text = tidy(withoutQuotedTails(withoutSignature(htmlText(withoutRichContent(html.slice(end, stop))))));
   const { author, nickname } = splitAuthor(meta.get('作者') ?? '');
   const createdAt = parsePttTime(meta.get('時間') ?? '');
   if (!author && !text) return null;

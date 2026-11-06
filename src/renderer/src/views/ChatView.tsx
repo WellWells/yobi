@@ -208,7 +208,7 @@ export const ChatView: React.FC = React.memo(() => {
   const handleTurnError = useCallback((message: string): void => {
     setExportToast({ message: message || t('chat.command.error'), level: 'error' });
   }, [t]);
-  const { sendTurn } = useConversationTurns(handleTurnError);
+  const { sendTurn, runShell } = useConversationTurns(handleTurnError);
 
   const flowCommands = useChatCommands();
   const describeMcpCommand = useCallback(
@@ -457,6 +457,12 @@ export const ChatView: React.FC = React.memo(() => {
     if (attachments.length > 0) clearAttachments();
     return true;
   }, [activeModelUrl, attachments, clearAttachments, sendTurn]);
+
+  // No sign-in gate: the command runs regardless, and its turn stays if the model cannot answer.
+  const handleRunShell = useCallback((command: string): boolean => {
+    runShell({ command, targetUrl: activeModelUrl });
+    return true;
+  }, [activeModelUrl, runShell]);
 
   const handleRunChatCommand = useCallback((
     command: ChatCommand,
@@ -861,6 +867,7 @@ export const ChatView: React.FC = React.memo(() => {
           onPickModel={handlePickModel}
           onUnknownModel={handleUnknownModel}
           onSend={handleSendPrompt}
+          onRunShell={handleRunShell}
           attachments={attachments}
           notice={attachmentNotice}
           onAddFiles={addFiles}
@@ -873,6 +880,7 @@ export const ChatView: React.FC = React.memo(() => {
           onUnknownCommand={handleUnknownCommand}
           chatMode={chatMode}
           web={web}
+          webOff={webOff}
           onToggleWeb={toggleWeb}
           onSetWeb={handleComposerSetWeb}
           autoWebSignal={autoWebSignal}

@@ -77,7 +77,7 @@ function overlaps(event: CalendarEvent, window: CalendarWindow): boolean {
   return event.start < window.end && event.end > window.start;
 }
 
-function eventFrom(item: ICAL.Event, startTime: ICAL.Time, endTime: ICAL.Time): CalendarEvent {
+function eventFrom(item: ICAL.Event, startTime: ICAL.Time, endTime: ICAL.Time, recurring: boolean): CalendarEvent {
   const component = item.component;
   const start = toJsDate(startTime, tzidOf(component, 'dtstart'));
   const end = toJsDate(endTime, tzidOf(component, 'dtend') || tzidOf(component, 'dtstart'));
@@ -88,6 +88,10 @@ function eventFrom(item: ICAL.Event, startTime: ICAL.Time, endTime: ICAL.Time): 
     start,
     end: end < start ? start : end,
     allDay: startTime.isDate,
+    uid: item.uid ?? '',
+    description: textOf(component, 'description'),
+    recurring,
+    invited: component.getAllProperties('attendee').length > 0,
   };
 }
 
@@ -122,7 +126,7 @@ function expandMaster(
 ): void {
   if (isCancelled(master.component)) return;
   if (!master.isRecurring()) {
-    pushIfInWindow(eventFrom(master, master.startDate, master.endDate), window, out);
+    pushIfInWindow(eventFrom(master, master.startDate, master.endDate, exceptions.length > 0), window, out);
     return;
   }
   for (const exception of exceptions) master.relateException(exception);
@@ -138,13 +142,13 @@ function expandMaster(
     const item = details.item ?? master;
     if (item !== master) seen.add(item);
     if (isCancelled(item.component)) continue;
-    pushIfInWindow(eventFrom(item, details.startDate, details.endDate), window, out);
+    pushIfInWindow(eventFrom(item, details.startDate, details.endDate, true), window, out);
   }
   // An instance moved here from past the point expansion stopped (or one the rule never
   // generates) still stands on its own RECURRENCE-ID entry.
   for (const exception of exceptions) {
     if (seen.has(exception) || isCancelled(exception.component)) continue;
-    pushIfInWindow(eventFrom(exception, exception.startDate, exception.endDate), window, out);
+    pushIfInWindow(eventFrom(exception, exception.startDate, exception.endDate, true), window, out);
   }
 }
 
@@ -179,7 +183,7 @@ export function readIcsEvents(ics: string, window: CalendarWindow): CalendarEven
     for (const [uid, list] of exceptions) {
       if (masters.has(uid)) continue;
       for (const orphan of list) {
-        if (!isCancelled(orphan.component)) pushIfInWindow(eventFrom(orphan, orphan.startDate, orphan.endDate), window, out);
+        if (!isCancelled(orphan.component)) pushIfInWindow(eventFrom(orphan, orphan.startDate, orphan.endDate, true), window, out);
       }
     }
     for (const event of anonymous) expandMaster(event, [], window, budget, out);

@@ -8,12 +8,13 @@ import type { LinkSiteId } from '../../shared/linkSites/types';
 import type { YtdlFailureCategory, YtdlInstallProgress, YtdlLastFailure, YtdlToolStatus, YtdlToolsState } from '../../shared/ytdl';
 import { writeFileAtomic } from '../atomicWrite';
 import { Mutex } from '../flow/lanes';
-import { isInsideDir, ytdlToolsRoot } from './paths';
+import { MANAGED_DIRS, VERSION_FILE, isInsideDir, ytdlToolsRoot } from './paths';
 import { executableName, platformTools, toolsDownloadBytes } from './toolManifest';
 
 /*
- * The one record of the download tools: `<userData>/tools/ytdl/state.json` plus what only lives in
- * memory (an install in progress and its progress). Read lazily on first use, never at import.
+ * The one record of the download tools: `<userData>/tools/ytdl/state.json`, the version.txt in each
+ * tool's fixed folder, and what only lives in memory (an install in progress and its progress).
+ * Read lazily on first use, never at import.
  */
 
 export interface InstalledYtdlp {
@@ -37,8 +38,6 @@ export interface YtdlCustomPaths {
 
 export interface PersistedYtdlState {
   ytdlp?: InstalledYtdlp;
-  /** Kept for rollback; deleted when the next version replaces it. */
-  previousYtdlp?: InstalledYtdlp;
   ffmpeg?: InstalledFfmpeg;
   /** The last self-test of the managed tools passed. */
   testedOk?: boolean;
@@ -96,7 +95,6 @@ export function normalizeYtdlState(raw: unknown): PersistedYtdlState {
   if (!isRecord(raw)) return {};
   const state: PersistedYtdlState = {};
   state.ytdlp = readYtdlp(raw.ytdlp);
-  state.previousYtdlp = readYtdlp(raw.previousYtdlp);
   if (isRecord(raw.ffmpeg) && str(raw.ffmpeg.version) && str(raw.ffmpeg.dir)) {
     state.ffmpeg = { version: String(raw.ffmpeg.version), dir: String(raw.ffmpeg.dir) };
   }
@@ -161,9 +159,32 @@ function managedFilesPresent(state: PersistedYtdlState): boolean {
   return [paths.ytdlp, paths.ffmpeg, paths.ffprobe].every((file) => existsSync(file));
 }
 
+/** The version a fixed tools folder's version.txt names; undefined when it has none. */
+function folderVersion(dir: string): string | undefined {
+  try {
+    const version = readFileSync(path.join(ytdlToolsRoot(), dir, VERSION_FILE), 'utf-8').trim();
+    return /^[0-9A-Za-z._-]{1,64}$/.test(version) ? version : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * Reads state.json on first use. Synchronous on purpose: the file is a few hundred bytes plus three
- * existence checks, and readiness checks in flows and menus need an answer without awaiting.
+ * A labelled fixed folder beats the record: the label moves in with the files in one rename and
+ * state.json is written after, so a crash or a failed second swap in between left the record
+ * naming the old version, or a per-version folder from before the fixed ones that went aside.
+ */
+function applyFolderVersions(state: PersistedYtdlState): void {
+  const ytdlpVersion = folderVersion(MANAGED_DIRS.ytdlp);
+  if (state.ytdlp && ytdlpVersion) state.ytdlp = { ...state.ytdlp, version: ytdlpVersion, dir: MANAGED_DIRS.ytdlp };
+  const ffmpegVersion = folderVersion(MANAGED_DIRS.ffmpeg);
+  if (state.ffmpeg && ffmpegVersion) state.ffmpeg = { version: ffmpegVersion, dir: MANAGED_DIRS.ffmpeg };
+}
+
+/**
+ * Reads state.json and the two version.txt files on first use. Synchronous on purpose: they are a
+ * few hundred bytes plus three existence checks, and readiness checks in flows and menus need an
+ * answer without awaiting.
  */
 function ensureLoaded(): void {
   if (loaded) return;
@@ -172,6 +193,7 @@ function ensureLoaded(): void {
   } catch {
     persisted = {};
   }
+  applyFolderVersions(persisted);
   filesPresent = managedFilesPresent(persisted);
   loaded = true;
 }
@@ -242,12 +264,17 @@ export async function readYtdlState(): Promise<PersistedYtdlState> {
   return structuredClone(persisted);
 }
 
-/** Writes are serialized; a failed write leaves the in-memory state as it was. */
+/**
+ * Writes are serialized; a failed write leaves the in-memory state as it was. Each write also
+ * takes the labelled fixed folders' versions, so the record follows a swap that happened even
+ * when the install failed after it.
+ */
 export async function updateYtdlState(mutate: (state: PersistedYtdlState) => void): Promise<YtdlToolsState> {
   ensureLoaded();
   return writeLock.runExclusive(async () => {
     const next = structuredClone(persisted);
     mutate(next);
+    applyFolderVersions(next);
     await fs.mkdir(ytdlToolsRoot(), { recursive: true });
     await writeFileAtomic(statePath(), JSON.stringify(next, null, 2));
     persisted = next;

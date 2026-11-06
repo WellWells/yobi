@@ -82,6 +82,8 @@ export interface Config extends SiteConnectorFlags {
   line: LineConfig;
   discord: DiscordConfig;
   slack: SlackConfig;
+  /** LINE PC: the user's own LINE account answers in the chats paired by code (no secrets). */
+  lineSelf: LineSelfConfig;
   /**
    * The user's mailboxes, used by the Mail connector, the read-new-mail step and the email step.
    * Each signs in to SMTP and IMAP with its address and its own (app) password.
@@ -94,6 +96,8 @@ export interface Config extends SiteConnectorFlags {
   mcpServers: McpServerConfig[];
   /** Opt-in: let `/agent`, bots and flow connector steps use the mail account (the Mail connector). */
   mailEnabled: boolean;
+  /** Opt-in: let `/agent` and bots read the calendars and change CalDAV events (the Calendar connector). */
+  calendarEnabled: boolean;
   /** Opt-in: host the built-in LINE PC reader as an in-process MCP connector. */
   lineReaderEnabled: boolean;
   /** Opt-in: relay the Thunderbird MCP add-on through an in-process MCP connector. */
@@ -107,6 +111,10 @@ export interface Config extends SiteConnectorFlags {
   taiwanRailEnabled: boolean | null;
   /** The PTT connector; null = not decided yet, decided once like `taiwanRailEnabled`. */
   pttConnectorEnabled: boolean | null;
+  /** The free machine-translation connector: on for everyone until the user switches it off. */
+  translateConnectorEnabled: boolean;
+  /** The news connector: on until the user switches it off, and only ever offered in zh-TW. */
+  pageConnectorEnabled: boolean;
   /**
    * The "Recognize links" switches the user turned. A group not in here follows the region's
    * default every time it is read (`resolveLinkRecognition`), so a language change moves it.
@@ -191,8 +199,6 @@ export interface TelegramConfig extends BotAccessConfig {
   apiId: number;
   apiHash: string;
   allowGroupCommands: boolean;
-  defaultReplyMode: 'markdown' | 'png' | 'webp' | 'pdf';
-  compactReply: boolean;
   /**
    * Mirror of the accounts holding the `admin` grant, written on every change so an older build
    * still finds its admins. Read only by the one-time permissions migration.
@@ -253,6 +259,12 @@ export interface SlackConfig extends SocketBotConfig {
   appToken: string;
 }
 
+/**
+ * LINE PC (`lineSelf`): no token. It reads the LINE PC database the LINE reader connector opens and
+ * answers as the user's own account; the chats paired by code are its group permissions.
+ */
+export type LineSelfConfig = SocketBotConfig;
+
 export interface SmtpConfig {
   host: string;
   port: number;
@@ -309,7 +321,7 @@ export type StoredConfig = Omit<Config, 'telegram' | 'line' | 'discord' | 'slack
   slack: StoredSlackConfig;
   byokInstances: StoredByokInstance[];
   mailAccounts: StoredMailAccount[];
-  /** Before 2026-10-23 there was one account: read once to move it into `mailAccounts`, then dropped. */
+  /** Legacy single account: read once to move it into `mailAccounts`, then dropped. */
   smtp?: StoredSmtpConfig;
   imap?: ImapConfig;
 };
@@ -402,8 +414,6 @@ export const defaultStored: StoredConfig = {
     apiId: 0,
     apiHashEncrypted: '',
     allowGroupCommands: false,
-    defaultReplyMode: 'markdown',
-    compactReply: false,
     adminUserIds: [],
     llmDirect: { targetUrl: '' },
     pairing: { pendingCodes: [], pairedUsers: [] },
@@ -450,17 +460,30 @@ export const defaultStored: StoredConfig = {
     groupPermissions: {},
     blockedUsers: [],
   },
+  lineSelf: {
+    enabled: false,
+    llmDirect: { targetUrl: '' },
+    pairing: { pendingCodes: [], pairedUsers: [] },
+    permissions: {},
+    permissionsVersion: BOT_PERMISSIONS_VERSION,
+    defaultGrants: [],
+    groupPermissions: {},
+    blockedUsers: [],
+  },
   mailAccounts: [],
   mailDefaultId: '',
   byokInstances: [],
   byokGroups: [],
   mcpServers: [],
   mailEnabled: false,
+  calendarEnabled: false,
   lineReaderEnabled: false,
   thunderbirdEnabled: false,
   xConnectorEnabled: false,
   taiwanRailEnabled: null,
   pttConnectorEnabled: null,
+  translateConnectorEnabled: true,
+  pageConnectorEnabled: true,
   linkRecognition: {},
   ...bySiteFlag(() => false),
   hiddenProviders: [],

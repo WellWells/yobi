@@ -1,7 +1,7 @@
 import { buildGeminiTitleScript } from './geminiTitleScript';
 import { INJECTED_READ_IMAGES_JS, readImagesCall } from './generatedImages';
 
-/** A picture Gemini drew, inside the answer (2026-10-19, temporary and normal chat). */
+/** A picture Gemini drew, inside the answer (temporary and normal chat). */
 export const GEMINI_GENERATED_IMAGE_SELECTOR = 'generated-image img';
 /** How long a drawn picture may take to finish loading once the turn is over. */
 const IMAGE_LOAD_MS = 30_000;
@@ -44,6 +44,45 @@ export const INJECTED_GEMINI_TEMPORARY_JS = `async function geminiEnterTemporary
   return active();
 }`;
 
+/**
+ * Page function: the answer's lists as `ListMark`s, for `restoreListNesting`. Code blocks and the
+ * follow-up suggestions live in `response-element`; a list in there is not one of the answer's.
+ */
+export const GEMINI_LIST_OUTLINE_FN = `function geminiListOutline(root) {
+  var marks = [];
+  function isList(el) {
+    return el.tagName === 'UL' || el.tagName === 'OL';
+  }
+  function walkItem(li, depth) {
+    marks.push({ item: true, depth: depth });
+    var sawFirstBlock = false;
+    for (var i = 0; i < li.children.length; i++) {
+      var child = li.children[i];
+      if (isList(child)) {
+        walkList(child, depth + 1);
+      } else if ((child.textContent || '').trim()) {
+        if (sawFirstBlock) marks.push({ item: false, depth: depth });
+        sawFirstBlock = true;
+        walk(child);
+      }
+    }
+  }
+  function walkList(list, depth) {
+    for (var i = 0; i < list.children.length; i++) {
+      if (list.children[i].tagName === 'LI') walkItem(list.children[i], depth);
+    }
+  }
+  function walk(el) {
+    if (el.tagName === 'RESPONSE-ELEMENT') return;
+    for (var i = 0; i < el.children.length; i++) {
+      if (isList(el.children[i])) walkList(el.children[i], 1);
+      else walk(el.children[i]);
+    }
+  }
+  walk(root);
+  return marks;
+}`;
+
 export const INJECTED_GEMINI_WAIT_AND_READ_JS = `async function geminiWaitAndRead(baseline, copyBtnSel, opts) {
   opts = opts || {};
   var IDLE_LIMIT = opts.idleMs === undefined ? 300000 : opts.idleMs;
@@ -55,6 +94,7 @@ export const INJECTED_GEMINI_WAIT_AND_READ_JS = `async function geminiWaitAndRea
   var RESP_BASELINE = opts.responseBaseline === undefined ? 0 : opts.responseBaseline;
   var IMAGE_LOAD_MS = opts.imageLoadMs === undefined ? ${IMAGE_LOAD_MS} : opts.imageLoadMs;
   ${INJECTED_READ_IMAGES_JS}
+  ${GEMINI_LIST_OUTLINE_FN}
 
   // A drawn picture carries its own copy control ("copy image"); only the answer's counts.
   function textCopyButtons(root) {
@@ -188,9 +228,13 @@ export const INJECTED_GEMINI_WAIT_AND_READ_JS = `async function geminiWaitAndRea
   }
 
   var response = '';
+  var listOutline = [];
   var lastCopyBtn = copyButton();
   if (lastCopyBtn) {
     response = (await interceptCopy(lastCopyBtn)) || '';
+    var rendered = lastResponse();
+    var markdown = rendered && rendered.querySelector('message-content .markdown, .markdown');
+    if (response && markdown) listOutline = geminiListOutline(markdown);
   }
   if (!response) response = readAnswerText();
 
@@ -203,5 +247,5 @@ export const INJECTED_GEMINI_WAIT_AND_READ_JS = `async function geminiWaitAndRea
     images = await ${readImagesCall(`answer.querySelectorAll(${JSON.stringify(GEMINI_GENERATED_IMAGE_SELECTOR)})`)};
   }
   if (!response && images.length === 0) throw new Error('Gemini answer element present but its text was empty');
-  return { response: response, title: title, images: images };
+  return { response: response, title: title, images: images, listOutline: listOutline };
 }`;

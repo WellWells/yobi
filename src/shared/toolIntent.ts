@@ -2,7 +2,7 @@ import { stripUnreadableRegions } from './connectorKeywords';
 
 /**
  * Whether a plain-chat message asks for something only a lookup can answer: weather, air quality,
- * a stock price, an exchange rate, the lunar date or the almanac, the receipt lottery, or what is new right now. Such a message runs as an agent turn
+ * a stock price, an exchange rate or how either moved, the lunar date or the almanac, the receipt lottery, or what is new right now. Such a message runs as an agent turn
  * (that message only; the composer mode is left as the user set it). Each topic must come with a
  * question about it, so mentioning the weather in passing does not count. Code and quoted lines
  * never count.
@@ -17,10 +17,14 @@ const LISTING = '[^。\\n]{0,12}?(?:有哪些|有什麼|有什么|是哪|哪些|
 /** Asking which day, or what the almanac says about one, close after an almanac word. */
 const ALMANAC_ASKING = '[^。\\n]{0,10}?(?:幾號|几号|幾月|几月|初幾|初几|哪天|哪一天|哪幾天|哪几天|是什麼|是什么|多少|宜|忌|沖|冲|嗎|吗|呢|\\?|？)';
 
+/** A stock, an index or a currency, named before a word about its move. */
+const MARKET_WORD = '(?:股|台積電|台积电|大盤|大盘|指數|指数|台幣|台币|新台幣|美元|美金|日圓|日圆|日幣|日币|歐元|欧元|人民幣|人民币|匯|汇|幣|币|ETF|\\.TW)';
+
 const TOOL_PHRASES: readonly RegExp[] = [
   // weather
   new RegExp(`(?:天氣|天气|氣溫|气温|溫度|温度|降雨機率|降雨机率|體感溫度|体感温度|紫外線|紫外线)${ASKING}`),
   /(?:會不會|会不会|要不要帶傘|要不要带伞)[^。\n]{0,6}(?:下雨|下雪)/,
+  /(?:會|会)下(?:雨|雪)(?:嗎|吗|\?|？)/,
   /(?<![a-z])(?:weather|forecast)(?![a-z])[^.\n]{0,30}(?:\?|today|tomorrow|tonight|this week)/i,
   /(?<![a-z])(?:what'?s|how'?s|what is|how is)\s+the\s+(?:weather|temperature)(?![a-z])/i,
   // air quality
@@ -31,7 +35,11 @@ const TOOL_PHRASES: readonly RegExp[] = [
   // exchange rate
   new RegExp(`(?:匯率|汇率)${ASKING}`),
   /(?<![a-z])exchange\s+rate(?![a-z])/i,
-  // The lunar date and the almanac: 「今天是農曆？」 was answered 九月十二 from memory (2026-10-22, it was 九月十三).
+  // A move over time: 「最近三個月台幣升值多少？」「台積電近半年漲了多少」. 漲了／跌了／走勢 alone
+  // also describe a fall or a weight, so they count only after a market word.
+  new RegExp(`(?:升值|貶值|贬值|漲幅|涨幅|跌幅)${ASKING}`),
+  new RegExp(`${MARKET_WORD}[^。\\n]{0,8}?(?:漲了|涨了|跌了|走勢|走势)${ASKING}`, 'i'),
+  // The lunar date and the almanac: 「今天是農曆？」 must not be answered from memory.
   new RegExp(`(?:農曆|农历|陰曆|阴历|農民曆|农民历|黃曆|黄历|通勝|通胜|宜忌|黃道吉日|黄道吉日|好日子|吉日)${ALMANAC_ASKING}`),
   new RegExp(`(?:適合|适合|宜不宜|可以)[^。\\n]{0,4}?(?:搬家|入宅|入厝|結婚|结婚|嫁娶|訂婚|订婚|開市|开市|開業|开业|開工|开工|動土|动土|出行|安葬|安床)[^。\\n]{0,6}?(?:嗎|吗|\\?|？|哪天|哪一天|哪幾天|哪几天)`),
   new RegExp(`(?:春節|春节|元宵|端午|七夕|中元|中秋|重陽|重阳|除夕|冬至|清明)(?:節|节)?[^。\\n]{0,4}?(?:是|在)?(?:幾號|几号|幾月|几月|哪天|哪一天|什麼時候|什么时候|星期幾|星期几)`),

@@ -96,8 +96,16 @@ function hashKey(ts: number, fields: string[]): string {
   return `${ts}:${createHash('sha1').update(fields.join('|'), 'utf-8').digest('hex').slice(0, 12)}`;
 }
 
+/**
+ * Content type 16 is hashed under its older label `link`, which keeps the watermark keys of
+ * messages reported earlier.
+ */
+function keyType(type: string): string {
+  return type === 'post' ? 'link' : type;
+}
+
 function bodyFields(msg: ParsedMessage): string[] {
-  return [msg.sender ?? '', msg.type, msg.content ?? '', msg.filename ?? '', msg.url ?? ''];
+  return [msg.sender ?? '', keyType(msg.type), msg.content ?? '', msg.filename ?? '', msg.url ?? ''];
 }
 
 /**
@@ -133,7 +141,7 @@ function messageBody(msg: ParsedMessage, labels: TranscriptLabels): string {
     const name = flatten(msg.filename) || text;
     return name ? `${labels.file} ${name}` : labels.file;
   }
-  if (msg.type === 'link') {
+  if (msg.type === 'post') {
     return flatten(msg.title) || flatten(msg.url) || text || labels.other;
   }
   if (text) return text;

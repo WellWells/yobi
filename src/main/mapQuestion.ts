@@ -46,14 +46,22 @@ function tidyQuestion(text: string): string {
     .trim();
 }
 
-export function splitMapsQuestion(text: string): MapsQuestion | null {
+/**
+ * Exactly one link `accepts` takes, and a question of at most `MAX_QUESTION_CHARS` around it
+ * (before, after or both); null for anything else.
+ */
+export function splitUrlQuestion(text: string, accepts: (url: string) => boolean): MapsQuestion | null {
   const spans = findUrls(text);
   if (spans.length !== 1) return null;
   const [span] = spans;
-  if (!isMapsUrl(span.url)) return null;
+  if (!accepts(span.url)) return null;
 
   const question = tidyQuestion(`${text.slice(0, span.start)} ${text.slice(span.end)}`);
   if (!/[\p{L}\p{N}]/u.test(question)) return null;
   if (question.length > MAX_QUESTION_CHARS) return null;
   return { url: span.url, question };
+}
+
+export function splitMapsQuestion(text: string): MapsQuestion | null {
+  return splitUrlQuestion(text, isMapsUrl);
 }

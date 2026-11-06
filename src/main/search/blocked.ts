@@ -3,8 +3,8 @@
  * (page loader, Electron).
  */
 
-/** The i18n key of the pipeline error raised when DuckDuckGo refuses every query of a search. */
-export const SEARCH_BLOCKED_KEY = 'search.error.ddgChallenge';
+/** The i18n key of the pipeline error raised when every engine refuses every query of a search. */
+export const SEARCH_BLOCKED_KEY = 'search.error.enginesBlocked';
 
 /**
  * What `/agent` reads instead of the user's localized "try again in a few minutes", which a model
@@ -15,6 +15,13 @@ export const SEARCH_BLOCKED_OBSERVATION =
 
 /** Appended to a research result when some of its queries were refused and the rest answered. */
 export const SEARCH_PARTIAL_BLOCK_NOTE = 'some searches were blocked; fewer sources than usual.';
+
+/**
+ * Appended to an agent's research when the answer is not in the language it should be in. Not a
+ * search block, but read by `agentCall` the same way: a field beside the answer, never inside it.
+ */
+export const RESEARCH_FOREIGN_LANGUAGE_NOTE =
+  'this answer is not in the ANSWER LANGUAGE — do not deliver it as is; write the answer yourself, in it.';
 
 /**
  * A research that failed because the engine is refusing us. The message stays the user's

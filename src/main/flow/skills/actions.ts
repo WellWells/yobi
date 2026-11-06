@@ -1,7 +1,7 @@
 import { clipboard } from 'electron';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { CaptureFormat, FlowButton, MarkdownCapturePayload } from '../../../shared/types';
+import type { FlowButton, MarkdownCapturePayload } from '../../../shared/types';
 import { cardStyleFromSettings, formatCardTime } from '../../../shared/captureCard';
 import { resolveCardTitle } from '../../../shared/markdownTitle';
 import { config as appConfig } from '../../config';
@@ -15,7 +15,7 @@ import {
   BOT_PLATFORM_NAMES,
   BYOK_IMAGE_MAX_FILES,
   PROVIDER_ATTACHMENT_POLICIES,
-  isBotPlatform,
+  parseBotPlatform,
   isByokTargetUrl,
   isSocketBotPlatform,
   providerFromUrl,
@@ -28,7 +28,7 @@ import { parseAttachmentList, resolveSafeLocalAttachment } from '../../attachmen
 import { ensureHttpScheme, fetchAndParse } from '../../urlParser';
 import { isFetchableWebUrl } from '../../../shared/webUrl';
 import { parseWebUrlList } from './urlList';
-import { isHeightLimitError } from './share';
+import { renderWithinHeightLimit } from '../../captureHeightLimit';
 import { sendLog, sendWebNotification } from '../../helpers';
 import { clipboardLane, llmLane, pageFetchLane } from '../lanes';
 import { FlowAbortError, resolveDelayMs, withAbort, withStepTimeout } from '../runtime';
@@ -40,6 +40,7 @@ import { formatLimit, formatMegabytes, parseFlowButtons, withButtonImages } from
 import { telegramSendLimitBytes } from '../../telegram/largeUpload';
 import { LINE_ACTION_TEXT_MAX, LINE_CAROUSEL_MAX, type LineCarouselItem } from '../../line/pickCarousel';
 import { lineMenuFits, type LineMenuButton } from '../../line/flowMenu';
+import { lineTextAbove } from '../../line/format';
 import { isBuiltinFlowId } from '../../../shared/builtinFlows';
 import { closePage, closeRunPages, openPage, runPageScript } from './browserPages';
 import { inferTelegramSendAs, isCaptureFormat } from '../interpolation';
@@ -255,39 +256,6 @@ async function resolveLlmAttachments(
   return resolved;
 }
 
-type CaptureMarkdown = NonNullable<FlowExecutorDeps['captureMarkdown']>;
-type CaptureMarkdownOptions = NonNullable<Parameters<CaptureMarkdown>[3]>;
-
-/**
- * Renders the llm step's card without losing the already-fetched answer to the image height limit,
- * which the card style's scale and width can push a flow past with no change to the flow: retry at
- * 1x first (same format, same file type for the next step), then as a PDF, which has no height limit.
- */
-async function captureCardWithinHeightLimit(
-  capture: CaptureMarkdown,
-  payload: MarkdownCapturePayload,
-  format: CaptureFormat,
-  background: string,
-  options: CaptureMarkdownOptions,
-): Promise<string> {
-  try {
-    return await capture(payload, format, background, options);
-  } catch (err) {
-    if (format === 'pdf' || !isHeightLimitError(err)) throw err;
-  }
-  const pixelRatio = options.pixelRatio ?? 1;
-  if (pixelRatio > 1) {
-    sendLog(`⚠️ [Flow] LLM export: ${format.toUpperCase()} at ${pixelRatio}x exceeds the image height limit — retrying at 1x`);
-    try {
-      return await capture(payload, format, background, { ...options, pixelRatio: 1 });
-    } catch (err) {
-      if (!isHeightLimitError(err)) throw err;
-    }
-  }
-  sendLog(`⚠️ [Flow] LLM export: ${format.toUpperCase()} exceeds the image height limit — re-rendering as PDF`);
-  return capture(payload, 'pdf', background, options);
-}
-
 export async function execLlm(
   config: Record<string, string>,
   deps: FlowExecutorDeps,
@@ -431,7 +399,14 @@ export async function execLlm(
     timestamp,
     turns: [{ prompt: '', response: body, provider, timestamp }],
   };
-  const filePath = await captureCardWithinHeightLimit(deps.captureMarkdown, payload, exportFormat, style.background, exportOptions);
+  // Losing the already-fetched answer to the image height limit is worse than a different file type.
+  const capture = deps.captureMarkdown;
+  const filePath = await renderWithinHeightLimit(
+    exportFormat,
+    exportOptions.pixelRatio ?? 1,
+    (format, pixelRatio) => capture(payload, format, style.background, { ...exportOptions, pixelRatio }),
+    '[Flow] LLM export',
+  );
   sendLog(`🖼️ [Flow] LLM export generated: ${filePath}`);
   return filePath;
 }
@@ -486,10 +461,7 @@ function resolveAttachmentSendAs(
 }
 
 function resolveBotPlatform(config: Record<string, string>): BotPlatform {
-  const choice = (config.platform ?? 'auto').trim().toLowerCase();
-  if (isBotPlatform(choice)) return choice;
-  const triggered = (config.__triggerPlatform ?? '').trim().toLowerCase();
-  return isBotPlatform(triggered) ? triggered : 'telegram';
+  return parseBotPlatform(config.platform) ?? parseBotPlatform(config.__triggerPlatform) ?? 'telegram';
 }
 
 const LINE_IMAGE_PATH_RE = /\.(?:jpe?g|png)$/i;
@@ -551,7 +523,7 @@ function extrasFor(config: Record<string, string>, extras: BotSendExtras | undef
 
 /**
  * The step takes the place of the Telegram message that started the run (`replaceTrigger`; a
- * pasted link answered with its video and the link in the caption, user 2026-10-23): sent
+ * pasted link answered with its video and the link in the caption): sent
  * unquoted, and once it is out in that chat the message is deleted. Only a message that said
  * nothing but the input (`TRIGGER_IS_INPUT_VARIABLE`): a link among someone's words stays where
  * it is, quoted as usual.
@@ -606,7 +578,7 @@ function lineChoices(message: string, config: Record<string, string>): LineChoic
   const withHints = (choices: readonly FlowButton[]): string => {
     if (choices.length === 0) return message;
     const lines = choices.map((b) => t(getLangCache(), 'flow.bot.buttonHint', { label: b.label, command: lineOf(b) }));
-    return [message.trim(), lines.join('\n')].filter(Boolean).join('\n\n');
+    return lineTextAbove(message, lines.join('\n'));
   };
   const rest = items.filter((b) => !carded.includes(b));
   return {
@@ -874,10 +846,11 @@ interface SocketSendParts {
 }
 
 /**
- * Discord and Slack: one message per recipient carrying the text, the run's own files (each
- * through the attachment guard; a link goes in the text, where the chat app previews it) and the
- * step's buttons, each standing for the line it runs — a built-in's link and choice, else the
- * flow's command with the button's input. The asking message is quoted in the chat it came from.
+ * Discord, Slack and LINE PC: one message per recipient carrying the text, the run's own files
+ * (each through the attachment guard; a link goes in the text, where the chat app previews it —
+ * a photo step's links go as `pictures`, which each platform shows its own way) and the step's
+ * buttons, each standing for the line it runs — a built-in's link and choice, else the flow's
+ * command with the button's input. The asking message is quoted in the chat it came from.
  */
 async function execBotSocket(
   platform: SocketBotPlatform,
@@ -902,15 +875,17 @@ async function execBotSocket(
 
   const caption = attachment ? (explicitAttachment ? message : legacyMagicCaption).trim() : message;
   const allowlist = attachmentAllowlist(config);
+  const photo = (config.attachmentType ?? '').trim() === 'photo';
   const files: string[] = [];
   const links: string[] = [];
+  const pictures: string[] = [];
   for (const item of lines(attachment).filter(Boolean)) {
-    if (/^https?:\/\//i.test(item)) links.push(item);
+    if (/^https?:\/\//i.test(item)) (photo ? pictures : links).push(item);
     else files.push(await resolveSafeLocalAttachment(item, allowlist));
   }
   const text = [caption.trim(), ...links].filter(Boolean).join('\n');
   const buttons = socketButtons(config);
-  if (!text && files.length === 0) return '';
+  if (!text && files.length === 0 && pictures.length === 0) return '';
 
   const askingChat = (config.__triggerChatId ?? '').trim();
   const askingMessage = (config.__triggerMessageId ?? '').trim();
@@ -918,6 +893,7 @@ async function execBotSocket(
     await deps.sendSocketBot(platform, chatId, {
       text,
       ...(files.length > 0 ? { files } : {}),
+      ...(pictures.length > 0 ? { pictures } : {}),
       ...(buttons.length > 0 ? { buttons } : {}),
       ...(askingMessage && chatId === askingChat ? { replyTo: askingMessage } : {}),
     });

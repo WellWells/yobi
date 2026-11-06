@@ -79,9 +79,9 @@ export async function createConversationFolder(raw: unknown, options: CreateFold
   }
 }
 
-/** The conversations something is about to write to, or a question an Agent run left waiting on. */
-async function busyConversations(files: readonly string[]): Promise<Set<string>> {
-  const busyReasonOf = await busyReasonReader();
+/** The conversations something is about to write to. */
+function busyConversations(files: readonly string[]): Set<string> {
+  const busyReasonOf = busyReasonReader();
   return new Set(files.filter((file) => busyReasonOf(file) !== null));
 }
 
@@ -113,7 +113,7 @@ export async function renameConversationFolder(fromRaw: unknown, toRaw: unknown)
   const fromDir = path.join(root, folder.name);
   const toDir = path.join(root, name);
   const files = await listConversationFiles(fromDir);
-  if ((await busyConversations(files)).size > 0) return { ok: false, error: 'busy' };
+  if (busyConversations(files).size > 0) return { ok: false, error: 'busy' };
 
   try {
     await holdingFiles(files, async () => {
@@ -160,7 +160,7 @@ export async function deleteConversationFolder(raw: unknown): Promise<FolderDele
   const root = await getOutputDir();
   const dir = path.join(root, folder.name);
   const files = await listConversationFiles(dir);
-  const busy = await busyConversations(files);
+  const busy = busyConversations(files);
   const free = files.filter((file) => !busy.has(file));
 
   let trashIds: string[] = [];

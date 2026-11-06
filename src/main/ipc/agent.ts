@@ -21,6 +21,7 @@ import {
   loadRunState,
   pruneOldRuns,
   readRunConnectors,
+  runHasEnded,
 } from '../flow/agent/agentRunStore';
 import type { IpcContext } from './context';
 
@@ -109,8 +110,7 @@ export function registerAgentHandlers(ctx: IpcContext): void {
     const strings = (await loadLanguageData(config.locale)) ?? {};
     const id = (runId ?? '').trim();
     const state = id ? await loadRunState(id) : null;
-    if (!state) return { success: false, error: t(strings, 'agent.error.notResumable') };
-    if (state.status === 'done') return { success: false, error: t(strings, 'agent.error.notResumable') };
+    if (!state || runHasEnded(state)) return { success: false, error: t(strings, 'agent.error.notResumable') };
     // A Telegram/LINE run goes on only in its chat, where the account's rights are re-read; resumed
     // here it would run a stranger's goal with the desktop's full kit and the owner's memory.
     if (isBotRun(state)) {

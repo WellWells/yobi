@@ -1,5 +1,5 @@
 import type { BrowserWindow } from 'electron';
-import { sleep, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
+import { readDocumentTitle, sleep, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
 import { ensureOnPage, landingMayStillRender, PAGE_REUSE } from './pageReuse';
 import { executeAutomationWithTimeout, dispatchFocusEvents, settledElementCounts } from './automationExecutor';
 import { isExpiredCookie, sendLog } from '../helpers';
@@ -9,6 +9,8 @@ import { WORKER_USER_AGENTS } from '../userAgent';
 import { applyWorkerUserAgent } from '../clientHints';
 import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_INPUT_SELECTORS, CHATGPT_SUBMIT_JS } from './chatgptSendScript';
 import { CHATGPT_READ_JS, cleanChatgptTitle } from './chatgptReadScript';
+import { CHATGPT_PAGE_SIGNALS_JS, isLoginRequiredFromSignals } from './chatgptLoginSignals';
+import type { ChatgptAuthSignals, ChatgptPageSignals } from './chatgptLoginSignals';
 import { uploadFilesToChatgpt } from './chatgptUpload';
 import { syncChatgptModel } from './chatgptModelSync';
 import { CHATGPT_SIGN_IN_START_URL, startChatgptSignIn } from './chatgptSignIn';
@@ -40,10 +42,7 @@ async function getChatgptCookies(workerWin: BrowserWindow) {
   return cookieCandidates.flat();
 }
 
-async function getChatgptAuthSignals(workerWin: BrowserWindow): Promise<{
-  hasSessionCookie: boolean;
-  hasLogoutDebugCookie: boolean;
-}> {
+async function getChatgptAuthSignals(workerWin: BrowserWindow): Promise<ChatgptAuthSignals> {
   const cookies = await getChatgptCookies(workerWin);
   const hasSessionCookie = cookies.some(
     (cookie) =>
@@ -58,37 +57,8 @@ async function getChatgptAuthSignals(workerWin: BrowserWindow): Promise<{
   return { hasSessionCookie, hasLogoutDebugCookie };
 }
 
-async function getChatgptPageSignals(workerWin: BrowserWindow): Promise<{
-  isAuthHost: boolean;
-  hasComposer: boolean;
-  hasLoginCta: boolean;
-  hasExpiredSessionModalHint: boolean;
-}> {
-  return await workerWin.webContents.executeJavaScript(`
-    (() => {
-      const host = (location.hostname || '').toLowerCase();
-      const isAuthHost = host.includes('auth.openai.com');
-      const hasComposer = Boolean(document.querySelector(${JSON.stringify(CHATGPT_INPUT_SELECTORS.join(', '))}));
-      const ctas = Array.from(document.querySelectorAll('button, a'))
-        .map((el) => (el.textContent || '').trim())
-        .filter(Boolean);
-      const hasLoginCta = ctas.some((text) => /^(Log in|Sign in)$/i.test(text));
-      const hasExpiredSessionModalHint =
-        ctas.some((text) => /expired session/i.test(text)) ||
-        document.body.innerText.includes('auth.expired-session-modal');
-      return { isAuthHost, hasComposer, hasLoginCta, hasExpiredSessionModalHint };
-    })()
-  `, false);
-}
-
-function isLoginRequiredFromSignals(
-  auth: { hasSessionCookie: boolean; hasLogoutDebugCookie: boolean },
-  page: { isAuthHost: boolean; hasComposer: boolean; hasLoginCta: boolean; hasExpiredSessionModalHint: boolean },
-): boolean {
-  if (!auth.hasSessionCookie) return true;
-  if (page.isAuthHost || page.hasLoginCta || page.hasExpiredSessionModalHint) return true;
-  if (auth.hasLogoutDebugCookie && !page.hasComposer) return true;
-  return false;
+async function getChatgptPageSignals(workerWin: BrowserWindow): Promise<ChatgptPageSignals> {
+  return await workerWin.webContents.executeJavaScript(CHATGPT_PAGE_SIGNALS_JS, false) as ChatgptPageSignals;
 }
 
 async function waitForChatgptComposerOrTimeout(
@@ -135,7 +105,7 @@ export async function runChatgptAutomation(
   if (isLoginRequiredFromSignals(authSignals, pageSignals)) {
     await showLoginWindowIfNeeded('ChatGPT', CHATGPT_SIGN_IN_START_URL, startChatgptSignIn);
     throw new Error(
-      `${CHATGPT_LOGIN_REQUIRED}: ChatGPT page indicates logged-out state (session=${authSignals.hasSessionCookie}, logoutDebug=${authSignals.hasLogoutDebugCookie}, composer=${pageSignals.hasComposer})`,
+      `${CHATGPT_LOGIN_REQUIRED}: ChatGPT page indicates logged-out state (session=${authSignals.hasSessionCookie}, logoutDebug=${authSignals.hasLogoutDebugCookie}, composer=${pageSignals.hasComposer}, sessionSignedOut=${pageSignals.sessionSignedOut})`,
     );
   }
 
@@ -155,8 +125,11 @@ export async function runChatgptAutomation(
     await settledElementCounts(wc, [CHATGPT_ASSISTANT_TURN_SELECTOR]);
   }
 
+  // A new chat shows a placeholder title (localized) until ChatGPT names it.
+  const placeholder = continuingThread ? '' : await readDocumentTitle(wc);
+
   const autoScript = buildChatgptAutomationScript(prompt, timeoutMs);
-  const result = await executeAutomationWithTimeout<{ response: string; title: string; images?: unknown }>(
+  const result = await executeAutomationWithTimeout<{ response: string; title: string; pendingTitle?: string; images?: unknown }>(
     wc,
     autoScript,
     timeoutMs,
@@ -172,7 +145,7 @@ export async function runChatgptAutomation(
 
   return {
     response: (result.response || '').trim(),
-    title: cleanChatgptTitle(result.title || ''),
+    title: cleanChatgptTitle(result.title || '', continuingThread ? [] : [placeholder, result.pendingTitle || '']),
     ...(images.length > 0 ? { images } : {}),
   };
 }

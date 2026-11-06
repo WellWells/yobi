@@ -38,7 +38,30 @@ export class ByokFailure extends Error {
   }
 }
 
+export const BYOK_REFUSED_PREFIX = 'BYOK refused: ';
+
+/**
+ * The model or its provider's safety filter declined the request (`finish_reason` content_filter,
+ * refusal or safety, or a `refusal` text). Never retried: the same request is refused again.
+ */
+export class ByokRefusal extends ByokFailure {
+  constructor(detail: string) {
+    super(`${BYOK_REFUSED_PREFIX}${detail}`);
+    this.name = 'ByokRefusal';
+  }
+}
+
+const REFUSAL_FINISH_REASONS = new Set(['content_filter', 'refusal', 'safety']);
+
+/** The refusal a finished reply carries, or null: its refusal text, else the finish reason. */
+export function refusalOf(finishReason: string, refusalText: string): ByokRefusal | null {
+  const text = refusalText.trim();
+  if (text) return new ByokRefusal(text);
+  return REFUSAL_FINISH_REASONS.has(finishReason) ? new ByokRefusal(finishReason) : null;
+}
+
 export function isByokRetryable(err: unknown): boolean {
+  if (err instanceof ByokRefusal) return false;
   if (!(err instanceof ByokFailure) || err.status === undefined) return true;
   if (PERMANENT_SERVER_STATUSES.has(err.status)) return false;
   const refusedByEndpoint = err.status >= 400 && err.status < 500;
@@ -310,6 +333,18 @@ function extractApiErrorDetail(bodyText: string): string {
   return compactPreview(bodyText, 200);
 }
 
+/** The refusal in a whole (non-streamed) completion body, or null. */
+function refusalInBody(bodyText: string): ByokRefusal | null {
+  try {
+    const parsed = JSON.parse(bodyText) as { choices?: { message?: { refusal?: unknown }; finish_reason?: unknown }[] };
+    const choice = parsed?.choices?.[0];
+    const text = typeof choice?.message?.refusal === 'string' ? choice.message.refusal : '';
+    return refusalOf(typeof choice?.finish_reason === 'string' ? choice.finish_reason : '', text);
+  } catch {
+    return null;
+  }
+}
+
 function extractCompletionContent(bodyText: string): string | null {
   try {
     const parsed = JSON.parse(bodyText) as { choices?: { message?: { content?: unknown } }[] };
@@ -491,6 +526,8 @@ async function streamByokChat(
       } catch (err: unknown) {
         throw mapTransportError(err);
       }
+      const refused = refusalInBody(bodyText);
+      if (refused) throw refused;
       const whole = extractCompletionContent(bodyText);
       if (!whole) throw new Error(`${BYOK_REQUEST_FAILED_PREFIX}empty or malformed completion response`);
       return { content: whole, usage: extractCompletionUsage(bodyText) };
@@ -501,18 +538,40 @@ async function streamByokChat(
     let buffer = '';
     let rawBody = '';
     let content = '';
+    let finishReason = '';
+    let refusalText = '';
     let usage: ByokUsage | null = null;
-    const finalize = (): { content: string; usage: ByokUsage | null } => ({
-      content: content.trim() || (extractCompletionContent(rawBody) ?? ''),
-      usage: usage ?? extractCompletionUsage(rawBody),
-    });
+    let sawDone = false;
+    // A refusal wins over whatever text came first: a filter that stops a reply mid-stream leaves
+    // a fragment that must not be handed on as the answer.
+    const finalize = (): { content: string; usage: ByokUsage | null } => {
+      const refused = refusalOf(finishReason, refusalText) ?? (content.trim() ? null : refusalInBody(rawBody));
+      if (refused) throw refused;
+      // A stream that stopped without saying it was finished. Taken as the whole reply it is a
+      // fragment that can still parse (a tool call with half an argument).
+      if (content.trim() && !sawDone && !finishReason) {
+        sendLog(`⚠️ BYOK stream stopped mid-reply after ${content.length} characters; tail: ${rawBody.slice(-200).replace(/s+/g, ' ')}`);
+        throw new ByokFailure(`${BYOK_REQUEST_FAILED_PREFIX}the reply stopped before it finished`);
+      }
+      return {
+        content: content.trim() || (extractCompletionContent(rawBody) ?? ''),
+        usage: usage ?? extractCompletionUsage(rawBody),
+      };
+    };
     const consumeLine = (rawLine: string): 'done' | undefined => {
       const line = rawLine.trim();
       if (!line || line.startsWith(':')) return;
       if (!line.startsWith('data:')) return;
       const data = line.slice(5).trim();
-      if (data === '[DONE]') return 'done';
-      let parsed: { choices?: { delta?: { content?: unknown } }[]; error?: { message?: unknown }; usage?: unknown };
+      if (data === '[DONE]') {
+        sawDone = true;
+        return 'done';
+      }
+      let parsed: {
+        choices?: { delta?: { content?: unknown; refusal?: unknown }; finish_reason?: unknown }[];
+        error?: { message?: unknown };
+        usage?: unknown;
+      };
       try {
         parsed = JSON.parse(data);
       } catch {
@@ -520,8 +579,11 @@ async function streamByokChat(
       }
       if (parsed.error) throw new Error(`${BYOK_REQUEST_FAILED_PREFIX}${extractApiErrorDetail(data)}`);
       usage = parseByokUsage(parsed.usage) ?? usage;
-      const piece = parsed.choices?.[0]?.delta?.content;
+      const choice = parsed.choices?.[0];
+      const piece = choice?.delta?.content;
       if (typeof piece === 'string') content += piece;
+      if (typeof choice?.delta?.refusal === 'string') refusalText += choice.delta.refusal;
+      if (typeof choice?.finish_reason === 'string') finishReason = choice.finish_reason;
     };
 
     for (;;) {
@@ -679,6 +741,8 @@ export async function runOnByokKeys<T extends { usage: ByokUsage | null }>(
           markKeyCooling(endpoint.id, err.retryAfterMs);
           noteKeyCooldown(endpoint.id);
         }
+        // The next key would be asked the same thing and decline it the same way.
+        if (err instanceof ByokRefusal) break;
         if (options.failOver && !options.failOver(err)) break;
         if (index < tryList.length - 1) {
           const detail = err instanceof Error ? err.message : String(err);

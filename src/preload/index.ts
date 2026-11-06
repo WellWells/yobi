@@ -41,15 +41,16 @@ import type {
   AccountStatus, AttachmentStashRequest, AuthProvider, BackupCategoryId, BackupCategoryInfo, BackupExportResult,
   BackupImportResult, BackupInspectResult, BotBuiltinCommands, BotByokCommandInfo, BotLlmDirectConfig, ByokConnectionProbe, ByokGroupSaveRequest, ByokInstanceSaveRequest, ByokModelsResult,
   ByokSettingsSnapshot, ByokTestResult, CaptureSettings, ChatCommandResult, ChatTurnEvent, HotkeyBindResult,
+  ShellInfo, ShellOutputEvent, ShellRunReply, ShellRunRequest,
   QuickExportSettings,
   FeedCandidate, FlowDefinition, FlowExecutionEvent, FlowExecutionLog, FlowExecutionResult, HiddenSources,
   ScraperPickRequest, ScraperPickResult,
   FlowBuildOutcome, FlowBuildPayload, FlowBuildRequestPayload, MarkdownCaptureRequest, MarkdownCaptureResult, MetricsSnapshot, NotifyEventPrefs, OutputFile, PromptPreferences, StartedConversation, ConversationImportResult, ConversationPinRequest, ResponseEditRequest, ResponseEditResult,
-  SchedulePreview, ShareLinkRequest, ShareLinkResult, ShareSettings, StashedAttachment, TriggerConfig,
+  SchedulePreview, ShareLinkRequest, ShareLinkResult, ShareSettings, StashedAttachment, TriggerConfig, TurnFileAction,
   SiteAccount, SiteAccountStatus,
 } from '../shared/types';
 import type {
-  BotAudienceSnapshot, BotPlatform, TrackpadGestureEvent, TrashedConversation, TrashResult,
+  BotAudienceSnapshot, BotPlatform, ReadingZoomCommand, TrackpadGestureEvent, TrashedConversation, TrashResult,
 } from '../shared/types';
 import type { FlowMetricsSnapshot } from '../shared/flowMetrics';
 import type { ConversationMenuCommandEvent, ConversationMenuTarget } from '../shared/conversationMenu';
@@ -78,6 +79,7 @@ import type {
 } from '../shared/types';
 import type { StepProgress } from '../shared/stepProgress';
 import type { CalendarSaveRequest, CalendarSaveResult, CalendarSummary, CalendarTestRequest, CalendarTestResult } from '../shared/calendars';
+import type { CalDavAccountInput, CalDavRefreshResult, CalDavSaveResult, CalDavSnapshot } from '../shared/calDav';
 
 export type ElectronAPI = {
   showWorker: () => void;
@@ -97,6 +99,10 @@ export type ElectronAPI = {
   getExternalEditorSettings: () => Promise<ExternalEditorSettings>;
   setExternalEditorSettings: (update: { choice: string; command: string }) => Promise<ExternalEditorSettings>;
   onChatTurn: (cb: (event: ChatTurnEvent) => void) => () => void;
+  getShellInfo: (conversationPath?: string) => Promise<ShellInfo>;
+  runShellCommand: (request: ShellRunRequest) => Promise<ShellRunReply>;
+  stopShellCommand: (sendId: string) => Promise<boolean>;
+  onShellOutput: (cb: (event: ShellOutputEvent) => void) => () => void;
   onUiNotification: (cb: (payload: UiNotificationPayload) => void) => () => void;
   onTelegramRuntime: (cb: (snapshot: TelegramRuntimeSnapshot) => void) => () => void;
   onLineRuntime: (cb: (snapshot: LineRuntimeSnapshot) => void) => () => void;
@@ -269,6 +275,7 @@ export type ElectronAPI = {
   exportConversationMarkdown: (filePath: string) => Promise<MarkdownCaptureResult>;
   openPath: (filePath: string) => Promise<boolean>;
   openFileWith: (filePath: string) => Promise<boolean>;
+  turnFileAction: (action: TurnFileAction, filePath: string) => Promise<boolean>;
   copyFilesToClipboard: (filePaths: string[]) => Promise<number>;
   openConfigDir: () => Promise<boolean>;
   openLogDir: () => Promise<boolean>;
@@ -295,8 +302,6 @@ export type ElectronAPI = {
   clearTelegramLargeUpload: () => Promise<TelegramLargeUploadResult>;
   testTelegramLargeUpload: (input: TelegramLargeUploadInput) => Promise<TelegramLargeUploadResult>;
   updateTelegramAllowGroupCommands: (enabled: boolean) => Promise<boolean>;
-  updateTelegramDefaultReplyMode: (mode: 'markdown' | 'png' | 'webp' | 'pdf') => Promise<boolean>;
-  updateTelegramCompactReply: (enabled: boolean) => Promise<boolean>;
   getBotProviderCommands: () => Promise<Record<Provider, BotProviderCommand>>;
   updateBotProviderCommands: (commands: Record<Provider, BotProviderCommand>) => Promise<boolean>;
   getBotBuiltinCommands: () => Promise<BotBuiltinCommands>;
@@ -340,6 +345,10 @@ export type ElectronAPI = {
   saveCalendar: (request: CalendarSaveRequest) => Promise<CalendarSaveResult>;
   removeCalendar: (id: string) => Promise<CalendarSummary[]>;
   testCalendar: (request: CalendarTestRequest) => Promise<CalendarTestResult>;
+  listCalDav: () => Promise<CalDavSnapshot>;
+  saveCalDav: (input: CalDavAccountInput) => Promise<CalDavSaveResult>;
+  removeCalDav: (id: string) => Promise<CalDavSnapshot>;
+  refreshCalDav: (id: string) => Promise<CalDavRefreshResult>;
   getEmailSettings: () => Promise<EmailSettingsSnapshot>;
   updateEmailCredentials: (input: MailAccountInput) => Promise<MailAccountSaveResult>;
   removeMailAccount: (id: string) => Promise<EmailSettingsSnapshot>;
@@ -414,6 +423,7 @@ export type ElectronAPI = {
   onLinkRecognitionChanged: (cb: (state: LinkRecognitionState) => void) => () => void;
   getMarkdownZoom: () => Promise<number>;
   updateMarkdownZoom: (zoom: number) => Promise<boolean>;
+  onReadingZoomCommand: (cb: (command: ReadingZoomCommand) => void) => () => void;
   getReadingPrefs: () => Promise<ReadingPrefs>;
   updateReadingPrefs: (patch: Partial<ReadingPrefs>) => Promise<ReadingPrefs>;
   getSidebarView: () => Promise<SidebarViewPrefs>;
@@ -528,6 +538,14 @@ const api: ElectronAPI = {
     const handler = (_: Electron.IpcRendererEvent, event: ChatTurnEvent) => cb(event);
     ipcRenderer.on(IPC.CHAT_TURN, handler);
     return () => ipcRenderer.removeListener(IPC.CHAT_TURN, handler);
+  },
+  getShellInfo: (conversationPath) => ipcRenderer.invoke(IPC.CHAT_SHELL_INFO, conversationPath),
+  runShellCommand: (request) => ipcRenderer.invoke(IPC.CHAT_SHELL_RUN, request),
+  stopShellCommand: (sendId) => ipcRenderer.invoke(IPC.CHAT_SHELL_STOP, sendId),
+  onShellOutput: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, event: ShellOutputEvent) => cb(event);
+    ipcRenderer.on(IPC.CHAT_SHELL_OUTPUT, handler);
+    return () => ipcRenderer.removeListener(IPC.CHAT_SHELL_OUTPUT, handler);
   },
   onAgentTrace: (cb) => {
     const handler = (_: Electron.IpcRendererEvent, payload: AgentTracePayload) => cb(payload);
@@ -799,6 +817,7 @@ const api: ElectronAPI = {
   exportConversationMarkdown: (filePath) => ipcRenderer.invoke(IPC.EXPORT_CONVERSATION_MARKDOWN, filePath),
   openPath: (filePath) => ipcRenderer.invoke(IPC.OPEN_PATH, filePath),
   openFileWith: (filePath) => ipcRenderer.invoke(IPC.OPEN_FILE_WITH, filePath),
+  turnFileAction: (action, filePath) => ipcRenderer.invoke(IPC.TURN_FILE_ACTION, action, filePath),
   copyFilesToClipboard: (filePaths) => ipcRenderer.invoke(IPC.COPY_FILES_TO_CLIPBOARD, filePaths),
   openConfigDir: () => ipcRenderer.invoke(IPC.OPEN_CONFIG_DIR),
   openLogDir: () => ipcRenderer.invoke(IPC.OPEN_LOG_DIR),
@@ -829,8 +848,6 @@ const api: ElectronAPI = {
   clearTelegramLargeUpload: () => ipcRenderer.invoke(IPC.CLEAR_TELEGRAM_LARGE_UPLOAD),
   testTelegramLargeUpload: (input) => ipcRenderer.invoke(IPC.TEST_TELEGRAM_LARGE_UPLOAD, input),
   updateTelegramAllowGroupCommands: (enabled) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_ALLOW_GROUP_COMMANDS, enabled),
-  updateTelegramDefaultReplyMode: (mode) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_DEFAULT_REPLY_MODE, mode),
-  updateTelegramCompactReply: (enabled) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_COMPACT_REPLY, enabled),
   getBotProviderCommands: () => ipcRenderer.invoke(IPC.GET_BOT_PROVIDER_COMMANDS),
   updateBotProviderCommands: (commands) => ipcRenderer.invoke(IPC.UPDATE_BOT_PROVIDER_COMMANDS, commands),
   getBotBuiltinCommands: () => ipcRenderer.invoke(IPC.GET_BOT_BUILTIN_COMMANDS),
@@ -874,6 +891,10 @@ const api: ElectronAPI = {
   saveCalendar: (request) => ipcRenderer.invoke(IPC.CALENDAR_SAVE, request),
   removeCalendar: (id) => ipcRenderer.invoke(IPC.CALENDAR_REMOVE, id),
   testCalendar: (request) => ipcRenderer.invoke(IPC.CALENDAR_TEST, request),
+  listCalDav: () => ipcRenderer.invoke(IPC.CALDAV_LIST),
+  saveCalDav: (input) => ipcRenderer.invoke(IPC.CALDAV_SAVE, input),
+  removeCalDav: (id) => ipcRenderer.invoke(IPC.CALDAV_REMOVE, id),
+  refreshCalDav: (id) => ipcRenderer.invoke(IPC.CALDAV_REFRESH, id),
   getEmailSettings: () => ipcRenderer.invoke(IPC.GET_EMAIL_SETTINGS),
   updateEmailCredentials: (creds) => ipcRenderer.invoke(IPC.UPDATE_EMAIL_CREDENTIALS, creds),
   removeMailAccount: (id) => ipcRenderer.invoke(IPC.REMOVE_MAIL_ACCOUNT, id),
@@ -1009,6 +1030,11 @@ const api: ElectronAPI = {
   },
   getMarkdownZoom: () => ipcRenderer.invoke(IPC.GET_MARKDOWN_ZOOM),
   updateMarkdownZoom: (zoom) => ipcRenderer.invoke(IPC.UPDATE_MARKDOWN_ZOOM, zoom),
+  onReadingZoomCommand: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, command: ReadingZoomCommand) => cb(command);
+    ipcRenderer.on(IPC.READING_ZOOM_COMMAND, handler);
+    return () => ipcRenderer.removeListener(IPC.READING_ZOOM_COMMAND, handler);
+  },
   getReadingPrefs: () => ipcRenderer.invoke(IPC.GET_READING_PREFS),
   updateReadingPrefs: (patch) => ipcRenderer.invoke(IPC.UPDATE_READING_PREFS, patch),
   getSidebarView: () => ipcRenderer.invoke(IPC.GET_SIDEBAR_VIEW),

@@ -14,13 +14,15 @@ import {
   resolveXMediaDestination,
   smallestReadable,
   splitCaption,
+  TELEGRAM_CAPTION_CHARS,
   xPostMessage,
 } from '../../../shared/xMedia';
 import type { XMediaDestination, XMediaInput } from '../../../shared/xMedia';
-import { TELEGRAM_UPLOAD_LIMIT_BYTES, formatButtonImages, formatFlowButtons, formatMegabytes } from '../../../shared/ytdl';
+import { formatButtonImages, formatFlowButtons, formatMegabytes } from '../../../shared/ytdl';
 import { postAudioInput, xAnalyzeInput } from '../../../shared/builtinFlows';
 import { coverForChat, keepForChat } from '../../chatMedia';
 import { countDownload } from '../../downloader/usage';
+import { telegramCaptionLead } from '../../telegram/longMessage';
 import { FlowUserError } from '../userError';
 import { downloadsFolder } from './fileOps';
 import { saveIntoFolder } from './savedDownloads';
@@ -30,7 +32,7 @@ import { formatPostTime } from './xReader';
 import { pickCover, pickMenuButtons, pickThumb, pickWindow } from './postPickMenu';
 import { chooseVariant, downloadTo, fetchVariantTo, isLocked, mediaFileName, saveFolder, sizedVariants } from './postMediaFetch';
 import { postAudio, postHasSound } from './postAudio';
-import { telegramLimitBytes, ytdlAccessFor } from './ytdlAccess';
+import { chatLimitBytes, ytdlAccessFor } from './ytdlAccess';
 import type { PostPicks, XMedia, XPost } from './xPosts';
 
 /** One item to deliver: a local file for Telegram and the computer, a URL LINE fetches itself. */
@@ -54,11 +56,11 @@ async function fetchItems(
   destination: XMediaDestination,
   jobDir: string,
   signal: AbortSignal | undefined,
-  telegramLimitBytes: number,
+  chatLimitBytes: number | undefined,
 ): Promise<Delivered[]> {
   const out: Delivered[] = [];
   // A chat's limit is a hard stop; the desktop preview may fall back to a version over it.
-  const cap = destination === 'preview' ? null : destinationLimitBytes(destination, telegramLimitBytes);
+  const cap = destination === 'preview' ? null : destinationLimitBytes(destination, chatLimitBytes);
   for (const [index, item] of media.entries()) {
     if (item.kind === 'photo') {
       if (destination === 'line') {
@@ -82,7 +84,7 @@ async function fetchItems(
       out.push({ target: photoUrl(item, 'medium'), preview: '', kind: 'photo', bytes, kept: file });
       continue;
     }
-    const variant = await chooseVariant(item, destination, signal, telegramLimitBytes);
+    const variant = await chooseVariant(item, destination, signal, chatLimitBytes);
     if (destination === 'line') {
       // LINE refuses a preview over 1 MB; the small size, where the site serves one, keeps well under it.
       out.push({ target: variant.url, preview: photoUrl(item, 'small'), kind: item.kind, bytes: 0 });
@@ -169,10 +171,12 @@ interface MenuPictures {
  * item's picture, kept in its cache; a button whose picture cannot be fetched stays a word.
  * Telegram gets them as one album in the buttons' order, from the same cache, so a bot step can
  * send them after this step is done — every one or none, or the numbers would not match, else
- * the linked item's picture by URL. LINE fetches each URL itself, as a carousel to tap.
- * An account's menu (an Instagram profile) shows only its profile picture.
+ * the linked item's picture by URL. LINE fetches each URL itself, as a carousel to tap. LINE PC
+ * sends every picture as a message of its own, ringing everyone's phone in the chat: its menu is
+ * the numbered lines alone. An account's menu (an Instagram profile) shows only its profile picture.
  */
 async function menuPictures(post: XPost, picks: PostPicks, destination: XMediaDestination): Promise<MenuPictures> {
+  if (destination === 'lineSelf') return { media: [], itemImages: new Map() };
   if (picks.account) {
     const cover = pickCover(picks);
     if (destination !== 'preview') return { media: [cover].filter(Boolean), itemImages: new Map() };
@@ -227,6 +231,8 @@ async function pickMenu(post: XPost, picks: PostPicks, destination: XMediaDestin
     message,
     caption: message,
     overflow: '',
+    lead: message,
+    rest: '',
     text: '',
     author: post.author ? `@${post.author}` : '',
     name: post.name,
@@ -285,18 +291,21 @@ async function postMedia(
   void cleanupYtdlJobs().catch(() => {});
   const jobDir = await createYtdlJobDir();
   try {
-    // A Telegram chat gets the best version under the person's limit: 100 MB without the admin
-    // right, else what the bot can send now (`telegramLimitBytes`).
-    const telegramLimit = destination === 'telegram' ? telegramLimitBytes(await ytdlAccessFor(config)) : TELEGRAM_UPLOAD_LIMIT_BYTES;
-    const fetched = forwarding ? await fetchItems(postFileStem(input.source, post), media, destination, jobDir, signal, telegramLimit) : [];
+    // A chat a file is sent to (Telegram, LINE PC) gets the best version under the person's limit:
+    // 100 MB without the admin right (or, on LINE PC, being the owner), else what the chat takes
+    // now (`chatLimitBytes`).
+    const chatLimit = destination === 'telegram' || destination === 'lineSelf'
+      ? chatLimitBytes(await ytdlAccessFor(config), destination)
+      : undefined;
+    const fetched = forwarding ? await fetchItems(postFileStem(input.source, post), media, destination, jobDir, signal, chatLimit) : [];
     let saved = fetched;
     if (destination === 'preview' && fetched.length > 0) {
       saved = [];
       for (const item of fetched) saved.push({ ...item, target: await keepForChat(item.target, path.basename(item.target)) });
     }
-    // Downloads go to the downloads folder, what a Telegram bot step sends too; the folder's
-    // three-day cleanup removes them.
-    if ((destination === 'local' || destination === 'telegram') && fetched.length > 0) {
+    // Downloads go to the downloads folder, what a Telegram or LINE PC bot step sends too; the
+    // folder's cleanup removes them.
+    if ((destination === 'local' || destination === 'telegram' || destination === 'lineSelf') && fetched.length > 0) {
       const folder = saveFolder(input, post, fetched.length, config.folder);
       saved = [];
       for (const item of fetched) saved.push({ ...item, target: await saveIntoFolder(item.target, folder, path.basename(item.target)) });
@@ -309,12 +318,15 @@ async function postMedia(
     const videoText = forwarding ? '' : await readVideoContent(media, readerUrl(config.reader), signal);
     const parts = { name: post.name, author: post.author, text: post.text, link: post.link, heading: post.heading };
     const split = splitCaption(parts, destination, saved.length > 0);
+    const opening = split.overflow ? telegramCaptionLead(parts, TELEGRAM_CAPTION_CHARS) : { lead: split.caption, rest: '' };
     const strings = getLangCache();
     const keptLine = kept.length > 0
       ? t(strings, 'xMedia.notice.lineVideoKept', { site, file: kept.length === 1 ? kept[0] : path.dirname(kept[0]) })
       : '';
-    const caption = [split.caption, keptLine].filter(Boolean).join('\n\n');
-    const { overflow } = split;
+    // Over the limit only in Markdown: counted as Telegram counts, it all goes under the media.
+    const whole = split.overflow && !opening.rest ? { caption: opening.lead, overflow: '' } : split;
+    const caption = [whole.caption, keptLine].filter(Boolean).join('\n\n');
+    const { overflow } = whole;
     const summary = destination === 'local' && saved.length > 0
       ? t(strings, 'xMedia.summary.saved', { count: String(saved.length), folder: `\`${path.dirname(saved[0].target)}\`` })
       : '';
@@ -327,6 +339,8 @@ async function postMedia(
       message: xPostMessage(parts),
       caption,
       overflow,
+      lead: opening.rest ? opening.lead : caption,
+      rest: opening.rest,
       text: post.text,
       author: post.author ? `@${post.author}` : '',
       name: post.name,

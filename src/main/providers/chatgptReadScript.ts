@@ -167,6 +167,9 @@ export const CHATGPT_READ_JS = `async function chatgptWaitAndRead(submitted, opt
   }
 
   await waitFor(hasNewResponse, 'new ChatGPT response', TIMEOUT, WAIT_MS);
+  // ChatGPT names a new chat only after answering, so the title now is its placeholder, in
+  // whatever language the page uses.
+  var pendingTitle = (document.title || '').trim();
 
   await waitFor(function() {
     var latest = getLatestAssistantTurn();
@@ -221,18 +224,23 @@ export const CHATGPT_READ_JS = `async function chatgptWaitAndRead(submitted, opt
   var finalAnswer = copiedText || answerText;
   if (!finalAnswer && images.length === 0) throw new Error('ChatGPT response is empty');
 
-  return { response: finalAnswer, title: (document.title || '').trim(), images: images };
+  return { response: finalAnswer, title: (document.title || '').trim(), pendingTitle: pendingTitle, images: images };
 }`;
 
 const CHATGPT_TITLE_SUFFIX_RE = /\s*[-–—]\s*ChatGPT\s*$/i;
-const CHATGPT_SITE_TITLES = new Set(['chatgpt', 'chatgpt.com', 'new chat']);
+/** The brand, not UI words: the placeholder of an unnamed chat comes from the page itself. */
+const CHATGPT_SITE_TITLES = new Set(['chatgpt', 'chatgpt.com']);
 
 /**
- * Trims the site name off a ChatGPT conversation title. Kept outside the injected script: a
- * regex literal inside a template string loses its escapes.
+ * Trims the site name off a ChatGPT conversation title. `placeholders` are titles the page showed
+ * for this chat before it was named (before the send, and when the answer appeared), in whatever
+ * language the page uses; a title equal to one of them is not the chat's name. Kept outside the
+ * injected script: a regex literal inside a template string loses its escapes.
  */
-export function cleanChatgptTitle(rawTitle: string): string {
-  const trimmed = (rawTitle || '').trim();
-  if (CHATGPT_SITE_TITLES.has(trimmed.toLowerCase())) return '';
-  return trimmed.replace(CHATGPT_TITLE_SUFFIX_RE, '').trim();
+export function cleanChatgptTitle(rawTitle: string, placeholders: readonly string[] = []): string {
+  const clean = (value: string): string => (value || '').trim().replace(CHATGPT_TITLE_SUFFIX_RE, '').trim();
+  const title = clean(rawTitle);
+  if (!title || CHATGPT_SITE_TITLES.has(title.toLowerCase())) return '';
+  if (placeholders.some((placeholder) => placeholder && clean(placeholder) === title)) return '';
+  return title;
 }

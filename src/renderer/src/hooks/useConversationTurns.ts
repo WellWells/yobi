@@ -1,7 +1,7 @@
 import { startTransition, useCallback, useEffect, useRef } from 'react';
-import type { ChatTurnEvent } from '../../../shared/types';
+import type { ChatTurnEvent, ShellOutputEvent, ShellRunReply } from '../../../shared/types';
 import { attachmentMetaNames } from '../../../shared/conversationDoc';
-import { fileApi, promptApi, ipcEvents } from '../api/electronApi';
+import { fileApi, promptApi, ipcEvents, shellApi } from '../api/electronApi';
 import { NEW_CONVERSATION_KEY, useAppStore } from '../store/appStore';
 import { remapPathValues, useConversationMoves } from '../store/conversationMoves';
 import { resolveSendTarget } from './sendTarget';
@@ -25,33 +25,13 @@ export function useConversationTurns(onError: (message: string) => void) {
 
   const sendTurn = useCallback(({ prompt, targetUrl, attachments }: SendTurnRequest): void => {
     void (async () => {
-      const state = useAppStore.getState();
-      const target = resolveSendTarget({
-        selectedFilePath: state.selectedFile?.path ?? '',
-        tempChatMode: state.tempChatMode,
-      });
-      let conversationPath = target.conversationPath;
-      if (target.releaseSelectedFile) state.selectFile(null);
-
-      if (!conversationPath && !state.tempChatMode) {
-        const started = await fileApi.startConversation(prompt);
-        if (started) {
-          conversationPath = started.path;
-          const store = useAppStore.getState();
-          store.setFiles(started.files);
-          if (!store.selectedFile) {
-            store.selectFile(started.file);
-            store.setFileContent(started.content);
-          }
-        }
-      }
-
+      const conversationPath = await conversationForSend(prompt);
       const sendId = nextSendId();
       const attached = attachmentMetaNames(attachments ?? []);
       originBySendId.current.set(sendId, conversationPath);
       useAppStore.getState().addPendingTurn(
         conversationPath || NEW_CONVERSATION_KEY,
-        { sendId, prompt, ...(attached.length > 0 ? { attachments: attached } : {}) },
+        { sendId, prompt, ...(attached.length > 0 ? { attachments: attached, attachmentFiles: attachments } : {}) },
       );
 
       promptApi.triggerWithOptions({
@@ -64,6 +44,30 @@ export function useConversationTurns(onError: (message: string) => void) {
     })();
   }, []);
 
+  /** A `!` line: run on this computer, its output shown as it comes, then read by the model. */
+  const runShell = useCallback(({ command, targetUrl }: { command: string; targetUrl: string }): void => {
+    void (async () => {
+      const record = `! ${command}`;
+      const conversationPath = await conversationForSend(record);
+      const sendId = nextSendId();
+      originBySendId.current.set(sendId, conversationPath);
+      useAppStore.getState().addPendingTurn(
+        conversationPath || NEW_CONVERSATION_KEY,
+        { sendId, prompt: record, shell: { command, output: '', running: true } },
+      );
+      const reply = await shellApi.run({
+        command,
+        targetUrl,
+        sendId,
+        ...(conversationPath ? { conversationPath } : {}),
+      }).catch((): ShellRunReply => ({ ok: false, error: '' }));
+      if (reply.ok) return;
+      originBySendId.current.delete(sendId);
+      useAppStore.getState().clearPendingTurn(sendId);
+      if (reply.error) onError(reply.error);
+    })();
+  }, [onError]);
+
   useEffect(() => {
     const unsubscribe = ipcEvents.onChatTurn((event: ChatTurnEvent) => {
       void handleChatTurn(event, originBySendId.current, onError);
@@ -71,7 +75,37 @@ export function useConversationTurns(onError: (message: string) => void) {
     return unsubscribe;
   }, [onError]);
 
-  return { sendTurn };
+  useEffect(() => shellApi.onOutput((event: ShellOutputEvent) => {
+    useAppStore.getState().updatePendingShell(event.sendId, {
+      shellLabel: event.shell,
+      folder: event.folder,
+      running: !event.done,
+      output: event.text,
+      ...(event.done ? { exitCode: event.exitCode, stopped: event.stopped } : {}),
+    });
+  }), []);
+
+  return { sendTurn, runShell };
+}
+
+/** The open conversation, or a new file for the first message (none in a temporary chat). */
+async function conversationForSend(prompt: string): Promise<string> {
+  const state = useAppStore.getState();
+  const target = resolveSendTarget({
+    selectedFilePath: state.selectedFile?.path ?? '',
+    tempChatMode: state.tempChatMode,
+  });
+  if (target.releaseSelectedFile) state.selectFile(null);
+  if (target.conversationPath || state.tempChatMode) return target.conversationPath;
+  const started = await fileApi.startConversation(prompt);
+  if (!started) return '';
+  const store = useAppStore.getState();
+  store.setFiles(started.files);
+  if (!store.selectedFile) {
+    store.selectFile(started.file);
+    store.setFileContent(started.content);
+  }
+  return started.path;
 }
 
 async function handleChatTurn(
@@ -84,9 +118,12 @@ async function handleChatTurn(
   origins.delete(event.sendId);
 
   if (event.phase === 'error') {
-    store.clearPendingTurn(event.sendId);
     onError(event.error ?? '');
-    return;
+    // A `!` command's turn was written without an answer: reloaded like an answered one.
+    if (!event.kept) {
+      store.clearPendingTurn(event.sendId);
+      return;
+    }
   }
   if (!event.conversationPath) {
     store.clearPendingTurn(event.sendId);

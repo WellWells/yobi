@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import { sendLog } from '../../helpers';
 import { getLangCache, t } from '../../i18n';
 import { createYtdlJobDir, removeYtdlJobDir } from '../../youtubeDownload';
-import { safeVideoFileName } from '../../../shared/ytdl';
+import { isChatDestination, safeVideoFileName } from '../../../shared/ytdl';
 import type { YtdlDestination } from '../../../shared/ytdl';
 import { siteLabel } from '../../../shared/linkSites/rows';
 import { FlowUserError } from '../userError';
@@ -40,8 +40,8 @@ export async function readVideoSubtitles(info: VideoInfo, signal?: AbortSignal):
 
 /**
  * Writes the .srt (`Title.srt`, a number added when the name is taken) and gives back the
- * `youtube_download` envelope: `kind` "subtitles"; handed to the bot step only for Telegram (sent
- * as a document), saved and said so everywhere else.
+ * `youtube_download` envelope: `kind` "subtitles"; handed to the bot step only for a chat it is
+ * sent to (Telegram, LINE PC: as a document), saved and said so everywhere else.
  */
 export async function saveSubtitles(info: VideoInfo, subtitles: TimedSubtitles, target: SubtitlesTarget): Promise<string> {
   const label = siteLabel(info.ref.site);
@@ -59,7 +59,7 @@ export async function saveSubtitles(info: VideoInfo, subtitles: TimedSubtitles, 
   }
   const sizeBytes = Buffer.byteLength(text, 'utf8');
   sendLog(`💬 [${label}] Saved ${finalPath} (${subtitles.language}${subtitles.auto ? ', automatic' : ''})`);
-  const handedOver = target.destination === 'telegram';
+  const handedOver = isChatDestination(target.destination);
   return JSON.stringify({
     output: finalPath,
     kind: 'subtitles',

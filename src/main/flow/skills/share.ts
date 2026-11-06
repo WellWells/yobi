@@ -20,12 +20,9 @@ import { expandFilenameTokens } from './fileOps';
 
 const DEFAULT_WIDTH = DEFAULT_CAPTURE_WIDTH;
 
-const HEIGHT_LIMIT_MARKER = 'height exceeds limits';
+import { isHeightLimitError } from '../../captureHeightLimit';
 
-export function isHeightLimitError(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : String(err ?? '');
-  return message.toLowerCase().includes(HEIGHT_LIMIT_MARKER);
-}
+export { isHeightLimitError };
 
 export function resolveBackgroundStyle(raw: string | undefined): CaptureBackgroundStyle {
   const value = (raw ?? '').trim().toLowerCase();

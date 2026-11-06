@@ -129,12 +129,39 @@ function linesFromDescription(qn: number, formats: readonly Json[]): readonly [n
   return match ? [Number(match[1]), match[2] ? Number(match[2]) : undefined] : null;
 }
 
-interface Stream {
+/** One H.264 stream of a `playurl` answer, labelled by its quality number. */
+export interface AvcStream {
   lines: number;
   fps: number;
   width: number;
   height: number;
   bandwidth: number;
+  /** Its entry in `dash.video[]`: the addresses a download fetches it from. */
+  entry: Json;
+}
+
+/**
+ * The H.264 (`avc1`) stream a download at each number of lines gets, smallest first: only
+ * `dash.video[]` counts (`accept_quality` and `quality` list more than is given), and of two
+ * numbers with the same lines (1080P and its high-bitrate twin) the larger stream.
+ */
+export function avcStreams(playurl: unknown): AvcStream[] {
+  const data = obj(obj(playurl)?.data);
+  const formats = arr(data?.support_formats).map(obj).filter((f): f is Json => f !== undefined);
+  const best = new Map<number, AvcStream>();
+  for (const entry of arr(obj(data?.dash)?.video).map(obj)) {
+    if (!entry || !str(entry.codecs).startsWith('avc1')) continue;
+    const qn = num(entry.id);
+    const known = QN_LINES[qn] ?? linesFromDescription(qn, formats);
+    if (!known) continue;
+    const [lines, qnFps] = known;
+    const fps = qnFps ?? Math.round(Number(str(entry.frameRate) || str(entry.frame_rate)) || 0);
+    const stream: AvcStream = { lines, fps, width: num(entry.width), height: num(entry.height), bandwidth: num(entry.bandwidth), entry };
+    const held = best.get(lines);
+    const kept = !held || stream.bandwidth > held.bandwidth ? stream : held;
+    best.set(lines, { ...kept, fps: Math.max(stream.fps, held?.fps ?? 0) });
+  }
+  return [...best.values()].sort((a, b) => a.lines - b.lines);
 }
 
 /** The code a bilibili API answer carries: 0 when it answered (`playurl` with streams). */
@@ -144,6 +171,16 @@ export function apiCode(answer: unknown): number | null {
 }
 
 const SMALL_LINES = 360;
+
+/** The video's length in ms as the stream list says (`timelength`; the rounded `dash.duration` is ~1% off on a short video), else the page's. */
+export function playurlTimelength(playurl: unknown, durationS: number): number {
+  return num(obj(obj(playurl)?.data)?.timelength) || durationS * 1_000;
+}
+
+/** Bytes for streams of `bandwidth` bits per second over `timelength` ms; null when either is unknown. */
+export function streamBytes(bandwidth: number, timelength: number): number | null {
+  return timelength > 0 && bandwidth > 0 ? Math.round((bandwidth * timelength) / 1_000 / 8) : null;
+}
 
 /**
  * The qualities a `playurl` answer actually streams in H.264 (`avc1`), smallest first: only
@@ -163,7 +200,6 @@ export function bilibiliChoices(
 ): YtdlChoice[] {
   const data = obj(obj(playurl)?.data);
   const dash = obj(data?.dash);
-  const formats = arr(data?.support_formats).map(obj).filter((f): f is Json => f !== undefined);
   const audios = arr(dash?.audio).map(obj).filter((a): a is Json => a !== undefined);
   const audioBandwidth = Math.max(0, ...audios.map((a) => num(a.bandwidth)));
   const aacBandwidths = audios.filter((a) => str(a.codecs).startsWith('mp4a')).map((a) => num(a.bandwidth));
@@ -171,25 +207,9 @@ export function bilibiliChoices(
   // What yt-dlp's `ba` among the AAC at or under the cap picks: the largest of them.
   const lowBandwidths = aacBandwidths.filter((b) => b > 0 && b <= LOW_AAC_MAX_KBPS * 1_000);
   const lowBandwidth = lowBandwidths.length > 0 ? Math.max(...lowBandwidths) : null;
-  const timelength = num(data?.timelength) || durationS * 1_000;
-  const best = new Map<number, Stream>();
-  for (const video of arr(dash?.video).map(obj)) {
-    if (!video || !str(video.codecs).startsWith('avc1')) continue;
-    const qn = num(video.id);
-    const known = QN_LINES[qn] ?? linesFromDescription(qn, formats);
-    if (!known) continue;
-    const [lines, qnFps] = known;
-    const fps = qnFps ?? Math.round(Number(str(video.frameRate) || str(video.frame_rate)) || 0);
-    const stream: Stream = { lines, fps, width: num(video.width), height: num(video.height), bandwidth: num(video.bandwidth) };
-    // Two numbers with the same lines (1080P and its high-bitrate twin): the larger stream is the
-    // one a download at that quality gets.
-    const held = best.get(lines);
-    const kept = !held || stream.bandwidth > held.bandwidth ? stream : held;
-    best.set(lines, { ...kept, fps: Math.max(stream.fps, held?.fps ?? 0) });
-  }
-  const bytes = (bandwidth: number, audio: number): number | null =>
-    timelength > 0 && bandwidth > 0 ? Math.round(((bandwidth + audio) * timelength) / 1_000 / 8) : null;
-  const choices: YtdlChoice[] = [...best.values()].map((stream) => withLowAudio({
+  const timelength = playurlTimelength(playurl, durationS);
+  const bytes = (bandwidth: number, audio: number): number | null => (bandwidth > 0 ? streamBytes(bandwidth + audio, timelength) : null);
+  const choices: YtdlChoice[] = avcStreams(playurl).map((stream) => withLowAudio({
     quality: stream.lines,
     label: stream.fps > 30 ? `${stream.lines}p${stream.fps}` : `${stream.lines}p`,
     sizeBytes: bytes(stream.bandwidth, audioBandwidth),

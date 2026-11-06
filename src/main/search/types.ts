@@ -1,6 +1,6 @@
 export type TemporalFilter = 'day' | 'week' | 'month' | 'none';
 
-/** The most queries one plan may hold. They are sent together, so this also sizes the DDG gate. */
+/** The most queries one plan may hold. They are sent together, so this also sizes the DuckDuckGo gate. */
 export const MAX_PLAN_QUERIES = 3;
 
 export interface QueryPlan {
@@ -14,6 +14,8 @@ export interface SerpHit {
   title: string;
   url: string;
   snippet?: string;
+  /** `YYYY-MM-DD`: the page's date as the engine showed it beside the result. */
+  date?: string;
 }
 
 export interface SourceDoc {
@@ -22,11 +24,29 @@ export interface SourceDoc {
   url: string;
   text: string;
   publishedAt?: string;
+  /** Not read: the text is the engine's summary of the result (quick mode's breadth). */
+  summaryOnly?: true;
+}
+
+/**
+ * Who a search is for, when its query is not their words: an agent searches with keywords it wrote,
+ * often in the place's own language, but answers the person's question in the person's language.
+ */
+export interface SearchAsker {
+  /** Their own words. */
+  words: string;
+  /** The conversation those words continue, so a follow-up ("so it goes round in a loop?") reads. */
+  history: string;
+  /**
+   * The "reply in the UI language" switch is on: the answer is in the UI language unless the words
+   * ask for another, never in the language of whatever they quote or paste (`answerLanguageFor`).
+   */
+  uiLanguage?: boolean;
 }
 
 export interface SearchOutcome {
   answer: string;
   sources: SourceDoc[];
-  /** Some of the plan's queries got DuckDuckGo's verification page; the rest answered. */
+  /** Every engine refused some of the plan's queries; the rest answered. */
   partiallyBlocked?: boolean;
 }

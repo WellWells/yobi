@@ -179,7 +179,8 @@ export async function runSessionText(
   return callWithTransportRetry(providerUrl, turn.full, deps, timeoutMs, signal, session);
 }
 
-export type Validation<T> = { ok: true; value: T } | { ok: false; error: string };
+/** `otherwise`: worth one more ask, but good enough when no repair is left. */
+export type Validation<T> = { ok: true; value: T } | { ok: false; error: string; otherwise?: T };
 
 const REJECTED_PREVIEW_CHARS = 500;
 
@@ -263,6 +264,10 @@ async function askJsonInTranscript<T>(opts: AskJsonOptions<T>, transcript: ByokT
         acceptReply(transcript, raw);
         return { ok: true, value: verdict.value, raw };
       }
+      if (attempt === maxRepairs && verdict.otherwise !== undefined) {
+        acceptReply(transcript, raw);
+        return { ok: true, value: verdict.otherwise, raw };
+      }
       lastError = verdict.error;
     }
 
@@ -305,6 +310,7 @@ export async function askJson<T>(opts: AskJsonOptions<T>): Promise<AskJsonResult
     } else {
       const verdict = opts.validate(json);
       if (verdict.ok) return { ok: true, value: verdict.value, raw };
+      if (attempt === maxRepairs && verdict.otherwise !== undefined) return { ok: true, value: verdict.otherwise, raw };
       lastError = verdict.error;
     }
 

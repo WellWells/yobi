@@ -1,9 +1,8 @@
 /**
- * Buttons under a bot run's question (2026-10-19, user: 「如果真的需要確認，我希望能夠提供按鈕在TG上進行」).
- * A question with choices — the model's own, or the program's approval of a shell command or a
+ * Buttons under a bot run's question. A question with choices — the model's own, or the program's approval of a shell command or a
  * connector change — gets one button per choice; a press answers with that choice's own text, as
  * if it had been typed, through the same queue. Typing still works. The buttons carry no numbers,
- * so a typed number is not a choice here (`applyAnswer`, 2026-10-20).
+ * so a typed number is not a choice here (`applyAnswer`).
  *
  * The run is already paused when the buttons go out, so a press never waits on the run it answers
  * (grammY handles one update at a time). `callback_data` carries only a random token and the

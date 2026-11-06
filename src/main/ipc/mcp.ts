@@ -1,11 +1,12 @@
 import { ipcMain } from 'electron';
-import { IPC } from '../../shared/types';
+import { BUILTIN_LINE_SERVER_ID, IPC } from '../../shared/types';
 import type { McpServerActionResult, McpServerSaveRequest, McpServerView } from '../../shared/types';
 import { errorText } from '../../shared/errorText';
 import { getMcpRegistry } from '../mcp';
 import { MCP_UNAVAILABLE } from '../mcp/mcpErrors';
 import { localizeActionResult, localizeServerViews } from '../mcp/mcpServerViews';
 import { listFlowTools } from '../mcp/flowTools';
+import { lineReaderSwitched } from '../line/readerSwitch';
 import type { McpFlowToolsRequest, McpFlowToolsResult } from '../../shared/mcpFlowStep';
 
 // Every result leaves through localizeActionResult: both the action's own error and each card's.
@@ -51,10 +52,14 @@ export function registerMcpHandlers(): void {
   ipcMain.handle(IPC.MCP_SET_BUILTIN_ENABLED, async (_event, id: string, enabled: boolean): Promise<McpServerActionResult> => {
     const registry = getMcpRegistry();
     if (!registry) return unavailableResult();
+    const builtinId = (id ?? '').trim();
     try {
-      return localizeActionResult(await registry.setBuiltinEnabled((id ?? '').trim(), enabled === true));
+      return localizeActionResult(await registry.setBuiltinEnabled(builtinId, enabled === true));
     } catch (err) {
       return localizeActionResult({ ok: false, servers: registry.listServers(), error: errorText(err) });
+    } finally {
+      // The LINE PC bot reads through this connector: it starts and stops with it.
+      if (builtinId === BUILTIN_LINE_SERVER_ID) lineReaderSwitched();
     }
   });
 

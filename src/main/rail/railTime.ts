@@ -111,8 +111,7 @@ export function dateArg(text: string | undefined, today: string): string {
 }
 
 /**
- * A time argument as models send it: blank or "now" (NOW, 現在, current…) means no time asked —
- * live eval 2026-10-22: a model sent "NOW", was refused, and tried a shell command for the clock.
+ * A time argument as models send it: blank or "now" (NOW, 現在, current…) means no time asked.
  */
 export function timeArg(text: string | undefined): string | undefined {
   const word = text?.trim() ?? '';

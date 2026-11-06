@@ -12,11 +12,13 @@ interface Props {
   busy: boolean;
   onGenerate: () => void;
   onRevoke: (code: string) => void;
+  /** Where the line is sent, said above the button (LINE PC: in the chat to pair, not a DM). */
+  hint: string;
   t: (key: string) => string;
 }
 
-/** Pairing codes for Discord and Slack: each shown as the `/pair` line to send the bot, ready to copy. */
-export const SocketBotPairingPanel: React.FC<Props> = ({ pendingCodes, connected, busy, onGenerate, onRevoke, t }) => {
+/** Pairing codes for the socket platforms: each shown as the `/pair` line to send, ready to copy. */
+export const SocketBotPairingPanel: React.FC<Props> = ({ pendingCodes, connected, busy, onGenerate, onRevoke, hint, t }) => {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -27,7 +29,7 @@ export const SocketBotPairingPanel: React.FC<Props> = ({ pendingCodes, connected
 
   return (
     <Stack gap={12}>
-      <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>{t('settings.socketBot.pairing.hint')}</Text>
+      <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>{hint}</Text>
       <Group gap={8} align="center">
         <MButton variant="default" leftSection={<UserPlus size={13} />} onClick={onGenerate} disabled={busy || !connected}>
           {t('settings.socketBot.pairing.generate')}

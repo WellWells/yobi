@@ -70,7 +70,21 @@ const SlackGuide: React.FC<{ t: Props['t'] }> = ({ t }) => {
   );
 };
 
+/**
+ * The platforms with a bot to make on their side. LINE PC has none: it is the user's own account,
+ * and its card's one paragraph says all there is to it.
+ */
+const GUIDES: Readonly<Partial<Record<SocketBotPlatform, React.FC<{ t: Props['t'] }>>>> = {
+  discord: DiscordGuide,
+  slack: SlackGuide,
+};
+
+export function hasSocketBotSetupGuide(platform: SocketBotPlatform): boolean {
+  return GUIDES[platform] !== undefined;
+}
+
 /** How to make the bot on the platform's side, step by step. */
-export const SocketBotSetupGuide: React.FC<Props> = ({ platform, t }) => (
-  platform === 'discord' ? <DiscordGuide t={t} /> : <SlackGuide t={t} />
-);
+export const SocketBotSetupGuide: React.FC<Props> = ({ platform, t }) => {
+  const Guide = GUIDES[platform];
+  return Guide ? <Guide t={t} /> : null;
+};

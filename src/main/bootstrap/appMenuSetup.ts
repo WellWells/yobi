@@ -48,6 +48,7 @@ function runConversationCommand(event: ConversationMenuCommandEvent): void {
 const deps: AppMenuDeps = {
   onOpenSettings: () => openSettings(),
   onConversationCommand: runConversationCommand,
+  onReadingZoom: (command) => sendToRenderer(IPC.READING_ZOOM_COMMAND, command),
 };
 let rebuildOnConversationChange = false;
 

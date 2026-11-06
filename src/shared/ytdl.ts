@@ -13,6 +13,13 @@ export type { FlowButton };
  */
 export const TELEGRAM_UPLOAD_LIMIT_BYTES = 49_000_000;
 
+/**
+ * What LINE PC is sent of a download. LINE sends a video up to 200 MiB as a video (a larger one
+ * goes as a plain file, which a phone does not play in the chat); kept a little under it, as
+ * Telegram's is, so it reads "200 MB" and an MB/MiB mix-up never decides the outcome.
+ */
+export const LINE_VIDEO_SEND_BYTES = 200_000_000;
+
 /** Telegram's own limit on one album. */
 export const TELEGRAM_ALBUM_MAX = 10;
 
@@ -27,7 +34,16 @@ export function formatLimit(bytes: number): string {
   return formatMegabytes(bytes);
 }
 
-export type YtdlDestination = 'telegram' | 'local';
+/**
+ * Where a download goes: a chat the bot step sends it to (Telegram, LINE PC), or this computer
+ * only. LINE's Messaging API and the other bots save it on the computer: they get `local`.
+ */
+export type YtdlDestination = 'telegram' | 'lineSelf' | 'local';
+
+/** A chat the file is sent to: it gets what a phone plays (H.264 with AAC, merged into MP4). */
+export function isChatDestination(destination: YtdlDestination): destination is 'telegram' | 'lineSelf' {
+  return destination !== 'local';
+}
 
 /**
  * `''` = not given (show the menu), `download` (the download menu: the qualities, the MP3 and the
@@ -357,8 +373,8 @@ export function buildYtdlChoices(
   for (const [quality, group] of byQuality) {
     const h264 = group.filter(isH264);
     const telegramPlayable = h264.length > 0 && aac.length > 0;
-    const video = destination === 'telegram' && h264.length > 0 ? largest(h264) : largest(group);
-    const audio = destination === 'telegram' && aac.length > 0 ? largest(aac) : largest(audios);
+    const video = isChatDestination(destination) && h264.length > 0 ? largest(h264) : largest(group);
+    const audio = isChatDestination(destination) && aac.length > 0 ? largest(aac) : largest(audios);
     if (!video) continue;
     const videoBytes = lengthOf(video);
     const audioBytes = audio ? lengthOf(audio) : 0;
@@ -381,8 +397,11 @@ export function buildYtdlChoices(
   return large.length > 0 ? large : choices;
 }
 
-/** The MP3's bitrate: a Telegram chat gets the smaller file, this computer the fuller one. */
-export const MP3_BITRATE_KBPS: Readonly<Record<YtdlDestination, number>> = { telegram: 128, local: 192 };
+/**
+ * The MP3's bitrate: a Telegram chat gets the smaller file (its bot sends 50 MB), LINE PC and this
+ * computer the fuller one.
+ */
+export const MP3_BITRATE_KBPS: Readonly<Record<YtdlDestination, number>> = { telegram: 128, lineSelf: 192, local: 192 };
 
 /** The MP3 button's and the progress line's name for it: a format, the same in every language. */
 export const MP3_LABEL = 'MP3';
@@ -468,6 +487,8 @@ export function withButtonImages(buttons: readonly FlowButton[], images: string 
 }
 
 export interface YtdlMenuLabels {
+  /** The "analyze" (summary) button's label, first in a link's whole menu; left out where there is none. */
+  analyze?: string;
   /** The subtitles (.srt) button's label; left out for a video with no subtitles. */
   subtitles?: string;
   /** `{{size}}` = "95 MB". */
@@ -519,9 +540,11 @@ export function ytdlSizeList(
  * computer. The subtitles need no download tools, so they stay while downloads are off; the button
  * limit cuts qualities, never the MP3 or the subtitles.
  *
- * `compact` is a bot chat's menu (its text lists the sizes, `ytdlSizeList`): the MP3 and the
- * subtitles in one group, then the bare qualities in a group of their own, so a phone shows two
- * short rows instead of a column of pairs.
+ * With `labels.analyze` (a link's whole menu) "analyze" comes first, the summary needing no download tools either.
+ *
+ * `compact` is a bot chat's menu (its text lists the sizes, `ytdlSizeList`): "analyze" in a group
+ * of its own, the MP3 and the subtitles in one, then the bare qualities in a group of their own,
+ * so a phone shows short rows instead of a column of pairs.
  */
 export function buildYtdlButtons(
   url: string,
@@ -532,27 +555,37 @@ export function buildYtdlButtons(
   audio: YtdlAudioChoice | null = null,
   compact = false,
 ): FlowButton[] {
+  const head: FlowButton[] = labels.analyze === undefined ? [] : [{ label: labels.analyze, input: `${url} summary` }];
   const last: FlowButton[] = labels.subtitles === undefined ? [] : [{ label: labels.subtitles, input: `${url} srt` }];
-  if (!downloadReady) return last;
+  if (!downloadReady) return startsGroups(compact, head, last);
   if (compact) {
     const actions: FlowButton[] = [...(audio ? [{ label: audio.label, input: `${url} mp3` }] : []), ...last];
     const qualities = choices
-      .slice(0, MAX_FLOW_BUTTONS - actions.length)
-      .map((choice, i): FlowButton => ({ label: choice.label, input: `${url} ${choice.quality}`, ...(i === 0 && actions.length > 0 ? { rowStart: true } : {}) }));
-    return [...actions, ...qualities];
+      .slice(0, MAX_FLOW_BUTTONS - head.length - actions.length)
+      .map((choice): FlowButton => ({ label: choice.label, input: `${url} ${choice.quality}` }));
+    return startsGroups(true, head, actions, qualities);
   }
   const buttons: FlowButton[] = [];
   for (const choice of choices) {
     buttons.push({ label: sizedLabel(choice, sendLimitBytes, labels), input: `${url} ${choice.quality}` });
   }
   const tail: FlowButton[] = audio ? [{ label: sizedLabel(audio, sendLimitBytes, labels), input: `${url} mp3` }, ...last] : last;
-  return [...buttons.slice(0, MAX_FLOW_BUTTONS - tail.length), ...tail];
+  return [...head, ...buttons.slice(0, MAX_FLOW_BUTTONS - head.length - tail.length), ...tail];
+}
+
+/** The groups in order; `compact`, each after the first non-empty one begins its own rows (`rowStart`). */
+function startsGroups(compact: boolean, ...groups: FlowButton[][]): FlowButton[] {
+  const out: FlowButton[] = [];
+  for (const group of groups) {
+    group.forEach((button, i) => out.push(compact && i === 0 && out.length > 0 ? { ...button, rowStart: true } : button));
+  }
+  return out;
 }
 
 /**
- * The first menu under a video whose site can sum it up: "analyze" (the summary) and "download",
- * which brings the download menu (`DOWNLOAD_MENU`) — the qualities only when asked for. A label
- * left out leaves its button out.
+ * A link's menu when the read got no qualities (YouTube's bot check): "analyze" (the summary) and
+ * "download", which reads the video again for the download menu (`DOWNLOAD_MENU`). A label left
+ * out leaves its button out.
  */
 export function buildVideoEntryButtons(url: string, labels: { analyze?: string; download?: string }): FlowButton[] {
   return [
@@ -562,7 +595,7 @@ export function buildVideoEntryButtons(url: string, labels: { analyze?: string; 
 }
 
 /**
- * A pasted video's preview (the user, 2026-10-23): up to 10 minutes at 480p, up to 20 minutes at
+ * A pasted video's preview: up to 10 minutes at 480p, up to 20 minutes at
  * 360p, longer ones none; 480p is the most a preview ever is, 360p the least.
  */
 export const PREVIEW_MAX_SECONDS = 20 * 60;
@@ -572,7 +605,7 @@ const PREVIEW_MIN_QUALITY = 360;
 /**
  * The quality a preview downloads, or null for none. The quality its length allows, else the
  * best below it down to 360p — always one whose estimate is known and fits `limitBytes` (what
- * this person gets in this chat). Measured 2026-10-23: YouTube 480p is 4–11 MB a minute (6
+ * this person gets in this chat). Measured: YouTube 480p is 4–11 MB a minute (6
  * typical), 360p 3–7; bilibili 480P 6–6.5, 360P 4–5 — so the size, not the length, decides
  * whether one fits a 49 MB Telegram bot.
  */
@@ -764,10 +797,14 @@ export interface YtdlToolsState {
   lastCheckedAt?: string;
 }
 
-/** `site`'s downloads can run: the tools are there and no change of that site waits for a newer yt-dlp. */
+/**
+ * `site`'s downloads can run: the tools are there and no change of that site waits for a newer
+ * yt-dlp. `pausable` false: a site Yobi downloads itself first, which such a change does not stop.
+ */
 export function ytdlDownloadReady(
   state: Pick<YtdlToolsState, 'status' | 'youtubeChangedAt' | 'siteChangedAt'>,
   site: LinkSiteId,
+  pausable = true,
 ): boolean {
-  return (state.status === 'ready' || state.status === 'custom') && !siteChangedAt(state, site);
+  return (state.status === 'ready' || state.status === 'custom') && !(pausable && siteChangedAt(state, site));
 }

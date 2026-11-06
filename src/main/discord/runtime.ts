@@ -1,9 +1,9 @@
 import type { SocketBotAccountInfo } from '../../shared/types';
 import { readUploadFiles } from '../botChat/files';
 import { t } from '../i18n';
-import { botChatKey } from '../botBuiltinCommands';
+import { botChatKey, withAnswerFiles } from '../botBuiltinCommands';
 import type { BotBuiltinRunResult } from '../botBuiltinCommands';
-import { SocketBotRuntime, type SocketBotOutgoing, type SocketBotRuntimeDeps } from '../botChat/socketRuntime';
+import { SocketBotRuntime, withPictureLinks, type SocketBotOutgoing, type SocketBotRuntimeDeps } from '../botChat/socketRuntime';
 import type { BotChatOutput } from '../botChat/types';
 import {
   CHOICE_BUTTON_PREFIX,
@@ -228,7 +228,7 @@ export class DiscordRuntime extends SocketBotRuntime<DiscordTextEvent> {
     }
     await this.post(event.channelId, {
       text: result.text.trim() ? result.text : t(s, 'bot.chat.emptyResponse'),
-      ...(result.files?.length ? { files: result.files } : {}),
+      ...withAnswerFiles(result),
       ...replyTo,
     }, { markdown: true });
     return true;
@@ -269,7 +269,7 @@ export class DiscordRuntime extends SocketBotRuntime<DiscordTextEvent> {
     if (!rest) throw new Error('Discord bot is not running');
     // A paired person's id is their DM; anything else is a channel the bot was given.
     const channelId = this.deps.isPairedUser(chatId) ? await rest.openDm(chatId) : chatId;
-    await this.post(channelId, message, { markdown: true });
+    await this.post(channelId, withPictureLinks(message), { markdown: true });
   }
 
   /**

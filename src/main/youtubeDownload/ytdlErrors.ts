@@ -12,7 +12,9 @@ export type YtdlFailureRule = readonly [YtdlFailureCategory, RegExp];
 const MACHINE_RULES: readonly YtdlFailureRule[] = [
   // A firewall that blocks yt-dlp.exe alone shows up as WinError 10013.
   ['firewall', /WinError 10013|An attempt was made to access a socket in a way forbidden|嘗試存取通訊端被拒絕|以一种访问权限不允许的方式做了一个访问套接字的尝试|urlopen error \[Errno 13\]|\[Errno 13\][^\n]*(?:connect|socket)/i],
-  ['disk', /No space left on device|ENOSPC|There is not enough space|\[Errno 28\]/i],
+  // Windows words a full disk in the system language; WinError 112 (ERROR_DISK_FULL) and 39
+  // (ERROR_HANDLE_DISK_FULL) are the same in every one.
+  ['disk', /WinError (?:112|39)\b|No space left on device|ENOSPC|There is not enough space|\[Errno 28\]/i],
 ];
 
 const RULES: readonly YtdlFailureRule[] = [

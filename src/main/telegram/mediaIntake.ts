@@ -249,8 +249,8 @@ async function prepareItems(
  * A picture or a file (an album is one) is a request like a message, paced the same way
  * (`admitPaced`). Only paired accounts hand the bot media, so no run holds the ticket: it goes
  * back once the task is queued. Only a request taken drops the question waiting for this person:
- * one the pace refuses runs nothing, so the question keeps waiting (review 2026-10-20: dropped
- * first, a refused photo reply left the run paused for good under buttons that no longer worked).
+ * one the pace refuses runs nothing, so the question keeps waiting (dropped first, a refused photo
+ * reply would leave the run paused for good under buttons that no longer worked).
  */
 async function pacedBatch(
   ctx: TelegramContext,

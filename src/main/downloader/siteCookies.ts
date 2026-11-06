@@ -10,7 +10,7 @@ import { SITE_PARTITIONS } from '../siteAccounts';
  * file it was given, so a file kept for the next call would carry what yt-dlp left there, not what
  * the session holds.
  *
- * Never a sign-in's (X, Instagram, Facebook): to the site yt-dlp is another browser, and one
+ * Never a sign-in's (X, Instagram, Facebook, bilibili, Threads): to the site yt-dlp is another browser, and one
  * session cookie arriving from two browsers reads as a stolen cookie.
  */
 

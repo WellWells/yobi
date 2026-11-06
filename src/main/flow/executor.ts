@@ -174,7 +174,7 @@ export function unwrapStepOutput(type: SkillType, raw: string): StepOutput {
     }
     return { output: raw, subVars: {} };
   }
-  if (type === 'stock' || type === 'forex' || type === 'weather' || type === 'air_quality' || type === 'calendar' || type === 'mail_fetch' || type === 'almanac' || type === 'tw_invoice' || type === 'gmap_reviews' || type === 'research' || type === 'sysinfo' || type === 'share' || type === 'line_read' || type === 'telegram_read' || type === 'mcp' || type === 'x_thread' || type === 'x_media' || type === 'youtube_info' || type === 'youtube_download') {
+  if (type === 'stock' || type === 'forex' || type === 'weather' || type === 'air_quality' || type === 'calendar' || type === 'mail_fetch' || type === 'almanac' || type === 'tw_invoice' || type === 'gmap_reviews' || type === 'research' || type === 'sysinfo' || type === 'share' || type === 'line_read' || type === 'telegram_read' || type === 'mcp' || type === 'x_thread' || type === 'x_media' || type === 'youtube_info' || type === 'youtube_download' || type === 'on_change') {
     try {
       const env = JSON.parse(raw) as Record<string, unknown>;
       if (env && typeof env.output === 'string') {

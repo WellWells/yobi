@@ -3,6 +3,7 @@ import { isByokTargetUrl } from '../../shared/types';
 import { charsPlusBreaks, utf8Len } from '../../shared/textBudget';
 import { promptAsSent } from '../../shared/conversationDoc';
 import type { ConversationTurn, ThreadMeta } from '../../shared/conversationDoc';
+import { readTurnShell } from '../../shared/shellBang';
 import { TAG_CURRENT, TAG_HISTORY, TAG_SUMMARY, formatExchange, wrapTag } from './conversationFrame';
 
 export type ContextMode = 'native' | 'replay';
@@ -118,7 +119,9 @@ export function packReplayPrompt(args: {
   const { turns, summary, newPrompt, budget, measure } = args;
   const preamble = args.preamble ?? '';
 
-  const usable = turns.filter((turn) => promptAsSent(turn).trim() !== '' && turn.response.trim() !== '');
+  // A `!` command stays without an answer: its output is still what a later question refers to.
+  const usable = turns.filter((turn) => promptAsSent(turn).trim() !== ''
+    && (turn.response.trim() !== '' || readTurnShell(turn.meta) !== null));
 
   const summaryText = summary.trim()
     ? truncateByMeasure(summary.trim(), Math.floor(budget * SUMMARY_SHARE), measure)

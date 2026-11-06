@@ -9,6 +9,7 @@ import type { SiteConnectorSite } from '../shared/siteConnectors';
 import { BILIBILI_NOTES } from './flow/agent/connectors/bilibiliContract';
 import { FACEBOOK_NOTES } from './flow/agent/connectors/facebookContract';
 import { INSTAGRAM_NOTES } from './flow/agent/connectors/instagramContract';
+import { THREADS_NOTES } from './flow/agent/connectors/threadsContract';
 import type { InProcessConnection } from './mcp/inProcessServer';
 
 export interface SiteConnectorRuntime {
@@ -30,6 +31,10 @@ export const BUILTIN_SITE_CONNECTORS: Readonly<Record<SiteConnectorSite, SiteCon
   bilibili: {
     connect: async (name, version) => (await import('./bilibili/bilibiliConnection')).connectBilibiliMcp(name, version),
     notes: BILIBILI_NOTES,
+  },
+  threads: {
+    connect: async (name, version) => (await import('./threads/threadsConnection')).connectThreadsMcp(name, version),
+    notes: THREADS_NOTES,
   },
 };
 

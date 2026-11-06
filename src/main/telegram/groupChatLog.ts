@@ -2,7 +2,7 @@ import type { Message } from 'grammy/types';
 import type { AgentChatLine } from '../../shared/types';
 
 /**
- * Kept per group for three days (the user's choice, 2026-10-17): long enough for a daily summary
+ * Kept per group for three days: long enough for a daily summary
  * to catch up on a day the computer was off. Saved through `GroupChatStore` so a restart loses
  * nothing; anything older is dropped from memory and disk alike.
  */
@@ -74,9 +74,7 @@ const RECAP_PHRASES: readonly RegExp[] = [
   /(?:上面|上方|以上|前面|剛剛|剛才|刚刚|刚才|稍早|大家|群組|群组|群裡|群里).{0,12}(?:統整|统整|總結|总结|摘要|整理|歸納|归纳|重點|重点|回顧|回顾|懶人包|懒人包|概括|彙整|汇整)/,
   /^(?:幫我|帮我|請|请)?(?:統整|统整|總結|总结|摘要|整理|歸納|归纳|彙整|汇整)(?:一下|下)?(?:重點|重点)?[。.!！?？]*$/,
   /(?:剛剛|剛才|刚刚|刚才|上面|前面|稍早|大家|他們|他们|你們|你们).{0,6}(?:在|有)?(?:聊|說|说|講|讲|討論|讨论|吵)(?:了)?(?:些)?(?:什麼|什么|啥|甚麼)/,
-  // "List what was discussed", "how many people were in it", "what did they discuss" (2026-10-17:
-  // 「逐一列出面討論的內容，幾個人討論」 — a typo for 上面 — matched nothing and was answered from
-  // the bot's own earlier answers).
+  // "List what was discussed", "how many people were in it", "what did they discuss".
   /(?:列出|列一下|條列|条列|列舉|列举|整理出).{0,12}(?:討論|讨论|對話|对话|聊天|聊了|說了|说了)/,
   /(?:討論|讨论|聊)(?:了|過|过)?(?:的)?(?:什麼|什么|啥|甚麼|內容|内容|話題|话题|主題|主题)/,
   /(?:幾|几|多少)(?:個|个|位)?人(?:在|有)?(?:討論|讨论|聊|說話|说话|發言|发言|參與|参与)/,

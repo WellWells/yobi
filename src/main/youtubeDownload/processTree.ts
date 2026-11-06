@@ -98,11 +98,57 @@ class TailBuffer {
   }
 }
 
+let runningTools = 0;
+let idleWaiters: Array<() => void> = [];
+let swapping: Promise<void> | null = null;
+
+/** How many tools started through `spawnTool` have not exited yet. */
+export function runningToolCount(): number {
+  return runningTools;
+}
+
+function toolExited(): void {
+  runningTools--;
+  if (runningTools > 0) return;
+  const waiters = idleWaiters;
+  idleWaiters = [];
+  for (const wake of waiters) wake();
+}
+
+/**
+ * Runs `fn` while no tool runs: waits until every tool started through `spawnTool` has exited, then
+ * holds new starts until `fn` settles. Replacing a managed tool's folder needs it — Windows cannot
+ * rename a folder whose program is running, and elsewhere a running program would lose files it
+ * still loads. `fn` must not start a tool itself.
+ */
+export async function withToolsIdle<T>(fn: () => Promise<T>): Promise<T> {
+  while (swapping || runningTools > 0) {
+    await (swapping ?? new Promise<void>((resolve) => idleWaiters.push(resolve)));
+  }
+  let resume = (): void => undefined;
+  swapping = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  try {
+    return await fn();
+  } finally {
+    swapping = null;
+    resume();
+  }
+}
+
 /**
  * Runs a tool without a shell. Resolves when it exits — also after a timeout or an abort, which
  * kill the whole tree and set `timedOut` / `aborted`; rejects only when it cannot start at all.
+ * Waits first while `withToolsIdle` is swapping a tool's folder.
  */
 export function spawnTool(cmd: string, args: readonly string[], options: SpawnToolOptions = {}): Promise<ToolResult> {
+  if (swapping) return swapping.then(() => spawnTool(cmd, args, options));
+  runningTools++;
+  return startTool(cmd, args, options).finally(toolExited);
+}
+
+function startTool(cmd: string, args: readonly string[], options: SpawnToolOptions): Promise<ToolResult> {
   const platform = options.platform ?? process.platform;
   const max = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   return new Promise<ToolResult>((resolve, reject) => {

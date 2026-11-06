@@ -13,6 +13,11 @@ import type { QueryPlan, TemporalFilter } from './types';
  */
 export const PLANNER_DEADLINE_MS = 6_000;
 /*
+ * Quick mode's own, shorter deadline: a plan normally takes ~1 s, and waiting the whole 6 s for one
+ * that never comes only delays searching the sentence as typed.
+ */
+export const QUICK_PLANNER_DEADLINE_MS = 3_000;
+/*
  * A browser provider answers on its own schedule and the whole search waits behind it, so the
  * planner gets a fraction of the answer's 300 s: past this the follow-up is better searched
  * verbatim than not at all.
@@ -59,10 +64,12 @@ export function planQueryLlm(
   targetUrl: string,
   locale: string,
   history = '',
+  quick = false,
 ): Promise<QueryPlan> {
+  const deadlineMs = quick ? QUICK_PLANNER_DEADLINE_MS : PLANNER_DEADLINE_MS;
   return runPlanner(query, locale, history, async (prompt) => {
     const { response } = await runByokCompletion(
-      targetUrl, prompt, PLANNER_DEADLINE_MS, AbortSignal.timeout(PLANNER_DEADLINE_MS),
+      targetUrl, prompt, deadlineMs, AbortSignal.timeout(deadlineMs),
     );
     return response;
   });
@@ -88,7 +95,7 @@ export function planQueryWeb(
  * planner gets it and answers with both halves: the queries an engine can match, and the
  * request rewritten to name its own subject for everything downstream.
  */
-function historySection(history: string): string[] {
+export function historySection(history: string): string[] {
   if (!history) return [];
   return [
     '',
@@ -100,6 +107,13 @@ function historySection(history: string): string[] {
   ];
 }
 
+/** How the planners choose `temporal`; the deep-research plan uses the same words. */
+export const TEMPORAL_RULE: readonly string[] = [
+  '- temporal: a filter that hides every page older than the period. Use "day"/"week"/"month" only',
+  '  for news or events of a period (today, this week, recent announcements). Products, specs,',
+  '  prices, rankings and "latest model/version" questions use "none": their official pages are older.',
+];
+
 function buildPlannerPrompt(query: string, locale: string, history: string): string {
   const language = languageForLocale(locale);
   return [
@@ -107,9 +121,7 @@ function buildPlannerPrompt(query: string, locale: string, history: string): str
     history
       ? '{"temporal":"day"|"week"|"month"|"none","queries":["...","..."],"resolved":"..."}'
       : '{"temporal":"day"|"week"|"month"|"none","queries":["...","..."]}',
-    '- temporal: a filter that hides every page older than the period. Use "day"/"week"/"month" only',
-    '  for news or events of a period (today, this week, recent announcements). Products, specs,',
-    '  prices, rankings and "latest model/version" questions use "none": their official pages are older.',
+    ...TEMPORAL_RULE,
     `- queries: 2-3 concrete search-engine queries. Include one refined in the user's language (${language}),`,
     '  one English variant, and optionally one from a different angle. Strip filler words; keep proper nouns.',
     ...(history
@@ -142,7 +154,7 @@ function stripAutoLinks(text: string): string {
     (label === href || label === href.replace(/\/$/, '') ? href : match));
 }
 
-function cleanField(text: string): string {
+export function cleanField(text: string): string {
   return stripAutoLinks(text).trim();
 }
 

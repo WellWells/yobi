@@ -4,7 +4,7 @@ import { fillTemplate } from '../../../shared/fillTemplate';
  * The composer shows at most one notice at a time, most consequential first: a connector riding
  * on the next send costs a real agent run, so it never loses its slot to "attachments are ignored".
  */
-export type ComposerNoticeKind = 'editor' | 'connectors' | 'flow' | 'web' | 'plain';
+export type ComposerNoticeKind = 'editor' | 'shell' | 'connectors' | 'flow' | 'web' | 'plain';
 
 export interface ComposerNoticeSpec {
   kind: ComposerNoticeKind;
@@ -34,6 +34,11 @@ export interface ComposerNoticeInput {
    * being written right now; the others are about the last send and wait their turn.
    */
   editorOpen?: boolean;
+  /**
+   * The draft starts with `!` and will run on this computer: where, already worded ("pwsh ·
+   * C:\Users\me"). Ahead of the notices about the last send, since it is about this one.
+   */
+  shell?: string | null;
 }
 
 export function pickComposerNotice(input: ComposerNoticeInput): ComposerNoticeSpec | null {
@@ -45,6 +50,9 @@ export function pickComposerNotice(input: ComposerNoticeInput): ComposerNoticeSp
       names: [],
       actionKey: 'chat.editor.done',
     };
+  }
+  if (input.shell) {
+    return { kind: 'shell', messageKey: null, message: input.shell, names: [], actionKey: null };
   }
   const autoWeb = input.autoWebActive === true;
   if (input.autoAttachedNames.length > 0) {

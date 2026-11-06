@@ -1,5 +1,5 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { BUILTIN_MAIL_SERVER_ID, BUILTIN_PTT_SERVER_ID, BUILTIN_RAIL_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID, THUNDERBIRD_UNAVAILABLE_ERROR } from '../../shared/builtinConnectors';
+import { BUILTIN_CALENDAR_SERVER_ID, BUILTIN_MAIL_SERVER_ID, BUILTIN_PAGE_SERVER_ID, BUILTIN_PTT_SERVER_ID, BUILTIN_RAIL_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_TRANSLATE_SERVER_ID, BUILTIN_X_SERVER_ID, THUNDERBIRD_UNAVAILABLE_ERROR } from '../../shared/builtinConnectors';
 import { BUILTIN_LINE_SERVER_ID } from '../../shared/types';
 import { forgetStoredLineKey } from '../line/lineKeyStore';
 import { connectionFileFingerprint } from '../thunderbird/bridge';
@@ -25,12 +25,20 @@ export interface BuiltinRuntime {
   availability?: () => string | null;
   /** i18n key kept as the connector's error while `availability` reports the app is not running. */
   unavailableError?: string;
+  /** For a connector whose calls can outlast the registry's usual limit. */
+  callTimeoutMs?: number;
 }
+
+/** The largest subtitle file is 200 requests in a row, with a retry or two on the way. */
+const TRANSLATE_CALL_TIMEOUT_MS = 10 * 60_000;
 
 // The native LINE driver and Electron are pulled in lazily, keeping the registry importable offline.
 export const BUILTIN_RUNTIMES: Readonly<Record<string, BuiltinRuntime>> = {
   [BUILTIN_LINE_SERVER_ID]: {
     connect: async (name, version) => (await import('../line/lineConnection')).connectLineMcp(name, version),
+    // A file line_send sends must be one the /agent read sandbox lets the model read.
+    prepareCall: async (toolName, args) =>
+      (toolName === 'line_send' ? (await import('./agentAttachmentGuard')).prepareLineSendCall(args) : { args }),
     // Switching the connector off has to drop the stored DB passphrase too, not just the in-memory
     // one — otherwise "off" would still leave a key for LINE's database on disk.
     onDisabled: forgetStoredLineKey,
@@ -59,6 +67,19 @@ export const BUILTIN_RUNTIMES: Readonly<Record<string, BuiltinRuntime>> = {
     onDisabled: () => {
       void import('../mail/mailConnection').then((mail) => mail.closeMailConnection());
     },
+  },
+  [BUILTIN_CALENDAR_SERVER_ID]: {
+    connect: async (name, version) => (await import('../calendar/calendarConnection')).connectCalendarMcp(name, version),
+  },
+  [BUILTIN_TRANSLATE_SERVER_ID]: {
+    connect: async (name, version) => (await import('../translate/translateConnection')).connectTranslateMcp(name, version),
+    // A subtitle file goes out to Microsoft, so it must be one the /agent read sandbox lets the model read.
+    prepareCall: async (toolName, args) =>
+      (toolName === 'translate_subtitle' ? (await import('./agentAttachmentGuard')).prepareReadPathCall(args) : { args }),
+    callTimeoutMs: TRANSLATE_CALL_TIMEOUT_MS,
+  },
+  [BUILTIN_PAGE_SERVER_ID]: {
+    connect: async (name, version) => (await import('../pageRead/pageReadConnection')).connectPageReadMcp(name, version),
   },
   // The sign-in site connectors (Instagram, Facebook, …) come from their table. Switching one off
   // never signs out: flows and pasted links read with the same sign-in.

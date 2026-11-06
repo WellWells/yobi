@@ -2,8 +2,8 @@
  * A downloaded route map → the picture the answer carries, in the chat media folder. Three maps
  * are too big to send as they are: Telegram refuses a photo whose width plus height passes
  * 10,000 px, and Taichung's is 13161×13754, 三鶯線's 7016×9934, Taipei's 5867×8000. So the long
- * side is brought down to 4,000 px and the picture saved as JPEG; measured 2026-10-22 with
- * Electron's decoder: ~0.5 s and a passing ~0.9 GB for Taichung's, 0.45–1.3 MB out, names still
+ * side is brought down to 4,000 px and the picture saved as JPEG; with Electron's decoder that
+ * takes ~0.5 s and a passing ~0.9 GB for Taichung's, gives 0.45–1.3 MB, names still
  * legible. Shrunk once per map version, then reused for every answer that day.
  */
 import * as fs from 'node:fs/promises';
@@ -30,7 +30,7 @@ export function shrinkMap(map: FoundMap): Buffer {
   const image = nativeImage.createFromBuffer(Buffer.from(map.bytes));
   if (image.isEmpty()) throw new Error('the map image could not be decoded');
   const { width, height } = image.getSize();
-  // Sized by the long side itself: scaling the short side rounds the long one to 4,001 (Taipei's map, 2026-10-22).
+  // Sized by the long side itself: scaling the short side rounds the long one to 4,001 (Taipei's map).
   const fitted = Math.max(width, height) <= MAP_PICTURE_LONG_SIDE ? image
     : image.resize(width >= height ? { width: MAP_PICTURE_LONG_SIDE, quality: 'good' } : { height: MAP_PICTURE_LONG_SIDE, quality: 'good' });
   const jpeg = fitted.toJPEG(JPEG_QUALITY);

@@ -1,17 +1,23 @@
 import React, { useMemo } from 'react';
 import { Box, Stack } from '@mantine/core';
-import { AttachmentChips, chipsFromNames } from './AttachmentChips';
+import { readTurnAttachments } from '../../../../shared/conversationDoc';
 import { CollapsibleContent } from './CollapsibleContent';
 import { PromptBody } from './PromptBody';
+import { TurnAttachments } from './TurnAttachments';
 
 interface UserBubbleProps {
   prompt: string;
   t: (key: string) => string;
   attachments?: string[];
+  /** Where each of them is on this computer, in the same order (`af`). */
+  attachmentFiles?: string[];
 }
 
-export const UserBubble = React.memo<UserBubbleProps>(({ prompt, t, attachments }) => {
-  const chips = useMemo(() => chipsFromNames(attachments ?? []), [attachments]);
+export const UserBubble = React.memo<UserBubbleProps>(({ prompt, t, attachments, attachmentFiles }) => {
+  const attached = useMemo(
+    () => readTurnAttachments({ a: attachments, af: attachmentFiles }),
+    [attachments, attachmentFiles],
+  );
 
   return (
     <Box
@@ -26,7 +32,7 @@ export const UserBubble = React.memo<UserBubbleProps>(({ prompt, t, attachments 
       }}
     >
       <Stack gap={8}>
-        {chips.length > 0 && <AttachmentChips attachments={chips} />}
+        {attached.length > 0 && <TurnAttachments attachments={attached} />}
         <CollapsibleContent fadeColor="var(--bg-secondary)" t={t}>
           <Box data-find-scope><PromptBody prompt={prompt} /></Box>
         </CollapsibleContent>

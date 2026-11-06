@@ -117,9 +117,10 @@ const LEVEL_KEYS: Record<ThinkingLevelProvider, Record<string, string>> = {
   },
   chatgpt: {
     instant: 'chat.thinkingMode.level.instant',
-    // Medium and high, matching the page's own slider.
+    // Medium, high and extra high, matching the page's own slider.
     'thinking:standard': 'chat.thinkingMode.level.medium',
     'thinking:extended': 'chat.thinkingMode.level.high',
+    'thinking:max': 'chat.thinkingMode.level.xhigh',
   },
 };
 

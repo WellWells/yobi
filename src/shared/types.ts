@@ -1,9 +1,10 @@
 import { SHARE_EXPIRE_VALUES } from './shareExpire';
-import { CAPTURE_PALETTES } from './capturePalettes';
+import { CAPTURE_BACKGROUND_STYLES, CAPTURE_PALETTES } from './capturePalettes';
+import type { CaptureBackgroundStyle } from './capturePalettes';
 import { SITE_CONNECTOR_ROWS, bySite } from './siteConnectors';
 import type { SiteConnectorSite } from './siteConnectors';
 import type { ShareExpire, ShareExpireCache } from './shareExpire';
-import type { MapPlaceRef, TurnMeta } from './conversationDoc';
+import type { MapPlaceRef, TurnMeta, TurnShell } from './conversationDoc';
 import type { TokenUsage } from './tokenEstimate';
 import type { Theme } from './themes';
 import type { BotGrant, BotGroupGrant } from './botPermissions';
@@ -453,6 +454,9 @@ export interface StashedAttachment {
   preview?: string;
 }
 
+/** What a conversation's right-click menu does with a file it shows. */
+export type TurnFileAction = 'open' | 'openWith' | 'copy';
+
 export interface ProviderAttachmentPolicy {
   maxFiles: number;
 }
@@ -480,6 +484,12 @@ export const UPLOAD_CAPABLE_PROVIDER_LABELS = PROVIDERS
 export interface TrackpadGestureEvent {
   phase: 'begin' | 'end';
 }
+
+/**
+ * A click on the macOS View menu's Actual Size / Zoom In / Zoom Out (`IPC.READING_ZOOM_COMMAND`):
+ * they step the reading size like Ctrl/⌘ +/−/0 in chat; the page itself never zooms.
+ */
+export type ReadingZoomCommand = 'in' | 'out' | 'reset';
 
 export const IPC = {
   LOG: 'log',
@@ -600,6 +610,11 @@ export const IPC = {
   OPEN_EXTERNAL_URL: 'url:open-external',
   TRIGGER_PROMPT_WITH_OPTIONS: 'prompt:trigger-with-options',
   CHAT_TURN: 'chat:turn',
+  /** A chat `!` command: the shell and folder it would run in, running it, stopping it, its output as it runs. */
+  CHAT_SHELL_INFO: 'chat:shell-info',
+  CHAT_SHELL_RUN: 'chat:shell-run',
+  CHAT_SHELL_STOP: 'chat:shell-stop',
+  CHAT_SHELL_OUTPUT: 'chat:shell-output',
   GET_SYNC_SYSTEM_LANGUAGE_TO_MODEL: 'prompt:get-sync-system-language-to-model',
   UPDATE_SYNC_SYSTEM_LANGUAGE_TO_MODEL: 'prompt:update-sync-system-language-to-model',
   GET_ONE_SHOT_TEMPORARY_CHAT: 'accounts:get-one-shot-temporary-chat',
@@ -613,6 +628,7 @@ export const IPC = {
   EXPORT_CONVERSATION_MARKDOWN: 'file:export-markdown',
   OPEN_PATH: 'file:open-path',
   OPEN_FILE_WITH: 'file:open-with',
+  TURN_FILE_ACTION: 'file:turn-file-action',
   COPY_FILES_TO_CLIPBOARD: 'file:copy-to-clipboard',
   COMPOSER_EDITOR_OPEN: 'composer:editor-open',
   COMPOSER_EDITOR_FINISH: 'composer:editor-finish',
@@ -641,8 +657,6 @@ export const IPC = {
   CLEAR_TELEGRAM_LARGE_UPLOAD: 'telegram:clear-large-upload',
   TEST_TELEGRAM_LARGE_UPLOAD: 'telegram:test-large-upload',
   UPDATE_TELEGRAM_ALLOW_GROUP_COMMANDS: 'telegram:update-allow-group-commands',
-  UPDATE_TELEGRAM_DEFAULT_REPLY_MODE: 'telegram:update-default-reply-mode',
-  UPDATE_TELEGRAM_COMPACT_REPLY: 'telegram:update-compact-reply',
   /** Replaces one paired Telegram / LINE account's grants (`BotSetPermissionsRequest`). */
   BOT_SET_PERMISSIONS: 'bot:set-permissions',
   /** Replaces what accounts are given when they pair (`BotSetDefaultGrantsRequest`). */
@@ -694,6 +708,10 @@ export const IPC = {
   CALENDAR_SAVE: 'calendar:save',
   CALENDAR_REMOVE: 'calendar:remove',
   CALENDAR_TEST: 'calendar:test',
+  CALDAV_LIST: 'caldav:list',
+  CALDAV_SAVE: 'caldav:save',
+  CALDAV_REMOVE: 'caldav:remove',
+  CALDAV_REFRESH: 'caldav:refresh',
   GET_PROMPT_PREFERENCES: 'prompt:get-preferences',
   UPDATE_PROMPT_PREFERENCES: 'prompt:update-preferences',
   GET_YOUTUBE_PROMPT: 'youtube:get-prompt',
@@ -785,6 +803,7 @@ export const IPC = {
   LINK_RECOGNITION_CHANGED: 'links:recognition-changed',
   GET_MARKDOWN_ZOOM: 'ui:get-markdown-zoom',
   UPDATE_MARKDOWN_ZOOM: 'ui:update-markdown-zoom',
+  READING_ZOOM_COMMAND: 'ui:reading-zoom-command',
   GET_READING_PREFS: 'ui:get-reading-prefs',
   UPDATE_READING_PREFS: 'ui:update-reading-prefs',
   GET_CAPTURE_SETTINGS: 'capture:get-settings',
@@ -1147,7 +1166,7 @@ export type SecretScope = 'telegram' | 'line' | 'discord' | 'slack' | 'smtp' | '
 
 /**
  * Where the user goes to re-enter a scope's secret, and what to call it. The label keys are
- * spelled out rather than built at the call site so `npm run i18n:check` can see them used.
+ * spelled out rather than built at the call site so the i18n key scan can see them used.
  * 'flow' is not a settings category: those two are configured inside flow steps.
  */
 export const SECRET_SCOPE_META: Record<SecretScope, { category: string; labelKey: string }> = {
@@ -1242,8 +1261,6 @@ export interface UpdateAvailablePayload {
 export type UpdateSource = 'store' | 'github';
 
 export type TelegramRuntimeStatus = 'idle' | 'starting' | 'running' | 'stopping' | 'error';
-export type TelegramReplyMode = 'markdown' | 'png' | 'webp' | 'pdf';
-export type TelegramOutputChoice = TelegramReplyMode | 'compact';
 
 /** A pending pairing code; Telegram and LINE share this one shape (`src/main/pairingCodes.ts`). */
 export interface PendingPairingCode {
@@ -1401,8 +1418,6 @@ export interface TelegramSettingsSnapshot {
   /** The my.telegram.org values for files over 50 MB. */
   largeUpload: TelegramLargeUploadSnapshot;
   allowGroupCommands: boolean;
-  defaultReplyMode: TelegramReplyMode;
-  compactReply: boolean;
   /** Per-account grants keyed by the stringified user id; no entry means no grants. */
   permissions: Record<string, BotGrant[]>;
   /** What an account is given when it pairs with a code. */
@@ -1499,23 +1514,35 @@ export interface LineCredentialsUpdate {
 
 /**
  * Bot platforms this computer reaches over a socket it opens itself (Discord's gateway, Slack's
- * Socket Mode): no public address, no webhook. They pair with a code like LINE, keep string ids,
+ * Socket Mode), or, for `lineSelf`, through LINE PC on this computer (the user's own account reads
+ * and answers): no public address, no webhook. They pair with a code like LINE, keep string ids,
  * and share one settings section, one set of IPC channels and one runtime shape.
  */
-export type SocketBotPlatform = 'discord' | 'slack';
-export const SOCKET_BOT_PLATFORMS: readonly SocketBotPlatform[] = ['discord', 'slack'] as const;
+export type SocketBotPlatform = 'discord' | 'slack' | 'lineSelf';
+export const SOCKET_BOT_PLATFORMS: readonly SocketBotPlatform[] = ['discord', 'slack', 'lineSelf'] as const;
 
 export function isSocketBotPlatform(value: string): value is SocketBotPlatform {
   return (SOCKET_BOT_PLATFORMS as readonly string[]).includes(value);
 }
 
-/** The secrets each socket platform signs in with, by config field: Slack needs its app token too. */
+/**
+ * The secrets each socket platform signs in with, by config field: Slack needs its app token too;
+ * LINE PC needs none (it reads the LINE PC database the LINE reader connector already opens).
+ */
 export const SOCKET_BOT_SECRET_FIELDS = {
   discord: ['botToken'],
   slack: ['botToken', 'appToken'],
+  lineSelf: [],
 } as const satisfies Record<SocketBotPlatform, readonly string[]>;
 
 export type SocketBotSecretField = typeof SOCKET_BOT_SECRET_FIELDS[SocketBotPlatform][number];
+
+/** The socket platforms that sign in with a secret — the ones a secret-health scope covers. */
+export type SecretSocketBotPlatform = Exclude<SocketBotPlatform, 'lineSelf'>;
+
+export function hasSocketBotSecrets(platform: SocketBotPlatform): platform is SecretSocketBotPlatform {
+  return SOCKET_BOT_SECRET_FIELDS[platform].length > 0;
+}
 
 export type SocketBotRuntimeStatus = 'idle' | 'starting' | 'running' | 'error';
 
@@ -1647,6 +1674,8 @@ export interface Task {
   clipboardFingerprint?: string;
   /** The app picked the provider for what only it can do (Gemini watching a video link): never switched to another. */
   providerPinned?: true;
+  /** A chat `!` command whose output this prompt carries: recorded on the turn, kept without an answer. */
+  shell?: TurnShell;
 }
 
 export interface PromptTriggerOptions {
@@ -1665,6 +1694,35 @@ export interface ChatTurnEvent {
   response?: string;
   meta?: TurnMeta;
   error?: string;
+  /** An error after which the turn was still written (a `!` command's): the file has changed. */
+  kept?: true;
+}
+
+/** Where a chat `!` command would run now. */
+export interface ShellInfo {
+  shell: string;
+  folder: string;
+}
+
+export interface ShellRunRequest {
+  command: string;
+  /** The model that reads the result. */
+  targetUrl: string;
+  sendId: string;
+  conversationPath?: string;
+}
+
+export type ShellRunReply = { ok: true } | { ok: false; error: string };
+
+/** A running `!` command's latest lines; `done` once it has ended (the model's answer follows as a chat turn). */
+export interface ShellOutputEvent {
+  sendId: string;
+  text: string;
+  done: boolean;
+  shell: string;
+  folder: string;
+  exitCode?: number | null;
+  stopped?: boolean;
 }
 
 export type CaptureFormat = 'png' | 'webp' | 'pdf';
@@ -1868,7 +1926,7 @@ export interface ExportPromptPayload {
   width: number;
   margin: number;
   palette: string;
-  backgroundStyle: string;
+  backgroundStyle: CaptureBackgroundStyle;
   direction: string;
   theme: Theme;
   strings: {
@@ -1881,11 +1939,39 @@ export interface ExportPromptPayload {
     cancel: string;
     theme: string;
     margin: string;
+    aiName: string;
+    aiNameMenu: string;
     share: ExportPromptShareStrings;
   };
   sizes: Array<{ value: number; label: string }>;
+  backgroundStyles: Array<{ value: CaptureBackgroundStyle; label: string }>;
+  /** The models that can suggest a file name; null when this panel offers no naming. */
+  naming: ExportNaming | null;
   share: ExportPromptShareState;
 }
+
+/** One model the panel can ask for a file name. */
+export interface ExportNameModel {
+  url: string;
+  label: string;
+  /** A key's preset, for its brand icon; absent on a web provider and on a key group. */
+  byokType?: ByokProviderType;
+}
+
+export interface ExportNaming {
+  /** Web providers first, then keys, then key groups; `label` null on the first. */
+  sections: Array<{ label: string | null; models: ExportNameModel[] }>;
+  /** The quick-action model (shared with rewriting and translation), ticked in the menu. */
+  modelUrl: string;
+}
+
+/** The panel asking main for a file name; `id` pairs the answer with the request. */
+export interface ExportNameRequest {
+  id: number;
+  providerUrl: string;
+}
+
+export type ExportNameResult = { id: number; name: string } | { id: number; error: string };
 
 export interface ExportPromptShareStrings {
   format: string;
@@ -1935,6 +2021,7 @@ export interface CaptureExportChoice {
   width: number;
   margin: number;
   palette: string;
+  backgroundStyle: CaptureBackgroundStyle;
   action: CaptureExportAction;
 }
 
@@ -1959,6 +2046,7 @@ export interface ExportChoiceFallback {
   width: number;
   margin: number;
   palette: string;
+  backgroundStyle: CaptureBackgroundStyle;
   expire: ShareExpire;
   burnAfterReading: boolean;
 }
@@ -1999,6 +2087,9 @@ export function normalizeExportChoice(
     palette: CAPTURE_PALETTES.some((entry) => entry.key === value.palette)
       ? (value.palette as string)
       : fallback.palette,
+    backgroundStyle: CAPTURE_BACKGROUND_STYLES.includes(value.backgroundStyle as CaptureBackgroundStyle)
+      ? (value.backgroundStyle as CaptureBackgroundStyle)
+      : fallback.backgroundStyle,
     action: value.action === 'save' ? 'save' : 'copy',
   };
 }
@@ -2130,10 +2221,20 @@ export const BOT_PLATFORM_NAMES: Readonly<Record<BotPlatform, string>> = {
   line: 'LINE',
   discord: 'Discord',
   slack: 'Slack',
+  lineSelf: 'LINE PC',
 } as const;
 
 export function isBotPlatform(value: string): value is BotPlatform {
   return (BOT_PLATFORMS as readonly string[]).includes(value);
+}
+
+/**
+ * A platform typed or stored by hand (a step's `platform`, a run's trigger platform), in any case:
+ * `lineSelf` is camelCase, so lower-casing the input before `isBotPlatform` would never find it.
+ */
+export function parseBotPlatform(value: string | undefined): BotPlatform | null {
+  const wanted = (value ?? '').trim().toLowerCase();
+  return BOT_PLATFORMS.find((platform) => platform.toLowerCase() === wanted) ?? null;
 }
 export type ScheduleMode = 'interval' | 'daily' | 'weekly' | 'monthly' | 'yearly' | 'once';
 
@@ -2365,7 +2466,8 @@ export const BUILTIN_SEARCH_FLOW_ID = '__builtin:search__';
 export const BUILTIN_QUICKSEARCH_COMMAND = 'quicksearch';
 export const BUILTIN_QUICKSEARCH_FLOW_ID = '__builtin:quicksearch__';
 
-export type SearchMode = 'standard' | 'quick';
+/** `deep`: several sub-questions researched one by one, checked for gaps, then written up together. */
+export type SearchMode = 'standard' | 'quick' | 'deep';
 
 export interface SearchCommandResult {
   success: boolean;
@@ -2554,6 +2656,11 @@ export interface AgentRunState {
    * run's answer, so one drawn before a question still reaches the user after the answer to it.
    */
   pictures?: string[];
+  /**
+   * Files `export_file` rendered in the chat media folder (a PDF or a picture of an answer), sent
+   * with the run's answer as files rather than photos.
+   */
+  documents?: string[];
   /**
    * The flows this run saved or changed, oldest first. A later "change it" in the same
    * conversation means the last of them; absent on runs written before flows could be edited.

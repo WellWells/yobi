@@ -1,8 +1,9 @@
 /**
  * Someone who is not paired writes to the bot in a private chat: that is a request to use it. It is
  * kept on their contact-directory entry (`pairingRequestedAt`), so it survives a restart and the
- * settings page can list it, and a manager may pair them without a code. Groups never make one:
- * a group's own grants decide what people there get.
+ * settings page can list it, and a manager may pair them without a code. Groups make one only on
+ * LINE PC, where nobody else has a private chat with the bot: someone there addressing it in an
+ * allowed group that lets them do nothing. Elsewhere a group's own grants decide.
  *
  * Platform-neutral on purpose: each platform registers how it pairs an id (`registerBotPairer`,
  * from its setup), and asks here whether its managers should hear about a request.
@@ -22,9 +23,10 @@ export const PAIRING_REQUEST_RENEW_MS = 7 * 24 * 60 * 60 * 1_000;
 
 /**
  * How many request cards a platform sends its managers per local calendar day. Over it, a request
- * is still recorded (settings lists it) but nobody is messaged — a LINE push costs quota.
+ * is still recorded (settings lists it) but nobody is messaged — a LINE push costs quota. The
+ * socket platforms and LINE PC send no card, only the desktop notification under the same count.
  */
-export const PAIRING_REQUEST_DAILY_CARDS: Readonly<Record<BotPlatform, number>> = { telegram: 20, line: 5, discord: 20, slack: 20 } as const;
+export const PAIRING_REQUEST_DAILY_CARDS: Readonly<Record<BotPlatform, number>> = { telegram: 20, line: 5, discord: 20, slack: 20, lineSelf: 20 } as const;
 
 /** Who asked, as the platform names them; the names can be anything the person typed. */
 export interface BotPairingProfile {
@@ -67,11 +69,14 @@ function displayName(profile: BotPairingProfile): string {
   return profile.username ? `@${profile.username}` : `ID ${profile.userId}`;
 }
 
-function notifyDesktop(platform: BotPlatform, profile: BotPairingProfile): void {
+function notifyDesktop(platform: BotPlatform, profile: BotPairingProfile, group?: { title: string }): void {
   const strings = getLangCache();
+  const vars = { platform: BOT_PLATFORM_NAMES[platform], name: displayName(profile) };
   sendWebNotification(
     t(strings, 'bot.pairingRequest.notify.title'),
-    t(strings, 'bot.pairingRequest.notify.body', { platform: BOT_PLATFORM_NAMES[platform], name: displayName(profile) }),
+    group
+      ? t(strings, 'bot.pairingRequest.notify.groupBody', { ...vars, group: group.title })
+      : t(strings, 'bot.pairingRequest.notify.body', vars),
     'info',
     { id: 'open-bot-settings', label: t(strings, 'bot.group.notify.action') },
   );
@@ -85,13 +90,19 @@ function serial<T>(work: () => Promise<T>): Promise<T> {
 }
 
 /**
- * An unpaired person wrote in a private chat. Records the request (once, or again when the stored
- * one is older than a week) and returns whether the managers should get its card: never for
- * someone blocked or paired, at most `PAIRING_REQUEST_DAILY_CARDS` a day, and once per request —
- * one recorded while the day's allowance was used up (no `pairingCardAt`) gets its card on that
- * person's next message once there is allowance again. A card comes with one desktop notification.
+ * An unpaired person wrote in a private chat (or, on LINE PC, in `group`). Records the request
+ * (once, or again when the stored one is older than a week) and returns whether the managers
+ * should get its card: never for someone blocked or paired, at most `PAIRING_REQUEST_DAILY_CARDS`
+ * a day, and once per request — one recorded while the day's allowance was used up (no
+ * `pairingCardAt`) gets its card on that person's next message once there is allowance again. A
+ * card comes with one desktop notification.
  */
-export function noteBotPairingRequest(platform: BotPlatform, profile: BotPairingProfile, now: Date = new Date()): Promise<boolean> {
+export function noteBotPairingRequest(
+  platform: BotPlatform,
+  profile: BotPairingProfile,
+  now: Date = new Date(),
+  group?: { title: string },
+): Promise<boolean> {
   return serial(async () => {
     const id = String(profile.userId ?? '').trim();
     if (!id || isBotUserBlocked(platform, id) || isBotUserPaired(platform, id)) return false;
@@ -110,7 +121,7 @@ export function noteBotPairingRequest(platform: BotPlatform, profile: BotPairing
     }
     if (!cards[platform].take(now)) return false;
     await markBotPairingCardSent(platform, id, now.toISOString());
-    notifyDesktop(platform, { ...profile, userId: id });
+    notifyDesktop(platform, { ...profile, userId: id }, group);
     return true;
   });
 }

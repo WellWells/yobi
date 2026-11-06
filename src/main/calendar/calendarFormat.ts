@@ -13,6 +13,13 @@ export interface CalendarEvent {
   /** Exclusive: an all-day event ends at local midnight after its last day. */
   end: Date;
   allDay: boolean;
+  /** The event's UID; '' when the file gave none. */
+  uid?: string;
+  description?: string;
+  /** One occurrence of a repeating event (or a moved instance of one). */
+  recurring?: boolean;
+  /** A meeting: it lists attendees, so changing it would answer or notify other people. */
+  invited?: boolean;
 }
 
 /** The local-time window a step reads: `start` inclusive, `end` exclusive. */

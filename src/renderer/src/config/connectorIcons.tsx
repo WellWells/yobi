@@ -1,11 +1,11 @@
 import React from 'react';
 import {
-  BookOpen, Briefcase, Code, CreditCard, FolderGit2, GraduationCap, LibraryBig, Mail, MessagesSquare, Palette, Server, TrainFront,
+  BookOpen, Briefcase, CalendarDays, Code, CreditCard, FileText, FolderGit2, GraduationCap, Languages, LibraryBig, Mail, MessagesSquare, Palette, Server, TrainFront,
 } from 'lucide-react';
 import {
   AirtableIcon, AsanaIcon, AtlassianIcon, BilibiliIcon, CloudflareIcon, DropboxIcon, FacebookIcon, FigmaIcon, GithubIcon,
   HuggingFaceIcon, InstagramIcon, IntercomIcon, LinearIcon, LineIcon, NeonIcon, NetlifyIcon, NotionIcon, PayPalIcon,
-  SentryIcon, SquareIcon, StripeIcon, SupabaseIcon, ThunderbirdIcon, VercelIcon, WebflowIcon, WixIcon,
+  SentryIcon, SquareIcon, StripeIcon, SupabaseIcon, ThreadsIcon, ThunderbirdIcon, VercelIcon, WebflowIcon, WixIcon,
   XIcon, ZapierIcon,
 } from './brandIcons';
 import type { BrandIcon } from './brandIcons';
@@ -13,8 +13,8 @@ import { brandTint, readableTint, tileBackground } from './brandTints';
 import { findCatalogEntry } from '../../../shared/mcpCatalog';
 import type { McpCatalogCategory, McpCatalogEntry } from '../../../shared/mcpCatalog';
 import {
-  BUILTIN_MAIL_SERVER_ID, BUILTIN_PTT_SERVER_ID, BUILTIN_RAIL_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID,
-  findBuiltinConnectorByUrl,
+  BUILTIN_CALENDAR_SERVER_ID, BUILTIN_MAIL_SERVER_ID, BUILTIN_PAGE_SERVER_ID, BUILTIN_PTT_SERVER_ID, BUILTIN_RAIL_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID,
+  BUILTIN_TRANSLATE_SERVER_ID, BUILTIN_X_SERVER_ID, findBuiltinConnectorByUrl,
 } from '../../../shared/builtinConnectors';
 import { SITE_CONNECTOR_ROWS, siteConnectorServerId } from '../../../shared/siteConnectors';
 import type { SiteConnectorSite } from '../../../shared/siteConnectors';
@@ -88,6 +88,8 @@ export const SITE_CONNECTOR_ICONS: Record<SiteConnectorSite, BrandIcon> = {
   instagram: InstagramIcon,
   facebook: FacebookIcon,
   bilibili: BilibiliIcon,
+  // Black like X's: it takes the text colour on every theme.
+  threads: ThreadsIcon,
 };
 
 /** The built-in connectors have no catalog entry, so their marks live here. */
@@ -102,6 +104,12 @@ export const BUILTIN_MARKS: Record<string, BuiltinMark> = {
   [BUILTIN_PTT_SERVER_ID]: { icon: MessagesSquare, hex: '#2563EB' },
   // Any IMAP mailbox, not only Gmail: a plain envelope in a mail red.
   [BUILTIN_MAIL_SERVER_ID]: { icon: Mail, hex: '#D44638' },
+  // Any CalDAV server or .ics feed, not one brand: a plain calendar in a violet no other built-in uses.
+  [BUILTIN_CALENDAR_SERVER_ID]: { icon: CalendarDays, hex: '#7C3AED' },
+  // Not Microsoft's own product: the language mark in a teal no other built-in uses.
+  [BUILTIN_TRANSLATE_SERVER_ID]: { icon: Languages, hex: '#0F8B8D' },
+  // Many outlets, no one brand: a plain newspaper in a rose no other built-in uses.
+  [BUILTIN_PAGE_SERVER_ID]: { icon: FileText, hex: '#BE185D' },
   ...Object.fromEntries(SITE_CONNECTOR_ROWS.map((row) => [
     siteConnectorServerId(row.site), { icon: SITE_CONNECTOR_ICONS[row.site], hex: row.hex },
   ])),

@@ -1,6 +1,7 @@
 import { t } from '../i18n';
 import { BOT_PLATFORM_NAMES, BUILTIN_NEW_COMMAND } from '../../shared/types';
 import { linkCommandFor } from '../../shared/builtinFlows';
+import { linkRequestText } from './wakeWord';
 import { builtinCommandGrant } from '../../shared/botPermissions';
 import { botAccessDeniedText } from '../botPermissions/denial';
 import type { BotRunKind } from '../../shared/types';
@@ -24,9 +25,8 @@ import type { BotChatEvent, BotChatRouterDeps, BotFlowCommandDef } from './types
 /**
  * When a message was sent at the latest, to tell whether it can answer a question: the earlier of
  * its batch's arrival here (a later message of the same batch is never the answer) and the
- * platform's own timestamp (review 2026-10-20: a "1" delivered late — redelivered after the tunnel
- * was down — arrived after a shell approval was asked and approved it, though the user sent it
- * before the question existed). A redelivered message is old by definition: never an answer.
+ * platform's own timestamp (a "1" delivered late must not approve a question asked after the user
+ * sent it). A redelivered message is old by definition: never an answer.
  */
 function answerSent(event: BotChatEvent, received: BotMessageSent): BotMessageSent {
   if (event.redelivered) return { sentAt: 0 };
@@ -197,7 +197,15 @@ export class BotChatRouter<E extends BotChatEvent> {
     if (!event.mentionsBot) return;
     this.noteUse(event);
     if (!(await this.access.mayChat(event.chatId, event.userId))) {
-      this.deps.onLog(`${this.tag} group mention from ${event.userId} in ${event.chatId} — not allowed to use the bot there, ignored`);
+      this.deps.onLog(`${this.tag} group mention from ${event.userId} in ${event.chatId} — not allowed to use the bot there`);
+      if (this.deps.groupPairingRequests && this.deps.onPairingRequest && !this.deps.isPairedUser(event.userId)) {
+        await this.deps.onPairingRequest(event);
+      }
+      return;
+    }
+    const command = this.deps.groupCommands && this.deps.isPairedUser(event.userId) ? parseBotCommand(event.text) : null;
+    if (command) {
+      await this.handleCommand(event, command);
       return;
     }
     if (!event.text || event.text.startsWith('/')) {
@@ -217,7 +225,7 @@ export class BotChatRouter<E extends BotChatEvent> {
     // Only a post or a video link: Yobi's own flow for it, not the agent — given the download grant.
     const linkFlow = await this.downloaderFlowFor(event);
     if (linkFlow) {
-      await this.runFlowCommand(event, linkFlow, event.text);
+      await this.runFlowCommand(event, linkFlow, linkRequestText(event.text));
       return;
     }
     // A plain message is an agent turn — working out whether a question needs a tool is the
@@ -316,7 +324,7 @@ export class BotChatRouter<E extends BotChatEvent> {
     const s = this.deps.getStrings();
     const ticket = await this.admitPaced(event);
     if (!ticket) return;
-    await this.reply(event, t(s, 'bot.chat.queued'));
+    await this.acknowledge(event);
     try {
       const result = await this.deps.onBuiltinCommand(key, input, targetUrl, event.chatId, event.userId);
       await this.pushResult(event, result);
@@ -346,9 +354,15 @@ export class BotChatRouter<E extends BotChatEvent> {
     return null;
   }
 
+  /** The "queued" line before a run starts, unless the platform's answer is its only message. */
+  private async acknowledge(event: E): Promise<void> {
+    if (this.deps.output.quietStart) return;
+    await this.reply(event, t(this.deps.getStrings(), 'bot.chat.queued'));
+  }
+
   private async runAgentAnswer(event: E, answer: string): Promise<void> {
     const s = this.deps.getStrings();
-    await this.reply(event, t(s, 'bot.chat.queued'));
+    await this.acknowledge(event);
     try {
       const result = await this.deps.onAgentAnswer(answer, event.chatId, event.userId);
       if (!result) {
@@ -377,7 +391,7 @@ export class BotChatRouter<E extends BotChatEvent> {
     if (!onFlowCommand) return;
     const ticket = await this.admitPaced(event);
     if (!ticket) return;
-    await this.reply(event, t(s, 'bot.chat.queued'));
+    await this.acknowledge(event);
 
     let started: Awaited<ReturnType<typeof onFlowCommand>>;
     try {
@@ -488,12 +502,12 @@ export class BotChatRouter<E extends BotChatEvent> {
   }
 
   /**
-   * The downloader's built-in for a message that is only a link, or null — also when the account
-   * lacks the download grant, so the link is answered like any other message.
+   * The downloader's built-in for a message that is only a link ("Yobi <link>" too), or null — also
+   * when the account lacks the download grant, so the link is answered like any other message.
    */
   private async downloaderFlowFor(event: E): Promise<ReturnType<typeof linkCommandFor>> {
     const allows = event.fromMenu ? undefined : this.deps.linkSites?.();
-    const linkFlow = this.deps.onFlowCommand ? linkCommandFor(event.text, allows) : null;
+    const linkFlow = this.deps.onFlowCommand ? linkCommandFor(linkRequestText(event.text), allows) : null;
     if (!linkFlow || !this.deps.canUseDownloader) return linkFlow;
     if (await this.access.mayDownload(event.chatId, event.userId)) return linkFlow;
     this.deps.onLog(`${this.tag} link from ${event.userId} left to the agent — no download grant`);

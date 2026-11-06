@@ -2,6 +2,7 @@ export * from './memoryProtocol';
 export * from './memoryRules';
 export * from './memoryState';
 export * from './memoryStore';
+export * from './botSelfMark';
 export * from './memoryPrompt';
 export * from './memorySettle';
 export * from './memoryContext';

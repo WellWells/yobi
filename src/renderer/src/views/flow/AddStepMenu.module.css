@@ -1,5 +1,5 @@
-/* Native scroll container — matches the app-wide native scrollbar
-   (globals.css) instead of Mantine's ScrollArea overlay scrollbar.
+/* Native scroll container — the platform's own scrollbar, like every
+   other list in the app, instead of Mantine's ScrollArea overlay scrollbar.
    Item hover/active is handled by Mantine Button (variant="default"),
    the same themed approach as the chat FileHeaderBar menu. */
 

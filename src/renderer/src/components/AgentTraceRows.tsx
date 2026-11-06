@@ -11,8 +11,16 @@ import {
   type ProgressState,
 } from './ProgressMark';
 import { fillTemplate } from '../../../shared/fillTemplate';
+import { researchLabel } from '../../../shared/researchIntent';
 
-const HIDDEN_CONFIG_KEYS = new Set(['provider']);
+/** `depth` is in the research row's name; `answer` only tells the run whether to stop there. */
+const HIDDEN_CONFIG_KEYS = new Set(['provider', 'answer']);
+
+/** A research row is named for what it does at its depth (`researchLabel`). */
+export function traceToolLabel(tool: string, config: Record<string, string> | undefined, t: (key: string) => string): string {
+  if (tool !== 'research') return tool;
+  return researchLabel(config?.depth, t) ?? tool;
+}
 
 const SUBLINE_STYLE = {
   fontSize: 'var(--font-size-xs)',
@@ -32,10 +40,10 @@ export function subLines(turn: AgentTraceTurn, t: (key: string) => string): stri
   return lines;
 }
 
-export function configText(config?: Record<string, string>): string {
+export function configText(config?: Record<string, string>, tool?: string): string {
   if (!config) return '';
   return Object.entries(config)
-    .filter(([key, value]) => !HIDDEN_CONFIG_KEYS.has(key) && value)
+    .filter(([key, value]) => !HIDDEN_CONFIG_KEYS.has(key) && !(tool === 'research' && key === 'depth') && value)
     .map(([key, value]) => `${key}=${value}`)
     .join('  ');
 }
@@ -43,9 +51,9 @@ export function configText(config?: Record<string, string>): string {
 export function AgentTraceRow({ turn }: { turn: AgentTraceTurn }) {
   const t = useI18nStore((state) => state.t);
   const mark: ProgressState = turn.status === 'ok' ? 'done' : turn.status === 'error' ? 'failed' : 'active';
-  const config = configText(turn.config);
+  const config = configText(turn.config, turn.tool);
   const lines = subLines(turn, t);
-  const label = turn.tool
+  const label = (turn.tool ? traceToolLabel(turn.tool, turn.config, t) : undefined)
     ?? (turn.provider
       ? fillTemplate(t('agent.trace.asking'), { provider: turn.provider })
       : t('agent.trace.thinking'));

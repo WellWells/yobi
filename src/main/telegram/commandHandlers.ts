@@ -8,7 +8,6 @@ import type {
   BotRunKind,
   BotLlmDirectConfig,
   FlowExecutionResult,
-  TelegramOutputChoice,
   TelegramReplyTarget,
 } from '../../shared/types';
 import type { ResolvedBuiltinCommand, ResolvedProviderCommand } from '../providerCommands';
@@ -19,6 +18,7 @@ import { builtinCommandGrant } from '../../shared/botPermissions';
 import { botAccessDeniedText } from '../botPermissions/denial';
 import { createBotChatAccess, type BotChatAccess } from '../botChat/access';
 import { botFlowEndText } from '../botChat/texts';
+import { linkRequestText } from '../botChat/wakeWord';
 import { t } from '../i18n';
 import { claimFlowButton, releaseFlowButton } from './flowButtons';
 import type { FlowButtonRecord } from './flowButtons';
@@ -81,7 +81,6 @@ export interface TelegramCommandOptions {
   onTaskRequest: (request: TelegramTaskRequest) => Promise<{ taskId: string }>;
   onStatusRequest: () => string;
   onRestartApp?: () => void;
-  onUpdateOutputMode: (choice: TelegramOutputChoice) => boolean;
   getLlmDirect: () => BotLlmDirectConfig;
   onLog: (message: string) => void;
   getStrings: () => Record<string, string>;
@@ -439,8 +438,7 @@ export async function handleDirectMessage(ctx: TelegramContext, options: Telegra
   if (!text || !ctx.from || !ctx.chat) return;
   const direct = options.getLlmDirect();
 
-  // Only a message sent after the question answers it (2026-10-20: a second "1" sent while the run
-  // was still working was read after it asked and answered for the user). An earlier one is a request.
+  // Only a message sent after the question answers it. An earlier one is a request.
   const answersAgent = options.hasPendingAgentAsk?.(ctx.chat.id, ctx.from.id, telegramSent(ctx.message)) ?? false;
 
   if (ctx.chat.type === 'private') {
@@ -492,10 +490,12 @@ export async function handleDirectMessage(ctx: TelegramContext, options: Telegra
  * A message that is only a post or a YouTube video link — in a group, what follows the bot's
  * mention — runs Yobi's own flow for it (`linkCommandFor`) in that chat, with the link as its
  * input; false leaves it to the agent — as for an account without the download grant, whose
- * link is an ordinary message. The request's pace ticket goes with the flow when it is one.
+ * link is an ordinary message. "Yobi <link>" is the link alone. The request's pace ticket goes
+ * with the flow when it is one.
  */
-async function runLinkFlow(ctx: TelegramContext, options: TelegramCommandOptions, text: string, ticket: BotPaceTicket): Promise<boolean> {
+async function runLinkFlow(ctx: TelegramContext, options: TelegramCommandOptions, said: string, ticket: BotPaceTicket): Promise<boolean> {
   if (!ctx.from || !ctx.chat || !options.onFlowCommand) return false;
+  const text = linkRequestText(said);
   const match = linkCommandFor(text, options.linkSites?.());
   if (!match) return false;
   if (!(await mayUseDownloader(options, ctx.from.id, ctx.chat.id))) {
@@ -571,7 +571,7 @@ function untaggedMentions(text: string, botUsername: string): Array<{ offset: nu
 
 /**
  * The admin commands' shared gate: a paired account with the admin grant, in its private chat.
- * Private only because what they show is the owner's (the queue, the output settings) and
+ * Private only because what they show is the owner's (the queue) and
  * /restart restarts this computer's app — none of it for a group (BOT_CAPABILITIES.admin).
  */
 async function adminGate(ctx: TelegramContext, options: TelegramCommandOptions): Promise<boolean> {
@@ -604,24 +604,6 @@ export async function handleRestartCommand(ctx: TelegramContext, options: Telegr
   if (!(await adminGate(ctx, options))) return;
   await ctx.reply(t(options.getStrings(), 'telegram.cmd.restartAck'));
   options.onRestartApp?.();
-}
-
-export async function handleOutputCommand(ctx: TelegramContext, options: TelegramCommandOptions): Promise<void> {
-  if (!(await adminGate(ctx, options))) return;
-  const raw = extractCommandPrompt(ctx.message?.text || '');
-  const nextMode = parseOutputMode(raw);
-  if (!nextMode) {
-    await ctx.reply(t(options.getStrings(), 'telegram.cmd.outputUsage'));
-    return;
-  }
-  const ok = options.onUpdateOutputMode(nextMode);
-  if (!ok) {
-    await ctx.reply(t(options.getStrings(), 'telegram.cmd.outputUpdateFailed'));
-    return;
-  }
-  await ctx.reply(t(options.getStrings(), 'telegram.cmd.outputUpdated', {
-    mode: nextMode.toUpperCase(),
-  }));
 }
 
 export async function handleFlowCommand(
@@ -838,14 +820,4 @@ export function ensurePrivateChat(ctx: Context): ctx is Context & { chat: NonNul
 
 function isProviderChatAllowed(ctx: Context, options: TelegramCommandOptions): boolean {
   return ensurePrivateChat(ctx) || options.allowGroupCommands();
-}
-
-function parseOutputMode(raw: string): TelegramOutputChoice | null {
-  const mode = raw.trim().toLowerCase();
-  if (mode === 'md' || mode === 'markdown') return 'markdown';
-  if (mode === 'compact') return 'compact';
-  if (mode === 'png') return 'png';
-  if (mode === 'webp') return 'webp';
-  if (mode === 'pdf') return 'pdf';
-  return null;
 }

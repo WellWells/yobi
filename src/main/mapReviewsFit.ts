@@ -1,6 +1,9 @@
-import type { MapReview } from './mapReviews';
+/** Any review with a score: Maps' 1-5 stars, Agoda's 10-point rating. */
+interface Rated {
+  rating: number;
+}
 
-function nextToDrop(reviews: readonly MapReview[], kept: readonly boolean[]): number {
+function nextToDrop(reviews: readonly Rated[], kept: readonly boolean[]): number {
   const counts = new Map<number, number>();
   reviews.forEach((entry, index) => {
     if (kept[index]) counts.set(entry.rating, (counts.get(entry.rating) ?? 0) + 1);
@@ -23,11 +26,11 @@ function nextToDrop(reviews: readonly MapReview[], kept: readonly boolean[]): nu
  * The reviews whose JSON array fits `limit` under the provider's own `measure`. Whole reviews go,
  * from the most common star level, oldest first (the sample is newest-first).
  */
-export function fitReviews(
-  reviews: readonly MapReview[],
+export function fitReviews<T extends Rated>(
+  reviews: readonly T[],
   limit: number,
   measure: (text: string) => number,
-): MapReview[] {
+): T[] {
   const sizes = reviews.map((entry) => measure(JSON.stringify(entry)));
   const comma = measure(',');
   const kept = reviews.map(() => true);

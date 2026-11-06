@@ -1,107 +1,103 @@
-import { load } from 'cheerio';
-import { fetchRawText } from '../pageLoader';
-import { CLEAN_UA } from '../userAgent';
-import { Semaphore } from '../flow/lanes';
-import { MAX_PLAN_QUERIES } from './types';
+import { sendLog } from '../helpers';
+import { searchBing } from './engines/bing';
+import { searchBrave } from './engines/brave';
+import { searchDdg } from './engines/ddg';
+import { EngineBusyError, SerpChallengeError } from './engines/gate';
+import { fuseRankings } from './fuse';
+import { recalledSerp, rememberSerp, serpCacheKey } from './serpCache';
 import type { SerpHit, TemporalFilter } from './types';
 
-export class SerpChallengeError extends Error {
-  constructor(marker: string) {
-    super(`DuckDuckGo returned a verification page instead of results (${marker})`);
-  }
+export { EngineBusyError, SerpChallengeError } from './engines/gate';
+export { DDG_COOLDOWN_MS, DDG_WINDOW_MS, searchDdg } from './engines/ddg';
+export { searchBing } from './engines/bing';
+export { searchBrave } from './engines/brave';
+
+type EngineSearch = (query: string, temporal: TemporalFilter, locale: string) => Promise<SerpHit[]>;
+
+interface Engine {
+  name: string;
+  search: EngineSearch;
 }
 
-const DDG_DF: Record<TemporalFilter, string> = { day: 'd', week: 'w', month: 'm', none: '' };
+/** Both asked for a plan's first query; the rest go to one of them in turn. */
+const PRIMARY_ENGINES: readonly Engine[] = [
+  { name: 'Brave', search: searchBrave },
+  { name: 'Bing', search: (query, _temporal, locale) => searchBing(query, locale) },
+];
 
-const DDG_REGION: Record<string, string> = {
-  'zh-TW': 'tw-tzh',
-  'zh-CN': 'cn-zh',
-  'en-US': 'us-en',
-  de: 'de-de',
-  es: 'es-es',
-  fr: 'fr-fr',
-  ja: 'jp-jp',
-  ko: 'kr-kr',
-  'pt-BR': 'br-pt',
-};
+/** Asked only when the primary engines came back empty-handed. */
+const BACKUP_ENGINE: Engine = { name: 'DuckDuckGo', search: searchDdg };
 
-/**
- * App-wide DuckDuckGo pacing: at most one plan's worth of queries in flight, and each start draws
- * from a bucket that holds one plan and refills one start per `DDG_WINDOW_MS`.
- */
-const ddgGate = new Semaphore(MAX_PLAN_QUERIES);
-export const DDG_WINDOW_MS = 4_000;
-let startTokens = MAX_PLAN_QUERIES;
-let tokensAt = 0;
-
-/**
- * After a verification page nothing is sent for this long; callers get the same
- * `SerpChallengeError` without touching the network.
- */
-export const DDG_COOLDOWN_MS = 180_000;
-let challengedUntil = 0;
-
-function throwIfCoolingDown(now: number): void {
-  if (now >= challengedUntil) return;
-  throw new SerpChallengeError(`cooling down, ${Math.ceil((challengedUntil - now) / 1_000)} s left`);
+interface EngineAnswer {
+  name: string;
+  hits: SerpHit[];
+  /** Refused us, is cooling down from a refusal, or was too busy pacing to take the query. */
+  unavailable: boolean;
+  note: string;
 }
 
-async function awaitDdgStart(): Promise<void> {
-  for (;;) {
-    const now = Date.now();
-    // Checked on every pass: a query queued here must not go out after its neighbour was challenged.
-    throwIfCoolingDown(now);
-    startTokens = Math.min(MAX_PLAN_QUERIES, startTokens + Math.max(0, now - tokensAt) / DDG_WINDOW_MS);
-    tokensAt = now;
-    if (startTokens >= 1) {
-      startTokens -= 1;
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, Math.ceil((1 - startTokens) * DDG_WINDOW_MS)));
-  }
-}
-
-export async function searchDdg(query: string, temporal: TemporalFilter, locale: string): Promise<SerpHit[]> {
-  throwIfCoolingDown(Date.now());
-  const params = new URLSearchParams({ q: query });
-  const region = DDG_REGION[locale];
-  if (region) params.set('kl', region);
-  if (DDG_DF[temporal]) params.set('df', DDG_DF[temporal]);
-
-  const html = await ddgGate.runExclusive(async () => {
-    await awaitDdgStart();
-    return fetchRawText(`https://html.duckduckgo.com/html/?${params.toString()}`, {
-      headers: { 'User-Agent': CLEAN_UA, 'Accept-Language': locale },
-    });
-  });
-  const $ = load(html);
-  const hits: SerpHit[] = [];
-  $('.result:not(.result--ad)').each((_, el) => {
-    const container = $(el);
-    const anchor = container.find('a.result__a').first();
-    const title = anchor.text().trim();
-    const url = resolveDdgHref(anchor.attr('href') ?? '');
-    if (!title || !url) return;
-    const snippet = container.find('.result__snippet').first().text().trim();
-    hits.push(snippet ? { title, url, snippet } : { title, url });
-  });
-  if (hits.length === 0 && html.includes('anomaly-modal')) {
-    challengedUntil = Math.max(challengedUntil, Date.now() + DDG_COOLDOWN_MS);
-    throw new SerpChallengeError('anomaly page');
-  }
-  return hits;
-}
-
-function resolveDdgHref(href: string): string {
-  const trimmed = href.trim();
-  if (!trimmed) return '';
+async function ask(engine: Engine, query: string, temporal: TemporalFilter, locale: string): Promise<EngineAnswer> {
   try {
-    const u = new URL(trimmed, 'https://duckduckgo.com/');
-    const uddg = u.searchParams.get('uddg');
-    if (uddg) return /^https?:\/\//i.test(uddg) ? uddg : '';
-    if (u.hostname.endsWith('duckduckgo.com')) return '';
-    return u.protocol === 'http:' || u.protocol === 'https:' ? u.href : '';
-  } catch {
-    return '';
+    const hits = await engine.search(query, temporal, locale);
+    return { name: engine.name, hits, unavailable: false, note: String(hits.length) };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const unavailable = err instanceof SerpChallengeError || err instanceof EngineBusyError;
+    return { name: engine.name, hits: [], unavailable, note: unavailable ? message : `failed (${message})` };
   }
+}
+
+function describe(answers: readonly EngineAnswer[]): string {
+  // A refusal's message already names its engine.
+  return answers.map((answer) => (answer.unavailable ? answer.note : `${answer.name} ${answer.note}`)).join(', ');
+}
+
+/**
+ * The primary engines' answers for one query. The plan's first query (`slot` 0) is the one worth
+ * two indexes agreeing on, so it goes to both at once; every later query goes to one engine in turn
+ * — Brave, then Bing — and to the other only when that one had nothing to give.
+ */
+async function askPrimaries(query: string, temporal: TemporalFilter, locale: string, slot: number): Promise<EngineAnswer[]> {
+  if (slot === 0) return Promise.all(PRIMARY_ENGINES.map((engine) => ask(engine, query, temporal, locale)));
+  const first = PRIMARY_ENGINES[(slot - 1) % PRIMARY_ENGINES.length];
+  const firstAnswer = await ask(first, query, temporal, locale);
+  if (firstAnswer.hits.length > 0) return [firstAnswer];
+  const other = PRIMARY_ENGINES.find((engine) => engine !== first) as Engine;
+  return [firstAnswer, await ask(other, query, temporal, locale)];
+}
+
+/**
+ * One query across the engines (`slot`: its place in the plan, see `askPrimaries`); DuckDuckGo only
+ * when the primary engines came back empty-handed. The same query within `SERP_CACHE_TTL_MS` is
+ * answered from memory. Throws `SerpChallengeError` when every engine asked was unavailable, so a
+ * blocked search is never mistaken for one with no results.
+ */
+export async function searchWeb(query: string, temporal: TemporalFilter, locale: string, slot = 0): Promise<SerpHit[]> {
+  const key = serpCacheKey(query, temporal, locale);
+  const recalled = recalledSerp(key);
+  if (recalled) {
+    sendLog(`🔎 [Search] "${query}" — ${recalled.hits.length} results from ${Math.round(recalled.ageMs / 1_000)} s ago, no request`);
+    return recalled.hits;
+  }
+
+  const primary = await askPrimaries(query, temporal, locale, slot);
+  const answered = primary.filter((answer) => answer.hits.length > 0);
+  if (answered.length > 0) {
+    sendLog(`🔎 [Search] "${query}" — ${describe(primary)}`);
+    const hits = fuseRankings(answered.map((answer) => answer.hits));
+    rememberSerp(key, hits);
+    return hits;
+  }
+
+  const backup = await ask(BACKUP_ENGINE, query, temporal, locale);
+  const all = [...primary, backup];
+  sendLog(`🔎 [Search] "${query}" — ${describe(all)}`);
+  if (backup.hits.length > 0) {
+    rememberSerp(key, backup.hits);
+    return backup.hits;
+  }
+  if (all.every((answer) => answer.unavailable)) {
+    throw new SerpChallengeError('Every search engine', all.map((answer) => answer.note).join('; '));
+  }
+  return [];
 }

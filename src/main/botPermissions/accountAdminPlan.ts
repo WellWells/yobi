@@ -13,11 +13,11 @@ import {
   sortBotGrants,
 } from '../../shared/botPermissions';
 import type { BotApprovePairingResult, BotGrant } from '../../shared/botPermissions';
-import { BUILTIN_CONNECTORS, BUILTIN_PTT_SERVER_ID, PUBLIC_DATA_CONNECTOR_IDS } from '../../shared/builtinConnectors';
+import { BUILTIN_CALENDAR_SERVER_ID, BUILTIN_CONNECTORS, BUILTIN_PAGE_SERVER_ID, BUILTIN_PTT_SERVER_ID, BUILTIN_TRANSLATE_SERVER_ID, PUBLIC_DATA_CONNECTOR_IDS } from '../../shared/builtinConnectors';
 import { clipLine } from '../../shared/textBudget';
 
-/** Built-in connectors added after the preview grant (2026-10-23), in the order they came. */
-const LATER_CONNECTORS: readonly string[] = [BUILTIN_PTT_SERVER_ID];
+/** Built-in connectors added later than the rest, in the order they came. */
+const LATER_CONNECTORS: readonly string[] = [BUILTIN_PTT_SERVER_ID, BUILTIN_CALENDAR_SERVER_ID, BUILTIN_TRANSLATE_SERVER_ID, BUILTIN_PAGE_SERVER_ID];
 
 /**
  * Every grant a card may toggle, in a fixed order: a toggle names its grant by index here. Shell

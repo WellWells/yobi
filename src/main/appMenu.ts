@@ -1,6 +1,7 @@
 import { app, Menu } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
 import type { ConversationMenuCommandEvent } from '../shared/conversationMenu';
+import type { ReadingZoomCommand } from '../shared/types';
 import { buildConversationMenuItems, getConversationMenuState } from './conversationMenu';
 import type { ConversationMenuState } from './conversationMenu';
 import { getLangCache, t } from './i18n';
@@ -9,6 +10,8 @@ export interface AppMenuDeps {
   onOpenSettings: () => void;
   /** A Conversation menu click, for the renderer to run. */
   onConversationCommand?: (event: ConversationMenuCommandEvent) => void;
+  /** A View menu Actual Size / Zoom In / Zoom Out click, for the renderer's reading size. */
+  onReadingZoom?: (command: ReadingZoomCommand) => void;
 }
 
 const NO_CONVERSATION: ConversationMenuState = { attached: false, open: null };
@@ -82,9 +85,11 @@ export function buildMacMenuTemplate(
         { role: 'reload', label: label('menu.view.reload') },
         ...developerItems,
         SEPARATOR,
-        { role: 'resetZoom', label: label('menu.view.resetZoom') },
-        { role: 'zoomIn', label: label('menu.view.zoomIn') },
-        { role: 'zoomOut', label: label('menu.view.zoomOut') },
+        // The reading size, as Ctrl/⌘ +/−/0 set it in chat; the page itself stays at 100%
+        // (pageZoom.ts). Not the zoom roles: those zoom the page and carry the registry's keys.
+        { label: label('menu.view.resetZoom'), click: () => deps.onReadingZoom?.('reset') },
+        { label: label('menu.view.zoomIn'), click: () => deps.onReadingZoom?.('in') },
+        { label: label('menu.view.zoomOut'), click: () => deps.onReadingZoom?.('out') },
       ],
     },
     { label: label('menu.conversation'), submenu: conversationItems },

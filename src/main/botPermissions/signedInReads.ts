@@ -6,7 +6,7 @@ import { isBotPlatform } from '../../shared/types';
 
 /*
  * How far a run may read a pasted link with the site sign-ins in Settings (X, Instagram,
- * Facebook, bilibili). Those sessions are the owner's own accounts: what they show — a
+ * Facebook, bilibili, Threads). Those sessions are the owner's own accounts: what they show — a
  * friends-only post, a private account the owner follows, stories — is what the owner may see,
  * not what whoever pasted the link may. Decided once per run here; the steps only read the mark.
  *

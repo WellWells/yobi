@@ -5,7 +5,7 @@
  */
 import { listBotContacts } from '../botDirectory';
 import { config } from '../config';
-import { groupGrantsOf } from '../../shared/botPermissions';
+import { botGroupGrantsOf } from '../../shared/botPermissions';
 import type { BotGroupGrant } from '../../shared/botPermissions';
 import type { BotAudienceSnapshot, BotAudienceUser, BotContact, BotPlatform } from '../../shared/types';
 import { pairedBotUserIds } from './rights';
@@ -14,6 +14,7 @@ import { isPairingRequestWaiting } from './pairingRequests';
 export const MAX_AUDIENCE_USERS = 200;
 
 export interface AudienceSource {
+  platform: BotPlatform;
   contacts: readonly BotContact[];
   groupPermissions: Readonly<Record<string, BotGroupGrant[]>>;
   blockedUsers: readonly string[];
@@ -31,7 +32,7 @@ export function buildBotAudience(source: AudienceSource): BotAudienceSnapshot {
   const groups = chats
     .filter((c) => c.chatType !== 'channel' && c.reachability !== 'removed')
     .map((c) => {
-      const grants = groupGrantsOf(source.groupPermissions, c.id);
+      const grants = botGroupGrantsOf(source.platform, source.groupPermissions, c.id);
       return {
         id: c.id,
         ...(c.title ? { title: c.title } : {}),
@@ -77,6 +78,7 @@ export function buildBotAudience(source: AudienceSource): BotAudienceSnapshot {
 export async function getBotAudience(platform: BotPlatform): Promise<BotAudienceSnapshot> {
   const target = config[platform];
   return buildBotAudience({
+    platform,
     contacts: await listBotContacts({ platform }),
     groupPermissions: target?.groupPermissions ?? {},
     blockedUsers: target?.blockedUsers ?? [],

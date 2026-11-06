@@ -7,6 +7,7 @@
 import type { SearchObject } from 'imapflow';
 import type { MailBackend, MailFolder, OpenFolder, RawMessage, SpecialUse } from './mailBackend';
 import type { ComposedMail, OutgoingMail, ReplyContext } from './mailCompose';
+import { isDiscardFolder, isDiscardLabel, namesDiscardFolder } from './mailDiscard';
 import { decodeMailId, encodeMailId, LEGACY_MAIL_ACCOUNT_ID, MailIdError, qualifyMailId, splitMailId, type MailRef } from './mailIds';
 import {
   countAttachments, formatAddresses, listAttachments, replySubject, toMailDetail, toMailSummary,
@@ -16,7 +17,7 @@ import { LOCAL_BODY_SCAN_MAX, LOCAL_SCAN_MAX, localSearch } from './mailLocalSea
 import { parseMailQuery, splitNonAsciiTerms, toGmailRaw, toImapSearches } from './mailQuery';
 
 /**
- * 50 rows by default and at most (2026-10-23): a row measured 250-350 characters on a real Gmail,
+ * 50 rows by default and at most: a row is about 250-350 characters on Gmail,
  * so 50 still fit what the agent shows the model of one result (`BYOK_OBSERVATION_LIMIT` 16,000).
  * Anything left out is said in `truncated`, with the offset of the next page.
  */
@@ -139,8 +140,8 @@ export interface MailAccountRef {
   canRead: boolean;
   /**
    * Its mail service files what its SMTP sends in Sent by itself (Gmail, Outlook.com, Microsoft
-   * 365), so Yobi never adds a copy: Outlook files it a few seconds later than Yobi used to look,
-   * and every mail sent from it ended up in Sent twice (2026-10-23, live).
+   * 365), so Yobi never adds a copy: Outlook files it a few seconds after the send, so a copy
+   * added here would land in Sent twice.
    */
   serverFilesSent?: boolean;
 }
@@ -186,7 +187,7 @@ export interface MailSearchResult {
   truncated?: string;
 }
 
-const ROLE_ALIASES: Readonly<Record<string, SpecialUse>> = {
+export const ROLE_ALIASES: Readonly<Record<string, SpecialUse>> = {
   sent: '\\Sent', drafts: '\\Drafts', draft: '\\Drafts', trash: '\\Trash', bin: '\\Trash', junk: '\\Junk', spam: '\\Junk',
   archive: '\\Archive', all: '\\All', 'all mail': '\\All', starred: '\\Flagged', flagged: '\\Flagged',
 };
@@ -670,12 +671,45 @@ export function createMailService(deps: MailServiceDeps) {
     };
   }
 
+  /**
+   * The action gate reads `move_to` as words, and folder names are localized: a move into the
+   * folder the server marks as the trash or spam passes only when `move_to` said so, and no Gmail
+   * label may do it. Checked in every mailbox the ids name, before anything changes.
+   */
+  async function refuseUnnamedDiscard(args: UpdateArgs): Promise<void> {
+    const wanted = args.move_to?.trim() ?? '';
+    const labels = args.add_labels ?? [];
+    if (!wanted && labels.length === 0) return;
+    const checked = new Set<string>();
+    for (const id of args.ids) {
+      const { box } = await mailboxOf(id);
+      if (checked.has(box.account.id)) continue;
+      checked.add(box.account.id);
+      const folders = await box.backend.folders(false);
+      const target = wanted && !namesDiscardFolder(wanted) ? findFolder(folders, wanted) : undefined;
+      if (target && isDiscardFolder(target)) {
+        throw new MailToolError(target.specialUse === '\\Trash'
+          ? `"${wanted}" is the trash folder: use mail_trash to move messages there`
+          : `"${wanted}" is the spam folder: to move messages there, pass move_to "spam"`);
+      }
+      if (!box.backend.gmail) continue;
+      const discardLabel = labels.find((label) => {
+        const folder = findFolder(folders, label);
+        return isDiscardLabel(label) || (folder !== undefined && isDiscardFolder(folder));
+      });
+      if (discardLabel) {
+        throw new MailToolError(`The label "${discardLabel}" would put messages in the trash or spam: use mail_trash for the trash, or move_to "spam"`);
+      }
+    }
+  }
+
   async function update(args: UpdateArgs): Promise<Record<string, unknown>> {
     if (args.ids.length === 0) throw new MailToolError('Give the ids of the messages to change');
     if (args.ids.length > UPDATE_IDS_MAX) throw new MailToolError(`At most ${UPDATE_IDS_MAX} messages per call`);
     const labels = [...(args.add_labels ?? []), ...(args.remove_labels ?? [])];
     const anything = args.read !== undefined || args.starred !== undefined || labels.length > 0 || Boolean(args.move_to?.trim()) || args.archive === true;
     if (!anything) throw new MailToolError('Say what to change: read, starred, add_labels, remove_labels, archive or move_to');
+    await refuseUnnamedDiscard(args);
     const destinations = new Set<string>();
     for (const id of args.ids) {
       await withMessage(id, async (box, folder, uid) => {

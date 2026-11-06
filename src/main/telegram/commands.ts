@@ -13,7 +13,6 @@ import {
   handleAgentAnswer,
   handleFlowButton,
   handleFlowCommand,
-  handleOutputCommand,
   handleProviderCommand,
   handleRestartCommand,
   handleStatusCommand,
@@ -80,9 +79,6 @@ export function attachTelegramHandlers(
 
   bot.command('status', async (ctx) => {
     await handleStatusCommand(ctx, options);
-  });
-  bot.command('output', async (ctx) => {
-    await handleOutputCommand(ctx, options);
   });
   bot.command('restart', async (ctx) => {
     await handleRestartCommand(ctx, options);
@@ -236,7 +232,7 @@ export interface CommandMenuOptions {
 type MenuEntry = { command: string; description: string };
 
 /** The admin commands, in menu order; only an admin's own chat lists them. */
-const ADMIN_MENU_COMMANDS = ['output', 'status', 'restart'] as const;
+const ADMIN_MENU_COMMANDS = ['status', 'restart'] as const;
 
 /** The managers' commands (the owner or an admin-grant holder), in menu order. */
 const MANAGER_MENU_COMMANDS = ['groups', 'users', 'invite'] as const;

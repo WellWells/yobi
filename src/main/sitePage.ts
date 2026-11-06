@@ -9,7 +9,7 @@ import { bySite } from '../shared/siteConnectors';
 
 /*
  * A site's page read in a hidden window, for sites whose pages only answer a real browser
- * (bilibili, Dcard, and Vimeo when Yobi's own request is turned away).
+ * (bilibili, Dcard, Agoda's reviews, and Vimeo when Yobi's own request is turned away).
  *
  * Two partitions per site (one for a site Yobi has no sign-in for: Dcard, Vimeo), neither shared
  * with the AI worker. The reader's never holds a sign-in and is the only one yt-dlp gets cookies
@@ -57,7 +57,8 @@ const HEAVY_RESOURCES = new Set(['image', 'media', 'font']);
 
 /**
  * What a Dcard reader's page fetches that the read never uses: pictures, video and fonts (the post
- * comes from its JSON), and the trackers on the shared blocklist. Cloudflare's own challenge
+ * comes from its JSON), and the trackers on the shared blocklist. Agoda's reader cuts the same
+ * (its reviews come from the page's own JSON requests). Cloudflare's own challenge
  * (`challenges.cloudflare.com`, the page's `/cdn-cgi/`) is never cut, whatever it loads.
  */
 export function isDcardHeavyRequest({ url, resourceType }: SitePageRequest): boolean {
@@ -89,6 +90,8 @@ const SITE_PAGES = {
   // Persistent too: a passed check's cookie serves later reads and restarts.
   reddit: { reader: 'persist:reddit-reader', blocks: ({ url }: SitePageRequest) => isRedditMediaRequest(url), chromeIdentity: true },
   vimeo: { reader: 'vimeo-reader', blocks: ({ url }: SitePageRequest) => isVimeoMediaRequest(url), chromeIdentity: true },
+  // In memory, as Vimeo's: the reviews need no sign-in and nothing of the read outlives the app.
+  agoda: { reader: 'agoda-reader', blocks: isDcardHeavyRequest, chromeIdentity: true },
 } as const satisfies Record<string, SitePageSpec>;
 
 export type SitePageSite = keyof typeof SITE_PAGES;

@@ -111,6 +111,8 @@ export function botConversationFolder(fileLabel: string | undefined): SystemFold
   if (!fileLabel) return null;
   if (fileLabel === 'tg' || fileLabel.startsWith('tg-')) return SYSTEM_FOLDERS.telegram;
   if (fileLabel === 'line' || fileLabel.startsWith('line-')) return SYSTEM_FOLDERS.line;
+  // LINE PC chats (the user's own account) are LINE conversations too.
+  if (fileLabel === 'linepc' || fileLabel.startsWith('linepc-')) return SYSTEM_FOLDERS.line;
   if (fileLabel === 'discord' || fileLabel.startsWith('discord-')) return SYSTEM_FOLDERS.discord;
   if (fileLabel === 'slack' || fileLabel.startsWith('slack-')) return SYSTEM_FOLDERS.slack;
   return null;

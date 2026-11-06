@@ -10,8 +10,8 @@ export interface ConnectorBotAccess {
 }
 
 /**
- * Who may use each added connector through the bots. Almost every card used to repeat
- * "only you", so that default is stated once and a card only speaks up when it differs.
+ * Who may use each added connector through the bots. The "only you" default is stated once
+ * and a card only speaks up when it differs.
  * Nothing at all while both bots are off.
  */
 export function connectorBotAccess(

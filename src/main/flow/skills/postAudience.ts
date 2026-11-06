@@ -2,8 +2,9 @@
  * Who a site shows a post to, as the post's own data marks it. A post anyone may see gives nothing
  * of the owner's circle away, even when only the owner's sign-in could fetch it; only what can be
  * told to be for some people only is kept from others. Each site's reader reads its own marker
- * (Facebook's audience icon, Instagram's private account, X's protected account); what the run
- * does with it is decided once, in `threadForOthers` (`readAccess.ts`).
+ * (Instagram's private account, X's protected account); Facebook's reader marks what only the
+ * sign-in could read, since its page names no audience but in words and icon names of Facebook's
+ * choosing. What the run does with it is decided once, in `threadForOthers` (`readAccess.ts`).
  */
 
 /**

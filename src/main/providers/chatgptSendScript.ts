@@ -6,9 +6,9 @@
 export const CHATGPT_COMPOSER_FORM_SELECTOR = 'form[data-chatgpt-composer], form[data-type="unified-composer"]';
 export const CHATGPT_USER_TURN_SELECTOR = '[data-message-author-role="user"], [data-chatgpt-search-unit-key$=":user"]';
 /**
- * The pictures ChatGPT drew for an answer (2026-10-19, normal chat). The redesigned page gives
- * such a message no `:assistant` unit — only `data-chatgpt-search-message-ids` around the gallery —
- * so the gallery itself counts as the answer; without it a picture-only answer was never seen.
+ * The pictures ChatGPT drew for an answer (normal chat). The page gives such a message no
+ * `:assistant` unit — only `data-chatgpt-search-message-ids` around the gallery — so the gallery
+ * itself counts as the answer; without it a picture-only answer is never seen.
  */
 export const CHATGPT_IMAGE_GALLERY_SELECTOR = '[data-testid="generated-image-gallery"]';
 export const CHATGPT_ASSISTANT_TURN_SELECTOR = `[data-message-author-role="assistant"], [data-chatgpt-search-unit-key$=":assistant"], ${CHATGPT_IMAGE_GALLERY_SELECTOR}`;

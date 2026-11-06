@@ -5,7 +5,7 @@ import { findBotPairedDisplayName } from './botChat/pairingState';
 import { isBotPlatform } from '../shared/types';
 import type { BotPlatform } from '../shared/types';
 
-const PLATFORM_TAGS: Record<BotPlatform, string> = { telegram: 'tg', line: 'line', discord: 'discord', slack: 'slack' } as const;
+const PLATFORM_TAGS: Record<BotPlatform, string> = { telegram: 'tg', line: 'line', discord: 'discord', slack: 'slack', lineSelf: 'linepc' } as const;
 const NAME_MAX = 40;
 
 /** Characters Windows refuses in a file name, plus controls; trailing dots and spaces are refused too. */

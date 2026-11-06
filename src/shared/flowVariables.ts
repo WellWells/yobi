@@ -1,5 +1,5 @@
 import type { BotPlatform, FlowDefinition, FlowVariable, FlowVariableOption, FlowVariableType } from './types';
-import { FLOW_VARIABLE_TYPES, isBotPlatform } from './types';
+import { FLOW_VARIABLE_TYPES, parseBotPlatform } from './types';
 
 export const FLOW_VAR_PREFIX = 'var';
 
@@ -108,8 +108,7 @@ function sanitizeVariable(raw: unknown): FlowVariable | null {
 /** Which bot's chats a recipient variable offers: the one its linked variable names, else "auto". */
 export function recipientPlatform(variable: FlowVariable, all: readonly FlowVariable[]): BotPlatform | 'auto' {
   if (!variable.platformKey) return 'auto';
-  const value = (all.find((v) => v.key === variable.platformKey)?.value ?? '').trim().toLowerCase();
-  return isBotPlatform(value) ? value : 'auto';
+  return parseBotPlatform(all.find((v) => v.key === variable.platformKey)?.value) ?? 'auto';
 }
 
 /**

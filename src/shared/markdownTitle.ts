@@ -10,23 +10,57 @@ function plainText(raw: string): string {
     .trim();
 }
 
-export function extractMarkdownTitle(markdown: string): string {
+/** The lines outside code fences, each with whether it is an ATX heading. */
+function* proseLines(markdown: string): Generator<{ line: string; heading: RegExpExecArray | null }> {
   let inFence = false;
-  let firstOfAnyLevel = '';
   for (const line of markdown.split('\n')) {
     if (FENCE.test(line)) {
       inFence = !inFence;
       continue;
     }
-    if (inFence) continue;
-    const match = ATX_HEADING.exec(line);
-    if (!match) continue;
-    const title = plainText(match[2]);
-    if (!title) continue;
-    if (match[1].length === 1) return title;
-    if (!firstOfAnyLevel) firstOfAnyLevel = title;
+    if (!inFence) yield { line, heading: ATX_HEADING.exec(line) };
   }
-  return firstOfAnyLevel;
+}
+
+export interface MarkdownHeading {
+  level: number;
+  text: string;
+}
+
+/** Every heading outside code fences, in order, as plain text. */
+export function markdownHeadings(markdown: string): MarkdownHeading[] {
+  const headings: MarkdownHeading[] = [];
+  for (const { heading } of proseLines(markdown)) {
+    const text = heading ? plainText(heading[2]) : '';
+    if (heading && text) headings.push({ level: heading[1].length, text });
+  }
+  return headings;
+}
+
+export function extractMarkdownTitle(markdown: string): string {
+  const headings = markdownHeadings(markdown);
+  return (headings.find((heading) => heading.level === 1) ?? headings[0])?.text ?? '';
+}
+
+const BLOCK_MARKER = /^\s*(?:>\s*)*(?:[-*+]\s+(?:\[[ xX]\]\s+)?|\d+[.)]\s+)?/;
+const RULE_OR_TABLE_SEPARATOR = /^[\s|:-]*-{3,}[\s|:-]*$|^\s*(?:[*_]\s*){3,}$/;
+
+/**
+ * The text outside code fences and headings, as one line of plain words: quote and list markers,
+ * table pipes and inline formatting dropped. Cut at `maxChars` characters (code points).
+ */
+export function markdownProse(markdown: string, maxChars: number): string {
+  const words: string[] = [];
+  let length = 0;
+  for (const { line, heading } of proseLines(markdown)) {
+    if (heading || RULE_OR_TABLE_SEPARATOR.test(line)) continue;
+    const text = plainText(line.replace(BLOCK_MARKER, '').replace(/\|/g, ' ')).replace(/\s+/g, ' ');
+    if (!text) continue;
+    words.push(text);
+    length += text.length + 1;
+    if (length >= maxChars) break;
+  }
+  return Array.from(words.join(' ')).slice(0, maxChars).join('').trim();
 }
 
 export interface LeadingTitle {

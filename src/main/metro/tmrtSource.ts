@@ -1,6 +1,6 @@
 /**
  * Taichung MRT read from the JSON API behind its own site (`www.tmrt.com.tw/api/public/*`, plain
- * GET, no key, no throttling met on 2026-10-22):
+ * GET, no key, no throttling met):
  *
  * - `Site/AllSite` is every station with its first and last train per direction as minutes after
  *   midnight (fields without `U` = toward 高鐵臺中站, with `U` = toward 北屯總站; weekday / holiday

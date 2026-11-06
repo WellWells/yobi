@@ -45,9 +45,8 @@ export const MAIL_PROVIDERS: readonly MailProvider[] = [
     helpUrl: 'https://support.apple.com/102654',
   },
   {
-    // Microsoft ended Basic Authentication for Outlook.com on 2024-09-16. Its account page still
-    // issues app passwords, but a real one was refused with `535 5.7.3 Authentication unsuccessful`
-    // (2026-10-23): these mailboxes sign in with a Microsoft account (`microsoftMail.ts`).
+    // Microsoft ended Basic Authentication for Outlook.com on 2024-09-16, so app passwords are
+    // refused: these mailboxes sign in with a Microsoft account (`microsoftMail.ts`).
     id: 'outlook',
     domains: ['outlook.com', 'hotmail.com', 'live.com', 'msn.com', 'outlook.com.tw', 'hotmail.com.tw', 'live.com.tw'],
     imap: { host: 'outlook.office365.com', port: 993 },

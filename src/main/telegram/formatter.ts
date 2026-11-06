@@ -1,11 +1,14 @@
 import { Marked, Renderer } from 'marked';
 import { t } from '../i18n';
 import { promoteDisplayMath, promoteInlineMath } from '../../shared/inlineMathDelimiters';
+import { isCitationLabel } from '../../shared/citations';
 import { expandableQuoteBody } from '../../shared/expandableQuote';
 import { flattenFootnotes } from '../../shared/markdownFootnotes';
 import { htmlAsPlainText } from '../../shared/markdownHtmlWhitelist';
+import { labelledCell } from '../../shared/tableCellText';
 import { mathTokenExtensions } from '../markdownMathTokens';
 import { readableTex } from '../readableTex';
+import { BARE_URL_STOP_CHARS, cjkBoundedUrls } from './bareUrls';
 
 export function escapeTelegramHtml(text: string): string {
   return text
@@ -17,6 +20,7 @@ export function escapeTelegramHtml(text: string): string {
 // Telegram cannot typeset math: a formula goes out as Unicode text (`readableTex`), or, when it
 // has more than that can show, as its TeX — a `$$` fence as <pre>, a `$$…$$` span as <code>.
 const telegramMarked = new Marked({
+  tokenizer: cjkBoundedUrls,
   extensions: mathTokenExtensions({
     display: (tex) => {
       const text = readableTex(tex);
@@ -46,10 +50,60 @@ export function truncateText(text: string, maxLength: number): string {
   return `${text.slice(0, cut).trimEnd()}…`;
 }
 
+// A Markdown link, an autolink, a bare URL or a code span: a cut inside one shows its raw syntax.
+const UNBREAKABLE_SPAN = /\[(?:\\.|[^\]\\\n])*\]\((?:<[^>\n]*>|[^)\s]*)\)|<https?:\/\/[^>\s]*>|https?:\/\/[^\s<>()]+|`[^`\n]+`/g;
+
+/** The last of the ascending `cuts` whose prefix fits, or -1; measure grows with the prefix. */
+function lastFittingCut(cuts: number[], fits: (cut: number) => boolean): number {
+  let low = 0;
+  let high = cuts.length - 1;
+  let found = -1;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    if (fits(cuts[mid])) {
+      found = cuts[mid];
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return found;
+}
+
+/** Where to end the next chunk of `rest`, which does not fit whole. */
+export function chunkCut(rest: string, maxChunkChars: number, measure: (markdown: string) => number): number {
+  const fits = (cut: number) => measure(rest.slice(0, cut)) <= maxChunkChars;
+  const lineEnds = [...rest.matchAll(/\n/g)].map((match) => match.index).filter((index) => index > 0);
+  const lineCut = lastFittingCut(lineEnds, fits);
+  if (lineCut > 0) {
+    const paragraph = rest.lastIndexOf('\n\n', lineCut);
+    if (paragraph > 0 && measure(rest.slice(0, paragraph)) >= maxChunkChars / 2) return paragraph;
+    if (measure(rest.slice(0, lineCut)) >= maxChunkChars / 2) return lineCut;
+  }
+  // No line end late enough: cut inside the line, after a space or punctuation, outside any link.
+  const spans = [...rest.matchAll(UNBREAKABLE_SPAN)].map((match) => [match.index, match.index + match[0].length]);
+  const insideSpan = (index: number) => spans.some(([from, to]) => index > from && index < to);
+  const breaks = [...rest.matchAll(/[\s。，、；：！？|)]/g)]
+    .map((match) => match.index + match[0].length)
+    .filter((index) => index < rest.length && !insideSpan(index));
+  const breakCut = lastFittingCut(breaks, fits);
+  if (breakCut > 0) return Math.max(breakCut, lineCut);
+  if (lineCut > 0) return lineCut;
+  const hardCut = lastFittingCut(Array.from({ length: rest.length - 1 }, (_, i) => i + 1), fits);
+  const span = spans.find(([from, to]) => hardCut > from && hardCut < to);
+  return span && span[0] > 0 ? span[0] : Math.max(1, hardCut);
+}
+
+/**
+ * Splits Markdown into at most `maxChunks` pieces of at most `maxChunkChars` as `measure` counts
+ * them (default: Markdown characters), preferring a blank line, then a line end, then a space or
+ * punctuation outside any link. Text past the last piece is dropped and marked with an ellipsis.
+ */
 export function splitMarkdownIntoChunks(
   text: string,
   maxChunkChars: number,
   maxChunks: number,
+  measure: (markdown: string) => number = (markdown) => markdown.length,
 ): string[] {
   const normalized = text.replace(/\r\n?/g, '\n').trim();
   if (!normalized) return [];
@@ -57,24 +111,72 @@ export function splitMarkdownIntoChunks(
   const chunks: string[] = [];
   let rest = normalized;
   while (rest && chunks.length < maxChunks) {
-    if (rest.length <= maxChunkChars) {
+    if (measure(rest) <= maxChunkChars) {
       chunks.push(rest);
       rest = '';
       break;
     }
-    const window = rest.slice(0, maxChunkChars);
-    let cut = window.lastIndexOf('\n\n');
-    if (cut < maxChunkChars / 2) cut = window.lastIndexOf('\n');
-    if (cut < maxChunkChars / 2) cut = maxChunkChars;
+    const cut = chunkCut(rest, maxChunkChars, measure);
     chunks.push(rest.slice(0, cut).trim());
     rest = rest.slice(cut).trim();
   }
 
-  if (rest && chunks.length > 0) {
-    const last = chunks.length - 1;
-    chunks[last] = truncateText(`${chunks[last]}…`, maxChunkChars);
-  }
+  if (rest && chunks.length > 0) chunks[chunks.length - 1] += '…';
   return chunks.filter(Boolean);
+}
+
+// Telegram's undocumented entity caps: a message is
+// refused (ENTITIES_TOO_LONG) once its entities pass about 10,000 — each link about 20 plus its
+// URL's UTF-8 bytes, each other entity about 10 — and keeps only its first 100 entities, dropping
+// the rest without an error. Costs are rounded up and the budget kept under, for headroom.
+export const TELEGRAM_ENTITY_BUDGET = 9_000;
+export const TELEGRAM_ENTITY_MAX = 100;
+const LINK_ENTITY_COST = 24;
+const OTHER_ENTITY_COST = 16;
+const ENTITY_TAG = /<(a|b|i|u|s|code|pre|blockquote|tg-spoiler)(\s[^>]*)?>/g;
+
+function decodeHref(href: string): string {
+  return href.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+}
+
+/** What a message's entities weigh against `TELEGRAM_ENTITY_BUDGET`. */
+export function telegramEntityCost(html: string): number {
+  let cost = 0;
+  for (const [, tag, attributes] of html.matchAll(ENTITY_TAG)) {
+    const href = tag === 'a' ? /href="([^"]*)"/.exec(attributes ?? '')?.[1] : undefined;
+    cost += href === undefined ? OTHER_ENTITY_COST : LINK_ENTITY_COST + Buffer.byteLength(decodeHref(href));
+  }
+  return cost;
+}
+
+export function telegramEntityCount(html: string): number {
+  return [...html.matchAll(ENTITY_TAG)].length;
+}
+
+/** Whether Telegram takes this HTML as one message, every link and style intact. */
+export function telegramHtmlFits(html: string, maxVisibleChars: number): boolean {
+  return telegramVisibleLength(html) <= maxVisibleChars
+    && telegramEntityCost(html) <= TELEGRAM_ENTITY_BUDGET
+    && telegramEntityCount(html) <= TELEGRAM_ENTITY_MAX;
+}
+
+/**
+ * What Markdown weighs against `maxVisibleChars`, as Telegram counts a message: the visible text
+ * after its HTML is parsed (a citation link costs its label there), or its entities when those are
+ * nearer their own caps.
+ */
+export function telegramMessageWeight(markdown: string, maxVisibleChars: number): number {
+  const html = formatResponseForTelegramHtml(markdown);
+  return Math.max(
+    telegramVisibleLength(html),
+    (telegramEntityCost(html) * maxVisibleChars) / TELEGRAM_ENTITY_BUDGET,
+    (telegramEntityCount(html) * maxVisibleChars) / TELEGRAM_ENTITY_MAX,
+  );
+}
+
+/** Chunks for an answer, each weighed as Telegram counts a message. */
+export function telegramCompactChunks(markdown: string, maxVisibleChars: number, maxChunks: number): string[] {
+  return splitMarkdownIntoChunks(markdown, maxVisibleChars, maxChunks, (chunk) => telegramMessageWeight(chunk, maxVisibleChars));
 }
 
 /** A span of a plain-text message, in UTF-16 code units as Telegram counts them. */
@@ -200,10 +302,23 @@ export function formatResponseForTelegramHtml(input: string): string {
     return `<pre><code>${escapedCode}</code></pre>\n`;
   };
   renderer.del = (token) => escapeTelegramHtml(token.raw);
-  renderer.link = ({ href, tokens }) => {
+  // The app's own `$`/`$$` repair, so what renders as a formula there is sent as one here.
+  const prepared = promoteInlineMath(promoteDisplayMath(flattenFootnotes(normalized)));
+  // A URL is linked once: a citation number keeps its link only where nothing else links its URL
+  // (see `isCitationLabel`), so repeated [1][2] do not spend Telegram's entity caps.
+  const linkedByWords = new Set<string>();
+  telegramMarked.walkTokens(telegramMarked.lexer(prepared, { gfm: true, breaks: true }), (token) => {
+    if (token.type === 'link' && !isCitationLabel(token.text)) linkedByWords.add(normalizeSourceUrl(token.href));
+  });
+  const cited = new Set<string>();
+  renderer.link = ({ href, tokens, text: linkText }) => {
     const safeHref = normalizeSourceUrl(href);
     const text = renderInline(tokens).trim();
     if (!safeHref) return text;
+    if (isCitationLabel(linkText)) {
+      if (linkedByWords.has(safeHref) || cited.has(safeHref)) return text;
+      cited.add(safeHref);
+    }
     const plainText = text.replace(/<[^>]+>/g, '').trim();
     const anchorText = !plainText || /^https?:\/\//i.test(plainText)
       ? escapeTelegramHtml(getSourceLabel(safeHref))
@@ -226,15 +341,19 @@ export function formatResponseForTelegramHtml(input: string): string {
     }
   };
   renderer.paragraph = ({ tokens }) => `${renderInline(tokens)}\n\n`;
-  renderer.list = ({ items }) => `${items.map((item) => renderer.listitem(item)).join('')}\n`;
   // Telegram has no checkbox: marked's default renders `<input type="checkbox">`, which is not
   // in Telegram's tag set and fails the WHOLE send with a 400.
   renderer.checkbox = ({ checked }) => (checked ? '☑ ' : '☐ ');
-  renderer.listitem = (item) => {
-    const rendered = renderBlock(item.tokens).trim();
-    const compact = rendered.replace(/\n{2,}/g, '\n').replace(/\n/g, ' ').trim();
-    // A task item already leads with its own ☐/☑; a bullet as well reads as two markers.
-    return item.task ? `${compact}\n` : `• ${compact}\n`;
+  // An ordered list keeps its numbers: a citation [2] is read against the second source.
+  renderer.list = ({ items, ordered, start }) => {
+    const first = Number(start) || 1;
+    return `${items.map((item, index) => {
+      const rendered = renderBlock(item.tokens).trim();
+      const compact = rendered.replace(/\n{2,}/g, '\n').replace(/\n/g, ' ').trim();
+      // A task item already leads with its own ☐/☑; a bullet as well reads as two markers.
+      if (item.task) return `${compact}\n`;
+      return `${ordered ? `${first + index}.` : '•'} ${compact}\n`;
+    }).join('')}\n`;
   };
   renderer.heading = ({ tokens }) => `${bold(renderInline(tokens).trim())}\n`;
   renderer.hr = () => '\n';
@@ -257,17 +376,24 @@ export function formatResponseForTelegramHtml(input: string): string {
     if (token.type === 'text' && token.tokens?.length) return renderInline(token.tokens);
     return escapeTelegramHtml(token.text);
   };
+  // Telegram has no table, and ` | ` rows wrap into a run on a phone: each row is a block, its
+  // first cell as a bold name, every other cell a "label：value" line (as LINE writes a row).
   renderer.table = ({ header, rows }) => {
-    // Rows stay ` | ` text (Telegram has no table); only the header row is set apart.
-    const lines = [header.map((cell) => bold(renderInline(cell.tokens).trim())).join(' | ')];
-    for (const row of rows) {
-      lines.push(row.map((cell) => renderInline(cell.tokens).trim()).join(' | '));
-    }
-    return `${lines.join('\n')}\n`;
+    const labels = header.map((cell) => renderInline(cell.tokens).replace(/<\/?b>/g, '').trim());
+    if (rows.length === 0) return `${labels.filter(Boolean).join(' · ')}\n\n`;
+    const blocks = rows.map((row) => {
+      const cells = row.map((cell) => renderInline(cell.tokens).trim());
+      if (cells.length === 1) return labelledCell(labels[0] ?? '', cells[0]);
+      const lines = [bold(cells[0])];
+      for (const [index, value] of cells.entries()) {
+        if (index > 0) lines.push(labelledCell(labels[index] ?? '', value));
+      }
+      return lines.filter(Boolean).join('\n');
+    });
+    return `${blocks.filter(Boolean).join('\n\n')}\n\n`;
   };
 
-  // The app's own `$`/`$$` repair, so what renders as a formula there is sent as one here.
-  const parsed = telegramMarked.parse(promoteInlineMath(promoteDisplayMath(flattenFootnotes(normalized))), {
+  const parsed = telegramMarked.parse(prepared, {
     renderer,
     gfm: true,
     breaks: true,
@@ -313,8 +439,10 @@ function getSourceLabel(rawUrl: string): string {
   }
 }
 
+const RAW_URL = new RegExp(`(^|[\\s(>])(https?://[^\\s<)${BARE_URL_STOP_CHARS}]+[^\\s<).,!?;:${BARE_URL_STOP_CHARS}])`, 'gu');
+
 function linkifyRawUrlsInHtml(html: string): string {
-  return html.replace(/(^|[\s(>])(https?:\/\/[^\s<)]+[^\s<).,!?;:])/g, (match, prefix: string, rawUrl: string) => {
+  return html.replace(RAW_URL, (match, prefix: string, rawUrl: string) => {
     const safeUrl = normalizeSourceUrl(rawUrl);
     if (!safeUrl) return match;
     const label = escapeTelegramHtml(getSourceLabel(safeUrl));

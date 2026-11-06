@@ -5,9 +5,8 @@ import { FlowAbortError } from '../runtime';
 
 /*
  * The agent cannot draw: its replies are a tool protocol, and no BYOK key makes pictures. Handed a
- * picture request it could not route elsewhere (a Telegram reply asking for a chiikawa-style picture
- * of the quoted post, 2026-10-19), it wrote a paragraph about "the picture drawn for you" and sent no
- * picture. `draw_image` hands the drawing to Gemini's or ChatGPT's web page, as the image command
+ * picture request it could not route elsewhere, it would describe a picture and send none.
+ * `draw_image` hands the drawing to Gemini's or ChatGPT's web page, as the image command
  * does, with a description the agent writes from what it has read; the pictures go out with the
  * run's answer. The caller does the drawing and keeps the files, so this module only words it.
  */
@@ -24,6 +23,10 @@ export interface DrawnPictures {
   reply: string;
   /** No picture, and the page's words say its picture limit is used up. */
   limit?: boolean;
+  /** Where the agent's read tools find each picture, for a connector to send it in this run. */
+  paths?: string[];
+  /** The page that was asked first and had used up its pictures, when this one stood in for it. */
+  instead?: string;
 }
 
 export type DrawImage = (prompt: string, provider: ImageProvider | null) => Promise<DrawnPictures>;
@@ -40,7 +43,7 @@ const REPLY_CHARS = 300;
  */
 export const DRAW_IMAGE_BRIEF = '- "draw_image": Make a PICTURE the user asks for; you cannot draw yourself, only pictures it returns reach the user. config: "prompt" (the whole picture, written from what you have read; REQUIRED). [+opts]';
 
-export const DRAW_IMAGE_LINE ='- "draw_image": Make a PICTURE the user asks for (illustration, photo, poster, a style such as chibi or watercolor). You cannot draw yourself: only pictures this tool returns reach the user, attached to your answer. config keys: "prompt" (the whole picture — subject, style, any text on it — written from what you have read, since the drawer sees nothing else; REQUIRED), "provider" ("chatgpt" only when the user asks for ChatGPT/GPT; default Gemini) → returns: how many pictures were attached.';
+export const DRAW_IMAGE_LINE ='- "draw_image": Make a PICTURE the user asks for (illustration, photo, poster, a style such as chibi or watercolor). You cannot draw yourself: only pictures this tool returns reach the user, attached to your answer. config keys: "prompt" (the whole picture — subject, style, any text on it — written from what you have read, since the drawer sees nothing else; REQUIRED), "provider" ("chatgpt" only when the user asks for ChatGPT/GPT; default Gemini) → returns: how many pictures were attached, and their paths for a connector that sends files.';
 
 export interface DrawContext {
   drawImage?: DrawImage;
@@ -66,20 +69,24 @@ function said(provider: string, reply: string): string {
 /** The observation for one drawing: pictures attached, or why there are none. */
 export function drawObservation(result: DrawnPictures): { observation: string; status: 'ok' | 'error' } {
   const words = said(result.provider, result.reply);
+  const standIn = result.instead ? ` (${result.instead}'s picture limit is used up)` : '';
   if (result.count > 0) {
+    const paths = result.paths ?? [];
+    const onward = paths.length > 0 ? ` To also send them through a connector (a chat, a mail), put these paths in its file or attachment field: ${paths.join(', ')}.` : '';
+    const who = result.instead ? ` and that ${result.provider} drew it` : '';
     return {
-      observation: `Attached ${result.count} picture(s) drawn by ${result.provider}.${words} They go out with your answer by themselves — no links, no image markdown. In "finish", say in a sentence or two what was drawn.`,
+      observation: `Attached ${result.count} picture(s) drawn by ${result.provider}${standIn}.${words} They go out with your answer by themselves — no links, no image markdown.${onward} In "finish", say in a sentence or two what was drawn${who}.`,
       status: 'ok',
     };
   }
   if (result.limit) {
     return {
-      observation: `ERROR: ${result.provider} drew no picture: its picture limit looks used up.${words} Do not retry — tell the user, and that they can try again later.`,
+      observation: `ERROR: ${result.provider} drew no picture${standIn}: its picture limit looks used up.${words} Do not retry — tell the user, and that they can try again later.`,
       status: 'error',
     };
   }
   return {
-    observation: `ERROR: ${result.provider} drew no picture.${words} If it refused the content, rewrite the description once; otherwise tell the user what it said. Never describe a picture as drawn.`,
+    observation: `ERROR: ${result.provider} drew no picture${standIn}.${words} If it refused the content, rewrite the description once; otherwise tell the user what it said. Never describe a picture as drawn.`,
     status: 'error',
   };
 }

@@ -110,7 +110,7 @@ function asRecord(value: unknown): DownloadJobRecord | null {
   if (r.audio !== undefined && r.audio !== 'low') return null;
   if (typeof r.videoId !== 'string' || typeof r.quality !== 'number' || typeof r.filePath !== 'string') return null;
   if (typeof r.sizeBytes !== 'number' || typeof r.savedLocally !== 'boolean') return null;
-  if (r.destination !== 'telegram' && r.destination !== 'local') return null;
+  if (r.destination !== 'telegram' && r.destination !== 'lineSelf' && r.destination !== 'local') return null;
   return r as DownloadJobRecord;
 }
 

@@ -76,22 +76,6 @@ export function useTelegramSettings() {
     });
   }, [runBusy, loadTelegramSettings]);
 
-  const handleTelegramDefaultReplyMode = useCallback(async (mode: 'markdown' | 'png' | 'webp' | 'pdf') => {
-    await runBusy(async () => {
-      await telegramApi.updateDefaultReplyMode(mode);
-      await loadTelegramSettings();
-    });
-  }, [runBusy, loadTelegramSettings]);
-
-  const handleToggleTelegramCompactReply = useCallback(async () => {
-    const snapshot = telegramSettingsRef.current;
-    if (!snapshot) return;
-    await runBusy(async () => {
-      await telegramApi.updateCompactReply(!snapshot.compactReply);
-      await loadTelegramSettings();
-    });
-  }, [runBusy, loadTelegramSettings]);
-
   const handleSaveTelegramToken = useCallback(async () => {
     await runBusy(async () => {
       const result = await telegramApi.updateToken(telegramTokenInput);
@@ -160,8 +144,6 @@ export function useTelegramSettings() {
     handleToggleTelegramEnabled,
     handleToggleTelegramGroupCommands,
     handleUpdateTelegramLlmDirect,
-    handleTelegramDefaultReplyMode,
-    handleToggleTelegramCompactReply,
     handleSaveTelegramToken,
     handleGeneratePairingCode,
     handleRevokePairingCode,

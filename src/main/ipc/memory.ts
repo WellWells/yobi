@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import { IPC, isBotPlatform } from '../../shared/types';
-import { botSelfFrom, normalizeMemoryNotes } from '../../shared/userMemory';
-import type { BotSelfChange, MemoryEditFailure, MemoryEditResult, UserMemoryBotSelf, UserMemorySnapshot } from '../../shared/userMemory';
+import { normalizeMemoryNotes } from '../../shared/userMemory';
+import type { BotSelfChange, MemoryEditFailure, MemoryEditResult, UserMemorySnapshot } from '../../shared/userMemory';
 import { sendLog, sendToRenderer } from '../helpers';
 import {
   addMemoryEntry,
@@ -10,6 +10,7 @@ import {
   memorySnapshot,
   onUserMemoryChanged,
   removeMemoryEntry,
+  setBotSelfMark,
   undoMemoryNote,
   updateUserMemory,
 } from '../memory';
@@ -27,11 +28,6 @@ async function edit(apply: (state: UserMemoryState) => MemoryStateOutcome): Prom
   });
   const snapshot = memorySnapshot(state);
   return refused.reason ? { ok: false, reason: refused.reason, snapshot } : { ok: true, snapshot };
-}
-
-function idList(raw: unknown): string[] {
-  if (!Array.isArray(raw)) return [];
-  return [...new Set(raw.map((value) => String(value ?? '').trim()).filter(Boolean))];
 }
 
 /**
@@ -88,15 +84,8 @@ export function registerMemoryHandlers(onBotSelfChanged?: () => void): void {
     const platform = typeof raw?.platform === 'string' && isBotPlatform(raw.platform) ? raw.platform : null;
     const userId = String(raw?.userId ?? '').trim();
     if (!platform || !userId || typeof raw?.self !== 'boolean') return memorySnapshot(await loadUserMemory());
-    const self = raw.self;
-    const { state, result } = await updateUserMemory((current) => {
-      const ids = idList(current.botSelf?.[platform]);
-      if (ids.includes(userId) === self) return null;
-      const nextIds = self ? [...ids, userId] : ids.filter((id) => id !== userId);
-      const botSelf: UserMemoryBotSelf = { ...botSelfFrom(current.botSelf, idList), [platform]: nextIds };
-      return { state: { ...current, botSelf }, result: true };
-    });
-    if (result) onBotSelfChanged?.();
+    const { state, changed } = await setBotSelfMark(platform, userId, raw.self);
+    if (changed) onBotSelfChanged?.();
     return memorySnapshot(state);
   });
 }

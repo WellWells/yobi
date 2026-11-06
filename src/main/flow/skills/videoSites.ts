@@ -1,16 +1,17 @@
 import { fetchYoutubeVideo } from '../../youtubeTranscript';
 import { pickCaptionTrack, readYoutubeCaptions } from '../../youtubeCaptions';
-import { fetchYoutubeVideoInfo } from '../../youtubeVideoInfo';
-import type { YoutubeCaptionTrack, YoutubeVideoInfo } from '../../youtubeVideoInfo';
+import { fetchYoutubeLinkCard, fetchYoutubeVideoInfo } from '../../youtubeVideoInfo';
+import type { YoutubeCaptionTrack, YoutubeLinkCard, YoutubeVideoInfo } from '../../youtubeVideoInfo';
 import { youtubeCoverForChat } from '../../chatMedia';
 import type { SiteDownloadHooks, VideoDownloadOptions } from '../../downloader/downloadVideo';
 import { streamFailure } from '../../downloader/streamFailure';
-import { streamAbortError } from '../../downloader/streamTypes';
+import { StreamTooLargeError, streamAbortError } from '../../downloader/streamTypes';
 import type { FetchLimit } from '../../downloader/streamTypes';
 import { withDownloadSlot } from '../../downloader/ytdlpInvoke';
 import { downloadVideo } from '../../youtubeDownload';
 import type { YtdlDownloadResult } from '../../youtubeDownload';
 import { youtubeSiteArgs } from '../../youtubeDownload/ytdlArgs';
+import { errorText } from '../../../shared/errorText';
 import { buildYtdlChoices } from '../../../shared/ytdl';
 import type { YtdlDestination, YtdlPick } from '../../../shared/ytdl';
 import { siteLabel } from '../../../shared/linkSites/rows';
@@ -21,7 +22,7 @@ import { m3u8Video } from './m3u8Video';
 import { soundcloudTrack } from './soundcloudTrack';
 import { cuesFromJson3 } from './srt';
 import { vimeoVideo } from './vimeoVideo';
-import type { SelfDownloadVideoSite, TimedSubtitles, VideoInfo, VideoSite } from './videoSiteTypes';
+import type { SelfDownloadVideoSite, TimedSubtitles, VideoInfo, VideoSite, YtdlpVideoSite } from './videoSiteTypes';
 
 export type { VideoInfo, VideoSite } from './videoSiteTypes';
 
@@ -30,12 +31,13 @@ export type { VideoInfo, VideoSite } from './videoSiteTypes';
  * asks yt-dlp for. Post sites have their readers in `postReader.ts`.
  */
 
-async function readYoutubeInfo(videoId: string): Promise<YoutubeVideoInfo> {
+async function readYoutubeInfo(videoId: string, signal?: AbortSignal): Promise<YoutubeVideoInfo> {
   const site = siteLabel('youtube');
   let info: YoutubeVideoInfo;
   try {
-    info = await fetchYoutubeVideoInfo(videoId);
+    info = await fetchYoutubeVideoInfo(videoId, signal);
   } catch (err) {
+    if (signal?.aborted) throw err;
     const reason = err instanceof Error ? err.message : String(err);
     throw new FlowUserError('flow.error.ytdlInfoUnreadable', { site }, `Could not read the YouTube video: ${reason}`);
   }
@@ -52,9 +54,40 @@ async function readYoutubeInfo(videoId: string): Promise<YoutubeVideoInfo> {
   return info;
 }
 
+/** A site turning the video page away for now (YouTube's bot check), in the words a download refusal uses. */
+export function videoPageHeldBack(site: VideoSiteId, detail: string): FlowUserError {
+  const label = siteLabel(site);
+  return new FlowUserError('flow.error.ytdlBlocked', { site: label }, `${label} held the video page back for now (${detail})`);
+}
+
+/**
+ * Every read met the bot check: the link card's title, channel and cover, marked `partial` (no
+ * length, qualities or subtitles). Without even that, the read is refused.
+ */
+async function botCheckedInfo(ref: VideoRef, signal?: AbortSignal): Promise<VideoInfo> {
+  let card: YoutubeLinkCard;
+  try {
+    card = await fetchYoutubeLinkCard(ref.id, signal);
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    throw videoPageHeldBack('youtube', `bot check, and no link card: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  return {
+    ref,
+    title: card.title,
+    channel: card.channel,
+    durationS: 0,
+    cover: card.image,
+    summary: true,
+    partial: true,
+    choices: () => [],
+  };
+}
+
 /** YouTube's player response, read without the download tools (`ytInitialPlayerResponse`). */
-async function youtubeInfo(ref: VideoRef): Promise<VideoInfo> {
-  const info = await readYoutubeInfo(ref.id);
+async function youtubeInfo(ref: VideoRef, signal?: AbortSignal): Promise<VideoInfo> {
+  const info = await readYoutubeInfo(ref.id, signal);
+  if (info.playability === 'botCheck') return botCheckedInfo(ref, signal);
   const track = pickCaptionTrack(info.captionTracks, info.defaultCaptionTrack);
   return {
     ref,
@@ -108,7 +141,15 @@ export const VIDEO_SITES: Record<VideoSiteId, VideoSite> = {
   m3u8: m3u8Video,
 };
 
-export type SiteVideoDownload = Omit<VideoDownloadOptions, 'url' | 'siteArgs' | 'cookies' | keyof SiteDownloadHooks> & {
+/**
+ * Whether a yt-dlp that cannot read `site` pauses its downloads: not for a site Yobi downloads
+ * itself first (`directDownload`), whose own download does not need yt-dlp.
+ */
+export function pausesForYtdlp(site: VideoSiteId): boolean {
+  return VIDEO_SITES[site].directDownload === undefined;
+}
+
+export type SiteVideoDownload = Omit<VideoDownloadOptions, 'url' | 'siteArgs' | 'cookies' | 'pausable' | keyof SiteDownloadHooks> & {
   /** The read that offered the menu: a site that downloads itself gets it (and reads it again without one). */
   info?: VideoInfo;
   /**
@@ -158,11 +199,53 @@ async function selfDownload(
 }
 
 /**
+ * A yt-dlp site's own first try (`directDownload`), holding the app-wide download slot as yt-dlp
+ * does. Null when it failed in a way yt-dlp may not (the reason logged): yt-dlp is asked next. A
+ * Stop is an AbortError naming the site; the size limit and the person's own errors
+ * (`FlowUserError`) are final, since yt-dlp would meet them too.
+ */
+async function directFirst(
+  direct: NonNullable<YtdlpVideoSite['directDownload']>,
+  site: YtdlpVideoSite,
+  ref: VideoRef,
+  pick: YtdlPick,
+  destination: YtdlDestination,
+  run: SiteVideoDownload,
+): Promise<YtdlDownloadResult | null> {
+  const label = siteLabel(ref.site);
+  const { signal } = run;
+  return withDownloadSlot(label, signal, async () => {
+    try {
+      // Without the menu's read, read again signed out: a download never needs the sign-in.
+      const info = run.info ?? await site.info(ref, signal, { signIn: 'none' });
+      return await direct.call(site, {
+        info,
+        pick,
+        destination,
+        jobDir: run.jobDir,
+        ...(signal ? { signal } : {}),
+        ...(run.lowAudio ? { lowAudio: true } : {}),
+        ...(run.fetchLimit ? { fetchLimit: run.fetchLimit } : {}),
+        ...(run.onProgress ? { onProgress: run.onProgress } : {}),
+        ...(run.onPostprocess ? { onPostprocess: run.onPostprocess } : {}),
+        ...(run.onLog ? { onLog: run.onLog } : {}),
+      });
+    } catch (err) {
+      if (signal?.aborted) throw streamAbortError(label);
+      if (err instanceof StreamTooLargeError || err instanceof FlowUserError) throw err;
+      run.onLog?.(`[Ytdl] ${label}: Yobi's own download failed (${errorText(err)}) — trying yt-dlp`);
+      return null;
+    }
+  });
+}
+
+/**
  * Downloads `ref` (the one its site's `info` returned, so the link is the site's canonical one):
  * by the site itself when it has `download`, else through the site-neutral `downloadVideo` with
- * the site's yt-dlp options, cookies and failure hooks. `mp3` is the sound alone, which needs no picture.
+ * the site's yt-dlp options, cookies and failure hooks — after the site's own `directDownload`
+ * when it has one and that failed. `mp3` is the sound alone, which needs no picture.
  */
-export function downloadSiteVideo(
+export async function downloadSiteVideo(
   ref: VideoRef,
   quality: YtdlPick,
   destination: YtdlDestination,
@@ -170,6 +253,10 @@ export function downloadSiteVideo(
 ): Promise<YtdlDownloadResult> {
   const site = VIDEO_SITES[ref.site];
   if (site.download) return selfDownload(site, ref, quality, destination, options);
+  if (site.directDownload) {
+    const done = await directFirst(site.directDownload, site, ref, quality, destination, options);
+    if (done) return done;
+  }
   // The yt-dlp path never sees the read.
   const { info: _info, fetchLimit: _fetchLimit, lowAudio, ...run } = options;
   const refresh = site.refreshBlocked;
@@ -183,5 +270,6 @@ export function downloadSiteVideo(
     ...(site.mask ? { mask: site.mask } : {}),
     // The hook reloads the page of the video being downloaded, so it is handed that video.
     ...(refresh ? { refreshBlocked: (signal?: AbortSignal) => refresh.call(site, ref, signal) } : {}),
+    ...(site.directDownload ? { pausable: false } : {}),
   });
 }

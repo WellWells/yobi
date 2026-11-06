@@ -41,7 +41,7 @@ import { normalizeBlockedUsers, normalizeDefaultGrantList, normalizeGroupPermiss
 import { normalizeInstanceUrl } from './share/privatebin';
 import { normalizeEditorChoice } from './editorPresets';
 import type {
-  ByokInstance, Config, DiscordConfig, ImapConfig, LineConfig, MailAccountConfig, SlackConfig, SmtpConfig, SocketBotConfig, StoredConfig, StoredMailAccount, TelegramConfig, WindowBounds,
+  ByokInstance, Config, DiscordConfig, ImapConfig, LineConfig, LineSelfConfig, MailAccountConfig, SlackConfig, SmtpConfig, SocketBotConfig, StoredConfig, StoredMailAccount, TelegramConfig, WindowBounds,
 } from './configTypes';
 import { canonicalise, comboOverlaps, SHORTCUTS } from '../shared/shortcuts';
 import type { ShortcutOverride } from '../shared/shortcuts';
@@ -110,11 +110,14 @@ export function normalizeConfig(raw: unknown): Config {
       ? obj.regionHotkey.trim()
       : regionHotkeyForOlderConfig(hotkey, quickExport.hotkey),
     mailEnabled: obj.mailEnabled === true,
+    calendarEnabled: obj.calendarEnabled === true,
     lineReaderEnabled: obj.lineReaderEnabled === true,
     thunderbirdEnabled: obj.thunderbirdEnabled === true,
     xConnectorEnabled: obj.xConnectorEnabled === true,
     taiwanRailEnabled: typeof obj.taiwanRailEnabled === 'boolean' ? obj.taiwanRailEnabled : null,
     pttConnectorEnabled: typeof obj.pttConnectorEnabled === 'boolean' ? obj.pttConnectorEnabled : null,
+    translateConnectorEnabled: obj.translateConnectorEnabled !== false,
+    pageConnectorEnabled: obj.pageConnectorEnabled !== false,
     linkRecognition: normalizeLinkRecognition(obj.linkRecognition),
     ...bySiteFlag((row) => obj[row.flag] === true),
     notifyEvents: normalizeNotifyEvents(obj.notifyEvents),
@@ -140,6 +143,7 @@ export function normalizeConfig(raw: unknown): Config {
     line: normalizeLine(obj.line, legacyAgentTarget),
     discord: normalizeDiscord(obj.discord),
     slack: normalizeSlack(obj.slack),
+    lineSelf: normalizeLineSelf(obj.lineSelf),
     mailAccounts,
     mailDefaultId: mailAccounts.some((account) => account.id === obj.mailDefaultId) ? String(obj.mailDefaultId) : '',
     byokInstances: normalizeByokInstances(obj.byokInstances),
@@ -451,6 +455,11 @@ export function normalizeSlack(raw: unknown): SlackConfig {
   return { ...normalizeSocketBot('slack', obj), botToken: trimmedString(obj.botToken), appToken: trimmedString(obj.appToken) };
 }
 
+export function normalizeLineSelf(raw: unknown): LineSelfConfig {
+  const obj = (raw && typeof raw === 'object') ? (raw as Partial<LineSelfConfig>) : {};
+  return normalizeSocketBot('lineSelf', obj);
+}
+
 /**
  * The bot's default model. A legacy config with `enabled: false` and no model of its own takes
  * the model of the legacy bot `/agent` command (`legacyAgentTarget`).
@@ -535,7 +544,7 @@ const MAIL_ACCOUNT_ID = /^[a-z0-9]{1,16}$/;
 export { LEGACY_MAIL_ACCOUNT_ID };
 
 /**
- * Before 2026-10-23 the store held one account as `smtp` (+ `imap`). Moves it, ciphertext and all,
+ * An older store held one account as `smtp` (+ `imap`). Moves it, ciphertext and all,
  * into `mailAccounts` as the default account and drops the old fields; null when there is nothing
  * to change. An empty legacy object (every older config has one) is simply dropped.
  */
@@ -734,10 +743,6 @@ export function deserializePairingConfig(raw: unknown, legacyAgentTarget = ''): 
     apiId: normalizeTelegramApiId(obj.apiId),
     apiHash: typeof obj.apiHash === 'string' ? obj.apiHash.trim() : '',
     allowGroupCommands: Boolean(obj.allowGroupCommands),
-    defaultReplyMode: obj.defaultReplyMode === 'png' || obj.defaultReplyMode === 'webp' || obj.defaultReplyMode === 'pdf'
-      ? obj.defaultReplyMode
-      : 'markdown',
-    compactReply: obj.compactReply === true,
     adminUserIds,
     llmDirect: normalizeLlmDirect(obj.llmDirect, legacyAgentTarget),
     pairing,

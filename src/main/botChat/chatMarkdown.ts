@@ -3,6 +3,7 @@ import { promoteDisplayMath, promoteInlineMath } from '../../shared/inlineMathDe
 import { flattenFootnotes } from '../../shared/markdownFootnotes';
 import { htmlAsPlainText } from '../../shared/markdownHtmlWhitelist';
 import { unfoldExpandableQuotes } from '../../shared/expandableQuote';
+import { labelledCell } from '../../shared/tableCellText';
 import { mathTokenExtensions } from '../markdownMathTokens';
 import { readableTex } from '../readableTex';
 
@@ -23,8 +24,6 @@ export interface ChatDialect {
   /** What code (a block's body) needs so the app shows it as written; absent = nothing. */
   escapeCode?: (text: string) => string;
 }
-
-const CJK_LABEL = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 
 /** A fenced block whose body the app shows as written. */
 function codeBlock(text: string, lang: string, dialect: ChatDialect): string {
@@ -57,12 +56,6 @@ function chatMarked(dialect: ChatDialect): Marked {
   });
   dialectMarked.set(dialect, instance);
   return instance;
-}
-
-function tableCell(header: string, value: string): string {
-  if (!value) return '';
-  if (!header) return value;
-  return CJK_LABEL.test(header) ? `${header}：${value}` : `${header}: ${value}`;
 }
 
 function indentContinuation(text: string, marker: string): string {
@@ -127,7 +120,7 @@ export function renderChatMarkdown(markdown: string, dialect: ChatDialect): stri
     const labels = header.map((cell) => inline(cell.tokens).trim());
     const lines = rows.length > 0
       ? rows.map((row) => row
-        .map((cell, index) => tableCell(labels[index] ?? '', inline(cell.tokens).trim()))
+        .map((cell, index) => labelledCell(labels[index] ?? '', inline(cell.tokens).trim()))
         .filter(Boolean)
         .join(' · '))
       : [labels.filter(Boolean).join(' · ')];

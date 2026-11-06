@@ -2,9 +2,9 @@
  * Requests to TDX (the Transport Data eXchange of Taiwan's MOTC), only with the user's own Client
  * ID/Secret: a bearer token (one day, from the token endpoint, itself limited to 20 calls a minute
  * per IP) is fetched once and reused. Without a key nothing is sent — TDX's visitor allowance (20
- * calls a day per IP, shared by everything on that IP) is never used: the user, 2026-10-22, "太不穩
- * 定了" after that day's probes and self-tests used it up and every TDX step answered 429. Yobi
- * never ships a key of its own either: points may not be passed to anyone else.
+ * calls a day per IP, shared by everything on that IP) is never used: it runs out quickly and every
+ * TDX step then answers 429. Yobi never ships a key of its own either: points may not be passed to
+ * anyone else.
  */
 import { browserHeaders, railFetch } from './railHttp';
 import type { FetchFn } from './railHttp';

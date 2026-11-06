@@ -14,16 +14,15 @@ import type { Mp3Tags } from '../../youtubeDownload';
 import { isCachedDownload, recordDownloads } from '../../downloadsCache';
 import { photoUrl, xPostMessage } from '../../../shared/xMedia';
 import type { XMediaInput } from '../../../shared/xMedia';
-import { MP3_BITRATE_KBPS, exceedsLimit, formatLimit, formatMegabytes, mp3Choice } from '../../../shared/ytdl';
+import { MP3_BITRATE_KBPS, exceedsLimit, formatLimit, formatMegabytes, isChatDestination, mp3Choice } from '../../../shared/ytdl';
 import type { SizeLimit, YtdlDestination } from '../../../shared/ytdl';
-import { telegramSendLimitBytes } from '../../telegram/largeUpload';
 import { FlowUserError } from '../userError';
 import { saveIntoFolder } from './savedDownloads';
 import { postFileStem, readLinkedThread, siteName } from './postReader';
 import { readAccessOf } from './readAccess';
 import { chooseVariant, downloadTo, fetchVariantTo, mediaFileName, saveFolder } from './postMediaFetch';
 import { resolveYtdlDestination, savedSummary as savedFileSummary } from './ytdl';
-import { downloadLimitBytes, overCap, ytdlAccessFor } from './ytdlAccess';
+import { chatSendLimitBytes, downloadLimitBytes, overCap, ytdlAccessFor } from './ytdlAccess';
 import type { XMedia, XPost } from './xPosts';
 import { formatPostTime } from './xReader';
 
@@ -145,9 +144,9 @@ async function mp3Of(item: XMedia, job: Mp3Job, signal: AbortSignal | undefined)
   return { file: out, sizeBytes, reused: false };
 }
 
-/** Where the MP3s went, when they were not handed to a bot step: the computer, or too large for Telegram. */
+/** Where the MP3s went, when they were not handed to a bot step: the computer, or too large for the chat. */
 function savedSummary(files: readonly string[], sizes: readonly number[], destination: YtdlDestination, showPath: boolean): string {
-  const tooLarge = destination === 'telegram';
+  const tooLarge = isChatDestination(destination);
   const sizeBytes = tooLarge ? Math.max(...sizes) : sizes.reduce((sum, n) => sum + n, 0);
   return savedFileSummary({ filePath: files.length === 1 ? files[0] : path.dirname(files[0]), sizeBytes }, destination, showPath);
 }
@@ -204,7 +203,7 @@ export async function postAudio(input: XMediaInput, config: Record<string, strin
       }
     }
     sendLog(`💾 [${site}] ${files.length} MP3(s) in ${folder}`);
-    const handedOver = destination === 'telegram' && largest <= telegramSendLimitBytes();
+    const handedOver = isChatDestination(destination) && largest <= chatSendLimitBytes(destination);
     const caption = xPostMessage({ name: post.name, author: post.author, text: '', link: post.link });
     return JSON.stringify({
       // One per line: a bot step sends several as one album of audio files.

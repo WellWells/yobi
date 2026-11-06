@@ -1,4 +1,16 @@
 import { stripUnreadableRegions } from './connectorKeywords';
+import type { SearchMode } from './types';
+
+const SEARCH_MODES: ReadonlySet<string> = new Set<SearchMode>(['quick', 'standard', 'deep']);
+
+/**
+ * What a research call is called at the depth it ran at, wherever it is shown — the app's trace
+ * and a bot's progress line alike. A quick one is a web search with an answer, not "research".
+ * Null for a depth it does not know.
+ */
+export function researchLabel(depth: string | undefined, t: (key: string) => string): string | null {
+  return depth && SEARCH_MODES.has(depth) ? t(`agent.trace.tool.research.${depth}`) : null;
+}
 
 /**
  * Whether the user's own words ask for in-depth research, which moves `/agent` research from the
@@ -15,6 +27,24 @@ const DEPTH_PHRASES: readonly RegExp[] = [
   /(?<![a-z])(?:in[\s-]depth|deep(?:ly)?\s+(?:research|dive|analysis|look)|thorough(?:ly)?|detailed|comprehensive(?:ly)?|cross[\s-]check)(?![a-z])/i,
   /(?<![a-z])compar(?:e|es|ed|ing|ison)(?![a-z])/i,
 ];
+
+/**
+ * A run's research depth, decided by the user's own words, never the model's: a model may write
+ * "deep" or "quick" whatever it was asked. When the user asked for depth, the run's first research
+ * is a deep one and the rest are standard — a deep research already splits the question, and a
+ * second one would spend minutes of the run's budget on it again.
+ */
+export interface ResearchDepth {
+  /** The user's words asked for depth. */
+  asked: boolean;
+  /** No research of this run has gone deep yet. */
+  deepAvailable: boolean;
+}
+
+export function researchDepthFor(depth: ResearchDepth, written: string): string {
+  if (!depth.asked) return written === 'deep' ? 'standard' : written;
+  return depth.deepAvailable ? 'deep' : 'standard';
+}
 
 export function asksForDeepResearch(text: string): boolean {
   const haystack = stripUnreadableRegions(text).trim();

@@ -32,7 +32,7 @@
 | **Runs on your PC** | LINE on this PC (Windows), your files, your shell, a browser window and Thunderbird. Nothing to host. |
 | **No API key** | AI steps drive the providers' web pages. Add your own key (BYOK) if you prefer. |
 | **An agent that acts** | Give `/agent` a goal; it picks its tools and asks before it changes anything. Messages to your bots run as the agent too, with the tools you grant each account. |
-| **Connectors** | Notion, GitHub, Figma, Stripe and more, or any MCP server by URL. Built in: LINE, Thunderbird, your mailboxes and X. |
+| **Connectors** | Notion, GitHub, Figma, Stripe and more, or any MCP server by URL. Built in: LINE, Thunderbird, your mailboxes, Get Page Text and X. |
 | **Triggers** | Schedule, global hotkey, bot command, in-app slash command, new file in a folder, system event. |
 | **AI providers** | Gemini, Claude, ChatGPT and Perplexity. Gemini and Perplexity work signed out. |
 | **No middleman** | Yobi has no server. Prompts go straight to the AI site you picked. |
@@ -108,7 +108,7 @@ Or describe it and AI builds the flow for you; every step stays editable:
 
 > *"Every weekday at 8am, summarize my RSS feed and send it to Telegram."*
 
-There are 28 templates to start from, run on a schedule, by a hotkey on selected text, or as a command in chat or to your bot.
+There are 29 templates to start from, run on a schedule, by a hotkey on selected text, or as a command in chat or to your bot.
 
 **Steps:**
 
@@ -129,10 +129,12 @@ Flows are plain `.json` files. An export leaves out your variable values and bot
 
 **On this PC:**
 
-- **LINE** (Windows) — list chats, search messages and read conversations from the running LINE desktop app. It sends nothing and marks nothing as read. Flows use the **LINE Messages** step.
+- **LINE** (Windows) — list chats, search messages and read conversations from the running LINE desktop app, and send as you, asking first every time. It marks nothing as read. Flows use the **LINE Messages** step.
 - **Thunderbird** — search, read, write, reply, forward and file mail, plus calendar, tasks and contacts. Needs the Thunderbird MCP add-on (linked in **Settings → Connectors**). Flows send mail with the **Send Email** step.
 
 **Mail.** Add mailboxes in **Settings → Connectors → Mail**: Gmail, Yahoo or iCloud with an app password, Outlook, Hotmail or Microsoft 365 with **Sign in with Microsoft**, or any IMAP/SMTP server. The agent searches all of them and can read, save attachments, draft, reply, send, file and trash mail; sending and trashing ask every time. Flows use **Read new mail** and **Send Email**.
+
+**Get Page Text.** On by default. Give the agent a link and it reads the text itself, without the menus and related stories: news, blogs, documentation, discussion threads and posts on sites like Reddit and X. Paste a link in chat or send it to a bot; a Google News link is followed to the article. Public pages only: what needs a sign-in (Zhihu, for one) stays shut, and subscriber articles give only their public opening.
 
 **X (Twitter).** Search posts, see trends, read an account's latest posts and the replies to a post. Turn it on and sign in under **Settings → Connectors**; search and trends need the sign-in. Mention X or Twitter in a message and the agent looks there. Flows use **X Accounts**, **X Post & Replies** and **X Trends**. Signed out, you get each account's newest few posts and top replies, and no trends.
 
@@ -245,12 +247,11 @@ An unpaired person who messages the bot privately is asking to join. Allow or bl
 | `/search` | Search the web and answer with sources (needs **Web search**) |
 | `/new` | Start a new conversation (also happens after 6 idle hours) |
 | `/help` | List the commands you can use (LINE) |
-| `/output <mode>` | Set everyone's reply format: `md` · `compact` · `png` · `webp` · `pdf` (Telegram, admin) |
 | `/status` | See the work queue (Telegram, admin) |
 | `/restart` | Restart Yobi (Telegram, admin) |
 | `/users` · `/invite` · `/groups` | Handle join requests and permissions, send an invite link that expires, choose which groups may use the bot (Telegram admins; on LINE, only you) |
 
-A plain message goes to the bot's **Default model**, which decides whether to search or use a tool. Pairing only allows chatting and the model commands. Grant more per account: **Agent**, **Web search**, **Read this computer**, **Run commands** (each command waits for your approval), connectors and **Admin** (Telegram only).
+A plain message goes to the bot's **Default model**, which decides whether to search or use a tool. Ask for a file, like "make it a PDF", and the answer comes back as a PDF, PNG or WebP in your card style (not on LINE). Pairing only allows chatting and the model commands. Grant more per account: **Agent**, **Web search**, **Read this computer**, **Run commands** (each command waits for your approval), connectors and **Admin** (Telegram only).
 
 You and your admins can ask the bot in a private chat to build or change a flow, such as "every morning at 8, send me the weather". The bot asks you before saving. Flows that run things on your PC, and admin-built flows that read your data or act as you (save files, send mail, open pages in your signed-in browser), are saved switched off for you to check on the desktop.
 
@@ -276,7 +277,7 @@ Using the web pages this way is outside the providers' terms of service. What Yo
 
 - Its browser window identifies as a normal browser, not Electron. On Windows, Google's sites see Google's Gemini app for Windows and other sites see Chrome; on macOS, Gemini sees Firefox.
 - Signed out of Perplexity, it clears perplexity.ai's cookies and site data before each new conversation and every 30 minutes. If Perplexity still asks you to sign up, it retries once as a new visitor.
-- It does not solve CAPTCHAs or rotate IPs. On a Cloudflare check from Claude or Perplexity, it stops and opens the window so you can finish it. When DuckDuckGo asks for verification, search pauses for 3 minutes. When Claude reports a usage limit, Yobi tells you when it resets.
+- It does not solve CAPTCHAs or rotate IPs. On a Cloudflare check from Claude or Perplexity, it stops and opens the window so you can finish it. When a search engine asks for verification or says it is getting too many searches, Yobi stops asking it for a while (longer if it keeps refusing) and uses the others. When Claude reports a usage limit, Yobi tells you when it resets.
 
 Use it responsibly: nothing illegal, no large-scale or abusive automation. Light personal use usually means an occasional verification prompt. Providers' terms change, so check them yourself. This isn't legal advice.
 
@@ -286,7 +287,7 @@ Use it responsibly: nothing illegal, no large-scale or abusive automation. Light
 
 - **Prompts** go to the AI you picked, through its web page or your BYOK endpoint. Chat and agent runs include your personal memory and answer preferences. The provider's privacy policy applies.
 - **No server, no telemetry.** Yobi has no account and no analytics. Conversations, flows, memory and exports are plain files on your disk.
-- **What else leaves your PC.** Web searches go to DuckDuckGo, and result pages are fetched directly. In chat the agent may search unless you turn **Web** off; flows search only in the **Web Search** and **Deep Research** steps. A share link is encrypted in the app before it's uploaded to PrivateBin (privatebin.net unless you set your own); the key stays in the link's `#fragment`, which browsers never send. Connectors talk only to the services you add. Yobi checks GitHub for updates at startup (the Store build doesn't).
+- **What else leaves your PC.** Web searches go to Brave Search and Bing (DuckDuckGo when both are unavailable), and result pages are fetched directly. In chat the agent may search unless you turn **Web** off; flows search only in the **Web Search** and **Deep Research** steps. A share link is encrypted in the app before it's uploaded to PrivateBin (privatebin.net unless you set your own); the key stays in the link's `#fragment`, which browsers never send. Connectors talk only to the services you add, and Get Page Text only reads public pages. Yobi checks GitHub for updates at startup (the Store build doesn't).
 - **The agent asks first.** Reading needs no confirmation. Shell commands, saving or editing flows, and connector tools that change things need your OK; sending and deleting ask every time, even with **Always allow this server**. It reads files only in Yobi's output folder, Documents, Downloads and Desktop, and writes only to the output folder. Anything that looks like a key or token is masked before the model sees it.
 - **Bots get what you grant.** Permissions are set per account in **Settings → Bot Integrations**; marking an account **Me** grants everything except Run commands and Admin. Files, commands and connectors work only in private chats, and a connector change from a bot runs only in your own private chat after you confirm.
 - **Encrypted credentials.** Bot tokens, mailbox passwords and Microsoft sign-ins, API keys, connector sign-ins and the LINE database key are encrypted with the OS key store (Electron `safeStorage`).
@@ -323,7 +324,7 @@ Issues and PRs are welcome. Make sure `npm run typecheck` passes. User-facing te
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). See [NOTICE](NOTICE) for what the license does not cover.
 
 ---
 

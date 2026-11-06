@@ -59,8 +59,7 @@ function stepLines(flow: FlowDefinition, strings: Strings): string[] {
 }
 
 /**
- * The chat question that stands in for the save dialog on a bot admin's run (2026-10-24, user:
- * 管理員要能透過指令建立流程). Top down: what is saved, when it runs, its steps, who it sends to,
+ * The chat question that stands in for the save dialog on a bot admin's run. Top down: what is saved, when it runs, its steps, who it sends to,
  * what still needs filling in, and whether it switches on. Names and labels are the model's, so each
  * is one plain line (`withoutUnseen`). Every list is capped, so the question always fits one message.
  */

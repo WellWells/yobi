@@ -150,7 +150,7 @@ export function chatSendDraws(targetUrl: string, opts: { agent: boolean; tempora
 export type ImageProvider = 'gemini' | 'chatgpt';
 
 /**
- * Naming who draws, as the user says it (2026-10-19: "使用 gemini 產生XXX的圖", "使用 gpt 產生YYY
+ * Naming who draws, as the user says it ("使用 gemini 產生XXX的圖", "使用 gpt 產生YYY
  * 的圖"; unnamed = Gemini): a use-word then the name anywhere, or the name opening the message. A
  * name with no use-word in the middle of a sentence ("畫一個 GPT 的 logo") is the subject, not the
  * choice. A refused name ("不要用 gpt", "don't use gpt") is no choice; 要不要用 / 用不用 ask for it.

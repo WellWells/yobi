@@ -6,7 +6,7 @@ import { config } from './config';
 import { executeAgentRun } from './chat/agentCommand';
 import {
   BOT_CHAT_TOOL_SCOPE, BOT_TOOL_SCOPE, withFlowCapability, withLocalCapability, withPictureCapability, withShellCapability,
-  withWebCapability,
+  withDocumentCapability, withWebCapability,
 } from './flow/agent/agentTools';
 import { runSearchCommand } from './chat/searchCommand';
 import { runImageCommand } from './chat/imageCommand';
@@ -16,7 +16,7 @@ import type { AgentRunOutcome, AgentRunRequest } from './chat/agentCommand';
 import type { SearchRunOutcome } from './chat/searchCommand';
 import { getBotConversation, setBotConversation } from './botConversations';
 import { botConversationFileLabel } from './botConversationLabel';
-import { applyAnswer, loadRunState } from './flow/agent/agentRunStore';
+import { applyAnswer, loadRunState, runHasEnded } from './flow/agent/agentRunStore';
 import { sendLog } from './helpers';
 import { t } from './i18n';
 import { getProviderLabel } from './providers';
@@ -44,7 +44,7 @@ export interface BotBuiltinRunResult {
   elapsedSeconds: string;
   awaitingAnswer: boolean;
   /**
-   * Send `text` exactly as written, as plain text whatever the reply mode, or not at all: it asks
+   * Send `text` exactly as written, as plain text in one message, or not at all: it asks
    * to approve a shell command or a connector change, and what the user reads must be what runs.
    */
   verbatim?: boolean;
@@ -55,6 +55,17 @@ export interface BotBuiltinRunResult {
   question?: { runId: string; text: string; choices: string[] };
   /** Pictures that go with the text (a drawn picture), kept in the chat's media folder. */
   files?: string[];
+  /** Files that go with the text as files, not photos (a PDF of an answer), kept in the chat's media folder. */
+  documents?: string[];
+}
+
+/**
+ * What a platform that attaches any kind of file sends with the answer: the pictures, then the
+ * files made for it.
+ */
+export function withAnswerFiles(result: BotBuiltinRunResult): { files?: string[] } {
+  const files = [...(result.files ?? []), ...(result.documents ?? [])];
+  return files.length > 0 ? { files } : {};
 }
 
 /**
@@ -89,9 +100,9 @@ interface PendingAsk {
 const pendingAsks = new Map<string, PendingAsk>();
 
 /**
- * Whether a message can be the answer: only one sent after the question was (2026-10-20: a second
- * "1", sent while the run that asked was still working, was read after the question and taken as
- * its answer). Telegram compares message ids when the question's is known, else times.
+ * Whether a message can be the answer: only one sent after the question was (a second "1" sent
+ * while the run that asked was still working is not). Telegram compares message ids when the
+ * question's is known, else times.
  */
 function sentAfterAsk(pending: PendingAsk, sent: BotMessageSent): boolean {
   if (sent.messageId !== undefined && pending.shownMessageId !== undefined) return sent.messageId > pending.shownMessageId;
@@ -195,8 +206,9 @@ function toResult(
 
   const memoryNotes = 'memoryNotes' in outcome ? outcome.memoryNotes ?? [] : [];
   const choices = 'choices' in outcome ? outcome.choices ?? [] : [];
-  // Pictures the agent drew go with its answer, never with a question.
+  // Pictures the agent drew and files it made go with its answer, never with a question.
   const files = !awaitingAnswer && 'files' in outcome ? outcome.files ?? [] : [];
+  const documents = !awaitingAnswer && 'documents' in outcome ? outcome.documents ?? [] : [];
 
   return {
     ok: true,
@@ -211,6 +223,7 @@ function toResult(
     ...(awaitingAnswer && 'shellApproval' in outcome && outcome.shellApproval ? { verbatim: true } : {}),
     ...(awaitingAnswer && question && runId && choices.length > 0 ? { question: { runId, text: question, choices } } : {}),
     ...(files.length > 0 ? { files } : {}),
+    ...(documents.length > 0 ? { documents } : {}),
   };
 }
 
@@ -253,13 +266,25 @@ async function botChatApprovals(chatKey: string): Promise<BotChatApprovals> {
  * closed: only a run recorded as `agent` gets the wider kit; the account's grants then remove local,
  * web and ungranted connector tools, and the shell grant adds `shell` (each command is confirmed in
  * the chat). The owner's own private chat puts connector changes to them as questions in the chat;
- * anyone else's are refused. A flow admin's own private chat (2026-10-24, user: 「管理員可以透過指令的
- * 方式去處理」) gets the flow builders, each flow held and put to them as a question before it is saved.
+ * anyone else's are refused. A flow admin's own private chat gets the flow builders, each flow held
+ * and put to them as a question before it is saved.
  *
  * A Maps link with a question is answered from reviews on either kit: the words around the link are
  * a question about the place.
  */
-function botRunScope(state: AgentRunState, approvals: BotChatApprovals): BotRunScope {
+/**
+ * Whether a platform's bot can send a file of any kind. LINE's Messaging API sends a picture only
+ * from a public https address and no other file, so `export_file` is not offered there.
+ */
+const SENDS_FILES: Readonly<Record<BotPlatform, boolean>> = {
+  telegram: true,
+  line: false,
+  discord: true,
+  slack: true,
+  lineSelf: true,
+};
+
+function botRunScope(state: AgentRunState, approvals: BotChatApprovals, chatKey: string): BotRunScope {
   const full = state.botScope === 'agent';
   const grants = state.botGrants;
   const shell = full && grants?.shell === true;
@@ -267,10 +292,12 @@ function botRunScope(state: AgentRunState, approvals: BotChatApprovals): BotRunS
   const flows = full ? approvals.flows : null;
   // Drawing uses the owner's web account, as the image command does, so it takes the same grant on
   // either kit; with it, `draw_image` is offered whatever the words and the model decides.
-  const toolScope = withFlowCapability(withPictureCapability(withWebCapability(
+  // A file of the answer is the answer in another form: either kit, wherever the chat can take one.
+  const platform = parseBotChatKey(chatKey)?.platform;
+  const toolScope = withDocumentCapability(withFlowCapability(withPictureCapability(withWebCapability(
     withShellCapability(withLocalCapability(full ? BOT_TOOL_SCOPE : BOT_CHAT_TOOL_SCOPE, grants?.local === true), shell),
     web,
-  ), web), flows !== null);
+  ), web), flows !== null), platform ? SENDS_FILES[platform] : false);
   const connectors = grants?.connectors;
   return {
     toolScope,
@@ -408,7 +435,7 @@ export async function runBotBuiltinCommand(
       ...(request.replyTo ? { deliveredPrompt: promptWithReply(request.input, request.replyTo) } : {}),
       origin: 'bot',
       memory: botChatMemoryResolver(request.chatKey),
-      ...botRunScope(state, await botChatApprovals(request.chatKey)),
+      ...botRunScope(state, await botChatApprovals(request.chatKey), request.chatKey),
       ...(fileLabel ? { fileLabel } : {}),
       ...(request.onProgressText ? { onProgressText: request.onProgressText } : {}),
     },
@@ -430,7 +457,7 @@ export async function resumeBotAgentAsk(
 ): Promise<BotBuiltinRunResult | null> {
   const strings = deps.getStrings();
   const state = await loadRunState(params.runId);
-  if (!state || state.status === 'done') {
+  if (!state || runHasEnded(state)) {
     sendLog(`[bot] agent run ${params.runId} is no longer resumable`);
     return null;
   }
@@ -467,7 +494,7 @@ export async function resumeBotAgentAsk(
       origin: 'bot',
       memory: botChatMemoryResolver(params.chatKey),
       // Read again: no longer marked as the owner (or no longer an admin), a waiting change or flow is not saved on this answer.
-      ...botRunScope(state, await botChatApprovals(params.chatKey)),
+      ...botRunScope(state, await botChatApprovals(params.chatKey), params.chatKey),
       ...(params.onProgressText ? { onProgressText: params.onProgressText } : {}),
     },
   );

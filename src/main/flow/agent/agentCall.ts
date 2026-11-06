@@ -6,8 +6,9 @@ import { unwrapStepOutput } from '../executor';
 import { FlowAbortError, resolveStepTimeoutMs, withStepTimeout } from '../runtime';
 import { sendLog } from '../../helpers';
 import { SearchBlockedError } from '../../search/blocked';
+import type { SearchAsker } from '../../search/types';
 import type { McpRegistry } from '../../mcp';
-import { denyReasonForFileTool } from './agentSandbox';
+import { denyReasonForFileTool, withAgentReadPath } from './agentSandbox';
 import { sensitiveCommandReason } from './sensitivePaths';
 import { isElevated } from './elevation';
 import { maskSecrets } from './secretMask';
@@ -21,6 +22,8 @@ import type { EvidenceLedger } from './evidenceLedger';
 import type { GoalIntent } from './actionGate';
 import { chatQuestionRefusal, shellTextDenyReason } from './shellApproval';
 import type { ShellApprovalText } from './shellApproval';
+import { sourcesLine } from './agentCitations';
+import type { CitationPool, ResearchSource } from './agentCitations';
 
 export interface ShellConfirmRequest {
   kind: 'shell';
@@ -51,6 +54,23 @@ const WRITE_TOOLS = new Set<SkillType>(['shell', 'file_write']);
 const LOCAL_SOURCE_TOOLS = new Set<SkillType>(['file_read', 'clipboard', 'sysinfo', 'shell']);
 
 const AGENT_STEP_ID = 'agent';
+
+const READ_TOOLS = new Set<SkillType>(['file_read', 'file_list']);
+
+/**
+ * Added to a read tool's "not found", so the model does not answer from an unrelated document in
+ * its place. A tool-result hint, not a prompt rule, so it costs nothing until a read misses.
+ */
+export const FILE_NOT_FOUND_HINT = 'NOT FOUND. Documents/, Downloads/ and Desktop/ are the user\'s own folders; any other relative path is inside the app output folder. Use file_list on the folder to get the exact name. If the file still cannot be found, tell the user it was not found — never answer from a different document in its place.';
+
+/** The hint line a failed call's observation ends with, or ''. */
+export function notFoundHint(tool: SkillType, err: unknown): string {
+  if (!READ_TOOLS.has(tool)) return '';
+  const code = (err as { code?: unknown } | null)?.code;
+  const message = err instanceof Error ? err.message : String(err);
+  const missing = code === 'ENOENT' || code === 'ENOTDIR' || /\bENOENT\b/.test(message);
+  return missing ? `\n${FILE_NOT_FOUND_HINT}` : '';
+}
 
 /**
  * Why this shell call is refused before the user is asked, or null. The elevation check is exact
@@ -136,6 +156,13 @@ export interface CallContext {
   keepPictures?: (files: readonly string[]) => Promise<void>;
   onTrace?: (event: AgentTraceEvent) => void;
   signal?: AbortSignal;
+  /** The run's one numbering of research sources (see `agentCitations.ts`). */
+  citations?: CitationPool;
+  /**
+   * The user a research answers: its query is keywords the model wrote, in whatever language finds
+   * the pages, but the answer is to the user's words and in their language. A helper has none.
+   */
+  asker?: SearchAsker;
 }
 
 export interface CallOutcome {
@@ -151,6 +178,54 @@ export interface CallOutcome {
   research?: ResearchProgress;
   /** Nothing ran: this shell command, change or held flow waits for the user's answer to a question. */
   deferred?: ShellConfirmRequest | McpConfirmRequest | FlowSaveRequest;
+  /** research: the cited answer alone, in the run's numbering — what `deliver` hands the user. */
+  answer?: string;
+  /** research: some searches were refused, so the answer rests on fewer sources than usual. */
+  partial?: boolean;
+  /** research: the answer is in another language than the user wrote in, so it is never handed over as is. */
+  foreign?: boolean;
+  /** research: the answer cites none of the pages it read — it found nothing usable (`RESEARCH_UNSOURCED_NOTE`). */
+  unsourced?: boolean;
+}
+
+/**
+ * A field beside a research answer that cites none of the pages read. Every stored answer like that
+ * said it found nothing, and every found answer cited a page, so the missing citation is the signal,
+ * whatever language the answer is in. The run does not end on it: the model reads this and decides.
+ */
+export const RESEARCH_UNSOURCED_NOTE =
+  'none: no page read answers this. Search differently or try another tool; failing that, deliver or finish saying it was not found and what was searched.';
+
+function parseResearchSources(raw: string | undefined): ResearchSource[] {
+  try {
+    const parsed: unknown = JSON.parse(raw ?? '[]');
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is ResearchSource => typeof item?.title === 'string' && typeof item?.link === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * A research result as the model reads it: the answer in the run's numbering, one SOURCES line
+ * naming each number's page, then the other fields. The JSON source list is not repeated — cut at
+ * 200 characters it named one page and a half.
+ */
+function researchOutcome(output: string, subVars: Record<string, string>, pool: CitationPool): CallOutcome {
+  const { sources, ...fields } = subVars;
+  const { text, cited } = pool.absorb(output, parseResearchSources(sources));
+  const line = sourcesLine(cited);
+  const unsourced = cited.length === 0;
+  const shown = unsourced ? { ...fields, citations: RESEARCH_UNSOURCED_NOTE } : fields;
+  const observation = maskSecrets(buildObservation(line ? `${text}\n${line}` : text, shown), false);
+  return {
+    ...outcome(observation, 'ok'),
+    answer: maskSecrets(text, false),
+    partial: Boolean(fields.note),
+    ...(fields.languageNote ? { foreign: true } : {}),
+    ...(unsourced ? { unsourced: true } : {}),
+  };
 }
 
 function outcome(observation: string, status: 'ok' | 'error', write = false, landed = false): CallOutcome {
@@ -250,10 +325,16 @@ export async function runCall(
     ? { ...recordConfig, ...(process.platform === 'win32' ? {} : { shell: shellInterpreter(recordConfig) }), cwd: ctx.workspaceDir }
     : tool === 'file_write'
       ? { ...recordConfig, noClobber: 'true' }
-      : recordConfig;
+      // The agent already read the goal and wrote this question: a quick research skips its own
+      // planner (BYOK plans often time out and are thrown away).
+      : tool === 'research'
+        ? { ...recordConfig, plannedQuestion: 'true' }
+        // The read runs on the path the sandbox just checked, never on a second resolution of it.
+        : await withAgentReadPath(tool, recordConfig);
   let research: ResearchProgress | undefined;
   const progressDeps: FlowExecutorDeps = {
     ...ctx.deps,
+    ...(tool === 'research' && ctx.asker ? { researchAsker: ctx.asker } : {}),
     onResearchProgress: (progress) => {
       research = progress;
       ctx.onTrace?.({ kind: 'research', turn: step, progress });
@@ -263,6 +344,11 @@ export async function runCall(
   try {
     const raw = await runTool(tool, execConfig, progressDeps, ctx.remainingMs(), ctx.signal);
     const unwrapped = unwrapStepOutput(tool, raw);
+    if (tool === 'research' && ctx.citations) {
+      const researched = researchOutcome(unwrapped.output, unwrapped.subVars, ctx.citations);
+      ctx.ledger.addObservation(researched.observation);
+      return withResearch(researched);
+    }
     const observation = maskSecrets(buildObservation(unwrapped.output, unwrapped.subVars), LOCAL_SOURCE_TOOLS.has(tool));
     ctx.ledger.addObservation(observation);
     return withResearch(outcome(observation, 'ok', isWrite, isWrite));
@@ -278,6 +364,6 @@ export async function runCall(
     // Masked like the success branch: on any non-zero exit `promisify(exec)` rejects with the
     // whole command line plus stderr.
     sendLog(`⚠️ [Agent] ${tool} failed: ${maskSecrets(message, true)}`);
-    return withResearch(outcome(`ERROR: ${maskSecrets(message, LOCAL_SOURCE_TOOLS.has(tool))}`, 'error', isWrite));
+    return withResearch(outcome(`ERROR: ${maskSecrets(message, LOCAL_SOURCE_TOOLS.has(tool))}${notFoundHint(tool, err)}`, 'error', isWrite));
   }
 }

@@ -9,7 +9,7 @@ import { FlowUserError } from '../userError';
 import {
   ALL_COMMENTS, COMMENTS_QUERY, commentsRequestBody, isQueryError, readBundleUrls, readCommentPage, readCommentsQueryId, readPageTokens,
 } from './facebookComments';
-import { postPhotoIds, readFacebookPage, readPhotoPage, readPostPage, readVideoPage, type FacebookRead } from './facebookPosts';
+import { postPhotoIds, readFacebookPage, readPhotoLinkPage, readPhotoPage, readPostPage, readVideoPage, type FacebookRead } from './facebookPosts';
 import { readStoryBucket, storyBucketPost } from './facebookStories';
 import type { Json } from './jsonPick';
 import { notForOthersError, signedInOnlyError } from './readAccess';
@@ -191,6 +191,22 @@ function isSignInWall(finalUrl: string, html: string): boolean {
   return html.includes('id="login_form"');
 }
 
+/**
+ * The post a sign-in wall stands in front of: the wall's `next`, when it names a post, reel or
+ * video. A share link redirects a visitor through `story.php`, which Facebook walls even for a
+ * public post; the post's own page, rebuilt from that address, is open to them.
+ */
+function postBehindWall(finalUrl: string): FacebookRef | null {
+  let next: string | null;
+  try {
+    next = new URL(finalUrl).searchParams.get('next');
+  } catch {
+    return null;
+  }
+  const behind = next ? parseFacebookUrl(next) : null;
+  return behind && behind.kind !== 'share' && behind.kind !== 'story' ? behind : null;
+}
+
 function unsupportedLanding(finalUrl: string): FlowUserError {
   return new FlowUserError('flow.error.xPostUrl', { url: finalUrl }, `Facebook share link led to a page that is not a post, reel or video: ${finalUrl}`);
 }
@@ -211,8 +227,9 @@ interface ReadOptions {
    */
   signedIn?: boolean;
   /**
-   * Read with the sign-in for someone else (`SiteReadOptions.forOthers`): no photo pages and no
-   * comments for a post marked as shown to some people only, which they are refused.
+   * Read with the sign-in for someone else (`SiteReadOptions.forOthers`), after a visitor's read
+   * got nothing: whatever the sign-in reads is shown to some people only, marked `restricted`
+   * (they are refused it), with no photo pages and no comments. Read signed out, nothing is marked.
    */
   forOthers?: boolean;
 }
@@ -225,18 +242,24 @@ async function readWith(ref: FacebookRef, signedIn: boolean, options: ReadOption
   // A share link names its post only once Facebook has redirected it.
   const target = ref.kind === 'share' ? parseFacebookUrl(finalUrl) : ref;
   if (!target || target.kind === 'share' || target.kind === 'story') {
-    if (isSignInWall(finalUrl, text)) return empty();
+    if (isSignInWall(finalUrl, text)) {
+      const behind = ref.kind === 'share' ? postBehindWall(finalUrl) : null;
+      return behind ? readWith(behind, signedIn, options) : empty();
+    }
     throw unsupportedLanding(finalUrl);
   }
   const facebookPage = readFacebookPage(text);
-  // Someone else's read of a post shown to some people only goes no further than its page.
-  const readsMore = (post: XPost): boolean => !options.forOthers || post.audience !== 'restricted';
+  // The sign-in reading for someone else what a visitor could not: shown to some people only. It
+  // goes no further than its page.
+  const restricted = signedIn && options.forOthers === true;
   let read: FacebookRead | null;
   if (target.kind === 'post') {
     read = readPostPage(facebookPage, target);
-    if (read && signedIn && readsMore(read.thread.focal)) {
+    if (read && signedIn && !restricted) {
       read = readPostPage(facebookPage, target, await readPhotoPages(postPhotoIds(facebookPage, target), signal));
     }
+  } else if (target.kind === 'photo') {
+    read = readPhotoLinkPage(facebookPage, target);
   } else {
     read = readVideoPage(facebookPage, target);
   }
@@ -248,14 +271,15 @@ async function readWith(ref: FacebookRef, signedIn: boolean, options: ReadOption
     postLink: focal.link,
     fallbackUrl: target.kind === 'reel' ? facebookVideoLink(target.id) : '',
   };
-  const replies = options.comments && readsMore(focal)
+  const replies = options.comments && !restricted
     ? await readComments(source, signedIn, signal).catch((err: unknown) => {
       signal?.throwIfAborted();
       sendLog(`📘 [Facebook] Comments unreadable: ${err instanceof Error ? err.message : String(err)}`);
       return [];
     })
     : [];
-  return { status, value: { focal: { ...focal, replyCount: Math.max(focal.replyCount, replies.length) }, replies }, wall: false };
+  const shown = { ...focal, replyCount: Math.max(focal.replyCount, replies.length), ...(restricted ? { audience: 'restricted' as const } : {}) };
+  return { status, value: { focal: shown, replies }, wall: false };
 }
 
 /**

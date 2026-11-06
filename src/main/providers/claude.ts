@@ -1,5 +1,5 @@
 import type { BrowserWindow, WebContents } from 'electron';
-import { isCloudflareChallengeActive, sleep, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
+import { isCloudflareChallengeActive, readDocumentTitle, sleep, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
 import { ensureOnPage, PAGE_REUSE, waitForThreadSettled } from './pageReuse';
 import { executeAutomationWithTimeout, dispatchFocusEvents } from './automationExecutor';
 import { sendLog } from '../helpers';
@@ -65,14 +65,6 @@ function usageLimitReached(state: Pick<ClaudeUsageLimitState, 'resetsAt' | 'noti
   return claudeUsageLimitError(state);
 }
 
-async function readTitle(wc: WebContents): Promise<string> {
-  try {
-    return String(await wc.executeJavaScript('document.title', false) ?? '');
-  } catch {
-    return '';
-  }
-}
-
 /** Rebuilds a reply that published an artifact; the copied chat text stands when that fails. */
 async function withArtifacts(wc: WebContents, copied: string): Promise<string> {
   try {
@@ -110,7 +102,7 @@ export async function runClaudeAutomation(
   if (reused) sendLog('♻️ Claude page kept open — typing straight into it, no reload');
   else await waitForComposer(wc);
 
-  if (await isCloudflareChallengeActive(wc)) {
+  if (await isCloudflareChallengeActive(wc, CLAUDE_INPUT_SELECTOR)) {
     await showInteractiveWorkerWindow(targetUrl);
     throw raiseVerificationChallenge({
       titleKey: 'cloudflare.notify.title',
@@ -145,7 +137,7 @@ export async function runClaudeAutomation(
   await dispatchFocusEvents(wc);
 
   // A new chat shows a placeholder title ("New chat", localized) until Claude names it.
-  const placeholder = continuingThread ? '' : await readTitle(wc);
+  const placeholder = continuingThread ? '' : await readDocumentTitle(wc);
 
   let result: ClaudeReadResult;
   try {

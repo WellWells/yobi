@@ -2,11 +2,11 @@ import type { WebContents } from 'electron';
 import { sendLog } from '../helpers';
 
 /*
- * ChatGPT's temporary chat cannot draw (2026-10-19: it answers "switch to a normal chat"), so a
- * picture asked for privately is drawn in a normal chat that is deleted once it has been read.
+ * ChatGPT's temporary chat cannot draw, so a picture is drawn in a normal chat that is deleted
+ * once it has been read.
  * Deleting is what the page's own "delete" does: PATCH the conversation with is_visible=false,
- * authorised by the bearer token of /api/auth/session. Measured the same day: 200
- * {"success":true}, then the conversation reads 404 conversation_deleted and leaves the list.
+ * authorised by the bearer token of /api/auth/session. The answer is 200 {"success":true}, then
+ * the conversation reads 404 conversation_deleted and leaves the list.
  */
 
 const CONVERSATION_ID_RE = /^\/c\/([0-9a-f-]{36})(?:\/|$)/i;

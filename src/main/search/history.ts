@@ -9,7 +9,7 @@ import type { ConversationDoc } from '../../shared/conversationDoc';
  * A follow-up only makes sense next to the question before it, so the thread comes along, capped:
  * every character spent here is one the sources (the only citable material) do not get.
  */
-const HISTORY_BUDGET: Record<SearchMode, number> = { standard: 4_000, quick: 2_000 };
+const HISTORY_BUDGET: Record<SearchMode, number> = { standard: 4_000, quick: 2_000, deep: 4_000 };
 
 /** Share of a browser provider's whole input cap that history may take. */
 const CAP_SHARE = 0.2;

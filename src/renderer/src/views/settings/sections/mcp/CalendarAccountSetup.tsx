@@ -1,21 +1,23 @@
 import React, { useEffect, useState } from 'react';
 import { ActionIcon, Box, Group, Stack, Text } from '@mantine/core';
-import { CalendarDays, FlaskConical, Pencil, Plus, Save, Trash2 } from 'lucide-react';
-import { SectionCard, SectionTitle, StatusLine } from '../components';
-import { AppButton } from '../../../components/AppButton';
-import { AppTextInput } from '../../../components/AppTextInput';
-import { AppPasswordInput } from '../../../components/AppPasswordInput';
-import { WebDialog } from '../../../components/WebDialog';
-import { SecretHealthAlert } from '../../../components/SecretHealthAlert';
-import { calendarApi } from '../../../api/electronApi';
-import { fillTemplate } from '../../../../../shared/fillTemplate';
-import { CALENDAR_NAME_MAX } from '../../../../../shared/calendars';
-import type { CalendarSummary, CalendarTestResult } from '../../../../../shared/calendars';
+import { FlaskConical, Pencil, Plus, Save, Trash2 } from 'lucide-react';
+import { StatusLine } from '../../components';
+import { AppButton } from '../../../../components/AppButton';
+import { AppTextInput } from '../../../../components/AppTextInput';
+import { AppPasswordInput } from '../../../../components/AppPasswordInput';
+import { WebDialog } from '../../../../components/WebDialog';
+import { SecretHealthAlert } from '../../../../components/SecretHealthAlert';
+import { GroupHeader } from '../../../../components/GroupHeader';
+import { CalDavAccounts } from './CalDavAccounts';
+import { calendarApi } from '../../../../api/electronApi';
+import { fillTemplate } from '../../../../../../shared/fillTemplate';
+import { CALENDAR_NAME_MAX } from '../../../../../../shared/calendars';
+import type { CalendarSummary, CalendarTestResult } from '../../../../../../shared/calendars';
 
 interface Props {
   t: (key: string) => string;
-  visible: boolean;
-  sectionGap: number;
+  /** Bumped when the mailboxes change: a CalDAV account can sign in as one of them. */
+  mailboxesVersion: number;
 }
 
 interface FormState {
@@ -38,10 +40,12 @@ function testLine(state: TestState | null, key: string, t: (k: string) => string
 }
 
 /**
- * Calendar subscriptions for the calendar flow step: a name and the calendar's .ics address.
- * The address is a secret, so it is only ever typed here; the list shows each feed's host.
+ * The one place calendars are entered, on the Calendar connector's card: the calendar step and
+ * the connector both use them. CalDAV accounts (read and write) and .ics subscriptions (read
+ * only: a name and the calendar's .ics address). The address is a secret, so it is only ever
+ * typed here; the list shows each feed's host.
  */
-export const CalendarsSetting: React.FC<Props> = ({ t, visible, sectionGap }) => {
+export const CalendarAccountSetup: React.FC<Props> = ({ t, mailboxesVersion }) => {
   const [calendars, setCalendars] = useState<CalendarSummary[]>([]);
   const [form, setForm] = useState<FormState | null>(null);
   const [saveError, setSaveError] = useState('');
@@ -49,9 +53,8 @@ export const CalendarsSetting: React.FC<Props> = ({ t, visible, sectionGap }) =>
   const [test, setTest] = useState<TestState | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<CalendarSummary | null>(null);
 
-  useEffect(() => {
-    if (visible) void calendarApi.list().then(setCalendars);
-  }, [visible]);
+  useEffect(() => { void calendarApi.list().then(setCalendars); }, []);
+  const subscriptions = calendars.filter((calendar) => calendar.kind === 'ics');
 
   const openForm = (next: FormState): void => {
     setForm(next);
@@ -139,86 +142,85 @@ export const CalendarsSetting: React.FC<Props> = ({ t, visible, sectionGap }) =>
   );
 
   return (
-    <Box display={visible ? 'block' : 'none'}>
-      <SectionCard style={{ marginBottom: sectionGap }}>
-        <SectionTitle icon={<CalendarDays size={15} />} label={t('settings.calendars.title')} />
-        <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6} mb={14}>{t('settings.calendars.hint')}</Text>
+    <Stack gap={8}>
+      <SecretHealthAlert scopes={['calendar']} />
 
-        <SecretHealthAlert scopes={['calendar']} />
+      <GroupHeader label={t('settings.calendars.caldav.heading')} variant="plain" />
+      <CalDavAccounts t={t} mailboxesVersion={mailboxesVersion} onChanged={() => { void calendarApi.list().then(setCalendars); }} />
 
-        {calendars.length === 0 && !form && (
-          <Text fz="var(--font-size-sm)" c="dimmed" mb={12}>{t('settings.calendars.empty')}</Text>
-        )}
+      <Box mt={12}><GroupHeader label={t('settings.calendars.ics.heading')} variant="plain" /></Box>
+      {subscriptions.length === 0 && !form && (
+        <Text fz="var(--font-size-sm)" c="dimmed">{t('settings.calendars.empty')}</Text>
+      )}
 
-        <Stack gap={0}>
-          {calendars.map((calendar, index) => {
-            const editingThis = form?.id === calendar.id;
-            const rowKey = `row:${calendar.id}`;
-            return (
-              <Box
-                key={calendar.id}
-                py={12}
-                style={index > 0 ? { borderTop: '1px solid var(--mantine-color-default-border)' } : undefined}
-              >
-                <Group justify="space-between" align="center" wrap="nowrap" gap={12}>
-                  <Stack gap={4} miw={0} flex={1}>
-                    <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-default-color)" truncate>
-                      {calendar.name}
-                    </Text>
-                    <Text fz="var(--font-size-sm)" c="dimmed" truncate>
-                      {calendar.unreadable ? t('settings.calendars.unreadable') : calendar.host}
-                    </Text>
-                  </Stack>
-                  <Group gap={6} align="center" wrap="nowrap" style={{ flexShrink: 0 }}>
-                    <AppButton
-                      variant="default"
-                      size="xs"
-                      leftSection={<FlaskConical size={13} />}
-                      loading={test?.key === rowKey && test.busy}
-                      disabled={calendar.unreadable}
-                      onClick={() => { void runTest(rowKey, calendar.id, ''); }}
-                    >
-                      {t('settings.calendars.test')}
-                    </AppButton>
-                    <ActionIcon
-                      variant={editingThis ? 'light' : 'default'}
-                      size={30}
-                      aria-label={t('settings.calendars.edit')}
-                      onClick={() => (editingThis ? setForm(null) : openForm({ id: calendar.id, name: calendar.name, url: '' }))}
-                    >
-                      <Pencil size={14} />
-                    </ActionIcon>
-                    <ActionIcon
-                      variant="default"
-                      size={30}
-                      c="red"
-                      aria-label={t('settings.calendars.delete')}
-                      onClick={() => setConfirmDelete(calendar)}
-                    >
-                      <Trash2 size={14} />
-                    </ActionIcon>
-                  </Group>
-                </Group>
-                {test?.key === rowKey && <Box mt={8}>{testLine(test, rowKey, t)}</Box>}
-                {editingThis && formView}
-              </Box>
-            );
-          })}
-        </Stack>
-
-        {form && form.id === null ? formView : (
-          <Group mt={calendars.length > 0 ? 12 : 0}>
-            <AppButton
-              variant="default"
-              size="xs"
-              leftSection={<Plus size={13} />}
-              onClick={() => openForm({ id: null, name: '', url: '' })}
+      <Stack gap={0}>
+        {subscriptions.map((calendar, index) => {
+          const editingThis = form?.id === calendar.id;
+          const rowKey = `row:${calendar.id}`;
+          return (
+            <Box
+              key={calendar.id}
+              py={8}
+              style={index > 0 ? { borderTop: '1px solid var(--mantine-color-default-border)' } : undefined}
             >
-              {t('settings.calendars.add')}
-            </AppButton>
-          </Group>
-        )}
-      </SectionCard>
+              <Group justify="space-between" align="center" wrap="nowrap" gap={12}>
+                <Stack gap={2} miw={0} flex={1}>
+                  <Text fz="var(--font-size-sm)" fw={600} c="var(--mantine-color-default-color)" truncate>
+                    {calendar.name}
+                  </Text>
+                  <Text fz="xs" c="dimmed" truncate>
+                    {calendar.unreadable ? t('settings.calendars.unreadable') : calendar.host}
+                  </Text>
+                </Stack>
+                <Group gap={6} align="center" wrap="nowrap" style={{ flexShrink: 0 }}>
+                  <AppButton
+                    variant="default"
+                    size="compact-xs"
+                    leftSection={<FlaskConical size={12} />}
+                    loading={test?.key === rowKey && test.busy}
+                    disabled={calendar.unreadable}
+                    onClick={() => { void runTest(rowKey, calendar.id, ''); }}
+                  >
+                    {t('settings.calendars.test')}
+                  </AppButton>
+                  <ActionIcon
+                    variant={editingThis ? 'light' : 'default'}
+                    size={26}
+                    aria-label={t('settings.calendars.edit')}
+                    onClick={() => (editingThis ? setForm(null) : openForm({ id: calendar.id, name: calendar.name, url: '' }))}
+                  >
+                    <Pencil size={13} />
+                  </ActionIcon>
+                  <ActionIcon
+                    variant="default"
+                    size={26}
+                    c="red"
+                    aria-label={t('settings.calendars.delete')}
+                    onClick={() => setConfirmDelete(calendar)}
+                  >
+                    <Trash2 size={13} />
+                  </ActionIcon>
+                </Group>
+              </Group>
+              {test?.key === rowKey && <Box mt={8}>{testLine(test, rowKey, t)}</Box>}
+              {editingThis && formView}
+            </Box>
+          );
+        })}
+      </Stack>
+
+      {form && form.id === null ? formView : (
+        <Group gap={8}>
+          <AppButton
+            variant="default"
+            size="compact-xs"
+            leftSection={<Plus size={12} />}
+            onClick={() => openForm({ id: null, name: '', url: '' })}
+          >
+            {t('settings.calendars.add')}
+          </AppButton>
+        </Group>
+      )}
 
       <WebDialog
         open={confirmDelete !== null}
@@ -236,6 +238,6 @@ export const CalendarsSetting: React.FC<Props> = ({ t, visible, sectionGap }) =>
         }}
         onCancel={() => setConfirmDelete(null)}
       />
-    </Box>
+    </Stack>
   );
 };

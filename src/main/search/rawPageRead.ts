@@ -1,9 +1,11 @@
 import { fetchRawResponse } from '../pageLoader';
 import type { RawFetchResponse } from '../pageLoader';
 import { userAgentForUrl } from '../userAgent';
-import { MAX_CONTENT_CHARS, parseHtml } from '../urlParser';
+import { MAX_CONTENT_CHARS } from '../urlParser';
+import { readPageText } from './pageText';
 import { extractPublishedAt, toPlausibleDate } from './publishedAt';
 import { blockSignal, retryAfterMs } from '../net/hostPolicy';
+import { isVerificationWall } from '../net/verificationWall';
 import type { HostPolicy } from '../net/hostPolicy';
 
 /**
@@ -21,6 +23,8 @@ export interface RawPage {
   publishedAt: string;
   /** The raw answer carried a script: a short 404 with one may be a single-page app's route. */
   scripted: boolean;
+  /** The answer was a verification wall (`net/verificationWall.ts`), not the page. */
+  walled: boolean;
 }
 
 const FRONTMATTER = /^﻿?---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
@@ -45,17 +49,18 @@ export function markdownPage(markdown: string): Pick<RawPage, 'text' | 'title' |
   };
 }
 
-function toPage(raw: RawFetchResponse, url: string): RawPage {
+async function toPage(raw: RawFetchResponse, url: string): Promise<RawPage> {
   if (/^text\/markdown\b/i.test(raw.headers?.['content-type'] ?? '')) {
-    return { status: raw.status, scripted: false, ...markdownPage(raw.text) };
+    return { status: raw.status, scripted: false, walled: false, ...markdownPage(raw.text) };
   }
-  const parsed = parseHtml(raw.text, url, { blockBreaks: true });
+  const parsed = await readPageText(raw.text, url);
   return {
     status: raw.status,
     text: parsed.cleanedText,
     title: parsed.title && parsed.title !== url ? parsed.title : '',
     publishedAt: extractPublishedAt(raw.text),
     scripted: /<script\b/i.test(raw.text),
+    walled: isVerificationWall(raw.text, parsed.cleanedText.length),
   };
 }
 

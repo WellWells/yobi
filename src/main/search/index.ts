@@ -3,10 +3,13 @@ import type { SearchMode } from '../../shared/types';
 import { sendLog } from '../helpers';
 import { planQuery } from './router';
 import { planQueryLlm, planQueryWeb } from './planner';
-import { searchDdg, SerpChallengeError } from './serp';
-import { SEARCH_BLOCKED_KEY } from './blocked';
+import { searchWeb, SerpChallengeError } from './serp';
+import { fuseRankings, hitKey } from './fuse';
+import { enginesBlockedError, SearchPipelineError } from './pipelineError';
+import { runDeepResearch } from './deep';
 import { harvest, selectTargets, DEFAULT_MAX_SOURCES, HARVEST_SPARE_TARGETS } from './harvest';
 import { rankHits, rankSourcesScored } from './rank';
+import { distinctQueries } from './queryNormalize';
 import type { ScoredSource } from './rank';
 import { extractRelevant } from './extract';
 import { createDocumentMapper, mapConcurrency, mapDocuments } from './mapReduce';
@@ -18,10 +21,10 @@ import { isFetchableWebUrl } from '../../shared/webUrl';
 import { citationHost } from '../../shared/citations';
 import { buildCitedPrompt, linkifyCitations, synthesize } from './synthesize';
 import { resendIfGeminiCapFell } from '../providers/geminiPromptTooLong';
-import type { QueryPlan, SearchOutcome, SerpHit, SourceDoc, TemporalFilter } from './types';
+import type { QueryPlan, SearchAsker, SearchOutcome, SerpHit, SourceDoc, TemporalFilter } from './types';
 import type { ResearchPhaseId } from '../../shared/researchProgress';
 
-export type { SearchOutcome, SerpHit, SourceDoc } from './types';
+export type { SearchAsker, SearchOutcome, SerpHit, SourceDoc } from './types';
 export { buildSearchHistory } from './history';
 
 export type SearchProgress =
@@ -35,45 +38,48 @@ export type SearchProgress =
   | { stage: 'analyzing' }
   | { stage: 'summarizing'; total: number }
   | { stage: 'summarized'; kept: boolean }
-  | { stage: 'synthesizing' };
+  | { stage: 'synthesizing' }
+  /** deep: the sub-questions' findings are being written, `total` of them. */
+  | { stage: 'finding'; total: number }
+  | { stage: 'found' }
+  /** deep: the findings are checked for gaps. */
+  | { stage: 'reviewing' }
+  /** deep: the gaps found, now being researched one by one (none = the findings were enough). */
+  | { stage: 'followups'; questions: string[] }
+  | { stage: 'followedUp' }
+  /** deep: more pages joined the read phase after it had finished. */
+  | { stage: 'fetchingMore'; count: number };
 
-export class SearchPipelineError extends Error {
-  readonly i18nKey: string;
-
-  constructor(i18nKey: string, fallback: string) {
-    super(fallback);
-    this.i18nKey = i18nKey;
-  }
-}
+export { SearchPipelineError } from './pipelineError';
 
 const BYOK_MAX_SOURCES = 12;
 const BYOK_MAP_MAX_SINGLE_KEY = 8;
-const QUICK_MAX_SOURCES = 2;
+/*
+ * Quick mode answers from many results, not from a few pages read whole (the way Perplexity is
+ * fast): three pages read in parallel, plus the summaries the engines already returned for the
+ * results it did not read — they cost no request and carry most of the breadth.
+ */
+const QUICK_MAX_SOURCES = 3;
+export const QUICK_SUMMARY_SOURCES = 8;
+/** Shorter than this, a result's summary is a title echo or a cookie notice, not evidence. */
+const MIN_SUMMARY_CHARS = 40;
 
 function preview(text: string): string {
   return text.length > 80 ? `${text.slice(0, 80)}…` : text;
 }
 
-function interleave<T>(lists: T[][]): T[] {
-  const merged: T[] = [];
-  const longest = Math.max(0, ...lists.map((list) => list.length));
-  for (let i = 0; i < longest; i++) {
-    for (const list of lists) {
-      if (i < list.length) merged.push(list[i]);
-    }
-  }
-  return merged;
-}
-
 type PlannerChannel = 'byok' | 'web' | 'none';
 
 /*
- * On BYOK the planner is a cheap side call: every standard search gets one, quick mode only with a
- * thread. On a browser provider it is a full extra round trip on the answer's lane, so it runs only
- * for follow-ups and long standard requests that need concrete queries.
+ * On BYOK the planner is a cheap side call (~1 s, never past `PLANNER_DEADLINE_MS`): every search
+ * gets one, quick mode included — working out what the user is after comes before searching for it.
+ * On a browser provider it is a full extra round trip on the answer's lane, so it runs only for
+ * follow-ups and long standard requests; the answer's own prompt works out the purpose there.
  */
-function plannerChannel(targetUrl: string, mode: SearchMode, history: string, query: string): PlannerChannel {
-  if (isByokTargetUrl(targetUrl)) return mode === 'standard' || history ? 'byok' : 'none';
+function plannerChannel(targetUrl: string, mode: SearchMode, history: string, query: string, plannedQuestion: boolean): PlannerChannel {
+  // The agent wrote this question from the user's goal: planning it again only adds a wait.
+  if (plannedQuestion && mode === 'quick' && !history) return 'none';
+  if (isByokTargetUrl(targetUrl)) return 'byok';
   return history || (mode === 'standard' && query.length > 120) ? 'web' : 'none';
 }
 
@@ -83,37 +89,34 @@ async function buildPlan(
   targetUrl: string,
   locale: string,
   history: string,
+  mode: SearchMode,
 ): Promise<QueryPlan> {
-  if (channel === 'byok') return planQueryLlm(query, targetUrl, locale, history);
+  if (channel === 'byok') return planQueryLlm(query, targetUrl, locale, history, mode === 'quick');
   if (channel === 'web') return planQueryWeb(query, targetUrl, locale, history);
   return planQuery(query);
 }
 
-function challengeError(): SearchPipelineError {
-  return new SearchPipelineError(
-    SEARCH_BLOCKED_KEY,
-    'DuckDuckGo is temporarily asking for human verification — try again in a few minutes',
-  );
-}
-
+/** The plan's queries, each across the engines; a page several queries find rises (`fuseRankings`). */
 async function runQueries(
   queries: string[],
   temporal: TemporalFilter,
   locale: string,
 ): Promise<{ hits: SerpHit[]; challenged: boolean }> {
   let challenged = false;
+  const distinct = distinctQueries(queries);
+  if (distinct.length < queries.length) sendLog(`🔎 [Search] ${queries.length - distinct.length} near-duplicate query(ies) not sent`);
   const perQuery = await Promise.all(
-    queries.map((q) => searchDdg(q, temporal, locale).catch((err) => {
+    distinct.map((q, slot) => searchWeb(q, temporal, locale, slot).catch((err) => {
       if (err instanceof SerpChallengeError) {
         challenged = true;
         sendLog(`🔎 [Search] ${err.message}`);
       } else {
-        sendLog(`🔎 [Search] ddg query failed (${err instanceof Error ? err.message : String(err)})`);
+        sendLog(`🔎 [Search] query failed (${err instanceof Error ? err.message : String(err)})`);
       }
       return [] as SerpHit[];
     })),
   );
-  return { hits: interleave(perQuery), challenged };
+  return { hits: fuseRankings(perQuery), challenged };
 }
 
 interface CollectedHits {
@@ -125,12 +128,12 @@ interface CollectedHits {
 async function collectHits(plan: QueryPlan, locale: string): Promise<CollectedHits> {
   const first = await runQueries(plan.queries, plan.temporal, locale);
   if (first.hits.length > 0) return { hits: first.hits, partiallyBlocked: first.challenged };
-  if (first.challenged) throw challengeError();
+  if (first.challenged) throw enginesBlockedError();
   if (plan.temporal === 'none') return { hits: [], partiallyBlocked: false };
 
   sendLog(`🔎 [Search] the "${plan.temporal}" recency filter left no results — retrying without it`);
   const retry = await runQueries(plan.queries, 'none', locale);
-  if (retry.hits.length === 0 && retry.challenged) throw challengeError();
+  if (retry.hits.length === 0 && retry.challenged) throw enginesBlockedError();
   return { hits: retry.hits, partiallyBlocked: retry.challenged };
 }
 
@@ -138,7 +141,7 @@ export async function searchSourceList(query: string, locale: string, limit: num
   const plan = planQuery(query);
   sendLog(`🔎 [Search] list mode temporal=${plan.temporal} — "${preview(query)}"`);
   const { hits } = await collectHits(plan, locale);
-  return selectTargets(rankHits(hits, query, plan.temporal !== 'none'), limit);
+  return selectTargets(rankHits(hits, [query, ...plan.queries].join('\n')), limit);
 }
 
 /**
@@ -260,14 +263,34 @@ async function mapOnWebProvider(
   return mapped;
 }
 
+/**
+ * The results quick mode did not read, as short sources of their own: the engine's summary of the
+ * page and its date. Video pages count — a summary is all a reader would get from one anyway.
+ */
+export function resultSummaries(hits: readonly SerpHit[], read: readonly SourceDoc[], limit: number): SourceDoc[] {
+  const readKeys = new Set(read.map((doc) => hitKey(doc.url)));
+  const seen = new Set<string>();
+  const summaries: SourceDoc[] = [];
+  for (const hit of hits) {
+    const key = hitKey(hit.url);
+    const snippet = hit.snippet?.trim() ?? '';
+    if (readKeys.has(key) || seen.has(key) || snippet.length < MIN_SUMMARY_CHARS) continue;
+    seen.add(key);
+    summaries.push({ id: 0, title: hit.title, url: hit.url, text: snippet, summaryOnly: true, ...(hit.date ? { publishedAt: hit.date } : {}) });
+    if (summaries.length >= limit) break;
+  }
+  return summaries;
+}
+
 function buildQuickSources(
   scored: ScoredSource[],
+  summaries: SourceDoc[],
   plan: QueryPlan,
   targetUrl: string,
   history: string,
 ): SourceDoc[] {
-  const budget = reserveForHistory(quickSynthesisBudget(targetUrl), history);
-  const sources = extractRelevant(scored.map((entry) => entry.doc), plan.queries.join(' '), budget);
+  const budget = quickSynthesisBudget(targetUrl, history);
+  const sources = extractRelevant([...scored.map((entry) => entry.doc), ...summaries], plan.queries.join(' '), budget);
   sendLog(`🔎 [Search] Quick mode packed ${sources.length} sources (${describeUsage(sources, budget)})`);
   return sources;
 }
@@ -304,12 +327,15 @@ export async function runWebSearch(
   maxSourcesOverride?: number,
   history = '',
   urls: readonly string[] = [],
+  plannedQuestion = false,
+  asker?: SearchAsker,
 ): Promise<SearchOutcome> {
-  if (urls.length > 0) return runOverGivenUrls(query, targetUrl, locale, onProgress, maxSourcesOverride, history, urls);
+  if (urls.length > 0) return runOverGivenUrls(query, targetUrl, locale, onProgress, maxSourcesOverride, history, urls, asker);
+  if (mode === 'deep') return runDeepResearch(query, targetUrl, locale, onProgress, history, asker);
   const isByok = isByokTargetUrl(targetUrl);
-  // Quick mode skips the planner to stay quick — but a follow-up without it is searched
-  // verbatim, and no amount of speed saves an answer to the wrong question.
-  const channel = plannerChannel(targetUrl, mode, history, query);
+  // A browser provider's quick mode skips the planner to stay quick — but a follow-up without it is
+  // searched verbatim, and no amount of speed saves an answer to the wrong question.
+  const channel = plannerChannel(targetUrl, mode, history, query, plannedQuestion);
   // Summarizing page by page is certain only on BYOK standard; a web provider decides once it sees
   // whether the pages overflow, and the phase joins the list then.
   onProgress?.({
@@ -323,7 +349,7 @@ export async function runWebSearch(
   });
   // Tens of seconds can pass here; without this the UI sits on the previous stage and reads as a hang.
   if (channel !== 'none') onProgress?.({ stage: 'planning', queries: [] });
-  const plan = await buildPlan(channel, query, targetUrl, locale, history);
+  const plan = await buildPlan(channel, query, targetUrl, locale, history, mode);
   sendLog(`🔎 [Search] mode=${mode} temporal=${plan.temporal} queries=${plan.queries.length} — "${preview(query)}"`);
   if (channel !== 'none') sendLog(`🔎 [Search] planned queries: ${JSON.stringify(plan.queries)}`);
 
@@ -338,10 +364,13 @@ export async function runWebSearch(
   if (hits.length === 0) {
     throw new SearchPipelineError('search.error.noResults', 'No search results found');
   }
-  sendLog(`🔎 [Search] ${hits.length} results from DuckDuckGo${partiallyBlocked ? ' (some queries were challenged)' : ''} — fetching top pages...`);
+  sendLog(`🔎 [Search] ${hits.length} results${partiallyBlocked ? ' (some queries were refused by every engine)' : ''} — fetching top pages...`);
   onProgress?.({ stage: 'searched', hits: hits.length });
 
-  const orderedHits = rankHits(hits, question, plan.temporal !== 'none');
+  // The planned queries count as the question's words too: an English variant's hits share no
+  // word with a Chinese question.
+  const orderedHits = rankHits(hits, [question, ...plan.queries].join('\n'));
+  const writer = answerWriter(history, asker);
   const defaultMaxSources = mode === 'quick' ? QUICK_MAX_SOURCES : isByok ? BYOK_MAX_SOURCES : DEFAULT_MAX_SOURCES;
   const maxSources = maxSourcesOverride ?? defaultMaxSources;
   const targets = selectTargets(orderedHits, maxSources + HARVEST_SPARE_TARGETS, true);
@@ -363,9 +392,14 @@ export async function runWebSearch(
 
   onProgress?.({ stage: 'analyzing' });
   const scored = rankSourcesScored(docs, question);
+  const summaries = mode === 'quick' ? resultSummaries(orderedHits, docs, QUICK_SUMMARY_SOURCES) : [];
+  if (summaries.length > 0) sendLog(`🔎 [Search] Quick mode adds ${summaries.length} result summaries beside ${docs.length} page(s)`);
   const packed: PackedSources = mode === 'quick'
-    ? { sources: buildQuickSources(scored, plan, targetUrl, history), repack: () => buildQuickSources(scored, plan, targetUrl, history) }
-    : await buildSources(scored, question, plan, targetUrl, locale, mapper, history, onProgress);
+    ? {
+        sources: buildQuickSources(scored, summaries, plan, targetUrl, writer.reserve),
+        repack: () => buildQuickSources(scored, summaries, plan, targetUrl, writer.reserve),
+      }
+    : await buildSources(scored, question, plan, targetUrl, locale, mapper, writer.reserve, onProgress);
   if (packed.sources.length === 0) {
     throw new SearchPipelineError('search.error.noRelevant', 'No sources were relevant to the query');
   }
@@ -378,9 +412,20 @@ export async function runWebSearch(
     locale,
     concise: mode === 'quick',
     lean: isLeanPromptProvider(targetUrl),
-    history,
+    history: writer.history,
+    ...(asker ? { asker: asker.words, uiLanguage: asker.uiLanguage === true } : {}),
   }));
   return { answer: linkifyCitations(raw, sources), sources, ...(partiallyBlocked ? { partiallyBlocked } : {}) };
+}
+
+/**
+ * What the answer's prompt carries besides the sources: the conversation, and the asker's words
+ * when the query is someone else's keywords. Both come out of the sources' allowance (`reserve`).
+ * Only the writer reads the asker's conversation — the planner and the ranking keep the query.
+ */
+function answerWriter(history: string, asker: SearchAsker | undefined): { history: string; reserve: string } {
+  const writerHistory = history || asker?.history || '';
+  return { history: writerHistory, reserve: [writerHistory, asker?.words ?? ''].filter(Boolean).join('\n') };
 }
 
 /**
@@ -396,7 +441,9 @@ async function runOverGivenUrls(
   maxSourcesOverride: number | undefined,
   history: string,
   urls: readonly string[],
+  asker?: SearchAsker,
 ): Promise<SearchOutcome> {
+  const writer = answerWriter(history, asker);
   // Regex-only plan: its queries are the extraction keywords, and a planner round trip buys
   // nothing when the pages are already chosen.
   const plan = planQuery(query);
@@ -427,7 +474,7 @@ async function runOverGivenUrls(
 
   onProgress?.({ stage: 'analyzing' });
   const packed = await buildSources(
-    rankSourcesScored(docs, query), query, plan, targetUrl, locale, null, history, onProgress,
+    rankSourcesScored(docs, query), query, plan, targetUrl, locale, null, writer.reserve, onProgress,
     GIVEN_URLS_MAP_OVERFLOW_FACTOR,
   );
   if (packed.sources.length === 0) {
@@ -442,7 +489,8 @@ async function runOverGivenUrls(
     locale,
     concise: false,
     lean: isLeanPromptProvider(targetUrl),
-    history,
+    history: writer.history,
+    ...(asker ? { asker: asker.words, uiLanguage: asker.uiLanguage === true } : {}),
   }));
   return { answer: linkifyCitations(raw, sources), sources };
 }

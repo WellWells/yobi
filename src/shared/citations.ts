@@ -58,6 +58,30 @@ export function resolveSelectionCitations(
   return resolved;
 }
 
+/** A citation's link words: only a number, `[1]` (often written `[\[1\]]`) or `1`. */
+export function isCitationLabel(linkText: string): boolean {
+  return /^\[?\d{1,3}\]?$/.test(linkText.replace(/\\(.)/g, '$1').trim());
+}
+
+/** A URL as a Markdown link destination: angle-bracketed, so spaces and parentheses survive. */
+export function mdLinkDestination(url: string): string {
+  return `<${url.replace(/</g, '%3C').replace(/>/g, '%3E')}>`;
+}
+
+/** A page title as link text: brackets would end the label early. */
+export function mdLinkLabel(title: string): string {
+  return title.replace(/[[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * The source list an answer ends with — one `n. [title](<url>)` line per source, the shape
+ * `parseCitationSources` reads back — under a rule and a bold heading.
+ */
+export function formatSourcesSection(sources: readonly CitationSource[], heading: string): string {
+  const list = sources.map((source) => `${source.id}. [${mdLinkLabel(source.title) || source.url}](${mdLinkDestination(source.url)})`);
+  return `---\n\n**${heading}**\n\n${list.join('\n')}`;
+}
+
 export function citationHost(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./, '');

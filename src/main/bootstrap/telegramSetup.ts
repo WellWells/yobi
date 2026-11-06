@@ -1,4 +1,4 @@
-import { IPC, isSocketBotPlatform } from '../../shared/types';
+import { IPC, parseBotPlatform } from '../../shared/types';
 import type { FlowExecutionResult } from '../../shared/types';
 import { BOT_MODEL_VARIABLE, TRIGGER_IS_INPUT_VARIABLE } from '../../shared/builtinFlows';
 import {
@@ -53,7 +53,6 @@ import {
   buildTelegramStatusText,
   getTelegramRuntimeSnapshot,
   setTelegramRuntimeSnapshot,
-  exportTelegramResultDocument,
 } from '../telegramBridge';
 import { listBotContacts, listBotPairedContacts, recordBotUse } from '../botDirectory';
 import { appQueueState, type QueueManager } from '../queueManager';
@@ -90,8 +89,6 @@ export function createTelegramRuntime(deps: {
     getToken: () => config.telegram.botToken,
     getAllowGroupCommands: () => config.telegram.allowGroupCommands,
     getLlmDirect: () => resolveLlmDirectTarget(config.telegram.llmDirect, getHiddenSources()),
-    getDefaultReplyMode: () => config.telegram.defaultReplyMode,
-    getCompactReply: () => config.telegram.compactReply,
     getPairing: () => config.telegram.pairing,
     savePairing: (next) => {
       config.telegram.pairing = normalizePairingState(next);
@@ -206,19 +203,6 @@ export function createTelegramRuntime(deps: {
     },
     onStatusRequest: () => buildTelegramStatusText(appQueueState(queue, getFlowManager())),
     onRestartApp: () => relaunchApp('Telegram /restart'),
-    onUpdateOutputChoice: (choice) => {
-      if (choice === 'compact') {
-        config.telegram.compactReply = true;
-      } else if (choice === 'markdown' || choice === 'png' || choice === 'webp' || choice === 'pdf') {
-        config.telegram.compactReply = false;
-        config.telegram.defaultReplyMode = choice;
-      } else {
-        return false;
-      }
-      saveConfig({ telegram: config.telegram });
-      return true;
-    },
-    onExportRequest: (request) => exportTelegramResultDocument(request),
     onLog: (message) => sendLog(message),
     onRuntime: (snapshot) => {
       setTelegramRuntimeSnapshot(snapshot);
@@ -331,8 +315,8 @@ function collectFlowRecipientIds(flowManager: FlowManager | null): number[] {
     for (const step of flow.steps) {
       if (step.type !== 'bot') continue;
       // Another bot's ids are not Telegram chats (a flow variable or `auto` may still mean Telegram).
-      const platform = (step.config.platform ?? '').trim().toLowerCase();
-      if (platform === 'line' || isSocketBotPlatform(platform)) continue;
+      const platform = parseBotPlatform(step.config.platform);
+      if (platform && platform !== 'telegram') continue;
       raw.push(String(step.config.chatIds ?? ''), String(step.config.chatId ?? ''));
     }
   }

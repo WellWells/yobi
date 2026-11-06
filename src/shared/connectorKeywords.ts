@@ -1,4 +1,4 @@
-import { findBuiltinConnector } from './builtinConnectors';
+import { findBuiltinConnector, readsAnyPage } from './builtinConnectors';
 import { findCatalogEntry } from './mcpCatalog';
 import { escapeRegExp } from './regex';
 
@@ -95,4 +95,28 @@ export function matchConnectorKeywords(
     }
   }
   return matched;
+}
+
+export interface ComposerConnectors {
+  /** Every connector the message names. */
+  named: string[];
+  /** Newly named: they join the conversation, whose later turns then run as an agent. */
+  attached: string[];
+  /** For this message alone: any link with words around it names one, and most chats hold links. */
+  forThisMessage: string[];
+}
+
+/** What a typed message does to the composer's connectors. `webOff`: the user switched web off here. */
+export function composerConnectors(
+  text: string,
+  connectors: readonly KeywordCandidate[],
+  active: readonly string[],
+  webOff: boolean,
+): ComposerConnectors {
+  const named = matchConnectorKeywords(text, webOff ? connectors.filter(({ id }) => !readsAnyPage(id)) : connectors);
+  return {
+    named,
+    attached: named.filter((id) => !active.includes(id) && !readsAnyPage(id)),
+    forThisMessage: named.filter(readsAnyPage),
+  };
 }

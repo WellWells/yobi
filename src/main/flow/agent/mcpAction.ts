@@ -4,7 +4,7 @@ import type { McpTool } from '../../mcp/mcpTypes';
 import { errorText } from '../../../shared/errorText';
 import { FlowAbortError } from '../runtime';
 import { maskSecrets } from './secretMask';
-import { canonicalArgumentNames, canonicalEnumArguments, formatMcpObservation, isArgumentError, resolveMcpTool, schemaHint, validateMcpArguments } from './mcpTools';
+import { canonicalArgumentNames, canonicalBooleanArguments, canonicalEnumArguments, formatMcpObservation, isArgumentError, resolveMcpTool, schemaHint, validateMcpArguments } from './mcpTools';
 import type { McpAction, McpRuntimeIndex } from './mcpTools';
 import { resolveToolContract } from './contractRegistry';
 import { decideAction, formatBlocked } from './actionGate';
@@ -41,7 +41,10 @@ export interface McpStepContext {
   ledger: EvidenceLedger;
   runId: string;
   intent: GoalIntent | null;
-  /** The user's answers to this run's questions: an explicit "yes, delete it" widens the boundary. */
+  /**
+   * The user's answers to this run's questions: an explicit "yes, delete it" widens the boundary, and
+   * so does any agreeing answer to a draft or an edit this run was already held back for.
+   */
   answers?: readonly string[];
   gate: { blocked: number; autoContext: number };
   /** No one can review a window this run opens, so nothing that changes things skips confirmation. */
@@ -176,7 +179,7 @@ export async function executeMcpProposal(
     return { observation: `ERROR: Unknown MCP tool ${action.server}/${action.name}`, status: 'error', write: false, landed: false, transientBlock: false };
   }
   const { serverId, tool } = resolved;
-  const args = canonicalEnumArguments(tool, canonicalArgumentNames(tool, action.arguments));
+  const args = canonicalBooleanArguments(tool, canonicalEnumArguments(tool, canonicalArgumentNames(tool, action.arguments)));
   const contract = resolveToolContract(serverId, tool);
   const risk = contract.risk(args);
   const write = risk !== 'read';
@@ -190,6 +193,7 @@ export async function executeMcpProposal(
   const read = readerFor(ctx, serverId);
   const decide = () => decideAction({
     serverId, tool, args, contract, ledger: ctx.ledger, intent: ctx.intent, blockedSoFar: ctx.gate.blocked, signature,
+    runId: ctx.runId,
     ...(ctx.answers ? { answers: ctx.answers } : {}),
   });
   let decision = decide();
@@ -221,11 +225,13 @@ export async function executeMcpProposal(
       ? decision.reasons
       : [{ code: 'context_unavailable', message: 'What this call depends on could not be looked up. Look it up with a (read) tool first.' }];
     const prior = decision.verdict === 'blocked' ? decision.recheck : undefined;
+    const crossed = decision.verdict === 'blocked' ? decision.boundary : undefined;
     const extra = prior ? await recheckPrior(ctx, prior) : [];
     ctx.gate.blocked += 1;
     const record: ActionRecord = {
       ...base,
       verdict: 'blocked',
+      ...(crossed ? { boundary: crossed } : {}),
       reasons: reasons.map(({ code, message }) => ({ code, message })),
       ...(prior ? {
         recheck: {

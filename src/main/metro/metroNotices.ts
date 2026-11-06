@@ -1,9 +1,9 @@
 /**
  * Each metro operator's latest announcements, read from its own list. The status banners lag:
- * on 2026-10-22 every banner said 正常營運 while every operator had already posted typhoon
- * 薔琵's 10/23 service changes, so the status tool shows recent notices beside the banner — and,
- * for one operator, the start of each notice's text: the title alone said "營運模式" and the model
- * answered "依颱風動態滾動式調整" instead of 直達車 cancelled (live eval 2026-10-23).
+ * a banner can say 正常營運 while operators have already posted a typhoon's service changes, so the
+ * status tool shows recent notices beside the banner — and, for one operator, the start of each
+ * notice's text: a title that says only "營運模式" would be answered "依颱風動態滾動式調整"
+ * instead of 直達車 cancelled.
  * Which list per operator and how it reads: `metroNoticeParse.ts`. Operators' sites only (no TDX).
  */
 import { addDays } from '../rail/railTime';
@@ -87,7 +87,7 @@ export async function fetchNotices(operator: MetroOperator, deps: MetroDeps): Pr
   return deps.memo(`notices-${operator}`, NOTICES_TTL_MS, async () => mergeNotices(await readLists(operator, deps)));
 }
 
-/** Enough for 2026-10-22's typhoon notices to say what changes (TYMC's 直達車 line is in its first 60). */
+/** Enough for a typhoon notice to say what changes (TYMC's 直達車 line is in its first 60). */
 export const NOTICE_EXCERPT_MAX = 400;
 const NOTICE_BODY_TTL_MS = 30 * 60_000;
 

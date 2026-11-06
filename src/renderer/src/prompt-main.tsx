@@ -6,16 +6,22 @@ import { getMantineTheme, buildCssVariablesResolver, applyRootThemeVars } from '
 import { ExportPromptPanel } from './components/exportPrompt/ExportPromptPanel';
 import { ShareResultPanel } from './components/exportPrompt/ShareResultPanel';
 import type {
-  ExportPromptChoice, ExportPromptPayload, PanelHeight, ShareResultAction, ShareResultState,
+  ExportNameRequest, ExportNameResult, ExportPromptChoice, ExportPromptPayload, PanelHeight, ShareResultAction,
+  ShareResultState,
 } from '../../shared/types';
 import type { Theme } from '../../shared/themes';
 import './styles/globals.css';
+import { markHostPlatform } from './utils/hostPlatform';
+
+markHostPlatform();
 
 declare global {
   interface Window {
     renderExportPrompt?: (payload: ExportPromptPayload) => Promise<ExportPromptChoice | null>;
     renderShareResult?: (state: ShareResultState) => Promise<ShareResultAction>;
     nextPanelHeight?: () => Promise<PanelHeight>;
+    nextNameRequest?: () => Promise<ExportNameRequest>;
+    deliverName?: (result: ExportNameResult) => void;
   }
 }
 
@@ -70,6 +76,43 @@ window.nextPanelHeight = () => new Promise<PanelHeight>((resolve) => {
   deliverHeight = resolve;
 });
 
+// The panel has no preload: main polls for name requests and answers through `deliverName`.
+let pendingNameRequest: ExportNameRequest | null = null;
+let takeNameRequest: ((request: ExportNameRequest) => void) | null = null;
+const nameAnswers = new Map<number, (result: ExportNameResult) => void>();
+let nameRequestId = 0;
+
+function requestName(providerUrl: string): Promise<ExportNameResult> {
+  nameRequestId += 1;
+  const request: ExportNameRequest = { id: nameRequestId, providerUrl };
+  return new Promise<ExportNameResult>((resolve) => {
+    nameAnswers.set(request.id, resolve);
+    if (takeNameRequest) {
+      const take = takeNameRequest;
+      takeNameRequest = null;
+      take(request);
+      return;
+    }
+    pendingNameRequest = request;
+  });
+}
+
+window.nextNameRequest = () => new Promise<ExportNameRequest>((resolve) => {
+  if (pendingNameRequest !== null) {
+    const request = pendingNameRequest;
+    pendingNameRequest = null;
+    resolve(request);
+    return;
+  }
+  takeNameRequest = resolve;
+});
+
+window.deliverName = (result) => {
+  const answer = nameAnswers.get(result.id);
+  nameAnswers.delete(result.id);
+  answer?.(result);
+};
+
 let promptGeneration = 0;
 
 window.renderExportPrompt = (payload) => new Promise<ExportPromptChoice | null>((resolve) => {
@@ -93,6 +136,7 @@ window.renderExportPrompt = (payload) => new Promise<ExportPromptChoice | null>(
       onSubmit={settle}
       onCancel={() => settle(null)}
       onHeight={emitHeight}
+      onRequestName={requestName}
     />,
   );
 });

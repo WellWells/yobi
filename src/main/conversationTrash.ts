@@ -11,6 +11,7 @@ import { conversationBusyReason } from './conversationBusy';
 import { busyReasonReader } from './conversationBusyCheck';
 import { conversationTrashDir } from './conversationTrashPaths';
 import { getOutputDir, getUniquePath } from './files';
+import { cancelAwaitingRunsIn } from './flow/agent/agentRunStore';
 import { Mutex } from './flow/lanes';
 import { deleteConversationFiles, forgetOrphanedConversations } from './history/conversationHistory';
 
@@ -162,10 +163,7 @@ export async function listTrash(): Promise<TrashedConversation[]> {
   });
 }
 
-/**
- * Splits off the files something is writing to right now, or that an Agent run is waiting on an
- * answer for (the answer would land in a new file); those stay where they are.
- */
+/** Splits off the files something is writing to right now; those stay where they are. */
 function withoutBusy(
   filePaths: readonly string[],
   busy: TrashBusyFile[],
@@ -184,12 +182,13 @@ function withoutBusy(
  * two leaves an entry without a file (dropped by the sweep), never a file nobody can find.
  * `failed` lists the files that could not be moved; a file already gone is in neither list.
  * A file something is writing to (`conversationBusyReason`) is left and listed in `busy`: the
- * answer on its way would otherwise land in a new file at the top of the list.
+ * answer on its way would otherwise land in a new file at the top of the list. A question an Agent
+ * run left waiting does not hold its conversation: the run is cancelled once the file has gone.
  */
 export async function trashConversations(filePaths: readonly string[], outputDir: string, now = new Date()): Promise<TrashResult> {
   return lock.runExclusive(async () => {
     const busy: TrashBusyFile[] = [];
-    const busyReasonOf = await busyReasonReader(now.getTime());
+    const busyReasonOf = busyReasonReader();
     const present = withoutBusy(filePaths.filter((filePath) => existsSync(filePath)), busy, busyReasonOf);
     let entries: TrashEntry[];
     try {
@@ -216,6 +215,7 @@ export async function trashConversations(filePaths: readonly string[], outputDir
       return { trashIds: [], failed: present, busy };
     }
     const moved: TrashEntry[] = [];
+    const movedPaths: string[] = [];
     const failed: string[] = [];
     let skipped = 0;
     for (const { filePath, entry } of planned) {
@@ -229,11 +229,13 @@ export async function trashConversations(filePaths: readonly string[], outputDir
       try {
         await moveFile(filePath, storedPath(entry.trashId));
         moved.push(entry);
+        movedPaths.push(filePath);
       } catch {
         failed.push(filePath);
       }
     }
     if (failed.length + skipped > 0) await writeIndex([...entries, ...moved]).catch(() => undefined);
+    await cancelAwaitingRunsIn(movedPaths, now);
     return { trashIds: moved.map((entry) => entry.trashId), failed, busy };
   });
 }
@@ -314,7 +316,9 @@ export async function sweepExpiredTrash(outputDir: string, now = new Date()): Pr
 export async function deleteConversationsPermanently(filePaths: readonly string[], outputDir: string): Promise<number> {
   return lock.runExclusive(async () => {
     await fs.mkdir(conversationTrashDir(), { recursive: true }).catch(() => undefined);
-    return deleteConversationFiles(filePaths, outputDir, [conversationTrashDir()]);
+    const deleted = await deleteConversationFiles(filePaths, outputDir, [conversationTrashDir()]);
+    await cancelAwaitingRunsIn(filePaths.filter((filePath) => !existsSync(filePath)));
+    return deleted;
   });
 }
 

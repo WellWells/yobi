@@ -25,8 +25,8 @@ export interface PttMcpDeps {
 const BOARDS_MAX = 10;
 const PAGES_MAX = 3;
 /**
- * Closes every non-empty listing. Live run 2026-10-24: asked what people say about a topic, the
- * agent answered from the titles alone; the hint sits where the next step is decided.
+ * Closes every non-empty listing. Asked what people say about a topic, an agent may answer from
+ * the titles alone; the hint sits where the next step is decided.
  */
 const PUSHES_HINT = " Titles and scores only: what people said is in each post's pushes, read with ptt_read_post.";
 const PUSHES_MAX = 1_000;

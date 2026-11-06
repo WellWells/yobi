@@ -123,16 +123,16 @@ export async function fetchVariantTo(
 
 /**
  * The version this destination gets, or why there is none: the best under the destination's limit
- * (`telegramLimitBytes` for a Telegram chat: the person's, see `destinationLimitBytes`).
+ * (`chatLimitBytes` for a chat a file is sent to: the person's, see `destinationLimitBytes`).
  */
 export async function chooseVariant(
   media: XMedia,
   destination: XMediaDestination,
   signal?: AbortSignal,
-  telegramLimitBytes?: number,
+  chatLimitBytes?: number,
 ): Promise<SizedMediaVariant> {
   const variants = await sizedVariants(media, signal);
-  const limit = destinationLimitBytes(destination, telegramLimitBytes);
+  const limit = destinationLimitBytes(destination, chatLimitBytes);
   const picked = pickVariant(variants, media.durationMs, limit);
   if (picked) return picked;
   // A preview is not a chat with a limit: the post still shows, with the smallest version.

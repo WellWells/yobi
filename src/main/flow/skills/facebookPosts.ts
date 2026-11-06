@@ -1,7 +1,6 @@
-import { facebookHandleOf, parseFacebookUrl, type FacebookRef } from '../../../shared/facebookLinks';
+import { facebookHandleOf, facebookPhotoLink, parseFacebookUrl, type FacebookRef } from '../../../shared/facebookLinks';
 import { photoMedia, videoMedia, type FacebookPage } from './facebookMedia';
 import { arr, num, obj, str, type Json } from './jsonPick';
-import { combineAudience, type PostAudience } from './postAudience';
 import type { XMedia, XPost, XThread } from './xPosts';
 
 /**
@@ -18,11 +17,14 @@ function textOf(value: unknown): string {
   return str(obj(value)?.text);
 }
 
-/** A post's own comments thread: `feedback:<post id>`, never a comment's (`feedback:<post>_<comment>`). */
+/**
+ * A post's or a photo's own comments thread: `feedback:<id>`, numbered or a photo's `pfbid0…`, never
+ * a comment's (`feedback:<post>_<comment>`).
+ */
 function postFeedbackId(value: unknown): string {
   const id = str(obj(value)?.id);
   try {
-    return /^feedback:\d+$/.test(atob(id)) ? id : '';
+    return /^feedback:(?:\d+|pfbid0[A-Za-z0-9]+)$/.test(atob(id)) ? id : '';
   } catch {
     return '';
   }
@@ -107,7 +109,7 @@ function readFields(page: FacebookPage, objects: readonly Json[]): PostFields {
     fields.text ||= messageOf(o);
     fields.name ||= actor.name;
     fields.author ||= facebookHandleOf(actor.url);
-    fields.createdAt ||= (num(o.creation_time) || num(story?.creation_time) || num(o.publish_time)) * 1_000;
+    fields.createdAt ||= (num(o.creation_time) || num(story?.creation_time) || num(o.publish_time) || num(o.created_time)) * 1_000;
     fields.feedbackId ||= postFeedbackId(o.feedback) || postFeedbackId(story?.feedback);
     fields.postId ||= str(o.post_id) || str(story?.post_id);
     fields.link ||= parseFacebookUrl(str(o.permalink_url) || str(story?.url))?.url ?? '';
@@ -127,31 +129,12 @@ export interface FacebookRead {
   feedbackId: string;
 }
 
-/** The audience icon Facebook draws for "Public" (a globe), by its name. */
-const PUBLIC_ICON = 'everyone';
-
-/**
- * Who Facebook shows a post to: the audience icon its header draws, `privacy_scope.icon_image.name`
- * on the story or on another object with the story's id — a video's story is its `creation_story`.
- * `everyone` is public; any other name (friends, a list, a group, only me) is restricted; an icon
- * given only as a picture (a reel page's) marks nothing.
+/*
+ * A post page names no audience the reader trusts: its header's audience icon is a name Facebook
+ * chooses (a public page's post came as `custom`, signed out too) next to text in the viewer's
+ * language. Who may see a post is told by who could read it (`facebookReader.ts`).
  */
-function storyAudience(page: FacebookPage, objects: readonly Json[]): PostAudience {
-  const names = new Set<string>();
-  const stories = objects.flatMap((o) => [o, obj(o.creation_story)]).filter((o): o is Json => o !== undefined);
-  for (const o of stories) {
-    for (const copy of [o, ...(page.byId.get(str(o.id)) ?? [])]) {
-      const name = str(obj(obj(copy.privacy_scope)?.icon_image)?.name);
-      if (name) names.add(name);
-    }
-  }
-  if (names.size === 0) return 'unknown';
-  return names.size === 1 && names.has(PUBLIC_ICON) ? 'public' : 'restricted';
-}
-
-function postOf(
-  page: FacebookPage, fields: PostFields, ref: FacebookRef, media: XMedia[], quoteMedia: XMedia[], audience: PostAudience,
-): XPost {
+function postOf(page: FacebookPage, fields: PostFields, ref: FacebookRef, media: XMedia[], quoteMedia: XMedia[]): XPost {
   return {
     id: fields.postId || ref.id,
     author: fields.author,
@@ -166,7 +149,6 @@ function postOf(
     isRepost: false,
     media,
     quoteMedia,
-    audience,
   };
 }
 
@@ -180,8 +162,25 @@ export function readVideoPage(page: FacebookPage, ref: FacebookRef): FacebookRea
   const fields = readFields(page, posts);
   if (!video && !fields.text && !fields.feedbackId) return null;
   // The link it was read from: a reel stays a reel, rather than the page's `/videos/` permalink.
-  const focal = postOf(page, { ...fields, link: '' }, ref, video ? [video] : [], [], storyAudience(page, posts));
+  const focal = postOf(page, { ...fields, link: '' }, ref, video ? [video] : [], []);
   return { thread: { focal, replies: [] }, feedbackId: fields.feedbackId };
+}
+
+/**
+ * A photo's own page, read by the photo's id: that photo alone, whichever post it is in, with its
+ * own comments. One photo of several has no text of its own, so the post's (`container_story`)
+ * comes after its fields. Null when the page does not show this photo.
+ */
+export function readPhotoLinkPage(page: FacebookPage, ref: FacebookRef): FacebookRead | null {
+  const photo = photoMedia(page, ref.id);
+  if (!photo) return null;
+  const objects = page.byId.get(ref.id) ?? [];
+  const containers = objects.map((o) => obj(o.container_story)).filter((o): o is Json => o !== undefined);
+  const fields = readFields(page, [...objects, ...containers]);
+  const owner = fields.author || str(objects.map(actorOf).find(Boolean)?.id);
+  // The photo's own link and id: the post's would show every photo in it and name the files alike.
+  const link = owner ? facebookPhotoLink(ref.id, owner) : ref.url;
+  return { thread: { focal: postOf(page, { ...fields, postId: '', link }, ref, [photo], []), replies: [] }, feedbackId: fields.feedbackId };
 }
 
 /** The single-post route's own post; with a numbered id, the post of that id. */
@@ -271,7 +270,5 @@ export function readPostPage(page: FacebookPage, ref: FacebookRef, photos: Reado
   const quoteMedia = mediaOf(page, attachmentsOf(sharedObjects), photos).filter((q) => !media.some((m) => sameMedia(m, q)));
   const links = linkPreviews(attachments).filter((url) => !fields.text.includes(url));
   const text = [[fields.text, ...links].filter(Boolean).join('\n'), quote].filter(Boolean).join('\n\n');
-  // A shared post goes out with it (its text, its media): both must be public.
-  const audience = combineAudience([storyAudience(page, objects), ...(shared ? [storyAudience(page, sharedObjects)] : [])]);
-  return { thread: { focal: postOf(page, { ...fields, text }, ref, media, quoteMedia, audience), replies: [] }, feedbackId: fields.feedbackId };
+  return { thread: { focal: postOf(page, { ...fields, text }, ref, media, quoteMedia), replies: [] }, feedbackId: fields.feedbackId };
 }

@@ -27,6 +27,13 @@ const IMGUR_PATH = /^\/([A-Za-z0-9]{7}|[A-Za-z0-9]{5})(?:\.(jpe?g|png|gif|gifv|m
 const IMGUR_SIZES: ReadonlyArray<readonly [suffix: string, width: number]> = [['', 2_560], ['h', 1_024], ['l', 640], ['m', 320]];
 
 const LINK_RE = /https?:\/\/[^\s<>"'）]+/g;
+const QUOTE_MARKS = /^(?::(?: |$))+/;
+
+/** The line without its quote marks, and how many quotes deep it sits: 0 for the author's own. */
+export function quotedLine(line: string): { depth: number; words: string } {
+  const marks = QUOTE_MARKS.exec(line)?.[0] ?? '';
+  return { depth: marks.split(':').length - 1, words: line.slice(marks.length) };
+}
 
 /** Every line's trailing blanks gone, runs of empty lines down to one, none at either end. */
 export function tidy(text: string): string {
@@ -77,11 +84,12 @@ export function pttImage(source: string): PttImage | null {
   return /\.(?:jpe?g|png)$/i.test(url.pathname) ? { source, url: url.href } : null;
 }
 
-/** The pictures the text links, in order, each once: at most a Telegram album's worth. */
+/** The pictures the author's own lines link, in order, each once: at most a Telegram album's worth. */
 export function imagesIn(text: string): PttImage[] {
   const out: PttImage[] = [];
   const seen = new Set<string>();
-  for (const [source] of text.matchAll(LINK_RE)) {
+  const ownLines = text.split('\n').filter((line) => quotedLine(line).depth === 0);
+  for (const [source] of ownLines.join('\n').matchAll(LINK_RE)) {
     const image = pttImage(source);
     if (!image || seen.has(image.url)) continue;
     seen.add(image.url);

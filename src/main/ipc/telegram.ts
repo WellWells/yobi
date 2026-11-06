@@ -71,19 +71,6 @@ export function registerTelegramHandlers(ctx: IpcContext): void {
     { failure: 'Failed to update Telegram group setting' },
   );
 
-  ipcMain.handle(IPC.UPDATE_TELEGRAM_DEFAULT_REPLY_MODE, (_event, mode: 'markdown' | 'png' | 'webp' | 'pdf') => {
-    if (mode !== 'markdown' && mode !== 'png' && mode !== 'webp' && mode !== 'pdf') return false;
-    config.telegram.defaultReplyMode = mode;
-    saveConfig({ telegram: config.telegram });
-    return true;
-  });
-
-  ipcMain.handle(IPC.UPDATE_TELEGRAM_COMPACT_REPLY, (_event, value: unknown) => {
-    config.telegram.compactReply = Boolean(value);
-    saveConfig({ telegram: config.telegram });
-    return true;
-  });
-
   ipcMain.handle(IPC.UPDATE_TELEGRAM_LLM_DIRECT, (_event, value: unknown) => {
     config.telegram.llmDirect = normalizeLlmDirect(value);
     saveConfig({ telegram: config.telegram });

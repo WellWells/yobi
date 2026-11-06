@@ -5,8 +5,7 @@ export { pttKeywordHasOperator } from '../../shared/pttBoard';
 
 /*
  * What www.ptt.cc/bbs/<board>/index.html and /search show, and the URLs that ask for them. Pure:
- * no network here. The page markup and the `q` syntax were measured on 2026-10-24 (see the PTT
- * board subscription design).
+ * no network here.
  */
 
 const PTT_ORIGIN = 'https://www.ptt.cc';

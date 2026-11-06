@@ -10,10 +10,13 @@ import { isYoutubeUrl, fetchYoutubeVideo } from './youtubeTranscript';
 import { isMapsUrl } from './mapReviews';
 import { splitMapsQuestion } from './mapQuestion';
 import { resolveMapsPrompt } from './mapUrlPrompt';
+import { resolveAgodaPrompt, splitAgodaQuestion } from './agodaUrlPrompt';
+import { isAgodaHotelUrl } from './agodaReviews';
 import { mapsLinksRecognized } from './linkRecognition';
 import type { MapPlaceRef } from '../shared/conversationDoc';
 import { withVideoSlots } from '../shared/youtubePrompt';
 import { fillTemplate } from '../shared/fillTemplate';
+import { isVerificationWall, VerificationWallError } from './net/verificationWall';
 
 export { fetchRawText, fetchRawResponse, ensureHttpScheme, runParserBlocks, runCssSelector, parseRssFeed, extractFeedLinks, withVideoSlots };
 export type { ParserBlock, ParserBlockType, RssFeedItem };
@@ -113,9 +116,10 @@ export async function fetchAndParse(url: string, options?: FetchAndParseOptions)
     return { title: url, url, cleanedText: raw, truncated: html.length > MAX_CONTENT_CHARS };
   }
 
-  if (options?.bodyText) return bodyTextOf(html, url);
-
-  return parseHtml(html, url);
+  const parsed = options?.bodyText ? bodyTextOf(html, url) : parseHtml(html, url);
+  // A wall's text is not the page: the reader skips it (`net/verificationWall.ts`).
+  if (isVerificationWall(html, parsed.cleanedText.length)) throw new VerificationWallError(url);
+  return parsed;
 }
 
 // `url` is the address the page was served from (after redirects), so callers can
@@ -215,6 +219,12 @@ function bodyTextOf(html: string, sourceUrl: string): UrlParseResult {
 
 export interface ParseHtmlOptions {
   blockBreaks?: boolean;
+  /**
+   * A thread: its replies are content, so the text comes from `<main>` or the body, never the
+   * first `<article>` — on forums that mark each post up as one (Discourse, XenForo) that is the
+   * opening post alone.
+   */
+  discussion?: boolean;
 }
 
 const BLOCK_BREAK_SELECTOR =
@@ -241,11 +251,14 @@ export function parseHtml(html: string, sourceUrl: string, options?: ParseHtmlOp
     });
   }
 
-  const contentEl = $('article, [role="main"], main').first();
+  const contentEl = $(options?.discussion ? '[role="main"], main' : 'article, [role="main"], main').first();
   const rawText = (contentEl.length ? contentEl : $('body')).text();
 
+  // Indented markup leaves lines holding one space; left in, they kept `\n{3,}` from collapsing
+  // and a long thread would spend hundreds of its characters on blank lines.
   const cleanedText = rawText
     .replace(/[ \t]+/g, ' ')
+    .replace(/ ?\n ?/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 
@@ -268,6 +281,11 @@ interface UrlPromptContext {
   /** Where the prompt will be sent; fetched content is fitted to this model's input limit. */
   targetUrl: string;
   onLog: (msg: string) => void;
+  /**
+   * Reads an Agoda hotel link's reviews (alone or with a question) instead of its page. Desktop
+   * chat and the hotkey only: a bot or /agent run leaves it off and gets today's page read.
+   */
+  hotelReviews?: boolean;
 }
 
 export interface ResolvedPrompt {
@@ -285,8 +303,10 @@ export async function resolveUrlPrompt(text: string, ctx: UrlPromptContext): Pro
   const maps = mapsLinksRecognized();
   if (!isSingleUrl(text)) {
     const asked = maps ? splitMapsQuestion(text) : null;
-    if (!asked) return { prompt: text };
-    return await resolveMapsPrompt(asked.url, asked.question, ctx) ?? { prompt: text };
+    if (asked) return await resolveMapsPrompt(asked.url, asked.question, ctx) ?? { prompt: text };
+    const hotel = ctx.hotelReviews ? splitAgodaQuestion(text) : null;
+    if (hotel) return await resolveAgodaPrompt(hotel.url, hotel.question, ctx) ?? { prompt: text };
+    return { prompt: text };
   }
 
   if (isYoutubeUrl(text)) return resolveYoutubePrompt(text, ctx);
@@ -296,11 +316,16 @@ export async function resolveUrlPrompt(text: string, ctx: UrlPromptContext): Pro
     if (maps) return maps;
   }
 
+  if (ctx.hotelReviews && isAgodaHotelUrl(text)) {
+    const hotel = await resolveAgodaPrompt(text.trim(), '', ctx);
+    if (hotel) return hotel;
+  }
+
   const logFetching = ctx.langData['urlParser.log.fetching'] ?? '🔗 URL detected — fetching page content...';
   ctx.onLog(logFetching);
 
   try {
-    const parsed = await fetchAndParse(text);
+    const parsed = await readLinkedPage(text.trim()) ?? await fetchAndParse(text);
     const promptTemplate = ctx.langData['urlParser.prompt'] ?? '';
     // Only a truncated page carries the "say it is incomplete" request. Asking the model to judge
     // truncation on every page made it add "no truncation found" notes to complete summaries.
@@ -317,6 +342,11 @@ export async function resolveUrlPrompt(text: string, ctx: UrlPromptContext): Pro
     ctx.onLog(logError);
     return { prompt: text };
   }
+}
+
+/** The text alone, or null to read the page the usual way. Loaded on the first pasted link. */
+async function readLinkedPage(link: string): Promise<UrlParseResult | null> {
+  return (await import('./pageRead/pageUrlPrompt')).pagePromptFor(link);
 }
 
 async function resolveYoutubePrompt(text: string, ctx: UrlPromptContext): Promise<ResolvedPrompt> {

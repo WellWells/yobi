@@ -5,6 +5,7 @@ import type {
 } from '../../shared/types';
 import type { SocketBotOutgoing } from '../botChat/socketRuntime';
 import type { ResearchProgress } from '../../shared/researchProgress';
+import type { SearchAsker } from '../search/types';
 import type { RecipientDirectory } from '../../shared/botRecipients';
 import type { StepProgress } from '../../shared/stepProgress';
 import type { LineCarouselItem } from '../line/pickCarousel';
@@ -22,6 +23,8 @@ export interface FlowExecutorDeps {
   getWorkerWin: () => BrowserWindow | null;
   /** A research call's checklist, re-sent whole each time a phase or a count changes. */
   onResearchProgress?: (progress: ResearchProgress) => void;
+  /** Set by `/agent` only: the person its research keywords were written for. A flow's query is its own. */
+  researchAsker?: SearchAsker;
   /** One run's long step reporting where it is (a download's percentage). */
   onStepProgress?: (progress: StepProgress) => void;
   ensureWorkerWin?: () => Promise<BrowserWindow | null>;

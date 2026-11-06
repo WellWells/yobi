@@ -1,10 +1,11 @@
 import { config } from '../config';
+import { isLineSelfChat } from '../lineSelf/chats';
 import { isBotSelfAccount } from '../memory/memoryContext';
 import { loadUserMemory } from '../memory/memoryStore';
 import type { UserMemoryState } from '../memory/memoryState';
 import {
   NO_BOT_RIGHTS,
-  groupGrantsOf,
+  botGroupGrantsOf,
   normalizeGrantList,
   resolveBotRights,
   resolveGroupRights,
@@ -39,9 +40,29 @@ export function isBotUserBlocked(platform: BotPlatform, userId: string): boolean
   return Boolean(id) && (config[platform]?.blockedUsers ?? []).includes(id) && !isBotUserPaired(platform, id);
 }
 
-/** The grants one group gives everyone in it, or null while it waits for the owner's approval. */
+/**
+ * The grants one group gives everyone in it, or null while it waits for the owner's approval. LINE
+ * PC's chats never wait (`botGroupsNeedApproval`): with nothing set, a group or a 1:1 chat gives
+ * everyone nothing, and each person there asks on their own rights. Its other chats (open chats)
+ * are never the bot's, so they stay closed like a pending group.
+ */
 function getGroupGrants(platform: BotPlatform, chatId: string): BotGroupGrant[] | null {
-  return groupGrantsOf(config[platform]?.groupPermissions, chatId);
+  if (platform === 'lineSelf' && !isLineSelfChat(chatId)) return null;
+  return botGroupGrantsOf(platform, config[platform]?.groupPermissions, chatId);
+}
+
+/**
+ * Whether this chat is the person's own for their rights: their private chat, or — on LINE PC,
+ * where only the user has a private chat and everyone else asks in a group they share with the
+ * user — any group or 1:1 chat. A paired account's rights there follow the person, not the chat
+ * (the user's own, or what the user granted someone they let in); the unpaired get the group's
+ * grants only.
+ * Personal memory is not decided here: it stays in the private chat (`botMemoryContext`), since it
+ * reaches every answer unasked and the others in a group read them.
+ */
+function isOwnChat(platform: BotPlatform, userId: string, chatId: string): boolean {
+  if (!chatId) return false;
+  return chatId === userId || platform === 'lineSelf';
 }
 
 /**
@@ -58,8 +79,9 @@ export function isBotGroupPending(platform: BotPlatform, chatId: string): boolea
  * What one person may do in one chat, from the config and the memory file as they are now.
  * `state` is the user-memory file (for the "me" mark); null — unreadable — means not the owner.
  * - a private chat: a paired account's own rights; an unpaired person gets nothing;
- * - a group the owner has allowed: what the group grants everyone, plus a paired account's own
- *   rights there; a group still pending: nothing for anyone;
+ * - a group the owner has allowed (LINE PC: any group or 1:1 chat): what the group grants
+ *   everyone, plus a paired account's own rights there (LINE PC: all of them, as in the private
+ *   chat); a group still pending: nothing for anyone;
  * - blocked: nothing anywhere.
  */
 export function computeBotRights(
@@ -76,7 +98,12 @@ export function computeBotRights(
   if (groupGrants === null) return { ...NO_BOT_RIGHTS };
   const paired = isBotUserPaired(platform, id);
   const own = paired
-    ? resolveBotRights({ platform, isOwner: state ? isBotSelfAccount(state, platform, id) : false, isPrivate, grants: getBotGrants(platform, id) })
+    ? resolveBotRights({
+      platform,
+      isOwner: state ? isBotSelfAccount(state, platform, id) : false,
+      isPrivate: isPrivate || isOwnChat(platform, id, chat),
+      grants: getBotGrants(platform, id),
+    })
     : { ...NO_BOT_RIGHTS };
   if (isPrivate || !chat) return own;
   return unionBotRights(own, resolveGroupRights(groupGrants));
@@ -107,7 +134,7 @@ export function computeBotFlowAdmin(
   chatId: string,
 ): boolean {
   const id = String(userId ?? '').trim();
-  if (!id || String(chatId ?? '').trim() !== id || !isBotUserPaired(platform, id)) return false;
+  if (!id || !isOwnChat(platform, id, String(chatId ?? '').trim()) || !isBotUserPaired(platform, id)) return false;
   if (state && isBotSelfAccount(state, platform, id)) return true;
   return platform === 'telegram' && getBotGrants(platform, id).includes('admin');
 }
@@ -125,7 +152,7 @@ export function computeBotConnectorChanges(
   chatId: string,
 ): boolean {
   const id = String(userId ?? '').trim();
-  if (!id || String(chatId ?? '').trim() !== id || !isBotUserPaired(platform, id)) return false;
+  if (!id || !isOwnChat(platform, id, String(chatId ?? '').trim()) || !isBotUserPaired(platform, id)) return false;
   return state !== null && isBotSelfAccount(state, platform, id);
 }
 

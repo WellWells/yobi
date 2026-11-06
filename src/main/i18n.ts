@@ -7,6 +7,7 @@ import { CLAUDE_BUSY, CLAUDE_LEFT_CONVERSATION } from './providers/claudeReadScr
 import { parseGeminiPromptTooLong } from './providers/geminiPromptTooLong';
 import { GEMINI_SIGNED_OUT_PROMPT_CAP } from './providers/geminiSignInState';
 import { WORKER_WINDOW_UNAVAILABLE } from './workerWindowError';
+import { NATIVE_CORE_UNAVAILABLE_TEXT } from './line/nativeContract';
 import { QUEUE_CANCELLED } from './flow/flowQueue';
 import { parseFlowRequestTooLong, parseFlowTooLongToRevise } from './flow/flowBuildTooLong';
 import { mtprotoErrorKey } from './telegram/mtproto/errors';
@@ -93,6 +94,8 @@ export function t(
 const LOGIN_REQUIRED_RE = /\b(GEMINI|CHATGPT|CLAUDE|PERPLEXITY)_LOGIN_REQUIRED\b/;
 /** `siteVerification.ts`'s two English diagnostics: `<site> needs a one-time verification…` / `<site> verification was not completed…`. */
 const SITE_VERIFICATION_RE = /^(\S+) (needs) a one-time verification in Yobi on this computer|^(\S+) verification was not completed/;
+/** `verificationWallMessage`'s English: `<site> shows a human-verification check…`. */
+const VERIFICATION_WALL_RE = /^(\S+) shows a human-verification check that cannot be answered unattended/;
 const LOGIN_REQUIRED_PROVIDERS: Record<string, string> = {
   GEMINI: 'Gemini',
   CHATGPT: 'ChatGPT',
@@ -117,7 +120,7 @@ const PROVIDER_ERROR_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
 ];
 
 /**
- * Step failures the statistics page showed in raw English (2026-10-19): Telegram's answer to a
+ * Step failures the statistics page would show in raw English: Telegram's answer to a
  * send whose chat id the bot cannot reach (grammY wraps it as `Call to 'sendMessage' failed!
  * (400: Bad Request: chat not found)`), and the page reader giving up on a page (`pageLoader.ts`).
  */
@@ -201,6 +204,7 @@ function localizeKnownError(raw: string, strings: Record<string, string>): strin
   const upload = mtprotoErrorKey(raw);
   if (upload) return t(strings, upload.key, upload.vars);
   if (raw.startsWith(WORKER_WINDOW_UNAVAILABLE)) return t(strings, 'main.error.workerWindowUnavailable');
+  if (raw.startsWith(NATIVE_CORE_UNAVAILABLE_TEXT)) return t(strings, 'main.error.lineCoreUnavailable');
   const overChars = parseFlowRequestTooLong(raw);
   if (overChars !== null) return t(strings, 'main.error.flowRequestTooLong', { chars: overChars.toLocaleString('en-US') });
   const flowOverChars = parseFlowTooLongToRevise(raw);
@@ -214,6 +218,9 @@ function localizeKnownError(raw: string, strings: Record<string, string>): strin
     const key = verify[2] ? 'flow.error.siteVerificationNeeded' : 'flow.error.siteVerificationIncomplete';
     return t(strings, key, { site: verify[1] ?? verify[3] });
   }
+  // A page that was a human-verification wall on an unattended read (`net/verificationWall.ts`).
+  const wall = VERIFICATION_WALL_RE.exec(raw);
+  if (wall) return t(strings, 'flow.error.verificationWall', { site: wall[1] });
   // A limit above the signed-out cap only happens signed in, so only the smaller one hints at signing in.
   const tooLong = parseGeminiPromptTooLong(raw);
   if (tooLong) {
@@ -256,6 +263,7 @@ export function localizeUserFacingError(raw: string, strings: Record<string, str
   const prefixHandlers: [string, string][] = [
     ['BYOK configuration incomplete: ', 'main.error.byokConfigIncomplete'],
     ['BYOK image unusable: ', 'main.error.byokImageUnusable'],
+    ['BYOK refused: ', 'main.error.byokRefused'],
     ['BYOK request failed: ', 'main.error.byokRequestFailed'],
   ];
   for (const [prefix, key] of prefixHandlers) {

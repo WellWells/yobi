@@ -2,8 +2,8 @@
  * The operators' own route maps. No map file is kept in the app and no map URL is fixed: five of
  * the eight systems put a version in the file name (Taipei `routemap2026-…`, New Taipei a
  * base64 name plus an upload number, KRTC a hex id on its PDFs), so every map is found again on
- * the operator's page that shows it, then fetched from the operator's own host. Measured
- * 2026-10-22; `npm run test:rail` re-reads every page before a release.
+ * the operator's page that shows it, then fetched from the operator's own host. The release
+ * self-test re-reads every page.
  */
 import { load } from 'cheerio';
 import { railFetch, browserHeaders, RailHttpError } from '../rail/railHttp';

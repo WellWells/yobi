@@ -26,11 +26,11 @@ export const FACEBOOK_TOOLS: Tool[] = [
   {
     name: 'facebook_post',
     description:
-      'Read one Facebook post, reel or video: author, time, text (a shared post\'s text quoted under it), the photo and video URLs, and up to 40 comments — a sample, so comments_read is usually below comment_count on a busy post. Share links (facebook.com/share/…, fb.watch) work too. Posts only friends or a group\'s members may see need the user signed in to Facebook in Yobi.',
+      'Read one Facebook post, photo, reel or video: author, time, text (a shared post\'s text quoted under it), the photo and video URLs, and up to 40 comments — a sample, so comments_read is usually below comment_count on a busy post. Share links (facebook.com/share/…, fb.watch) work too. Posts only friends or a group\'s members may see need the user signed in to Facebook in Yobi.',
     inputSchema: {
       type: 'object',
       properties: {
-        url: { type: 'string', description: 'The post, reel or video URL (https://www.facebook.com/reel/<id>/, /<page>/posts/<id>, /watch/?v=<id>, or a share link)' },
+        url: { type: 'string', description: 'The post, photo, reel or video URL (https://www.facebook.com/reel/<id>/, /<page>/posts/<id>, /photo.php?fbid=<id>, /watch/?v=<id>, or a share link)' },
         max_comments: { type: 'number', description: `Max comments (default 20, at most ${COMMENTS_MAX})` },
       },
       required: ['url'],
@@ -65,7 +65,7 @@ async function dispatch(service: FacebookServiceLike, name: string, args: Record
   const raw = typeof args.url === 'string' ? args.url.trim() : '';
   const ref = parseFacebookUrl(raw);
   if (!ref) {
-    throw new Error(`Not a Facebook post URL: '${raw}'. Expected https://www.facebook.com/reel/<id>/, /<page>/posts/<id>, /watch/?v=<id> or a share link.`);
+    throw new Error(`Not a Facebook post URL: '${raw}'. Expected https://www.facebook.com/reel/<id>/, /<page>/posts/<id>, /photo.php?fbid=<id>, /watch/?v=<id> or a share link.`);
   }
   const thread = await service.read(ref.url);
   const media = thread.focal.media.length > 0 ? thread.focal.media : thread.focal.quoteMedia;

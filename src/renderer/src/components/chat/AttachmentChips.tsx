@@ -1,45 +1,41 @@
 import React from 'react';
-import { ActionIcon, Box, Group, Image, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Box, Group, Image, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { FileText, X } from 'lucide-react';
 import { formatByteSize } from '../../utils/byteSize';
+
+const CHIP_MAX_WIDTH = 220;
 
 export interface AttachmentChipItem {
   id: string;
   name: string;
   size?: number;
   previewUrl?: string;
+  /** Where it is on this computer: with `onOpen`, the chip is a button. */
+  path?: string;
 }
 
 interface AttachmentChipsProps {
   attachments: readonly AttachmentChipItem[];
   onRemove?: (id: string) => void;
   removeLabel?: string;
-}
-
-export function chipsFromNames(names: readonly string[]): AttachmentChipItem[] {
-  if (!Array.isArray(names)) return [];
-  return names
-    .filter((name): name is string => typeof name === 'string' && name.length > 0)
-    .map((name, index) => ({ id: `${index}-${name}`, name }));
+  onOpen?: (path: string) => void;
+  onOpenMenu?: (path: string, event: React.MouseEvent) => void;
 }
 
 export const AttachmentChips: React.FC<AttachmentChipsProps> = ({
   attachments,
   onRemove,
   removeLabel,
+  onOpen,
+  onOpenMenu,
 }) => {
   if (attachments.length === 0) return null;
 
   return (
     <Group gap={8} wrap="wrap">
-      {attachments.map((attachment) => (
-        <Tooltip
-          key={attachment.id}
-          label={attachment.size === undefined
-            ? attachment.name
-            : `${attachment.name} · ${formatByteSize(attachment.size)}`}
-          position="top"
-        >
+      {attachments.map((attachment) => {
+        const { path } = attachment;
+        const chip = (
           <Group
             gap={8}
             wrap="nowrap"
@@ -49,7 +45,7 @@ export const AttachmentChips: React.FC<AttachmentChipsProps> = ({
             style={{
               border: '1px solid var(--mantine-color-default-border)',
               borderRadius: 'var(--mantine-radius-md)',
-              maxWidth: 220,
+              maxWidth: CHIP_MAX_WIDTH,
             }}
           >
             {attachment.previewUrl ? (
@@ -75,8 +71,27 @@ export const AttachmentChips: React.FC<AttachmentChipsProps> = ({
               </ActionIcon>
             )}
           </Group>
-        </Tooltip>
-      ))}
+        );
+        return (
+          <Tooltip
+            key={attachment.id}
+            label={attachment.size === undefined
+              ? attachment.name
+              : `${attachment.name} · ${formatByteSize(attachment.size)}`}
+            position="top"
+          >
+            {path && onOpen ? (
+              <UnstyledButton
+                onClick={() => onOpen(path)}
+                onContextMenu={(event: React.MouseEvent) => onOpenMenu?.(path, event)}
+                style={{ maxWidth: CHIP_MAX_WIDTH }}
+              >
+                {chip}
+              </UnstyledButton>
+            ) : chip}
+          </Tooltip>
+        );
+      })}
     </Group>
   );
 };

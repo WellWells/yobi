@@ -20,7 +20,6 @@ export const TAG_SETS = {
   editor: ['settings.editor', 'settings.search.alias.editor'],
   links: ['settings.linkRecognition', 'settings.search.alias.links'],
   ytdl: ['settings.ytdl', 'ytdl.tools', 'settings.bot.perm.who.downloader', 'settings.search.alias.ytdl'],
-  calendars: ['settings.calendars', 'settings.search.alias.calendars'],
   theme: ['settings.theme', 'settings.search.alias.theme'],
   reading: [
     'settings.appearance', 'layout.stacked', 'layout.sideBySide',
@@ -35,7 +34,8 @@ export const TAG_SETS = {
   memory: ['settings.memory', 'settings.search.alias.memory'],
   accounts: ['settings.accounts', 'settings.modelSources', 'settings.search.alias.accounts'],
   byok: ['settings.byok', 'settings.search.alias.byok'],
-  mcp: ['settings.mcp', 'settings.search.alias.mcp'],
+  // Calendars are entered on the Calendar connector's card, so their words find this card.
+  mcp: ['settings.mcp', 'settings.calendars', 'settings.search.alias.mcp', 'settings.search.alias.calendars'],
   // The shared commands card, and each platform card on its own: one platform's name must not
   // pull in the other platform's card. The per-account permission editor renders inside each
   // platform's paired list, so both carry its strings; the admin grant is Telegram-only.
@@ -44,6 +44,7 @@ export const TAG_SETS = {
   line: ['settings.line', ...BOT_ACCOUNT_KEYS, 'settings.search.alias.line'],
   discord: ['settings.discord', ...BOT_ACCOUNT_KEYS, 'settings.search.alias.discord'],
   slack: ['settings.slack', ...BOT_ACCOUNT_KEYS, 'settings.search.alias.slack'],
+  lineSelf: ['settings.lineSelf', ...BOT_ACCOUNT_KEYS, 'settings.search.alias.lineSelf'],
   stats: ['settings.stats', 'settings.search.alias.stats'],
   config: ['settings.config', 'settings.backup', 'settings.search.alias.config'],
   danger: ['settings.danger', 'settings.reset', 'settings.group.danger', 'settings.search.alias.danger'],
@@ -55,8 +56,8 @@ export const CATEGORY_TAG_MAP: Record<Category, (keyof typeof TAG_SETS)[]> = {
   accounts: ['accounts', 'byok'],
   ai: ['timeout', 'prompt', 'youtube'],
   memory: ['memory'],
-  connectors: ['mcp', 'calendars'],
-  bots: ['telegram', 'line', 'discord', 'slack', 'bots'],
+  connectors: ['mcp'],
+  bots: ['telegram', 'line', 'lineSelf', 'discord', 'slack', 'bots'],
   general: ['language', 'tray', 'editor'],
   appearance: ['theme', 'reading'],
   notifications: ['notify'],

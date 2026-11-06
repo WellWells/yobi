@@ -33,10 +33,10 @@ export interface BatchAction {
 
 /**
  * Builders that write, or whose second call depends on the first (`build_flow` reads the assessment
- * `assess_flow` left behind), and `draw_image`, whose picture is part of the answer rather than a
- * read. None belongs in a set of calls that run side by side.
+ * `assess_flow` left behind), and `draw_image` and `export_file`, whose picture or file is part of
+ * the answer rather than a read. None belongs in a set of calls that run side by side.
  */
-const SEQUENTIAL_BUILTINS = new Set<string>(['assess_flow', 'build_flow', 'edit_flow', 'draw_image']);
+const SEQUENTIAL_BUILTINS = new Set<string>(['assess_flow', 'build_flow', 'edit_flow', 'draw_image', 'export_file']);
 
 export interface BatchValidationContext {
   scope: AgentToolScope;
@@ -117,7 +117,7 @@ export function validateBatchAction(
 }
 
 /** Tools whose work is model calls: they share one resource, the provider behind the run. */
-const LLM_BACKED = new Set<string>(['research', 'llm', 'delegate']);
+const LLM_BACKED = new Set<string>(['research', 'llm', 'delegate', 'agoda_reviews']);
 
 /**
  * What a call contends for. Calls on the same resource run one after another; different resources

@@ -29,7 +29,7 @@ import { getSecretHealth, isSecretEncryptionAvailable } from '../secretHealth';
 import { clearAuthRecord } from '../mcp/mcpTokenStore';
 import { getMcpRegistry } from '../mcp';
 import { setDataKey } from '../dataKeyStore';
-import { clearCalendarUrl } from '../calendar/calendarStore';
+import { clearBrokenCalendarSecret } from '../calendar/calendarStore';
 import { flushPendingTempChatResult, isTempChatMode, setTempChatMode } from '../tempChat';
 import { getWorkerWin } from '../windows';
 import { llmLane } from '../flow/lanes';
@@ -100,7 +100,7 @@ function clearBrokenSecret(raw: unknown): { ok: boolean } {
 
   if (target.scope === 'mcp') clearAuthRecord(target.id);
   else if (target.scope === 'dataKey') setDataKey(target.id, '');
-  else if (target.scope === 'calendar') clearCalendarUrl(target.id);
+  else if (target.scope === 'calendar') clearBrokenCalendarSecret(target.id);
   else clearStoredSecret(target.scope, target.id, target.field);
 
   sendLog(`🗑️ Removed an unreadable stored secret: ${target.scope}.${target.field}`);

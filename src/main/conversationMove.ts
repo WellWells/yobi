@@ -94,8 +94,7 @@ export async function moveConversations(paths: readonly string[], targetDir: str
     return { outcomes: [], error: 'invalidTarget' };
   }
 
-  // Read once: a question an Agent run left waiting, after a restart too, holds its conversation.
-  const busyReasonOf = await busyReasonReader();
+  const busyReasonOf = busyReasonReader();
   const outcomes: ConversationMoveOutcome[] = [];
   const moved: Array<ConversationMove & { id: string }> = [];
 

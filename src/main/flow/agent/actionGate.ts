@@ -43,8 +43,8 @@ export function allowedBoundaries(intent: GoalIntent | null): Set<ActionBoundary
 
 /** Words that name a boundary in a user's answer. `modify` and `draft` are allowed by default. */
 const CONSENT_WORDS: ReadonlyArray<[ActionBoundary, RegExp]> = [
-  ['delete', /刪除|刪掉|删除|删掉|移除|垃圾桶|\b(delete|remove|trash)\b/i],
-  ['send', /寄出|寄送|發送|发送|送出|\bsend\b/i],
+  ['delete', /刪除|刪掉|删除|删掉|移除|垃圾桶|收回|撤回|\b(delete|remove|trash|unsend)\b/i],
+  ['send', /寄出|寄送|發送|发送|送出|傳送|传送|\b(send|react)\b/i],
 ];
 /**
  * Anything that refuses, cancels, keeps, postpones or limits, matched anywhere in the answer:
@@ -69,6 +69,41 @@ export function consentedBoundaries(answers: readonly string[]): ActionBoundary[
   return [...found];
 }
 
+/** Boundaries only an answer that names them may widen; see `CONSENT_WORDS`. */
+const NAMED_ONLY = new Set<ActionBoundary>(CONSENT_WORDS.map(([boundary]) => boundary));
+
+/**
+ * This run was held back for crossing `boundary` before it paused for the answer it resumes with:
+ * a resume restores what it did into the ledger's prior actions under the same run id. Only those
+ * count. A block in the invocation running now came after its answers were fixed (answers arrive
+ * only with a resume, and asking ends the invocation), so no answer can be to it — counting it would
+ * let the model retry its way past the block, even one prompted by text a tool result carried.
+ * Never another run's either: prior actions also carry the conversation's earlier runs.
+ */
+function heldBackBeforeAnswer(input: GateInput, boundary: ActionBoundary): boolean {
+  if (!input.runId) return false;
+  return input.ledger.priorActions.some((record) =>
+    record.runId === input.runId && record.verdict === 'blocked' && record.boundary === boundary);
+}
+
+/**
+ * What the user's answers widen for a call that would cross `boundary`. A draft or an edit has no
+ * word of its own ("建立", "記在…", a folder name), so once this run was held back for exactly that
+ * — and so told to ask — the latest answer, the one this invocation resumed with, allows it unless it
+ * refuses, keeps, defers or limits. An earlier yes never outweighs a later no. A send or a delete
+ * still needs an answer that names it. Program-owned approvals (shell, connector, flow) are not
+ * answers here, so after such a resume the latest model-question answer may predate the block; those
+ * pauses are bot-only, where every change is still confirmed call by call.
+ */
+function answeredBoundaries(input: GateInput, boundary: ActionBoundary | null): ActionBoundary[] {
+  const answers = input.answers ?? [];
+  const named = consentedBoundaries(answers);
+  if (!boundary || NAMED_ONLY.has(boundary) || named.includes(boundary)) return named;
+  const latest = answers.at(-1) ?? '';
+  const agreed = latest.trim() !== '' && !NOT_CONSENT.test(latest);
+  return agreed && heldBackBeforeAnswer(input, boundary) ? [...named, boundary] : named;
+}
+
 const BOUNDARY_WORDS: Record<ActionBoundary, string> = {
   draft: 'create a draft or open a compose window',
   modify: 'change, move or create things',
@@ -83,8 +118,10 @@ export interface GateInput {
   contract: ToolContract;
   ledger: EvidenceLedger;
   intent: GoalIntent | null;
-  /** The user's answers to this run's questions; see `consentedBoundaries`. */
+  /** The user's answers to this run's questions; see `answeredBoundaries`. */
   answers?: readonly string[];
+  /** Which earlier records are this run's own, for an answer widening a draft or an edit. */
+  runId?: string;
   blockedSoFar: number;
   signature: string;
 }
@@ -92,7 +129,7 @@ export interface GateInput {
 export type GateDecision =
   | { verdict: 'ready' }
   | { verdict: 'needs'; needs: NonNullable<ContractCheck['needs']> }
-  | { verdict: 'blocked'; reasons: GateReason[]; recheck?: ActionRecord; transient: boolean };
+  | { verdict: 'blocked'; reasons: GateReason[]; recheck?: ActionRecord; transient: boolean; boundary?: ActionBoundary };
 
 const RECHECK_OUTCOMES = new Set(['claimed', 'review_opened', 'partial', 'uncertain']);
 const FINAL_FAILURES = new Set(['not_found', 'invalid_args', 'permission']);
@@ -162,14 +199,16 @@ export function decideAction(input: GateInput): GateDecision {
 
   const boundary = contract.boundary(args);
   const declared = input.intent?.change ?? DEFAULT_CHANGE;
-  const allowed = allowedBoundaries({ change: [...declared, ...consentedBoundaries(input.answers ?? [])], content: 'none' });
+  const allowed = allowedBoundaries({ change: [...declared, ...answeredBoundaries(input, boundary)], content: 'none' });
   if (boundary && !allowed.has(boundary)) {
+    const answer = NAMED_ONLY.has(boundary) ? `an answer that says to ${boundary}` : 'an answer that agrees';
     return {
       verdict: 'blocked',
       transient: false,
+      boundary,
       reasons: [{
         code: 'boundary_exceeded',
-        message: `This call would ${BOUNDARY_WORDS[boundary]}, and the GOAL did not ask for that. Do only what the GOAL asks; if you believe it should, ask the user first — an answer that says to ${boundary} allows it.`,
+        message: `This call would ${BOUNDARY_WORDS[boundary]}, and the GOAL did not ask for that. Do only what the GOAL asks; if you believe it should, ask the user first — ${answer} allows it.`,
       }],
     };
   }

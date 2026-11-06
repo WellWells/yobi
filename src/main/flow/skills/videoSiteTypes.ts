@@ -41,6 +41,13 @@ export interface VideoInfo {
    */
   summaryNeedsSignIn?: boolean;
   /**
+   * The site held the video page back (YouTube's bot check), so this is only what a link preview
+   * shows — title, channel, cover; no length, qualities or subtitles. Enough for a link's menu,
+   * cut to "analyze" and "download" (which asks again), and a summary; whatever needs the
+   * qualities refuses (`flow.error.ytdlBlocked`).
+   */
+  partial?: true;
+  /**
    * This video is one part of several under one id (a bilibili video in parts — episodes, or the
    * same video in several languages): which one, of how many. Only that part is downloaded, and
    * the menu says so. Absent for a video in one part.
@@ -85,6 +92,12 @@ export interface SelfDownloadRequest {
   onLog?: (line: string) => void;
 }
 
+/** What a yt-dlp site's own first try (`YtdlpVideoSite.directDownload`) is asked for. */
+export interface DirectDownloadRequest extends SelfDownloadRequest {
+  /** The menu priced this Telegram quality with the low AAC (`YtdlChoice.lowAudio`), as `downloadArgs` gets it. */
+  lowAudio?: boolean;
+}
+
 /** The parts of a video site that do not depend on how it downloads. */
 export interface VideoSiteBase {
   /**
@@ -119,6 +132,13 @@ export interface YtdlpVideoSite extends VideoSiteBase, Omit<SiteDownloadHooks, '
    * link or quality the site does not take.
    */
   downloadArgs(ref: VideoRef, quality: YtdlPick, destination: YtdlDestination, lowAudio?: boolean): readonly string[];
+  /**
+   * Yobi's own download, tried before yt-dlp (bilibili: the streams its player is given, each from
+   * the backup addresses when its host refuses): as `SelfDownloadVideoSite.download`, with the
+   * low-AAC flag. Any failure but a Stop or the size limit (`StreamTooLargeError`) hands the
+   * download to yt-dlp, so a site with it is never paused for a yt-dlp that cannot read it.
+   */
+  directDownload?(request: DirectDownloadRequest): Promise<YtdlDownloadResult>;
   download?: never;
   /**
    * Whose cookies yt-dlp gets for this site's reads and downloads (`cookies` of `runYtdlpJson` and
@@ -148,6 +168,7 @@ export interface SelfDownloadVideoSite extends VideoSiteBase {
    */
   download(request: SelfDownloadRequest): Promise<YtdlDownloadResult>;
   downloadArgs?: never;
+  directDownload?: never;
   cookies?: never;
   classify?: never;
   mask?: never;

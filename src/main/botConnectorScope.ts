@@ -1,3 +1,4 @@
+import { readsAnyPage } from '../shared/builtinConnectors';
 import { matchConnectorKeywords } from '../shared/connectorKeywords';
 import type { KeywordCandidate } from '../shared/connectorKeywords';
 import { reachableOnSend } from '../shared/mcpConnectOnUse';
@@ -12,7 +13,8 @@ import { getMcpRegistry } from './mcp';
  * message names (`matchConnectorKeywords`) is declared for the run, and the conversation keeps it in
  * its thread marker (`mcp`), so a follow-up that does not name it again still has it. Undeclared, a
  * bot run sweeps up every connected server, and with many of them the model sees one summary line
- * per server and guesses at tool names.
+ * per server and guesses at tool names. A connector any link names (`anyPage`) is for that message
+ * alone.
  */
 export interface BotConnectorDisclosure {
   /** Declared for this run: kept or named, reachable now, and granted to this account. */
@@ -46,7 +48,7 @@ export function pickBotConnectors(
   const named = matchConnectorKeywords(text, candidates);
   const reachable = new Set(candidates.filter((candidate) => candidate.connected).map((candidate) => candidate.id));
   const ids = [...new Set([...kept.filter((id) => reachable.has(id)), ...named])];
-  const added = named.filter((id) => !kept.includes(id));
+  const added = named.filter((id) => !kept.includes(id) && !readsAnyPage(id));
   return { ids, remember: added.length > 0 ? [...kept, ...added] : null, named };
 }
 

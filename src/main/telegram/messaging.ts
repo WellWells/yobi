@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
-import { InputFile, InputMediaBuilder } from 'grammy';
-import type { TelegramReplyMode, TelegramReplyTarget } from '../../shared/types';
+import * as path from 'node:path';
+import { InputFile, InputMediaBuilder, type Bot } from 'grammy';
+import type { TelegramReplyTarget } from '../../shared/types';
 import { resolveSafeLocalAttachment } from '../attachmentGuard';
 import { getLangCache, t } from '../i18n';
 import { getErrorMessage } from './errors';
@@ -8,15 +9,21 @@ import {
   escapeTelegramHtml,
   extractResponseSection,
   formatResponseForTelegramHtml,
-  splitMarkdownIntoChunks,
+  TELEGRAM_ENTITY_BUDGET,
+  TELEGRAM_ENTITY_MAX,
+  telegramCompactChunks,
+  telegramEntityCost,
+  telegramEntityCount,
+  telegramHtmlFits,
   telegramVerbatimMessage,
   telegramVisibleLength,
   truncateText,
 } from './formatter';
+import { telegramMessageChunks } from './longMessage';
 import { TELEGRAM_MESSAGE_MAX } from '../../shared/botMessageLimits';
+import { unfoldExpandableQuotes } from '../../shared/expandableQuote';
 import type { AgentAskShown, BotBuiltinRunResult } from '../botBuiltinCommands';
 import { numberedQuestion } from '../flow/agent/shellApproval';
-import { buildExportCallbackData, type ExportTokenRegistry } from './exporter';
 import { fetchOptimizedImage } from './remoteImage';
 import { flowButtonKeyboard } from './flowButtons';
 import { askKeyboard, clearRetiredButtons, noteAskMessage, retireAskButtons } from './askButtons';
@@ -28,11 +35,8 @@ import { largeUploadReady, uploadLargeFile } from './largeUpload';
 import type { LargeUploadFile } from './largeUpload';
 import { TELEGRAM_LARGE_UPLOAD_FAILED, TELEGRAM_LARGE_UPLOAD_NOT_READY } from './largeUploadError';
 import { MTPROTO_ERROR_PREFIX } from './mtproto/errors';
-import {
-  safeSendMessage,
-  sendDirectExport,
-  type TelegramSendContext,
-} from './exportHandlers';
+import type { TelegramContext } from './commandHandlers';
+import { jpegName, webpFileAsJpeg, type WebpDecoder } from './webpPhoto';
 
 const TELEGRAM_MSG_LIMIT = TELEGRAM_MESSAGE_MAX;
 const TELEGRAM_CAPTION_LIMIT = 1024;
@@ -40,24 +44,42 @@ const TELEGRAM_RESULT_MAX = 2600;
 const COMPACT_CHUNK_CHARS = 3000;
 const COMPACT_MAX_MESSAGES = 3;
 
-export interface TelegramMessagingContext extends TelegramSendContext {
+export interface TelegramMessagingContext {
+  getBot: () => Bot<TelegramContext> | null;
+  getStrings: () => Record<string, string>;
+  onLog: (message: string) => void;
   isPollerActive: () => boolean;
-  getDefaultReplyMode: () => TelegramReplyMode;
-  getCompactReply: () => boolean;
-  registry: ExportTokenRegistry;
   /** A run's question reached the chat: its message, and whether its choices were numbered. */
   onAgentAskShown?: (target: TelegramReplyTarget, shown: AgentAskShown) => void;
   /** The run whose question this person still has to answer in this chat, or null. */
   pendingAgentAskRunId?: (chatId: number, userId: number) => string | null;
+  /** Makes a WebP photo the JPEG it goes up as; without it a WebP goes as it is. */
+  webpToJpeg?: WebpDecoder;
 }
 
-export interface TelegramTaskSuccessPayload {
-  providerLabel: string;
-  savedFileName: string;
-  response: string;
-  prompt: string;
-  title: string;
-  elapsedSeconds: string;
+type TelegramInlineKeyboard = {
+  inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+};
+
+export async function safeSendMessage(
+  mctx: Pick<TelegramMessagingContext, 'getBot' | 'onLog'>,
+  chatId: number,
+  text: string,
+  replyToMessageId?: number,
+  replyMarkup?: TelegramInlineKeyboard,
+): Promise<void> {
+  const bot = mctx.getBot();
+  if (!bot) return;
+  try {
+    await bot.api.sendMessage(chatId, text, {
+      parse_mode: 'HTML',
+      reply_parameters: replyToMessageId ? { message_id: replyToMessageId } : undefined,
+      reply_markup: replyMarkup,
+      link_preview_options: { is_disabled: true },
+    });
+  } catch (err: unknown) {
+    mctx.onLog(`[telegram] failed to send message: ${getErrorMessage(err)}`);
+  }
 }
 
 /** `reply_markup` for a flow step's buttons, minted for this chat. */
@@ -86,24 +108,27 @@ export async function sendProactive(
   }
   try {
     const s = mctx.getStrings();
-    const responseSection = extractResponseSection(text, s);
-    const responseText = truncateText(responseSection.trim(), TELEGRAM_RESULT_MAX);
-    const body = formatResponseForTelegramHtml(responseText);
-    const fallbackBody = `<i>${escapeTelegramHtml(t(s, 'telegram.msg.emptyResponse'))}</i>`;
-    const message = body || fallbackBody;
-    const markup = { ...replyMarkupFor(chatId, extras), ...quoteOf(extras?.replyTo) };
-
-    if (message.length > TELEGRAM_MSG_LIMIT) {
-      const buffer = Buffer.from(responseSection || text, 'utf8');
-      await bot.api.sendDocument(chatId, new InputFile(buffer, 'output.md'), {
+    const responseSection = extractResponseSection(text, s).trim();
+    const buttons = replyMarkupFor(chatId, extras);
+    const quote = quoteOf(extras?.replyTo);
+    const chunks = telegramMessageChunks(responseSection, COMPACT_CHUNK_CHARS, COMPACT_MAX_MESSAGES);
+    if (!chunks) {
+      await bot.api.sendDocument(chatId, new InputFile(Buffer.from(unfoldExpandableQuotes(responseSection), 'utf8'), 'output.md'), {
         caption: t(getLangCache(), 'telegram.flowOutputTooLong', {}),
-        ...markup,
+        ...buttons,
+        ...quote,
       });
-    } else {
-      await bot.api.sendMessage(chatId, message, {
+      return;
+    }
+    const fallbackBody = `<i>${escapeTelegramHtml(t(s, 'telegram.msg.emptyResponse'))}</i>`;
+    const bodies = chunks.length > 0 ? chunks.map(renderCompactChunk) : [fallbackBody];
+    // Read as one answer: the first message quotes the request, the buttons close the last.
+    for (const [index, body] of bodies.entries()) {
+      await bot.api.sendMessage(chatId, body || fallbackBody, {
         parse_mode: 'HTML',
         link_preview_options: { is_disabled: true },
-        ...markup,
+        ...(index === bodies.length - 1 ? buttons : {}),
+        ...(index === 0 ? quote : {}),
       });
     }
   } catch (err: unknown) {
@@ -294,16 +319,20 @@ export async function sendProactiveFile(
       mctx.onLog('[telegram] optimized image upload unavailable; falling back to URL send');
     }
 
+    // A WebP photo goes up as a JPEG, the document it falls back to too: a WebP document is a sticker.
+    const jpeg = !isRemote && mode === 'photo' ? await webpPhotoJpeg(mctx, resolvedLocal) : null;
+    const photo = (): string | InputFile => (jpeg ? new InputFile(jpeg, jpegName(resolvedLocal)) : media());
+
     try {
       if (mode === 'photo') {
-        await bot.api.sendPhoto(chatId, media(), captionOpts);
+        await bot.api.sendPhoto(chatId, photo(), captionOpts);
       } else {
         await bot.api.sendDocument(chatId, media(), captionOpts);
       }
     } catch (sendErr: unknown) {
       if (sendAs === 'auto' && mode === 'photo') {
         mctx.onLog(`[telegram] photo send failed, retrying as document: ${String(sendErr)}`);
-        await bot.api.sendDocument(chatId, media(), captionOpts);
+        await bot.api.sendDocument(chatId, photo(), captionOpts);
       } else {
         throw sendErr;
       }
@@ -311,6 +340,20 @@ export async function sendProactiveFile(
   } catch (err: unknown) {
     mctx.onLog(`[telegram] sendProactiveFile failed for chat ${chatId}: ${String(err)}`);
     throw err;
+  }
+}
+
+/**
+ * The JPEG a WebP photo goes up as (`webpPhoto.ts`); null for any other picture, and when there is
+ * no decoder or it fails — the file then goes as it is, still as a photo.
+ */
+async function webpPhotoJpeg(mctx: Pick<TelegramMessagingContext, 'webpToJpeg' | 'onLog'>, file: string): Promise<Buffer | null> {
+  if (!mctx.webpToJpeg) return null;
+  try {
+    return await webpFileAsJpeg(file, mctx.webpToJpeg);
+  } catch (err: unknown) {
+    mctx.onLog(`[telegram] could not make ${path.basename(file)} a JPEG (${getErrorMessage(err)}); sending the file as it is`);
+    return null;
   }
 }
 
@@ -335,6 +378,13 @@ interface AlbumFile {
   video?: VideoMeta;
   /** Title, artist and length of a sound file. */
   audio?: AudioMeta;
+  /** A WebP photo made a JPEG: what goes up in place of the file. */
+  jpeg?: Buffer;
+}
+
+/** What goes up for an album file: a WebP photo's JPEG, or the file itself. */
+function albumUpload(file: AlbumFile): InputFile {
+  return file.jpeg ? new InputFile(file.jpeg, jpegName(file.path)) : new InputFile(file.path);
 }
 
 /** One album file sent alone by its file_id: what is left when the album of them cannot be made. */
@@ -355,7 +405,7 @@ function albumMedia(group: readonly AlbumFile[], media: ReadonlyArray<string | I
   }) as Array<ReturnType<typeof InputMediaBuilder.video>>;
 }
 
-const ALBUM_PHOTO_RE = /\.(?:jpe?g|png)$/i;
+const ALBUM_PHOTO_RE = /\.(?:jpe?g|png|webp)$/i;
 const ALBUM_VIDEO_RE = /\.mp4$/i;
 
 /**
@@ -393,7 +443,7 @@ async function sendAlbumByFileId(
     }
     // The first carries the caption and the quote, for when it stays as a message of its own.
     const opts = { ...(index === 0 ? { ...caption, ...quote } : {}), disable_notification: true };
-    const upload = new InputFile(file.path);
+    const upload = albumUpload(file);
     let fileId: string | undefined;
     let messageId: number;
     if (file.kind === 'video') {
@@ -446,11 +496,12 @@ async function sendAlbumByFileId(
 
 /**
  * Several local files as one album (Telegram's limit is 10 per album; more go as further albums),
- * the caption under the first. MP4s go as videos with their size and length and JPEG/PNGs as
- * photos — Telegram mixes those two. An album of MP3/M4As only (a post's videos as MP3s) goes as
- * audio, which mixes with nothing else; any other mix is sent as documents, since documents mix
- * with nothing. An album within the upload cap goes up in one request; a larger one by file id
- * (`sendAlbumByFileId`, which takes each file over the cap up over MTProto).
+ * the caption under the first. MP4s go as videos with their size and length and JPEG/PNG/WebPs as
+ * photos (a WebP made a JPEG) — Telegram mixes those two. An album of MP3/M4As only (a post's
+ * videos as MP3s) goes as audio, which mixes with nothing else; any other mix is sent as
+ * documents, since documents mix with nothing. An album within the upload cap goes up in one
+ * request; a larger one by file id (`sendAlbumByFileId`, which takes each file over the cap up
+ * over MTProto).
  */
 export async function sendProactiveAlbum(
   mctx: TelegramMessagingContext,
@@ -481,6 +532,12 @@ export async function sendProactiveAlbum(
     if (ALBUM_PHOTO_RE.test(file)) return { path: file, sizeBytes, kind: 'photo' };
     return { path: file, sizeBytes, kind: 'video', video: videoMeta(await probeMedia(file).catch(() => null)) };
   }));
+  // One at a time: each is a decode by the platform. Its JPEG is what counts against the upload cap.
+  for (const [index, file] of files.entries()) {
+    if (file.kind !== 'photo') continue;
+    const jpeg = await webpPhotoJpeg(mctx, file.path);
+    if (jpeg) files[index] = { ...file, sizeBytes: jpeg.length, jpeg };
+  }
   try {
     for (let start = 0; start < files.length; start += TELEGRAM_ALBUM_MAX) {
       const group = files.slice(start, start + TELEGRAM_ALBUM_MAX);
@@ -500,13 +557,13 @@ export async function sendProactiveAlbum(
         continue;
       }
       try {
-        await bot.api.sendMediaGroup(chatId, albumMedia(group, group.map((file) => new InputFile(file.path)), groupCaption), groupQuote);
+        await bot.api.sendMediaGroup(chatId, albumMedia(group, group.map(albumUpload), groupCaption), groupQuote);
       } catch (err: unknown) {
         if (isPhotoRefused(err) && group.some((file) => file.kind === 'photo')) {
           // A tall capture is past a photo's size rules; as documents the same files go through.
           mctx.onLog(`[telegram] album photos refused (${String(err)}); sending the album as documents`);
-          const asDocuments = group.map((file): AlbumFile => ({ path: file.path, sizeBytes: file.sizeBytes, kind: 'document' }));
-          await bot.api.sendMediaGroup(chatId, albumMedia(asDocuments, asDocuments.map((file) => new InputFile(file.path)), groupCaption), groupQuote);
+          const asDocuments = group.map((file): AlbumFile => ({ path: file.path, sizeBytes: file.sizeBytes, kind: 'document', jpeg: file.jpeg }));
+          await bot.api.sendMediaGroup(chatId, albumMedia(asDocuments, asDocuments.map(albumUpload), groupCaption), groupQuote);
           continue;
         }
         if (!isTooLargeError(err)) throw err;
@@ -524,79 +581,14 @@ function commandLabel(s: Record<string, string>, command: string): string {
   return command === 'direct' ? t(s, 'telegram.msg.directLabel') : command;
 }
 
+/** A finished answer: the answer itself, cut into at most three messages (`sendCompactReply`). */
 export async function sendTaskSuccess(
   mctx: TelegramMessagingContext,
   target: TelegramReplyTarget,
-  payload: TelegramTaskSuccessPayload,
+  response: string,
 ): Promise<void> {
   if (!mctx.getBot() || !mctx.isPollerActive()) return;
-  const s = mctx.getStrings();
-  const responseSection = extractResponseSection(payload.response, s);
-
-  if (mctx.getCompactReply()) {
-    await sendCompactReply(mctx, target, responseSection);
-    await deleteQueuedMessage(mctx, target);
-    return;
-  }
-
-  const responseText = truncateText(responseSection.trim(), TELEGRAM_RESULT_MAX);
-  const body = formatResponseForTelegramHtml(responseText);
-  const defaultReplyMode = mctx.getDefaultReplyMode();
-  const titleLine = escapeTelegramHtml(
-    t(s, 'telegram.msg.completed', {
-      command: commandLabel(s, target.command),
-      provider: payload.providerLabel,
-      elapsed: payload.elapsedSeconds,
-    }),
-  );
-  const savedLine = escapeTelegramHtml(
-    t(s, 'telegram.msg.saved', { file: payload.savedFileName }),
-  );
-  if (defaultReplyMode === 'markdown') {
-    const exportToken = mctx.registry.issue({
-      command: target.command,
-      chatId: target.chatId,
-      userId: target.userId,
-      providerLabel: payload.providerLabel,
-      savedFileName: payload.savedFileName,
-      prompt: payload.prompt,
-      response: payload.response,
-      title: payload.title,
-    });
-    const message = [
-      titleLine,
-      savedLine,
-      '',
-      body || `<i>${escapeTelegramHtml(t(s, 'telegram.msg.emptyResponse'))}</i>`,
-    ].join('\n');
-    const keyboard = {
-      inline_keyboard: [
-        [
-          { text: t(s, 'telegram.msg.downloadPng'), callback_data: buildExportCallbackData(exportToken, 'png') },
-          { text: t(s, 'telegram.msg.downloadWebp'), callback_data: buildExportCallbackData(exportToken, 'webp') },
-        ],
-        [
-          { text: t(s, 'telegram.msg.downloadPdf'), callback_data: buildExportCallbackData(exportToken, 'pdf') },
-        ],
-      ],
-    };
-    await safeSendMessage(mctx, target.chatId, message, target.requestMessageId, keyboard);
-    await deleteQueuedMessage(mctx, target);
-    return;
-  }
-
-  await sendDirectExport(mctx, {
-    command: target.command,
-    chatId: target.chatId,
-    userId: target.userId,
-    providerLabel: payload.providerLabel,
-    savedFileName: payload.savedFileName,
-    prompt: payload.prompt,
-    response: payload.response,
-    title: payload.title,
-    format: defaultReplyMode,
-    replyToMessageId: target.requestMessageId,
-  });
+  await sendCompactReply(mctx, target, extractResponseSection(response, mctx.getStrings()));
   await deleteQueuedMessage(mctx, target);
 }
 
@@ -614,13 +606,9 @@ export async function sendPictureReply(
 ): Promise<boolean> {
   const bot = mctx.getBot();
   if (!bot || !mctx.isPollerActive() || files.length === 0 || files.length > TELEGRAM_ALBUM_MAX) return false;
-  const captionSource = extractResponseSection(caption, mctx.getStrings()).trim();
-  const captionHtml = captionSource ? formatResponseForTelegramHtml(captionSource) : '';
-  if (telegramVisibleLength(captionHtml) > TELEGRAM_CAPTION_LIMIT) return false;
-  const captionOpts: CaptionOpts = captionHtml ? { caption: captionHtml, parse_mode: 'HTML' } : {};
-  const reply = target.requestMessageId
-    ? { reply_parameters: { message_id: target.requestMessageId, allow_sending_without_reply: true } }
-    : {};
+  const captionOpts = replyCaption(mctx, caption);
+  if (!captionOpts) return false;
+  const reply = replyQuote(target);
   try {
     const paths = await Promise.all(files.map((file) => resolveSafeLocalAttachment(file, [...files])));
     if (paths.length === 1) {
@@ -631,6 +619,48 @@ export async function sendPictureReply(
     }
   } catch (err: unknown) {
     mctx.onLog(`[telegram] pictures not sent as the reply: ${getErrorMessage(err)}`);
+    return false;
+  }
+  await deleteQueuedMessage(mctx, target);
+  return true;
+}
+
+/** The answer as a caption under the reply's file; null when it does not fit one. */
+function replyCaption(mctx: TelegramMessagingContext, caption: string): CaptionOpts | null {
+  const captionSource = extractResponseSection(caption, mctx.getStrings()).trim();
+  const captionHtml = captionSource ? formatResponseForTelegramHtml(captionSource) : '';
+  if (telegramVisibleLength(captionHtml) > TELEGRAM_CAPTION_LIMIT) return null;
+  return captionHtml ? { caption: captionHtml, parse_mode: 'HTML' } : {};
+}
+
+function replyQuote(target: TelegramReplyTarget): { reply_parameters?: { message_id: number; allow_sending_without_reply: true } } {
+  return target.requestMessageId
+    ? { reply_parameters: { message_id: target.requestMessageId, allow_sending_without_reply: true } }
+    : {};
+}
+
+/**
+ * A file made for the answer (a PDF of it, `export_file`) as the reply itself: the file answering
+ * the request, the answer as its caption — one message, as a drawn picture is. Sent as a document,
+ * never a photo: a PNG asked for as a file is wanted whole, not recompressed. Returns false, having
+ * sent nothing, when the caption does not fit one or Telegram refuses the file; the caller then
+ * sends the text and the file apart.
+ */
+export async function sendDocumentReply(
+  mctx: TelegramMessagingContext,
+  target: TelegramReplyTarget,
+  file: string,
+  caption: string,
+): Promise<boolean> {
+  const bot = mctx.getBot();
+  if (!bot || !mctx.isPollerActive()) return false;
+  const captionOpts = replyCaption(mctx, caption);
+  if (!captionOpts) return false;
+  try {
+    const safe = await resolveSafeLocalAttachment(file, [file]);
+    await bot.api.sendDocument(target.chatId, new InputFile(safe), { ...captionOpts, ...replyQuote(target) });
+  } catch (err: unknown) {
+    mctx.onLog(`[telegram] file not sent as the reply: ${getErrorMessage(err)}`);
     return false;
   }
   await deleteQueuedMessage(mctx, target);
@@ -650,14 +680,13 @@ export async function clearStaleAskButtons(mctx: TelegramMessagingContext, targe
 
 /**
  * A bot run's reply. A question marked `verbatim` (a shell approval) goes out as plain text exactly
- * as written, whatever the reply mode: compact, Markdown, PNG, WebP and PDF all rewrite, cut or
- * picture the text, and the user must read the whole command that "1" would run. Returns false
- * when a question could not be shown (an approval: not whole); the caller then withdraws it.
+ * as written: the answer's formatting rewrites and cuts the text, and the user must read the whole
+ * command that "1" would run. Returns false when a question could not be shown (an approval: not
+ * whole); the caller then withdraws it.
  */
 export async function sendBuiltinReply(
   mctx: TelegramMessagingContext,
   target: TelegramReplyTarget,
-  prompt: string,
   result: BotBuiltinRunResult,
 ): Promise<boolean> {
   if (!result.ok) {
@@ -671,21 +700,14 @@ export async function sendBuiltinReply(
   if (result.question) return sendQuestionReply(mctx, target, result, result.question);
   if (result.verbatim) return sendVerbatimReply(mctx, target, result);
   if (result.awaitingAnswer) return sendPlainQuestion(mctx, target, result.text);
-  await sendTaskSuccess(mctx, target, {
-    providerLabel: result.providerLabel,
-    savedFileName: result.savedFileName,
-    response: result.text,
-    prompt,
-    title: result.title,
-    elapsedSeconds: result.elapsedSeconds,
-  });
+  await sendTaskSuccess(mctx, target, result.text);
   return true;
 }
 
 /**
  * A question with choices: its words, then one button per choice (`askButtons.ts`) in place of the
- * numbered list. Always one text message, whatever the reply mode — a question pictured as a PNG or
- * cut into chunks has nowhere to put the buttons. An approval is shown exactly as written, the
+ * numbered list. Always one text message — a question cut into chunks has nowhere to put the
+ * buttons. An approval is shown exactly as written, the
  * model's own question keeps its formatting. Typing an answer still works.
  */
 async function sendQuestionReply(
@@ -729,11 +751,11 @@ async function sendQuestionReply(
 }
 
 /**
- * A question without choices: one message whatever the reply mode, as a question with buttons is,
- * so the message that carries it is known and only one sent after it answers (`sentAfterAsk`).
- * Through the reply mode its id was never kept, and Telegram's whole-second `date` was weighed
- * against this computer's clock: a message sent in the same second, before the question, answered
- * it (review 2026-10-20). HTML Telegram refuses is sent again as plain text.
+ * A question without choices: one message, as a question with buttons is, so the message that
+ * carries it is known and only one sent after it answers (`sentAfterAsk`). Sent as an answer, its
+ * id would not be kept, and Telegram's whole-second `date` would be weighed against this
+ * computer's clock: a message sent in the same second, before the question, could answer it. HTML
+ * Telegram refuses is sent again as plain text.
  */
 async function sendPlainQuestion(mctx: TelegramMessagingContext, target: TelegramReplyTarget, text: string): Promise<boolean> {
   const bot = mctx.getBot();
@@ -764,8 +786,8 @@ async function sendPlainQuestion(mctx: TelegramMessagingContext, target: Telegra
 
 /**
  * The model's question when its buttons could not be sent: one plain-text message, the choices
- * numbered so a typed "2" answers — never through the reply mode (a card, compact chunks or export
- * buttons are no place for a question). Measured before it goes out, as the button message is.
+ * numbered so a typed "2" answers — never as an answer's chunks (no place for a question).
+ * Measured before it goes out, as the button message is.
  */
 async function sendNumberedQuestion(
   mctx: TelegramMessagingContext,
@@ -833,7 +855,7 @@ async function sendCompactReply(
 ): Promise<void> {
   const s = mctx.getStrings();
   const emptyBody = `<i>${escapeTelegramHtml(t(s, 'telegram.msg.emptyResponse'))}</i>`;
-  const chunks = splitMarkdownIntoChunks(response, COMPACT_CHUNK_CHARS, COMPACT_MAX_MESSAGES);
+  const chunks = telegramCompactChunks(response, COMPACT_CHUNK_CHARS, COMPACT_MAX_MESSAGES);
   if (chunks.length === 0) {
     await safeSendMessage(mctx, target.chatId, emptyBody, target.requestMessageId);
     return;
@@ -847,8 +869,12 @@ async function sendCompactReply(
 function renderCompactChunk(chunk: string): string {
   let source = chunk;
   let html = formatResponseForTelegramHtml(source);
-  while (html.length > TELEGRAM_MSG_LIMIT && source.length > 32) {
-    const ratio = TELEGRAM_MSG_LIMIT / html.length;
+  while (!telegramHtmlFits(html, TELEGRAM_MSG_LIMIT) && source.length > 32) {
+    const ratio = Math.min(
+      TELEGRAM_MSG_LIMIT / telegramVisibleLength(html),
+      TELEGRAM_ENTITY_BUDGET / telegramEntityCost(html),
+      TELEGRAM_ENTITY_MAX / telegramEntityCount(html),
+    );
     source = truncateText(source, Math.max(32, Math.floor(source.length * ratio) - 16));
     html = formatResponseForTelegramHtml(source);
   }

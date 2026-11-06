@@ -252,12 +252,7 @@ export const LineSection: React.FC<Props> = ({ line, access, botCommands, t, sho
 
             <SectionTitle icon={<MessageSquare size={15} />} label={t('settings.line.section.reply')} />
             <Stack gap={12}>
-              <BotReplyPreview
-                compactReply
-                mode="markdown"
-                note={t('settings.line.reply.note')}
-                t={t}
-              />
+              <BotReplyPreview note={t('settings.line.reply.note')} t={t} />
 
               <SettingDivider my={4} />
 
