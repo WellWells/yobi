@@ -19,7 +19,9 @@ import type { ReadingFont } from '../shared/readingPrefs';
 import type { SidebarViewPrefs } from '../shared/sidebarView';
 import { DEFAULT_DOWNLOADS_KEEP } from '../shared/downloads';
 import type { DownloadsKeep } from '../shared/downloads';
+import type { TrustedCommand } from '../shared/trustedCommands';
 import type { LinkRecognitionPrefs } from '../shared/linkRecognition';
+import type { LinkAnalysisPreferences } from '../shared/types';
 import type { BotBuiltinCommands, BotByokCommands, BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureRange, CaptureSettings, CardLayout, QuickExportSettings, LinePairingState, McpServerConfig, NotifyEventPrefs, PromptPreferences, Provider, ShareSettings, TelegramChannel, TelegramPairingState } from '../shared/types';
 
 /**
@@ -49,8 +51,12 @@ export interface Config extends SiteConnectorFlags {
   flowGenerateUrl: string;
   /** Which model tidies the personal memory. Empty follows the chat model. */
   memoryCurateUrl: string;
+  /** Which model sorts unfiled flows into folders. Empty follows the chat model. */
+  flowSortUrl: string;
   /** Which model the writing tools (rewrite a selection) last used. Empty follows the chat model. */
   writingToolsUrl: string;
+  /** Which model drafted, revised or tested a skill last. Empty follows the chat model. */
+  skillAuthorUrl: string;
   /** Which editor the composer's Ctrl+G opens; see `ExternalEditorChoice`. */
   externalEditor: string;
   /** The command line for `externalEditor: 'custom'`. */
@@ -74,6 +80,7 @@ export interface Config extends SiteConnectorFlags {
   /** A chat or hotkey send the chosen web AI cannot take goes to the next signed-in one. */
   providerFallback: boolean;
   promptPreferences: PromptPreferences;
+  linkAnalysis: LinkAnalysisPreferences;
   youtubePrompt: string;
   providerCommands: Record<Provider, BotProviderCommand>;
   builtinCommands: BotBuiltinCommands;
@@ -147,6 +154,8 @@ export interface Config extends SiteConnectorFlags {
   /** How the conversation list is sorted and whether it is grouped by date. */
   sidebarView: SidebarViewPrefs;
   showTokenUsage: boolean;
+  /** The recap icon above the composer; off leaves only `/recap`. */
+  showRecap: boolean;
   /** Where the main window was last left. `null` until the first run has produced one. */
   windowBounds: WindowBounds | null;
   captureSettings: CaptureSettings;
@@ -154,6 +163,11 @@ export interface Config extends SiteConnectorFlags {
   share: ShareSettings;
   /** How long Downloads/Yobi keeps what Yobi saved there; the sweep reads it every time. */
   downloadsKeep: DownloadsKeep;
+  /**
+   * Programs and actions `/agent` runs without asking, on this computer only: a restored backup keeps
+   * the current list (paths are this machine's, and a backup must not grant running anything).
+   */
+  agentTrustedCommands: TrustedCommand[];
 }
 
 export interface ByokInstance {
@@ -328,9 +342,12 @@ export type StoredConfig = Omit<Config, 'telegram' | 'line' | 'discord' | 'slack
 
 export const defaultStored: StoredConfig = {
   targetUrl: PROVIDER_URLS.gemini,
+  linkAnalysis: { mapsTargetUrl: '', articleTargetUrl: '', mapsPrompt: '' },
   flowGenerateUrl: '',
   memoryCurateUrl: '',
+  flowSortUrl: '',
   writingToolsUrl: '',
+  skillAuthorUrl: '',
   externalEditor: '',
   externalEditorCommand: '',
   hotkey: defaultMainHotkey(process.platform === 'darwin'),
@@ -361,6 +378,7 @@ export const defaultStored: StoredConfig = {
   readingFullWidth: false,
   sidebarView: { sort: 'activity', groupByDate: true },
   showTokenUsage: true,
+  showRecap: true,
   windowBounds: null,
   captureSettings: {
     palette: DEFAULT_CAPTURE_PALETTE,
@@ -402,6 +420,7 @@ export const defaultStored: StoredConfig = {
     claude: { enabled: true, command: '' },
     gemini: { enabled: true, command: '' },
     perplexity: { enabled: true, command: '' },
+    deepseek: { enabled: true, command: '' },
   },
   builtinCommands: {
     search: { enabled: true, command: '', targetUrl: '' },
@@ -496,4 +515,5 @@ export const defaultStored: StoredConfig = {
   chatgptModel: EMPTY_CHATGPT_CHOICE,
   chatgptModelCatalog: null,
   downloadsKeep: DEFAULT_DOWNLOADS_KEEP,
+  agentTrustedCommands: [],
 };

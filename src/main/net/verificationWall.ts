@@ -21,6 +21,10 @@ const WALL_MARKS: readonly RegExp[] = [
   // DataDome's challenge (its normal-page tag is `js.datadome.co`).
   /\bcaptcha-delivery\.com\b/,
   /\bid=["']?px-captcha\b/,
+  // 36kr's own firewall. Its leading `__` keeps `\b` off this one.
+  /\bid=["']?__waf_verification_challenge\b/,
+  // ByteDance's firewall (juejin): a proof-of-work script, 2.4 KB and no text.
+  /\b_wafchallengeid\b/,
 ];
 
 /** A wall's own text is a sentence or two; a real page past one this short is rare. */

@@ -12,7 +12,8 @@ export function wantsExternalEditor(event: KeyboardEventLike): boolean {
 /**
  * Puts the editor's text in the field through the browser's editing pipeline, so Ctrl+Z brings
  * back what was there before. Returns false when the browser refused, so the caller sets the
- * state itself.
+ * state itself. `execCommand` is marked deprecated, but no other API edits a field through its
+ * undo stack.
  */
 export function replaceAllText(field: HTMLTextAreaElement, text: string): boolean {
   if (field.value === text) return true;

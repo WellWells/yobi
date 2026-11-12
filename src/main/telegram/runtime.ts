@@ -113,7 +113,7 @@ export interface TelegramRuntimeDeps {
     chatId: number,
     userId: number,
     onProgressText: (text: string) => void,
-    chat?: Pick<TelegramBuiltinRequest, 'replyTo' | 'recentChat' | 'chatRecap'>,
+    chat?: Pick<TelegramBuiltinRequest, 'replyTo' | 'recentChat' | 'chatRecap' | 'modelNamed'>,
   ) => Promise<BotBuiltinRunResult>;
   onAgentAnswer: (
     answer: string,
@@ -647,6 +647,7 @@ export class TelegramRuntime {
               ...(request.replyTo ? { replyTo: request.replyTo } : {}),
               ...(request.recentChat?.length ? { recentChat: request.recentChat } : {}),
               ...(request.chatRecap ? { chatRecap: request.chatRecap } : {}),
+              ...(request.modelNamed ? { modelNamed: request.modelNamed } : {}),
             },
           );
         } finally {

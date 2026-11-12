@@ -1,4 +1,4 @@
-import { PROVIDER_LABELS, PROVIDER_URLS } from '../../../../shared/types';
+import { PROVIDER_LABELS, PROVIDER_URLS, isByokTargetUrl } from '../../../../shared/types';
 import { isShareLinkFormat } from '../../../../shared/shareFormat';
 import { storedMcpAccess } from '../../../../shared/mcpFlowStep';
 import type { FlowDefinition, Provider, SkillInstance, SkillType } from '../../../../shared/types';
@@ -57,6 +57,7 @@ const ACCESS_BY_SKILL: Partial<Record<SkillType, FlowAccess>> = {
   capture: 'screen',
   clipboard: 'clipboard',
   http: 'sendData',
+  translate: 'sendData',
   bot: 'sendData',
   email_send: 'sendData',
   // Its arguments go to the connector's server, whatever the tool does with them.
@@ -84,12 +85,28 @@ export const FLOW_ACCESS: readonly FlowAccess[] = [
   'readFiles', 'writeFiles', 'screen', 'clipboard', 'sendData', 'thirdPartyAi', 'lineMessages', 'telegramMessages', 'calendar', 'mail',
 ] as const;
 
-export function llmProviderLabel(providerUrl: string | undefined): string {
+/** A model the picker offers beyond the built-in providers (a BYOK key or key group). */
+export interface NamedModel {
+  url: string;
+  label: string;
+}
+
+/**
+ * The model a step names, as the model picker shows it. A BYOK key or group goes by its own
+ * name; one this computer no longer has (deleted, or a flow imported from elsewhere) reads as
+ * `byokFallback`, never as the id in its URL.
+ */
+export function llmProviderLabel(
+  providerUrl: string | undefined,
+  models: readonly NamedModel[] = [],
+  byokFallback = '',
+): string {
   const url = (providerUrl ?? '').trim();
   if (!url) return '';
   for (const key of Object.keys(PROVIDER_URLS) as Provider[]) {
     if (PROVIDER_URLS[key] === url) return PROVIDER_LABELS[key];
   }
+  if (isByokTargetUrl(url)) return models.find((model) => model.url === url)?.label ?? byokFallback;
   try {
     return new URL(url).hostname.replace(/^www\./, '');
   } catch {
@@ -186,6 +203,7 @@ const SUMMARY_KEYS: Partial<Record<SkillType, string[]>> = {
   file_list: ['directory'],
   notify: ['message'],
   text: ['text'],
+  translate: ['to', 'text'],
   power: ['action'],
   clipboard: ['action'],
   stock: ['symbol', 'period'],
@@ -207,7 +225,7 @@ const CODE_SKILLS: ReadonlySet<SkillType> = new Set<SkillType>(['shell', 'run', 
 
 /** Summaries that are a target — URL or path — where I/l and 0/O lookalikes must stay apart. */
 const TARGET_SUMMARY_SKILLS: ReadonlySet<SkillType> = new Set<SkillType>([
-  'browser', 'browser_open', 'http', 'rss', 'scraper', 'gmap_reviews', 'youtube', 'x_thread',
+  'browser', 'browser_open', 'http', 'rss', 'scraper', 'gmap_reviews', 'youtube', 'x_thread', 'x_media',
   'youtube_download', 'file_download', 'file_read', 'file_delete', 'file_list', 'file_write',
 ]);
 

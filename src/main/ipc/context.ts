@@ -27,6 +27,7 @@ export interface IpcContext {
   bindQuickExportHotkey: () => boolean;
   bindRegionHotkey: () => boolean;
   checkForUpdates: () => Promise<boolean>;
+  installUpdate: () => boolean;
   onTraySettingsChanged?: () => void;
   onTrayMenuRebuild?: () => void;
   onHideToTray?: () => void;
@@ -48,6 +49,7 @@ export function buildSettingsSnapshot(): SettingsSnapshot {
     oneShotTemporaryChat: config.oneShotTemporaryChat,
     providerFallback: config.providerFallback,
     promptPreferences: config.promptPreferences,
+    linkAnalysis: config.linkAnalysis,
     youtubePrompt: config.youtubePrompt,
     responseTimeout: config.responseTimeout,
     closeToTray: config.closeToTray,

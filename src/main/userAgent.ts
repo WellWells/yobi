@@ -38,6 +38,7 @@ export const WORKER_USER_AGENTS: Record<Provider, string> = {
   chatgpt: CLEAN_UA,
   claude: CLEAN_UA,
   perplexity: CLEAN_UA,
+  deepseek: CLEAN_UA,
 };
 
 export function userAgentForUrl(url: string): string {

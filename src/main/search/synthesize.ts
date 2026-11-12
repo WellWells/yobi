@@ -8,6 +8,7 @@ import { answerLanguageFor, UNLESS_ASKED_OTHERWISE } from '../../shared/answerLa
 import { mdLinkDestination } from '../../shared/citations';
 import { ensureWorkerWindow } from '../windows';
 import { llmLane } from '../flow/lanes';
+import { yieldRunSlot } from '../flow/flowQueue';
 import { sendLog } from '../helpers';
 import { workerWindowUnavailable } from '../workerWindowError';
 import type { SourceDoc } from './types';
@@ -259,7 +260,8 @@ export async function runWorkerCompletion(
   opts: { refuseCut?: boolean } = {},
 ): Promise<string> {
   const queuedAt = Date.now();
-  return llmLane.runExclusive(async () => {
+  // The wait and the round trip lend the run's queue slot; reading pages keeps it.
+  return yieldRunSlot(() => llmLane.runExclusive(async () => {
     const startedAt = Date.now();
     const queued = startedAt - queuedAt;
     // Prepared once the lane is ours: a Gemini run queued ahead can lower the cap this is cut to.
@@ -276,12 +278,12 @@ export async function runWorkerCompletion(
       const waited = queued >= 1_000 ? `, ${seconds(queued)}s waiting for the lane` : '';
       sendLog(`🔎 [Search] ${label} round-trip ${seconds(Date.now() - startedAt)}s on ${getProviderLabel(targetUrl)}${waited}`);
     }
-  });
+  }));
 }
 
 export async function synthesize(prompt: string, targetUrl: string): Promise<string> {
   if (isByokTargetUrl(targetUrl)) {
-    const { response } = await runByokCompletion(targetUrl, prompt, BYOK_IDLE_TIMEOUT_MS);
+    const { response } = await yieldRunSlot(() => runByokCompletion(targetUrl, prompt, BYOK_IDLE_TIMEOUT_MS));
     return response;
   }
   // The question ends the prompt, and the sources were packed to the cap: a cut here can only come

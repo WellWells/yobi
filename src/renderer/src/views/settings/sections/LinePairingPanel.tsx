@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ActionIcon, Box, Group, Stack, Text, Tooltip, Button as MButton } from '@mantine/core';
-import { Link2, Trash2, UserPlus } from 'lucide-react';
+import { Link2, Trash, UserPlus } from 'lucide-react';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { CopyIconButton } from '../../../components/CopyIconButton';
 
@@ -91,7 +91,7 @@ export const LinePairingPanel: React.FC<Props> = ({ pendingCodes, account, busy,
                     onClick={() => onRevoke(pending.code)}
                     aria-label={t('settings.line.pairing.revoke')}
                   >
-                    <Trash2 size={13} />
+                    <Trash size={13} />
                   </ActionIcon>
                 </Tooltip>
               </Group>

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { decryptToken, decryptTokenChecked, encryptToken } from '../configEncryption';
+import { decryptToken, decryptTokenChecked, encryptSecret } from '../configEncryption';
 import { clearSecretFailures, recordSecretFailure } from '../secretHealth';
 import { calendarFile } from './calendarFile';
 import type { StoredDavAccount, StoredDavCalendar, StoredDavHome } from './calendarFile';
@@ -15,10 +15,6 @@ const CALENDAR_PREFIX = 'davc_';
 
 export function isDavAccountId(id: string): boolean {
   return id.startsWith(ACCOUNT_PREFIX);
-}
-
-export function isDavCalendarId(id: string): boolean {
-  return id.startsWith(CALENDAR_PREFIX);
 }
 
 /** Stable across refreshes: the same collection of the same account keeps the id a flow stored. */
@@ -123,10 +119,6 @@ export function listDavAccounts(): CalDavAccountSummary[] {
   return stored().map(summaryOf);
 }
 
-export function davAccountCount(): number {
-  return stored().length;
-}
-
 /** The account and calendar behind each CalDAV calendar, in Settings order (no secret decrypted). */
 export function davCalendarEntries(): { account: StoredDavAccount; calendar: StoredDavCalendar }[] {
   return stored().flatMap((account) => account.calendars.map((calendar) => ({ account, calendar })));
@@ -176,13 +168,15 @@ export interface DavAccountWrite {
 }
 
 /** Writes an account after discovery succeeded; returns its id. */
-export function putDavAccount(input: DavAccountWrite): string {
+export async function putDavAccount(input: DavAccountWrite): Promise<string> {
+  const newPassword = !input.mailAccountId && input.password !== undefined ? await encryptSecret(input.password) : undefined;
+  // Read after the await: an account written meanwhile stays.
   const list = stored();
   const existing = input.id ? list.find((entry) => entry.id === input.id) : undefined;
   const id = existing?.id ?? `${ACCOUNT_PREFIX}${randomUUID().slice(0, 8)}`;
   const passwordEncrypted = input.mailAccountId
     ? ''
-    : input.password !== undefined ? encryptToken(input.password) : existing?.passwordEncrypted ?? '';
+    : newPassword ?? existing?.passwordEncrypted ?? '';
   const next: StoredDavAccount = {
     id,
     provider: input.provider,
@@ -232,10 +226,12 @@ export function probeDavAccounts(): void {
   for (const entry of stored()) if (!entry.mailAccountId) decryptPassword(entry);
 }
 
-export function reEncryptDavAccounts(): void {
-  write(stored().map((entry) => {
-    if (entry.mailAccountId) return entry;
+export async function reEncryptDavAccounts(): Promise<void> {
+  const fresh = new Map<string, string>();
+  for (const entry of stored()) {
+    if (entry.mailAccountId) continue;
     const plaintext = decryptToken(entry.passwordEncrypted, `calendar.password (${entry.id})`);
-    return plaintext ? { ...entry, passwordEncrypted: encryptToken(plaintext) } : entry;
-  }));
+    if (plaintext) fresh.set(entry.passwordEncrypted, await encryptSecret(plaintext, { fresh: true }));
+  }
+  write(stored().map((entry) => ({ ...entry, passwordEncrypted: fresh.get(entry.passwordEncrypted) ?? entry.passwordEncrypted })));
 }

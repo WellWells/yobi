@@ -8,7 +8,9 @@ import { IPC, SOCKET_BOT_PLATFORMS, SOCKET_BOT_SECRET_FIELDS } from '../../share
 import type { SocketBotPlatform } from '../../shared/types';
 import { notifyBotGroupJoined, noteBotPairingRequest, registerBotPairer } from '../botPermissions';
 import { clearBotPairingRequest, listBotContacts } from '../botDirectory';
-import { config } from '../config';
+import { config, getHiddenSources } from '../config';
+import { uploadFallbackUrl } from '../botChat/attachmentPlan';
+import { sweepOrphanTempAttachments } from '../botChat/mediaTemp';
 import { sendLog, sendToRenderer } from '../helpers';
 import { botChatKey, markAgentAskShown, pendingAgentAskRunId } from '../botBuiltinCommands';
 import type { BotChatEvent } from '../botChat/types';
@@ -30,6 +32,7 @@ import { pairLineSelfOwner } from '../lineSelf/owner';
 import { LineSelfRuntime, type LineSelfTextEvent } from '../lineSelf/runtime';
 import { onLineReaderSwitched } from '../line/readerSwitch';
 import { botChatDeps } from './botChatDeps';
+import { lineSelfAdminSource } from './lineSelfAdmin';
 import type { FlowManager } from '../flow';
 
 export type SocketBotRuntimes = Readonly<Record<SocketBotPlatform, SocketBotRuntime<BotChatEvent>>>;
@@ -79,12 +82,16 @@ function registerPairer(platform: SocketBotPlatform, runtime: SocketBotRuntime<B
 
 /**
  * LINE PC: the user's own account, read through the LINE connector. Nothing to pair or bind: the
- * account pairs itself as the user's when the bot connects, "Yobi" works in any group and in the
- * user's 1:1 chats, and anyone else's "Yobi" in a group asks the owner to let them in. The LINE
+ * account pairs itself as the user's when the bot connects, "Yobi" works in any group and in any
+ * 1:1 chat from either side, and anyone else's "Yobi" asks the owner to let them in. The LINE
  * modules load the native database driver, so they are imported when first used.
  */
 function createLineSelfRuntime(getFlowManager: () => FlowManager | null): LineSelfRuntime {
   const shared = socketDeps<LineSelfTextEvent>('lineSelf', getFlowManager);
+  // A request's photos are scratch copies deleted when its run ends; a run cut short leaves some.
+  void sweepOrphanTempAttachments().then((removed) => {
+    if (removed > 0) sendLog(`[lineSelf] swept ${removed} orphaned media temp file(s)`);
+  });
   return new LineSelfRuntime({
     ...shared,
     // A 1:1 chat the user said "Yobi" in is no group for the settings page to list.
@@ -97,12 +104,24 @@ function createLineSelfRuntime(getFlowManager: () => FlowManager | null): LineSe
     coreProblem: async () => (await import('../line/nativeLineCore')).nativeCoreProblem(),
     pictureFile: async (url) => (await import('../lineSelf/pictures')).appLinePictureFile(url, sendLog),
     photoFile: async (file) => (await import('../lineSelf/pictures')).appLinePhotoFile(file, sendLog),
+    uploadFallbackUrl: () => uploadFallbackUrl(getHiddenSources()),
+    appModelUrl: () => config.targetUrl,
     ensureOwner: async (owner) => {
       if (await pairLineSelfOwner(owner)) sendLog(`[lineSelf] paired ${owner.userId} as your own account`);
     },
     knownChats: async () => (await listBotContacts({ platform: 'lineSelf', kind: 'chat' }))
       .filter((contact) => contact.reachability !== 'removed')
       .map((contact) => contact.id),
+    // Any group or friend LINE PC has: what the flow editor's recipient list offers.
+    liveChat: async (chatId) => {
+      if (!config.lineReaderEnabled || process.platform !== 'win32') return null;
+      const [{ getSharedLineService }, { findLineSelfTarget }] = await Promise.all([
+        import('../line/sharedService'),
+        import('../lineSelf/targets'),
+      ]);
+      return findLineSelfTarget(getSharedLineService(), chatId);
+    },
+    admin: lineSelfAdminSource(),
   });
 }
 

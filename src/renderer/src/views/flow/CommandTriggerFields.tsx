@@ -1,6 +1,6 @@
 import React from 'react';
 import { Group, Stack, Text } from '@mantine/core';
-import { Bot, MessageSquare, TriangleAlert } from 'lucide-react';
+import { Bot, MessageSquare, TriangleExclamationPoint } from 'lucide-react';
 import { AppTextInput } from '../../components/AppTextInput';
 import { GroupHeader } from '../../components/GroupHeader';
 import type { TriggerConfig } from '../../../../shared/types';
@@ -82,21 +82,21 @@ export const CommandTriggerFields: React.FC<CommandTriggerFieldsProps> = ({
 
       {commandEmpty && (
         <Group gap={6} align="center">
-          <TriangleAlert size={13} color="var(--mantine-color-warning)" />
+          <TriangleExclamationPoint size={13} color="var(--mantine-color-warning)" />
           <Text fz="xs" c="var(--mantine-color-warning)">{tk('command.empty')}</Text>
         </Group>
       )}
 
       {conflicts?.map((conflict) => (
         <Group key={conflict.kind} gap={6} align="flex-start" wrap="nowrap">
-          <TriangleAlert size={13} color="var(--mantine-color-warning)" style={{ marginTop: 2, flexShrink: 0 }} />
+          <TriangleExclamationPoint size={13} color="var(--mantine-color-warning)" style={{ marginTop: 2, flexShrink: 0 }} />
           <Text fz="xs" c="var(--mantine-color-warning)">{describeFlowIssue(conflict, t)}</Text>
         </Group>
       ))}
 
       {kind === 'bot' && showBotCompoundHint && (
         <Group gap={6} align="flex-start" wrap="nowrap">
-          <TriangleAlert size={13} color="var(--mantine-color-dimmed)" style={{ marginTop: 2, flexShrink: 0 }} />
+          <TriangleExclamationPoint size={13} color="var(--mantine-color-dimmed)" style={{ marginTop: 2, flexShrink: 0 }} />
           <Text fz="xs" c="dimmed">{t('flow.trigger.bot.scheduleHint')}</Text>
         </Group>
       )}

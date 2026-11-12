@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, Box, Group, Stack, Text, Tooltip } from '@mantine/core';
-import { Check, Copy, ExternalLink, Link2, Trash2, TriangleAlert } from 'lucide-react';
+import { Check, Copy, ExternalLink, Link2, Trash, TriangleExclamationPoint } from 'lucide-react';
 import { SHARE_CONSENT_KEYS, clampShareExpire, resolveShareExpires } from '../../../../shared/types';
 import type { ShareErrorCode, ShareExpire, ShareSettings } from '../../../../shared/types';
 import { clipboardApi, shareApi } from '../../api/electronApi';
@@ -199,7 +199,7 @@ export const ShareLinkDialog: React.FC<ShareLinkDialogProps> = ({ open, onClose,
         {stage === 'result' && result && (
           <Stack gap={14}>
             {revoked ? (
-              <Alert color="gray" icon={<Trash2 size={16} />} variant="light">
+              <Alert color="gray" icon={<Trash size={16} />} variant="light">
                 {t('share.revoked')}
               </Alert>
             ) : (
@@ -216,7 +216,7 @@ export const ShareLinkDialog: React.FC<ShareLinkDialogProps> = ({ open, onClose,
               <AppButton
                 variant="subtle"
                 color="red"
-                leftSection={<Trash2 size={14} />}
+                leftSection={<Trash size={14} />}
                 loading={busy}
                 disabled={!result.deleteUrl || revoked}
                 onClick={handleRevoke}
@@ -263,7 +263,7 @@ const ShareErrorAlert: React.FC<{
   error: { code: ShareErrorCode; detail?: string };
   t: (key: string) => string;
 }> = ({ error, t }) => (
-  <Alert color="var(--mantine-color-error)" variant="light" icon={<TriangleAlert size={16} />}>
+  <Alert color="var(--mantine-color-error)" variant="light" icon={<TriangleExclamationPoint size={16} />}>
     <Stack gap={4}>
       <Text fz="var(--font-size-sm)">{t(`share.error.${error.code}`)}</Text>
       {error.detail && (

@@ -6,6 +6,7 @@ import { FlowUserError } from '../userError';
 import { BROWSER_STEP_TIMEOUT_MS } from '../runtime';
 import { parseXHandle, splitXAccountLines } from '../../../shared/xHandles';
 import { parseXMediaInput } from '../../../shared/xMedia';
+import { X_POSTS_MAX_PER_RUN } from '../../../shared/flowFeedCaps';
 import { readLinkedThread, siteName } from './postReader';
 import { readAccessOf } from './readAccess';
 import { buildPushThreadEnvelope } from './pushThread';
@@ -18,7 +19,7 @@ const xPostsCheckpoints = makeCheckpointStore<SeenCheckpoint>('x_posts');
 
 /** Profiles fetched at once; X rate-limits aggressively. */
 const X_FETCH_CONCURRENCY = 2;
-const MAX_NEW_PER_RUN = 10;
+const MAX_NEW_PER_RUN = X_POSTS_MAX_PER_RUN;
 const DEFAULT_PER_ACCOUNT = 5;
 const DEFAULT_MAX_REPLIES = 20;
 const TITLE_MAX_CHARS = 80;

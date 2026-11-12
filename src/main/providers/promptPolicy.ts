@@ -14,6 +14,8 @@ export const PROVIDER_PROMPT_POLICIES: Record<Provider, ProviderPromptPolicy> = 
   chatgpt: { maxBytes: 65_535, maxCharsPlusBreaks: null },
   claude: { maxBytes: 100_000, maxCharsPlusBreaks: null },
   perplexity: { maxBytes: 40_000, maxCharsPlusBreaks: null },
+  // The composer has no maxlength; the server's own cap was not measured, so this stays conservative.
+  deepseek: { maxBytes: null, maxCharsPlusBreaks: 100_000 },
   gemini: { maxBytes: null, maxCharsPlusBreaks: GEMINI_SIGNED_OUT_PROMPT_CAP },
 };
 

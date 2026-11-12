@@ -2,7 +2,8 @@
  * The providers' own temporary chats: kept out of the account's history, so a one-shot send
  * (a flow step, a translation, a search synthesis) leaves no conversation behind.
  * ChatGPT and Claude open one from a link; Gemini only from a button its runner presses;
- * Perplexity's is an account-menu toggle for signed-in users, so it is not used.
+ * Perplexity's is an account-menu toggle for signed-in users, so it is not used. DeepSeek has none
+ * of its own: its runner deletes the conversation once the answer has been read instead.
  */
 import { PROVIDER_URLS, providerFromUrl } from '../../shared/types';
 import type { Provider } from '../../shared/types';

@@ -27,8 +27,11 @@ function setFlag(el: HTMLElement, name: string, on: boolean): void {
  * Fades the top or bottom edge of a vertical scroll container while there is more list beyond
  * it. Returns the class to put on that container. The edges are written straight onto the
  * element as `data-fade-top` / `data-fade-bottom`, so scrolling never re-renders the list.
+ *
+ * `container` names which container the ref holds when it can be unmounted and drawn again (the
+ * chat sidebar folded to its rail and back): a new value watches the new element.
  */
-export function useScrollEdgeFade(ref: React.RefObject<HTMLElement | null>): string {
+export function useScrollEdgeFade(ref: React.RefObject<HTMLElement | null>, container?: string | number | boolean): string {
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -55,6 +58,6 @@ export function useScrollEdgeFade(ref: React.RefObject<HTMLElement | null>): str
       mutation.disconnect();
       resize.disconnect();
     };
-  }, [ref]);
+  }, [ref, container]);
   return styles.fade;
 }

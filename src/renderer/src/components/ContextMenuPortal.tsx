@@ -11,12 +11,17 @@ export interface ContextMenuPortalProps {
   position: ContextMenuPosition | null;
   onClose: () => void;
   children: React.ReactNode;
+  /** Off = focus stays where it was (a text field keeps its selection drawn); default on. */
+  trapFocus?: boolean;
+  dropdownRef?: React.Ref<HTMLDivElement>;
 }
 
 export const ContextMenuPortal: React.FC<ContextMenuPortalProps> = ({
   position,
   onClose,
   children,
+  trapFocus = true,
+  dropdownRef,
 }) => {
   useEffect(() => {
     if (!position) return;
@@ -42,9 +47,9 @@ export const ContextMenuPortal: React.FC<ContextMenuPortalProps> = ({
       style={{ zIndex: Z_CONTEXT_MENU }}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      <Menu opened withinPortal={false} position="bottom-start" offset={0} zIndex={Z_CONTEXT_MENU}>
+      <Menu opened withinPortal={false} position="bottom-start" offset={0} zIndex={Z_CONTEXT_MENU} trapFocus={trapFocus}>
         <Menu.Target><Box w={0} h={0} /></Menu.Target>
-        <Menu.Dropdown>{children}</Menu.Dropdown>
+        <Menu.Dropdown ref={dropdownRef}>{children}</Menu.Dropdown>
       </Menu>
     </Box>
   );

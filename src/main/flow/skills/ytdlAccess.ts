@@ -1,4 +1,4 @@
-import { botFlowAdminAllowed, getBotRights } from '../../botPermissions/rights';
+import { botFlowAdminAllowed, botOwnerAllowed, getBotRights } from '../../botPermissions/rights';
 import { telegramSendLimitBytes } from '../../telegram/largeUpload';
 import { NO_BOT_RIGHTS } from '../../../shared/botPermissions';
 import { LINE_VIDEO_SEND_BYTES, exceedsLimit } from '../../../shared/ytdl';
@@ -10,7 +10,8 @@ import { parseBotPlatform } from '../../../shared/types';
  * a schedule) gets everything. A bot user without the admin grant is capped (`BOT_USER_CAP_BYTES`)
  * and never told where a file sits on this computer; an admin — and on LINE PC, which answers as
  * the owner from their own computer, the owner — is told only in their own private chat, since a
- * group would read the path too. A bot user with the preview grant gets a short video at a low
+ * group would read the path too. On LINE PC only the owner is ever told: another admin is uncapped
+ * in their own 1:1 chat but never sees the owner's disk. A bot user with the preview grant gets a short video at a low
  * quality before its menu (`preview`).
  */
 export interface YtdlAccess {
@@ -38,7 +39,10 @@ export async function ytdlAccessFor(config: Record<string, string>): Promise<Ytd
   const preview = rights.preview && rights.download;
   const uncapped = rights.admin || (platform === 'lineSelf' && (await botFlowAdminAllowed(platform, userId, chatId).catch(() => false)));
   if (!uncapped) return { capped: true, showPath: false, preview };
-  return { capped: false, showPath: Boolean(chatId) && chatId === userId, preview };
+  const ownChat = Boolean(chatId) && chatId === userId;
+  // LINE PC answers from the owner's computer as the owner: its paths are theirs alone, not an admin's.
+  const showPath = ownChat && (platform !== 'lineSelf' || (await botOwnerAllowed(platform, userId).catch(() => false)));
+  return { capped: false, showPath, preview };
 }
 
 /**

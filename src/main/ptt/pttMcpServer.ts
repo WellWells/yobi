@@ -3,13 +3,12 @@
  * a post with its pushes. Takes the PTT service and the article reader as parameters, so the tool
  * surface is tested offline with fakes; the real ones are wired in pttConnection.ts.
  */
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { fitPushes, pushLineText, taipeiTime } from '../flow/skills/pushThread';
 import { tallyPushes } from '../flow/skills/pttPosts';
 import type { XThread } from '../flow/skills/xPosts';
 import type { XRead } from '../flow/skills/xReader';
-import { createToolServer } from '../mcp/inProcessServer';
+import { createToolServer, type ToolServer } from '../mcp/inProcessServer';
 import type { PttBoardEntry } from './pttBoards';
 import { pttKeywordHasOperator, pttSearchTerms, type PttListing, type PttQuery } from './pttListing';
 import { PttBoardMissingError, type PttListPage, type PttService } from './pttService';
@@ -260,6 +259,6 @@ async function dispatch(deps: PttMcpDeps, name: string, args: Record<string, unk
   }
 }
 
-export function createPttMcpServer(deps: PttMcpDeps): Server {
+export function createPttMcpServer(deps: PttMcpDeps): ToolServer {
   return createToolServer({ name: PTT_SERVER_NAME, tools: PTT_TOOLS, dispatch: (name, args, signal) => dispatch(deps, name, args, signal) });
 }

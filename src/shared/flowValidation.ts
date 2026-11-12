@@ -10,6 +10,7 @@ import { checkVariableReferences } from './flowReferenceCheck';
 import { sanitizeFlowVariables } from './flowVariables';
 import { checkBlockStructure, describeBlockIssue } from './flowBlockStructure';
 import { unwrapMarkdownLink } from './markdownLinkUnwrap';
+import { isCaptureFormat, parseLlmExportFormats } from './fileOutputStep';
 
 export { extractJsonFromLlmResponse } from './llmJsonExtract';
 export { checkBlockStructure, describeBlockIssue } from './flowBlockStructure';
@@ -23,8 +24,6 @@ export const OUTPUT_KEY_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 const REQUIRED_KEYS: Partial<Record<SkillType, string[]>> = Object.fromEntries(
   SKILL_SPECS.map((spec) => [spec.type, spec.fields.filter((f) => f.required).map((f) => f.key)]),
 );
-
-const LLM_EXPORT_FORMATS = ['png', 'webp', 'pdf'];
 
 /** Legacy config key spellings, read under their current name instead of being dropped. */
 const CONFIG_KEY_ALIASES: Partial<Record<SkillType, Record<string, string>>> = {
@@ -83,10 +82,10 @@ function validateStep(raw: unknown, index: number): StepValidationResult {
 
   if (skillType === 'llm') {
     const exportFormat = (config.exportFormat ?? '').trim().toLowerCase();
-    if (exportFormat && !LLM_EXPORT_FORMATS.includes(exportFormat)) {
-      return { ok: false, error: `Step ${index + 1} ("llm") has invalid exportFormat "${config.exportFormat}" — use "png", "webp", "pdf" or ""` };
+    if (exportFormat && exportFormat.split(',').some((format) => !isCaptureFormat(format.trim()))) {
+      return { ok: false, error: `Step ${index + 1} ("llm") has invalid exportFormat "${config.exportFormat}" — use a comma-separated list of "png", "webp", "pdf", or ""` };
     }
-    config.exportFormat = exportFormat;
+    config.exportFormat = parseLlmExportFormats(exportFormat).join(',');
   }
 
   for (const key of REQUIRED_KEYS[skillType] ?? []) {

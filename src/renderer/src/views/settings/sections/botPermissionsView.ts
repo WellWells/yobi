@@ -193,7 +193,8 @@ export function grantChips(grants: readonly BotGrant[], input: GrantViewInput): 
 /**
  * What the "+ Permission" menu offers: only grants the account does not have yet, grouped.
  * Single connectors are hidden once all connectors are granted (they would change nothing),
- * admin is Telegram only, and the owner is only offered what "me" does not imply.
+ * admin only where the platform has admins (Telegram, LINE, LINE PC), and the owner is only
+ * offered what "me" does not imply.
  */
 export function grantMenuGroups(grants: readonly BotGrant[], input: GrantViewInput): GrantMenuGroup[] {
   const has = new Set<BotGrant>(grants);
@@ -221,8 +222,10 @@ export function grantMenuGroups(grants: readonly BotGrant[], input: GrantViewInp
 }
 
 /**
- * The "+ Permission" menu of a platform's defaults for new pairings: an account's menu without
- * the grants that are never a default (shell, admin).
+ * The "+ Permission" menu of a platform's defaults for new pairings: an account's menu with only
+ * what a default may be (`isDefaultableGrant`) — what an admin who is not the owner may hand out,
+ * since whoever an admin lets in gets the defaults: never shell, admin, reading this computer, all
+ * connectors or a private one.
  */
 export function defaultGrantMenuGroups(grants: readonly BotGrant[], input: GrantViewInput): GrantMenuGroup[] {
   return grantMenuGroups(grants, { ...input, isOwner: false })

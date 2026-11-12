@@ -3,6 +3,7 @@ import { Check, Circle, X } from 'lucide-react';
 import { researchFailed, researchFraction, researchPhase } from '../../../shared/researchProgress';
 import type { ResearchPhase, ResearchProgress } from '../../../shared/researchProgress';
 import { fillTemplate as fill } from '../../../shared/fillTemplate';
+import { researchPhaseBrief } from '../utils/agentTrace';
 
 type Translate = (key: string) => string;
 
@@ -14,9 +15,8 @@ const LINE_STYLE = {
   textOverflow: 'ellipsis',
 };
 
-/** What one phase says: its name, then its counts once it has any. */
+/** What one phase says: its name, then its counts once it has any, then what it carries. */
 export function phaseText(phase: ResearchPhase, t: Translate): string {
-  const counted = phase.total !== undefined && phase.status !== 'pending';
   switch (phase.id) {
     case 'plan':
       return phase.queries?.length
@@ -27,23 +27,18 @@ export function phaseText(phase: ResearchPhase, t: Translate): string {
         ? fill(t('agent.research.phase.searchDone'), { hits: phase.hits })
         : t('agent.research.phase.search');
     case 'read': {
-      const base = counted
-        ? fill(t('agent.research.phase.readCount'), { done: phase.done ?? 0, total: phase.total ?? 0 })
-        : t('agent.research.phase.read');
+      const base = researchPhaseBrief(phase, t);
       return phase.failed
         ? `${base} · ${fill(t('agent.research.readFailed'), { count: phase.failed, hosts: (phase.failedHosts ?? []).join(', ') })}`
         : base;
     }
     case 'summarize': {
-      const base = counted
-        ? fill(t('agent.research.phase.summarizeCount'), { done: phase.done ?? 0, total: phase.total ?? 0 })
-        : t('agent.research.phase.summarize');
+      const base = researchPhaseBrief(phase, t);
       return phase.dropped ? `${base} · ${fill(t('agent.research.dropped'), { count: phase.dropped })}` : base;
     }
     case 'analyze':
-      return counted
-        ? fill(t('agent.research.phase.analyzeCount'), { done: phase.done ?? 0, total: phase.total ?? 0 })
-        : t('agent.research.phase.analyze');
+    case 'write':
+      return researchPhaseBrief(phase, t);
     case 'review':
       if (phase.queries?.length) {
         return fill(t('agent.research.phase.reviewCount'), {
@@ -53,16 +48,21 @@ export function phaseText(phase: ResearchPhase, t: Translate): string {
         });
       }
       return phase.queries && phase.status === 'done' ? t('agent.research.phase.reviewEnough') : t('agent.research.phase.review');
-    case 'write':
-      return t('agent.research.phase.write');
   }
 }
 
 /** The one line a finished research leaves behind. */
 export function researchSummary(progress: ResearchProgress, t: Translate): string {
   const read = researchPhase(progress, 'read');
-  const parts = [fill(t('agent.research.summary.read'), { count: read?.done ?? 0 })];
-  if (read?.failed) parts[0] += fill(t('agent.research.summary.failed'), { count: read.failed });
+  const parts: string[] = [];
+  const searches = progress.searches ?? [];
+  if (searches.length > 0) {
+    const results = searches.reduce((sum, search) => sum + search.results.length, 0);
+    parts.push(fill(t('agent.research.summary.searches'), { count: searches.length, results }));
+  }
+  let readPart = fill(t('agent.research.summary.read'), { count: read?.done ?? 0 });
+  if (read?.failed) readPart += fill(t('agent.research.summary.failed'), { count: read.failed });
+  parts.push(readPart);
   if (progress.sources !== undefined) parts.push(fill(t('agent.research.summary.sources'), { count: progress.sources }));
   return parts.join(' · ');
 }

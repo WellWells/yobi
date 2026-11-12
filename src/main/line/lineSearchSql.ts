@@ -20,14 +20,6 @@ import { CONTENT_TYPE_FILTERS, contentTypeCode } from './schema';
  */
 export const SEARCH_TYPE_NAMES: readonly string[] = [...[...CONTENT_TYPE_FILTERS, 'event', 'unsent'].sort(), 'url', 'notice'];
 
-/** `link`, the older name of `post`: still accepted, with a note. */
-export const LEGACY_POST_TYPE = 'link';
-
-/** Whether a name is an accepted search type (a listed name, the `link` alias or a raw `type_N` code). */
-export function isSearchType(name: string): boolean {
-  return SEARCH_TYPE_NAMES.includes(name) || name === LEGACY_POST_TYPE || /^type_\d+$/.test(name);
-}
-
 export type HasColumn = (column: string) => boolean;
 
 /** A column reference that becomes NULL when the column is absent from this database. */

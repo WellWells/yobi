@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Group, Stack, Text } from '@mantine/core';
 import { Check, ExternalLink, Info, Link2 } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import type { ConversationDoc } from '../../../../shared/conversationDoc';
 import { formatCardTime } from '../../../../shared/captureCard';
 import { clipboardApi } from '../../api/electronApi';
@@ -33,7 +34,7 @@ const Value: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 export const ConversationInfoDialog: React.FC<ConversationInfoDialogProps> = ({
   open, onClose, onClosed, conversation, content, filePath,
 }) => {
-  const { t, locale } = useI18nStore();
+  const { t, locale } = useI18nStore(useShallow((s) => ({ t: s.t, locale: s.locale })));
   const [pathCopied, setPathCopied] = useState(false);
   const info = useMemo(
     () => (conversation ? summarizeConversation(conversation, content) : null),

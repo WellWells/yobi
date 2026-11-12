@@ -1,17 +1,19 @@
 /**
  * Managing who may use the bot from LINE itself, the port of Telegram's `/users`: an unpaired
- * person writing in private is a pairing request, and the owner gets its card ("Allow" / "Block");
- * `/users` in the owner's private chat lists the paired accounts and the waiting requests, each a
- * card with its grants as toggles and "Unpair" — the same writes as the settings page.
+ * person writing in private is a pairing request, and the managers get its card ("Allow" /
+ * "Block"); `/users` in a manager's private chat lists the paired accounts and the waiting
+ * requests, each a card with its grants as toggles, the admin toggle (the owner only) and
+ * "Unpair" — the same writes as the settings page.
  *
- * LINE has no admin grant, so the manager is the owner ("me"), paired, in their own private chat,
- * checked on every command and every tap (`isLineManager`). Postback data comes back from the
- * client as it likes, so it only names an account and a grant index; what a tap may do is worked
- * out again from the account as it is now (`applyAccountPress`).
+ * The managers are the owner ("me") and the admin-grant holders, paired, in their own private
+ * chat, checked on every command and every tap (`isLineManager`). Postback data comes back from
+ * the client as it likes, so it only names an account and a grant index; what a tap may do is
+ * worked out again from the account and the one tapping as they are now (`applyAccountPress`).
  *
  * LINE quota: every answer goes through the reply token (free). The only pushes are a new
- * request's card to the owner (at most `PAIRING_REQUEST_DAILY_CARDS.line` a day, decided by
- * `noteBotPairingRequest`) and, when an invite is used, the new account's card to its issuer.
+ * request's card to the managers (at most `PAIRING_REQUEST_DAILY_CARDS.line` requests a day,
+ * decided by `noteBotPairingRequest`, and at most `LINE_MANAGER_PUSHES_DAILY` pushes a day across
+ * managers, owner first) and, when an invite is used, the new account's card to its issuer.
  */
 import type { messagingApi } from '@line/bot-sdk';
 import { t } from '../i18n';
@@ -21,7 +23,7 @@ import type { AccountWrites, ManagedAccount } from '../botPermissions/accountAdm
 import type { LineClient } from './client';
 import type { LinePostbackEvent, LineTextEvent } from './events';
 import { replyByToken } from './postbackRouter';
-import { isLineManager } from './manager';
+import { LINE_MANAGER_PUSHES_DAILY, isLineManager, takeLineManagerPush } from './manager';
 import type { LineManagerCheck } from './manager';
 import { lineAccountCardMessage, lineAccountListMessage, lineUnpairConfirmMessage, parseLineAccountAction } from './accountCards';
 import type { LineAccountCardEnv } from './accountCards';
@@ -32,7 +34,7 @@ export interface LineAccountAdminSource extends AccountWrites {
   listAccounts: () => Promise<ManagedAccount[]>;
   /** One account as it is now; null = an id the bot knows nothing of. */
   getAccount: (userId: string) => Promise<ManagedAccount | null>;
-  /** The private chats a new request's card goes to: the owner, paired. */
+  /** The private chats a new request's card goes to: the managers, paired, owner first. */
   getManagerIds: () => Promise<string[]>;
   /** Records a request; true = the owner should get its card now. */
   noteRequest: (profile: { userId: string; displayName?: string }) => Promise<boolean>;
@@ -42,6 +44,8 @@ export interface LineAccountAdminDeps extends LineManagerCheck {
   source: LineAccountAdminSource;
   getClient: () => LineClient | null;
   getStrings: () => Record<string, string>;
+  /** Takes one push to a manager from today's allowance (`takeLineManagerPush` unless a test gives its own). */
+  takePush?: () => boolean;
 }
 
 export interface LineAccountAdmin {
@@ -59,6 +63,7 @@ const errorText = (err: unknown): string => (err instanceof Error ? err.message 
 
 export function createLineAccountAdmin(deps: LineAccountAdminDeps): LineAccountAdmin {
   const { source, onLog } = deps;
+  const takePush = deps.takePush ?? takeLineManagerPush;
   const isManager = (event: { userId: string; chatId: string; chatKind: string }): Promise<boolean> => isLineManager(event, deps);
 
   function reply(replyToken: string | undefined, message: string | messagingApi.FlexMessage): Promise<boolean> {
@@ -76,7 +81,7 @@ export function createLineAccountAdmin(deps: LineAccountAdminDeps): LineAccountA
 
   async function handleCommand(event: LineTextEvent): Promise<void> {
     if (!(await isManager(event))) {
-      onLog(`[line] /users refused for ${event.userId} — not the owner in a private chat`);
+      onLog(`[line] /users refused for ${event.userId} — not an admin in a private chat`);
       await reply(event.replyToken, t(deps.getStrings(), 'line.users.ownerOnly'));
       return;
     }
@@ -96,7 +101,7 @@ export function createLineAccountAdmin(deps: LineAccountAdminDeps): LineAccountA
     }
     const s = deps.getStrings();
     if (!(await isManager(event))) {
-      onLog(`[line] account-management tap refused for ${event.userId} — not the owner`);
+      onLog(`[line] account-management tap refused for ${event.userId} — not an admin`);
       await reply(event.replyToken, t(s, 'line.users.ownerOnly'));
       return;
     }
@@ -122,12 +127,19 @@ export function createLineAccountAdmin(deps: LineAccountAdminDeps): LineAccountA
       : lineAccountCardMessage(fresh, env, notice ? { notice } : {}));
   }
 
-  /** Pushes one account's card to each of these owners; returns how many got it. */
+  /**
+   * Pushes one account's card to each of these managers, in order (owner first), while today's
+   * push allowance lasts; returns how many got it.
+   */
   async function pushCards(account: ManagedAccount, managerIds: readonly string[], heading?: string): Promise<number> {
     const client = deps.getClient();
     if (!client) return 0;
     let sent = 0;
     for (const managerId of managerIds) {
+      if (!takePush()) {
+        onLog(`[line] ${account.id}'s card not pushed to ${managerId} — today's ${LINE_MANAGER_PUSHES_DAILY} pushes to managers are used`);
+        break;
+      }
       try {
         await client.pushFlex(managerId, lineAccountCardMessage(account, await envFor(managerId), heading ? { heading } : {}));
         sent += 1;

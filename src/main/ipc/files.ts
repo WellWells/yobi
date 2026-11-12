@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { IPC } from '../../shared/types';
-import { withLeadingBom } from '../../shared/conversationDoc';
+import { withConversationTitle } from '../../shared/conversationDoc';
 import { turnFileOpens } from '../../shared/turnMedia';
 import type {
   AttachmentStashRequest,
@@ -12,12 +12,14 @@ import type {
   MarkdownCaptureRequest,
   MarkdownCaptureResult,
   ResponseEditResult,
+  PromptRewindResult,
   StartedConversation,
   StashedAttachment,
 } from '../../shared/types';
 import { writeFileAtomic } from '../atomicWrite';
 import { editConversationResponse, parseResponseEditRequest, withConversationFile } from '../chat/conversationStore';
-import { attachmentFromClipboard, stashAttachmentBytes } from '../attachmentStash';
+import { parsePromptRewindRequest, rewindConversation } from '../chat/conversationRewind';
+import { attachmentFromClipboard, copiedPathsOrPaste, stashAttachmentBytes } from '../attachmentStash';
 import { getAssetPath, getMainWindow, sendLog, sendToRenderer } from '../helpers';
 import {
   listOutputFiles,
@@ -109,21 +111,8 @@ export function registerFileHandlers(): void {
     try {
       const written = await withConversationFile(filePath, async () => {
         const content = await fs.readFile(filePath, 'utf-8');
-        const heading = `# ${title}`;
-        // A leading BOM stays the first character: the heading goes after it, not in front.
-        const next = withLeadingBom(content, (body) => {
-          const lines = body.split('\n');
-          const firstLine = lines[0]?.trim() ?? '';
-          // The same title again is not an edit: no write, no watcher event, no list broadcast.
-          if (firstLine === heading) return null;
-          if (/^#\s+/.test(firstLine)) {
-            // Keep a CRLF file's line ending on the line that changes.
-            lines[0] = lines[0]?.endsWith('\r') ? `${heading}\r` : heading;
-          } else {
-            lines.unshift(heading, '');
-          }
-          return lines.join('\n');
-        });
+        // The same title again is not an edit: no write, no watcher event, no list broadcast.
+        const next = withConversationTitle(content, title);
         if (next === null) return false;
         await writeFileAtomic(filePath, next);
         return true;
@@ -144,6 +133,22 @@ export function registerFileHandlers(): void {
       return result;
     } catch (err: unknown) {
       sendLog(`⚠️ Could not edit the answer: ${err instanceof Error ? err.message : String(err)}`);
+      return { ok: false, reason: 'failed' };
+    }
+  });
+
+  ipcMain.handle(IPC.REWIND_CONVERSATION, async (_event, request: unknown): Promise<PromptRewindResult> => {
+    const parsed = parsePromptRewindRequest(request);
+    if (!parsed || !await isAllowedFilePath(parsed.filePath)) return { ok: false, reason: 'failed' };
+    try {
+      const result = await rewindConversation(parsed);
+      if (result.ok) {
+        sendLog(`✏️ Rewound ${path.basename(parsed.filePath)} to before question ${parsed.turnIndex + 1}`);
+        sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
+      }
+      return result;
+    } catch (err: unknown) {
+      sendLog(`⚠️ Could not rewind the conversation: ${err instanceof Error ? err.message : String(err)}`);
       return { ok: false, reason: 'failed' };
     }
   });
@@ -227,6 +232,12 @@ export function registerFileHandlers(): void {
 
   ipcMain.handle(IPC.ATTACHMENT_FROM_CLIPBOARD, (): Promise<StashedAttachment | null> =>
     attachmentFromClipboard());
+
+  // The fallback paste lands in the window that asked, so only the message box's window may ask.
+  ipcMain.handle(IPC.CLIPBOARD_PASTE_PATHS, async (event): Promise<string[]> => {
+    if (event.sender !== getMainWindow()?.webContents) return [];
+    return copiedPathsOrPaste(event.sender);
+  });
 
   ipcMain.handle(IPC.CAPTURE_PAGE, async (event, args: { name?: string }): Promise<string> => {
     if (!isManagedPageWebContents(event.sender)) {

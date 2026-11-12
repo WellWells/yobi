@@ -1,0 +1,25 @@
+/* Copy and edit sit under the question and show while the pointer is on it, as in Gemini,
+   ChatGPT and Claude. Space is reserved (opacity, not display) so revealing them never shifts
+   the turns below. */
+.actions {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+/* :focus-within keeps them reachable by keyboard; the copied state holds them visible long
+   enough for the check mark to register after the pointer leaves. */
+.question:hover .actions,
+.question:focus-within .actions,
+.actions[data-copied='true'] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Touch input has no hover to reveal them with. */
+@media (hover: none) {
+  .actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}

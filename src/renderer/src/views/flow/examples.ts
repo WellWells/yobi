@@ -12,10 +12,12 @@ import {
 } from '../../../../shared/translateLanguages';
 import {
   COUNCIL_MEMBERS,
+  FILE_SUMMARY_DOC_REF,
   articleBriefingPrompt,
   askPrompt,
   councilMemberPrompt,
   councilSynthesisPrompt,
+  fileSummaryPrompt,
   lineAlertPrompt,
   lineDigestPrompt,
   telegramDigestPrompt,
@@ -45,7 +47,13 @@ function makeId(): string {
 
 type Translate = (key: string) => string;
 
-export type TemplateCategory = 'hotkey' | 'push' | 'command';
+/**
+ * The gallery rail a template sits on. `hotkey`, `file` and `command` say how it starts; the
+ * scheduled ones are split by what they bring you (`brief` the day's own information and alerts,
+ * `follow` new posts from sites and channels, `chats` the user's group chats), because eighteen
+ * of them on one rail left two thirds of it off screen.
+ */
+export type TemplateCategory = 'hotkey' | 'file' | 'brief' | 'follow' | 'chats' | 'command';
 
 /**
  * Gallery identity colour: what the template is about, not what its first step does
@@ -336,7 +344,7 @@ function currencyOptions(t: Translate): FlowVariableOption[] {
   return COMMON_CURRENCIES.map((code) => ({ value: code, label: `${code} — ${t(`flow.currency.${code}`)}` }));
 }
 
-const FOREX_GATE_CODE = [
+export const FOREX_GATE_CODE = [
   'const rate = parseFloat("{{forex_1.rate}}");',
   'const target = parseFloat("{{var.targetPrice}}");',
   'const risingAlert = "{{var.direction}}" === "above";',
@@ -545,6 +553,18 @@ function selectionTemplate(spec: SelectionTemplateSpec): FlowTemplate {
   };
 }
 
+/** What the new-file summary watches for: what `file_read` reads as text (PDF, or UTF-8 text). */
+export const FILE_SUMMARY_PATTERN = '*.pdf; *.txt; *.md';
+
+/**
+ * What the new-file summary appends to the original's name ("report.pdf.summary.md"). The
+ * original's own extension stays in, so the two sort side by side and the template's first step
+ * can tell its own output from a document by this suffix alone.
+ */
+export function fileSummarySuffix(t: Translate): string {
+  return `.${t('flow.templates.fileSummary.suffix')}.md`;
+}
+
 export const FLOW_TEMPLATES: FlowTemplate[] = [
   selectionTemplate({
     key: 'sel_translate',
@@ -570,8 +590,43 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
     prompt: selectionSummaryPrompt,
   }),
   {
+    key: 'file_summary',
+    category: 'file',
+    titleKey: 'flow.templates.fileSummary',
+    descKey: 'flow.templates.fileSummary.desc',
+    primarySkill: 'file_read',
+    hue: 'yellow',
+    // The folder: the setup wizard asks for the file trigger's own folder (`setupQuestions.ts`).
+    setupCount: 1,
+    build: (t, locale): FlowDefinition => {
+      // The summary lands beside the file it summarises, inside the folder being watched, so it
+      // must never pass for a new document: with `*.md` watched, each summary would be summarised
+      // in turn. The first step drops any file carrying the summary's own suffix.
+      const suffix = fileSummarySuffix(t);
+      return {
+        id: makeId(),
+        name: t('flow.templates.fileSummary'),
+        description: t('flow.templates.fileSummary.desc'),
+        enabled: false,
+        trigger: { type: 'file', watchFolder: '', watchPattern: FILE_SUMMARY_PATTERN, watchSubfolders: false },
+        steps: [
+          step('if', { left: '{{file.name}}', operator: 'contains', right: suffix }, t('flow.templates.fileSummary.step.ifOwn')),
+          step('stop', { value: '' }, t('flow.templates.fileSummary.step.skipOwn')),
+          step('end_if', {}, t('flow.skill.end_if')),
+          step('file_read', { path: '{{file}}' }, t('flow.templates.fileSummary.step.read'), 'doc_1'),
+          step('stop', { value: FILE_SUMMARY_DOC_REF }, t('flow.templates.fileSummary.step.stopEmpty')),
+          step('llm', llmConfig(fileSummaryPrompt(locale)), t('flow.templates.fileSummary.step.llm'), 'llm_1'),
+          // An absolute file name puts the summary in the original's folder, subfolder included.
+          step('file_write', { folder: '', filename: `{{file}}${suffix}`, content: '{{llm_1}}' }, t('flow.templates.fileSummary.step.write')),
+          step('notify', { title: `${t('flow.templates.fileSummary.notify.title')} · {{file.name}}`, body: '{{llm_1}}' }, t('flow.templates.fileSummary.step.notify')),
+        ],
+        ...timestamps(),
+      };
+    },
+  },
+  {
     key: 'line_digest',
-    category: 'push',
+    category: 'chats',
     titleKey: 'flow.templates.lineDigest',
     descKey: 'flow.templates.lineDigest.desc',
     primarySkill: 'line_read',
@@ -596,7 +651,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
   },
   {
     key: 'telegram_digest',
-    category: 'push',
+    category: 'chats',
     titleKey: 'flow.templates.telegramDigest',
     descKey: 'flow.templates.telegramDigest.desc',
     primarySkill: 'telegram_read',
@@ -621,7 +676,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
   },
   {
     key: 'line_alert',
-    category: 'push',
+    category: 'chats',
     titleKey: 'flow.templates.lineAlert',
     descKey: 'flow.templates.lineAlert.desc',
     primarySkill: 'line_read',
@@ -646,7 +701,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
   },
   {
     key: 'line_weekly',
-    category: 'push',
+    category: 'chats',
     titleKey: 'flow.templates.lineWeekly',
     descKey: 'flow.templates.lineWeekly.desc',
     primarySkill: 'line_read',
@@ -734,7 +789,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
   },
   {
     key: 'rss_telegram',
-    category: 'push',
+    category: 'follow',
     titleKey: 'flow.templates.rss',
     descKey: 'flow.templates.rss.desc',
     primarySkill: 'rss',
@@ -764,7 +819,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
   },
   {
     key: 'youtube_subs',
-    category: 'push',
+    category: 'follow',
     titleKey: 'flow.templates.ytSubs',
     descKey: 'flow.templates.ytSubs.desc',
     primarySkill: 'youtube_subs',
@@ -794,7 +849,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
   },
   {
     key: 'youtube_mp3',
-    category: 'push',
+    category: 'follow',
     titleKey: 'flow.templates.ytMp3',
     descKey: 'flow.templates.ytMp3.desc',
     primarySkill: 'youtube_download',
@@ -828,7 +883,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
   },
   {
     key: 'x_watch',
-    category: 'push',
+    category: 'follow',
     titleKey: 'flow.templates.xWatch',
     descKey: 'flow.templates.xWatch.desc',
     primarySkill: 'x_posts',
@@ -871,7 +926,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
   },
   {
     key: 'ptt_hot',
-    category: 'push',
+    category: 'follow',
     titleKey: 'flow.templates.pttHot',
     descKey: 'flow.templates.pttHot.desc',
     primarySkill: 'ptt_board',
@@ -904,7 +959,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
   },
   {
     key: 'ptt_analyze',
-    category: 'push',
+    category: 'follow',
     titleKey: 'flow.templates.pttAnalyze',
     descKey: 'flow.templates.pttAnalyze.desc',
     primarySkill: 'ptt_board',
@@ -936,7 +991,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
   },
   {
     key: 'morning_brief',
-    category: 'push',
+    category: 'brief',
     titleKey: 'flow.templates.morningBrief',
     descKey: 'flow.templates.morningBrief.desc',
     primarySkill: 'weather',
@@ -974,7 +1029,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
   },
   {
     key: 'mail_digest',
-    category: 'push',
+    category: 'brief',
     titleKey: 'flow.templates.mailDigest',
     descKey: 'flow.templates.mailDigest.desc',
     primarySkill: 'mail_fetch',
@@ -999,7 +1054,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
   },
   {
     key: 'mail_watch',
-    category: 'push',
+    category: 'brief',
     titleKey: 'flow.templates.mailWatch',
     descKey: 'flow.templates.mailWatch.desc',
     primarySkill: 'mail_fetch',
@@ -1027,7 +1082,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
   },
   {
     key: 'stock_watch',
-    category: 'push',
+    category: 'brief',
     titleKey: 'flow.templates.stockWatch',
     descKey: 'flow.templates.stockWatch.desc',
     primarySkill: 'stock',
@@ -1051,7 +1106,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
   },
   {
     key: 'forex_alert',
-    category: 'push',
+    category: 'brief',
     titleKey: 'flow.templates.forexAlert',
     descKey: 'flow.templates.forexAlert.desc',
     primarySkill: 'forex',
@@ -1091,7 +1146,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
   },
   {
     key: 'invoice_draw',
-    category: 'push',
+    category: 'brief',
     titleKey: 'flow.templates.invoiceDraw',
     descKey: 'flow.templates.invoiceDraw.desc',
     primarySkill: 'tw_invoice',
@@ -1100,19 +1155,18 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
     build: (t): FlowDefinition => ({
       id: makeId(),
       name: t('flow.templates.invoiceDraw'),
-      description: t('flow.templates.invoiceDraw.desc'),
+      description: t('flow.templates.invoiceDraw.instructions'),
       enabled: false,
-      // The draw is on the 25th of odd months and the list updates around 14:00 Taiwan time. The
-      // schedule cannot say "odd months", so it runs on the 25th-27th of every month (a late list
-      // is still caught) and `.newThisMonth` is blank unless the latest period was drawn this
-      // month; on_change lets each period through once.
+      // Check a few days around each draw to catch a late publication. The first run delivers
+      // the latest available period, even outside its draw month; later runs gate on the period.
       trigger: monthlyCron([25, 26, 27], 15),
-      variables: [chatVar(t)],
+      variables: [{ ...chatVar(t), hint: t('flow.templates.invoiceDraw.recipientHint') }],
       steps: [
-        recipientGuard(t),
         step('tw_invoice', { ...DEFAULT_SKILL_CONFIG.tw_invoice }, t('flow.templates.invoiceDraw.step.fetch'), 'invoice_1'),
-        step('on_change', { value: '{{invoice_1.newThisMonth}}' }, t('flow.templates.invoiceDraw.step.onlyNew'), 'changed_1'),
-        step('stop', { value: '{{changed_1}}' }, t('flow.templates.step.stop_noNew')),
+        step('text', { text: '{{invoice_1.text}}' }, t('flow.templates.invoiceDraw.step.result'), 'result_1'),
+        step('stop', { value: '{{var.chatId}}' }, t('flow.templates.invoiceDraw.step.noRecipient')),
+        step('on_change', { value: '{{invoice_1.period}}' }, t('flow.templates.invoiceDraw.step.onlyNew'), 'changed_1'),
+        step('stop', { value: '{{changed_1}}' }, t('flow.templates.invoiceDraw.step.alreadyChecked')),
         step('bot', { chatId: '{{var.chatId}}', message: '{{invoice_1.text}}', attachment: '', attachmentType: 'auto', emitFailFlag: 'false' }, t('flow.templates.step.bot'), 'bot_1'),
       ],
       ...timestamps(),
@@ -1120,7 +1174,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
   },
   {
     key: 'page_change',
-    category: 'push',
+    category: 'follow',
     titleKey: 'flow.templates.pageChange',
     descKey: 'flow.templates.pageChange.desc',
     primarySkill: 'on_change',
@@ -1169,7 +1223,7 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
   },
   {
     key: 'web_monitor',
-    category: 'push',
+    category: 'follow',
     titleKey: 'flow.templates.webMonitor',
     descKey: 'flow.templates.webMonitor.desc',
     primarySkill: 'scraper',

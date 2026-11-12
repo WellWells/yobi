@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  MoonStar, ReceiptText, Terminal, Globe, MessageSquare, Clipboard, Timer, Bell, Camera, Bot, Rss, OctagonX, StickyNote, ListTree, Repeat, IterationCcw, Split, Merge, Cpu, Webhook, MonitorPlay, ListVideo, Film, MonitorDown, Rocket, Braces, Power, RotateCcw, AppWindow, SquareCode, SquareX, FilePen, FileText, Share2, FolderOpen, Inbox, Mail, Trash2, Type, TrendingUp, ArrowRightLeft, Cloud, Wind, CalendarDays, Download, Dices, CircleStop, SkipForward, Search, MapPin, Microscope, GitCompare, MessagesSquare, MessageSquareQuote, MessageSquareText, Flame, SquarePlay, Plug, Newspaper,
+  MoonStar, ReceiptText, Terminal, Globe, MessageSquare, Clipboard, Timer, Bell, Camera, Bot, Rss, OctagonX, StickyNote, ListTree, Repeat, IterationCcw, Split, Merge, Cpu, Webhook, MonitorPlay, ListVideo, Film, MonitorDown, Rocket, Braces, Power, RotateCcw, AppWindow, SquareCode, SquareX, FilePen, FileText, Share2, FolderOpen, Inbox, Mail, Trash, Type, TrendingUp, ArrowRightLeft, Cloud, Wind, CalendarDays, Download, Dices, ArrowRightFromLine, SkipForward, Search, MapPin, Microscope, GitCompare, MessagesSquare, MessageSquareQuote, MessageSquareText, Flame, SquarePlay, Plug, Newspaper,
 } from 'lucide-react';
 import { XIcon } from '../../../config/brandIcons';
 import type { SkillType } from '../../../../../shared/types';
@@ -49,6 +49,8 @@ import { FileListConfig } from './FileListConfig';
 import { FileDeleteConfig } from './FileDeleteConfig';
 import { EmailSendConfig } from './EmailSendConfig';
 import { TextConfig } from './TextConfig';
+import { TranslateConfig } from './TranslateConfig';
+import { Languages } from 'lucide-react';
 import { StockConfig } from './StockConfig';
 import { ForexConfig } from './ForexConfig';
 import { WeatherConfig } from './WeatherConfig';
@@ -116,6 +118,7 @@ export const STEP_CONFIG_EDITOR: SkillConfigEditorMap = {
   file_download: FileDownloadConfig,
   email_send: EmailSendConfig,
   text: TextConfig,
+  translate: TranslateConfig,
   stock: StockConfig,
   forex: ForexConfig,
   weather: WeatherConfig,
@@ -157,7 +160,7 @@ export const SKILL_ICON: Record<SkillType, React.ReactNode> = {
   if: <Split size={14} />,
   end_if: <Merge size={14} />,
   on_change: <GitCompare size={14} />,
-  break: <CircleStop size={14} />,
+  break: <ArrowRightFromLine size={14} />,
   continue: <SkipForward size={14} />,
   sysinfo: <Cpu size={14} />,
   http: <Webhook size={14} />,
@@ -175,10 +178,11 @@ export const SKILL_ICON: Record<SkillType, React.ReactNode> = {
   file_write: <FilePen size={14} />,
   file_read: <FileText size={14} />,
   file_list: <FolderOpen size={14} />,
-  file_delete: <Trash2 size={14} />,
+  file_delete: <Trash size={14} />,
   file_download: <Download size={14} />,
   email_send: <Mail size={14} />,
   text: <Type size={14} />,
+  translate: <Languages size={14} />,
   stock: <TrendingUp size={14} />,
   forex: <ArrowRightLeft size={14} />,
   weather: <Cloud size={14} />,

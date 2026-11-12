@@ -43,7 +43,11 @@ export const MemoryEntryForm: React.FC<Props> = ({
         error={tooLong}
         onChange={(event) => setText(event.currentTarget.value)}
         onKeyDown={(event) => {
-          if (event.key === 'Escape') onCancel();
+          // Escape cancels this edit only: taken, the Settings dialog around it stays open.
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            onCancel();
+          }
           // Enter saves; Shift+Enter still breaks a line, and an IME composition keeps its own Enter.
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
             event.preventDefault();

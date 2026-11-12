@@ -18,6 +18,7 @@ export const PROVIDER_URLS = {
   claude: 'https://claude.ai/new',
   chatgpt: 'https://chatgpt.com/',
   perplexity: 'https://www.perplexity.ai/',
+  deepseek: 'https://chat.deepseek.com/',
 } as const;
 
 export type Provider = keyof typeof PROVIDER_URLS;
@@ -27,12 +28,13 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
   claude: 'Claude',
   chatgpt: 'ChatGPT',
   perplexity: 'Perplexity',
+  deepseek: 'DeepSeek',
 } as const;
 
 /** Display order everywhere providers are listed: the model menu, Settings, bot commands. */
-export const PROVIDERS = ['gemini', 'claude', 'chatgpt', 'perplexity'] as const;
+export const PROVIDERS = ['gemini', 'claude', 'chatgpt', 'perplexity', 'deepseek'] as const;
 
-export const AUTH_PROVIDERS = ['gemini', 'claude', 'chatgpt', 'perplexity'] as const;
+export const AUTH_PROVIDERS = ['gemini', 'claude', 'chatgpt', 'perplexity', 'deepseek'] as const;
 export type AuthProvider = (typeof AUTH_PROVIDERS)[number];
 
 /**
@@ -53,7 +55,7 @@ export interface SiteAccountStatus {
   loggedIn: boolean;
 }
 
-export const LOGIN_REQUIRED_PROVIDERS = ['claude', 'chatgpt'] as const;
+export const LOGIN_REQUIRED_PROVIDERS = ['claude', 'chatgpt', 'deepseek'] as const;
 export type LoginRequiredProvider = (typeof LOGIN_REQUIRED_PROVIDERS)[number];
 
 export function loginRequiredProviderForUrl(url: string): LoginRequiredProvider | null {
@@ -65,6 +67,7 @@ export const DEFAULT_PROVIDER_COMMANDS: Record<Provider, string> = {
   claude: 'claude',
   gemini: 'gemini',
   perplexity: 'pplx',
+  deepseek: 'deepseek',
 } as const;
 
 export const BOT_COMMAND_RE = /^[a-z][a-z0-9_]{0,31}$/;
@@ -93,6 +96,7 @@ export function providerFromUrl(url: string): Provider {
     if (host.includes('perplexity.ai')) return 'perplexity';
     if (host.includes('chatgpt.com') || host.includes('chat.openai.com')) return 'chatgpt';
     if (host === 'claude.ai' || host.endsWith('.claude.ai')) return 'claude';
+    if (host === 'chat.deepseek.com') return 'deepseek';
   } catch {
   }
   return 'gemini';
@@ -459,6 +463,10 @@ export type TurnFileAction = 'open' | 'openWith' | 'copy';
 
 export interface ProviderAttachmentPolicy {
   maxFiles: number;
+  /** The page's own per-file ceiling, when measured; larger files are refused before upload. */
+  maxFileBytes?: number;
+  /** Extensions Yobi otherwise offers that this page refuses (lower case, no dot). */
+  refusedExtensions?: readonly string[];
 }
 
 export const PROVIDER_ATTACHMENT_POLICIES: Record<Provider, ProviderAttachmentPolicy> = {
@@ -466,6 +474,17 @@ export const PROVIDER_ATTACHMENT_POLICIES: Record<Provider, ProviderAttachmentPo
   chatgpt: { maxFiles: 10 },
   claude: { maxFiles: 10 },
   perplexity: { maxFiles: 0 },
+  // chat.deepseek.com's own model config (`client/settings?scope=model`): 50 files per
+  // message, 100 MiB each; its extension list has no HEIC/HEIF, RTF or OpenDocument.
+  deepseek: {
+    maxFiles: 50,
+    maxFileBytes: 100 * 1024 * 1024,
+    refusedExtensions: [
+      'heic', 'heif', 'rtf', 'odt', 'ods', 'odp',
+      'text', 'jsonl', 'ndjson', 'env', 'zig', 'svelte', 'astro', 'gql', 'tfvars',
+      'gitattributes', 'editorconfig', 'makefile',
+    ],
+  },
 };
 
 /**
@@ -496,6 +515,7 @@ export const IPC = {
   STATUS: 'status',
   QUEUE_UPDATE: 'queue:update',
   UPDATE_AVAILABLE: 'update:available',
+  UPDATE_DOWNLOADED: 'update:downloaded',
   UPDATE_NOT_AVAILABLE: 'update:not-available',
   UPDATE_ERROR: 'update:error',
   FILE_LIST: 'file:list',
@@ -527,6 +547,7 @@ export const IPC = {
   SITE_ACCOUNT_LOGOUT: 'site-account:logout',
   PROVIDER_CLEAR_DATA: 'provider:clear-data',
   UPDATE_CHECK: 'update:check',
+  UPDATE_INSTALL: 'update:install',
   GET_UPDATE_SOURCE: 'update:get-source',
   GET_FILE_LIST: 'file:get-list',
   SEARCH_FILE_LIST: 'file:search',
@@ -544,6 +565,7 @@ export const IPC = {
   CONVERSATION_MENU_STATE: 'conversation-menu:state',
   CONVERSATION_MENU_COMMAND: 'conversation-menu:command',
   EDIT_TURN_RESPONSE: 'file:edit-turn-response',
+  REWIND_CONVERSATION: 'file:rewind-conversation',
   SET_TURN_TRANSLATION: 'file:set-turn-translation',
   CONVERSATION_HISTORY_LIST: 'conversation-history:list',
   CONVERSATION_HISTORY_GET: 'conversation-history:get',
@@ -609,6 +631,7 @@ export const IPC = {
   OPEN_THIRD_PARTY_LICENSES: 'license:open-third-party',
   OPEN_EXTERNAL_URL: 'url:open-external',
   TRIGGER_PROMPT_WITH_OPTIONS: 'prompt:trigger-with-options',
+  CHAT_STOP_SEND: 'prompt:stop-send',
   CHAT_TURN: 'chat:turn',
   /** A chat `!` command: the shell and folder it would run in, running it, stopping it, its output as it runs. */
   CHAT_SHELL_INFO: 'chat:shell-info',
@@ -649,6 +672,7 @@ export const IPC = {
   COPY_TEXT_TO_CLIPBOARD: 'clipboard:write-text',
   ATTACHMENT_STASH_BYTES: 'attachment:stash-bytes',
   ATTACHMENT_FROM_CLIPBOARD: 'attachment:from-clipboard',
+  CLIPBOARD_PASTE_PATHS: 'clipboard:paste-paths',
   GET_TELEGRAM_SETTINGS: 'telegram:get-settings',
   UPDATE_TELEGRAM_ENABLED: 'telegram:update-enabled',
   UPDATE_TELEGRAM_BOT_TOKEN: 'telegram:update-bot-token',
@@ -686,6 +710,7 @@ export const IPC = {
   REVOKE_LINE_PAIRING_CODE: 'line:revoke-pairing-code',
   UNPAIR_LINE_USER: 'line:unpair-user',
   LIST_LINE_CHATS: 'line:list-chats',
+  LIST_LINE_SELF_TARGETS: 'line:list-self-targets',
   REFRESH_LINE_ACCOUNT: 'line:refresh-account',
   // Socket platforms (Discord, Slack): every call names its platform first.
   SOCKET_BOT_GET_SETTINGS: 'socket-bot:get-settings',
@@ -714,6 +739,10 @@ export const IPC = {
   CALDAV_REFRESH: 'caldav:refresh',
   GET_PROMPT_PREFERENCES: 'prompt:get-preferences',
   UPDATE_PROMPT_PREFERENCES: 'prompt:update-preferences',
+  GET_LINK_ANALYSIS_PREFERENCES: 'link-analysis:get-preferences',
+  UPDATE_LINK_ANALYSIS_PREFERENCES: 'link-analysis:update-preferences',
+  PROMPT_AUTHOR_GENERATE: 'prompt-author:generate',
+  PROMPT_AUTHOR_CANCEL: 'prompt-author:cancel',
   GET_YOUTUBE_PROMPT: 'youtube:get-prompt',
   UPDATE_YOUTUBE_PROMPT: 'youtube:update-prompt',
   GET_RESPONSE_TIMEOUT: 'response:get-timeout',
@@ -740,10 +769,43 @@ export const IPC = {
   MEMORY_CURATE_CANCEL: 'memory:curate-cancel',
   MEMORY_CURATE_APPLY: 'memory:curate-apply',
   MEMORY_CURATE_UNDO: 'memory:curate-undo',
+  // Programs and actions `/agent` runs without asking. Only main adds to it (the confirmation's
+  // "always allow"); Settings can read and remove, never add.
+  AGENT_TRUSTED_COMMANDS_LIST: 'agent-trusted-commands:list',
+  AGENT_TRUSTED_COMMANDS_REMOVE: 'agent-trusted-commands:remove',
+  AGENT_TRUSTED_COMMANDS_CHANGED: 'agent-trusted-commands:changed',
+  // Agent Skills (SKILL.md folders the `/agent` loop can load).
+  SKILLS_LIST: 'skills:list',
+  SKILLS_RESTORE_BUNDLED: 'skills:restore-bundled',
+  SKILLS_SET_ENABLED: 'skills:set-enabled',
+  SKILLS_PICK_IMPORT: 'skills:pick-import',
+  SKILLS_INSPECT: 'skills:inspect',
+  SKILLS_INSTALL: 'skills:install',
+  SKILLS_DISCARD: 'skills:discard',
+  SKILLS_READ: 'skills:read',
+  SKILLS_SAVE: 'skills:save',
+  SKILLS_CREATE: 'skills:create',
+  SKILLS_DELETE: 'skills:delete',
+  SKILLS_EXPORT: 'skills:export',
+  SKILLS_OPEN_FOLDER: 'skills:open-folder',
+  SKILLS_CHANGED: 'skills:changed',
+  SKILLS_DRAFT: 'skills:draft',
+  SKILLS_TRY: 'skills:try',
+  SKILLS_DRAFT_CANCEL: 'skills:draft-cancel',
+  SKILLS_DRAFT_PROGRESS: 'skills:draft-progress',
+  SKILLS_DEFAULT_MODEL: 'skills:default-model',
+  SKILLS_TEST: 'skills:test',
+  SKILLS_CHECK_UPDATES: 'skills:check-updates',
   WRITING_TOOLS_GET_MODEL: 'writing:get-model',
   WRITING_TOOLS_RUN: 'writing:run',
   WRITING_TOOLS_CANCEL: 'writing:cancel',
   WRITING_TOOLS_PROGRESS: 'writing:progress',
+  AI_NAME_SUGGEST: 'ai-name:suggest',
+  AI_NAME_CANCEL: 'ai-name:cancel',
+  FLOW_ASSIST_EDIT: 'flow-assist:edit',
+  FLOW_ASSIST_EXPLAIN: 'flow-assist:explain',
+  FLOW_ASSIST_NAMES: 'flow-assist:names',
+  FLOW_ASSIST_CANCEL: 'flow-assist:cancel',
   DOC_ASSISTANT_RUN: 'doc-assistant:run',
   DOC_ASSISTANT_CANCEL: 'doc-assistant:cancel',
   DOC_ASSISTANT_PROGRESS: 'doc-assistant:progress',
@@ -798,6 +860,8 @@ export const IPC = {
   UPDATE_LAYOUT_MODE: 'ui:update-layout-mode',
   GET_SHOW_TOKEN_USAGE: 'ui:get-show-token-usage',
   UPDATE_SHOW_TOKEN_USAGE: 'ui:update-show-token-usage',
+  GET_SHOW_RECAP: 'ui:get-show-recap',
+  UPDATE_SHOW_RECAP: 'ui:update-show-recap',
   GET_LINK_RECOGNITION: 'links:get-recognition',
   SET_LINK_RECOGNITION: 'links:set-recognition',
   LINK_RECOGNITION_CHANGED: 'links:recognition-changed',
@@ -827,13 +891,28 @@ export const IPC = {
   FLOW_DELETE_MANY: 'flow:delete-many',
   FLOW_SET_ENABLED_MANY: 'flow:set-enabled-many',
   FLOW_DUPLICATE: 'flow:duplicate',
-  FLOW_MOVE: 'flow:move',
   FLOW_REORDER: 'flow:reorder',
+  /** The flow sidebar's folders (`FlowFolder[]`); kept apart from the flows themselves. */
+  FLOW_FOLDER_LIST: 'flow-folder:list',
+  FLOW_FOLDER_CREATE: 'flow-folder:create',
+  FLOW_FOLDER_RENAME: 'flow-folder:rename',
+  /** Removes a folder; its flows go back to the top level. */
+  FLOW_FOLDER_DELETE: 'flow-folder:delete',
+  FLOW_FOLDER_MOVE: 'flow-folder:move',
+  /** Main → renderer after any folder change: the new `FlowFolder[]`. */
+  FLOW_FOLDERS_CHANGED: 'flow-folder:changed',
+  /** Sorting unfiled flows into folders: the model proposes, the user ticks what is filed. */
+  FLOW_FOLDER_SORT_GET_MODEL: 'flow-folder:sort-get-model',
+  FLOW_FOLDER_SORT_PROPOSE: 'flow-folder:sort-propose',
+  FLOW_FOLDER_SORT_CANCEL: 'flow-folder:sort-cancel',
+  FLOW_FOLDER_SORT_APPLY: 'flow-folder:sort-apply',
+  FLOW_FOLDER_SORT_UNDO: 'flow-folder:sort-undo',
   FLOW_EXECUTE: 'flow:execute',
   FLOW_RUN_CHAT_COMMAND: 'flow:run-chat-command',
   /** `{ progressId, progress }`: where a long step of one chat command run is (a `StepProgress`). */
   FLOW_CHAT_COMMAND_PROGRESS: 'flow:chat-command-progress',
   FLOW_ABORT: 'flow:abort',
+  FLOW_STOP_CHAT_COMMAND: 'flow:stop-chat-command',
   FLOW_GENERATE: 'flow:generate',
   FLOW_BUILD_PROGRESS: 'flow:build-progress',
   FLOW_GET_AI_URL: 'flow:get-ai-url',
@@ -847,6 +926,7 @@ export const IPC = {
   /** Broadcast and invoke: ids of the flows whose watched folder (file trigger) is missing. */
   FLOW_WATCH_MISSING: 'flow:watch-missing',
   FLOW_WATCH_MISSING_GET: 'flow:watch-missing-get',
+  FLOW_SETUP_BLOCKERS: 'flow:setup-blockers',
   FLOW_EXPORT: 'flow:export',
   FLOW_EXPORT_RESULT: 'flow:export-result',
   AGENT_RUN: 'agent:run',
@@ -871,6 +951,8 @@ export const IPC = {
   X_POSTS_CLEAR_CHECKPOINT: 'x-posts:clear-checkpoint',
   PTT_BOARD_HAS_CHECKPOINT: 'ptt-board:has-checkpoint',
   PTT_BOARD_CLEAR_CHECKPOINT: 'ptt-board:clear-checkpoint',
+  LINE_READ_HAS_CHECKPOINT: 'line-read:has-checkpoint',
+  LINE_READ_CLEAR_CHECKPOINT: 'line-read:clear-checkpoint',
   PTT_FIND_BOARDS: 'ptt-board:find-boards',
   PTT_PREVIEW_BOARD: 'ptt-board:preview',
   PTT_CANCEL_PREVIEW: 'ptt-board:cancel-preview',
@@ -1001,7 +1083,7 @@ export interface SelectPathResult {
   content?: string;
 }
 
-export type BackupCategoryId = 'config' | 'flows' | 'checkpoints' | 'memory' | 'userMemory' | 'outputs' | 'history';
+export type BackupCategoryId = 'config' | 'flows' | 'checkpoints' | 'memory' | 'userMemory' | 'skills' | 'outputs' | 'history';
 
 export const BACKUP_CATEGORY_IDS: readonly BackupCategoryId[] = [
   'config',
@@ -1009,6 +1091,7 @@ export const BACKUP_CATEGORY_IDS: readonly BackupCategoryId[] = [
   'checkpoints',
   'memory',
   'userMemory',
+  'skills',
   'outputs',
   'history',
 ] as const;
@@ -1148,6 +1231,22 @@ export type ResponseEditResult =
   | { ok: true; content: string }
   | { ok: false; reason: 'conflict' | 'missing' | 'failed' };
 
+/**
+ * Back to just before one question, to send it again edited; `expected` is that question as shown,
+ * `text` the edited one (the conversation is named after it when the first question is edited).
+ */
+export interface PromptRewindRequest {
+  filePath: string;
+  turnIndex: number;
+  expected: string;
+  text: string;
+}
+
+/** `conflict`: the file no longer has the question the edit started from. */
+export type PromptRewindResult =
+  | { ok: true; content: string }
+  | { ok: false; reason: 'conflict' | 'missing' | 'failed' };
+
 /** What a drop of Markdown files onto the conversation list did, file by file. */
 export interface ConversationImportResult {
   /** Copied into the outputs folder, in drop order. */
@@ -1256,6 +1355,8 @@ export interface UiNotificationPayload {
 export interface UpdateAvailablePayload {
   version: string;
   releaseUrl: string;
+  /** The app is fetching this update itself; false means the user downloads it. */
+  autoDownload: boolean;
 }
 
 export type UpdateSource = 'store' | 'github';
@@ -1490,6 +1591,24 @@ export type LineChatListResult =
   | { ok: true; chats: LineChatOption[] }
   | { ok: false; reason: 'disabled' | 'error'; message: string };
 
+/**
+ * A group or friend a LINE PC flow step can send to. `needsOpen`: LINE PC has no key for it yet —
+ * it can be picked, but the send fails until the user opens that chat once in LINE PC.
+ */
+export interface LineSelfTargetOption {
+  id: string;
+  name: string;
+  type: 'group' | 'personal';
+  /** ISO time of the chat's last activity; absent for a chat never opened on this PC. */
+  lastMessageAt?: string;
+  sendable: 'ready' | 'needsOpen';
+}
+
+/** The LINE PC recipient picker's list: the user's own id (their one-person group), then the chats. */
+export type LineSelfTargetListResult =
+  | { ok: true; ownId: string; ownName: string; targets: LineSelfTargetOption[] }
+  | { ok: false; reason: 'disabled' | 'error'; message: string };
+
 export interface LineSettingsSnapshot {
   enabled: boolean;
   hasChannelAccessToken: boolean;
@@ -1696,6 +1815,8 @@ export interface ChatTurnEvent {
   error?: string;
   /** An error after which the turn was still written (a `!` command's): the file has changed. */
   kept?: true;
+  /** The user pressed Stop: nothing to report, and the composer may take the question back. */
+  stopped?: true;
 }
 
 /** Where a chat `!` command would run now. */
@@ -2196,7 +2317,7 @@ export interface ZipExportResult {
   error?: string;
 }
 
-export type SkillType = 'shell' | 'run' | 'js' | 'browser' | 'browser_open' | 'browser_js' | 'browser_close' | 'llm' | 'clipboard' | 'delay' | 'notify' | 'capture' | 'share' | 'bot' | 'rss' | 'stop' | 'comment' | 'scraper' | 'search' | 'research' | 'gmap_reviews' | 'line_read' | 'telegram_read' | 'mcp' | 'loop' | 'end_loop' | 'if' | 'end_if' | 'on_change' | 'sysinfo' | 'http' | 'youtube' | 'youtube_subs' | 'youtube_info' | 'youtube_download' | 'x_posts' | 'x_thread' | 'x_trends' | 'x_media' | 'ptt_board' | 'power' | 'restart_app' | 'file_write' | 'file_read' | 'file_list' | 'file_delete' | 'file_download' | 'email_send' | 'text' | 'stock' | 'forex' | 'weather' | 'air_quality' | 'calendar' | 'mail_fetch' | 'almanac' | 'tw_invoice' | 'random' | 'break' | 'continue';
+export type SkillType = 'shell' | 'run' | 'js' | 'browser' | 'browser_open' | 'browser_js' | 'browser_close' | 'llm' | 'clipboard' | 'delay' | 'notify' | 'capture' | 'share' | 'bot' | 'rss' | 'stop' | 'comment' | 'scraper' | 'search' | 'research' | 'gmap_reviews' | 'line_read' | 'telegram_read' | 'mcp' | 'loop' | 'end_loop' | 'if' | 'end_if' | 'on_change' | 'sysinfo' | 'http' | 'youtube' | 'youtube_subs' | 'youtube_info' | 'youtube_download' | 'x_posts' | 'x_thread' | 'x_trends' | 'x_media' | 'ptt_board' | 'power' | 'restart_app' | 'file_write' | 'file_read' | 'file_list' | 'file_delete' | 'file_download' | 'email_send' | 'text' | 'translate' | 'stock' | 'forex' | 'weather' | 'air_quality' | 'calendar' | 'mail_fetch' | 'almanac' | 'tw_invoice' | 'random' | 'break' | 'continue';
 
 export interface SkillInstance {
   id: string;
@@ -2518,6 +2639,15 @@ export interface AgentActionSummary {
   verification?: { status: string; evidence: string };
 }
 
+/** One call a delegated helper made, as the row of its `delegate` step shows it. */
+export interface AgentHelperStep {
+  tool: string;
+  /** What it worked on, from the fields a step may show (`stepParam`). */
+  param?: string;
+  /** The helper's own title for the call. */
+  doing?: string;
+}
+
 export interface AgentTurnRecord {
   /** The step: one per call, the number the model and the trace rows use. */
   index: number;
@@ -2528,6 +2658,10 @@ export interface AgentTurnRecord {
    */
   turn?: number;
   thought: string;
+  /** The model's own title for this step (`readDoing`); absent when it wrote none or an unusable one. */
+  doing?: string;
+  /** A `delegate` step: what its helper did, in order. */
+  helperSteps?: AgentHelperStep[];
   tool: string;
   config: Record<string, string>;
   observation: string;
@@ -2567,6 +2701,11 @@ export interface AgentReplyContext {
   text: string;
   /** The bot's own earlier message. */
   self?: boolean;
+  /**
+   * Nobody but the person asking chose its words: their own message, or the bot's answer in their
+   * private chat. Without it the run carries someone else's text (`botPermissions/othersText.ts`).
+   */
+  asker?: true;
   /** What else it carries that the model is not shown (`photo`, `video`, `sticker`…). */
   media?: string;
 }
@@ -2581,6 +2720,26 @@ export interface AgentChatLine {
   asker?: true;
   /** The message the request replies to. */
   replied?: true;
+}
+
+/** A page read for a bot run before it started: its text, or why there is none. */
+export interface AgentLinkedPage {
+  url: string;
+  title: string;
+  text: string;
+  truncated: boolean;
+  failure?: string;
+}
+
+/** A page a bot forwards as it stands: the Markdown of each part, and the site's own media for it. */
+export interface BotPageForward {
+  link: string;
+  images: string[];
+  /** The title and where it comes from. */
+  opening: string;
+  body: string;
+  /** How many replies there are, and the link. */
+  closing: string;
 }
 
 export interface AgentRunState {
@@ -2600,6 +2759,8 @@ export interface AgentRunState {
    * `recentChat` alone, never from the bot's own earlier exchanges with this person.
    */
   chatRecap?: true;
+  /** The page the request is about, persisted so an answered question does not read it again. */
+  linkedPage?: AgentLinkedPage;
   /**
    * The MCP servers the user disclosed for this run. Persisted, so a resume discloses the same
    * set. Read through `readRunConnectors` — a resume that silently loses its scope widens what
@@ -2693,6 +2854,7 @@ export interface AgentRunState {
 export interface AgentRunSummary {
   runId: string;
   goal: string;
+  providerUrl: string;
   /** The conversation the run was started in; "Continue" reopens it. */
   conversationPath?: string;
   status: AgentRunStatus;
@@ -2705,17 +2867,23 @@ export type AgentStageLabel =
   | 'planning' | 'analyzing' | 'repairing'
   /** The provider answered with its previous reply word for word; the turn is asked again in a new chat. */
   | 'repeated'
-  | 'delegating' | 'confirming' | 'verifying'
+  | 'confirming' | 'verifying'
   /** The model finished while saying the goal is not done, and was sent back to finish the work. */
   | 'held'
   /** Flow building: matching the request against the skill list, and writing the steps. */
   | 'discovering' | 'building';
 
 export type AgentTraceEvent =
+  /** A desktop run left the queue and is past the link shortcut: its clock starts at `at`. */
+  | { kind: 'started'; at: number }
   | { kind: 'thinking'; turn: number; provider?: string }
-  | { kind: 'tool'; turn: number; tool: string; config: Record<string, string>; thought?: string }
+  | { kind: 'tool'; turn: number; tool: string; config: Record<string, string>; thought?: string; doing?: string }
   | { kind: 'plan'; steps: string[]; done: number[] }
   | { kind: 'stage'; turn: number; label: AgentStageLabel; detail?: string }
+  /** The user answered the confirmation on step `turn`: the step no longer waits on them. */
+  | { kind: 'answered'; turn: number }
+  /** The helper of the `delegate` step `turn` made a call. */
+  | { kind: 'helper'; turn: number; step: AgentHelperStep }
   | { kind: 'research'; turn: number; progress: ResearchProgress }
   | { kind: 'observation'; turn: number; tool: string; status: 'ok' | 'error'; preview: string }
   | { kind: 'synthesizing' }
@@ -2764,7 +2932,7 @@ export const FLOW_BUILD_PHASES = ['understand', 'discover', 'plan', 'build', 've
 export type FlowBuildPhase = typeof FLOW_BUILD_PHASES[number];
 
 /** An integration a step needs before it can do anything, and that the user has to set up once. */
-export type FlowSetupNeed = 'bot' | 'email' | 'line' | 'ytdl' | 'calendar' | 'mailbox';
+export type FlowSetupNeed = 'bot' | 'email' | 'line' | 'ytdl' | 'calendar' | 'mailbox' | 'telegram';
 
 export interface FlowBuildBlocker {
   skill: SkillType;
@@ -2781,7 +2949,9 @@ export type FlowBuildIssueKind =
   /** A bot step naming a recipient that matched no paired chat, or more than one. */
   | 'recipient'
   /** A bot step that, left blank, sends to every one of several paired people. */
-  | 'broadcast';
+  | 'broadcast'
+  /** A LINE PC bot step with more recipients than one step may send to (`LINE_SELF_MAX_RECIPIENTS`). */
+  | 'tooManyRecipients';
 
 export interface FlowBuildIssue {
   kind: FlowBuildIssueKind;
@@ -2909,7 +3079,22 @@ export type AgentConfirmRequestData =
     allowAlways?: boolean;
     danger?: boolean;
   }
-  | { kind: 'shell'; command: string; interpreter: string; cwd: string };
+  | {
+    kind: 'shell';
+    /** Always shown whole: what is shown is what runs. */
+    command: string;
+    interpreter: string;
+    cwd: string;
+    /** The model's title for this step, in the user's language; shown above what the program read. */
+    summary?: string;
+    /**
+     * What the program read: program, action, files of a plain command, and the installed skill whose
+     * folder it gets as SKILL_DIR (`agent.shell.confirm.row.*`).
+     */
+    rows?: AgentConfirmRow[];
+    /** Present when "always allow" can cover the command: the programs and actions it would cover. */
+    alwaysFor?: string[];
+  };
 
 export interface AgentConfirmRow {
   key: string;
@@ -2922,9 +3107,10 @@ export interface AgentConfirmRow {
 export type AgentConfirmPayload = AgentConfirmRequestData & { id: string };
 
 /**
- * `approveAlways` means different things per kind and deliberately so: for `mcp` it is
- * persisted into that server's settings, for `shell` it lasts only until this run ends. Never
- * unify them — a shell allow-all that survived the app restart is a different product.
+ * `approveAlways` means different things per kind and deliberately so: for `mcp` it lets that
+ * server's edits through; for `shell` it records only the programs and actions of that one command
+ * (`alwaysFor`), never "any command". Never widen the shell one into an allow-all — the run that
+ * earned it reads untrusted pages into the prompt that writes its next command.
  */
 export type AgentConfirmChoice = 'approve' | 'approveAlways' | 'deny';
 
@@ -2936,6 +3122,14 @@ export interface PromptPreferences {
   length: PromptLength;
   customInstructions: string;
   nickname?: string;
+}
+
+export interface LinkAnalysisPreferences {
+  /** Empty follows the bot's default, or the current desktop model. */
+  mapsTargetUrl: string;
+  articleTargetUrl: string;
+  /** Empty uses the built-in Google Maps report. */
+  mapsPrompt: string;
 }
 
 export interface SettingsSnapshot {
@@ -2951,6 +3145,7 @@ export interface SettingsSnapshot {
   oneShotTemporaryChat: boolean;
   providerFallback: boolean;
   promptPreferences: PromptPreferences;
+  linkAnalysis: LinkAnalysisPreferences;
   youtubePrompt: string;
   responseTimeout: number;
   closeToTray: boolean;

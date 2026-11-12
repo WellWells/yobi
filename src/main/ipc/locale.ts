@@ -6,6 +6,7 @@ import { isValidLocaleTag, loadLanguageData, setLangCache } from '../i18n';
 import { getLanguageDir, getUserLanguageDir } from '../files';
 import { broadcastLinkRecognition } from '../linkRecognition';
 import { rebroadcastFlowMetrics } from '../flowMetrics';
+import { announceSkills } from './skills';
 import type { IpcContext } from './context';
 
 async function listPacksIn(dir: string): Promise<string[]> {
@@ -28,6 +29,8 @@ function applyLocaleChange(ctx: IpcContext, lang: string, markUserSet: boolean):
   saveConfig(markUserSet ? { locale: nextLocale, localeSetByUser: true } : { locale: nextLocale });
   // Yobi's language is half of where the user is: the link switches' defaults and the Taiwan row follow it.
   broadcastLinkRecognition();
+  // Region-specific built-in skills (Taiwan price comparison) follow the interface language.
+  announceSkills();
   void loadLanguageData(nextLocale).then((data) => {
     if (!data) return;
     setLangCache(data);

@@ -1,7 +1,8 @@
 import type React from 'react';
 import type { ConversationFolder } from '../../../../shared/conversationFolders';
 import { folderKey } from '../../../../shared/conversationFolders';
-import type { SidebarRow } from '../../utils/timeGroups';
+import { sectionOfRowKey } from '../../utils/timeGroups';
+import type { SidebarRow, SidebarSectionKey } from '../../utils/timeGroups';
 import type { OutputFile } from '../../../../shared/types';
 import { isTypingTarget } from '../../utils/domUtils';
 import { folderRowKey } from '../../utils/sidebarOrder';
@@ -26,7 +27,7 @@ interface SidebarKeyNavDeps {
   visibleFiles: OutputFile[];
   /** Every focusable row's key in drawn order (folders and conversations); defaults to the conversations. */
   navKeys?: readonly string[];
-  fileItemRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
+  fileItemRefs: React.RefObject<Map<string, HTMLDivElement>>;
   scrollToKey?: (key: string) => void;
   scrollToIndex: (index: number, options: { align: 'auto' }) => void;
   getFocusedFile: () => OutputFile | null;
@@ -36,6 +37,26 @@ interface SidebarKeyNavDeps {
   onTogglePin: (file: OutputFile) => void;
   onCloseContextMenu: () => void;
   folders?: FolderKeyActions;
+  sections?: SectionKeyActions;
+}
+
+/** What the keys do on a section heading (Pinned, Folders, Conversations). */
+export interface SectionKeyActions {
+  isCollapsed: (section: SidebarSectionKey) => boolean;
+  setCollapsed: (section: SidebarSectionKey, collapsed: boolean) => void;
+}
+
+/** A section heading's keys: Enter/Space close or open it, → opens, ← closes. */
+function handleSectionKey(e: React.KeyboardEvent, section: SidebarSectionKey, actions: SectionKeyActions): void {
+  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+    e.preventDefault();
+    actions.setCollapsed(section, e.key === 'ArrowLeft');
+    return;
+  }
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    actions.setCollapsed(section, !actions.isCollapsed(section));
+  }
 }
 
 /** The folder side of the keys, read off the drawn rows: which row key is a folder, which folder a row is in. */
@@ -60,14 +81,14 @@ export function folderKeyActionsFor(
   };
 }
 
-function focusedKey(fileItemRefs: React.MutableRefObject<Map<string, HTMLDivElement>>): string | null {
+function focusedKey(fileItemRefs: React.RefObject<Map<string, HTMLDivElement>>): string | null {
   for (const [key, node] of fileItemRefs.current.entries()) {
     if (node === document.activeElement) return key;
   }
   return null;
 }
 
-function focusLater(fileItemRefs: React.MutableRefObject<Map<string, HTMLDivElement>>, key: string): void {
+function focusLater(fileItemRefs: React.RefObject<Map<string, HTMLDivElement>>, key: string): void {
   window.requestAnimationFrame(() => fileItemRefs.current.get(key)?.focus());
 }
 
@@ -96,14 +117,15 @@ function handleFolderKey(e: React.KeyboardEvent, folder: ConversationFolder, act
 
 /**
  * The conversation list's own keys (registry owner `sidebarList`): arrows move focus through the
- * folder and conversation rows, Enter and Space open the focused conversation (`sidebar.activate`)
- * — the open one included, which reloads it — or open/close a folder, ← on a conversation in a
- * folder goes to its folder; F2 edits the title (renames a folder), Alt+R reveals it, Alt+P pins or
- * unpins it, Delete moves it (or a folder's conversations) to Recently Deleted (no confirmation).
+ * section headings, folder and conversation rows, Enter and Space open the focused conversation
+ * (`sidebar.activate`) — the open one included, which reloads it — or open/close a folder or a
+ * section, ← on a conversation in a folder goes to its folder; F2 edits the title (renames a
+ * folder), Alt+R reveals it, Alt+P pins or unpins it, Delete moves it (or a folder's
+ * conversations) to Recently Deleted (no confirmation).
  */
 export function createSidebarKeyDownHandler({
   editingPath, dialogOpen, visibleFiles, navKeys, fileItemRefs, scrollToKey,
-  scrollToIndex, getFocusedFile, onSelect, onEditH1, onDelete, onTogglePin, onCloseContextMenu, folders,
+  scrollToIndex, getFocusedFile, onSelect, onEditH1, onDelete, onTogglePin, onCloseContextMenu, folders, sections,
 }: SidebarKeyNavDeps): (e: React.KeyboardEvent) => void {
   const order = navKeys ?? visibleFiles.map((file) => file.path);
   return (e) => {
@@ -126,6 +148,11 @@ export function createSidebarKeyDownHandler({
     }
 
     const key = focusedKey(fileItemRefs);
+    const section = key && sections ? sectionOfRowKey(key) : null;
+    if (section && sections) {
+      handleSectionKey(e, section, sections);
+      return;
+    }
     const folder = key && folders ? folders.folderFor(key) : null;
     if (folder && folders) {
       handleFolderKey(e, folder, folders);

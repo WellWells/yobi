@@ -1,6 +1,6 @@
 import React from 'react';
 import { ActionIcon, Menu as MMenu, Tooltip } from '@mantine/core';
-import { MoreVertical } from 'lucide-react';
+import { EllipsisVertical } from 'lucide-react';
 
 interface HeaderMoreMenuProps {
   opened: boolean;
@@ -37,7 +37,7 @@ export const HeaderMoreMenu: React.FC<HeaderMoreMenuProps> = ({ opened, onToggle
       {/* No tooltip over the open menu: it would sit on top of the menu's search box. */}
       <Tooltip label={t('common.moreActions')} position="bottom" disabled={opened}>
         <ActionIcon onClick={onToggle} aria-label={t('common.moreActions')} variant="subtle" size="md" radius="xl" c="dimmed">
-          <MoreVertical size={16} />
+          <EllipsisVertical size={16} />
         </ActionIcon>
       </Tooltip>
     </MMenu.Target>

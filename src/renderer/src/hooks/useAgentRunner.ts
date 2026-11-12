@@ -58,13 +58,9 @@ export function useAgentRunner(
       if (res.usedWeb) onUsedWeb?.();
       trackQuestion(res, runId, mcpServerIds);
       if (res.success) await finish(sendId, res.filePath);
-      else {
-        fail(sendId);
-        if (res.error) onError?.(res.error);
-      }
+      else if (!fail(sendId) && res.error) onError?.(res.error);
     } catch (err: unknown) {
-      fail(sendId);
-      onError?.(err instanceof Error ? err.message : String(err));
+      if (!fail(sendId)) onError?.(err instanceof Error ? err.message : String(err));
     } finally {
       await refreshResumable();
     }
@@ -93,7 +89,7 @@ export function useAgentRunner(
     // every server out, which is a different — and silent — thing.
     const scope = mcpServerIds.length > 0 ? [...mcpServerIds] : undefined;
     return track(goal, runId, sending, () => (answering
-      ? agentApi.resume(runId, goal)
+      ? agentApi.resume(runId, goal, targetUrl)
       : agentApi.run(goal, targetUrl, runId, conversationPath, sending, scope, web)), mcpServerIds);
   }, [track]);
 
@@ -101,9 +97,11 @@ export function useAgentRunner(
    * Takes the banner's entry itself, since the banner has already emptied the resumable list. The
    * run goes back to its own conversation first, so the bubble sits under its earlier turns.
    */
-  const resume = useCallback(async (entry: AgentRunSummary): Promise<void> => {
+  const resume = useCallback(async (entry: AgentRunSummary, providerUrl?: string): Promise<void> => {
+    // What the banner showed: the run's own model unless another was picked there.
+    const target = providerUrl ?? entry.providerUrl;
     await openRunConversation(entry.conversationPath);
-    return track(entry.goal, entry.runId, [], () => agentApi.resume(entry.runId));
+    return track(entry.goal, entry.runId, [], () => agentApi.resume(entry.runId, undefined, target));
   }, [track]);
 
   /** A picked choice resumes the run that asked, by id, instead of going out as a typed chat message. */
@@ -112,7 +110,9 @@ export function useAgentRunner(
     if (!pending) return;
     // Cleared before the call, so a second click cannot resume the same run twice.
     useAgentRunStore.getState().setPendingQuestion(null);
-    return track(pick.text, pick.runId, [], () => agentApi.resume(pick.runId, pick.text), pending.mcpServerIds);
+    // The model the composer shows, the same one a typed answer goes out with.
+    const target = useAppStore.getState().aiUrl;
+    return track(pick.text, pick.runId, [], () => agentApi.resume(pick.runId, pick.text, target), pending.mcpServerIds);
   }, [track]);
 
   const discard = useCallback(async (runId: string): Promise<void> => {

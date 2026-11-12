@@ -1,22 +1,26 @@
-.bar {
-  height: 48px;
-  background: var(--mantine-color-default);
-  border-bottom: 1px solid var(--mantine-color-default-border);
-  flex-shrink: 0;
-  user-select: none;
-  /* WebkitAppRegion must stay in inline style (Electron-specific, not CSS-accessible) */
+/* The caption controls float over the views' top rows (no band of their own): transparent, so the
+   row under them shows through, and under the modals' layers (Z_MODAL is 200), but over the
+   Settings dialog's (Z_SETTINGS is 140), which opens below their row. */
+.caption {
+  position: fixed;
+  top: 0;
+  z-index: 150;
 }
 
-.spacer {
-  flex: 1;
-  min-width: 4px;
+.cluster {
+  right: 0;
+}
+
+/* Where macOS puts them: 16px in, on the rows' centre line. */
+.trafficLights {
+  left: 0;
+  padding-left: 16px;
 }
 
 .macGroup {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  margin: 0 10px 0 6px;
   flex-shrink: 0;
 }
 
@@ -82,7 +86,9 @@
   flex-shrink: 0;
 }
 
+/* Its top edge sits over the views' top rows, which are drag regions. */
 .popover {
+  -webkit-app-region: no-drag;
   position: fixed;
   width: 380px;
   max-height: 420px;

@@ -31,6 +31,11 @@ export type { VideoInfo, VideoSite } from './videoSiteTypes';
  * asks yt-dlp for. Post sites have their readers in `postReader.ts`.
  */
 
+/** Google's "unusual traffic" page, by the two ways a plain read meets it: this address is turned away, not this video. */
+export function isYoutubeTurnedAway(message: string): boolean {
+  return /^YouTube (?:redirected to (?:www\.)?google\.|answered HTTP 429$)/.test(message);
+}
+
 async function readYoutubeInfo(videoId: string, signal?: AbortSignal): Promise<YoutubeVideoInfo> {
   const site = siteLabel('youtube');
   let info: YoutubeVideoInfo;
@@ -39,6 +44,7 @@ async function readYoutubeInfo(videoId: string, signal?: AbortSignal): Promise<Y
   } catch (err) {
     if (signal?.aborted) throw err;
     const reason = err instanceof Error ? err.message : String(err);
+    if (isYoutubeTurnedAway(reason)) throw videoPageHeldBack('youtube', reason);
     throw new FlowUserError('flow.error.ytdlInfoUnreadable', { site }, `Could not read the YouTube video: ${reason}`);
   }
   if (info.playability === 'live') {
@@ -165,7 +171,7 @@ export type SiteVideoDownload = Omit<VideoDownloadOptions, 'url' | 'siteArgs' | 
 };
 
 /**
- * A site that downloads itself, holding the app-wide download slot as a yt-dlp download does;
+ * A site that downloads itself, holding its site's download slot as a yt-dlp download does;
  * its failures worded as yt-dlp's are (`streamFailure`), a Stop an AbortError naming the site.
  */
 async function selfDownload(
@@ -199,7 +205,7 @@ async function selfDownload(
 }
 
 /**
- * A yt-dlp site's own first try (`directDownload`), holding the app-wide download slot as yt-dlp
+ * A yt-dlp site's own first try (`directDownload`), holding its site's download slot as yt-dlp
  * does. Null when it failed in a way yt-dlp may not (the reason logged): yt-dlp is asked next. A
  * Stop is an AbortError naming the site; the size limit and the person's own errors
  * (`FlowUserError`) are final, since yt-dlp would meet them too.

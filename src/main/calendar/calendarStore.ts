@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { decryptToken, decryptTokenChecked, encryptToken } from '../configEncryption';
+import { decryptToken, decryptTokenChecked, encryptSecret } from '../configEncryption';
 import { clearSecretFailures, recordSecretFailure } from '../secretHealth';
 import { calendarFile } from './calendarFile';
 import type { StoredCalendar } from './calendarFile';
@@ -121,7 +121,7 @@ export function calendarUrl(id: string): string {
   return entry ? decryptUrl(entry).url : '';
 }
 
-export function saveCalendar(request: CalendarSaveRequest): CalendarSaveResult {
+export async function saveCalendar(request: CalendarSaveRequest): Promise<CalendarSaveResult> {
   const name = String(request.name ?? '').trim().slice(0, CALENDAR_NAME_MAX);
   if (!name) return { ok: false, error: 'name' };
   const list = stored();
@@ -136,16 +136,19 @@ export function saveCalendar(request: CalendarSaveRequest): CalendarSaveResult {
   if (rawUrl && !url) return { ok: false, error: 'url' };
   if (!existing && !url) return { ok: false, error: 'url' };
 
+  const urlEncrypted = url ? await encryptSecret(url) : '';
+  // Read again after the await: a calendar written meanwhile stays.
+  const current = stored();
   if (existing) {
-    const next = list.map((item) => (item.id === id
-      ? { ...item, name, urlEncrypted: url ? encryptToken(url) : item.urlEncrypted }
+    const next = current.map((item) => (item.id === id
+      ? { ...item, name, urlEncrypted: urlEncrypted || item.urlEncrypted }
       : item));
     write(next);
     if (url) clearSecretFailures('calendar', id);
     return { ok: true, id, calendars: listCalendars() };
   }
-  const created: StoredCalendar = { id: `cal_${randomUUID().slice(0, 8)}`, name, urlEncrypted: encryptToken(url) };
-  write([...list, created]);
+  const created: StoredCalendar = { id: `cal_${randomUUID().slice(0, 8)}`, name, urlEncrypted };
+  write([...current, created]);
   return { ok: true, id: created.id, calendars: listCalendars() };
 }
 
@@ -180,11 +183,13 @@ export function probeCalendars(): void {
   probeDavAccounts();
 }
 
-export function reEncryptCalendars(): void {
-  write(stored().map((item) => {
+export async function reEncryptCalendars(): Promise<void> {
+  const fresh = new Map<string, string>();
+  for (const item of stored()) {
     const plaintext = decryptToken(item.urlEncrypted, `calendar.url (${item.id})`);
-    return plaintext ? { ...item, urlEncrypted: encryptToken(plaintext) } : item;
-  }));
-  reEncryptDavAccounts();
+    if (plaintext) fresh.set(item.urlEncrypted, await encryptSecret(plaintext, { fresh: true }));
+  }
+  write(stored().map((item) => ({ ...item, urlEncrypted: fresh.get(item.urlEncrypted) ?? item.urlEncrypted })));
+  await reEncryptDavAccounts();
 }
 

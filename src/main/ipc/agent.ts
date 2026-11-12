@@ -10,7 +10,9 @@ import { loadLanguageData, t } from '../i18n';
 import { cancelAllAgentConfirms } from '../chat/agentConfirmBridge';
 import { executeAgentRun } from '../chat/agentCommand';
 import { mergeConversationThread } from '../chat/conversationStore';
-import { sendLog } from '../helpers';
+import { normalizeAiUrl, sendLog } from '../helpers';
+import { removeTrustedShellCommand, trustedShellCommands } from '../chat/trustedCommands';
+import type { TrustedCommand } from '../../shared/trustedCommands';
 import {
   abortRun,
   applyAnswer,
@@ -61,6 +63,10 @@ export function resolveDisclosedServers(serverIds: readonly string[] | undefined
 export function registerAgentHandlers(ctx: IpcContext): void {
   void pruneOldRuns(Date.now());
 
+  // List and remove only: nothing the renderer sends can add a program (see chat/trustedCommands.ts).
+  ipcMain.handle(IPC.AGENT_TRUSTED_COMMANDS_LIST, (): readonly TrustedCommand[] => trustedShellCommands());
+  ipcMain.handle(IPC.AGENT_TRUSTED_COMMANDS_REMOVE, (_event, raw: unknown): readonly TrustedCommand[] => removeTrustedShellCommand(raw));
+
   const deps = { flowManager: ctx.flowManager, getMainWin: ctx.getMainWin };
 
   ipcMain.handle(
@@ -106,7 +112,7 @@ export function registerAgentHandlers(ctx: IpcContext): void {
     },
   );
 
-  ipcMain.handle(IPC.AGENT_RESUME, async (_event, runId: string, rawAnswer?: string): Promise<AgentCommandResult> => {
+  ipcMain.handle(IPC.AGENT_RESUME, async (_event, runId: string, rawAnswer?: string, providerUrl?: unknown): Promise<AgentCommandResult> => {
     const strings = (await loadLanguageData(config.locale)) ?? {};
     const id = (runId ?? '').trim();
     const state = id ? await loadRunState(id) : null;
@@ -128,6 +134,9 @@ export function registerAgentHandlers(ctx: IpcContext): void {
       state.mcpCommandName = still.command;
     }
     const answer = (rawAnswer ?? '').trim();
+    // The model picked for this resume, spelled the way every other send spells it; anything that
+    // is not a non-empty string keeps the run's own model.
+    if (typeof providerUrl === 'string' && providerUrl.trim()) state.providerUrl = normalizeAiUrl(providerUrl);
     // The question's turn lists its choices numbered (`numberedQuestion`) above the chips, so a
     // typed "2" is the second; a chip sends its choice's own text.
     const resumeFrom = answer ? applyAnswer(state.turns, answer, { numbered: true }) : dropUnansweredAsk(state.turns);

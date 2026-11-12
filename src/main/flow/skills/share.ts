@@ -16,6 +16,7 @@ import { resolveCardTitle } from '../../../shared/markdownTitle';
 import { getLangCache, t } from '../../i18n';
 import { sendLog } from '../../helpers';
 import type { FlowExecutorDeps } from '../types';
+import { FlowUserError } from '../userError';
 import { expandFilenameTokens } from './fileOps';
 
 const DEFAULT_WIDTH = DEFAULT_CAPTURE_WIDTH;
@@ -206,7 +207,7 @@ export async function execShare(
   deps: FlowExecutorDeps,
 ): Promise<string> {
   const raw = config.content ?? '';
-  if (!raw.trim()) throw new Error('share: content is empty');
+  if (!raw.trim()) throw new FlowUserError('flow.error.requiredShareContent', {}, 'share: content is empty');
   // SECURITY: conversation markers are machine state. Nothing handed to someone else —
   // a rendered card or an uploaded paste — may carry them.
   const content = stripConversationMarkers(raw);

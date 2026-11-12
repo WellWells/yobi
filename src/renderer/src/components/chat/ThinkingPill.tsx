@@ -61,6 +61,7 @@ export const ThinkingPill: React.FC<{ url: string; menuDirection: MenuDirection 
         icon={icon}
         label={label}
         chevron={false}
+        collapsible
         open={false}
         accent={on}
         aria-pressed={control.kind === 'toggle' ? on : undefined}
@@ -95,6 +96,7 @@ export const ThinkingPill: React.FC<{ url: string; menuDirection: MenuDirection 
           variant="subtle"
           icon={icon}
           label={label}
+          collapsible
           open={open}
           accent={control.active}
           onClick={() => setOpen((current) => !current)}

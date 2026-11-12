@@ -13,6 +13,10 @@ import type { FlowWriteConfirmRequest } from '../flow/agent/agentBuiltins';
 import { toolDisplayName } from '../flow/agent/actionOutcome';
 import { askRenderer } from './agentConfirmBridge';
 import type { CommandOrigin } from './commandOrigin';
+import { addTrustedShellCommands } from './trustedCommands';
+import { trustedCommandLabel } from '../../shared/trustedCommands';
+import type { PlainCommandFacts } from '../flow/agent/shellTrust';
+import type { AgentConfirmRow } from '../../shared/types';
 
 type Strings = Record<string, string>;
 type GetWin = () => BrowserWindow | null;
@@ -85,10 +89,11 @@ async function confirmFlowWrite(
  * must be exactly the string that runs, or a harmless-looking prefix could hide an appended payload.
  */
 /*
- * Every command is asked, every time; there is deliberately no "allow for the rest of this run".
- * The agent reads untrusted pages into the same prompt that picks the next command, so a blanket
- * approval could be abused by the very run that earned it. A stray `approveAlways` counts as a
- * one-time approve.
+ * There is deliberately no "allow for the rest of this run": the agent reads untrusted pages into
+ * the same prompt that picks the next command, so a blanket approval could be spent by the very run
+ * that earned it. "Always allow" records only this command's programs and actions, and only when
+ * the check could vouch for them (`req.trust`, see shellTrust.ts); without it a stray
+ * `approveAlways` counts as a one-time approve.
  */
 async function confirmShell(
   req: ShellConfirmRequest,
@@ -104,15 +109,33 @@ async function confirmShell(
     sendLog(`\u{1F512} [Agent] shell: refused a ${req.command.length}-character command`);
     return false;
   }
+  const rows = shellRows(req.facts, req.skill);
   const choice = await askRenderer(getMainWin(), {
     kind: 'shell',
     // WHOLE, never clipped. The dialog scrolls it; what is shown is what runs.
     command: req.command,
     interpreter: req.interpreter,
     cwd: req.cwd,
+    ...(req.summary ? { summary: req.summary } : {}),
+    ...(rows.length > 0 ? { rows } : {}),
+    ...(req.trust?.length ? { alwaysFor: req.trust.map(trustedCommandLabel) } : {}),
   });
 
+  if (choice === 'approveAlways' && req.trust?.length) addTrustedShellCommands(req.trust);
   return choice !== 'deny';
+}
+
+/**
+ * The program, its actions, the files named and the skill, one row each; a row with nothing in it
+ * is left out. A command that is not plain has no facts, only its skill.
+ */
+export function shellRows(facts: PlainCommandFacts | undefined, skill: string | undefined): AgentConfirmRow[] {
+  return [
+    { key: 'program', value: facts?.programs.join(' · ') ?? '' },
+    { key: 'action', value: facts?.verbs.join(' · ') ?? '' },
+    { key: 'files', value: facts?.files.join('\n') ?? '' },
+    { key: 'skill', value: skill ?? '' },
+  ].filter((row) => row.value !== '');
 }
 
 /**

@@ -97,7 +97,7 @@ export async function saveCalDavAccount(input: CalDavAccountInput, deps: CalDavA
   }
   const { calendars } = found;
   if (calendars.length === 0) return { ok: false, error: 'noCalendars' };
-  const id = putDavAccount({
+  const id = await putDavAccount({
     ...(input.id ? { id: input.id } : {}),
     provider: signIn.provider,
     server: signIn.server,

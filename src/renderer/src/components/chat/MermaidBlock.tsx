@@ -1,6 +1,6 @@
 import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { ActionIcon, Group, Text, Tooltip } from '@mantine/core';
-import { Check, Code2, Copy, Workflow } from 'lucide-react';
+import { Check, CodeXml, Copy, Workflow } from 'lucide-react';
 import { ShikiCodeBlock } from '../ShikiCodeBlock';
 import { CODE_CHROME } from '../codeBlockChrome';
 import { CaptureContentThemeContext } from '../../utils/forcedCodeTheme';
@@ -18,7 +18,7 @@ export const MermaidBlock = React.memo<MermaidBlockProps>(({ code }) => {
   const forcedTheme = useContext(CaptureContentThemeContext);
   const theme = forcedTheme ?? storeTheme;
   const staticRender = forcedTheme !== null;
-  const { t } = useI18nStore();
+  const t = useI18nStore((s) => s.t);
 
   const [state, setState] = useState<MermaidState | null>(() => getCachedMermaid(code, theme) ?? null);
   const [showSource, setShowSource] = useState(false);
@@ -82,7 +82,7 @@ export const MermaidBlock = React.memo<MermaidBlockProps>(({ code }) => {
           onClick={() => setShowSource((previous) => !previous)}
           aria-label={showSource ? t('mermaid.showDiagram') : t('mermaid.showSource')}
         >
-          {showSource ? <Workflow size={12} /> : <Code2 size={12} />}
+          {showSource ? <Workflow size={12} /> : <CodeXml size={12} />}
         </ActionIcon>
       </Tooltip>
       <Tooltip label={copied ? t('mermaid.copied') : t('mermaid.copySource')}>

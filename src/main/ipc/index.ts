@@ -13,10 +13,11 @@ import {
   createTaskId,
   getAssetPath,
 } from '../helpers';
-import { loadLanguageData } from '../i18n';
+import { loadLanguageData, localizeUserFacingError } from '../i18n';
+import { reportSendFailure } from '../taskReporting';
 import { titleFromPrompt } from '../output';
 import { whileConversationBusy } from '../conversationBusy';
-import { resolveUrlPrompt } from '../urlParser';
+import { pinsProvider, resolveUrlPrompt } from '../urlParser';
 import { showWorkerWindow } from '../windows';
 import { openOfferedSiteVerification } from '../siteVerification';
 import type { IpcContext } from './context';
@@ -55,7 +56,11 @@ import { registerClaudeModelHandlers } from './claudeModel';
 import { registerChatgptModelHandlers } from './chatgptModel';
 import { registerMemoryHandlers } from './memory';
 import { registerMemoryCurateHandlers } from './memoryCurate';
+import { registerSkillHandlers } from './skills';
 import { registerWritingToolsHandlers } from './writingTools';
+import { registerPromptAuthorHandlers } from './promptAuthor';
+import { registerAiNameHandlers } from './aiName';
+import { registerFlowAssistHandlers } from './flowAssist';
 import { registerDocAssistantHandlers } from './docAssistant';
 import { registerTranslateHandlers } from './translate';
 import { registerMarkdownExportHandlers } from './markdownExport';
@@ -72,7 +77,7 @@ export function setupIpcHandlers(deps: IpcContext): void {
   }
   _ipcInitialized = true;
 
-  const { queue, getMainWin, checkForUpdates } = deps;
+  const { queue, getMainWin, checkForUpdates, installUpdate } = deps;
   const ctx = deps;
 
   async function enqueuePromptFromUi(
@@ -101,14 +106,24 @@ export function setupIpcHandlers(deps: IpcContext): void {
       ? normalizeAiUrl(targetUrl)
       : config.targetUrl;
 
-    const langData = await loadLanguageData(config.locale) ?? {};
-    const resolved = await resolveUrlPrompt(text, {
-      langData: langData as Record<string, string>,
-      youtubePrompt: config.youtubePrompt,
-      targetUrl: resolvedTargetUrl,
-      onLog: sendLog,
-      hotelReviews: true,
-    });
+    const langData = (await loadLanguageData(config.locale) ?? {}) as Record<string, string>;
+    let resolved: Awaited<ReturnType<typeof resolveUrlPrompt>>;
+    try {
+      resolved = await resolveUrlPrompt(text, {
+        langData,
+        youtubePrompt: config.youtubePrompt,
+        targetUrl: resolvedTargetUrl,
+        onLog: sendLog,
+        hotelReviews: true,
+      });
+    } catch (err) {
+      // Refused before a task exists (a custom Maps report leaves no room for a review): no task
+      // will ever report this send, so its "sending" bubble is cleared here, with the reason.
+      const raw = err instanceof Error ? err.message : String(err);
+      sendLog(`⚠️ UI prompt not queued: ${raw}`);
+      reportSendFailure(conversation?.sendId ?? '', conversation?.conversationPath ?? '', localizeUserFacingError(raw, langData));
+      return null;
+    }
     const finalTargetUrl = resolved.forceProviderUrl ?? resolvedTargetUrl;
 
     const id = createTaskId();
@@ -125,7 +140,7 @@ export function setupIpcHandlers(deps: IpcContext): void {
       sendId: conversation?.sendId,
       ...(resolved.prompt !== text ? { external: true } : {}),
       ...(resolved.map ? { mapPlace: resolved.map } : {}),
-      ...(resolved.forceProviderUrl ? { providerPinned: true as const } : {}),
+      ...(pinsProvider(resolved) ? { providerPinned: true as const } : {}),
     });
     sendLog(`[${id}] 🎯 UI prompt queued for ${getProviderLabel(finalTargetUrl)}`);
     return id;
@@ -139,6 +154,7 @@ export function setupIpcHandlers(deps: IpcContext): void {
     if (typeof site === 'string') openOfferedSiteVerification(site);
   });
   ipcMain.handle(IPC.UPDATE_CHECK, () => checkForUpdates());
+  ipcMain.handle(IPC.UPDATE_INSTALL, () => installUpdate());
 
   ipcMain.on(IPC.WINDOW_MINIMIZE, () => getMainWin()?.minimize());
   ipcMain.on(IPC.WINDOW_MAXIMIZE, () => {
@@ -198,6 +214,13 @@ export function setupIpcHandlers(deps: IpcContext): void {
       sendId: options?.sendId,
     }),
   );
+
+  ipcMain.handle(IPC.CHAT_STOP_SEND, (_event, sendId: unknown) => {
+    if (typeof sendId !== 'string') return false;
+    const stopped = queue.stopSend(sendId.trim());
+    if (stopped) sendLog(`🛑 Stop pressed for chat send ${sendId}`);
+    return stopped;
+  });
 
   ipcMain.handle(IPC.CANCEL_QUEUE_TASK, (_event, taskId: string) => {
     const normalizedTaskId = (taskId ?? '').trim();
@@ -270,7 +293,11 @@ export function setupIpcHandlers(deps: IpcContext): void {
   registerChatgptModelHandlers();
   registerMemoryHandlers(() => announceBotPermissionsChanged(ctx, 'telegram'));
   registerMemoryCurateHandlers();
+  registerSkillHandlers();
   registerWritingToolsHandlers();
+  registerPromptAuthorHandlers();
+  registerAiNameHandlers();
+  registerFlowAssistHandlers({ flowManager: () => ctx.flowManager ?? null });
   registerDocAssistantHandlers();
   registerTranslateHandlers();
   registerMarkdownExportHandlers();

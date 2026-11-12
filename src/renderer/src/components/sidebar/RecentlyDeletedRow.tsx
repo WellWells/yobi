@@ -1,6 +1,6 @@
 import React from 'react';
 import { Group, Text, UnstyledButton } from '@mantine/core';
-import { Trash2 } from 'lucide-react';
+import { Trash } from 'lucide-react';
 import styles from '../Sidebar.module.css';
 
 interface RecentlyDeletedRowProps {
@@ -22,7 +22,7 @@ export const RecentlyDeletedRow: React.FC<RecentlyDeletedRowProps> = ({ count, l
     data-selected="false"
   >
     <Group gap={8} wrap="nowrap">
-      <Trash2 size={14} color="var(--text-muted)" style={{ flexShrink: 0 }} />
+      <Trash size={14} color="var(--text-muted)" style={{ flexShrink: 0 }} />
       <Text fz="var(--font-size-sm)" flex={1} truncate>{label}</Text>
       <Text component="span" fz="var(--font-size-xs)" className={styles.timestamp}>{count}</Text>
     </Group>

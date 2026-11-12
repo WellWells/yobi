@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useFlowStore } from '../store/useFlowStore';
+import { useSavedFlows } from '../store/useSavedFlows';
 import { MCP_COMMAND_ID_PREFIX } from '../../../shared/mcpCommand';
 import {
   BOT_COMMAND_RE,
@@ -114,6 +114,6 @@ export function flowChatCommands(flows: readonly FlowDefinition[]): ChatCommand[
 }
 
 export function useChatCommands(): ChatCommand[] {
-  const flows = useFlowStore((s) => s.flows);
+  const flows = useSavedFlows();
   return useMemo(() => flowChatCommands(flows), [flows]);
 }

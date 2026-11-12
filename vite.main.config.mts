@@ -1,4 +1,4 @@
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig, type Plugin, type Rolldown } from 'vite';
 import { builtinModules, createRequire } from 'node:module';
 import { dirname, resolve, join } from 'node:path';
 import { copyFileSync, mkdirSync, readdirSync } from 'node:fs';
@@ -62,6 +62,25 @@ const EXTERNALIZED = [
   ...builtinModules.map((m) => `node:${m}`),
 ];
 
+/**
+ * Bundler warnings about dependency code that is harmless in this bundle. Each is matched by its
+ * code AND the package that raised it, so the same warning from our own code or any other package
+ * still prints. The release self-test build uses the same filter.
+ */
+const KNOWN_DEPENDENCY_WARNINGS = [
+  // unpdf calls `import.meta.resolve('pdfjs-dist/package.json')` inside a try, to default the cMap
+  // and standard-font URLs. In this CJS bundle `import.meta` becomes `{}`, so the call throws and
+  // is caught. Those URLs never existed here: pdfjs-dist is not installed (unpdf bundles its own
+  // pdf.js) and the packaged app ships no node_modules.
+  { code: 'EMPTY_IMPORT_META', pkg: 'unpdf' },
+] as const;
+
+export function onBuildLog(level: Rolldown.LogLevel, log: Rolldown.RolldownLog, defaultHandler: Rolldown.LogOrStringHandler): void {
+  const id = log.id?.replace(/\\/g, '/') ?? '';
+  const known = level === 'warn' && KNOWN_DEPENDENCY_WARNINGS.some((w) => w.code === log.code && id.includes(`/node_modules/${w.pkg}/`));
+  if (!known) defaultHandler(level, log);
+}
+
 export default defineConfig({
   plugins: [copyLanguageFilesPlugin(), copyEntryStubPlugin()],
   // mtcute's crypto is WebAssembly; `?inline` turns the .wasm into a data URL inside the bundle
@@ -81,6 +100,7 @@ export default defineConfig({
     sourcemap: 'hidden',
     ssr: resolve(import.meta.dirname, 'src/main/index.ts'),
     rollupOptions: {
+      onLog: onBuildLog,
       output: {
         format: 'cjs',
         entryFileNames: '[name].js',

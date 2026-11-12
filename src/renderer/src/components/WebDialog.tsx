@@ -1,5 +1,6 @@
 import React from 'react';
 import { Modal, Button, Group, Text } from '@mantine/core';
+import { Z_MODAL } from '../config/zLayers';
 
 interface WebDialogProps {
   open: boolean;
@@ -8,7 +9,10 @@ interface WebDialogProps {
   confirmText: string;
   cancelText: string;
   danger?: boolean;
-  /** Above the default only when it opens over another dialog. */
+  /**
+   * Above the default only when it opens over another dialog. The default is a dialog's layer: a
+   * confirm asked from inside Settings (its dialog is Z_SETTINGS) must open over it, not behind.
+   */
   zIndex?: number;
   onConfirm: () => void;
   onCancel: () => void;
@@ -21,7 +25,7 @@ export const WebDialog: React.FC<WebDialogProps> = ({
   confirmText,
   cancelText,
   danger = false,
-  zIndex = 60,
+  zIndex = Z_MODAL,
   onConfirm,
   onCancel,
 }) => (

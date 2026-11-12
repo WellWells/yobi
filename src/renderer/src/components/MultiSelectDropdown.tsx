@@ -3,7 +3,7 @@ import { MultiSelect } from '@mantine/core';
 import type { MultiSelectProps } from '@mantine/core';
 import { Z_POPOVER } from '../config/zLayers';
 
-type SelectOption = { value: string; label: string };
+type SelectOption = { value: string; label: string; disabled?: boolean };
 type SelectOptionGroup = { group: string; items: SelectOption[] };
 
 export type MultiSelectDropdownProps = Omit<MultiSelectProps, 'data' | 'onChange'> & {

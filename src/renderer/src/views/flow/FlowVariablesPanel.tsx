@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActionIcon, Badge, Box, Button, Code, Collapse, Divider, Group, Stack, Text, Tooltip,
 } from '@mantine/core';
-import { Plus, Settings2, SlidersHorizontal, Trash2, TriangleAlert } from 'lucide-react';
+import { Plus, Settings2, SlidersHorizontal, Trash, TriangleExclamationPoint } from 'lucide-react';
 import { AppTextInput } from '../../components/AppTextInput';
 import { SectionCard } from '../../components/SectionCard';
 import { SelectDropdown } from '../../components/SelectDropdown';
@@ -50,7 +50,7 @@ const UsageHint: React.FC<{ usages: number; t: (k: string) => string }> = ({ usa
   }
   return (
     <Group gap={4} wrap="nowrap" align="center">
-      <TriangleAlert size={12} color="var(--mantine-color-warning)" />
+      <TriangleExclamationPoint size={12} color="var(--mantine-color-warning)" />
       <Text fz="xs" c="var(--mantine-color-warning)">{t('flow.variables.unused')}</Text>
     </Group>
   );
@@ -101,7 +101,7 @@ const DefinitionRow: React.FC<DefinitionRowProps> = ({
         />
         <Tooltip label={t('flow.variables.remove')}>
           <ActionIcon variant="subtle" color="red" size="md" mt={22} onClick={onRemove}>
-            <Trash2 size={14} />
+            <Trash size={14} />
           </ActionIcon>
         </Tooltip>
       </Group>
@@ -254,15 +254,16 @@ export const FlowVariablesPanel: React.FC<FlowVariablesPanelProps> = ({ flow, t,
                 {editing ? t('flow.variables.doneEditing') : t('flow.variables.edit')}
               </Button>
             )}
-            <Button variant="default" size="xs" leftSection={<Plus size={14} />} onClick={handleAdd}>
-              {t('flow.variables.add')}
-            </Button>
+            {/* With no settings yet the card is this one row; what a setting is waits in the tooltip. */}
+            <Tooltip label={t('flow.variables.empty')} multiline maw={300} position="bottom-end" disabled={variables.length > 0}>
+              <Button variant="default" size="xs" leftSection={<Plus size={14} />} onClick={handleAdd}>
+                {t('flow.variables.add')}
+              </Button>
+            </Tooltip>
           </Group>
         </Group>
 
-        {variables.length === 0 ? (
-          <Text fz="xs" c="dimmed" style={{ lineHeight: 1.6 }}>{t('flow.variables.empty')}</Text>
-        ) : (
+        {variables.length > 0 && (
           <>
             <Collapse expanded={!editing}>
               <Stack gap="sm">

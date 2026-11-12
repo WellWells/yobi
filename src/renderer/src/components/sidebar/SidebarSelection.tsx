@@ -1,6 +1,6 @@
 import React from 'react';
 import { ActionIcon, Menu as MMenu, Tooltip } from '@mantine/core';
-import { Trash2, Upload } from 'lucide-react';
+import { Trash, Upload } from 'lucide-react';
 import type { ConversationFolder } from '../../../../shared/conversationFolders';
 import type { OutputFile } from '../../../../shared/types';
 import { useResolvedCombo } from '../../store/shortcutStore';
@@ -99,7 +99,7 @@ export const SelectionContextMenu: React.FC<SelectionContextMenuProps> = ({
       <SelectionMenuItems onAction={onAction} disabled={busy} t={t} />
       <MMenu.Divider />
       <MMenu.Item
-        leftSection={<Trash2 size={13} />}
+        leftSection={<Trash size={13} />}
         color="red"
         rightSection={<ShortcutHint combo={deleteCombo} />}
         disabled={busy}

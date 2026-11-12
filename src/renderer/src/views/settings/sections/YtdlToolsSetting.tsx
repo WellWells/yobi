@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Group, Stack, Text } from '@mantine/core';
-import { MonitorDown, RefreshCw, Trash2 } from 'lucide-react';
+import { MonitorDown, RefreshCw, Trash } from 'lucide-react';
 import {
   AppTextInput, GroupHeader, SectionCard, SectionTitle, SelectDropdown, SettingDivider, SettingField, SettingRow,
   ToggleSwitch,
@@ -106,7 +106,7 @@ export const YtdlToolsSetting: React.FC<Props> = ({ t, visible, sectionGap, rost
                   variant="subtle"
                   color="red"
                   size="xs"
-                  leftSection={<Trash2 size={14} />}
+                  leftSection={<Trash size={14} />}
                   loading={busy === 'remove'}
                   onClick={() => void run('remove', ytdlToolsApi.remove)}
                 >

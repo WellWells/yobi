@@ -97,7 +97,7 @@ export function noteGeminiComposerCut(kept: number): boolean {
   });
 }
 
-export function resetGeminiSignInStateForTests(): void {
+export function resetGeminiSignInState(): void {
   cookieSignedIn = false;
   pageSignedOut = false;
   composerCutAt = null;

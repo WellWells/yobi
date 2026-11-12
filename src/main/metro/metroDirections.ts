@@ -56,10 +56,6 @@ const LINES: Readonly<Record<MetroNetwork, readonly LineOrder[]>> = {
   klrt: [{ line: 'C', codes: KLRT_RING, ring: true }],
 };
 
-export function lineOrders(network: MetroNetwork): readonly LineOrder[] {
-  return LINES[network];
-}
-
 /** One way out of a station: the code to ask about, and the line's end(s) that way, as codes. */
 export interface Direction {
   line: string;

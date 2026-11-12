@@ -1,4 +1,5 @@
 import { jsonrepair } from 'jsonrepair';
+import { escapeInnerQuotes } from './llmJsonInnerQuotes';
 import { escapeLiteralBackslashes } from './llmJsonLiteralEscapes';
 
 function tryParse(text: string): unknown | undefined {
@@ -106,6 +107,12 @@ function attemptParse(raw: string): Parsed | undefined {
   if (escaped !== text) {
     const literal = tryParse(stripTrailingCommas(escaped));
     if (literal !== undefined) return { value: literal, repaired: false };
+  }
+  // Unescaped quotes inside a string, before jsonrepair: it gives up on `("…")` and CJK after them.
+  const quoted = escapeInnerQuotes(escaped);
+  if (quoted !== escaped) {
+    const inner = tryParse(stripTrailingCommas(quoted));
+    if (inner !== undefined) return { value: inner, repaired: true };
   }
   const repaired = repairParse(escaped);
   return repaired === undefined ? undefined : { value: repaired, repaired: true };

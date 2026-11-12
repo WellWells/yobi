@@ -4,7 +4,7 @@ import { PaletteSwatch } from '../capture/PalettePicker';
 import { CardSchematic } from './CardSchematic';
 import { ExpirySlider } from './ExpirySlider';
 import { MarginSlider } from '../capture/MarginSlider';
-import { Copy, Link2, Save, TriangleAlert } from 'lucide-react';
+import { Copy, Link2, Save, TriangleExclamationPoint } from 'lucide-react';
 import { AppTextInput } from '../AppTextInput';
 import { AppButton } from '../AppButton';
 import { AppSegmentedControl } from '../AppSegmentedControl';
@@ -130,7 +130,7 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
       />
 
       {payload.notice && (
-        <Alert color="var(--mantine-color-error)" variant="light" icon={<TriangleAlert size={16} />}>
+        <Alert color="var(--mantine-color-error)" variant="light" icon={<TriangleExclamationPoint size={16} />}>
           <Text fz="var(--font-size-sm)" style={{ wordBreak: 'break-word' }}>{payload.notice}</Text>
         </Alert>
       )}

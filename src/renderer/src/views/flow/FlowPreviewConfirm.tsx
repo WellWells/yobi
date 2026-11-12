@@ -2,10 +2,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert, Anchor, Badge, Box, Button, Divider, Group, ScrollArea, Stack, Text,
 } from '@mantine/core';
-import { CornerDownRight, ShieldAlert, TriangleAlert } from 'lucide-react';
+import { CornerDownRight, ShieldExclamationPoint, TriangleExclamationPoint } from 'lucide-react';
 import { AppModal } from '../../components/AppModal';
 import { SKILL_ICON, skillHue } from './skills';
 import { analyzeFlow, isCodeSummary, llmProviderLabel, summarizeStep } from './flowCapabilities';
+import { useNamedModels } from './useNamedModels';
 import type { FlowDefinition } from '../../../../shared/types';
 import { Z_MODAL_CONFIRM } from '../../config/zLayers';
 import { fillTemplate } from '../../../../shared/fillTemplate';
@@ -26,12 +27,13 @@ export const StepRow: React.FC<{
   t: (key: string) => string;
 }> = ({ index, flow, riskySteps, t }) => {
   const [expanded, setExpanded] = useState(false);
+  const namedModels = useNamedModels();
   const step = flow.steps[index];
   const position = index + 1;
   const risky = riskySteps.has(position);
   const summary = summarizeStep(step.type, step.config);
   const isCode = isCodeSummary(step.type);
-  const provider = step.type === 'llm' ? llmProviderLabel(step.config.provider) : '';
+  const provider = step.type === 'llm' ? llmProviderLabel(step.config.provider, namedModels, t('flow.step.byokProvider')) : '';
   const canExpand = summary.length > EXPANDABLE_OVER;
 
   return (
@@ -135,7 +137,7 @@ export const FlowPreviewConfirm: React.FC<FlowPreviewConfirmProps> = ({
       opened
       onClose={onCancel}
       title={title}
-      icon={hasRisk ? <ShieldAlert size={16} /> : undefined}
+      icon={hasRisk ? <ShieldExclamationPoint size={16} /> : undefined}
       size="lg"
       zIndex={Z_MODAL_CONFIRM}
     >
@@ -151,7 +153,7 @@ export const FlowPreviewConfirm: React.FC<FlowPreviewConfirmProps> = ({
               {caps.hasRisk && (
                 <Alert
                   color="var(--mantine-color-error)"
-                  icon={<TriangleAlert size={14} />}
+                  icon={<TriangleExclamationPoint size={14} />}
                   title={t('flow.import.confirm.risk')}
                   p="xs"
                 >

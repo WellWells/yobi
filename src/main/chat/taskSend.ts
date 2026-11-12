@@ -22,6 +22,8 @@ import { llmLane } from '../flow/lanes';
 import { buildCombinedPromptFromPrefs, buildTaskInstruction, getLangCache, t } from '../i18n';
 import { ensureWorkerWindow } from '../windows';
 import { workerWindowUnavailable } from '../workerWindowError';
+import { clickStopGeneration } from '../providers/stopGeneration';
+import { stopPageOnAbort, taskStopSignal, throwIfStopped } from './taskStop';
 
 function resolvePromptPrefs(task: Task): PromptPreferences {
   const isBotTask = task.source === 'telegram' || task.source === 'line';
@@ -120,6 +122,8 @@ export async function sendTaskTo(ctx: TaskSendContext, sendUrl: string): Promise
     outgoingPrompt: string,
     expectThreadUrl?: string,
   ): Promise<AutomationResult & { sentPrompt: string }> => llmLane.runExclusive(async () => {
+    // Stopped while waiting for the worker: nothing has been typed, so nothing is sent.
+    throwIfStopped(task);
     // Inside the lane: a Gemini run queued ahead can lower the cap this prompt is sized for.
     const preparedPrompt = preparePromptForProvider(outgoingPrompt, sendUrl, { refuseCut: ownText });
     if (preparedPrompt.removedBlankLines) {
@@ -130,17 +134,31 @@ export async function sendTaskTo(ctx: TaskSendContext, sendUrl: string): Promise
     }
     const activeWorker = await ensureWorkerWindow(config.targetUrl, 'automation');
     if (!activeWorker || activeWorker.isDestroyed()) throw workerWindowUnavailable();
-    const automated = await runAutomation(
-      activeWorker,
-      preparedPrompt.prompt,
-      config.responseTimeout,
-      sendUrl,
-      task.attachments,
-      expectThreadUrl,
-      needsTitle,
-      // Yobi's temporary chat is not saved here, so it is not kept in the provider either.
-      chatContext.temporary,
+    // Stopped while the worker window was readied: still nothing typed, so nothing is sent.
+    throwIfStopped(task);
+    // Stop pressed while the page answers: the site's own stop ends it, so the lane is freed now.
+    const releaseStop = stopPageOnAbort(
+      taskStopSignal(task),
+      async () => !activeWorker.isDestroyed() && clickStopGeneration(activeWorker.webContents, sendUrl),
+      (clicked) => sendLog(`[${id}] 🛑 ${clicked ? `Stopped ${sendLabel}'s answer` : `${sendLabel} showed no stop control`}`),
     );
+    let automated: AutomationResult;
+    try {
+      automated = await runAutomation(
+        activeWorker,
+        preparedPrompt.prompt,
+        config.responseTimeout,
+        sendUrl,
+        task.attachments,
+        expectThreadUrl,
+        needsTitle,
+        // Yobi's temporary chat is not saved here, so it is not kept in the provider either.
+        chatContext.temporary,
+      );
+    } finally {
+      releaseStop();
+    }
+    throwIfStopped(task);
     // Still in the lane and on the provider's page: an SVG answer is drawn there.
     const pictured = await withAnswerSvgPictures(activeWorker, automated);
     return { ...pictured, sentPrompt: preparedPrompt.prompt };
@@ -161,7 +179,12 @@ export async function sendTaskTo(ctx: TaskSendContext, sendUrl: string): Promise
     withInstruction,
     ...(withNativeReminder ? { withNativeReminder } : {}),
     runBrowser: runBrowserTask,
-    runByok: (outgoing) => runByokCompletion(sendUrl, withByokImages(outgoing, byokImages), config.responseTimeout),
+    runByok: (outgoing) => runByokCompletion(
+      sendUrl,
+      withByokImages(outgoing, byokImages),
+      config.responseTimeout,
+      taskStopSignal(task),
+    ),
     onThreadLost: () => sendLog(`[${id}] 🧵 Stored conversation thread is gone — continuing with a text recap`),
   });
   let sent: ConversationalSendResult;

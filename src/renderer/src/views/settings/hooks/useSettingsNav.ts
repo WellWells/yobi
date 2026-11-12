@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Bell, Bot, Brain, ChartLine, Cpu, DatabaseBackup, ImageDown, Keyboard, Link, Palette, Plug, SlidersHorizontal, Sparkles } from 'lucide-react';
+import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { Bell, Bot, Brain, ChartLine, Cpu, DatabaseBackup, ImageDown, Keyboard, Link, Palette, Plug, Puzzle, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useI18nStore } from '../../../store/i18nStore';
 import { useAppStore } from '../../../store/appStore';
@@ -17,6 +17,7 @@ const CATEGORY_ICON: Record<Category, LucideIcon> = {
   ai: Sparkles,
   memory: Brain,
   connectors: Plug,
+  skills: Puzzle,
   bots: Bot,
   general: SlidersHorizontal,
   appearance: Palette,
@@ -70,7 +71,11 @@ export function useSettingsNav() {
     [translations, enTranslations, t],
   );
 
-  const q = searchQuery.trim().toLowerCase();
+  // The field shows each keystroke at once; the results follow in a pass that a newer keystroke
+  // interrupts, so typing never waits for the pages it filters.
+  const resultsQuery = useDeferredValue(searchQuery);
+  const searchPending = resultsQuery !== searchQuery;
+  const q = resultsQuery.trim().toLowerCase();
   const isSearching = q.length > 0;
 
   const sectionVisible = (tags: readonly string[]): boolean => haystacks.get(tags)?.includes(q) ?? false;
@@ -96,6 +101,7 @@ export function useSettingsNav() {
     activeCategory,
     setActiveCategory,
     isSearching,
+    searchPending,
     showSection,
     showCategory,
     navCategoryDefs,

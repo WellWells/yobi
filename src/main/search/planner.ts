@@ -1,4 +1,5 @@
 import { runByokCompletion } from '../providers/byokClient';
+import { yieldRunSlot } from '../flow/flowQueue';
 import { fenceUntrusted } from '../../shared/promptFencing';
 import { extractJsonFromLlmResponse } from '../../shared/llmJsonExtract';
 import { sendLog } from '../helpers';
@@ -68,9 +69,9 @@ export function planQueryLlm(
 ): Promise<QueryPlan> {
   const deadlineMs = quick ? QUICK_PLANNER_DEADLINE_MS : PLANNER_DEADLINE_MS;
   return runPlanner(query, locale, history, async (prompt) => {
-    const { response } = await runByokCompletion(
+    const { response } = await yieldRunSlot(() => runByokCompletion(
       targetUrl, prompt, deadlineMs, AbortSignal.timeout(deadlineMs),
-    );
+    ));
     return response;
   });
 }

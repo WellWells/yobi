@@ -1,4 +1,6 @@
-import type { FlowDefinition, SkillInstance, SkillType } from './types';
+import type { BotPlatform, FlowDefinition, SkillInstance, SkillType } from './types';
+import { parseBotPlatform } from './types';
+import { botStepTargets, splitTargets } from './botRecipients';
 import { HOTKEY_SELECTION_VAR } from './flowReferenceCheck';
 import { extractTemplateVariables } from './templateVariables';
 
@@ -95,11 +97,43 @@ export const OWNER_ACTION_STEP_TYPES: ReadonlySet<SkillType> = new Set<SkillType
   'browser_open',
 ]);
 
-/** Whether a flow's steps act as the owner (a clipboard step only when it writes). */
-export function actsAsOwner(steps: readonly StepShape[] | undefined): boolean {
+/** Whoever asked for the flow in a bot chat. */
+export interface FlowAsker {
+  platform: BotPlatform;
+  userId: string;
+}
+
+const TRIGGER_CHAT_TOKEN = '{{bot.triggerChatId}}';
+
+/**
+ * A bot step that may post from the owner's own LINE account (platform LINE PC, `auto`, or a
+ * variable) to anyone but the asker: any group or friend LINE PC has is a recipient there, so it
+ * speaks as the owner. Answering where the flow's command was asked, or the asker's own id, does not.
+ * A blank field is every paired account.
+ */
+function postsAsOwner(step: StepShape, asker: FlowAsker | undefined): boolean {
+  if (step.type !== 'bot') return false;
+  const config = step.config ?? {};
+  const raw = (config.platform ?? '').trim();
+  const platform = /\{\{[^}]+\}\}/.test(raw) ? 'auto' : parseBotPlatform(raw) ?? 'auto';
+  if (platform !== 'lineSelf' && platform !== 'auto') return false;
+  const targets = splitTargets(botStepTargets(config));
+  if (targets.length === 0) return true;
+  return targets.some((target) => {
+    if (target.replace(/\s+/g, '') === TRIGGER_CHAT_TOKEN) return false;
+    return !(asker && target === asker.userId && (platform === 'auto' || asker.platform === 'lineSelf'));
+  });
+}
+
+/**
+ * Whether a flow's steps act as the owner (a clipboard step only when it writes; a bot step that
+ * may post from the owner's LINE account to someone other than `asker`).
+ */
+export function actsAsOwner(steps: readonly StepShape[] | undefined, asker?: FlowAsker): boolean {
   return (steps ?? []).some((step) => (
-    OWNER_ACTION_STEP_TYPES.has(step.type)
-    && !(step.type === 'clipboard' && (step.config?.action ?? '').trim() !== 'write')
+    (OWNER_ACTION_STEP_TYPES.has(step.type)
+      && !(step.type === 'clipboard' && (step.config?.action ?? '').trim() !== 'write'))
+    || postsAsOwner(step, asker)
   ));
 }
 

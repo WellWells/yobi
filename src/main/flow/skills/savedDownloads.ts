@@ -36,9 +36,10 @@ export async function moveFile(from: string, to: string): Promise<void> {
 
 /**
  * Moves `file` into `folder` under a name nothing there uses; the placeholder goes if the move
- * fails. Inside Downloads/Yobi it is noted for the cleanup (`downloadsCache.ts`).
+ * fails. Inside Downloads/Yobi it is noted for the cleanup (`downloadsCache.ts`), with what it is a
+ * copy of when `source` says (`findSourcedDownload`).
  */
-export async function saveIntoFolder(file: string, folder: string, fileName: string): Promise<string> {
+export async function saveIntoFolder(file: string, folder: string, fileName: string, source?: string): Promise<string> {
   await fs.mkdir(folder, { recursive: true });
   const finalPath = path.join(folder, await reserveName(folder, fileName));
   try {
@@ -47,6 +48,6 @@ export async function saveIntoFolder(file: string, folder: string, fileName: str
     await fs.rm(finalPath, { force: true }).catch(() => {});
     throw err;
   }
-  await recordDownloads([finalPath]).catch(() => {});
+  await recordDownloads([finalPath], Date.now(), source).catch(() => {});
   return finalPath;
 }

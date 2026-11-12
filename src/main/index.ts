@@ -60,7 +60,8 @@ import { notifyQueueLevelFailure, processTask } from './taskProcessor';
 import { bindHotkey as bindHotkeyImpl, bindQuickExportHotkey, bindRegionHotkey, bindRegionHotkeyAtLaunch } from './hotkeyBinding';
 import { loadFlowsFromDisk } from './flow/flowPersistence';
 import type { FlowManager } from './flow';
-import { checkForUpdates } from './updater';
+import { checkForUpdates, installUpdate } from './updater';
+import { getAppVersion } from './appVersion';
 import { destroyTray, isTrayCreated } from './tray';
 import { applyPendingFactoryReset } from './factoryReset';
 import { setupPlatformIcons, loadInitialLanguages, setupWindows } from './bootstrap/appSetup';
@@ -72,20 +73,28 @@ import { handleDiscardedTask } from './taskReporting';
 import { createLineRuntime } from './bootstrap/lineSetup';
 import { createSocketBotRuntimes } from './bootstrap/socketBotSetup';
 import { initMcp } from './bootstrap/mcpSetup';
-import { initSecretHealthBridge, probeStoredSecrets, reportSecretHealth } from './bootstrap/secretHealthSetup';
+import { applyChatTargetDefault } from './bootstrap/chatTargetSetup';
+import { holdQuitForSecretWrites, initSecretHealthBridge, probeStoredSecrets, reportSecretHealth } from './bootstrap/secretHealthSetup';
 
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 
 /*
- * Fixed at 9333, away from Chrome's default 9222, so attaching to "the dev app" can never land on a
+ * Fixed at 9981, away from Chrome's default 9222, so attaching to "the dev app" can never land on a
  * browser instead. YOBI_CDP_PORT is only for throwaway instances (screenshots, demos) that must run
  * next to the dev app.
+ *
+ * Release builds never expose CDP: Chromium also honours the switch from the command line
+ * (`Yobi.exe --remote-debugging-port=…`) and no Electron fuse turns that off, so a packaged build
+ * strips it before the DevTools HTTP handler starts.
  */
-const DEV_CDP_PORT = '9333';
+const DEV_CDP_PORT = '9981';
 
-if (!app.isPackaged) {
+if (app.isPackaged) {
+  app.commandLine.removeSwitch('remote-debugging-port');
+  app.commandLine.removeSwitch('remote-debugging-pipe');
+} else {
   app.commandLine.appendSwitch('remote-debugging-port', process.env['YOBI_CDP_PORT'] || DEV_CDP_PORT);
 }
 app.userAgentFallback = CLEAN_UA;
@@ -157,7 +166,7 @@ app.whenReady().then(async () => {
   powerSaveBlockerId = powerSaveBlocker.start('prevent-app-suspension');
 
   initLogFile();
-  sendLog(`🚀 Yobi ${app.getVersion()} starting (${process.platform}, electron ${process.versions.electron})`);
+  sendLog(`🚀 Yobi ${getAppVersion()} starting (${process.platform}, electron ${process.versions.electron})`);
 
   await applyPendingFactoryReset();
 
@@ -189,8 +198,11 @@ app.whenReady().then(async () => {
   refusePageReaderDownloads((partition) => session.fromPartition(partition), sendLog);
 
   initSecretHealthBridge();
-  initSensitiveConfig();
-  probeStoredSecrets();
+  // safeStorage decrypts asynchronously; every synchronous secret read after this line relies on it.
+  await Promise.all([initSensitiveConfig(), probeStoredSecrets()]);
+  // After the secrets are open: it may save the config, and a save before them wrote the
+  // Telegram token fields from their still-empty plaintext.
+  applyChatTargetDefault();
 
   setupPlatformIcons();
   await loadInitialLanguages();
@@ -221,6 +233,7 @@ app.whenReady().then(async () => {
     bindQuickExportHotkey,
     bindRegionHotkey,
     checkForUpdates,
+    installUpdate,
     flowManager: flowManager!,
     ...buildTrayIpcCallbacks(),
   });
@@ -253,7 +266,8 @@ app.whenReady().then(async () => {
     : '✅ Ready — the ask hotkey is switched off');
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  if (holdQuitForSecretWrites(event, () => app.quit())) return;
   sendLog('🔄 App closing — shutting down services...');
   setAppQuitting(true);
   flushMetrics();

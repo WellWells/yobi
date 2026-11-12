@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Alert, Group, Stack, Text } from '@mantine/core';
-import { Trash2, TriangleAlert } from 'lucide-react';
+import { Trash, TriangleExclamationPoint } from 'lucide-react';
 import { AppButton } from './AppButton';
 import { secretApi } from '../api/electronApi';
 import { useI18nStore } from '../store/i18nStore';
@@ -19,7 +19,7 @@ function failureKey(failure: SecretFailure): string {
 }
 
 export const SecretHealthAlert: React.FC<Props> = ({ scopes, resolveLabel }) => {
-  const { t } = useI18nStore();
+  const t = useI18nStore((s) => s.t);
   const keyState = useSecretHealthStore((state) => state.keyState);
   const encryptionAvailable = useSecretHealthStore((state) => state.encryptionAvailable);
   const failures = useSecretFailures(...scopes);
@@ -38,7 +38,7 @@ export const SecretHealthAlert: React.FC<Props> = ({ scopes, resolveLabel }) => 
     : (keyState === 'rotated' ? 'secret.alert.bodyRotated' : 'secret.alert.body');
 
   return (
-    <Alert color="var(--mantine-color-error)" icon={<TriangleAlert size={16} />} title={t('secret.alert.title')} mb={12}>
+    <Alert color="var(--mantine-color-error)" icon={<TriangleExclamationPoint size={16} />} title={t('secret.alert.title')} mb={12}>
       <Stack gap={8}>
         <Text fz="var(--font-size-sm)" lh={1.6}>{t(body)}</Text>
 
@@ -57,7 +57,7 @@ export const SecretHealthAlert: React.FC<Props> = ({ scopes, resolveLabel }) => 
                   variant="subtle"
                   color="red"
                   size="compact-xs"
-                  leftSection={<Trash2 size={13} />}
+                  leftSection={<Trash size={13} />}
                   loading={removing === failureKey(failure)}
                   onClick={() => { void handleRemove(failure); }}
                 >

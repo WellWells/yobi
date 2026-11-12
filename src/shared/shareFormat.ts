@@ -8,7 +8,7 @@ export interface ShareFormatChoice {
   zip: boolean;
 }
 
-export const DEFAULT_SHARE_FORMAT: ShareFormatChoice = { format: 'pdf', zip: false };
+const DEFAULT_SHARE_FORMAT: ShareFormatChoice = { format: 'pdf', zip: false };
 
 const FORMAT_ALIASES: Record<string, ShareFormat> = {
   pdf: 'pdf',

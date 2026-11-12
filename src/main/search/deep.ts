@@ -6,6 +6,7 @@ import { languageForLocale } from '../../shared/localeLanguage';
 import { Semaphore } from '../flow/lanes';
 import { sendLog } from '../helpers';
 import { runByokCompletion } from '../providers/byokClient';
+import { yieldRunSlot } from '../flow/flowQueue';
 import { resendIfGeminiCapFell } from '../providers/geminiPromptTooLong';
 import { reserveForHistory, synthesisBudget, UNBOUNDED } from './budgets';
 import {
@@ -19,7 +20,7 @@ import { harvest, HARVEST_SPARE_TARGETS, selectTargets } from './harvest';
 import { mapConcurrency } from './mapReduce';
 import { enginesBlockedError, SearchPipelineError } from './pipelineError';
 import { distinctQueries } from './queryNormalize';
-import { rankHits } from './rank';
+import { rankByQuality } from './hitQuality';
 import { planQuery } from './router';
 import { searchWeb, SerpChallengeError } from './serp';
 import { linkifyCitations, runWorkerCompletion, synthesize } from './synthesize';
@@ -34,9 +35,9 @@ const BYOK_SOURCES_PER_QUESTION = 4;
 
 type Report = ((progress: SearchProgress) => void) | undefined;
 
-function complete(prompt: string, targetUrl: string, label: string): Promise<string> {
+export function complete(prompt: string, targetUrl: string, label: string): Promise<string> {
   if (isByokTargetUrl(targetUrl)) {
-    return runByokCompletion(targetUrl, prompt, BYOK_CALL_TIMEOUT_MS).then(({ response }) => response);
+    return yieldRunSlot(() => runByokCompletion(targetUrl, prompt, BYOK_CALL_TIMEOUT_MS)).then(({ response }) => response);
   }
   return runWorkerCompletion(prompt, targetUrl, WEB_CALL_TIMEOUT_MS, label);
 }
@@ -62,16 +63,26 @@ interface SearchTally {
   queries: string[];
 }
 
-async function searchQuestion(question: SubQuestion, temporal: TemporalFilter, locale: string, tally: SearchTally): Promise<SerpHit[]> {
+async function searchQuestion(
+  question: SubQuestion,
+  temporal: TemporalFilter,
+  locale: string,
+  tally: SearchTally,
+  onProgress: Report,
+): Promise<SerpHit[]> {
   const run = async (filter: TemporalFilter): Promise<SerpHit[]> => {
     const queries = distinctQueries(question.queries);
     const lists = await Promise.all(queries.map((query) => {
       const slot = tally.slot++;
       tally.asked += 1;
       tally.queries.push(query);
-      return searchWeb(query, filter, locale, slot).catch((err: unknown) => {
+      return searchWeb(query, filter, locale, slot).then((hits) => {
+        onProgress?.({ stage: 'results', query, hits, refused: false });
+        return hits;
+      }, (err: unknown) => {
         if (err instanceof SerpChallengeError) tally.refused += 1;
         sendLog(`🔬 [Deep] "${query}" — ${err instanceof Error ? err.message : String(err)}`);
+        onProgress?.({ stage: 'results', query, hits: [], refused: true });
         return [] as SerpHit[];
       });
     }));
@@ -84,7 +95,7 @@ async function searchQuestion(question: SubQuestion, temporal: TemporalFilter, l
 /** Each question's pages to read, best first; a page goes to the first question that ranked it. */
 function claimTargets(questions: readonly SubQuestion[], hits: readonly SerpHit[][], perQuestion: number, claimed: Set<string>): SerpHit[][] {
   return questions.map((question, index) => {
-    const ranked = rankHits(hits[index], [question.question, ...question.queries].join('\n'));
+    const ranked = rankByQuality(hits[index], [question.question, ...question.queries].join('\n'));
     const targets = selectTargets(ranked.filter((hit) => !claimed.has(hitKey(hit.url))), perQuestion + HARVEST_SPARE_TARGETS, true);
     for (const target of targets) claimed.add(hitKey(target.url));
     return targets;
@@ -115,9 +126,9 @@ async function readQuestions(
   const read = await Promise.all(targets.map((list) => harvest(
     list,
     perQuestion,
-    (url) => onProgress?.({ stage: 'read', host: citationHost(url) }),
+    (url) => onProgress?.({ stage: 'read', host: citationHost(url), url }),
     undefined,
-    (url) => onProgress?.({ stage: 'readFailed', host: citationHost(url) }),
+    (url) => onProgress?.({ stage: 'readFailed', host: citationHost(url), url }),
   )));
   return read.map((docs) => numberDocs(docs, pool));
 }
@@ -205,7 +216,7 @@ export async function runDeepResearch(
   const tally: SearchTally = { slot: 0, asked: 0, refused: 0, queries: [] };
   // One question after another: the engines see a research's queries trickle, not burst.
   const hits: SerpHit[][] = [];
-  for (const sub of questions) hits.push(await searchQuestion(sub, plan.temporal, locale, tally));
+  for (const sub of questions) hits.push(await searchQuestion(sub, plan.temporal, locale, tally, onProgress));
   const found = hits.reduce((sum, list) => sum + list.length, 0);
   if (found === 0) {
     if (tally.asked > 0 && tally.refused === tally.asked) throw enginesBlockedError();
@@ -230,7 +241,7 @@ export async function runDeepResearch(
   const extra: Finding[] = [];
   if (followups.length > 0) {
     const moreHits: SerpHit[][] = [];
-    for (const sub of followups) moreHits.push(await searchQuestion(sub, 'none', locale, tally));
+    for (const sub of followups) moreHits.push(await searchQuestion(sub, 'none', locale, tally, onProgress));
     const moreDocs = await readQuestions(followups, moreHits, perQuestion, claimed, pool, onProgress, true);
     extra.push(...await findingsFor(followups, moreDocs, targetUrl, locale, () => onProgress?.({ stage: 'followedUp' })));
   }

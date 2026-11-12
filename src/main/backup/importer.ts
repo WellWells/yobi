@@ -21,6 +21,8 @@ import { resetFlowVersionCache } from '../flow/flowVersions';
 import { notionSyncRoot } from '../notion/notionSyncStore';
 import { FOLDER_STATE_FILE } from '../conversationFolderPaths';
 import { getFlowDataDir } from '../flow';
+import { writeFileAtomic } from '../atomicWrite';
+import { FLOW_FOLDERS_FILE, parseFlowFolders } from '../../shared/flowFolders';
 
 interface ApplyBackupDeps {
   reloadFlows: () => Promise<void>;
@@ -94,7 +96,7 @@ async function restoreConfig(zip: AdmZip): Promise<Config | null> {
   } catch {
     return null;
   }
-  return importConfigFromJson(parsed);
+  return await importConfigFromJson(parsed);
 }
 
 async function restoreFlows(zip: AdmZip, deps: ApplyBackupDeps): Promise<boolean> {
@@ -109,8 +111,30 @@ async function restoreFlows(zip: AdmZip, deps: ApplyBackupDeps): Promise<boolean
   if (!Array.isArray(parsed)) return false;
   // Elements are not validated here: reloadFlows() migrates and normalizes them, as it does on start.
   await saveFlowsToDisk(parsed as FlowDefinition[]);
+  await restoreFlowFolders(zip);
   await deps.reloadFlows();
   return true;
+}
+
+/**
+ * The sidebar folders the backup's flows were sorted into. A backup without them (made before
+ * flow folders) or with a file that does not parse leaves today's folders: ids of flows the backup
+ * does not have are simply not listed.
+ */
+async function restoreFlowFolders(zip: AdmZip): Promise<void> {
+  const entry = zip.getEntry(FLOW_FOLDERS_FILE);
+  if (!entry) return;
+  let text: string;
+  try {
+    text = zip.readAsText(entry);
+    if (!parseFlowFolders(JSON.parse(text))) throw new Error('not a flow folders file');
+  } catch (err: unknown) {
+    sendLog(`⚠️ Backup: kept the current flow folders, the backup's could not be read: ${errorText(err)}`);
+    return;
+  }
+  await writeFileAtomic(path.join(getFlowDataDir(), FLOW_FOLDERS_FILE), text).catch((err: unknown) => {
+    sendLog(`⚠️ Backup: could not restore the flow folders: ${errorText(err)}`);
+  });
 }
 
 async function restoreDir(zip: AdmZip, def: CategoryDef): Promise<boolean> {

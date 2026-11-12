@@ -5,6 +5,7 @@
  */
 import type { McpServerView } from '../../shared/types';
 import {
+  findStepServer,
   interpolateMcpArguments,
   schemaFields,
   type McpFlowToolsRequest,
@@ -29,23 +30,7 @@ export function mcpToolAccess(serverId: string, tool: McpTool, args: Record<stri
   return risk === 'destructive' ? 'delete' : 'write';
 }
 
-function fold(text: string): string {
-  return text.normalize('NFKC').trim().toLowerCase();
-}
-
-/**
- * The server a step names: its id (what the editor stores), else its name or slash command
- * (what an AI-built step writes), folded and only when exactly one matches.
- */
-export function findStepServer(servers: readonly McpServerView[], ref: string): McpServerView | undefined {
-  const wanted = ref.trim();
-  if (!wanted) return undefined;
-  const byId = servers.find((server) => server.id === wanted);
-  if (byId) return byId;
-  const folded = fold(wanted.replace(/^\//, ''));
-  const matches = servers.filter((server) => fold(server.name) === folded || fold(server.commandName ?? '') === folded);
-  return matches.length === 1 ? matches[0] : undefined;
-}
+export { findStepServer };
 
 /**
  * Not connected, and using it will not connect it: a sign-in that is missing or expired, or a

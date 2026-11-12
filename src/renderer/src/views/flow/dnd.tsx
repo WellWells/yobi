@@ -1,16 +1,22 @@
-import React, { forwardRef } from 'react';
+import React, { forwardRef, useMemo } from 'react';
 import { ActionIcon, Tooltip } from '@mantine/core';
 import { GripVertical } from 'lucide-react';
 import { KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 
+const KEYBOARD_SENSOR = { coordinateGetter: sortableKeyboardCoordinates };
+
 export function useFlowSensors(options?: { delay?: number }) {
-  const activationConstraint = options?.delay
-    ? { delay: options.delay, tolerance: 5 }
-    : { distance: 5 };
+  // The same objects across draws: dnd-kit rebuilds every sortable's listeners when a sensor's
+  // options change, and with fresh objects each draw every step card drew again per keystroke.
+  const delay = options?.delay;
+  const pointer = useMemo(
+    () => ({ activationConstraint: delay ? { delay, tolerance: 5 } : { distance: 5 } }),
+    [delay],
+  );
   return useSensors(
-    useSensor(PointerSensor, { activationConstraint }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(PointerSensor, pointer),
+    useSensor(KeyboardSensor, KEYBOARD_SENSOR),
   );
 }
 

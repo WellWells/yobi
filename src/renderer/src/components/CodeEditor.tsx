@@ -11,6 +11,8 @@ interface CodeEditorProps {
   onChange: (value: string) => void;
   placeholder?: string;
   ariaLabel?: string;
+  /** The textarea's id, so a field label above the editor can name it (`htmlFor`). */
+  id?: string;
   lang?: string;
   parser?: string;
   minHeight?: number;
@@ -26,6 +28,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   onChange,
   placeholder,
   ariaLabel,
+  id,
   lang = 'javascript',
   parser = 'babel',
   minHeight = 132,
@@ -125,6 +128,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
         padding={10}
         placeholder={placeholder}
         aria-label={ariaLabel}
+        textareaId={id}
         spellCheck={false}
         style={{
           fontFamily: 'var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)',

@@ -86,13 +86,15 @@ export function moveMenuModel(files: readonly Pick<OutputFile, 'folder'>[], fold
 
 /**
  * Where a drop on a row files the dragged conversations: a folder row or a conversation shown
- * inside a folder = that folder, a top-level conversation or time group = the top level (`''`).
- * The pinned group belongs to no folder: dropping there does nothing (null).
+ * inside a folder = that folder, a top-level conversation, time group or the Recent heading = the
+ * top level (`''`). The Pinned and Folders headings belong to no folder: dropping there does
+ * nothing (null).
  */
 export function dropTargetForRow(row: SidebarRow | undefined): string | null {
   if (!row) return null;
   if (row.kind === 'folder') return row.folder.name;
-  if (row.kind === 'header') return row.key === 'pinned' ? null : '';
+  if (row.kind === 'section') return row.key === 'conversations' ? '' : null;
+  if (row.kind === 'header') return '';
   if (row.file.pinned && !row.inFolder) return null;
   return row.inFolder ?? '';
 }

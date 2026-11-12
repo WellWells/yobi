@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Anchor, Flex, Group, Stack, Text } from '@mantine/core';
-import { Brain, TriangleAlert } from 'lucide-react';
+import { Brain, TriangleExclamationPoint } from 'lucide-react';
 import { canUndoMemoryNote, MEMORY_NOTE_KEYS, normalizeMemoryNotes } from '../../../../shared/userMemory';
 import type { MemoryNote } from '../../../../shared/userMemory';
 import { userMemoryApi } from '../../api/electronApi';
@@ -61,7 +61,7 @@ export const MemoryNotes: React.FC<Props> = ({ raw, t }) => {
         return (
           <Group key={`${note.op}-${note.id ?? ''}-${index}`} gap={6} wrap="nowrap" align="flex-start">
             <Flex h={NOTE_LINE_HEIGHT} align="center" c={full ? 'var(--mantine-color-warning)' : 'dimmed'} style={{ flexShrink: 0 }}>
-              {full ? <TriangleAlert size={13} /> : <Brain size={13} />}
+              {full ? <TriangleExclamationPoint size={13} /> : <Brain size={13} />}
             </Flex>
             <Text fz="var(--font-size-sm)" lh={NOTE_LINE_HEIGHT} c={full ? 'var(--mantine-color-warning)' : 'dimmed'} style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
               {noteText(note, t)}

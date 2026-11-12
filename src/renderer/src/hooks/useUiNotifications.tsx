@@ -91,7 +91,21 @@ function noticeBody(detail: string | undefined, notice: AppNotice, getId: () => 
       </Stack>
     );
   }
-  if (!filePath && !action) return detail;
+  // What went wrong in detail is in the log: one click there from wherever the error found the
+  // user. A way to look, not what the notice is about, so it does not keep the notice open.
+  const logs = notice.level === 'error' ? (
+    <Button
+      variant="default"
+      size="compact-xs"
+      onClick={() => {
+        notifications.hide(getId());
+        useAppStore.getState().setView('logs');
+      }}
+    >
+      {t('notify.action.viewLogs')}
+    </Button>
+  ) : null;
+  if (!filePath && !action && !logs) return detail;
 
   const text = detail ? <Text fz="var(--font-size-sm)">{detail}</Text> : null;
   return (
@@ -113,6 +127,7 @@ function noticeBody(detail: string | undefined, notice: AppNotice, getId: () => 
             {action.label}
           </Button>
         ) : null}
+        {logs}
       </Group>
     </Stack>
   );

@@ -1,5 +1,5 @@
 import { notionToDisplay, type NotionDisplayLabels } from '../../../../shared/notion/notionDisplay';
-import { splitNotionBlocks, unspaceNotionBlocks } from '../../../../shared/notion/notionBlocks';
+import { splitNotionBlocks } from '../../../../shared/notion/notionBlocks';
 import type { NotionPendingChange } from '../../../../shared/notion/notionSyncTypes';
 import { useI18nStore } from '../../store/i18nStore';
 import { visibleSkeleton } from '../../utils/markdownBlocks';
@@ -113,8 +113,8 @@ export function locateChanges(scope: HTMLElement, body: string, changes: readonl
   if (changes.length === 0) return [];
   const labels = displayLabels();
   const page = pageChars(scope);
-  // The blocks exactly as main numbered them (`notionDocStatus`): split again after the blank lines go.
-  const blocks = splitNotionBlocks(unspaceNotionBlocks(body));
+  // The blocks exactly as main numbered them (`notionDocStatus`).
+  const blocks = splitNotionBlocks(body);
   const spans = alignBlocks(page.chars, blocks.map((block) => shownChars(block.text, labels)));
   const spots: ChangeSpot[] = [];
   for (const change of changes) {

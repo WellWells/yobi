@@ -1,87 +1,84 @@
-import React, { useCallback, useState } from 'react';
-import { Box, Group, Loader, Text, UnstyledButton } from '@mantine/core';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Box, Group, Loader, Text } from '@mantine/core';
 import type { AgentRunState } from '../../../../shared/types';
 import { agentApi } from '../../api/electronApi';
+import { useAgentRunStore } from '../../store/useAgentRunStore';
 import { runAsText, traceFromRun } from '../../utils/agentTrace';
 import { AgentTraceRows } from '../AgentTraceRows';
 import { CopyIconButton } from '../CopyIconButton';
+import { TraceHeader } from './TraceHeader';
 
 interface TurnTraceProps {
   runId: string;
+  title: string;
+  durationMs?: number;
   t: (key: string) => string;
 }
 
 type Loaded = { kind: 'run'; state: AgentRunState } | { kind: 'gone' };
 
 /**
- * The reasoning behind one finished turn, closed by default.
+ * The reasoning behind one finished turn, closed unless the user expanded the live run.
  *
  * It is loaded on first open rather than with the conversation: a file of twenty turns would
  * otherwise read twenty run files to render rows nobody asked to see. `gone` is a normal
  * outcome, not an error — runs are reclaimed once stale, and the answer above stays readable
  * without its trace.
  */
-function TurnTraceInner({ runId, t }: TurnTraceProps) {
-  const [open, setOpen] = useState(false);
+function TurnTraceInner({ runId, title, durationMs, t }: TurnTraceProps) {
+  const [liveView] = useState(() => useAgentRunStore.getState().runViews[runId]);
+  const [open, setOpen] = useState(liveView?.open === true);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
-  const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    if (!open || loaded) return undefined;
+    let current = true;
+    void agentApi.getRun(runId)
+      .then((state) => { if (current) setLoaded(state ? { kind: 'run', state } : { kind: 'gone' }); })
+      .catch(() => { if (current) setLoaded({ kind: 'gone' }); });
+    return () => { current = false; };
+  }, [open, loaded, runId]);
+
+  // Written back: the next mount, a resume's bubble and the run's other turn all read the store.
   const toggle = useCallback((): void => {
-    setOpen((prev) => {
-      const next = !prev;
-      if (!next || loaded || loading) return next;
-      setLoading(true);
-      void agentApi.getRun(runId)
-        .then((state) => setLoaded(state ? { kind: 'run', state } : { kind: 'gone' }))
-        .catch(() => setLoaded({ kind: 'gone' }))
-        .finally(() => setLoading(false));
-      return next;
-    });
-  }, [runId, loaded, loading]);
+    setOpen(!open);
+    useAgentRunStore.getState().setRunOpen(runId, !open);
+  }, [open, runId]);
 
-  const steps = loaded?.kind === 'run' ? traceFromRun(loaded.state.turns) : [];
+  // Rows expanded during the run stay on screen while the same rows load from the run file.
+  const liveSteps = liveView?.ending?.steps.filter((row) => row.tool) ?? [];
+  const steps = loaded?.kind === 'run' ? traceFromRun(loaded.state.turns) : loaded ? [] : liveSteps;
+  const loading = !loaded && steps.length === 0;
 
   return (
-    <Box mt={6}>
-      <UnstyledButton
-        onClick={toggle}
-        c="dimmed"
-        aria-expanded={open}
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
-      >
-        {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-        <Text fz="var(--font-size-sm)" fw={500}>{t('chat.trace.toggle')}</Text>
-      </UnstyledButton>
+    <Box mb={8}>
+      <TraceHeader title={title} durationMs={durationMs} open={open} onToggle={toggle} />
 
       {open && (
-        <Box pl={17} mt={4}>
+        <Box mt={4}>
           {loading && (
             <Group gap={6} c="dimmed">
               <Loader size="xs" />
               <Text fz="var(--font-size-xs)">{t('chat.trace.loading')}</Text>
             </Group>
           )}
-          {!loading && loaded?.kind === 'gone' && (
+          {loaded?.kind === 'gone' && (
             <Text fz="var(--font-size-xs)" c="dimmed">{t('chat.trace.unavailable')}</Text>
           )}
-          {!loading && loaded?.kind === 'run' && (
-            steps.length === 0 ? (
-              <Text fz="var(--font-size-xs)" c="dimmed">{t('chat.trace.empty')}</Text>
-            ) : (
-              <>
-                <AgentTraceRows trace={steps} />
-                <Box mt={4}>
-                  <CopyIconButton
-                    value={runAsText(loaded.state)}
-                    copyLabel={t('chat.trace.copy')}
-                    copiedLabel={t('chat.copied')}
-                    size={22}
-                    position="bottom"
-                  />
-                </Box>
-              </>
-            )
+          {loaded?.kind === 'run' && steps.length === 0 && (
+            <Text fz="var(--font-size-xs)" c="dimmed">{t('chat.trace.empty')}</Text>
+          )}
+          {steps.length > 0 && <AgentTraceRows trace={steps} />}
+          {loaded?.kind === 'run' && steps.length > 0 && (
+            <Box mt={4}>
+              <CopyIconButton
+                value={runAsText(loaded.state)}
+                copyLabel={t('chat.trace.copy')}
+                copiedLabel={t('chat.copied')}
+                size={22}
+                position="bottom"
+              />
+            </Box>
           )}
         </Box>
       )}

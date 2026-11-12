@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { Badge, Box, Checkbox, Group, Loader, Stack, Text, Tooltip } from '@mantine/core';
-import { TriangleAlert } from 'lucide-react';
+import { TriangleExclamationPoint } from 'lucide-react';
 import { ToggleSwitch } from '../../components/ToggleSwitch';
 import { RowMoreButton } from '../../components/RowMoreButton';
 import type { MenuAnchor } from '../../components/RowMoreButton';
@@ -10,13 +10,18 @@ import { flowTrailingActions } from '../../utils/rowSwipeActions';
 import type { FlowDefinition } from '../../../../shared/types';
 import type { FlowIssue } from '../../../../shared/flowIssues';
 import { describeFlowIssue } from './flowIssueText';
+import type { FlowRowStatus } from './flowRowStatus';
 import styles from './FlowSidebarItem.module.css';
 
 export interface FlowSidebarItemProps {
   flow: FlowDefinition;
+  /** Drawn inside an open folder: one step in, its name under the folder's name. */
+  indented?: boolean;
   selected: boolean;
   isRunning: boolean;
   issues: FlowIssue[];
+  /** Whether it is working: the second line after the trigger (`flowRowStatus`). */
+  status?: FlowRowStatus | null;
   t: (k: string) => string;
   selectMode: boolean;
   checked: boolean;
@@ -36,8 +41,44 @@ function issueId(issue: FlowIssue): string {
   return `${issue.kind} ${issue.scope ?? ''} ${issue.command ?? ''}`;
 }
 
+const STATUS_COLOR: Record<FlowRowStatus['tone'], string> = {
+  error: 'var(--mantine-color-error)',
+  warning: 'var(--mantine-color-warning)',
+  dimmed: 'dimmed',
+};
+
+/** The reason and the time go on hover, and into the label, since a tooltip is mouse-only. */
+const RowStatusText: React.FC<{ status: FlowRowStatus }> = ({ status }) => {
+  const text = (
+    <Text
+      fz="var(--font-size-xs)"
+      c={STATUS_COLOR[status.tone]}
+      lineClamp={1}
+      aria-label={status.detail.length > 0 ? [status.text, ...status.detail].join(' ') : undefined}
+      style={{ minWidth: 0, fontVariantNumeric: 'tabular-nums' }}
+    >
+      {status.text}
+    </Text>
+  );
+  if (status.detail.length === 0) return text;
+  return (
+    <Tooltip
+      position="bottom-start"
+      maw={280}
+      multiline
+      label={(
+        <Stack gap={4}>
+          {status.detail.map((line) => <Text key={line} fz="xs" lh={1.5}>{line}</Text>)}
+        </Stack>
+      )}
+    >
+      {text}
+    </Tooltip>
+  );
+};
+
 export const FlowSidebarItem: React.FC<FlowSidebarItemProps> = ({
-  flow, selected, isRunning, issues, t, selectMode, checked, onToggleSelect,
+  flow, indented = false, selected, isRunning, issues, status = null, t, selectMode, checked, onToggleSelect,
   onRowClick, onContextMenu, onOpenMenuAt, menuOpen, onToggleEnabled, onDelete,
 }) => {
   const rowRef = useRef<HTMLDivElement | null>(null);
@@ -51,7 +92,7 @@ export const FlowSidebarItem: React.FC<FlowSidebarItemProps> = ({
   });
   return (
     // The frame carries the row's margin so the swipe layer covers exactly the rounded row.
-    <Box className={styles.frame}>
+    <Box className={styles.frame} data-indented={indented || undefined}>
     <SwipeRow trailing={trailing} disabled={selectMode}>
     <Box
       ref={rowRef}
@@ -77,14 +118,12 @@ export const FlowSidebarItem: React.FC<FlowSidebarItemProps> = ({
           <Text fz="var(--font-size-sm)" fw={500} lineClamp={1}>
             {flow.name || t('flow.flowName')}
           </Text>
-          <Group gap={4}>
-            <Badge size="xs" variant="light">{t(`flow.trigger.${flow.trigger.type}`)}</Badge>
+          <Group gap={4} wrap="nowrap" style={{ minWidth: 0 }}>
+            <Badge size="xs" variant="light" style={{ flexShrink: 0 }}>{t(`flow.trigger.${flow.trigger.type}`)}</Badge>
             {flow.extraTriggers && flow.extraTriggers.length > 0 && (
-              <Badge size="xs" variant="light" color="gray">{`+${flow.extraTriggers.length}`}</Badge>
+              <Badge size="xs" variant="light" color="gray" style={{ flexShrink: 0 }}>{`+${flow.extraTriggers.length}`}</Badge>
             )}
-            <Text fz="var(--font-size-xs)" c="dimmed">
-              {flow.steps.length} {t('flow.steps').toLowerCase()}
-            </Text>
+            {status && <RowStatusText status={status} />}
           </Group>
         </Stack>
         <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
@@ -117,7 +156,7 @@ export const FlowSidebarItem: React.FC<FlowSidebarItemProps> = ({
                 aria-label={issues.map((issue) => describeFlowIssue(issue, t)).join(' ')}
                 style={{ display: 'inline-flex' }}
               >
-                <TriangleAlert size={13} color="var(--mantine-color-warning)" />
+                <TriangleExclamationPoint size={13} color="var(--mantine-color-warning)" />
               </Box>
             </Tooltip>
           )}

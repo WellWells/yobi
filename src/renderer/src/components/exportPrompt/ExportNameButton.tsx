@@ -4,6 +4,8 @@ import { Check, Sparkles } from 'lucide-react';
 import { getByokTypeIcon, getModelIconByUrl } from '../../config/models';
 import type { ExportNameModel, ExportNaming } from '../../../../shared/types';
 
+const MENU_EDGE_GAP = 8;
+
 interface Props {
   naming: ExportNaming;
   label: string;
@@ -21,11 +23,25 @@ function iconOf(model: ExportNameModel): React.ComponentType<{ size?: number }> 
  * model in use is never a guess; the one used last is ticked. Escape closes the menu only: the
  * dropdown is portalled, but React still bubbles its keys to the panel, whose Escape cancels the
  * whole export. The tooltip steps aside while the menu is open, or it sits over the menu's items.
+ *
+ * The window grows to fit the open menu, but only up to its height cap (and the screen's work
+ * area), and the menu keeps the side it opened on. A long model list used to run off the window's
+ * bottom edge: when it fits on neither side, Mantine falls back to the side asked for, and below
+ * the button there is barely any room. So the menu takes the side with more room and is capped to
+ * that room, scrolling the rest; if the window grows, the room grows with it.
  */
 export const ExportNameButton: React.FC<Props> = ({ naming, label, menuLabel, busy, onPick }) => {
   const [opened, setOpened] = useState(false);
   return (
-    <Menu position="bottom-end" offset={6} withinPortal disabled={busy} opened={opened} onChange={setOpened}>
+    <Menu
+      position="bottom-end"
+      offset={6}
+      withinPortal
+      disabled={busy}
+      opened={opened}
+      onChange={setOpened}
+      middlewares={{ flip: { fallbackStrategy: 'bestFit' }, size: { padding: MENU_EDGE_GAP } }}
+    >
       <Menu.Target>
         <Tooltip label={label} disabled={busy || opened}>
           <ActionIcon variant="default" size="input-sm" aria-label={label} loading={busy}>
@@ -35,6 +51,7 @@ export const ExportNameButton: React.FC<Props> = ({ naming, label, menuLabel, bu
       </Menu.Target>
 
       <Menu.Dropdown
+        style={{ overflowY: 'auto' }}
         onKeyDown={(event) => {
           if (event.key === 'Escape') event.stopPropagation();
         }}

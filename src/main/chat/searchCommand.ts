@@ -59,6 +59,7 @@ function progressText(progress: SearchProgress, strings: Strings): string | null
     case 'summarizing':
       return t(strings, 'search.progress.analyzing');
     case 'outline':
+    case 'results':
     case 'searched':
     case 'readFailed':
     case 'summarized':
@@ -198,5 +199,6 @@ export function runSearchCommand(
     }),
     undefined,
     (request.clientToken ?? '').trim() || undefined,
+    conversationPath,
   ));
 }

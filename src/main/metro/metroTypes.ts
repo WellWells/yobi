@@ -8,8 +8,6 @@ import type { FetchFn } from '../rail/railHttp';
 
 export type MetroNetwork = 'trtc' | 'tymc' | 'danhai' | 'ankeng' | 'sanying' | 'tmrt' | 'krtc' | 'klrt';
 
-export const METRO_NETWORKS: readonly MetroNetwork[] = ['trtc', 'tymc', 'danhai', 'ankeng', 'sanying', 'tmrt', 'krtc', 'klrt'];
-
 /** A station keyed by its network and the first code printed on its signs (`trtc:BL12`, `tymc:A13`, `tmrt:103a`). */
 export type MetroNode = `${MetroNetwork}:${string}`;
 
@@ -33,10 +31,6 @@ export function metroNode(network: MetroNetwork, code: string): MetroNode {
 
 export function stationNode(station: MetroStation): MetroNode {
   return metroNode(station.network, station.codes[0]);
-}
-
-export function nodeNetwork(node: MetroNode): MetroNetwork {
-  return node.slice(0, node.indexOf(':')) as MetroNetwork;
 }
 
 /** One ticket kind the operator lists for a pair, named the way the operator names it (敬老/愛心, 兒童, 一日票). */

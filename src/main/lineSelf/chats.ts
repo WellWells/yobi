@@ -5,7 +5,7 @@
  */
 const DIRECT_CHAT_ID = /^u[0-9a-f]{32}$/u;
 
-/** A 1:1 chat: the bot reads only the user's own "Yobi" lines there, never the other side. */
+/** A 1:1 chat: the bot reads only the "Yobi" lines there, the user's and the other side's. */
 export function isLineDirectChat(chatId: string): boolean {
   return DIRECT_CHAT_ID.test(chatId);
 }

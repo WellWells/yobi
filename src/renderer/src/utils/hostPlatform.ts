@@ -1,6 +1,8 @@
+// Chromium always has userAgentData here (the App's pages are secure contexts). The fallback is
+// the user agent string, not `navigator.platform`, which is deprecated.
 const raw = (
   (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform
-  ?? navigator.platform
+  ?? navigator.userAgent
   ?? ''
 ).toLowerCase();
 

@@ -86,13 +86,14 @@ export async function execPttBoard(
   // names are case-blind on PTT, and resolveBoard answers a board outside the hot boards as typed
   // until the directory is crawled, then as the directory spells it: the key must not change then.
   const queryKey = `ptt-query:${pttListUrl({ ...query, board: query.board.toLowerCase() })}`;
-  const { fresh } = await reconcileSeenCache(pttBoardCheckpoints, stepId, [queryKey, ...posts.map((p) => p.link)], undefined);
+  const { fresh, lapsed } = await reconcileSeenCache(pttBoardCheckpoints, stepId, [queryKey, ...posts.map((p) => p.link)], undefined);
   const freshLinks = new Set(fresh);
   const oldest = Date.now() - cacheWindowMs(undefined);
   const inWindow = (post: PttListing): boolean => post.postedAt >= oldest;
 
   let out: PttListing[];
-  if (freshLinks.has(queryKey)) {
+  // An expired record (no run for longer than the window) is the same query, not a new one.
+  if (freshLinks.has(queryKey) && !lapsed) {
     out = posts.slice(0, FIRST_RUN_COUNT).filter(inWindow);
     sendLog(`📰 [Flow] PTT board: new query — seeding the checkpoint, returning ${out.length} article(s)`);
   } else {

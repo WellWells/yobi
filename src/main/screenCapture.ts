@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { getOutputDir, buildSnapshotFileName, getUniquePath } from './files';
 import { sendLog } from './helpers';
+import { FlowUserError } from './flow/userError';
 
 export type ScreenCaptureFormat = 'png' | 'jpg';
 
@@ -10,7 +11,11 @@ export async function captureScreenToFile(format: ScreenCaptureFormat, targetDir
   if (process.platform === 'darwin') {
     const status = systemPreferences.getMediaAccessStatus('screen');
     if (status === 'denied' || status === 'restricted') {
-      throw new Error('Screen recording permission is required — enable it in System Settings › Privacy & Security › Screen Recording.');
+      throw new FlowUserError(
+        'flow.error.capturePermission',
+        {},
+        'Screen recording permission is required — enable it in System Settings › Privacy & Security › Screen Recording.',
+      );
     }
   }
 
@@ -19,11 +24,13 @@ export async function captureScreenToFile(format: ScreenCaptureFormat, targetDir
   const height = Math.round(primary.size.height * primary.scaleFactor);
 
   const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width, height } });
-  if (sources.length === 0) throw new Error('No screen source available to capture');
+  if (sources.length === 0) throw new FlowUserError('flow.error.captureNoScreen', {}, 'No screen source available to capture');
   const source = sources.find((s) => s.display_id === String(primary.id)) ?? sources[0];
 
   const image = source.thumbnail;
-  if (image.isEmpty()) throw new Error('Captured screen image is empty (screen recording permission may be required)');
+  if (image.isEmpty()) {
+    throw new FlowUserError('flow.error.captureEmpty', {}, 'Captured screen image is empty (screen recording permission may be required)');
+  }
 
   const buffer = format === 'jpg' ? image.toJPEG(92) : image.toPNG();
   const outputDir = targetDir?.trim() ? targetDir.trim() : await getOutputDir();

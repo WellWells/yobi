@@ -21,6 +21,8 @@ const POLL_MS = 400;
 const SCRIPT_MS = 5_000;
 /** An answer still missing this long after asking: ask again (the first one can come back empty). */
 const ASK_AGAIN_MS = 3_000;
+/** An ad still up this long: open the page again rather than wait it out. Most loads have none. */
+export const AD_PATIENCE_MS = 12_000;
 
 function baseLanguage(code: string): string {
   return code.toLowerCase().split('-')[0];
@@ -54,15 +56,20 @@ export function pickCaptionTrack(tracks: readonly YoutubeCaptionTrack[], default
  * is one, else what it has seen so far (player there, times asked, requests, empty answers) for
  * the log when it never comes.
  */
-export function captionsScript(track: YoutubeCaptionTrack): string {
+export function captionsScript(track: YoutubeCaptionTrack, videoId: string): string {
   return `(() => {
-  const want = { lang: ${JSON.stringify(track.languageCode)}, asr: ${track.asr} };
+  const want = { lang: ${JSON.stringify(track.languageCode)}, asr: ${track.asr}, video: ${JSON.stringify(videoId)} };
   const s = window.__yobiCaptions
-    || (window.__yobiCaptions = { body: '', askedAt: 0, asked: 0, seen: 0, empty: 0, inFlight: 0 });
+    || (window.__yobiCaptions = { body: '', askedAt: 0, asked: 0, seen: 0, empty: 0, inFlight: 0, others: 0 });
   const wanted = (raw) => {
     try {
       const url = new URL(raw, location.href);
       if (!/\\/api\\/timedtext$/.test(url.pathname)) return null;
+      // An ad before the video has captions of its own, asked for the same way.
+      if (url.searchParams.get('v') !== want.video) {
+        s.others++;
+        return null;
+      }
       if (url.searchParams.get('lang') !== want.lang || url.searchParams.has('tlang')) return null;
       if ((url.searchParams.get('kind') === 'asr') !== want.asr) return null;
       return url;
@@ -121,7 +128,7 @@ export function captionsScript(track: YoutubeCaptionTrack): string {
   if (s.body) return { body: s.body };
   const player = document.getElementById('movie_player');
   const ready = Boolean(player && typeof player.setOption === 'function');
-  const state = { player: ready, asked: s.asked, seen: s.seen, empty: s.empty };
+  const state = { player: ready, asked: s.asked, seen: s.seen, empty: s.empty, others: s.others, ad: Boolean(player && player.classList && player.classList.contains('ad-showing')) };
   // A request for the track still on its way is never cut short by asking again.
   if (!ready || s.inFlight > 0 || Date.now() - s.askedAt < ${ASK_AGAIN_MS}) return state;
   s.askedAt = Date.now();
@@ -135,10 +142,22 @@ export function captionsScript(track: YoutubeCaptionTrack): string {
 })()`;
 }
 
+/**
+ * Whether to open the page again, polled. The player turns no captions on behind an ad, and in a
+ * hidden window one could outlast the read (about a third of the loads), while whether a
+ * load has an ad is settled per load.
+ */
+export function adWatch(since: number | null, showing: boolean, now: number): { since: number | null; reload: boolean } {
+  if (!showing) return { since: null, reload: false };
+  if (since === null) return { since: now, reload: false };
+  return now - since >= AD_PATIENCE_MS ? { since: null, reload: true } : { since, reload: false };
+}
+
 /** What the page's script had seen when the read gave up, for the log. */
 function describeState(state: Json): string {
   if (state.player !== true) return 'no player on the page';
-  return `asked the player ${num(state.asked)} times, ${num(state.seen)} requests for the track, ${num(state.empty)} empty`;
+  const ad = state.ad === true ? ', an ad was showing' : '';
+  return `asked the player ${num(state.asked)} times, ${num(state.seen)} requests for the track, ${num(state.empty)} empty, ${num(state.others)} for another video${ad}`;
 }
 
 function stopped(signal: AbortSignal): unknown {
@@ -188,9 +207,10 @@ async function readInWindow(videoId: string, track: YoutubeCaptionTrack, signal:
   win.webContents.on('did-fail-load', (_event, code, description, _url, isMainFrame) => {
     if (isMainFrame && code !== -3) loadError = `${description} (${code})`;
   });
-  const script = captionsScript(track);
+  const script = captionsScript(track, videoId);
   const started = Date.now();
   let last = 'the page never answered';
+  let adSince: number | null = null;
   try {
     // Mapped, not merely created: a never-shown window stalls rendering, and the watch page then
     // never builds its player. Transparent before it is mapped, so it never
@@ -211,6 +231,9 @@ async function readInWindow(videoId: string, track: YoutubeCaptionTrack, signal:
       const body = str(answer?.body);
       if (body) return JSON.parse(body) as unknown;
       if (answer) last = describeState(answer);
+      const ad = adWatch(adSince, answer?.ad === true, Date.now());
+      adSince = ad.since;
+      if (ad.reload) void win.loadURL(url).catch(() => {});
       await new Promise((resolve) => setTimeout(resolve, POLL_MS));
     }
     signal?.throwIfAborted();

@@ -150,7 +150,7 @@ export function quickExportNamer(markdown: string): ExportNamer {
         `🏷️ Quick export: asking ${model.label} for a file name `
         + `(${material.headings.length + material.opening.length} chars of outline)`,
       );
-      const outcome = await suggestExportName(material, providerUrl, oneShotIo(signal, () => undefined), emptyReply);
+      const outcome = await suggestExportName(material, providerUrl, oneShotIo(signal, () => undefined), emptyReply, config.locale);
       if (outcome && 'error' in outcome) sendLog(`⚠️ Quick export: no file name from ${model.label} — ${outcome.error}`);
       return outcome;
     },

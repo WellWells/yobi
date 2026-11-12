@@ -33,6 +33,8 @@ export interface PendingTurn {
   sendId: string;
   prompt: string;
   runId?: string;
+  /** When it was sent; a run's view older than this belongs to an earlier attempt. */
+  beganAt?: number;
   attachments?: string[];
   /** Where each of them is, so the bubble shows the pictures from the moment it is sent. */
   attachmentFiles?: string[];
@@ -59,6 +61,21 @@ export interface PendingShell {
 export type View = 'chat' | 'settings' | 'about' | 'logs' | 'flow';
 
 export const NAV_ORDER: View[] = ['chat', 'flow', 'logs', 'settings', 'about'];
+
+/** The two views with a sidebar, switched between at its top; Settings, Logs and About open from its foot. */
+export type MainView = 'chat' | 'flow';
+
+export function isMainView(view: View): view is MainView {
+  return view === 'chat' || view === 'flow';
+}
+
+/**
+ * The view on screen: Settings (with its Logs and About pages) is a dialog over the chat or flow
+ * view it was opened from, which stays drawn behind it.
+ */
+export function drawnView(state: { currentView: View; lastMainView: MainView }): MainView {
+  return isMainView(state.currentView) ? state.currentView : state.lastMainView;
+}
 
 export type LayoutMode = 'stacked' | 'side-by-side';
 
@@ -111,6 +128,8 @@ interface AppState {
   tempChatConversation: ConversationDoc | null;
 
   currentView: View;
+  /** The chat or flow view last shown: where Settings' back button returns. */
+  lastMainView: MainView;
   /** One-shot: a level filter another view asked the log panel to open with. */
   logLevelRequest: LogLevel[] | null;
   /** One-shot: the settings category another view asked Settings to open on. */
@@ -119,6 +138,8 @@ interface AppState {
   layoutMode: LayoutMode;
   markdownZoom: number;
   showTokenUsage: boolean;
+  /** The recap icon above the composer. */
+  showRecap: boolean;
 
   hotkey: string;
   /** The screen-region hotkey; empty = off. */
@@ -156,6 +177,8 @@ interface AppState {
   setTempChatMode: (enabled: boolean) => void;
   setTempChatResult: (content: string) => void;
   setView: (view: View) => void;
+  /** Closes the Settings dialog (with its Logs and About pages) back to the view behind it. */
+  closeSettings: () => void;
   openLogsFiltered: (levels: LogLevel[]) => void;
   clearLogLevelRequest: () => void;
   openSettingsCategory: (category: string) => void;
@@ -167,6 +190,7 @@ interface AppState {
   /** The macOS View menu's reading-size items, sent over from main. */
   applyReadingZoomCommand: (command: ReadingZoomCommand) => void;
   setShowTokenUsage: (show: boolean) => void;
+  setShowRecap: (show: boolean) => void;
   setHotkey: (hotkey: string) => void;
   setRegionHotkey: (hotkey: string) => void;
   setUserNickname: (nickname: string) => void;
@@ -197,6 +221,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   tempChatBlocks: null,
   tempChatConversation: null,
   currentView: 'chat',
+  lastMainView: 'chat',
   logLevelRequest: null,
   settingsCategoryRequest: null,
   // Empty until bootstrap reads it: empty also means "off", so nothing advertises a combo early.
@@ -218,6 +243,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   layoutMode: 'stacked',
   markdownZoom: 100,
   showTokenUsage: true,
+  showRecap: true,
 
   setStatus: (status) => set({ status }),
   setQueue: (queue) => set({ queue }),
@@ -339,7 +365,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     parsedBlocks: null,
     conversation: null,
   }),
-  setView: (currentView) => set({ currentView }),
+  setView: (currentView) => set((state) => ({
+    currentView,
+    lastMainView: isMainView(currentView) ? currentView : state.lastMainView,
+  })),
+  closeSettings: () => set((state) => ({ currentView: state.lastMainView })),
   openLogsFiltered: (logLevelRequest) => set({ currentView: 'logs', logLevelRequest }),
   clearLogLevelRequest: () => set({ logLevelRequest: null }),
   openSettingsCategory: (settingsCategoryRequest) => set({ currentView: 'settings', settingsCategoryRequest }),
@@ -360,6 +390,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   setShowTokenUsage: (showTokenUsage) => {
     window.electronAPI.updateShowTokenUsage(showTokenUsage).catch(() => {});
     set({ showTokenUsage });
+  },
+  setShowRecap: (showRecap) => {
+    window.electronAPI.updateShowRecap(showRecap).catch(() => {});
+    set({ showRecap });
   },
   setHotkey: (hotkey) => set({ hotkey }),
   setRegionHotkey: (regionHotkey) => set({ regionHotkey }),

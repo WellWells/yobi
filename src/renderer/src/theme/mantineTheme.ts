@@ -17,6 +17,9 @@ function generateColors(accent: string): MantineColorsTuple {
   ] as unknown as MantineColorsTuple;
 }
 
+/** The one backdrop's darkness, under every dialog and the narrow window's sidebar drawer. */
+export const BACKDROP_OPACITY = 0.55;
+
 const baseTheme: MantineThemeOverride = {
   autoContrast: true,
   luminanceThreshold: 0.3,
@@ -44,7 +47,7 @@ const baseTheme: MantineThemeOverride = {
     },
     Modal: {
       defaultProps: {
-        overlayProps: { backgroundOpacity: 0.55 },
+        overlayProps: { backgroundOpacity: BACKDROP_OPACITY },
       },
     },
     // Mantine's Badge.css uppercases, bolds and letter-spaces every badge; Yobi's are sentence

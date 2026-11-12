@@ -21,7 +21,7 @@ interface ViewBoundaryState {
 }
 
 export function BoundaryFallback({ error }: { error: Error }): React.ReactElement {
-  const { t } = useI18nStore();
+  const t = useI18nStore((s) => s.t);
   const [detailsOpen, setDetailsOpen] = useState(false);
   return (
     <Flex flex={1} align="center" justify="center" p={24}>

@@ -1,5 +1,5 @@
 export type Category =
-  | 'accounts' | 'ai' | 'memory' | 'connectors' | 'bots' | 'general' | 'appearance'
+  | 'accounts' | 'ai' | 'memory' | 'connectors' | 'skills' | 'bots' | 'general' | 'appearance'
   | 'notifications' | 'links' | 'export' | 'shortcuts' | 'stats' | 'system';
 
 const BOT_ACCOUNT_KEYS = [
@@ -31,20 +31,24 @@ export const TAG_SETS = {
   timeout: ['settings.responseTimeout', 'settings.search.alias.timeout'],
   prompt: ['settings.prompt', 'settings.search.alias.prompt'],
   youtube: ['settings.youtube.prompt', 'settings.search.alias.youtube'],
+  mapsPrompt: ['settings.mapsPrompt', 'settings.search.alias.mapsPrompt'],
+  modelDefaults: ['settings.modelDefaults', 'settings.search.alias.modelDefaults'],
   memory: ['settings.memory', 'settings.search.alias.memory'],
   accounts: ['settings.accounts', 'settings.modelSources', 'settings.search.alias.accounts'],
   byok: ['settings.byok', 'settings.search.alias.byok'],
   // Calendars are entered on the Calendar connector's card, so their words find this card.
   mcp: ['settings.mcp', 'settings.calendars', 'settings.search.alias.mcp', 'settings.search.alias.calendars'],
+  skills: ['settings.skills', 'settings.search.alias.skills'],
   // The shared commands card, and each platform card on its own: one platform's name must not
   // pull in the other platform's card. The per-account permission editor renders inside each
-  // platform's paired list, so both carry its strings; the admin grant is Telegram-only.
+  // platform's paired list, so both carry its strings; the admin grant is on the platforms with
+  // admins (Telegram, LINE, LINE PC) only.
   bots: ['settings.bot.commands', 'settings.bot.builtin', 'settings.bot.perm.who.command', 'settings.search.alias.bots'],
   telegram: ['settings.telegram', ...BOT_ACCOUNT_KEYS, 'settings.bot.perm.grant.admin', 'settings.search.alias.telegram'],
-  line: ['settings.line', ...BOT_ACCOUNT_KEYS, 'settings.search.alias.line'],
+  line: ['settings.line', ...BOT_ACCOUNT_KEYS, 'settings.bot.perm.grant.admin', 'settings.search.alias.line'],
   discord: ['settings.discord', ...BOT_ACCOUNT_KEYS, 'settings.search.alias.discord'],
   slack: ['settings.slack', ...BOT_ACCOUNT_KEYS, 'settings.search.alias.slack'],
-  lineSelf: ['settings.lineSelf', ...BOT_ACCOUNT_KEYS, 'settings.search.alias.lineSelf'],
+  lineSelf: ['settings.lineSelf', ...BOT_ACCOUNT_KEYS, 'settings.bot.perm.grant.admin', 'settings.search.alias.lineSelf'],
   stats: ['settings.stats', 'settings.search.alias.stats'],
   config: ['settings.config', 'settings.backup', 'settings.search.alias.config'],
   danger: ['settings.danger', 'settings.reset', 'settings.group.danger', 'settings.search.alias.danger'],
@@ -53,10 +57,11 @@ export const TAG_SETS = {
 // Key order is the nav order (what a first-time user needs first) and the stacking order of
 // search results; SettingsView renders its category blocks in the same order.
 export const CATEGORY_TAG_MAP: Record<Category, (keyof typeof TAG_SETS)[]> = {
-  accounts: ['accounts', 'byok'],
-  ai: ['timeout', 'prompt', 'youtube'],
+  accounts: ['modelDefaults', 'accounts', 'byok'],
+  ai: ['prompt', 'youtube', 'mapsPrompt', 'timeout'],
   memory: ['memory'],
   connectors: ['mcp'],
+  skills: ['skills'],
   bots: ['telegram', 'line', 'lineSelf', 'discord', 'slack', 'bots'],
   general: ['language', 'tray', 'editor'],
   appearance: ['theme', 'reading'],

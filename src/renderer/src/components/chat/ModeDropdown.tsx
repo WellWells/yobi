@@ -98,6 +98,7 @@ export const ModeDropdown: React.FC<ModeDropdownProps> = ({
           label={label}
           open={open}
           accent={agentOn}
+          collapsible
           onClick={() => setOpen((prev) => !prev)}
         />
       </Menu.Target>

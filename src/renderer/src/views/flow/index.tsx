@@ -3,15 +3,25 @@ import {
   Flex, Menu, Stack,
 } from '@mantine/core';
 import {
-  ArrowDown, ArrowUp, ChevronDown, Copy, Download, ListChecks, Pencil, Play, Plus, Power, PowerOff, Sparkles, Trash2, Upload, Workflow,
+  ArrowDown, ArrowUp, ChevronDown, Copy, Download, ListChecks, PanelLeftClose, Pencil, Play, Plus, Power, PowerOff, Sparkles, Trash,
+  Upload,
 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useI18nStore } from '../../store/i18nStore';
 import { useFlowStore } from '../../store/useFlowStore';
+import { useFlowOutlineStore } from '../../store/useFlowOutlineStore';
 import { flowApi, ipcEvents } from '../../api/electronApi';
-import { PanelToolbar, ToolbarIconButton, ToolbarSearchButton } from '../../components/PanelToolbar';
+import { CaptionStrip, ToolbarIconButton, ToolbarSearchButton } from '../../components/PanelToolbar';
 import { SidebarActionRow } from '../../components/SidebarActionRow';
-import { EmptyState } from '../../components/EmptyState';
+import { SidebarTop } from '../../components/SidebarTop';
+import { SettingsFooter } from '../../components/ViewNav';
+import { SidebarRail } from '../../components/SidebarRail';
+import { useSidebarLayoutStore } from '../../store/sidebarLayoutStore';
+import { useSidebarDrawerStore } from '../../store/sidebarDrawerStore';
+import { comboLabel } from '../../../../shared/shortcuts';
+import { isMac } from '../../utils/keyLabels';
+import { SidebarDrawer, SidebarDrawerButton } from '../../components/SidebarDrawer';
+import { useNarrowWindow } from '../../hooks/useNarrowWindow';
 import { AppButton } from '../../components/AppButton';
 import { WebDialog } from '../../components/WebDialog';
 import { ContextMenuPortal } from '../../components/ContextMenuPortal';
@@ -30,19 +40,34 @@ import { FlowPreviewConfirm } from './FlowPreviewConfirm';
 import type { FlowTemplate } from './examples';
 import { FlowGenerateModal } from './FlowGenerateModal';
 import { FlowRenameModal } from './FlowRenameModal';
+import { FlowHome } from './FlowHome';
 import { YtdlToolsDialog } from '../../components/ytdl/YtdlToolsDialog';
 import { Z_POPOVER } from '../../config/zLayers';
 import { useShortcutAction } from '../../shortcuts/useShortcutAction';
 import { useResolvedCombo } from '../../store/shortcutStore';
 import type { MenuAnchor } from '../../components/RowMoreButton';
 import { fillTemplate } from '../../../../shared/fillTemplate';
+import type { ConversationFolder } from '../../../../shared/conversationFolders';
+import { MoveToFolderButton, MoveToFolderSub } from '../../components/sidebar/FolderMenus';
+import { useFlowFolderStore } from '../../store/flowFolderStore';
+import { FlowFolderMenu } from './FlowFolderMenu';
+import { FlowFolderSortModal } from './FlowFolderSortModal';
+import type { FlowFolderRowUi } from './FlowSidebarList';
+import { useFlowFolders } from './useFlowFolders';
+import {
+  buildFlowSidebarRows, flowSiblings, folderOfFlow, swapInOrder, visibleFlowIds,
+} from './flowSidebarRows';
+
+/** Flow folders are labels: each is shown as named (never as a chat system folder's translation). */
+const ownName = (name: string): string => name;
 
 export const FlowView: React.FC = () => {
-  const { t } = useI18nStore();
+  const { t, locale } = useI18nStore(useShallow((s) => ({ t: s.t, locale: s.locale })));
+  const narrowWindow = useNarrowWindow();
   const {
     flows, selectedFlowId, runningFlowIds,
     selectFlow, createFlow, deleteFlow, deleteFlows, setFlowsEnabled, duplicateFlow,
-    saveFlow, updateFlow, moveFlow, reorderFlows, executeFlow, importFlows, buildFlow,
+    saveFlow, updateFlow, reorderFlows, executeFlow, importFlows, buildFlow,
     adoptFlow, replaceSavedFlow, dropRemovedFlow, appendExecutionLog, markFlowRunning, markFlowDone,
   } = useFlowStore(
     useShallow((s) => ({
@@ -57,7 +82,6 @@ export const FlowView: React.FC = () => {
       duplicateFlow: s.duplicateFlow,
       saveFlow: s.saveFlow,
       updateFlow: s.updateFlow,
-      moveFlow: s.moveFlow,
       reorderFlows: s.reorderFlows,
       executeFlow: s.executeFlow,
       importFlows: s.importFlows,
@@ -74,11 +98,11 @@ export const FlowView: React.FC = () => {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; flowId: string } | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [renameId, setRenameId] = useState<string | null>(null);
-  const [isBatchRunning, setIsBatchRunning] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [wizardTemplate, setWizardTemplate] = useState<FlowTemplate | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [generateOpen, setGenerateOpen] = useState(false);
+  const [generateSeed, setGenerateSeed] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const selection = useMultiSelect();
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
@@ -119,9 +143,13 @@ export const FlowView: React.FC = () => {
     setSearchOpen(true);
   }, 'flow');
 
-  // The flow page has no text of its own to search, so finding means finding a flow.
+  // With a flow open, finding means finding one of its steps (the outline's search); otherwise a flow.
   useShortcutAction('nav.find', () => {
     if (selection.selectMode) return;
+    if (selectedFlowId) {
+      useFlowOutlineStore.getState().requestSearchFocus();
+      return;
+    }
     setSearchOpen(true);
   }, 'flow');
 
@@ -153,7 +181,44 @@ export const FlowView: React.FC = () => {
     [flows, selectedFlowId],
   );
 
+  const folderState = useFlowFolders(selectedFlowId, t);
+  const { folders } = folderState;
+  const { open: openFolders, collapsed } = useFlowFolderStore(useShallow((s) => ({ open: s.open, collapsed: s.collapsed })));
+  const compareNames = useMemo(() => new Intl.Collator(locale, { numeric: true, sensitivity: 'base' }).compare, [locale]);
+  const rows = useMemo(
+    () => buildFlowSidebarRows(flows, folders, { open: openFolders, collapsed, compareNames }),
+    [flows, folders, openFolders, collapsed, compareNames],
+  );
+  // The move menus take conversation folders; flow folders are never system ones.
+  const menuFolders = useMemo<ConversationFolder[]>(() => folders.map((folder) => ({ name: folder.name, system: false })), [folders]);
+  const folderOf = useCallback((flowId: string) => ({ folder: folderOfFlow(folders, flowId) || undefined }), [folders]);
+  const unfiledCount = useMemo(() => {
+    const filed = new Set(folders.flatMap((folder) => folder.flowIds));
+    return flows.filter((flow) => !filed.has(flow.id)).length;
+  }, [flows, folders]);
+  const [sortOpen, setSortOpen] = useState(false);
+
   const openSearch = useCallback((): void => setSearchOpen(true), []);
+
+  // Folded to the icon rail like the chat sidebar, with its own remembered choice. A narrow
+  // window has the sidebar as a drawer, whole, never the rail: there the fold opens and closes it.
+  const { storedRail, toggleStoredRail } = useSidebarLayoutStore(useShallow((s) => ({
+    storedRail: s.flowCollapsed, toggleStoredRail: s.toggleFlowCollapsed,
+  })));
+  const toggleDrawer = useSidebarDrawerStore((s) => s.toggle);
+  const railed = storedRail && !narrowWindow;
+  const toggleSidebar = narrowWindow ? toggleDrawer : toggleStoredRail;
+  useShortcutAction('view.toggleSidebar', toggleSidebar, 'flow');
+  const toggleSidebarCombo = comboLabel(useResolvedCombo('view.toggleSidebar'), isMac);
+  const withCombo = (label: string): string => (toggleSidebarCombo ? `${label} (${toggleSidebarCombo})` : label);
+  // Folding ends a selection (Delete would act on rows nobody can see) and closes the row and
+  // folder menus, which would otherwise come back at their old place on unfolding.
+  useEffect(() => {
+    if (!railed) return;
+    if (selection.selectMode) selection.exit();
+    setContextMenu(null);
+    folderState.closeFolderMenu();
+  }, [railed]);
 
   const handleDeleteFlow = useCallback(async (flowId: string) => {
     await deleteFlow(flowId);
@@ -173,10 +238,19 @@ export const FlowView: React.FC = () => {
     await saveFlow(updated);
   }, [flows, updateFlow, saveFlow]);
 
+  // Up and down pass the neighbour in the same folder (or at the top level), never into another list.
+  const neighbourOf = useCallback((flowId: string, direction: 'up' | 'down'): string | null => {
+    const siblings = flowSiblings(flows, folders, flowId);
+    const index = siblings.indexOf(flowId);
+    return siblings[direction === 'up' ? index - 1 : index + 1] ?? null;
+  }, [flows, folders]);
+
   const handleMoveFlow = useCallback(async (flowId: string, direction: 'up' | 'down') => {
-    await moveFlow(flowId, direction);
     setContextMenu(null);
-  }, [moveFlow]);
+    const neighbour = neighbourOf(flowId, direction);
+    if (!neighbour) return;
+    await reorderFlows(swapInOrder(flows.map((flow) => flow.id), flowId, neighbour));
+  }, [neighbourOf, flows, reorderFlows]);
 
   const handleRunFlow = useCallback(async (flowId: string) => {
     const flow = flows.find((item) => item.id === flowId);
@@ -193,28 +267,15 @@ export const FlowView: React.FC = () => {
     setContextMenu(null);
   }, [flows]);
 
-  const handleRunAllFlows = useCallback(async () => {
-    if (flows.length === 0 || isBatchRunning) return;
-    const flowsToRun = [...flows];
-    setIsBatchRunning(true);
-    try {
-      for (const flow of flowsToRun) {
-        await saveFlow(flow);
-      }
-      await Promise.allSettled(flowsToRun.map((flow) => flowApi.execute(flow.id)));
-    } finally {
-      setIsBatchRunning(false);
-      setContextMenu(null);
-    }
-  }, [flows, isBatchRunning, saveFlow]);
-
   const handleToggleEnabled = useCallback(async (flow: FlowDefinition, enabled: boolean) => {
     const updated = { ...flow, enabled };
     updateFlow(updated);
     await saveFlow(updated);
   }, [updateFlow, saveFlow]);
 
-  const selectableIds = useMemo(() => flows.map((f) => f.id), [flows]);
+  // Shift ranges and Select All run over the flows drawn: a closed folder's are skipped.
+  const selectableIds = useMemo(() => visibleFlowIds(rows), [rows]);
+  const selectedFolders = useMemo(() => [...selection.selectedIds].map(folderOf), [selection.selectedIds, folderOf]);
 
   const handleRowClick = useCallback((flowId: string, mods: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => {
     const result = selection.selectClick(flowId, {
@@ -264,12 +325,36 @@ export const FlowView: React.FC = () => {
     () => (renameId ? flows.find((flow) => flow.id === renameId) ?? null : null),
     [renameId, flows],
   );
-  const contextFlowIndex = contextFlow ? flows.findIndex((flow) => flow.id === contextFlow.id) : -1;
+
+  const folderUi: FlowFolderRowUi = {
+    renaming: folderState.renaming,
+    renameText: folderState.renameText,
+    setRenameText: folderState.setRenameText,
+    commitRename: folderState.commitRename,
+    cancelRename: folderState.cancelRename,
+    menuName: folderState.folderMenu?.name ?? null,
+    openMenu: folderState.openFolderMenu,
+    openMenuAt: folderState.openFolderMenuAt,
+    onToggleFolder: (name) => useFlowFolderStore.getState().toggleOpen(name),
+    onToggleSection: (key) => useFlowFolderStore.getState().toggleCollapsed(key),
+    onNewFolder: () => { void folderState.createFolder(); },
+    ...(unfiledCount > 0 ? { onSmartSort: () => setSortOpen(true) } : {}),
+    onMove: (flowIds, folder, before) => { void folderState.moveTo(flowIds, folder, before); },
+  };
+  const folderMenuFlows = useMemo(() => {
+    const ids = new Set(folderState.folderMenu?.flowIds ?? []);
+    return flows.filter((flow) => ids.has(flow.id));
+  }, [folderState.folderMenu, flows]);
 
   return (
     <FlowDropzone t={t} onImport={requestImport}>
-      <Flex flex={1} h="100%" style={{ overflow: 'hidden' }}>
+      {/* Relative: a narrow window's sidebar drawer and its backdrop are placed in this row. */}
+      <Flex flex={1} h="100%" pos="relative" style={{ overflow: 'hidden' }}>
+        <SidebarDrawer selection={selectedFlowId}>
         <Stack
+          // Folded, the list stays mounted, hidden (its scroll, open folders and drag state kept),
+          // and the rail after it takes its place.
+          display={railed ? 'none' : undefined}
           gap={0}
           w={240}
           miw={200}
@@ -277,39 +362,40 @@ export const FlowView: React.FC = () => {
           bg="var(--mantine-color-default)"
           style={{ borderRight: '1px solid var(--mantine-color-default-border)', overflow: 'hidden' }}
         >
-          <PanelToolbar>
-            {/* The row opens the template gallery; its ▾ holds the other ways to add a flow. */}
-            <SidebarActionRow
-              icon={Plus}
-              label={t('flow.newFlow')}
-              onClick={() => setTemplatesOpen(true)}
-              trailing={(
-                <Menu position="bottom-end" offset={4} withinPortal zIndex={Z_POPOVER}>
-                  <Menu.Target>
-                    <ToolbarIconButton icon={ChevronDown} label={t('flow.newFlow.more')} onClick={() => undefined} />
-                  </Menu.Target>
-                  <Menu.Dropdown>
-                    <Menu.Item leftSection={<Sparkles size={13} />} onClick={() => setGenerateOpen(true)}>
-                      {t('flow.generate')}
-                    </Menu.Item>
-                    <Menu.Item leftSection={<Download size={13} />} onClick={() => setImportOpen(true)}>
-                      {t('flow.import')}
-                    </Menu.Item>
-                  </Menu.Dropdown>
-                </Menu>
-              )}
-            />
+          <SidebarTop
+            action={(
+              // The row opens the template gallery; its ▾ holds the other ways to add a flow.
+              <SidebarActionRow
+                icon={Plus}
+                label={t('flow.newFlow')}
+                onClick={() => setTemplatesOpen(true)}
+                trailing={(
+                  <Menu position="bottom-end" offset={4} withinPortal zIndex={Z_POPOVER}>
+                    <Menu.Target>
+                      <ToolbarIconButton icon={ChevronDown} label={t('flow.newFlow.more')} onClick={() => undefined} />
+                    </Menu.Target>
+                    <Menu.Dropdown>
+                      <Menu.Item leftSection={<Sparkles size={13} />} onClick={() => { setGenerateSeed(''); setGenerateOpen(true); }}>
+                        {t('flow.generate')}
+                      </Menu.Item>
+                      <Menu.Item leftSection={<Download size={13} />} onClick={() => setImportOpen(true)}>
+                        {t('flow.import')}
+                      </Menu.Item>
+                    </Menu.Dropdown>
+                  </Menu>
+                )}
+              />
+            )}
+          >
             <ToolbarSearchButton label={t('flow.search.tooltip')} onClick={openSearch} />
-            <ToolbarIconButton
-              icon={Play}
-              label={t('flow.runAll')}
-              disabled={flows.length === 0 || isBatchRunning}
-              onClick={() => { void handleRunAllFlows(); }}
-            />
-          </PanelToolbar>
+            <ToolbarIconButton icon={PanelLeftClose} label={withCombo(t('sidebar.collapse'))} onClick={toggleSidebar} />
+          </SidebarTop>
 
           <FlowSidebarList
             flows={flows}
+            rows={rows}
+            folders={folders}
+            folderUi={folderUi}
             selectedFlowId={selectedFlowId}
             runningFlowIds={runningFlowIds}
             t={t}
@@ -335,6 +421,15 @@ export const FlowView: React.FC = () => {
               t={t}
               extraActions={(
                 <>
+                  <MoveToFolderButton
+                    files={selectedFolders}
+                    folders={menuFolders}
+                    label={ownName}
+                    disabled={selection.count === 0}
+                    onMove={(folder) => { void folderState.moveTo([...selection.selectedIds], folder); }}
+                    onMoveToNew={() => { void folderState.createFolder([...selection.selectedIds]); }}
+                    t={t}
+                  />
                   <AppButton
                     size="xs"
                     variant="default"
@@ -359,7 +454,15 @@ export const FlowView: React.FC = () => {
               )}
             />
           )}
+          <SettingsFooter />
         </Stack>
+        </SidebarDrawer>
+        {railed && (
+          <SidebarRail expandLabel={withCombo(t('sidebar.expand'))} onExpand={toggleSidebar} otherView="chat">
+            <ToolbarIconButton icon={Plus} label={t('flow.newFlow')} onClick={() => setTemplatesOpen(true)} />
+            <ToolbarSearchButton label={t('flow.search.tooltip')} onClick={openSearch} />
+          </SidebarRail>
+        )}
 
         <ContextMenuPortal
           position={contextMenu ? { x: contextMenu.x, y: contextMenu.y } : null}
@@ -369,12 +472,42 @@ export const FlowView: React.FC = () => {
           <Menu.Item leftSection={<Pencil size={13} />} rightSection={<ShortcutHint combo={renameCombo} />} onClick={() => { setRenameId(contextMenu!.flowId); setContextMenu(null); }}>{t('flow.renameFlow')}</Menu.Item>
           <Menu.Item leftSection={<Copy size={13} />} rightSection={<ShortcutHint combo={duplicateCombo} />} onClick={() => { void handleDuplicateFlow(contextMenu!.flowId); }}>{t('flow.duplicateFlow')}</Menu.Item>
           <Menu.Item leftSection={<Upload size={13} />} onClick={() => { void handleExportFlow(contextMenu!.flowId); }}>{t('flow.exportFlow')}</Menu.Item>
-          <Menu.Item leftSection={<ArrowUp size={13} />} disabled={contextFlowIndex <= 0} onClick={() => { void handleMoveFlow(contextMenu!.flowId, 'up'); }}>{t('flow.flow.moveUp')}</Menu.Item>
-          <Menu.Item leftSection={<ArrowDown size={13} />} disabled={contextFlowIndex < 0 || contextFlowIndex >= flows.length - 1} onClick={() => { void handleMoveFlow(contextMenu!.flowId, 'down'); }}>{t('flow.flow.moveDown')}</Menu.Item>
+          {contextFlow && (
+            <MoveToFolderSub
+              files={[folderOf(contextFlow.id)]}
+              folders={menuFolders}
+              label={ownName}
+              onMove={(folder) => { setContextMenu(null); void folderState.moveTo([contextFlow.id], folder); }}
+              onMoveToNew={() => { setContextMenu(null); void folderState.createFolder([contextFlow.id]); }}
+              t={t}
+            />
+          )}
+          <Menu.Item leftSection={<ArrowUp size={13} />} disabled={!contextFlow || !neighbourOf(contextFlow.id, 'up')} onClick={() => { void handleMoveFlow(contextMenu!.flowId, 'up'); }}>{t('flow.flow.moveUp')}</Menu.Item>
+          <Menu.Item leftSection={<ArrowDown size={13} />} disabled={!contextFlow || !neighbourOf(contextFlow.id, 'down')} onClick={() => { void handleMoveFlow(contextMenu!.flowId, 'down'); }}>{t('flow.flow.moveDown')}</Menu.Item>
           <Menu.Divider />
           <Menu.Item leftSection={<ListChecks size={13} />} disabled={flows.length < 2} onClick={() => handleStartSelection(contextMenu!.flowId)}>{t('selection.selectMultiple')}</Menu.Item>
-          <Menu.Item leftSection={<Trash2 size={13} />} color="red" rightSection={<ShortcutHint combo={deleteCombo} />} onClick={() => { setPendingDeleteId(contextMenu!.flowId); setContextMenu(null); }}>{t('flow.deleteFlow')}</Menu.Item>
+          <Menu.Item leftSection={<Trash size={13} />} color="red" rightSection={<ShortcutHint combo={deleteCombo} />} onClick={() => { setPendingDeleteId(contextMenu!.flowId); setContextMenu(null); }}>{t('flow.deleteFlow')}</Menu.Item>
         </ContextMenuPortal>
+
+        <FlowFolderMenu
+          menu={folderState.folderMenu}
+          anyOff={folderMenuFlows.some((flow) => !flow.enabled)}
+          anyOn={folderMenuFlows.some((flow) => flow.enabled)}
+          onClose={folderState.closeFolderMenu}
+          onRename={folderState.startRename}
+          onSetEnabled={(flowIds, enabled) => { void setFlowsEnabled(flowIds, enabled); }}
+          onDelete={folderState.deleteFolder}
+          t={t}
+        />
+
+        <FlowFolderSortModal
+          open={sortOpen}
+          flows={flows}
+          unfiledCount={unfiledCount}
+          onClose={() => setSortOpen(false)}
+          t={t}
+          locale={locale}
+        />
 
         <WebDialog
           open={Boolean(pendingDeleteId)}
@@ -409,6 +542,11 @@ export const FlowView: React.FC = () => {
           onBlank={() => {
             setTemplatesOpen(false);
             void createFlow();
+          }}
+          onGenerate={(seed) => {
+            setTemplatesOpen(false);
+            setGenerateSeed(seed);
+            setGenerateOpen(true);
           }}
           escapeDisabled={wizardTemplate !== null}
         />
@@ -446,11 +584,13 @@ export const FlowView: React.FC = () => {
           t={t}
           onClose={() => setGenerateOpen(false)}
           onBuild={buildFlow}
+          initialDescription={generateSeed}
         />
 
         <FlowRenameModal
           open={Boolean(renameFlow)}
           initialName={renameFlow?.name ?? ''}
+          flow={renameFlow ?? null}
           t={t}
           onClose={() => setRenameId(null)}
           onRename={(name) => { if (renameId) void handleRenameFlow(renameId, name); }}
@@ -468,11 +608,27 @@ export const FlowView: React.FC = () => {
               onExport={() => { void handleExportFlow(selectedFlow.id); }}
               onMoveUp={() => { void handleMoveFlow(selectedFlow.id, 'up'); }}
               onMoveDown={() => { void handleMoveFlow(selectedFlow.id, 'down'); }}
-              canMoveUp={flows.findIndex((flow) => flow.id === selectedFlow.id) > 0}
-              canMoveDown={flows.findIndex((flow) => flow.id === selectedFlow.id) < flows.length - 1}
+              canMoveUp={Boolean(neighbourOf(selectedFlow.id, 'up'))}
+              canMoveDown={Boolean(neighbourOf(selectedFlow.id, 'down'))}
             />
           ) : (
-            <EmptyState icon={Workflow} label={t('flow.emptyState')} fill />
+            <>
+              {/* No editor, so no top row: the title bar over the pane is an empty strip to drag by
+                  — in a narrow window with the way to the flows in the drawer. */}
+              {narrowWindow ? <CaptionStrip><SidebarDrawerButton /></CaptionStrip> : <CaptionStrip />}
+              <FlowHome
+                flows={flows}
+                folders={folders}
+                t={t}
+                locale={locale}
+                {...(unfiledCount > 0 ? { onSmartSort: () => setSortOpen(true) } : {})}
+                onOpenFlow={selectFlow}
+                onBlank={() => { void createFlow(); }}
+                onGenerate={(seed) => { setGenerateSeed(seed); setGenerateOpen(true); }}
+                onImport={() => setImportOpen(true)}
+                onPickTemplate={setWizardTemplate}
+              />
+            </>
           )}
         </Flex>
       </Flex>

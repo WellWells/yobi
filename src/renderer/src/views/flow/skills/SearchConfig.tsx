@@ -11,9 +11,12 @@ function todayCompact(): string {
   return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
 }
 
+/** What the runner reads when the field is blank (`search.ts`). */
+const SEARCH_DEFAULT_LIMIT = '10';
+
 export const SearchConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
   const query = step.config.query ?? '';
-  const limit = step.config.limit ?? '10';
+  const limit = step.config.limit ?? SEARCH_DEFAULT_LIMIT;
 
   return (
     <Stack gap="xs">
@@ -27,6 +30,9 @@ export const SearchConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) 
 
       <AppNumberInput
         label={t('flow.skill.search.limit')}
+        // Blank runs with the default, so the blank field says what that default is.
+        placeholder={SEARCH_DEFAULT_LIMIT}
+        suffix={` ${t('flow.skill.search.limit.unit')}`}
         value={limit}
         onChange={(v) => onChange({ ...step.config, limit: v === '' ? '' : String(v) })}
         size="sm"

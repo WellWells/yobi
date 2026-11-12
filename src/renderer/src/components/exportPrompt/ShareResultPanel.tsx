@@ -1,6 +1,6 @@
 import React from 'react';
 import { ActionIcon, Alert, Box, Group, Stack, Text, Tooltip } from '@mantine/core';
-import { Check, ExternalLink, Trash2, TriangleAlert } from 'lucide-react';
+import { Check, ExternalLink, Trash, TriangleExclamationPoint } from 'lucide-react';
 import { AppButton } from '../AppButton';
 import { AppTextInput } from '../AppTextInput';
 import { PromptShell } from './PromptShell';
@@ -23,7 +23,7 @@ export const ShareResultPanel: React.FC<Props> = ({ title, state, onAction, onHe
   return (
     <PromptShell title={title} onHeight={onHeight} onEscape={done} onEnter={done}>
       {state.revoked ? (
-        <Alert color="gray" icon={<Trash2 size={16} />} variant="light">
+        <Alert color="gray" icon={<Trash size={16} />} variant="light">
           {state.strings.revoked}
         </Alert>
       ) : (
@@ -68,7 +68,7 @@ export const ShareResultPanel: React.FC<Props> = ({ title, state, onAction, onHe
       )}
 
       {state.error && (
-        <Alert color="var(--mantine-color-error)" variant="light" icon={<TriangleAlert size={16} />}>
+        <Alert color="var(--mantine-color-error)" variant="light" icon={<TriangleExclamationPoint size={16} />}>
           <Text fz="var(--font-size-sm)" style={{ wordBreak: 'break-word' }}>{state.error}</Text>
         </Alert>
       )}
@@ -77,7 +77,7 @@ export const ShareResultPanel: React.FC<Props> = ({ title, state, onAction, onHe
         <AppButton
           variant="subtle"
           color="red"
-          leftSection={<Trash2 size={14} />}
+          leftSection={<Trash size={14} />}
           loading={busy}
           disabled={state.revoked}
           onClick={() => { setBusy(true); onAction('revoke'); }}

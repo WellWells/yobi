@@ -1,5 +1,6 @@
 import { SOCKET_BOT_PLATFORMS } from '../../shared/types';
 import type { FlowBuildBlocker, FlowSetupNeed, SkillType } from '../../shared/types';
+import { SKILL_TYPES } from '../../shared/flowSkillSpecs';
 import { config } from '../config';
 import { isSocketBotConfigured } from './botRecipientDirectory';
 import { getYtdlToolsState } from '../youtubeDownload';
@@ -37,8 +38,8 @@ const NEED_BY_SKILL: Partial<Record<SkillType, FlowSetupNeed>> = {
   bot: 'bot',
   email_send: 'email',
   line_read: 'line',
-  // Only a connected bot hears a group; "bot" also wants a paired account, which the summary is sent to.
-  telegram_read: 'bot',
+  // Only the Telegram bot keeps group messages: a LINE, Discord or Slack bot does not make it readable.
+  telegram_read: 'telegram',
   youtube_download: 'ytdl',
   // Reported like the others, never a gate: a calendar step that fails soft (the morning brief)
   // runs without one and the brief leaves the schedule out.
@@ -87,6 +88,7 @@ export function isSetupDone(need: FlowSetupNeed, snap: IntegrationSnapshot): boo
   if (need === 'ytdl') return snap.ytdlTools === true;
   if (need === 'calendar') return (snap.calendars ?? 0) > 0;
   if (need === 'mailbox') return snap.mailbox === true;
+  if (need === 'telegram') return snap.telegram;
   return snap.lineReader;
 }
 
@@ -109,4 +111,20 @@ export function probeReadiness(
     else ready.push(skill);
   }
   return { ready, blocked };
+}
+
+const KNOWN_SKILLS = new Set<string>(SKILL_TYPES);
+
+/**
+ * The template wizard's question, over IPC: which of a flow's step types still lack their setup.
+ * It reads the same probe "Create with AI" does, so the two never disagree about what is set up.
+ * Input from the renderer is untrusted: anything that is not a known skill type is dropped.
+ */
+export function setupBlockersFor(
+  skills: unknown,
+  snap: IntegrationSnapshot = snapshotIntegrations(),
+): FlowBuildBlocker[] {
+  if (!Array.isArray(skills)) return [];
+  const known = skills.filter((skill): skill is SkillType => typeof skill === 'string' && KNOWN_SKILLS.has(skill));
+  return probeReadiness([...new Set(known)], snap).blocked;
 }

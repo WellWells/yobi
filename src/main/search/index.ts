@@ -7,14 +7,17 @@ import { searchWeb, SerpChallengeError } from './serp';
 import { fuseRankings, hitKey } from './fuse';
 import { enginesBlockedError, SearchPipelineError } from './pipelineError';
 import { runDeepResearch } from './deep';
-import { harvest, selectTargets, DEFAULT_MAX_SOURCES, HARVEST_SPARE_TARGETS } from './harvest';
+import { harvest, selectTargets, HARVEST_SPARE_TARGETS } from './harvest';
 import { rankHits, rankSourcesScored } from './rank';
+import { postKey, rankByQuality } from './hitQuality';
 import { distinctQueries } from './queryNormalize';
 import type { ScoredSource } from './rank';
 import { extractRelevant } from './extract';
 import { createDocumentMapper, mapConcurrency, mapDocuments } from './mapReduce';
 import type { DocumentMapper } from './mapReduce';
-import { isLeanPromptProvider, quickSynthesisBudget, reserveForHistory, synthesisBudget, UNBOUNDED } from './budgets';
+import {
+  isLeanPromptProvider, quickSynthesisBudget, reserveForHistory, standardWebBudget, synthesisBudget, UNBOUNDED,
+} from './budgets';
 import type { SynthesisBudget } from './budgets';
 import { charsPlusBreaks, utf8Len } from '../../shared/textBudget';
 import { isFetchableWebUrl } from '../../shared/webUrl';
@@ -31,10 +34,12 @@ export type SearchProgress =
   /** The phases this search will go through, sent first so the whole checklist shows at once. */
   | { stage: 'outline'; phases: ResearchPhaseId[] }
   | { stage: 'planning'; queries: string[] }
+  /** One query's results as it returns (refused: every engine refused or failed it). */
+  | { stage: 'results'; query: string; hits: SerpHit[]; refused: boolean }
   | { stage: 'searched'; hits: number }
   | { stage: 'fetching'; count: number }
-  | { stage: 'read'; host: string }
-  | { stage: 'readFailed'; host: string }
+  | { stage: 'read'; host: string; url: string }
+  | { stage: 'readFailed'; host: string; url: string }
   | { stage: 'analyzing' }
   | { stage: 'summarizing'; total: number }
   | { stage: 'summarized'; kept: boolean }
@@ -56,10 +61,19 @@ const BYOK_MAX_SOURCES = 12;
 const BYOK_MAP_MAX_SINGLE_KEY = 8;
 /*
  * Quick mode answers from many results, not from a few pages read whole (the way Perplexity is
- * fast): three pages read in parallel, plus the summaries the engines already returned for the
+ * fast): five pages read in parallel, plus the summaries the engines already returned for the
  * results it did not read — they cost no request and carry most of the breadth.
  */
-const QUICK_MAX_SOURCES = 3;
+export const QUICK_MAX_SOURCES = 5;
+/** Standard on a web provider: twice the pages of before, packed to `standardWebBudget`. */
+export const WEB_STANDARD_MAX_SOURCES = 6;
+/** Once 3 pages are read the rest get this long, then are cancelled: more pages, not a slower answer. */
+export const SETTLE = { after: 3, graceMs: 2_500 } as const;
+/**
+ * A web provider summarizes page by page only when its best 3 pages overflow (what the decision was
+ * made on when it read 3), and summarizes only those: reading more pages adds no model request.
+ */
+export const MAP_DECISION_PAGES = 3;
 export const QUICK_SUMMARY_SOURCES = 8;
 /** Shorter than this, a result's summary is a title echo or a cookie notice, not evidence. */
 const MIN_SUMMARY_CHARS = 40;
@@ -101,18 +115,23 @@ async function runQueries(
   queries: string[],
   temporal: TemporalFilter,
   locale: string,
+  onProgress?: (progress: SearchProgress) => void,
 ): Promise<{ hits: SerpHit[]; challenged: boolean }> {
   let challenged = false;
   const distinct = distinctQueries(queries);
   if (distinct.length < queries.length) sendLog(`🔎 [Search] ${queries.length - distinct.length} near-duplicate query(ies) not sent`);
   const perQuery = await Promise.all(
-    distinct.map((q, slot) => searchWeb(q, temporal, locale, slot).catch((err) => {
+    distinct.map((q, slot) => searchWeb(q, temporal, locale, slot).then((hits) => {
+      onProgress?.({ stage: 'results', query: q, hits, refused: false });
+      return hits;
+    }, (err: unknown) => {
       if (err instanceof SerpChallengeError) {
         challenged = true;
         sendLog(`🔎 [Search] ${err.message}`);
       } else {
         sendLog(`🔎 [Search] query failed (${err instanceof Error ? err.message : String(err)})`);
       }
+      onProgress?.({ stage: 'results', query: q, hits: [], refused: true });
       return [] as SerpHit[];
     })),
   );
@@ -125,14 +144,14 @@ interface CollectedHits {
   partiallyBlocked: boolean;
 }
 
-async function collectHits(plan: QueryPlan, locale: string): Promise<CollectedHits> {
-  const first = await runQueries(plan.queries, plan.temporal, locale);
+async function collectHits(plan: QueryPlan, locale: string, onProgress?: (progress: SearchProgress) => void): Promise<CollectedHits> {
+  const first = await runQueries(plan.queries, plan.temporal, locale, onProgress);
   if (first.hits.length > 0) return { hits: first.hits, partiallyBlocked: first.challenged };
   if (first.challenged) throw enginesBlockedError();
   if (plan.temporal === 'none') return { hits: [], partiallyBlocked: false };
 
   sendLog(`🔎 [Search] the "${plan.temporal}" recency filter left no results — retrying without it`);
-  const retry = await runQueries(plan.queries, 'none', locale);
+  const retry = await runQueries(plan.queries, 'none', locale, onProgress);
   if (retry.hits.length === 0 && retry.challenged) throw enginesBlockedError();
   return { hits: retry.hits, partiallyBlocked: retry.challenged };
 }
@@ -162,20 +181,30 @@ async function buildSources(
   mapper: DocumentMapper | null,
   history: string,
   onProgress: ((progress: SearchProgress) => void) | undefined,
-  mapFactor: number = SEARCH_MAP_OVERFLOW_FACTOR,
+  /** Pages the user named: every one is weighed for summarizing, against the whole window. */
+  given = false,
 ): Promise<PackedSources> {
-  const budget = reserveForHistory(synthesisBudget(targetUrl), history);
+  // Searched pages on a web provider pack to its standard cap; the user's own pages get the window.
+  const budgetNow = (): SynthesisBudget => (given || isByokTargetUrl(targetUrl)
+    ? reserveForHistory(synthesisBudget(targetUrl), history)
+    : standardWebBudget(targetUrl, history));
+  const budget = budgetNow();
   if (!isByokTargetUrl(targetUrl)) {
     const relevant = scored.map((entry) => entry.doc);
+    const weighed = given ? relevant : relevant.slice(0, MAP_DECISION_PAGES);
+    const rest = relevant.slice(weighed.length);
     // A web provider has no cheap side channel, so mapping costs one serial round trip per
     // page. When the sources already fit, extracting keeps the wording the summaries would lose.
-    const mapped = overflowsBudget(relevant, budget, mapFactor)
-      ? await mapOnWebProvider(relevant, query, targetUrl, locale, summaryReporter(onProgress, relevant.length))
+    // Weighed against the provider's whole window, as before the 30,000 cap: the cap packs
+    // tighter, it must not buy a model request.
+    const window = reserveForHistory(synthesisBudget(targetUrl), history);
+    const mapped = overflowsBudget(weighed, window, given ? GIVEN_URLS_MAP_OVERFLOW_FACTOR : SEARCH_MAP_OVERFLOW_FACTOR)
+      ? [...await mapOnWebProvider(weighed, query, targetUrl, locale, summaryReporter(onProgress, weighed.length)), ...rest]
       : relevant;
     const pack = (): SourceDoc[] => {
-      const now = reserveForHistory(synthesisBudget(targetUrl), history);
+      const now = budgetNow();
       const sources = extractRelevant(mapped, plan.queries.join(' '), now);
-      sendLog(`🔎 [Search] Extracted ${sources.length} sources (${describeUsage(sources, now)}) for single-shot synthesis`);
+      sendLog(`🔎 [Search] Extracted ${sources.length} sources (${describeUsage(sources, now, mapped)}) for single-shot synthesis`);
       return sources;
     };
     return { sources: pack(), repack: pack };
@@ -190,7 +219,11 @@ async function buildSources(
     : `🔎 [Search] Summarizing ${mapInputs.length} sources (${mapConcurrency(targetUrl)} at a time)...`);
   const onEach = summaryReporter(onProgress, mapInputs.length);
   const sources = fitToBudget(
-    mapper ? await mapper.collect(mapInputs, onEach) : await mapDocuments(mapInputs, query, targetUrl, locale, onEach),
+    mapper
+      ? await mapper.collect(mapInputs, onEach)
+      // A page the user named is summarized whole: they asked for that page, not the parts of it
+      // that repeat their words.
+      : await mapDocuments(mapInputs, query, targetUrl, locale, onEach, given ? undefined : plan.queries.join('\n')),
     budget.bytes,
   );
   // A BYOK budget does not move.
@@ -268,11 +301,13 @@ async function mapOnWebProvider(
  * page and its date. Video pages count — a summary is all a reader would get from one anyway.
  */
 export function resultSummaries(hits: readonly SerpHit[], read: readonly SourceDoc[], limit: number): SourceDoc[] {
-  const readKeys = new Set(read.map((doc) => hitKey(doc.url)));
+  // A Reddit post is one page on every mirror: its summary says what the read copy already did.
+  const identity = (url: string): string => postKey(url) ?? hitKey(url);
+  const readKeys = new Set(read.map((doc) => identity(doc.url)));
   const seen = new Set<string>();
   const summaries: SourceDoc[] = [];
   for (const hit of hits) {
-    const key = hitKey(hit.url);
+    const key = identity(hit.url);
     const snippet = hit.snippet?.trim() ?? '';
     if (readKeys.has(key) || seen.has(key) || snippet.length < MIN_SUMMARY_CHARS) continue;
     seen.add(key);
@@ -290,12 +325,18 @@ function buildQuickSources(
   history: string,
 ): SourceDoc[] {
   const budget = quickSynthesisBudget(targetUrl, history);
-  const sources = extractRelevant([...scored.map((entry) => entry.doc), ...summaries], plan.queries.join(' '), budget);
-  sendLog(`🔎 [Search] Quick mode packed ${sources.length} sources (${describeUsage(sources, budget)})`);
+  const inputs = [...scored.map((entry) => entry.doc), ...summaries];
+  const sources = extractRelevant(inputs, plan.queries.join(' '), budget);
+  sendLog(`🔎 [Search] Quick mode packed ${sources.length} sources (${describeUsage(sources, budget, inputs)})`);
   return sources;
 }
 
-function describeUsage(sources: SourceDoc[], budget: SynthesisBudget): string {
+/** `read 63418 chars → 19873/20000 chars+breaks`: what the pages held against what was packed. */
+function describeUsage(sources: SourceDoc[], budget: SynthesisBudget, read: readonly SourceDoc[]): string {
+  return `read ${read.reduce((sum, doc) => sum + doc.text.length, 0)} chars → ${describePacked(sources, budget)}`;
+}
+
+function describePacked(sources: SourceDoc[], budget: SynthesisBudget): string {
   const parts: string[] = [];
   if (budget.bytes !== UNBOUNDED) {
     parts.push(`${sources.reduce((sum, doc) => sum + utf8Len(doc.text), 0)}/${budget.bytes} bytes`);
@@ -360,7 +401,7 @@ export async function runWebSearch(
 
   onProgress?.({ stage: 'planning', queries: plan.queries });
 
-  const { hits, partiallyBlocked } = await collectHits(plan, locale);
+  const { hits, partiallyBlocked } = await collectHits(plan, locale, onProgress);
   if (hits.length === 0) {
     throw new SearchPipelineError('search.error.noResults', 'No search results found');
   }
@@ -369,22 +410,25 @@ export async function runWebSearch(
 
   // The planned queries count as the question's words too: an English variant's hits share no
   // word with a Chinese question.
-  const orderedHits = rankHits(hits, [question, ...plan.queries].join('\n'));
+  const orderedHits = rankByQuality(hits, [question, ...plan.queries].join('\n'));
   const writer = answerWriter(history, asker);
-  const defaultMaxSources = mode === 'quick' ? QUICK_MAX_SOURCES : isByok ? BYOK_MAX_SOURCES : DEFAULT_MAX_SOURCES;
+  const defaultMaxSources = mode === 'quick' ? QUICK_MAX_SOURCES : isByok ? BYOK_MAX_SOURCES : WEB_STANDARD_MAX_SOURCES;
   const maxSources = maxSourcesOverride ?? defaultMaxSources;
+  // BYOK standard reads its 12 in parallel to summarize them; a count a flow asked for is read in full.
+  const settle = maxSourcesOverride === undefined && (mode === 'quick' || !isByok) ? SETTLE : undefined;
   const targets = selectTargets(orderedHits, maxSources + HARVEST_SPARE_TARGETS, true);
   onProgress?.({ stage: 'fetching', count: Math.min(targets.length, maxSources) });
   const mapper = isByok && mode === 'standard' && isByokGroupUrl(targetUrl)
-    ? createDocumentMapper(question, targetUrl, locale)
+    ? createDocumentMapper(question, targetUrl, locale, plan.queries.join('\n'))
     : null;
   if (mapper) sendLog(`🔎 [Search] Summarizing as pages arrive (${mapConcurrency(targetUrl)} at a time)...`);
   const docs = await harvest(
     targets,
     maxSources,
-    (url) => onProgress?.({ stage: 'read', host: citationHost(url) }),
+    (url) => onProgress?.({ stage: 'read', host: citationHost(url), url }),
     mapper ? (doc) => mapper.enqueue(doc) : undefined,
-    (url) => onProgress?.({ stage: 'readFailed', host: citationHost(url) }),
+    (url) => onProgress?.({ stage: 'readFailed', host: citationHost(url), url }),
+    settle ? { settle } : {},
   );
   if (docs.length === 0) {
     throw new SearchPipelineError('search.error.noSources', 'No source pages could be read');
@@ -463,9 +507,9 @@ async function runOverGivenUrls(
   const docs = await harvest(
     unique.map((url) => ({ title: url, url })),
     maxSources,
-    (url) => onProgress?.({ stage: 'read', host: citationHost(url) }),
+    (url) => onProgress?.({ stage: 'read', host: citationHost(url), url }),
     undefined,
-    (url) => onProgress?.({ stage: 'readFailed', host: citationHost(url) }),
+    (url) => onProgress?.({ stage: 'readFailed', host: citationHost(url), url }),
     { recall: false },
   );
   if (docs.length === 0) {
@@ -474,8 +518,7 @@ async function runOverGivenUrls(
 
   onProgress?.({ stage: 'analyzing' });
   const packed = await buildSources(
-    rankSourcesScored(docs, query), query, plan, targetUrl, locale, null, writer.reserve, onProgress,
-    GIVEN_URLS_MAP_OVERFLOW_FACTOR,
+    rankSourcesScored(docs, query), query, plan, targetUrl, locale, null, writer.reserve, onProgress, true,
   );
   if (packed.sources.length === 0) {
     throw new SearchPipelineError('search.error.noRelevant', 'No sources were relevant to the query');

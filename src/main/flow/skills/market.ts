@@ -8,6 +8,7 @@ import {
   summarizeHistory,
 } from './marketHistory';
 import type { HistoryData, HistoryRequest, HistorySummary } from './marketHistory';
+import { splitSymbols } from '../../../shared/flowListTerms';
 
 interface ForexResult {
   base: string; target: string; rate: number; amount: number; converted: number; asOf: string;
@@ -331,7 +332,7 @@ async function execStockHistory(symbols: string[], req: HistoryRequest, dateRaw:
 }
 
 export async function execStock(config: Record<string, string>, timeoutMs: number): Promise<string> {
-  const symbols = (config.symbol ?? '').split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+  const symbols = splitSymbols(config.symbol);
 
   if (symbols.length === 0) {
     sendLog('📈 [Flow] Stock: no symbol');

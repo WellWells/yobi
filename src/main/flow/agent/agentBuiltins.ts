@@ -1,6 +1,6 @@
 import type {
   AgentFlowRecipient, AgentStageLabel, FlowAssessment, FlowBuildEvent, FlowBuildPhase,
-  FlowDefinition, TriggerType,
+  FlowDefinition, FlowExecutionResult, TriggerType,
 } from '../../../shared/types';
 import { describeRecipientSetup, withRecipientQuestion } from '../../../shared/botRecipientQuestion';
 import type { RecipientDirectory } from '../../../shared/botRecipients';
@@ -14,15 +14,20 @@ import type { FlowExecutorDeps } from '../types';
 import { buildHoldReason, describeSavedFlow, holdingSave, sensitiveTypesOf } from './agentFlowShared';
 import type { FlowHold, FlowSaveRequest, FlowWriteConfirmRequest } from './agentFlowShared';
 import { runEditFlowTool } from './agentFlowEdit';
+import { RUN_FLOW_LINE, runRunFlowTool } from './agentFlowRun';
 import { DRAW_IMAGE_BRIEF, DRAW_IMAGE_LINE, runDrawImage } from './agentDrawImage';
 import type { DrawImage } from './agentDrawImage';
 import { AGODA_REVIEWS_BRIEF, AGODA_REVIEWS_LINE, runAgodaReviews } from './agentAgoda';
 import { EXPORT_FILE_BRIEF, EXPORT_FILE_LINE, runExportFile } from './agentExportFile';
 import type { ExportFile } from './agentExportFile';
+import { MOVIE_INFO_LINE, movieInfoDeps, runMovieInfo } from './agentMovie';
+import type { ResearchSource } from './agentCitations';
+import { USE_SKILL_LINE, runUseSkill } from './agentSkillTool';
+import type { SkillRunState } from './agentSkillTool';
 
 export type { FlowSaveRequest, FlowWriteConfirmRequest } from './agentFlowShared';
 
-export const AGENT_BUILTIN_TOOLS = ['assess_flow', 'build_flow', 'edit_flow', 'delegate', 'draw_image', 'agoda_reviews', 'export_file'] as const;
+export const AGENT_BUILTIN_TOOLS = ['assess_flow', 'build_flow', 'edit_flow', 'run_flow', 'delegate', 'draw_image', 'agoda_reviews', 'export_file', 'use_skill', 'movie_info'] as const;
 
 export type AgentBuiltinTool = typeof AGENT_BUILTIN_TOOLS[number];
 
@@ -51,6 +56,8 @@ export interface BuiltinDeps {
    * `deferred` instead of saving it; the engine pauses on it and saves it once the answer approves.
    */
   holdFlows?: FlowHold;
+  /** Runs a saved flow once, as Run in the editor does (`run_flow`). Absent = this run cannot run flows. */
+  runFlow?: (flowId: string) => Promise<FlowExecutionResult>;
   /** Switches on a flow saved from an approved chat question; null when it is gone. */
   enableFlow?: (flowId: string) => Promise<FlowDefinition | null>;
   /**
@@ -78,6 +85,8 @@ export interface BuiltinDeps {
   exportFile?: ExportFile;
   /** Files made so far; `export_file` counts them. */
   exportCalls?: number;
+  /** The run's installed skills and which it has loaded. Absent = no skills are installed. */
+  skills?: SkillRunState;
 }
 
 const MIN_BUILTIN_TIMEOUT_MS = 30_000;
@@ -101,9 +110,10 @@ const DELEGATE_LINE = '- "delegate": Hand a READ-ONLY sub-question that needs SE
  * and the MCP catalog gets what is left.
  */
 const FLOW_TOOL_LINES = [
-  '- "assess_flow": Can Yobi AUTOMATE this as a saved flow, and how? Read-only. config keys: "goal" (what to automate, user\'s words; REQUIRED) → returns: verdict, step outline, gaps, what to ask first.',
+  '- "assess_flow": Can Yobi AUTOMATE this as a saved flow, and how? Read-only. config keys: "goal" (what to automate, user\'s words; REQUIRED) → returns: verdict, outline, gaps, questions.',
   '- "build_flow": SAVE a new flow, DISABLED for review. Call "assess_flow" first; ask what it reports missing, never invent it. config keys: "goal" (the request plus what the user said since; REQUIRED) → returns: name, steps, what to check.',
-  '- "edit_flow": Change a flow the user has (never build a copy); saves over it once they approve. Yobi already holds bot tokens and chat IDs — never ask for them. config keys: "change" (user\'s words; REQUIRED), "flow" (its name; omit for the one made earlier in this chat) → returns: what changed.',
+  // `run_flow` rides on this line (same "flow" key): a line of its own did not fit Gemini's budget.
+  '- "edit_flow": Change a flow the user has (never build a copy); saves over it once they approve. Bot tokens and chat IDs are already set — never ask for them. config keys: "change" (user\'s words; REQUIRED), "flow" (its name; omit = the last one in this chat) → returns: what changed. "run_flow" (same "flow") test-runs it once.',
 ];
 
 export function buildBuiltinCatalog(
@@ -112,6 +122,7 @@ export function buildBuiltinCatalog(
   includePictures = false,
   includeHotelReviews = false,
   includeDocuments = false,
+  includeSkills = false,
 ): string {
   return [
     ...(includeFlows ? FLOW_TOOL_LINES : []),
@@ -119,6 +130,7 @@ export function buildBuiltinCatalog(
     ...(includePictures ? [DRAW_IMAGE_BRIEF] : []),
     ...(includeHotelReviews ? [AGODA_REVIEWS_BRIEF] : []),
     ...(includeDocuments ? [EXPORT_FILE_BRIEF] : []),
+    ...(includeSkills ? [USE_SKILL_LINE] : []),
   ].join('\n');
 }
 
@@ -128,6 +140,9 @@ export function builtinToolEntry(tool: AgentBuiltinTool): string {
   if (tool === 'agoda_reviews') return AGODA_REVIEWS_LINE;
   if (tool === 'export_file') return EXPORT_FILE_LINE;
   if (tool === 'delegate') return DELEGATE_LINE;
+  if (tool === 'use_skill') return USE_SKILL_LINE;
+  if (tool === 'run_flow') return RUN_FLOW_LINE;
+  if (tool === 'movie_info') return MOVIE_INFO_LINE;
   return FLOW_TOOL_LINES.find((line) => line.startsWith(`- "${tool}"`)) ?? '';
 }
 
@@ -137,6 +152,8 @@ export function builtinRequiredFields(tool: AgentBuiltinTool): string[] {
   if (tool === 'draw_image') return ['prompt'];
   if (tool === 'agoda_reviews') return ['url'];
   if (tool === 'export_file') return ['format'];
+  if (tool === 'use_skill') return ['skill'];
+  if (tool === 'movie_info') return ['title'];
   return tool === 'assess_flow' || tool === 'build_flow' ? ['goal'] : [];
 }
 
@@ -145,6 +162,9 @@ export function builtinConfigKeys(tool: AgentBuiltinTool): string[] {
   if (tool === 'draw_image') return ['prompt', 'provider'];
   if (tool === 'agoda_reviews') return ['url', 'question'];
   if (tool === 'export_file') return ['format', 'content', 'title'];
+  if (tool === 'use_skill') return ['skill', 'file', 'page', 'run', 'args', 'stdin'];
+  if (tool === 'run_flow') return ['flow'];
+  if (tool === 'movie_info') return ['title', 'year', 'id'];
   return tool === 'edit_flow' ? ['change', 'flow'] : builtinRequiredFields(tool);
 }
 
@@ -219,6 +239,8 @@ export interface BuiltinOutcome {
   status: 'ok' | 'error';
   /** Nothing was saved: the finished flow waits for the user's answer in the chat (`holdFlows`). */
   deferred?: FlowSaveRequest;
+  /** The pages the observation's linked markers cite, for the run's citation pool. */
+  sources?: ResearchSource[];
 }
 
 /**
@@ -361,8 +383,20 @@ export async function runBuiltinTool(
   // The context itself, so the drawing count carries from one call to the next.
   if (tool === 'draw_image') return runDrawImage(config, ctx);
   if (tool === 'export_file') return runExportFile(config, ctx);
+  if (tool === 'use_skill') {
+    return ctx.skills ? runUseSkill(config, ctx.skills, ctx.signal) : { observation: 'ERROR: no skills are installed.', status: 'error' };
+  }
+  if (tool === 'movie_info') return runMovieInfo(config, movieInfoDeps(), ctx.signal);
   if (tool === 'agoda_reviews') {
     return runAgodaReviews(config, { deps: budgetedDeps(ctx), providerUrl: ctx.providerUrl, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+  }
+  if (tool === 'run_flow') {
+    return runRunFlowTool(config, {
+      recentFlows: ctx.recentFlows ?? [],
+      ...(ctx.listFlows ? { listFlows: ctx.listFlows } : {}),
+      ...(ctx.runFlow ? { runFlow: ctx.runFlow } : {}),
+      ...(ctx.holdFlows ? { hold: ctx.holdFlows } : {}),
+    });
   }
   if (tool === 'edit_flow') {
     return runEditFlowTool(config, {

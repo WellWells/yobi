@@ -1,3 +1,4 @@
+import { namesToolId } from '../../../shared/agentStepLabel';
 import { isByokTargetUrl } from '../../../shared/types';
 import type { SkillType } from '../../../shared/types';
 import { byokConcurrencyCeiling } from '../../providers/byokClient';
@@ -7,6 +8,7 @@ import type { AgentAction, AgentToolScope } from './agentTools';
 import { resolveMcpTool, validateMcpAction } from './mcpTools';
 import type { McpAction, McpRuntimeIndex } from './mcpTools';
 import { resolveToolContract } from './contractRegistry';
+import { readDoing } from './agentDoing';
 import { readPlanFields, readStepBudget } from './agentPrompts';
 import { readIntent } from './actionGate';
 import type { GoalIntent } from './actionGate';
@@ -29,14 +31,16 @@ export interface BatchAction {
   planDone?: number[];
   stepsNeeded?: number;
   intent?: GoalIntent;
+  /** A title written for the whole batch instead of per item: the first step shows it. */
+  doing?: string;
 }
 
 /**
  * Builders that write, or whose second call depends on the first (`build_flow` reads the assessment
- * `assess_flow` left behind), and `draw_image` and `export_file`, whose picture or file is part of
+ * `assess_flow` left behind), `run_flow` (a real run of the user's flow), and `draw_image` and `export_file`, whose picture or file is part of
  * the answer rather than a read. None belongs in a set of calls that run side by side.
  */
-const SEQUENTIAL_BUILTINS = new Set<string>(['assess_flow', 'build_flow', 'edit_flow', 'draw_image', 'export_file']);
+const SEQUENTIAL_BUILTINS = new Set<string>(['assess_flow', 'build_flow', 'edit_flow', 'run_flow', 'draw_image', 'export_file']);
 
 export interface BatchValidationContext {
   scope: AgentToolScope;
@@ -55,7 +59,7 @@ function validateItem(item: unknown, index: number, ctx: BatchValidationContext)
   const obj = item as Record<string, unknown>;
   if (typeof obj.server === 'string') {
     if (!ctx.mcpIndex) return itemError(index, 'this run has no MCP tools, so a call has no "server".');
-    const checked = validateMcpAction({ server: obj.server, name: obj.name, arguments: obj.arguments }, ctx.mcpIndex);
+    const checked = validateMcpAction({ server: obj.server, name: obj.name, arguments: obj.arguments, doing: obj.doing }, ctx.mcpIndex);
     if (!checked.ok) return itemError(index, checked.error);
     const resolved = resolveMcpTool(ctx.mcpIndex, checked.value.server, checked.value.name);
     // Reads only. A change is proposed alone so the gate, its confirmation and its check each see
@@ -65,7 +69,7 @@ function validateItem(item: unknown, index: number, ctx: BatchValidationContext)
     }
     return checked;
   }
-  const checked = validateAgentAction({ action: 'call_tool', thought: '', tool: obj.tool, config: obj.config }, false, ctx.scope);
+  const checked = validateAgentAction({ action: 'call_tool', thought: '', tool: obj.tool, config: obj.config, doing: obj.doing }, false, ctx.scope);
   if (!checked.ok) return itemError(index, checked.error);
   const tool = checked.value.tool ?? '';
   if (isHelpTool(tool) || SEQUENTIAL_BUILTINS.has(tool) || HELPER_EXCLUDED_SKILLS.has(tool as SkillType)) {
@@ -82,12 +86,23 @@ function validateItem(item: unknown, index: number, ctx: BatchValidationContext)
 function validateSingle(item: unknown, obj: Record<string, unknown>, ctx: BatchValidationContext): Validation<BatchCall> {
   if (typeof item !== 'object' || item === null || Array.isArray(item)) return validateItem(item, 0, ctx);
   const call = item as Record<string, unknown>;
-  const bookkeeping = { thought: obj.thought, plan: obj.plan, plan_done: obj.plan_done, steps_needed: obj.steps_needed, intent: obj.intent };
+  const bookkeeping = {
+    thought: obj.thought, plan: obj.plan, plan_done: obj.plan_done, steps_needed: obj.steps_needed, intent: obj.intent,
+    doing: call.doing ?? obj.doing,
+  };
   if (typeof call.server === 'string') {
     if (!ctx.mcpIndex) return itemError(0, 'this run has no MCP tools, so a call has no "server".');
     return validateMcpAction({ ...bookkeeping, server: call.server, name: call.name, arguments: call.arguments }, ctx.mcpIndex);
   }
   return validateAgentAction({ ...bookkeeping, action: 'call_tool', tool: call.tool, config: call.config }, false, ctx.scope);
+}
+
+/** A title for the whole batch names none of its tools, the same as a title on a single call. */
+function batchDoing(obj: Record<string, unknown>, calls: readonly BatchCall[]): { doing?: string } {
+  const written = readDoing(obj, '');
+  const line = written.doing ?? '';
+  const named = calls.some((call) => namesToolId(line, call.action === 'call_mcp' ? call.name : call.tool ?? ''));
+  return named ? {} : written;
 }
 
 /** A `call_tools` action: 2-3 independent reads, or one call of any kind. */
@@ -112,7 +127,7 @@ export function validateBatchAction(
   }
   return {
     ok: true,
-    value: { thought, action: 'call_tools', calls, ...readPlanFields(obj), ...readStepBudget(obj), ...readIntent(obj) },
+    value: { thought, action: 'call_tools', calls, ...readPlanFields(obj), ...readStepBudget(obj), ...readIntent(obj), ...batchDoing(obj, calls) },
   };
 }
 

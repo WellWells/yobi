@@ -2,6 +2,7 @@ import { getProviderLabel, isLoginRequiredError } from './providers';
 import { answerTextWithPictures, keepAnswerPictures, sendAnswerToTelegram } from './chat/answerPictures';
 import { providerNamesItsThread, sendTaskTo } from './chat/taskSend';
 import { resolveTaskChatContext } from './chat/taskChatContext';
+import { throwIfStopped, wasStopped } from './chat/taskStop';
 import { appendOrCreateConversation } from './chat/conversationPersist';
 import { resolveTaskMemory, settleTaskMemory } from './chat/taskMemory';
 import { wantsRecap } from './chat/recapPrompt';
@@ -26,7 +27,8 @@ import {
 } from './output';
 import { config } from './config';
 import { deliverTempChatResult, isTempChatMode } from './tempChat';
-import { IPC, PROVIDER_LABELS, isByokTargetUrl } from '../shared/types';
+import { IPC, PROVIDER_ATTACHMENT_POLICIES, PROVIDER_LABELS, isByokTargetUrl, providerFromUrl } from '../shared/types';
+import { megabytesLabel } from '../shared/attachmentFormats';
 import { looksLikeImageRequest } from '../shared/imageRequest';
 import { providerSwitchNotice } from '../shared/providerFallback';
 import {
@@ -119,7 +121,11 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
     const outcome = await sendWithProviderFallback({
       targetUrl,
       enabled: mayFallBack,
-      send: (sendUrl) => sendTaskTo(sendContext, sendUrl),
+      // A stopped send is not handed to the next provider: the user asked for no answer.
+      send: (sendUrl) => {
+        throwIfStopped(task);
+        return sendTaskTo(sendContext, sendUrl);
+      },
       candidates: (tried) => nextFallbackProviders(tried, candidateNeeds),
       onSwitch: (failed, next) => sendLog(
         `[${id}] 🔀 ${PROVIDER_LABELS[failed.provider]} gave no answer (${failed.reason}) — sending it to ${PROVIDER_LABELS[next]} instead`,
@@ -127,6 +133,8 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
     });
     targetUrl = outcome.targetUrl;
     providerLabel = getProviderLabel(targetUrl);
+    // Whatever came back after Stop (a cut-short answer, an aborted request) is dropped.
+    throwIfStopped(task);
     if (!outcome.ok) {
       fallbackNote = describeFallbackFailure(outcome, (key) => t(getLangCache(), key));
       throw outcome.error;
@@ -221,6 +229,8 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
 
     const temporaryReply = chatContext.temporary;
     let conversationPath = '';
+    // Last point before the answer is kept: Stop can arrive while memory and pictures settle.
+    throwIfStopped(task);
     if (temporaryReply) {
       deliverTempChatResult({
         content: buildOutputMarkdown(markdownOptions),
@@ -319,6 +329,11 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
     }
   } catch (err: unknown) {
     lastError = err;
+    // The user's own Stop is neither a failure to count nor one to notify; `finally` reports it.
+    if (wasStopped(task)) {
+      sendLog(`[${id}] 🛑 Stopped by the user — the answer is not kept`);
+      return;
+    }
     recordTaskOutcome('chat', classifyFailure(err instanceof Error ? err.message : String(err)), task);
     const strings = getLangCache();
     const withFallbackNote = (message: string): string => (fallbackNote ? `${message}\n${fallbackNote}` : message);
@@ -349,10 +364,16 @@ async function runTask(task: Task, deps: TaskProcessorDeps): Promise<void> {
         ? 'attach.upload.notSignedIn'
         : phase === 'gems-mode'
           ? 'attach.upload.gemsMode'
-          : phase === 'rejected'
+          : phase === 'rejected' || phase === 'unsupported-type'
             ? 'attach.upload.rejected'
-            : 'attach.upload.failed';
-      const message = t(strings, key, { provider: providerLabel });
+            : phase === 'too-large'
+              ? 'attach.upload.tooLarge'
+              : 'attach.upload.failed';
+      const maxBytes = PROVIDER_ATTACHMENT_POLICIES[providerFromUrl(targetUrl)]?.maxFileBytes;
+      const message = t(strings, key, {
+        provider: providerLabel,
+        size: maxBytes ? megabytesLabel(maxBytes) : '',
+      });
       sendWebNotification(t(strings, 'notify.chat.failure.title'), withFallbackNote(message), 'error');
       sendLog(`[${id}] ⚠️ attachment upload failed: ${phase}`);
       await replyRemoteError(task, deps, { providerLabel, message });

@@ -25,6 +25,8 @@ export interface CommandResult {
   usage?: TokenUsage;
   /** Agent run id, so the saved turn can reopen the reasoning that produced it. */
   runId?: string;
+  /** The run's last step title, the finished line of its trace; kept only with `runId`. */
+  stepTitle?: string;
   /** Choices an agent question offers. */
   choices?: string[];
   /** What the answer changed in the user's memory. */
@@ -62,6 +64,7 @@ export function turnMetaFor(args: CommandResult): TurnMeta {
     ...(attached.length > 0 ? { a: attached } : {}),
     ...(args.attachmentFiles?.length ? { af: args.attachmentFiles } : {}),
     ...(args.runId ? { r: args.runId } : {}),
+    ...(args.runId && args.stepTitle ? { st: args.stepTitle.replace(/-->/g, '--') } : {}),
     ...(choices.length > 0 ? { ch: choices } : {}),
     ...(args.memoryNotes?.length ? { mem: args.memoryNotes } : {}),
     ...(args.usage ? tokenMetaFields(args.usage) : {}),

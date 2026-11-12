@@ -59,6 +59,8 @@ export interface PageText {
   siteName: string;
   /** The page went on past `MAX_CONTENT_CHARS`. */
   truncated: boolean;
+  /** The page calls itself an article, or a row found its text: more than the reader view's opinion. */
+  selfDeclared: boolean;
 }
 
 interface PageBody {
@@ -139,7 +141,7 @@ function cleanText(raw: string): string {
 }
 
 /** The readable text of one element, paragraphs on their own lines. */
-function textOf($: CheerioAPI, element: AnyNode, drop?: string): string {
+export function textOf($: CheerioAPI, element: AnyNode, drop?: string): string {
   const copy = $(element).clone();
   copy.find(drop ? `${NEVER_TEXT}, ${drop}` : NEVER_TEXT).remove();
   copy.find('br').replaceWith('\n');
@@ -219,6 +221,11 @@ function withinCap(page: PageText): PageText {
   return { ...page, text: page.text.slice(0, MAX_CONTENT_CHARS), truncated: true };
 }
 
+function saysItIsArticle($: CheerioAPI, site: PageSite | null, structured: StructuredArticle | null, method: PageReadMethod): boolean {
+  if (method === 'discussion' || method === 'whole page') return false;
+  return callsItselfArticle($, structured) || (site !== null && method === 'site');
+}
+
 /** A page's text, or null when it holds next to none (an app shell, an empty page). */
 export function extractPageText(html: string, url: string, site: PageSite | null): PageText | null {
   const $ = load(html);
@@ -234,6 +241,7 @@ export function extractPageText(html: string, url: string, site: PageSite | null
     method: body.method,
     siteName: asText($('meta[property="og:site_name"]').attr('content')),
     truncated: body.truncated === true,
+    selfDeclared: saysItIsArticle($, site, structured, body.method),
   });
 }
 
@@ -251,5 +259,6 @@ export function extractPlainText(raw: string, url: string): PageText | null {
     method: 'plain text',
     siteName: '',
     truncated: false,
+    selfDeclared: false,
   });
 }

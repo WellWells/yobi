@@ -13,6 +13,12 @@ import type { BotPlatform } from '../shared/types';
 export interface BotSession {
   path: string;
   id?: string;
+  /**
+   * A run in this conversation carried someone else's words (`botPermissions/othersText.ts`): its
+   * file holds them, so every later run that replays it is held to what a group may have. Belongs
+   * to this file only — a new conversation starts without it.
+   */
+  othersText?: true;
 }
 
 type SessionMap = Record<string, BotSession>;
@@ -31,9 +37,9 @@ function storePath(): string {
 export function parseBotSession(value: unknown): BotSession | null {
   if (typeof value === 'string') return value ? { path: value } : null;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const { path: filePath, id } = value as Record<string, unknown>;
+  const { path: filePath, id, othersText } = value as Record<string, unknown>;
   if (typeof filePath !== 'string' || !filePath) return null;
-  return isConversationId(id) ? { path: filePath, id } : { path: filePath };
+  return { path: filePath, ...(isConversationId(id) ? { id } : {}), ...(othersText === true ? { othersText } : {}) };
 }
 
 async function load(): Promise<SessionMap> {
@@ -55,9 +61,10 @@ async function load(): Promise<SessionMap> {
   return cache;
 }
 
-/** A value without an id stays the bare path older versions wrote. */
+/** A value with nothing but its path stays the bare path older versions wrote. */
 function storedValue(session: BotSession): string | BotSession {
-  return session.id ? { path: session.path, id: session.id } : session.path;
+  if (!session.id && !session.othersText) return session.path;
+  return { path: session.path, ...(session.id ? { id: session.id } : {}), ...(session.othersText ? { othersText: true } : {}) };
 }
 
 function persist(): Promise<void> {
@@ -115,14 +122,42 @@ export async function getBotConversation(chatKey: string, now = Date.now()): Pro
   return null;
 }
 
-export async function setBotConversation(chatKey: string, conversationPath: string): Promise<void> {
+/**
+ * `othersText`: the run just written carried someone else's words. The mark stays with the same file
+ * once set and is never carried to a new one.
+ */
+export async function setBotConversation(chatKey: string, conversationPath: string, othersText = false): Promise<void> {
   if (!chatKey || !conversationPath) return;
   const sessions = await load();
   const current = sessions[chatKey];
   const id = (await conversationIdAt(conversationPath)) ?? undefined;
-  if (current?.path === conversationPath && current.id === id) return;
-  sessions[chatKey] = id ? { path: conversationPath, id } : { path: conversationPath };
+  const sameFile = current?.path === conversationPath;
+  const marked = othersText || (sameFile && current?.othersText === true);
+  if (sameFile && current?.id === id && (current?.othersText === true) === marked) return;
+  sessions[chatKey] = { path: conversationPath, ...(id ? { id } : {}), ...(marked ? { othersText: true as const } : {}) };
   await persist();
+}
+
+/**
+ * Marks the chat's conversation as holding someone else's words when it is the file at
+ * `conversationPath` (a failed turn, which does not make a file the chat's conversation).
+ */
+export async function markBotConversationOthersText(chatKey: string, conversationPath: string): Promise<void> {
+  const sessions = await load();
+  const current = sessions[chatKey];
+  if (!current || current.othersText || conversationPathKey(current.path) !== conversationPathKey(conversationPath)) return;
+  sessions[chatKey] = { ...current, othersText: true };
+  await persist();
+}
+
+/**
+ * Whether the conversation this chat continues at `conversationPath` holds someone else's words
+ * (`BotSession.othersText`). No path = a new conversation, which holds nobody's yet.
+ */
+export async function botConversationHasOthersText(chatKey: string, conversationPath: string | null | undefined): Promise<boolean> {
+  if (!conversationPath) return false;
+  const session = (await load())[chatKey];
+  return session?.othersText === true && conversationPathKey(session.path) === conversationPathKey(conversationPath);
 }
 
 /**
@@ -140,7 +175,7 @@ export async function repointBotConversations(
     const move = byOldPath.get(conversationPathKey(session.path));
     if (!move) continue;
     const id = move.id ?? session.id;
-    sessions[key] = id ? { path: move.to, id } : { path: move.to };
+    sessions[key] = { path: move.to, ...(id ? { id } : {}), ...(session.othersText ? { othersText: true as const } : {}) };
     changed += 1;
   }
   if (changed > 0) await persist();

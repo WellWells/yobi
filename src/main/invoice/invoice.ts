@@ -1,5 +1,6 @@
 import { claimWindowOf, drawDateOf, periodCode, periodFromCode, ROC_OFFSET, taipeiDate } from './invoicePeriods';
 import type { PeriodRef } from './invoicePeriods';
+import { MAX_TICKET_NUMBERS, parseTicketNumbers, type TicketNumber } from '../../shared/invoiceNumbers';
 
 /** One drawn period as the Ministry of Finance's feed lists it. */
 export interface InvoiceDraw extends PeriodRef {
@@ -115,40 +116,7 @@ export function parseInvoiceFeed(xml: string): InvoiceDraw[] {
     .filter((d) => !seen.has(d.period) && seen.add(d.period));
 }
 
-export interface TicketNumber {
-  /** As the receipt prints it, normalised: "AB-12345678", "12345678", or a tail "111". */
-  display: string;
-  /** 3-8 digits; fewer than 8 = only the last digits are known. */
-  digits: string;
-}
-
-/** Most numbers one request can check. */
-export const MAX_TICKET_NUMBERS = 200;
-
-/**
- * Receipt numbers in whatever the user or the model typed: several separated by spaces, commas,
- * 、 or lines; full-width digits; a two-letter track prefix ("AB-12345678", "ab12345678") kept for
- * display only; or just the last 3 (up to 7) digits. Words between them are ignored; a digit run
- * that is not 3-8 long (a phone number, a date) is returned in `bad` instead of being guessed at.
- */
-export function parseTicketNumbers(raw: string): { numbers: TicketNumber[]; bad: string[] } {
-  const text = raw.normalize('NFKC').toUpperCase();
-  const numbers: TicketNumber[] = [];
-  const bad: string[] = [];
-  const seen = new Set<string>();
-  for (const m of text.matchAll(/(?:(?<![A-Z])([A-Z]{2})\s*[-–—]?\s*)?(\d+)/g)) {
-    const [whole, track, digits] = m;
-    if (digits.length < 3 || digits.length > 8 || (track && digits.length !== 8)) {
-      bad.push(whole.trim());
-      continue;
-    }
-    const display = track ? `${track}-${digits}` : digits;
-    if (seen.has(digits)) continue;
-    seen.add(digits);
-    numbers.push({ display, digits });
-  }
-  return { numbers: numbers.slice(0, MAX_TICKET_NUMBERS), bad };
-}
+export { MAX_TICKET_NUMBERS, parseTicketNumbers, type TicketNumber };
 
 export interface TicketMatch {
   /** won = a prize for certain (with `atLeast`, possibly a bigger one); maybe = only the full number can tell. */

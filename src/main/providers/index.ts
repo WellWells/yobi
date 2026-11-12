@@ -4,6 +4,8 @@ import { runPerplexityAutomation } from './perplexity';
 import { isChatgptLoginRequiredError, runChatgptAutomation } from './chatgpt';
 import { runClaudeAutomation } from './claude';
 import { isClaudeLoginRequiredError } from './claudeSession';
+import { runDeepseekAutomation } from './deepseek';
+import { isDeepseekLoginRequiredError } from './deepseekSession';
 import { getByokLabel } from './byokClient';
 import { ensureOnPage, extractThreadUrl, isSamePage, PAGE_REUSE, waitForThreadSettled } from './pageReuse';
 import { supportsTemporaryChat, temporaryChatUrl } from './temporaryChat';
@@ -37,6 +39,7 @@ const PROVIDER_RUNNER: Record<
   perplexity: runPerplexityAutomation,
   chatgpt: runChatgptAutomation,
   claude: runClaudeAutomation,
+  deepseek: runDeepseekAutomation,
 };
 
 export { PROVIDER_PROMPT_POLICIES, promptPolicyFor } from './promptPolicy';
@@ -175,6 +178,12 @@ export async function runAutomation(
   }
   const provider = detectProvider(targetUrl);
 
+  // DeepSeek's new conversations are deleted after reading. Rebuild from local history instead
+  // of adding turns to an old saved thread; the existing conversation must remain untouched.
+  if (provider === 'deepseek' && expectThreadUrl) {
+    return { response: '', title: '', threadUrl: null, threadLost: true };
+  }
+
   if (expectThreadUrl) {
     try {
       // Reuse rather than reload when the worker is still parked on the thread: the runner
@@ -205,7 +214,8 @@ export async function runAutomation(
     workerWin, prompt, timeoutMs, navigationTarget, attachments, wantTitle, Boolean(expectThreadUrl), temporaryNewChat,
   ));
   meterText(prompt, result.response);
-  return { ...result, threadUrl: extractThreadUrl(provider, currentUrl(workerWin)) };
+  const { discarded, ...answer } = result;
+  return { ...answer, threadUrl: discarded ? null : extractThreadUrl(provider, currentUrl(workerWin)) };
 }
 
 export function isLoginRequiredError(targetUrl: string, err: unknown): boolean {
@@ -215,6 +225,9 @@ export function isLoginRequiredError(targetUrl: string, err: unknown): boolean {
   }
   if (provider === 'claude') {
     return isClaudeLoginRequiredError(err);
+  }
+  if (provider === 'deepseek') {
+    return isDeepseekLoginRequiredError(err);
   }
   if (provider === 'gemini') {
     const msg = err instanceof Error ? err.message : String(err ?? '');

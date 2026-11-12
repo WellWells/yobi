@@ -95,6 +95,6 @@ export function pruneScheduleState(liveFlowIds: Iterable<string>): void {
   if (changed) scheduleWrite();
 }
 
-export function resetScheduleStateForTests(next: ScheduleState = {}): void {
+export function resetScheduleState(next: ScheduleState = {}): void {
   state = next;
 }

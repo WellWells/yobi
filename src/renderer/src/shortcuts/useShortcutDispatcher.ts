@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { activeCombos, digitPrefixOf, isDispatchable, matchesCombo, SHORTCUTS } from '../../../shared/shortcuts';
 import type { ShortcutDef, ShortcutOverride } from '../../../shared/shortcuts';
+import { SETTINGS_DIALOG_ID } from '../components/SettingsDialog';
 import { NAV_ORDER, useAppStore } from '../store/appStore';
 import type { View } from '../store/appStore';
 import { useShortcutStore } from '../store/shortcutStore';
@@ -10,8 +11,15 @@ import { isMac } from '../utils/keyLabels';
 
 const DISPATCHABLE: ShortcutDef[] = SHORTCUTS.filter(isDispatchable);
 
+/**
+ * A dialog on screen: the Settings dialog stays mounted, hidden, while it is closed. Settings
+ * itself does not count: it is where the settings, logs and about views are drawn, and their
+ * shortcuts (Ctrl+F, Alt+1..5) are meant to work there; a dialog opened from it does count.
+ */
 function modalIsOpen(): boolean {
-  return Boolean(document.querySelector('[aria-modal="true"]'));
+  const settings = document.getElementById(SETTINGS_DIALOG_ID);
+  return Array.from(document.querySelectorAll('[aria-modal="true"]'))
+    .some((dialog) => !settings?.contains(dialog) && dialog.checkVisibility());
 }
 
 /**

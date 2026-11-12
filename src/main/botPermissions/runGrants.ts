@@ -28,8 +28,8 @@ export async function botChatApprovesConnectorChanges(chatKey: string): Promise<
 
 /**
  * Whether the person behind a bot chat key may build and change flows from this chat, read now: a
- * flow admin (`computeBotFlowAdmin`: the owner, or a Telegram admin-grant holder, still paired, in
- * their own private chat). `owner` says which — another admin's flows that read the owner's data
+ * flow admin (`computeBotFlowAdmin`: the owner, or an admin-grant holder, still paired, in their
+ * own private chat; the LINE PC owner in any chat). `owner` says which — another admin's flows that read the owner's data
  * are saved switched off. A failure fails closed.
  */
 export async function botChatFlowBuilder(chatKey: string): Promise<{ owner: boolean } | null> {

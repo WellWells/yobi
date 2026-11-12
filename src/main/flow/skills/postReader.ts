@@ -1,8 +1,9 @@
 import { FlowUserError } from '../userError';
 import { sendLog } from '../../helpers';
+import { ReadCache, readThrough, type CachedRead } from '../../downloader/readCache';
 import { getSiteAccountStatus } from '../../siteAccounts';
 import type { SiteAccount } from '../../../shared/types';
-import type { PostSource, XMediaInput } from '../../../shared/xMedia';
+import { isAccountLink, isStoryLink, type PostSource, type XMediaInput } from '../../../shared/xMedia';
 import { rowById } from '../../../shared/linkSites/rows';
 import type { PostRef, PostSiteId } from '../../../shared/linkSites/types';
 import { readDcardThread } from './dcardReader';
@@ -14,7 +15,7 @@ import { readThreadsPostThread } from './threadsReader';
 import { readTikTokThread } from './tiktokReader';
 import { readWeiboThread } from './weiboReader';
 import { isSignedInOnly, threadForOthers } from './readAccess';
-import type { ReadAccess } from './readAccess';
+import type { ReadAccess, SignInUse } from './readAccess';
 import { readPostThread, type XRead } from './xReader';
 import type { XPost, XThread } from './xPosts';
 
@@ -42,8 +43,8 @@ export interface SiteReadOptions {
   /**
    * The owner's sign-in reads it for someone else (`readForOthers`): a post its site marks as
    * shown to some people only (`XPost.audience` `restricted`) is refused whole, so a site skips
-   * the extra requests that only show more of it (Facebook's photo pages and comments,
-   * Instagram's comments) once the post's own page says so.
+   * the extra requests that only show more of it (Instagram's comments) once the post's own page
+   * says so.
    */
   forOthers?: boolean;
 }
@@ -53,6 +54,12 @@ export interface SiteReader {
   read(link: PostLink, options: SiteReadOptions): Promise<XRead<XThread>>;
   /** The sign-in in Settings the reader uses when allowed; absent for a site Yobi never signs in to. */
   account?: SiteAccount;
+  /**
+   * The site marks no audience Yobi reads, so who could read a post is the only tell (Facebook): a
+   * post a visitor cannot see is shown only signed in, and someone else's read stops at the
+   * visitor's — the sign-in is not asked, and the visitor's "shown only signed in" is theirs.
+   */
+  othersAsVisitor?: true;
   /**
    * The saved media's file name before the item number and extension. Absent: the author's
    * handle, or the site's id when the post has none, then the post id (`postFileStem`).
@@ -78,8 +85,9 @@ export const SITE_READERS: Record<PostSiteId, SiteReader> = {
   },
   // Facebook's comments are a dozen extra requests, which a forward ("media") does not show.
   facebook: {
-    read: (link, { comments, signal, signedIn, forOthers }) => readFacebookThread(link.url, { comments, signal, signedIn, forOthers }),
+    read: (link, { comments, signal, signedIn }) => readFacebookThread(link.url, { comments, signal, signedIn }),
     account: 'facebook',
+    othersAsVisitor: true,
     // The handle is only there for a page with a vanity name, and only on some reads of it: the
     // same video would be saved under two names. Its files are named after the site instead.
     fileStem: (post) => `facebook-${post.id}`,
@@ -124,7 +132,8 @@ export function siteName(source: PostSource): string {
  * kills Instagram's yt-dlp probe, rather than letting the read finish for nobody. `access`: what
  * the run allows (`readAccessOf` the step's config); anything not given is not allowed. `others`
  * (someone else's bot message) reads as a visitor, and may then fall back to the sign-in: the
- * post whole, unless its site marks it as shown to some people only — then nothing of it.
+ * post whole, unless its site marks it as shown to some people only — then nothing of it. `posts`
+ * (an admin in a group) reads a post as `full` and a story or a profile as `others`.
  */
 export async function readLinkedThread(
   input: XMediaInput,
@@ -132,8 +141,62 @@ export async function readLinkedThread(
   signal: AbortSignal | undefined,
   access: Partial<ReadAccess>,
 ): Promise<XThread> {
+  return (await readLinkedThreadCached(input, step, signal, access)).value;
+}
+
+/** A single post read for a forward or its MP3: its media do not change, and their addresses last hours. */
+export const POST_READ_TTL_MS = 60 * 60_000;
+/** A post read with its replies (the analysis): replies keep coming, so a shorter while. */
+export const THREAD_READ_TTL_MS = 30 * 60_000;
+/** A person's stories or latest posts (a menu): a new one may be up any minute. */
+export const MENU_READ_TTL_MS = 5 * 60_000;
+
+const threadReads = new ReadCache<XThread>();
+
+function readTtl(input: XMediaInput, step: string): number {
+  if (isStoryLink(input) || isAccountLink(input)) return MENU_READ_TTL_MS;
+  return step === 'media' ? POST_READ_TTL_MS : THREAD_READ_TTL_MS;
+}
+
+/**
+ * The cache key: the link, whether the replies were read, and the sign-in use the run allows —
+ * a read for someone else (`others`) or as a visitor never answers the owner's signed-in one, nor
+ * the other way round. Who reads decides that use, so it is decided again on every run.
+ */
+function readKey(input: XMediaInput, step: string, signIn: Exclude<SignInUse, 'posts'>): string {
+  return [input.source, input.url, step === 'media' ? 'media' : 'thread', signIn].join('|');
+}
+
+/**
+ * `readLinkedThread`, saying whether the read came from the cache: the same link read again within
+ * `readTtl` is answered from memory (`readCache.ts`), not from the site. A caller whose download
+ * from a kept read fails forgets it (`forgetLinkedThread`) and reads once more, fresh.
+ */
+export async function readLinkedThreadCached(
+  input: XMediaInput,
+  step: string,
+  signal: AbortSignal | undefined,
+  access: Partial<ReadAccess>,
+): Promise<CachedRead<XThread>> {
+  const signIn = signInFor(input, access?.signIn ?? 'none');
+  const read = await readThrough(threadReads, readKey(input, step, signIn), readTtl(input, step), () => readFresh(input, step, signal, access, signIn), { copy: (thread) => structuredClone(thread) });
+  if (read.cached) sendLog(`♻️ [${siteName(input.source)}] ${input.id}: read a moment ago — not asking the site again`);
+  return read;
+}
+
+/** Drops the kept read of this link, so the next one asks the site. */
+export function forgetLinkedThread(input: XMediaInput, step: string, access: Partial<ReadAccess>): void {
+  threadReads.delete(readKey(input, step, signInFor(input, access?.signIn ?? 'none')));
+}
+
+async function readFresh(
+  input: XMediaInput,
+  step: string,
+  signal: AbortSignal | undefined,
+  access: Partial<ReadAccess>,
+  signIn: Exclude<SignInUse, 'posts'>,
+): Promise<XThread> {
   const reader = SITE_READERS[input.source];
-  const signIn = access?.signIn ?? 'none';
   const options: SiteReadOptions = {
     comments: step !== 'media',
     signal,
@@ -147,13 +210,24 @@ export async function readLinkedThread(
 }
 
 /**
+ * The run's use of the sign-in for this link. An admin in a group (`posts`) showed the group the
+ * post they pasted, so it is read as in their own chat; a story or a profile is read as for anyone
+ * else: viewing it is the owner's account seen looking.
+ */
+function signInFor(input: XMediaInput, signIn: SignInUse): Exclude<SignInUse, 'posts'> {
+  if (signIn !== 'posts') return signIn;
+  return isStoryLink(input) || isAccountLink(input) ? 'others' : 'full';
+}
+
+/**
  * Someone else's read (`SignInUse` `others`): the visitor's read stands whenever it gets the post —
  * the owner's sign-in is not touched. Only a post a visitor cannot see is read again with the
  * sign-in, when the site is signed in, and `threadForOthers` decides: a post marked as shown to
  * some people only is refused, any other goes out whole. A story or a profile fails in the
  * visitor's read and is never retried. When the signed-in read gets nothing either, the visitor's
- * failure is what the person reads. Every run reads it anew: a button pressed on the reply
- * (analyze, MP3) is checked again, not trusted.
+ * failure is what the person reads, as it is for a site whose only tell is who could read the
+ * post (`othersAsVisitor`). A button pressed on the reply (analyze, MP3) is a read of its own, not
+ * trusted: answered from the cache only by an earlier read made for someone else too (`readKey`).
  */
 async function readForOthers(input: XMediaInput, step: string, account: SiteAccount, options: SiteReadOptions): Promise<XThread> {
   const reader = SITE_READERS[input.source];
@@ -169,6 +243,7 @@ async function readForOthers(input: XMediaInput, step: string, account: SiteAcco
     visitorFailure = err;
   }
   signal?.throwIfAborted();
+  if (reader.othersAsVisitor) throw visitorFailure;
   if (!(await getSiteAccountStatus(account).catch(() => false))) throw visitorFailure;
   let thread: XThread | null = null;
   try {

@@ -20,6 +20,7 @@ import {
 import type { Config } from '../config';
 import { sendLog, normalizeAiUrl, applyLaunchAtStartup, relaunchApp } from '../helpers';
 import { getLogDir } from '../logFile';
+import { getAppVersion } from '../appVersion';
 import { getMetricsSnapshot, resetMetrics } from '../metrics';
 import { getFlowMetricsView, resetFlowMetrics } from '../flowMetrics';
 import { getConversationTokenStats } from '../conversationTokenStats';
@@ -29,12 +30,16 @@ import { getSecretHealth, isSecretEncryptionAvailable } from '../secretHealth';
 import { clearAuthRecord } from '../mcp/mcpTokenStore';
 import { getMcpRegistry } from '../mcp';
 import { setDataKey } from '../dataKeyStore';
+import { refreshSecretCipher } from '../configEncryption';
+import { probeStoredSecrets } from '../bootstrap/secretHealthSetup';
 import { clearBrokenCalendarSecret } from '../calendar/calendarStore';
 import { flushPendingTempChatResult, isTempChatMode, setTempChatMode } from '../tempChat';
 import { getWorkerWin } from '../windows';
 import { llmLane } from '../flow/lanes';
 import { releaseHotkeySlots, setHotkeyPaused, wouldCollide } from '../hotkey';
-import { normalizeShortcuts } from '../configNormalizers';
+import { normalizeLinkAnalysisPreferences, normalizeShortcuts } from '../configNormalizers';
+import { isSelectableAnalysisTarget } from '../linkAnalysis';
+import { PROMPT_TEMPLATE_MAX_CHARS } from '../../shared/promptAuthor';
 import { isRegisterableAccelerator } from '../../shared/shortcuts';
 import type { ShortcutOverride } from '../../shared/shortcuts';
 import { isLinkRecognitionTarget, withLinkRecognition } from '../../shared/linkRecognition';
@@ -93,13 +98,13 @@ function parseSecretTarget(raw: unknown): SecretTarget | null {
  * stop being warned about it. Refused while the keychain is merely out of reach: that failure
  * is usually temporary, and honouring it would destroy a secret that was about to come back.
  */
-function clearBrokenSecret(raw: unknown): { ok: boolean } {
+async function clearBrokenSecret(raw: unknown): Promise<{ ok: boolean }> {
   const target = parseSecretTarget(raw);
   if (!target) return { ok: false };
-  if (!isSecretEncryptionAvailable()) return { ok: false };
+  if (!(await refreshSecretCipher())) return { ok: false };
 
   if (target.scope === 'mcp') clearAuthRecord(target.id);
-  else if (target.scope === 'dataKey') setDataKey(target.id, '');
+  else if (target.scope === 'dataKey') await setDataKey(target.id, '');
   else if (target.scope === 'calendar') clearBrokenCalendarSecret(target.id);
   else clearStoredSecret(target.scope, target.id, target.field);
 
@@ -108,7 +113,13 @@ function clearBrokenSecret(raw: unknown): { ok: boolean } {
 }
 
 export function registerSettingsHandlers(ctx: IpcContext): void {
-  ipcMain.handle(IPC.GET_SECRET_HEALTH, () => getSecretHealth());
+  ipcMain.handle(IPC.GET_SECRET_HEALTH, async () => {
+    // Asked again every time. A keychain that was out of reach at boot (a Linux keyring that
+    // came up late) gets the stores read again, so the warning stops naming secrets that are fine.
+    const wasAvailable = isSecretEncryptionAvailable();
+    if (await refreshSecretCipher() && !wasAvailable) await probeStoredSecrets();
+    return getSecretHealth();
+  });
   ipcMain.handle(IPC.DELETE_BROKEN_SECRET, (_event, raw: unknown) => clearBrokenSecret(raw));
 
   ipcMain.handle(IPC.GET_HOTKEY, () => config.hotkey);
@@ -205,6 +216,18 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
   });
 
   ipcMain.handle(IPC.GET_YOUTUBE_PROMPT, () => config.youtubePrompt);
+  ipcMain.handle(IPC.GET_LINK_ANALYSIS_PREFERENCES, () => config.linkAnalysis);
+  ipcMain.handle(IPC.UPDATE_LINK_ANALYSIS_PREFERENCES, (_event, prefs: unknown) => {
+    const next = normalizeLinkAnalysisPreferences(prefs);
+    const current = config.linkAnalysis;
+    if (next.mapsPrompt.length > PROMPT_TEMPLATE_MAX_CHARS) throw new Error('Maps prompt is too long');
+    if (!isSelectableAnalysisTarget(next.mapsTargetUrl, current?.mapsTargetUrl)
+      || !isSelectableAnalysisTarget(next.articleTargetUrl, current?.articleTargetUrl)) {
+      throw new Error('Unknown analysis model');
+    }
+    saveConfig({ linkAnalysis: next });
+    return config.linkAnalysis;
+  });
   ipcMain.handle(IPC.UPDATE_YOUTUBE_PROMPT, (_event, prompt: unknown) => {
     config.youtubePrompt = typeof prompt === 'string' ? prompt : '';
     saveConfig({ youtubePrompt: config.youtubePrompt });
@@ -287,7 +310,7 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
     return error === '';
   });
 
-  ipcMain.handle(IPC.GET_APP_VERSION, () => app.getVersion());
+  ipcMain.handle(IPC.GET_APP_VERSION, () => getAppVersion());
   ipcMain.handle(IPC.GET_UPDATE_SOURCE, () => (process.windowsStore ? 'store' : 'github'));
 
   ipcMain.handle(IPC.GET_THEME, () => config.theme);
@@ -307,6 +330,12 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
   ipcMain.handle(IPC.UPDATE_SHOW_TOKEN_USAGE, (_event, show: boolean) => {
     config.showTokenUsage = Boolean(show);
     saveConfig({ showTokenUsage: config.showTokenUsage });
+    return true;
+  });
+  ipcMain.handle(IPC.GET_SHOW_RECAP, () => config.showRecap);
+  ipcMain.handle(IPC.UPDATE_SHOW_RECAP, (_event, show: boolean) => {
+    config.showRecap = Boolean(show);
+    saveConfig({ showRecap: config.showRecap });
     return true;
   });
   ipcMain.handle(IPC.GET_LINK_RECOGNITION, (): LinkRecognitionState => currentLinkRecognition());

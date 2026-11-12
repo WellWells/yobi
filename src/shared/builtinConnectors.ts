@@ -142,10 +142,10 @@ export const BUILTIN_CONNECTORS: readonly BuiltinConnector[] = [
   {
     id: BUILTIN_PAGE_SERVER_ID,
     flag: 'pageConnectorEnabled',
-    descriptor: () => builtinServerConfig('page', 'Get Page Text'),
+    descriptor: () => builtinServerConfig('page', 'Universal Page Reader'),
     // No bare 內文 or 新聞: a match turns the message into an agent run, and it is on by default. Its
     // title counts as a keyword too, so it is not a phrase people say either. A link is what names it.
-    keywords: ['取得內文', '获取正文', '網頁內文', '网页内文', '新聞內文', '新聞全文', '文章全文'],
+    keywords: ['通用網頁讀取', '通用网页读取', '取得內文', '获取正文', '網頁內文', '网页内文', '新聞內文', '新聞全文', '文章全文'],
     mentionedIn: asksAboutLink,
     // Public pages, read signed out, public addresses only.
     publicData: true,

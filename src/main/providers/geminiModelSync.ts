@@ -19,7 +19,7 @@ import type {
   GeminiPickerSnapshot,
   GeminiPickerTarget,
 } from '../../shared/geminiModels';
-import { GEMINI_MODE_BUTTON_SELECTOR, buildGeminiModelPickerScript } from './geminiModelScript';
+import { GEMINI_MODE_BUTTON_SELECTOR, buildGeminiModelPickerScript, namedGeminiPickerResult } from './geminiModelScript';
 import type { GeminiPickerResult } from './geminiModelScript';
 import { GEMINI_SIGNED_OUT_PROMPT_CAP, geminiPromptCap, noteGeminiPageSignIn } from './geminiSignInState';
 
@@ -45,7 +45,9 @@ export function setGeminiModelChoice(patch: Partial<GeminiModelChoice>): GeminiM
 }
 
 async function runPicker(wc: WebContents, target: GeminiPickerTarget | null): Promise<GeminiPickerResult> {
-  return executeWithTimeout<GeminiPickerResult>(wc, buildGeminiModelPickerScript(target), PICKER_TIMEOUT_MS);
+  return namedGeminiPickerResult(
+    await executeWithTimeout<GeminiPickerResult>(wc, buildGeminiModelPickerScript(target), PICKER_TIMEOUT_MS),
+  );
 }
 
 /** Keeps the catalog and the setting in step with what the page just showed. */
@@ -143,9 +145,10 @@ async function waitForPicker(wc: WebContents, timeoutMs: number): Promise<void> 
  * For a list that is missing or stale: loads Gemini just far enough to read its picker. Leaving
  * the worker on Gemini afterwards costs the next other-provider send one reload at most.
  */
-export async function refreshGeminiModels(workerWin: BrowserWindow): Promise<void> {
+export async function refreshGeminiModels(workerWin: BrowserWindow, reload = false): Promise<void> {
   const wc = workerWin.webContents;
-  if (!isProviderHost(wc.getURL(), 'gemini') || wc.isLoading()) {
+  // A separate sign-in window updates shared cookies, but not the worker's loaded document.
+  if (reload || !isProviderHost(wc.getURL(), 'gemini') || wc.isLoading()) {
     applyWorkerUserAgent(wc, WORKER_USER_AGENTS.gemini);
     await navigateAndWait(wc, PROVIDER_URLS.gemini);
   }

@@ -2,7 +2,18 @@ import type { GeminiModelChoice, GeminiModelState } from '../../../shared/gemini
 import type { ClaudeModelChoice, ClaudeModelState } from '../../../shared/claudeModels';
 import type { ChatgptModelChoice, ChatgptModelState } from '../../../shared/chatgptModels';
 import type { McpFlowToolsRequest, McpFlowToolsResult } from '../../../shared/mcpFlowStep';
+import type { AiNameRequest, AiNameResult } from '../../../shared/aiName';
+import type {
+  FlowAssistEditRequest, FlowAssistEditResult, FlowAssistExplainRequest, FlowAssistExplainResult, FlowAssistNamesRequest, FlowAssistNamesResult,
+} from '../../../shared/flowAssist';
+import type { PromptAuthorRequest, PromptAuthorResult } from '../../../shared/promptAuthor';
 import type { MemoryEditResult, MemoryNote, BotSelfChange, UserMemorySnapshot } from '../../../shared/userMemory';
+import type { AgentSkillView, BundledSkillChange, SkillImportResult, SkillImportSource, SkillInstallResult, SkillSaveResult } from '../../../shared/agentSkills';
+import type { TrustedCommand } from '../../../shared/trustedCommands';
+import type {
+  SkillDraftProgress, SkillDraftRequest, SkillDraftResult, SkillFilesView, SkillTestRequest,
+  SkillTestResult, SkillTextFiles, SkillTryRequest, SkillTryResult,
+} from '../../../shared/skillAuthoring';
 import type {
   BotApprovePairingRequest,
   BotApprovePairingResult,
@@ -22,6 +33,13 @@ import type {
   MemoryCurateProposeResult,
 } from '../../../shared/memoryCurate';
 import type { WritingToolsProgress, WritingToolsRequest, WritingToolsResult } from '../../../shared/writingTools';
+import type {
+  FlowSortApplyResult,
+  FlowSortPick,
+  FlowSortProposeRequest,
+  FlowSortProposeResult,
+  FlowSortUndoResult,
+} from '../../../shared/flowFolderSort';
 import type { ConversationMenuCommandEvent, ConversationMenuTarget } from '../../../shared/conversationMenu';
 import type { DocAssistantProgress, DocAssistantRequest, DocAssistantResult } from '../../../shared/docAssistant';
 import type {
@@ -34,6 +52,7 @@ import type { TelegramLargeUploadInput, TelegramLargeUploadResult } from '../../
 import type { ConversationHistoryList, ConversationRestoreResult } from '../../../shared/conversationHistory';
 import type { ConversationMovedEvent, ConversationMoveResult } from '../../../shared/conversationMove';
 import type { ConversationFolder, FolderActionResult, FolderDeleteResult } from '../../../shared/conversationFolders';
+import type { FlowFolder, FlowFolderDeleteResult, FlowFolderMoveResult, FlowFolderResult } from '../../../shared/flowFolders';
 import type { SidebarViewPrefs } from '../../../shared/sidebarView';
 import type { LinkRecognitionState, LinkRecognitionTarget } from '../../../shared/linkRecognition';
 import type {
@@ -62,6 +81,7 @@ import type {
   BotBuiltinCommands,
   BotByokCommandInfo,
   BotLlmDirectConfig,
+  LinkAnalysisPreferences,
   ByokConnectionProbe,
   ByokGroupSaveRequest,
   ByokInstanceSaveRequest,
@@ -80,12 +100,16 @@ import type {
   ScraperPickRequest,
   ScraperPickResult,
   FlowDefinition,
+  SchedulePreview,
+  TriggerConfig,
   FlowExecutionEvent,
   FlowExecutionLog,
   FlowExecutionResult,
+  FlowBuildBlocker,
   FlowBuildOutcome,
   FlowBuildPayload,
   FlowBuildRequestPayload,
+  SkillType,
   HiddenSources,
   MarkdownCaptureRequest,
   BatchCaptureFormat,
@@ -103,6 +127,8 @@ import type {
   TrashResult,
   ResponseEditRequest,
   ResponseEditResult,
+  PromptRewindRequest,
+  PromptRewindResult,
   StartedConversation,
   ConversationImportResult,
   StashedAttachment,
@@ -130,6 +156,7 @@ import type {
   TelegramSettingsSnapshot,
   LineSettingsSnapshot,
   LineChatListResult,
+  LineSelfTargetListResult,
   LineRuntimeSnapshot,
   SocketBotActionResult,
   SocketBotPlatform,
@@ -220,6 +247,8 @@ export const fileApi = {
     window.electronAPI.setConversationsPinned({ paths, pinned }),
   editTurnResponse: (request: ResponseEditRequest): Promise<ResponseEditResult> =>
     window.electronAPI.editTurnResponse(request),
+  rewindConversation: (request: PromptRewindRequest): Promise<PromptRewindResult> =>
+    window.electronAPI.rewindConversation(request),
   startConversation: (prompt: string): Promise<StartedConversation | null> =>
     window.electronAPI.startConversation(prompt),
   importConversations: (filePaths: string[]): Promise<ConversationImportResult> =>
@@ -283,6 +312,28 @@ export const folderApi = {
   onChanged: (cb: (folders: ConversationFolder[]) => void): (() => void) => window.electronAPI.onFolderListChanged(cb),
 };
 
+/** The flow sidebar's folders, addressed by name; kept apart from the flows themselves. */
+export const flowFolderApi = {
+  list: (): Promise<FlowFolder[]> => window.electronAPI.listFlowFolders(),
+  create: (name: string): Promise<FlowFolderResult> => window.electronAPI.createFlowFolder(name),
+  /** Makes a deleted folder again with the flows that were in it (those still at the top level). */
+  restore: (name: string, flowIds: string[]): Promise<FlowFolderResult> => window.electronAPI.createFlowFolder(name, flowIds),
+  rename: (from: string, to: string): Promise<FlowFolderResult> => window.electronAPI.renameFlowFolder(from, to),
+  /** Its flows go back to the top level (`flowIds` undoes it). */
+  remove: (name: string): Promise<FlowFolderDeleteResult> => window.electronAPI.deleteFlowFolder(name),
+  /** `folder`: '' = the top level; `before`: the flow they were dropped on. */
+  move: (flowIds: string[], folder: string, before?: string): Promise<FlowFolderMoveResult> =>
+    window.electronAPI.moveFlowsToFolder(flowIds, folder, before),
+  onChanged: (cb: (folders: FlowFolder[]) => void): (() => void) => window.electronAPI.onFlowFoldersChanged(cb),
+  /** Sorting unfiled flows: the model proposes folders, the user ticks what is filed. */
+  getSortModel: (): Promise<string> => window.electronAPI.getFlowSortModel(),
+  proposeSort: (request: FlowSortProposeRequest): Promise<FlowSortProposeResult> => window.electronAPI.proposeFlowSort(request),
+  cancelSort: (): Promise<boolean> => window.electronAPI.cancelFlowSort(),
+  applySort: (proposalId: string, picks: FlowSortPick[]): Promise<FlowSortApplyResult> =>
+    window.electronAPI.applyFlowSort(proposalId, picks),
+  undoSort: (): Promise<FlowSortUndoResult> => window.electronAPI.undoFlowSort(),
+};
+
 export const sidebarViewApi = {
   get: (): Promise<SidebarViewPrefs> => window.electronAPI.getSidebarView(),
   update: (patch: Partial<SidebarViewPrefs>): Promise<SidebarViewPrefs> => window.electronAPI.updateSidebarView(patch),
@@ -308,6 +359,10 @@ export const settingsApi = {
     window.electronAPI.updatePromptPreferences(prefs),
   getYoutubePrompt: (): Promise<string> => window.electronAPI.getYoutubePrompt(),
   updateYoutubePrompt: (prompt: string): Promise<boolean> => window.electronAPI.updateYoutubePrompt(prompt),
+  generatePromptDraft: (request: PromptAuthorRequest): Promise<PromptAuthorResult> => window.electronAPI.generatePromptDraft(request),
+  cancelPromptDraft: (id: string): Promise<boolean> => window.electronAPI.cancelPromptDraft(id),
+  getLinkAnalysisPreferences: (): Promise<LinkAnalysisPreferences> => window.electronAPI.getLinkAnalysisPreferences(),
+  updateLinkAnalysisPreferences: (prefs: LinkAnalysisPreferences): Promise<LinkAnalysisPreferences> => window.electronAPI.updateLinkAnalysisPreferences(prefs),
   getSyncSystemLanguageToModel: (): Promise<boolean> => window.electronAPI.getSyncSystemLanguageToModel(),
   updateSyncSystemLanguageToModel: (enabled: boolean): Promise<boolean> =>
     window.electronAPI.updateSyncSystemLanguageToModel(enabled),
@@ -335,6 +390,7 @@ export const settingsApi = {
   resetSettings: () => window.electronAPI.resetSettings(),
   getLayoutMode: (): Promise<string> => window.electronAPI.getLayoutMode(),
   getShowTokenUsage: (): Promise<boolean> => window.electronAPI.getShowTokenUsage(),
+  getShowRecap: (): Promise<boolean> => window.electronAPI.getShowRecap(),
   getLinkRecognition: (): Promise<LinkRecognitionState> => window.electronAPI.getLinkRecognition(),
   setLinkRecognition: (target: LinkRecognitionTarget, on: boolean): Promise<LinkRecognitionState> =>
     window.electronAPI.setLinkRecognition(target, on),
@@ -422,6 +478,7 @@ export const botApi = {
 export const lineApi = {
   getSettings: (): Promise<LineSettingsSnapshot> => window.electronAPI.getLineSettings(),
   listChats: (): Promise<LineChatListResult> => window.electronAPI.listLineChats(),
+  listSelfTargets: (): Promise<LineSelfTargetListResult> => window.electronAPI.listLineSelfTargets(),
   updateEnabled: (enabled: boolean): Promise<{ ok: boolean; message?: string }> =>
     window.electronAPI.updateLineEnabled(enabled),
   updateCredentials: (creds: LineCredentialsUpdate): Promise<{ ok: boolean; message?: string }> =>
@@ -531,6 +588,33 @@ export const siteAccountApi = {
   onStatusChanged: (cb: (status: SiteAccountStatus) => void) => window.electronAPI.onSiteAccountStatusChanged(cb),
 };
 
+export const skillsApi = {
+  list: (): Promise<AgentSkillView[]> => window.electronAPI.listSkills(),
+  restoreBundled: (change: BundledSkillChange): Promise<SkillSaveResult> => window.electronAPI.restoreBundledSkill(change),
+  setEnabled: (name: string, enabled: boolean): Promise<AgentSkillView[]> => window.electronAPI.setSkillEnabled(name, enabled),
+  pickImport: (kind: 'folder' | 'file'): Promise<SkillImportResult | null> => window.electronAPI.pickSkillImport(kind),
+  inspect: (source: Exclude<SkillImportSource, { kind: 'path' }>): Promise<SkillImportResult> => window.electronAPI.inspectSkillImport(source),
+  install: (previewId: string, keys: string[]): Promise<SkillInstallResult> => window.electronAPI.installSkills(previewId, keys),
+  discard: (previewId: string): Promise<void> => window.electronAPI.discardSkillImport(previewId),
+  read: (name: string): Promise<SkillFilesView | null> => window.electronAPI.readSkill(name),
+  save: (name: string, files: SkillTextFiles): Promise<SkillSaveResult> => window.electronAPI.saveSkill(name, files),
+  create: (files: SkillTextFiles): Promise<SkillSaveResult> => window.electronAPI.createSkill(files),
+  remove: (name: string): Promise<AgentSkillView[]> => window.electronAPI.deleteSkill(name),
+  exportZip: (name: string): Promise<boolean> => window.electronAPI.exportSkill(name),
+  openFolder: (name?: string): Promise<boolean> => window.electronAPI.openSkillFolder(name),
+  onChanged: (cb: (skills: AgentSkillView[]) => void) => window.electronAPI.onSkillsChanged(cb),
+  draft: (request: SkillDraftRequest): Promise<SkillDraftResult> => window.electronAPI.draftSkill(request),
+  onDraftProgress: (cb: (progress: SkillDraftProgress) => void) => window.electronAPI.onSkillDraftProgress(cb),
+  tryOut: (request: SkillTryRequest): Promise<SkillTryResult> => window.electronAPI.trySkill(request),
+  test: (request: SkillTestRequest): Promise<SkillTestResult> => window.electronAPI.testSkill(request),
+  cancelDraft: (): Promise<void> => window.electronAPI.cancelSkillDraft(),
+  draftModel: (): Promise<string> => window.electronAPI.getSkillDraftModel(),
+  checkUpdates: (): Promise<AgentSkillView[]> => window.electronAPI.checkSkillUpdates(),
+  trustedCommands: (): Promise<TrustedCommand[]> => window.electronAPI.listTrustedCommands(),
+  removeTrustedCommand: (entry: Pick<TrustedCommand, 'program' | 'verb'>): Promise<TrustedCommand[]> => window.electronAPI.removeTrustedCommand(entry),
+  onTrustedCommandsChanged: (cb: (list: TrustedCommand[]) => void) => window.electronAPI.onTrustedCommandsChanged(cb),
+};
+
 export const userMemoryApi = {
   get: (): Promise<UserMemorySnapshot> => window.electronAPI.getUserMemory(),
   setEnabled: (enabled: boolean): Promise<UserMemorySnapshot> => window.electronAPI.setUserMemoryEnabled(enabled),
@@ -555,6 +639,20 @@ export const writingToolsApi = {
   run: (request: WritingToolsRequest): Promise<WritingToolsResult> => window.electronAPI.runWritingTools(request),
   cancel: (id: string): Promise<boolean> => window.electronAPI.cancelWritingTools(id),
   onProgress: (cb: (progress: WritingToolsProgress) => void) => window.electronAPI.onWritingToolsProgress(cb),
+};
+
+/** The ✨ on a rename box: one name from the picked model; the model list ticks `writingToolsApi.getModel`. */
+export const aiNameApi = {
+  suggest: (request: AiNameRequest): Promise<AiNameResult> => window.electronAPI.suggestAiName(request),
+  cancel: (id: string): Promise<boolean> => window.electronAPI.cancelAiName(id),
+};
+
+/** The flow editor's AI assistant: proposals for the open draft; nothing is saved by these. */
+export const flowAssistApi = {
+  edit: (request: FlowAssistEditRequest): Promise<FlowAssistEditResult> => window.electronAPI.assistFlowEdit(request),
+  explain: (request: FlowAssistExplainRequest): Promise<FlowAssistExplainResult> => window.electronAPI.assistFlowExplain(request),
+  names: (request: FlowAssistNamesRequest): Promise<FlowAssistNamesResult> => window.electronAPI.assistFlowNames(request),
+  cancel: (id: string): Promise<boolean> => window.electronAPI.cancelFlowAssist(id),
 };
 
 export const docAssistantApi = {
@@ -606,6 +704,7 @@ export const secretApi = {
 export const promptApi = {
   triggerWithOptions: (options: PromptTriggerOptions): Promise<string | null> =>
     window.electronAPI.triggerPromptWithOptions(options),
+  stop: (sendId: string): Promise<boolean> => window.electronAPI.stopChatSend(sendId),
 };
 
 /** A chat line starting with `!`: run on this computer, then read by the model. */
@@ -635,8 +734,10 @@ export const clipboardApi = {
 
 export const updateApi = {
   checkForUpdates: (): Promise<boolean> => window.electronAPI.checkForUpdates(),
+  installUpdate: (): Promise<boolean> => window.electronAPI.installUpdate(),
   getUpdateSource: (): Promise<UpdateSource> => window.electronAPI.getUpdateSource(),
   onUpdateAvailable: (cb: (payload: UpdateAvailablePayload) => void) => window.electronAPI.onUpdateAvailable(cb),
+  onUpdateDownloaded: (cb: (payload: UpdateAvailablePayload) => void) => window.electronAPI.onUpdateDownloaded(cb),
   onUpdateNotAvailable: (cb: () => void) => window.electronAPI.onUpdateNotAvailable(cb),
   onUpdateError: (cb: () => void) => window.electronAPI.onUpdateError(cb),
   openExternal: (url: string): Promise<boolean> => window.electronAPI.openExternalUrl(url),
@@ -668,6 +769,8 @@ export const attachmentApi = {
   stashBytes: (request: AttachmentStashRequest): Promise<StashedAttachment> =>
     window.electronAPI.stashAttachmentBytes(request),
   fromClipboard: (): Promise<StashedAttachment | null> => window.electronAPI.attachmentFromClipboard(),
+  /** The copied files' paths; with none copied, main pastes the clipboard the ordinary way. */
+  pastePaths: (): Promise<string[]> => window.electronAPI.clipboardPastePaths(),
   /** The screen region the region hotkey boxed, once; null when there is none waiting. */
   takeRegionCapture: (): Promise<StashedAttachment | null> => window.electronAPI.takeRegionCapture(),
   onRegionCaptureReady: (cb: () => void): (() => void) => window.electronAPI.onRegionCaptureReady(cb),
@@ -732,6 +835,8 @@ export const ipcEvents = {
 
 export const flowApi = {
   getAll: (): Promise<FlowDefinition[]> => window.electronAPI.getFlows(),
+  /** The scheduler's own next fire times for a trigger. */
+  previewSchedule: (trigger: TriggerConfig): Promise<SchedulePreview> => window.electronAPI.previewSchedule(trigger),
   /**
    * `import` tags the flow's first version as imported (the import dialog and the template wizard).
    * `reviewed` is the editor's own Save: only it lifts a chat-made flow's public-web-only mark.
@@ -748,8 +853,6 @@ export const flowApi = {
   setFlowsEnabled: (flowIds: string[], enabled: boolean): Promise<FlowDefinition[]> =>
     window.electronAPI.setFlowsEnabled(flowIds, enabled),
   duplicateFlow: (flowId: string): Promise<FlowDefinition | null> => window.electronAPI.duplicateFlow(flowId),
-  moveFlow: (flowId: string, direction: 'up' | 'down'): Promise<FlowDefinition[]> =>
-    window.electronAPI.moveFlow(flowId, direction),
   reorderFlows: (orderedIds: string[]): Promise<FlowDefinition[]> =>
     window.electronAPI.reorderFlows(orderedIds),
   execute: (flowId: string): Promise<FlowExecutionResult> => window.electronAPI.executeFlow(flowId),
@@ -758,10 +861,13 @@ export const flowApi = {
   onChatCommandProgress: (cb: (payload: { progressId: string; progress: StepProgress }) => void) =>
     window.electronAPI.onChatCommandProgress(cb),
   abort: (flowId: string): Promise<boolean> => window.electronAPI.abortFlow(flowId),
+  stopChatCommand: (progressId: string): Promise<boolean> => window.electronAPI.stopChatCommand(progressId),
   build: (request: FlowBuildRequestPayload): Promise<FlowBuildOutcome> => window.electronAPI.generateFlow(request),
   onBuildProgress: (cb: (payload: FlowBuildPayload) => void): (() => void) =>
     window.electronAPI.onFlowBuildProgress(cb),
   getAiUrl: (): Promise<string> => window.electronAPI.getFlowAiUrl(),
+  /** Which of these step types still lack a one-time setup (the same check "Create with AI" runs). */
+  setupBlockers: (skills: SkillType[]): Promise<FlowBuildBlocker[]> => window.electronAPI.getFlowSetupBlockers(skills),
   exportFlow: (flow: FlowDefinition): Promise<boolean> => window.electronAPI.exportFlow(flow),
   exportFlowResult: (content: string, defaultFileName: string): Promise<boolean> =>
     window.electronAPI.exportFlowResult(content, defaultFileName),
@@ -773,8 +879,8 @@ export const agentApi = {
     window.electronAPI.runAgentCommand(goal, targetUrl, runId, conversationPath, attachments, mcpServerIds, web),
   setConversationConnectors: (filePath: string, serverIds: string[], web?: boolean, agent?: boolean): Promise<boolean> =>
     window.electronAPI.setConversationConnectors(filePath, serverIds, web, agent),
-  resume: (runId: string, answer?: string): Promise<AgentCommandResult> =>
-    window.electronAPI.resumeAgentRun(runId, answer),
+  resume: (runId: string, answer?: string, providerUrl?: string): Promise<AgentCommandResult> =>
+    window.electronAPI.resumeAgentRun(runId, answer, providerUrl),
   cancel: (runId: string): Promise<boolean> => window.electronAPI.cancelAgentRun(runId),
   listResumable: (): Promise<AgentRunSummary[]> => window.electronAPI.listResumableAgentRuns(),
   getRun: (runId: string): Promise<AgentRunState | null> => window.electronAPI.getAgentRun(runId),
@@ -805,6 +911,12 @@ export const ytSubsApi = {
 export const xPostsApi = {
   hasCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.xPostsHasCheckpoint(stepId),
   clearCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.xPostsClearCheckpoint(stepId),
+};
+
+/** Where a line_read step's "only new messages" left off, per chat. */
+export const lineReadApi = {
+  hasCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.lineReadHasCheckpoint(stepId),
+  clearCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.lineReadClearCheckpoint(stepId),
 };
 
 export const pttBoardApi = {

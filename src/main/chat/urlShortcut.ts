@@ -22,6 +22,8 @@ export interface UrlShortcutOptions {
   hotelReviews?: boolean;
   /** The "AI responses" settings, sent ahead of the prompt the way a chat send carries them. */
   instruction?: string;
+  /** A provider command names the target for this request. */
+  preserveTarget?: boolean;
 }
 
 function withInstruction(prompt: string, instruction: string | undefined): string {
@@ -45,7 +47,9 @@ export async function runUrlShortcut(
     langData: strings,
     youtubePrompt: config.youtubePrompt,
     targetUrl,
+    ...(options.preserveTarget ? { preserveTarget: true } : {}),
     onLog: sendLog,
+    ...(signal ? { signal } : {}),
     ...(options.hotelReviews ? { hotelReviews: true } : {}),
   });
 

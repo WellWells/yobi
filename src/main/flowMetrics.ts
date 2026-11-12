@@ -20,7 +20,8 @@ import type { FlowRunEvent, FlowStepEvent } from './flowMeter';
 const store = new Store<FlowMetricsSnapshot>({
   name: 'flow-metrics',
   cwd: getConfigDir(),
-  defaults: emptyFlowMetrics(),
+  // Spread for conf 16's dot-path `defaults` type; see the same note in metrics.ts.
+  defaults: { ...emptyFlowMetrics() },
   clearInvalidConfig: true,
 });
 

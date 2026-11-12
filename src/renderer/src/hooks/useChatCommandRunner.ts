@@ -9,7 +9,7 @@ import type { ExportToast } from './useCaptureExport';
 import { fillTemplate } from '../../../shared/fillTemplate';
 
 export function useChatCommandRunner(setToast: (toast: ExportToast) => void) {
-  const { t } = useI18nStore();
+  const t = useI18nStore((s) => s.t);
   const { begin, finish, fail } = useCommandTurn();
 
   // A pasted link's built-in was never typed as a command: its failure is said in its own words.
@@ -40,15 +40,13 @@ export function useChatCommandRunner(setToast: (toast: ExportToast) => void) {
     try {
       const { result, filePath } = await flowApi.runChatCommand(cmd.flowId, cmd.command, input, conversationPath, sendId, modelUrl);
       if (!result.success) {
-        fail(sendId);
-        failToast(cmd.command, result.displayError ?? result.error ?? '');
+        if (!fail(sendId)) failToast(cmd.command, result.displayError ?? result.error ?? '');
         return;
       }
       await finish(sendId, filePath);
       if (!filePath && !isUntypedBuiltinCommand(cmd.flowId)) doneToast(cmd.command);
     } catch (err: unknown) {
-      fail(sendId);
-      failToast(cmd.command, err instanceof Error ? err.message : String(err));
+      if (!fail(sendId)) failToast(cmd.command, err instanceof Error ? err.message : String(err));
     } finally {
       stopProgress();
     }

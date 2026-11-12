@@ -33,13 +33,14 @@ const PROVIDER_DESCRIPTION_KEYS: Record<Provider, string> = {
   claude: 'telegram.commands.claude',
   gemini: 'telegram.commands.gemini',
   perplexity: 'telegram.commands.pplx',
+  deepseek: 'telegram.commands.deepseek',
 };
 
 const BOT_RESERVED_STATIC_COMMANDS = [
   'start', 'init', 'status', 'restart', 'groups', 'users', 'invite', 'pair', 'help', BUILTIN_NEW_COMMAND,
 ];
 
-export const BOT_STATIC_COMMANDS = [
+const BOT_STATIC_COMMANDS = [
   ...BOT_RESERVED_STATIC_COMMANDS,
   ...Object.values(DEFAULT_BUILTIN_COMMANDS),
 ];

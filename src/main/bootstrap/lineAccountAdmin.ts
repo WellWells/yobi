@@ -18,6 +18,8 @@ import type { ManagedAccountSource } from '../botPermissions/managedAccounts';
 import type { InviteStore } from '../botPermissions/invites';
 import { clearBotPairingRequest, findBotContact } from '../botDirectory';
 import { config } from '../config';
+import { isBotSelfAccount } from '../memory/memoryContext';
+import { loadUserMemory } from '../memory/memoryStore';
 import { sendLog, sendToRenderer } from '../helpers';
 import { getLineRuntimeSnapshot } from '../lineBridge';
 import { issueLineAccountCode, revokeLineAccountCode, unpairLineAccount, validLinePairingCodes } from '../lineAccounts';
@@ -29,6 +31,17 @@ const LINE_ACCOUNTS: ManagedAccountSource = {
   paired: () => config.line.pairing.pairedUsers.map((user) => ({ id: user.userId, name: user.displayName ?? '' })),
   isUserId: (id) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id),
 };
+
+/**
+ * Who gets LINE's request and join cards: the managers (the owner and the admin-grant holders,
+ * paired), owner first — the day's pushes to managers run out from the end of this list.
+ */
+export async function lineManagerIds(): Promise<string[]> {
+  const managers = (await pairedMenuAccess('line')).filter((entry) => entry.flowAdmin).map((entry) => entry.userId);
+  const state = await loadUserMemory().catch(() => null);
+  const isOwner = (id: string): boolean => state !== null && isBotSelfAccount(state, 'line', id);
+  return [...managers.filter(isOwner), ...managers.filter((id) => !isOwner(id))];
+}
 
 /** The settings page refetches its LINE snapshot on this broadcast. */
 function announce(): void {
@@ -62,8 +75,7 @@ export function lineAccountAdmin(): LineAccountAdminSource {
     },
     unpair: async (userId) => unpairLineAccount(userId),
     isConnectorOn: isBuiltinConnectorOn,
-    // LINE has no admin grant: the owner alone.
-    getManagerIds: async () => (await pairedMenuAccess('line')).filter((entry) => entry.flowAdmin).map((entry) => entry.userId),
+    getManagerIds: lineManagerIds,
     noteRequest: async ({ userId, displayName }) => {
       const before = (await findBotContact('line', 'user', userId))?.pairingRequestedAt;
       // LINE's display name goes where the directory keeps a first name, as `recordBotUse` does.

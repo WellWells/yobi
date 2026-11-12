@@ -20,6 +20,9 @@ export const AppTextInput = React.forwardRef<HTMLInputElement, AppTextInputProps
     size="sm"
     variant="default"
     styles={mergeInputStyles(buildInputStyles({ tone, mono, numeric }), styles)}
+    // A mono field holds a code (a command, a variable name): a spelling squiggle there is noise,
+    // and the app's right-click menu has no suggestions to offer for it.
+    spellCheck={mono ? false : undefined}
     {...props}
   />
 ));

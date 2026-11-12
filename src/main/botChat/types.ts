@@ -1,7 +1,7 @@
 import type { BotCommandAccessMode } from '../../shared/botCommandAccess';
 import type { LinkSiteFilter } from '../../shared/linkRecognition';
-import type { BotBuiltinCommandKey, BotLlmDirectConfig, BotPlatform, BotRunKind, FlowExecutionResult } from '../../shared/types';
-import type { BotBuiltinRunResult, BotMessageSent } from '../botBuiltinCommands';
+import type { AgentReplyContext, BotBuiltinCommandKey, BotLlmDirectConfig, BotPlatform, BotRunKind, FlowExecutionResult } from '../../shared/types';
+import type { BotBuiltinRunRequest, BotBuiltinRunResult, BotMessageSent } from '../botBuiltinCommands';
 import type { ByokCommandDef } from '../byokCommands';
 import type { ResolvedBuiltinCommand, ResolvedProviderCommand } from '../providerCommands';
 import type { BotRequestPace } from '../botRequestPace';
@@ -61,6 +61,16 @@ export interface BotChatOutput<E extends BotChatEvent> {
    */
   quietStart?: boolean;
   /**
+   * False = the platform issues no pairing codes (LINE PC): `/pair` from someone not let in is no
+   * pairing attempt — no code checked, no attempt counted — but a line like any other of theirs.
+   */
+  pairingCodes?: false;
+  /**
+   * Whether `/help` lists this owner command (`ownerCommands`) to this admin; absent = to every
+   * admin. LINE PC's `/groups` is the owner's alone, so no other admin is shown it.
+   */
+  listsOwnerCommand?: (name: string, userId: string) => boolean;
+  /**
    * An agent run's answer, written the platform's way. False only for a verbatim question (a shell
    * or connector approval) that does not fit one message whole: it must not be clipped, so the
    * router withdraws the question instead.
@@ -75,6 +85,40 @@ export interface BotChatOutput<E extends BotChatEvent> {
    * asking message, quoted; Slack: the channel thread). Undefined when replies there do not (a Slack DM).
    */
   replyRef?: (event: E) => string | undefined;
+  /**
+   * What the chat around a request brings to its agent run (the message it quotes, the group's
+   * talk), read when the run starts: a message or a model command, never `/search` nor the answer
+   * to the agent's question (its run already has it). Absent, or empty = a run with none.
+   */
+  agentContext?: (event: E, input: string) => Promise<BotAgentContext>;
+  /**
+   * The pictures or files an agent run's request is about (LINE PC: the photo a "Yobi" line quotes,
+   * or the one its sender posted just before), planned for the run's model and fetched once the
+   * request is taken (after the pace check). Null = a run on its words alone. Never `/search`.
+   */
+  agentMedia?: (event: E, targetUrl: string) => Promise<BotAgentMedia | null>;
+}
+
+/** The chat's part of an agent run (`BotBuiltinRunRequest`). */
+export type BotAgentContext = Pick<BotBuiltinRunRequest, 'replyTo' | 'recentChat' | 'chatRecap'>;
+
+/** What a run carries besides its words: the model command that named it, its chat's part, its files. */
+export type BotRunExtras = Pick<BotBuiltinRunRequest, 'modelNamed' | 'attachments'> & BotAgentContext;
+
+/** A request's pictures and files, ready for its run (`BotChatOutput.agentMedia`). */
+export interface BotAgentMedia {
+  /** Nothing could be handed to the model: this is said instead of running (the request still counted). */
+  refusal?: string;
+  /** Scratch copies to upload with the run. */
+  attachments: string[];
+  /** The model that reads them: the run's own, or the stand-in when that one takes no uploads. */
+  targetUrl: string;
+  /** The message the request is about as the run is shown it, in place of the chat's quote (its media now attached or read). */
+  replyTo?: AgentReplyContext;
+  /** Said in place of a failed run's own words (the stand-in model could not read them). */
+  failureText?: string;
+  /** Deletes the scratch copies; called once the run is over, however it ended. */
+  dispose: () => Promise<void>;
 }
 
 export interface BotChatRouterDeps<E extends BotChatEvent> {
@@ -87,7 +131,8 @@ export interface BotChatRouterDeps<E extends BotChatEvent> {
   getLlmDirect: () => BotLlmDirectConfig;
   getProviderCommands: () => ResolvedProviderCommand[];
   getBuiltinCommands: () => ResolvedBuiltinCommand[];
-  onBuiltinCommand: (key: BotRunKind, input: string, targetUrl: string, chatId: string, userId: string) => Promise<BotBuiltinRunResult>;
+  /** `run` is passed only when it holds something: a plain message is the five arguments alone. */
+  onBuiltinCommand: (key: BotRunKind, input: string, targetUrl: string, chatId: string, userId: string, run?: BotRunExtras) => Promise<BotBuiltinRunResult>;
   /**
    * Whether this account may type this built-in command in this chat (its grants: web for
    * `/search`). Asked before anything is queued and when listing commands.

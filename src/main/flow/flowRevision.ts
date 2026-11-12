@@ -157,9 +157,12 @@ export function mergeRevision(
   const steps = revised.steps.map((step, index) => {
     const id = stepIds[index];
     const before = id ? byId.get(id) : undefined;
-    if (!before || before.type !== step.type || claimed.has(before.id)) return { ...step, id: newId() };
+    // A step "named" with its kind ("rss", "file_write") has no name: the model fills blank labels
+    // that way, which also listed every untouched unnamed step as changed.
+    const label = (step.label ?? '').trim() === step.type ? (before?.label === step.label ? step.label : '') : step.label;
+    if (!before || before.type !== step.type || claimed.has(before.id)) return { ...step, label, id: newId() };
     claimed.add(before.id);
-    return { ...step, id: before.id, config: { ...unseenKeys(before), ...step.config } };
+    return { ...step, id: before.id, label, config: { ...unseenKeys(before), ...step.config } };
   });
   const [trigger, ...extraTriggers] = keptTriggers(
     [revised.trigger, ...(revised.extraTriggers ?? [])],

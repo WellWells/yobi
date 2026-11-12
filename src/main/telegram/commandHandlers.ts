@@ -17,6 +17,7 @@ import type { BotCommandAccess, BotCommandAccessMode } from '../../shared/botCom
 import { builtinCommandGrant } from '../../shared/botPermissions';
 import { botAccessDeniedText } from '../botPermissions/denial';
 import { createBotChatAccess, type BotChatAccess } from '../botChat/access';
+import { PAGE_ANALYZE_FLOW_ID, pageAnalyzeLink } from '../../shared/pageAnalyzeLine';
 import { botFlowEndText } from '../botChat/texts';
 import { linkRequestText } from '../botChat/wakeWord';
 import { t } from '../i18n';
@@ -26,7 +27,7 @@ import type { GroupAdminDeps } from './groupAdmin';
 import type { AccountAdminDeps } from './accountAdmin';
 import type { InviteDeps } from './inviteAdmin';
 import { createProgressMessage } from './progressMessage';
-import { readReplyContext } from './replyContext';
+import { readReplyContext, repliedLinkOf } from './replyContext';
 import { asksAboutTheChat, type GroupChatLog } from './groupChatLog';
 import { stepProgressMessage } from '../../shared/stepProgress';
 import type { StepProgress } from '../../shared/stepProgress';
@@ -63,6 +64,8 @@ export interface TelegramBuiltinRequest {
   recentChat?: AgentChatLine[];
   /** The request is about the group's talk itself (`asksAboutTheChat`, in a group). */
   chatRecap?: true;
+  /** A model command (`/gemini …`), not a plain message. */
+  modelNamed?: true;
 }
 
 export interface TelegramAgentAnswerRequest {
@@ -299,7 +302,8 @@ function noteUse(options: TelegramCommandOptions, from: NonNullable<TelegramCont
  */
 export async function admitPaced(ctx: TelegramContext, options: TelegramCommandOptions): Promise<BotPaceTicket | null> {
   if (!options.pace || !ctx.from) return UNPACED;
-  const date = ctx.msg?.date;
+  // A press's `msg` is the old message the button sits on.
+  const date = ctx.callbackQuery ? undefined : ctx.msg?.date;
   const sentAt = date ? date * 1_000 : Date.now();
   const verdict = options.pace.admit(String(ctx.from.id), { sentAt, paired: options.isPairedUser(ctx.from.id) });
   if (verdict.ok) return verdict;
@@ -360,10 +364,19 @@ async function runQueued(
 }
 
 /** Paces the request, then runs it; the ticket goes back when the run is over. */
+interface BuiltinRun {
+  key: BotRunKind;
+  input: string;
+  targetUrl: string;
+  command: string;
+  /** The input is the link the message replied to: the reply says nothing more. */
+  linkFromReply?: boolean;
+}
+
 async function dispatchBuiltin(
   ctx: TelegramContext,
   options: TelegramCommandOptions,
-  run: { key: BotRunKind; input: string; targetUrl: string; command: string },
+  run: BuiltinRun,
   ticket?: BotPaceTicket,
 ): Promise<void> {
   if (!options.onBuiltinCommand) return;
@@ -376,16 +389,12 @@ async function dispatchBuiltin(
   }
 }
 
-async function runBuiltin(
-  ctx: TelegramContext,
-  options: TelegramCommandOptions,
-  run: { key: BotRunKind; input: string; targetUrl: string; command: string },
-): Promise<void> {
+async function runBuiltin(ctx: TelegramContext, options: TelegramCommandOptions, run: BuiltinRun): Promise<void> {
   // "@bot analyse this" under someone's message: the agent is shown the message and what the group
   // was saying around it, or "this" is whatever the bot conversation was last about. A typed
   // `/search` searches its own words only.
   const message = run.key === 'agent' ? ctx.message : undefined;
-  const replyTo = message ? readReplyContext(message, options.getBotUsername?.() ?? '') : null;
+  const replyTo = message && !run.linkFromReply ? readReplyContext(message, options.getBotUsername?.() ?? '') : null;
   const inGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
   // Said even when nothing was kept: the model then says so instead of answering from its own answers.
   const chatRecap = Boolean(inGroup && options.groupChat && asksAboutTheChat(run.input));
@@ -401,6 +410,7 @@ async function runBuiltin(
       ...(replyTo ? { replyTo } : {}),
       ...(recentChat.length > 0 ? { recentChat } : {}),
       ...(chatRecap ? { chatRecap: true as const } : {}),
+      ...(run.key === 'agent' && run.command !== 'direct' ? { modelNamed: true as const } : {}),
     });
   });
 }
@@ -455,8 +465,9 @@ export async function handleDirectMessage(ctx: TelegramContext, options: Telegra
     const mention = extractBotMention(rawText, ctx.message?.entities, options.getBotUsername?.() ?? '');
     const ticket = await admitPaced(ctx, options);
     if (!ticket) return;
-    if (await runLinkFlow(ctx, options, mention.mentioned ? mention.prompt : text, ticket)) return;
-    await dispatchBuiltin(ctx, options, { key: 'agent', input: text, targetUrl: direct.targetUrl, command: 'direct' }, ticket);
+    const said = mention.mentioned ? mention.prompt : text;
+    if (await runLinkFlow(ctx, options, said, ticket)) return;
+    await dispatchBuiltin(ctx, options, { key: 'agent', input: said || text, targetUrl: direct.targetUrl, command: 'direct' }, ticket);
     return;
   }
 
@@ -472,18 +483,22 @@ export async function handleDirectMessage(ctx: TelegramContext, options: Telegra
     options.onLog(`[telegram] group mention from ${ctx.from.id} in ${ctx.chat.id} — not allowed to use the bot there, ignored`);
     return;
   }
-  if (!match.prompt || match.prompt.startsWith('/')) {
+  // A bare tag under a message that is one link: that link, as if pasted here.
+  const repliedLink = match.prompt ? null : repliedLinkOf(ctx.message);
+  const prompt = repliedLink ?? match.prompt;
+  if (!prompt || prompt.startsWith('/')) {
     await ctx.reply(t(options.getStrings(), 'telegram.direct.mentionUsage'));
     return;
   }
   if (answersAgent) {
-    await handleTypedAnswer(ctx, options, match.prompt);
+    await handleTypedAnswer(ctx, options, prompt);
     return;
   }
   const ticket = await admitPaced(ctx, options);
   if (!ticket) return;
-  if (await runLinkFlow(ctx, options, match.prompt, ticket)) return;
-  await dispatchBuiltin(ctx, options, { key: 'agent', input: match.prompt, targetUrl: direct.targetUrl, command: 'direct' }, ticket);
+  if (await runLinkFlow(ctx, options, prompt, ticket)) return;
+  const run = { key: 'agent' as const, input: prompt, targetUrl: direct.targetUrl, command: 'direct', ...(repliedLink ? { linkFromReply: true } : {}) };
+  await dispatchBuiltin(ctx, options, run, ticket);
 }
 
 /**
@@ -683,6 +698,30 @@ interface QueuedFlowRun {
   settled: Promise<void>;
 }
 
+/**
+ * "Analyze" under a forwarded page: it takes the right to talk here, not the downloader's, and is
+ * paced like a message, because behind it is a model call.
+ */
+async function pressPageAnalyze(
+  ctx: TelegramContext,
+  options: TelegramCommandOptions,
+  record: FlowButtonRecord,
+  press: { userId: number; chatId: number },
+): Promise<QueuedFlowRun | undefined> {
+  const s = options.getStrings();
+  if (!(await mayChat(options, press.userId, press.chatId))) {
+    options.onLog(`[telegram] page analyze refused for user ${press.userId} — may not use the bot here`);
+    await ctx.reply(t(s, 'telegram.cmd.accessDenied'));
+    return undefined;
+  }
+  if (!pageAnalyzeLink(record.input)) {
+    await ctx.reply(t(s, 'telegram.flowButton.expired'));
+    return undefined;
+  }
+  const { targetUrl } = options.getLlmDirect();
+  return { settled: dispatchBuiltin(ctx, options, { key: 'agent', input: record.input, targetUrl, command: 'direct' }) };
+}
+
 /** The queued run, or undefined when nothing was queued. */
 async function pressFlowButton(
   ctx: TelegramContext,
@@ -696,6 +735,7 @@ async function pressFlowButton(
     await ctx.reply(t(s, 'telegram.cmd.providerPrivateOnly'));
     return undefined;
   }
+  if (record.flowId === PAGE_ANALYZE_FLOW_ID) return pressPageAnalyze(ctx, options, record, press);
   // A built-in's button runs what its line runs when typed: the YouTube menu's choice reruns the
   // menu, "analyze" under a forwarded post the analysis. A line that is not a built-in's has
   // expired — it never becomes an agent run. Its buttons

@@ -205,6 +205,17 @@ export const SHORTCUTS = [
   },
 
   {
+    // ChatGPT's key for the same thing; folds the view's sidebar (conversations, flows) to its icon
+    // rail and back.
+    id: 'view.toggleSidebar',
+    group: 'nav',
+    scope: { kind: 'view', views: ['chat', 'flow'] },
+    defaultCombo: 'CommandOrControl+Shift+S',
+    rebindable: false,
+    lockReasonKey: 'settings.shortcut.lock.convention',
+    guards: { requireNoModal: true },
+  },
+  {
     id: 'view.zoomIn',
     group: 'nav',
     scope: { kind: 'view', views: ['chat'] },
@@ -266,6 +277,17 @@ export const SHORTCUTS = [
     rebindable: false,
     hintKey: 'settings.shortcut.chat.externalEditor.hint',
     lockReasonKey: 'settings.shortcut.lock.composer',
+  },
+  {
+    // The paste-as-plain-text key everywhere; a copied file's plain text is its path, while
+    // Ctrl+V keeps attaching it. macOS's own Paste and Match Style is Cmd+Option+Shift+V.
+    id: 'composer.pastePath',
+    group: 'chat',
+    scope: { kind: 'widget', owner: 'composer' },
+    defaultCombo: 'CommandOrControl+Shift+V',
+    rebindable: false,
+    hintKey: 'settings.shortcut.composer.pastePath.hint',
+    lockReasonKey: 'settings.shortcut.lock.convention',
   },
   {
     id: 'composer.smartHomeEnd',
@@ -336,6 +358,23 @@ export const SHORTCUTS = [
     id: 'answerEditor.cancel',
     group: 'chat',
     scope: { kind: 'widget', owner: 'answerEditor' },
+    defaultCombo: 'Escape',
+    rebindable: false,
+    lockReasonKey: 'settings.shortcut.lock.field',
+  },
+  {
+    // Editing a question sends like the composer does, as in Gemini, ChatGPT and Claude.
+    id: 'promptEditor.send',
+    group: 'chat',
+    scope: { kind: 'widget', owner: 'promptEditor' },
+    defaultCombo: 'Enter',
+    rebindable: false,
+    lockReasonKey: 'settings.shortcut.lock.composer',
+  },
+  {
+    id: 'promptEditor.cancel',
+    group: 'chat',
+    scope: { kind: 'widget', owner: 'promptEditor' },
     defaultCombo: 'Escape',
     rebindable: false,
     lockReasonKey: 'settings.shortcut.lock.field',

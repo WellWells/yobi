@@ -1,0 +1,47 @@
+/* The landing page's cards (your flows, featured templates): the gallery tile's look, laid out in
+   a grid. These rules override UnstyledButton's reset, which only holds because main.tsx imports
+   Mantine's stylesheet before any app CSS. */
+.card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  text-align: left;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-default-border);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+/* Lift, never darken (the gallery tile's hover). */
+.card:hover {
+  background: var(--mantine-color-bg-tertiary);
+  border-color: var(--mantine-color-accent);
+}
+
+/* A switched-off flow is still a card you can open; it only reads as resting. */
+.card[data-disabled] {
+  opacity: 0.6;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.triggerMark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--text-muted);
+  background: var(--mantine-color-bg-tertiary);
+}

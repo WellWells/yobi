@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Group, Stack, Text } from '@mantine/core';
-import { CalendarClock, TriangleAlert } from 'lucide-react';
+import { CalendarClock, TriangleExclamationPoint } from 'lucide-react';
 import type { SchedulePreview, TriggerConfig } from '../../../../shared/types';
 import { describeSchedule, formatRelativeTime, formatRunTime, scheduleWarningKey } from '../../../../shared/flowSchedule';
 
@@ -44,7 +44,7 @@ export const SchedulePreviewPanel: React.FC<SchedulePreviewPanelProps> = ({ trig
 
       {warningKey && (
         <Group gap={6} align="center" wrap="nowrap">
-          <TriangleAlert size={13} color="var(--mantine-color-warning)" />
+          <TriangleExclamationPoint size={13} color="var(--mantine-color-warning)" />
           <Text fz="xs" c="var(--mantine-color-warning)">{t(warningKey)}</Text>
         </Group>
       )}

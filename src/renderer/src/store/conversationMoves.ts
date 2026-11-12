@@ -25,11 +25,6 @@ import type { RecapState } from '../utils/recapState';
 type Listener = (moves: readonly ConversationMove[]) => void;
 const listeners = new Set<Listener>();
 
-/** `path` after the moves; unchanged when it was not moved. */
-export function remapPath(moves: readonly ConversationMove[], path: string): string {
-  return movedPathFor(moves, path) ?? path;
-}
-
 /** Re-points, in place, each value that is a moved path (a send's origin by its send id). */
 export function remapPathValues(map: Map<string, string>, moves: readonly ConversationMove[]): void {
   for (const [key, path] of map) {

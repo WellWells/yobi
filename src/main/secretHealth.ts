@@ -2,7 +2,7 @@ import { safeStorage } from 'electron';
 import type Store from 'electron-store';
 import { openStoreWithRecovery } from './configStore';
 import { getConfigDir } from './configPaths';
-import { encryptToken } from './configEncryption';
+import { encryptSecret, isEncryptedSecret, refreshSecretCipher, secretCipherAvailable, trackSecretWrite } from './configEncryption';
 import type { SecretFailure, SecretHealth, SecretKeyState, SecretScope } from '../shared/types';
 
 /**
@@ -39,12 +39,12 @@ export function setSecretHealthListener(fn: (health: SecretHealth) => void): voi
 }
 
 /**
- * Read live rather than cached: on Linux the keyring can come up after the app does, and on
- * macOS access can be granted mid-session. A stale `false` here would keep offering the
- * wrong story long after the keychain came back.
+ * The OS answer as of the last secret read or write. On Linux the keyring can come up after the
+ * app does, and on macOS access can be granted mid-session, so whatever decides on it (the
+ * settings warning, the delete escape hatch) asks again first with `refreshSecretCipher`.
  */
 export function isSecretEncryptionAvailable(): boolean {
-  return safeStorage.isEncryptionAvailable();
+  return secretCipherAvailable();
 }
 
 export function getSecretHealth(): SecretHealth {
@@ -67,16 +67,18 @@ export function recordSecretFailure(failure: SecretFailure): void {
   publish();
 }
 
-function writeCanary(): void {
-  if (!safeStorage.isEncryptionAvailable()) return;
-  getStore().set('canary', encryptToken(CANARY_PLAINTEXT));
+/** `fresh` after a re-encryption sweep, so the canary moves to the new key with everything else. */
+async function writeCanary(fresh = false): Promise<void> {
+  if (!(await refreshSecretCipher())) return;
+  const stored = await encryptSecret(CANARY_PLAINTEXT, { fresh });
+  if (isEncryptedSecret(stored)) getStore().set('canary', stored);
 }
 
 function adoptCurrentKeyIfClean(): void {
   // Once the user has re-entered everything, adopt the current key so the alarm stops
   // for good instead of resurfacing on the next boot.
   if (failures.size > 0 || keyState !== 'rotated') return;
-  writeCanary();
+  void trackSecretWrite(writeCanary().catch(() => undefined));
   keyState = 'intact';
 }
 
@@ -108,7 +110,7 @@ export function clearAllSecretFailures(): void {
  * blob should be rewritten before the old provider goes away.
  */
 export async function checkSecretKey(): Promise<{ state: SecretKeyState; shouldReEncrypt: boolean }> {
-  if (!safeStorage.isEncryptionAvailable()) {
+  if (!(await refreshSecretCipher())) {
     keyState = 'unknown';
     publish();
     return { state: 'unknown', shouldReEncrypt: false };
@@ -116,7 +118,7 @@ export async function checkSecretKey(): Promise<{ state: SecretKeyState; shouldR
 
   const stored = getStore().get('canary');
   if (!stored?.startsWith(ENCRYPTED_PREFIX)) {
-    writeCanary();
+    await writeCanary();
     keyState = 'unknown';
     publish();
     return { state: 'unknown', shouldReEncrypt: false };
@@ -136,6 +138,6 @@ export async function checkSecretKey(): Promise<{ state: SecretKeyState; shouldR
 }
 
 /** Re-stamps the canary after a re-encryption sweep so the next boot reads the new key. */
-export function refreshCanary(): void {
-  writeCanary();
+export async function refreshCanary(): Promise<void> {
+  await writeCanary(true);
 }

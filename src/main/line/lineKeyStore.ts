@@ -14,10 +14,10 @@ export function loadStoredLineKey(): string {
   return getDataKey(DATA_KEY_LINE_DB);
 }
 
-export function rememberLineKey(key: string): void {
-  setDataKey(DATA_KEY_LINE_DB, key);
+export function rememberLineKey(key: string): Promise<void> {
+  return setDataKey(DATA_KEY_LINE_DB, key);
 }
 
-export function forgetStoredLineKey(): void {
-  setDataKey(DATA_KEY_LINE_DB, '');
+export function forgetStoredLineKey(): Promise<void> {
+  return setDataKey(DATA_KEY_LINE_DB, '');
 }

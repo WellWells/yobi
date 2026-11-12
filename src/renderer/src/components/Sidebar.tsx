@@ -9,15 +9,19 @@ import { noteConversationOpened } from '../store/recapStore';
 import { dropQuestionOfRemovedConversation } from '../store/useAgentRunStore';
 import type { BatchCaptureFormat, OutputFile } from '../../../shared/types';
 import { folderKey } from '../../../shared/conversationFolders';
-import { PanelToolbar, ToolbarSearchButton } from './PanelToolbar';
+import { ToolbarIconButton, ToolbarSearchButton } from './PanelToolbar';
 import { SidebarActionRow } from './SidebarActionRow';
+import { SidebarTop } from './SidebarTop';
+import { SettingsFooter } from './ViewNav';
+import { SidebarRail } from './SidebarRail';
 import { EmptyState } from './EmptyState';
 import { WebDialog } from './WebDialog';
 import { GroupHeader } from './GroupHeader';
-import { Download, MessageSquare, SquarePen } from 'lucide-react';
+import { Download, FolderPlus, MessageSquare, PanelLeftClose, SquarePen } from 'lucide-react';
 import { BatchExportStrip } from './sidebar/BatchExportStrip';
 import { useBatchExport } from './sidebar/useBatchExport';
 import { fileApi } from '../api/electronApi';
+import { categoryAiSource } from '../../../shared/aiName';
 import { FileItem } from './sidebar/FileItem';
 import { FileContextMenu } from './sidebar/FileContextMenu';
 import { useSidebarFileActions } from './sidebar/useSidebarFileActions';
@@ -27,8 +31,11 @@ import { RecentlyDeletedRow } from './sidebar/RecentlyDeletedRow';
 import { RecentlyDeletedDialog } from './sidebar/RecentlyDeletedDialog';
 import { fillTemplate } from '../../../shared/fillTemplate';
 import { pathsToDrag, useConversationImport } from './sidebar/useConversationImport';
-import { SidebarViewMenu } from './sidebar/SidebarViewMenu';
+import { SidebarImportMenu } from './sidebar/SidebarImportMenu';
+import { SidebarFilterMenu } from './sidebar/SidebarFilterMenu';
 import { FolderRow } from './sidebar/FolderRow';
+import { SectionRow } from './sidebar/SectionRow';
+import { SectionActionButton } from './sidebar/SectionActionButton';
 import { FolderContextMenu } from './sidebar/FolderMenus';
 import { SidebarSelectionBar, SelectionContextMenu } from './sidebar/SidebarSelection';
 import { folderLabel } from './sidebar/folderActions';
@@ -44,8 +51,14 @@ import { movedPathFor } from '../../../shared/conversationMove';
 import { useReloadOpenConversation } from '../hooks/useReloadOpenConversation';
 import { useFormatTime } from '../hooks/useFormatTime';
 import { useScrollEdgeFade } from '../hooks/useScrollEdgeFade';
-import { buildSidebarRows, focusableRowKeys, sidebarRowKey } from '../utils/timeGroups';
+import { buildSidebarRows, focusableRowKeys, sectionOfFile, sidebarRowKey } from '../utils/timeGroups';
+import type { SidebarSectionKey } from '../utils/timeGroups';
 import { folderRowKey } from '../utils/sidebarOrder';
+import { useSidebarLayoutStore } from '../store/sidebarLayoutStore';
+import { useSidebarDrawerStore } from '../store/sidebarDrawerStore';
+import { useNarrowWindow } from '../hooks/useNarrowWindow';
+import { providerIconFor } from '../config/providerIcons';
+import type { ModelIcon } from '../config/models';
 import type { MenuAnchor } from './RowMoreButton';
 import { useSelectionActions } from './sidebar/useSelectionActions';
 import { containsActiveElement } from '../utils/domUtils';
@@ -61,20 +74,24 @@ interface SidebarProps {
   onOpenedByClick?: (path: string) => void;
 }
 
-const FILE_ROW_HEIGHT = 72;
-const HEADER_ROW_HEIGHT = 34;
-const FOLDER_ROW_HEIGHT = 34;
-// Group labels start in the same column as the conversation titles: the row inset plus the
-// `.fileItem` left border and left padding in Sidebar.module.css.
+// One-line rows (32px and the 2px above and below), as ChatGPT's, Claude's and Perplexity's.
+const FILE_ROW_HEIGHT = 36;
+const HEADER_ROW_HEIGHT = 26;
+const SECTION_ROW_HEIGHT = 32;
+// Space above every section heading but the first, so the sections read as three blocks.
+const SECTION_GAP = 10;
+const FOLDER_ROW_HEIGHT = 36;
+// Group labels start in the same column as the rows' leading icons (provider marks, folder icons):
+// the row inset plus the `.fileItem` left border and left padding in Sidebar.module.css.
 const ROW_INSET = 8;
-const HEADER_INSET = 20;
-// A conversation drawn inside a folder sits one step in: its title starts under the folder icon
-// (the row inset, `.folderItem`'s left padding, FolderRow's 13px chevron and 6px gap, less the
+const HEADER_INSET = 18;
+// A conversation drawn inside a folder sits one step in: its mark starts under the folder's name
+// (the row inset, `.folderItem`'s left padding, FolderRow's 15px icon and 8px gap, less the
 // `.fileItem` left padding).
-const FOLDER_CHILD_INSET = 21;
+const FOLDER_CHILD_INSET = 31;
 
 export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearch, onOpenedByClick }) => {
-  const { files, selectedFile, selectFile, setFileContent, setFiles, unreadFilePaths } = useAppStore(
+  const { files, selectedFile, selectFile, setFileContent, setFiles, unreadFilePaths, byokModels, byokGroupModels } = useAppStore(
     useShallow((s) => ({
       files: s.files,
       selectedFile: s.selectedFile,
@@ -82,15 +99,45 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
       setFileContent: s.setFileContent,
       setFiles: s.setFiles,
       unreadFilePaths: s.unreadFilePaths,
+      byokModels: s.byokModels,
+      byokGroupModels: s.byokGroupModels,
     })),
   );
+  const {
+    collapsedSections, storedCollapsed, providerFilter: chosenProvider,
+    setSectionCollapsed, toggleSection, setStoredCollapsed, toggleStoredCollapsed, setProviderFilter,
+  } = useSidebarLayoutStore(
+    useShallow((s) => ({
+      collapsedSections: s.collapsedSections,
+      storedCollapsed: s.collapsed,
+      providerFilter: s.providerFilter,
+      setSectionCollapsed: s.setSectionCollapsed,
+      toggleSection: s.toggleSection,
+      setStoredCollapsed: s.setCollapsed,
+      toggleStoredCollapsed: s.toggleCollapsed,
+      setProviderFilter: s.setProviderFilter,
+    })),
+  );
+  // A narrow window has the sidebar as a drawer (`SidebarDrawer`), whole, never the rail: there
+  // showing it opens the drawer and folding it closes the drawer. The rail stays the user's choice
+  // for a wide window, kept as it was.
+  const narrowWindow = useNarrowWindow();
+  const { setDrawerOpen, toggleDrawer } = useSidebarDrawerStore(
+    useShallow((s) => ({ setDrawerOpen: s.setOpen, toggleDrawer: s.toggle })),
+  );
+  const sidebarCollapsed = storedCollapsed && !narrowWindow;
+  const setSidebarCollapsed = useCallback((collapsed: boolean): void => {
+    if (narrowWindow) setDrawerOpen(!collapsed);
+    else setStoredCollapsed(collapsed);
+  }, [narrowWindow, setDrawerOpen, setStoredCollapsed]);
+  const toggleSidebar = narrowWindow ? toggleDrawer : toggleStoredCollapsed;
   const { t, locale } = useI18nStore(useShallow((s) => ({ t: s.t, locale: s.locale })));
   const selection = useMultiSelect();
   // Rows moved into a folder stay ticked.
   useConversationMoves((moves) => selection.rename((id) => movedPathFor(moves, id) ?? id));
   const fileItemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const sidebarViewportRef = useRef<HTMLDivElement>(null);
-  const fadeClass = useScrollEdgeFade(sidebarViewportRef);
+  const fadeClass = useScrollEdgeFade(sidebarViewportRef, sidebarCollapsed);
 
   const loadFiles = useCallback(async () => {
     const latest = await fileApi.getList();
@@ -115,15 +162,49 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
 
   const folderState = useConversationFolders(files, selectedFile?.path ?? null, t);
   const { folders, open: openFolders } = folderState;
+  // The ✨ in a category's rename box names it from the conversations in it.
+  const renamingFolderAi = useMemo(() => {
+    const name = folderState.renaming;
+    if (!name) return null;
+    const titles = files.filter((file) => file.folder === name).map((file) => file.preview);
+    return categoryAiSource('chat', name, titles, folders.map((folder) => folder.name));
+  }, [folderState.renaming, files, folders]);
   const view = useSidebarViewStore((s) => s.view);
   const compareTitles = useMemo(() => new Intl.Collator(locale, { numeric: true, sensitivity: 'base' }).compare, [locale]);
 
   // Pinned first (latest activity), then the folders, then the top-level conversations in the
-  // chosen order; a closed folder's conversations are not drawn. Keys, ↑↓ and Shift ranges walk
-  // the same drawn order.
-  const { rows, rowIndexByFileIndex, visibleFiles } = useMemo(() => buildSidebarRows(files, new Date(), {
+  // chosen order (one model's, when filtered); a closed folder's or section's conversations are not
+  // drawn. Keys, ↑↓ and Shift ranges walk the same drawn order.
+  const { rows, rowIndexByFileIndex, visibleFiles, providers, providerFilter } = useMemo(() => buildSidebarRows(files, new Date(), {
     folders, expanded: openFolders, view, compareTitles, folderLabel: (folder) => folderLabel(folder.name, t),
-  }), [files, folders, openFolders, view, compareTitles, t]);
+    collapsed: collapsedSections, provider: chosenProvider,
+  }), [files, folders, openFolders, view, compareTitles, t, collapsedSections, chosenProvider]);
+
+  // The open conversation is never hidden in a closed section: opening it — or pinning it, filing
+  // it in a folder — opens the section it is drawn in. Closing the section afterwards is left alone.
+  // Opening one the model filter hides (from Ctrl+K, a new chat on another model) clears the filter
+  // the same way; filtering while it is open leaves it open and unlisted.
+  const openFile = selectedFile ? files.find((file) => file.path === selectedFile.path) ?? null : null;
+  const openSection: SidebarSectionKey | null = openFile ? sectionOfFile(openFile) : null;
+  useEffect(() => {
+    if (openSection) setSectionCollapsed(openSection, false);
+    if (openSection === 'conversations' && providerFilter && openFile?.provider !== providerFilter) setProviderFilter(null);
+  }, [selectedFile?.path, openSection, setSectionCollapsed]);
+
+  // Whose answer each row holds: the model menu's own icons, matched by the name in the file.
+  const flowLabel = t('chat.command.providerLabel');
+  const providerIcon = useMemo(() => {
+    const extra = [...byokModels, ...byokGroupModels];
+    const cache = new Map<string, ModelIcon>();
+    return (provider: string | undefined): ModelIcon => {
+      const key = provider ?? '';
+      const hit = cache.get(key);
+      if (hit) return hit;
+      const icon = providerIconFor(provider, extra, flowLabel);
+      cache.set(key, icon);
+      return icon;
+    };
+  }, [byokModels, byokGroupModels, flowLabel]);
   const selectableIds = useMemo(() => visibleFiles.map((f) => f.path), [visibleFiles]);
   const navKeys = useMemo(() => focusableRowKeys(rows), [rows]);
 
@@ -133,6 +214,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
     estimateSize: (index) => {
       const kind = rows[index]?.kind;
       if (kind === 'header') return HEADER_ROW_HEIGHT;
+      if (kind === 'section') return SECTION_ROW_HEIGHT + (index > 0 ? SECTION_GAP : 0);
       return kind === 'folder' ? FOLDER_ROW_HEIGHT : FILE_ROW_HEIGHT;
     },
     getItemKey: (index) => {
@@ -155,10 +237,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
     if (index >= 0) rowVirtualizer.scrollToIndex(index, { align: 'auto' });
   }, [rows, rowVirtualizer]);
 
-  // A folder being renamed in place (a new one too) is scrolled into view, or its field would be unseen.
+  // A folder being renamed in place (a new one too) is shown — the sidebar unfolded, the folders
+  // section opened — and scrolled into view, or its field would be unseen. It runs again as the
+  // rows catch up with the opened section.
   useEffect(() => {
-    if (folderState.renaming) scrollToKey(folderRowKey(folderState.renaming));
-  }, [folderState.renaming]);
+    if (!folderState.renaming) return;
+    setSidebarCollapsed(false);
+    setSectionCollapsed('folders', false);
+    scrollToKey(folderRowKey(folderState.renaming));
+  }, [folderState.renaming, rows]);
 
   const getFocusedFile = useCallback((): OutputFile | null => {
     const active = document.activeElement;
@@ -321,16 +408,40 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
     });
   }, [selectedFile?.path, permanentOpen, editingPath]);
 
-  // A title edit started from the menu bar may be on a row scrolled out of the virtual list.
+  // A title edit started from the menu bar may be on a row scrolled out of the virtual list, in a
+  // closed section, or in a folded sidebar: its field is shown either way.
   useEffect(() => {
     if (!editingPath) return;
+    setSidebarCollapsed(false);
+    const editing = files.find((f) => f.path === editingPath);
+    if (editing) setSectionCollapsed(sectionOfFile(editing), false);
     const idx = visibleFiles.findIndex((f) => f.path === editingPath);
     if (idx >= 0) scrollToFileIndex(idx);
-  }, [editingPath, visibleFiles]);
+  }, [editingPath, visibleFiles, sidebarCollapsed]);
+
+  // Folding the sidebar ends a selection (Delete would otherwise act on rows nobody can see) and
+  // closes a row's menu, which would otherwise come back at its old place on unfolding.
+  useEffect(() => {
+    if (!sidebarCollapsed) return;
+    if (selection.selectMode) selection.exit();
+    closeContextMenu();
+    folderState.closeFolderMenu();
+  }, [sidebarCollapsed]);
+
+  useShortcutAction('view.toggleSidebar', toggleSidebar, 'chat');
+  const toggleSidebarCombo = comboLabel(useResolvedCombo('view.toggleSidebar'), isMac);
+  const withCombo = (label: string): string => (toggleSidebarCombo ? `${label} (${toggleSidebarCombo})` : label);
 
   const formatTime = useFormatTime();
   const unreadLabel = t('sidebar.unread');
   const turnsLabel = t('chat.turns');
+  // The hover card's second line: provider · time · turns. The time carries its own day ("Mon
+  // 09:04"), since the card is read away from the time-group heading.
+  const rowDetail = (file: OutputFile, time: string): string => [
+    file.provider,
+    formatTime(time),
+    (file.turns ?? 1) > 1 ? fillTemplate(turnsLabel, { count: String(file.turns) }) : '',
+  ].filter(Boolean).join(' · ');
   const moreLabel = t('common.moreActions');
   const openMenuPath = contextMenu?.file.path ?? null;
   const swipeMore = t('rowSwipe.more');
@@ -344,6 +455,31 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
   const folderKeys = useMemo(() => folderKeyActionsFor(rows, openFolders, {
     setOpen: folderState.setFolderOpen, renameFolder: folderState.startRename, deleteFolder: folderState.deleteFolder,
   }), [rows, openFolders, folderState.setFolderOpen, folderState.startRename, folderState.deleteFolder]);
+  // The folders heading drawn before the first folder has nothing to fold; its keys do nothing.
+  const foldersEmpty = rows.some((row) => row.kind === 'section' && row.key === 'folders' && row.empty);
+  const sectionKeys = useMemo(() => ({
+    isCollapsed: (section: SidebarSectionKey) => collapsedSections.has(section),
+    setCollapsed: (section: SidebarSectionKey, collapsed: boolean) => {
+      if (section === 'folders' && foldersEmpty) return;
+      setSectionCollapsed(section, collapsed);
+    },
+  }), [collapsedSections, setSectionCollapsed, foldersEmpty]);
+  const newFolderLabel = t('sidebar.folder.new');
+  const startNewFolder = useCallback(() => { void folderState.createFolder(); }, [folderState.createFolder]);
+  // What each heading carries at its right end: a new folder, the conversations' filter.
+  const sectionActions = (key: SidebarSectionKey): React.ReactNode => {
+    if (key === 'folders') return <SectionActionButton icon={FolderPlus} label={newFolderLabel} onClick={startNewFolder} />;
+    if (key !== 'conversations') return null;
+    return (
+      <SidebarFilterMenu
+        providers={providers}
+        providerFilter={providerFilter}
+        onProviderFilter={setProviderFilter}
+        providerIcon={providerIcon}
+        t={t}
+      />
+    );
+  };
 
   const handleListKeyDown = createSidebarKeyDownHandler({
     editingPath: editingPath ?? folderState.renaming,
@@ -360,7 +496,50 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
     onTogglePin: handleTogglePin,
     onCloseContextMenu: closeContextMenu,
     folders: folderKeys,
+    sections: sectionKeys,
   });
+
+  const sidebarStyle = { borderRight: '1px solid var(--mantine-color-default-border)', overflow: 'hidden', position: 'relative' } as const;
+
+  // Mounted whether or not the sidebar is folded: the menu bar can delete or restore from either.
+  const dialogs = (
+    <>
+      {/* Only when a file could not be moved to Recently Deleted: deleting it is then for good. */}
+      <WebDialog
+        open={permanentOpen}
+        title={t('trash.permanent.title')}
+        description={fillTemplate(t('trash.permanent.body'), { count: trash.pendingPermanent?.paths.length ?? 0 })}
+        confirmText={t('trash.permanent.confirm')}
+        cancelText={t('dialog.cancel')}
+        danger
+        onConfirm={() => { void trash.confirmPermanent(); }}
+        onCancel={trash.cancelPermanent}
+      />
+
+      <RecentlyDeletedDialog opened={trash.dialogOpen} onClose={trash.closeDialog} />
+    </>
+  );
+
+  // Folded: the icon rail (`SidebarRail`) with a new chat and search, Flow at its foot.
+  if (sidebarCollapsed) {
+    return (
+      <FileDropZone
+        onFiles={handleImportFiles}
+        icon={Download}
+        title={t('sidebar.import.dropTitle')}
+        detail={t('sidebar.import.dropDetail')}
+      >
+        <SidebarRail expandLabel={withCombo(t('sidebar.expand'))} onExpand={toggleSidebar} otherView="flow" extra={dialogs}>
+          <ToolbarIconButton
+            icon={SquarePen}
+            label={newChatCombo ? `${t('chat.new')} (${comboLabel(newChatCombo, isMac)})` : t('chat.new')}
+            onClick={onNewConversation}
+          />
+          <ToolbarSearchButton label={t('sidebar.search.tooltip')} onClick={onOpenSearch} />
+        </SidebarRail>
+      </FileDropZone>
+    );
+  }
 
   return (
     <FileDropZone
@@ -375,20 +554,23 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
       miw={180}
       maw={300}
       bg="var(--mantine-color-default)"
-      style={{ borderRight: '1px solid var(--mantine-color-default-border)', overflow: 'hidden', position: 'relative' }}
+      style={sidebarStyle}
     >
-      <PanelToolbar>
-        <Tooltip label={comboLabel(newChatCombo, isMac)} position="bottom" disabled={!newChatCombo}>
-          <SidebarActionRow icon={SquarePen} label={t('chat.new')} onClick={onNewConversation} />
-        </Tooltip>
+      <SidebarTop
+        action={(
+          <Tooltip label={comboLabel(newChatCombo, isMac)} position="bottom" disabled={!newChatCombo}>
+            <SidebarActionRow
+              icon={SquarePen}
+              label={t('chat.new')}
+              onClick={onNewConversation}
+              trailing={<SidebarImportMenu onPickFiles={handleImportFiles} onOpenImported={handleOpenImported} t={t} />}
+            />
+          </Tooltip>
+        )}
+      >
         <ToolbarSearchButton label={t('sidebar.search.tooltip')} onClick={onOpenSearch} />
-        <SidebarViewMenu
-          onNewFolder={() => { void folderState.createFolder(); }}
-          onPickFiles={handleImportFiles}
-          onOpenImported={handleOpenImported}
-          t={t}
-        />
-      </PanelToolbar>
+        <ToolbarIconButton icon={PanelLeftClose} label={withCombo(t('sidebar.collapse'))} onClick={toggleSidebar} />
+      </SidebarTop>
 
       <Box
         ref={sidebarViewportRef}
@@ -407,6 +589,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
               if (!row) return null;
               let padding = `2px ${ROW_INSET}px`;
               if (row.kind === 'header') padding = `0 ${ROW_INSET}px 0 ${HEADER_INSET}px`;
+              else if (row.kind === 'section') padding = `${virtualRow.index > 0 ? SECTION_GAP : 0}px ${ROW_INSET}px 0`;
               else if (row.kind === 'file' && row.inFolder) padding = `2px ${ROW_INSET}px 2px ${FOLDER_CHILD_INSET}px`;
               return (
                 <Box
@@ -446,8 +629,20 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
                       swipeLabels={swipeLabels}
                       onCommitEdit={handleCommitEdit}
                       onCancelEdit={handleCancelEdit}
-                      timeLabel={formatTime(row.time, row.group)}
-                      turnsLabel={turnsLabel}
+                      providerIcon={providerIcon(row.file.provider)}
+                      detail={rowDetail(row.file, row.time)}
+                      registerItemRef={registerItemRef}
+                    />
+                  )}
+                  {row.kind === 'section' && (
+                    <SectionRow
+                      section={row.key}
+                      label={t(`sidebar.section.${row.key}`)}
+                      collapsed={row.collapsed}
+                      empty={row.empty}
+                      detail={row.key === 'conversations' ? providerFilter ?? undefined : undefined}
+                      actions={sectionActions(row.key)}
+                      onToggle={toggleSection}
                       registerItemRef={registerItemRef}
                     />
                   )}
@@ -462,6 +657,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
                       setRenameText={folderState.setRenameText}
                       onCommitRename={folderState.commitRename}
                       onCancelRename={folderState.cancelRename}
+                      aiSource={folderState.renaming === row.folder.name ? renamingFolderAi : null}
                       menuOpen={folderState.folderMenu?.folder.name === row.folder.name}
                       moreLabel={moreLabel}
                       dropTarget={drop.overFolder === folderKey(row.folder.name)}
@@ -471,7 +667,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
                       registerItemRef={registerItemRef}
                     />
                   )}
-                  {row.kind === 'header' && <GroupHeader label={t(`sidebar.group.${row.key}`)} />}
+                  {row.kind === 'header' && <GroupHeader variant="sub" label={t(`sidebar.group.${row.key}`)} />}
                 </Box>
               );
             })}
@@ -495,6 +691,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
           {...selectionProps}
         />
       )}
+      <SettingsFooter />
 
       <SelectionContextMenu position={picked.selectionMenu} onClose={picked.closeSelectionMenu} busy={batch.running} {...selectionProps} />
 
@@ -522,19 +719,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
         t={t}
       />
 
-      {/* Only when a file could not be moved to Recently Deleted: deleting it is then for good. */}
-      <WebDialog
-        open={permanentOpen}
-        title={t('trash.permanent.title')}
-        description={fillTemplate(t('trash.permanent.body'), { count: trash.pendingPermanent?.paths.length ?? 0 })}
-        confirmText={t('trash.permanent.confirm')}
-        cancelText={t('dialog.cancel')}
-        danger
-        onConfirm={() => { void trash.confirmPermanent(); }}
-        onCancel={trash.cancelPermanent}
-      />
-
-      <RecentlyDeletedDialog opened={trash.dialogOpen} onClose={trash.closeDialog} />
+      {dialogs}
     </Stack>
     </FileDropZone>
   );

@@ -10,7 +10,8 @@ export interface XGraphqlResult {
   data: unknown;
 }
 
-const COMPLETED_MARKER = '{kind:"GraphQLRequestStream.Completed"';
+/** A finished result in the page: `kind` is the name in older pages, a number in current ones. */
+const COMPLETED_CHUNK = /\{kind:(?:"GraphQLRequestStream\.Completed"|1,requestId:)/g;
 
 /** Far deeper than any measured payload (~40); only here so a malformed page cannot blow the stack. */
 const MAX_DEPTH = 256;
@@ -210,24 +211,31 @@ export function readGraphqlResponse(url: string, body: string, postData?: string
   }
 }
 
+/** A result's `data`: its value is an object in older pages, the same object as JSON in current ones. */
+function resultData(value: unknown): unknown {
+  if (typeof value !== 'string') return (value as { data?: unknown } | undefined)?.data;
+  try {
+    return (JSON.parse(value) as { data?: unknown } | null)?.data;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Every completed, successful GraphQL result in the page; a chunk that does not decode is skipped. */
 export function readSsrGraphql(html: string): XGraphqlResult[] {
   const results: XGraphqlResult[] = [];
-  let from = 0;
-  for (;;) {
-    const at = html.indexOf(COMPLETED_MARKER, from);
-    if (at < 0) return results;
-    from = at + COMPLETED_MARKER.length;
+  for (const { index } of html.matchAll(COMPLETED_CHUNK)) {
     let decoded: unknown;
     try {
-      decoded = decodeLiteral(html, at).value;
+      decoded = decodeLiteral(html, index).value;
     } catch {
       continue;
     }
-    const chunk = decoded as { key?: unknown; result?: { kind?: unknown; value?: { data?: unknown } } };
+    const chunk = decoded as { key?: unknown; result?: { kind?: unknown; value?: unknown } };
     if (typeof chunk?.key !== 'string' || chunk.result?.kind !== 'Result.Ok') continue;
-    const data = chunk.result.value?.data;
+    const data = resultData(chunk.result.value);
     if (data === undefined) continue;
     results.push({ ...splitKey(chunk.key), data });
   }
+  return results;
 }

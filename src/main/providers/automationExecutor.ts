@@ -1,13 +1,21 @@
 import type { WebContents } from 'electron';
 import { withTimeout } from '../promiseRace';
 
+/**
+ * The longest a page script may run when `timeoutMs` is the provider's no-output limit: the script
+ * itself gives up after that long without a new word, so a slow but steady answer runs on to here.
+ */
+export function automationHardTimeoutMs(timeoutMs: number): number {
+  return Math.max(timeoutMs * 5, 300_000);
+}
+
 export async function executeAutomationWithTimeout<T>(
   wc: WebContents,
   script: string,
   timeoutMs: number,
   providerLabel: string,
 ): Promise<T> {
-  const hardTimeoutMs = Math.max(timeoutMs * 5, 300_000);
+  const hardTimeoutMs = automationHardTimeoutMs(timeoutMs);
   try {
     return (await withTimeout(
       wc.executeJavaScript(script, true),

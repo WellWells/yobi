@@ -1,6 +1,6 @@
 import React from 'react';
 import { Group, Input, Stack, Text } from '@mantine/core';
-import { TriangleAlert } from 'lucide-react';
+import { TriangleExclamationPoint } from 'lucide-react';
 import { AppSegmentedControl } from '../../components/AppSegmentedControl';
 import { BotUserAllowlist } from '../../components/BotUserAllowlist';
 import { botCommandAccessMode, isBotCommandAccessMode } from '../../../../shared/botCommandAccess';
@@ -54,7 +54,7 @@ export const BotCommandAccessField: React.FC<BotCommandAccessFieldProps> = ({ va
       )}
       {isTriggerClosed(value) && (
         <Group gap={6} align="center">
-          <TriangleAlert size={13} color="var(--mantine-color-error)" />
+          <TriangleExclamationPoint size={13} color="var(--mantine-color-error)" />
           <Text fz="xs" c="var(--mantine-color-error)">{t('flow.trigger.bot.access.nobody')}</Text>
         </Group>
       )}

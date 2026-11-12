@@ -40,11 +40,6 @@ export function isWeekdayHoliday(date: string): boolean {
   return CALENDAR_EXCEPTIONS[date] === 'off' && !isWeekend(date);
 }
 
-/** A Saturday or Sunday the official calendar makes a workday (補行上班). */
-export function isMakeUpWorkday(date: string): boolean {
-  return CALENDAR_EXCEPTIONS[date] === 'work' && isWeekend(date);
-}
-
 /** A workday followed by a day off (KRTC's 假日前一日 timetable). */
 export function isDayBeforeOffDay(date: string): boolean {
   return !isOffDay(date) && isOffDay(addDays(date, 1));

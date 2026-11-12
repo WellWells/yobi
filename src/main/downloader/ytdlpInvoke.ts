@@ -143,16 +143,30 @@ function ytdlpAbortError(label: string, what: 'download' | 'read' = 'download'):
   return err;
 }
 
-const downloadSlot = new Semaphore(1);
+/**
+ * One download per site, keyed by the site's label (`siteLabel`, one per row): a site's bot check
+ * reads many downloads at once from one address, while different sites never wait on each other.
+ */
+const downloadSlots = new Map<string, Semaphore>();
 /** yt-dlp reads that download nothing (a site's probe); a few at once, never a crowd of them. */
 const probeSlot = new Semaphore(2);
 
+function downloadSlotFor(label: string): Semaphore {
+  let slot = downloadSlots.get(label);
+  if (!slot) {
+    slot = new Semaphore(1);
+    downloadSlots.set(label, slot);
+  }
+  return slot;
+}
+
 /**
- * Runs `run` holding the app-wide download slot: a second download waits its turn, and a Stop
- * while waiting throws AbortError without ever starting yt-dlp.
+ * Runs `run` holding the download slot of the site `label` names: a second download from that site
+ * waits its turn, and a Stop while waiting throws AbortError without ever starting yt-dlp.
  */
 export async function withDownloadSlot<T>(label: string, signal: AbortSignal | undefined, run: () => Promise<T>): Promise<T> {
-  if (downloadSlot.busy) deps.log('[Ytdl] another download is running; this one waits');
+  const downloadSlot = downloadSlotFor(label);
+  if (downloadSlot.busy) deps.log(`[Ytdl] another ${label} download is running; this one waits`);
   try {
     await downloadSlot.acquire(signal);
   } catch {

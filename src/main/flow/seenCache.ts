@@ -72,11 +72,16 @@ export async function reconcileSeenCache(
   stepId: string,
   current: string[],
   cacheDays: string | undefined,
-): Promise<{ fresh: string[]; isFirstRun: boolean }> {
+): Promise<{ fresh: string[]; isFirstRun: boolean; lapsed: boolean }> {
   const checkpoint = await store.load(stepId);
   const nowIso = new Date().toISOString();
   const prev = readSeenEntries(checkpoint, nowIso);
-  const { fresh, entries } = dedupeLinks(current, prev, nowIso, cacheWindowMs(cacheDays));
+  const windowMs = cacheWindowMs(cacheDays);
+  const now = Date.parse(nowIso);
+  // Every entry expired (the step did not run for longer than the window): its own keys look new
+  // too, which says nothing about the source having changed.
+  const lapsed = checkpoint !== null && !prev.some((e) => now - Date.parse(e.seenAt) <= windowMs);
+  const { fresh, entries } = dedupeLinks(current, prev, nowIso, windowMs);
   await store.save(stepId, { seen: entries, updatedAt: nowIso });
-  return { fresh, isFirstRun: checkpoint === null };
+  return { fresh, isFirstRun: checkpoint === null, lapsed };
 }

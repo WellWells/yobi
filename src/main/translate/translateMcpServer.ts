@@ -8,9 +8,8 @@
  * catalog shows (130 characters); the rest is there for `tool_help`.
  */
 import * as path from 'node:path';
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { ToolError, createToolServer } from '../mcp/inProcessServer';
+import { ToolError, createToolServer, type ToolServer } from '../mcp/inProcessServer';
 import { ALSO_NAMED } from '../mcp/schemaAliases';
 import { engineLanguage, type EngineLanguage } from './engineLanguages';
 import { SUBTITLE_EXTENSIONS, decodeSubtitle, parseSubtitle, renderSubtitle, subtitleKind } from './subtitleDocument';
@@ -36,6 +35,9 @@ const SUBTITLE_MAX_BYTES = 5 * 1024 * 1024;
 /** About twenty hours of dialogue; more than this is not one subtitle file. */
 const SUBTITLE_MAX_LINES = 20_000;
 const BOM = '﻿';
+
+/** Every result says what it is, so a reply does not hand a context-free draft over as finished. */
+export const MT_NOTE = 'Machine translation, line by line with no context: names, slang and wordplay can come out wrong. Tell the user it is a quick draft.';
 
 /*
  * Both are reads to the action gate, translate_subtitle included: it only adds a new file under a
@@ -114,7 +116,7 @@ async function translateText(deps: TranslateMcpDeps, args: Record<string, unknow
   }
   const input = requestOf(args, text.split(/\r?\n/), signal);
   const result = await run(deps, input);
-  return { translation: result.lines.join('\n'), to: input.to.tag };
+  return { translation: result.lines.join('\n'), to: input.to.tag, note: MT_NOTE };
 }
 
 /** The file's bytes. Errors name the file only: the path here is resolved and carries the account name. */
@@ -153,10 +155,11 @@ async function translateSubtitle(deps: TranslateMcpDeps, args: Record<string, un
     translated: result.changed,
     unchanged: doc.spans.length - result.changed,
     to: input.to.tag,
+    note: MT_NOTE,
   };
 }
 
-export function createTranslateMcpServer(deps: TranslateMcpDeps): Server {
+export function createTranslateMcpServer(deps: TranslateMcpDeps): ToolServer {
   return createToolServer({
     name: TRANSLATE_SERVER_NAME,
     tools: TRANSLATE_TOOLS,

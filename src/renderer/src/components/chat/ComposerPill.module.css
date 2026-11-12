@@ -14,6 +14,33 @@
   border-color: transparent !important;
 }
 
+/* The composer's footer row; its pills read its width. */
+.footer {
+  container-type: inline-size;
+}
+
+/* A pill's words stay on one line and give way with an ellipsis, never one letter a line. */
+.label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* What follows the words inside them (the model pill's model, after the provider's name), apart
+   by the pill's own gap. */
+.label > * {
+  margin-inline-start: 6px;
+}
+
+/* A narrow footer (a narrow window): the mode and thinking pills keep their icon and chevron, so
+   the model's name keeps its room. */
+@container (max-width: 439px) {
+  .collapsible {
+    display: none;
+  }
+}
+
 /* An accented pill (non-chat mode) keeps its tint on hover so the mode stays visible. */
 .accent:hover:not([data-disabled]),
 .accent[data-expanded] {

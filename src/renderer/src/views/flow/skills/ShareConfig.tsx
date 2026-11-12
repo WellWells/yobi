@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Group, Stack, Text } from '@mantine/core';
+import { Group, Input, Stack, Text } from '@mantine/core';
 import { AppButton } from '../../../components/AppButton';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { AppTextarea } from '../../../components/AppTextarea';
@@ -12,8 +12,11 @@ import { shareApi } from '../../../api/electronApi';
 import { DEFAULT_CAPTURE_BACKGROUND_STYLE, DEFAULT_CAPTURE_PALETTE } from '../../../../../shared/capturePalettes';
 import type { CaptureBackgroundStyle } from '../../../../../shared/capturePalettes';
 import {
-  SHARE_FORMATS, isShareLinkFormat, parseShareFormat, withoutZipPrefix,
+  SHARE_FORMATS, isShareFormatToken, isShareLinkFormat, parseShareFormat, withoutZipPrefix,
 } from '../../../../../shared/shareFormat';
+import { useFlowStore } from '../../../store/useFlowStore';
+import { FieldPair } from './FieldPair';
+import { stepsLosingShareFile } from './shareLinkImpact';
 import {
   CAPTURE_WIDTHS,
   DEFAULT_CAPTURE_WIDTH,
@@ -46,6 +49,16 @@ export const ShareConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) =
     void shareApi.getSettings().then(setSettings);
   }, [sharing, settings]);
 
+  const rawFormat = (step.config.format ?? '').trim();
+  // A word the runner does not know falls back to PDF; a variable is read at run time.
+  const unknownFormat = rawFormat !== '' && !rawFormat.includes('{{') && !isShareFormatToken(rawFormat);
+  // A primitive, so the card draws again only when the answer changes.
+  const losingFile = useFlowStore((s) => {
+    if (!sharing) return '';
+    const flow = s.flows.find((f) => f.id === s.selectedFlowId);
+    return flow ? stepsLosingShareFile(flow, step.id).map((n) => `#${n}`).join(', ') : '';
+  });
+
   const parsed = parseShareFormat(step.config.format);
   const zip = parsed.zip || step.config.zip === 'true';
   const width = snapCaptureWidth(Number(step.config.width) || DEFAULT_CAPTURE_WIDTH);
@@ -58,18 +71,8 @@ export const ShareConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) =
 
   return (
     <Stack gap="xs">
-      <AppTextarea
-        label={t('flow.skill.share.content')}
-        placeholder={t('flow.skill.share.content.placeholder')}
-        value={step.config.content ?? ''}
-        onChange={(e) => onChange({ ...step.config, content: e.currentTarget.value })}
-        minRows={3}
-        autosize
-        size="sm"
-      />
-
-      <Stack gap={6}>
-        <Text fz="xs" c="dimmed">{t('flow.skill.share.format')}</Text>
+      {/* First: the format decides which fields follow. */}
+      <Input.Wrapper label={t('flow.skill.share.format')}>
         <AppSegmentedControl
           value={parsed.format}
           options={SHARE_FORMATS.map((value) => ({
@@ -79,7 +82,28 @@ export const ShareConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) =
           onChange={(format) => onChange({ ...step.config, format, zip: zip ? 'true' : 'false' })}
           size="sm"
         />
-      </Stack>
+      </Input.Wrapper>
+      {unknownFormat && (
+        <Text fz="xs" c="var(--mantine-color-warning)">
+          {fillTemplate(t('flow.skill.share.format.unknown'), { format: rawFormat })}
+        </Text>
+      )}
+      {losingFile && (
+        <Text fz="xs" c="var(--mantine-color-warning)">
+          {fillTemplate(t('flow.skill.share.format.linkLosesFile'), { steps: losingFile })}
+        </Text>
+      )}
+
+      <AppTextarea
+        label={t('flow.skill.share.content')}
+        placeholder={t('flow.skill.share.content.placeholder')}
+        value={step.config.content ?? ''}
+        onChange={(e) => onChange({ ...step.config, content: e.currentTarget.value })}
+        minRows={3}
+        maxRows={12}
+        autosize
+        size="sm"
+      />
 
       {sharing ? (
         <>
@@ -119,24 +143,25 @@ export const ShareConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) =
         </>
       ) : (
         <>
-          <AppTextInput
-            label={t('flow.skill.share.title')}
-            placeholder={t('flow.skill.share.title.placeholder')}
-            value={step.config.title ?? ''}
-            onChange={(e) => onChange({ ...step.config, title: e.currentTarget.value })}
-            size="sm"
-          />
-          <AppTextInput
-            label={t('flow.skill.share.filename')}
-            placeholder={t('flow.skill.share.filename.placeholder')}
-            value={step.config.filename ?? ''}
-            onChange={(e) => onChange({ ...step.config, filename: e.currentTarget.value })}
-            size="sm"
-            mono
-          />
+          <FieldPair>
+            <AppTextInput
+              label={t('flow.skill.share.title')}
+              placeholder={t('flow.skill.share.title.placeholder')}
+              value={step.config.title ?? ''}
+              onChange={(e) => onChange({ ...step.config, title: e.currentTarget.value })}
+              size="sm"
+            />
+            <AppTextInput
+              label={t('flow.skill.share.filename')}
+              placeholder={t('flow.skill.share.filename.placeholder')}
+              value={step.config.filename ?? ''}
+              onChange={(e) => onChange({ ...step.config, filename: e.currentTarget.value })}
+              size="sm"
+              mono
+            />
+          </FieldPair>
 
-          <Stack gap={6}>
-            <Text fz="xs" c="dimmed">{t('capture.size')}</Text>
+          <Input.Wrapper label={t('capture.size')}>
             <AppSegmentedControl
               value={String(width)}
               options={CAPTURE_WIDTHS.map((value) => ({
@@ -146,20 +171,22 @@ export const ShareConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) =
               onChange={(value) => onChange({ ...step.config, width: value })}
               size="sm"
             />
-          </Stack>
+          </Input.Wrapper>
 
-          <SelectDropdown
-            label={t('common.background')}
-            options={buildCapturePaletteOptions(t)}
-            value={step.config.palette || DEFAULT_CAPTURE_PALETTE}
-            onChange={(palette) => onChange({ ...step.config, palette })}
-            size="sm"
-          />
-          <BackgroundStylePicker
-            value={(step.config.backgroundStyle || DEFAULT_CAPTURE_BACKGROUND_STYLE) as CaptureBackgroundStyle}
-            onChange={(backgroundStyle) => onChange({ ...step.config, backgroundStyle })}
-            t={t}
-          />
+          <FieldPair>
+            <SelectDropdown
+              label={t('common.background')}
+              options={buildCapturePaletteOptions(t)}
+              value={step.config.palette || DEFAULT_CAPTURE_PALETTE}
+              onChange={(palette) => onChange({ ...step.config, palette })}
+              size="sm"
+            />
+            <BackgroundStylePicker
+              value={(step.config.backgroundStyle || DEFAULT_CAPTURE_BACKGROUND_STYLE) as CaptureBackgroundStyle}
+              onChange={(backgroundStyle) => onChange({ ...step.config, backgroundStyle })}
+              t={t}
+            />
+          </FieldPair>
 
           <ToggleSwitch
             label={t('flow.skill.share.zip')}
@@ -180,9 +207,19 @@ export const ShareConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) =
         checked={step.config.emitFailFlag === 'true'}
         onChange={(e) => onChange({ ...step.config, emitFailFlag: e.currentTarget.checked ? 'true' : 'false' })}
       />
+      {step.config.emitFailFlag === 'true' && (
+        <Text fz="xs" c="var(--text-muted)">
+          {fillTemplate(t('flow.skill.share.emitFailFlag.hint'), { flag: `{{${step.outputKey}.isFailed}}` })}
+        </Text>
+      )}
 
       <Text fz="xs" c="dimmed">
-        {sharing ? t('flow.skill.share.hint.link') : t('flow.skill.share.hint.file')}
+        {sharing
+          ? fillTemplate(t('flow.skill.share.hint.link'), { url: `{{${step.outputKey}.url}}` })
+          : fillTemplate(t('flow.skill.share.hint.file'), { path: `{{${step.outputKey}.path}}` })}
+      </Text>
+      <Text fz="xs" c="var(--text-muted)">
+        {fillTemplate(t('flow.skill.share.hint.summary'), { summary: `{{${step.outputKey}.summary}}` })}
       </Text>
     </Stack>
   );

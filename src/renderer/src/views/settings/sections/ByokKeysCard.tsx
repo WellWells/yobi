@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ActionIcon, Badge, Box, Group, Stack, Text } from '@mantine/core';
-import { KeyRound, Pencil, Plus, Trash2 } from 'lucide-react';
+import { KeyRound, Pencil, Plus, Trash } from 'lucide-react';
 import { SectionCard, SectionTitle, VisibilityToggle } from '../components';
 import { useHiddenSources } from '../hooks/useHiddenSources';
 import { AppButton } from '../../../components/AppButton';
@@ -101,7 +101,7 @@ export const ByokKeysCard: React.FC<Props> = ({ byok, t, sectionGap }) => {
                     aria-label={t('settings.byok.delete')}
                     onClick={() => setConfirmDelete(instance)}
                   >
-                    <Trash2 size={14} />
+                    <Trash size={14} />
                   </ActionIcon>
                   <VisibilityToggle
                     label={instance.name}

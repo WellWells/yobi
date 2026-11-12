@@ -40,6 +40,7 @@ import { siteChangedAt } from '../../../shared/linkSites/siteChanged';
 import type { StepProgress } from '../../../shared/stepProgress';
 import { SPACE_FACTOR, fetchLimitFor, freeDiskBytes, streamCapBytes } from '../../downloader/fetchLimits';
 import { StreamTooLargeError } from '../../downloader/streamTypes';
+import { ReadCache, readThrough, type CachedRead } from '../../downloader/readCache';
 import { countDownload, countDownloadFailure } from '../../downloader/usage';
 import { FlowUserError } from '../userError';
 import { downloadsFolder } from './fileOps';
@@ -97,11 +98,50 @@ async function readVideo(
   onProgress?: (progress: StepProgress) => void,
   partialOk = false,
 ): Promise<VideoInfo> {
+  return (await readVideoCached(ref, config, signal, onProgress, partialOk)).value;
+}
+
+/**
+ * How long a video's details answer the same link again: the menu, then the button pressed on it,
+ * then the same link pasted later, read the site once. A site that downloads itself from the
+ * addresses it read retries once with a fresh read when they have expired (`youtubeDownload`).
+ */
+export const VIDEO_READ_TTL_MS = 60 * 60_000;
+
+const videoReads = new ReadCache<VideoInfo>();
+
+/** The link as its site rebuilt it, and the sign-in use the run allows: a signed-out read never answers a signed-in one. */
+function videoReadKey(ref: VideoRef, signIn: string): string {
+  return [ref.site, ref.url, ref.variant ?? '', signIn].join('|');
+}
+
+/**
+ * `readVideo`, saying whether the details came from the cache (`readCache.ts`). A `partial` read
+ * (the site held the page back) is never kept: the next paste may get the whole of it.
+ */
+async function readVideoCached(
+  ref: VideoRef,
+  config: Readonly<Record<string, string>>,
+  signal?: AbortSignal,
+  onProgress?: (progress: StepProgress) => void,
+  partialOk = false,
+): Promise<CachedRead<VideoInfo>> {
   if (isPlaylist(ref)) throw playlistRefused(ref.site);
   const { signIn } = readAccessOf(config);
-  const info = await withReadingNotice(ref.site, onProgress, () => VIDEO_SITES[ref.site].info(ref, signal, { signIn }));
-  if (info.partial && !partialOk) throw videoPageHeldBack(ref.site, 'only the link card was readable');
-  return info;
+  const read = await readThrough(
+    videoReads,
+    videoReadKey(ref, signIn),
+    VIDEO_READ_TTL_MS,
+    () => withReadingNotice(ref.site, onProgress, () => VIDEO_SITES[ref.site].info(ref, signal, { signIn })),
+    { keep: (info) => !info.partial },
+  );
+  if (read.cached) sendLog(`♻️ [${siteLabel(ref.site)}] ${ref.id}: read a moment ago — not asking the site again`);
+  if (read.value.partial && !partialOk) throw videoPageHeldBack(ref.site, 'only the link card was readable');
+  return read;
+}
+
+function forgetVideoRead(ref: VideoRef, config: Readonly<Record<string, string>>): void {
+  videoReads.delete(videoReadKey(ref, readAccessOf(config).signIn));
 }
 
 /** A link to a whole playlist or collection (`PLAYLIST_KIND`), which the rows take only to turn away. */
@@ -218,7 +258,7 @@ async function youtubeInfo(
 ): Promise<string> {
   const input = parseVideoInput(config.input ?? '');
   if (!input) {
-    throw new FlowUserError('flow.error.ytdlNotYoutube', {}, 'The input has no YouTube video link');
+    throw new FlowUserError('flow.error.ytdlNotYoutube', {}, 'The input has no video link');
   }
   // A link alone or a summary does without the qualities: a held-back page still answers them.
   const info = await readVideo(input.ref, config, signal, onProgress, !input.quality || input.quality === 'summary');
@@ -609,14 +649,15 @@ async function youtubeDownload(
   onProgress: ((progress: StepProgress) => void) | undefined,
 ): Promise<string> {
   const asked = matchVideoRef(config.url ?? '');
-  if (!asked) throw new FlowUserError('flow.error.ytdlNotYoutube', {}, 'The url is not a YouTube video link');
+  if (!asked) throw new FlowUserError('flow.error.ytdlNotYoutube', {}, 'The url is not a video link');
   if (isPlaylist(asked)) throw playlistRefused(asked.site);
   if (parseQualityToken(config.quality ?? '') === 'srt') return subtitlesDownload(asked, config, signal, onProgress);
   const requested = requestedQuality(config.quality);
   // A site with sound only (SoundCloud) has its MP3 alone: any quality asked for is that.
   const quality: YtdlPick = videoIsAudioOnly(asked.site) ? 'mp3' : requested;
   requireTools(asked.site);
-  const info = await readVideo(asked, config, signal, onProgress);
+  const read = await readVideoCached(asked, config, signal, onProgress);
+  let info = read.value;
   // The site's own form of the link, as its `info` read it, is what gets downloaded.
   const { ref } = info;
   const label = siteLabel(ref.site);
@@ -661,8 +702,8 @@ async function youtubeDownload(
   try {
     onProgress?.(phaseOnly('starting', target.label, target.sizeBytes, target.kind));
     const reporter = downloadProgressReporter(target, onProgress);
-    const result = await downloadSiteVideo(ref, target.pick, destination, {
-      info,
+    const download = (details: VideoInfo) => downloadSiteVideo(ref, target.pick, destination, {
+      info: details,
       jobDir,
       signal,
       onProgress: reporter?.sample,
@@ -670,6 +711,15 @@ async function youtubeDownload(
       onLog: sendLog,
       ...(target.lowAudio ? { lowAudio: true } : {}),
       ...(fetchLimit ? { fetchLimit } : {}),
+    });
+    const result = await download(info).catch(async (err: unknown) => {
+      if (!retriesWithFreshRead(err, read.cached, ref.site, signal)) throw err;
+      // A site downloading itself fetches the addresses its read gave, which expire: a kept read's
+      // may have. Read once more, fresh, and try again.
+      forgetVideoRead(asked, config);
+      sendLog(`♻️ [${label}] The download from a kept read failed (${err instanceof Error ? err.message : String(err)}) — reading the video again`);
+      info = await readVideo(asked, config, signal, onProgress);
+      return download(info);
     }).catch((err: unknown) => {
       if (!(err instanceof StreamTooLargeError)) throw asFlowError(err, ref.site);
       // Stopped as it passed the limit: over the person's cap, or more than the disk can take.
@@ -717,6 +767,16 @@ async function subtitlesDownload(
     destination: resolveYtdlDestination(config.destination, config.__triggerPlatform),
     showPath: access.showPath,
   });
+}
+
+/**
+ * Whether a failed download is tried once more with a fresh read: only a site that downloads from
+ * the addresses its read gave (`VideoSite.download`; yt-dlp reads the page itself), only when that
+ * read came from the cache, and never after a Stop, the size limit or the person's own error.
+ */
+export function retriesWithFreshRead(err: unknown, cached: boolean, site: VideoSiteId, signal: AbortSignal | undefined): boolean {
+  if (!cached || signal?.aborted || !VIDEO_SITES[site].download) return false;
+  return !(err instanceof StreamTooLargeError) && !(err instanceof FlowUserError);
 }
 
 /** yt-dlp's leftovers (part files, the separate streams), leaving the folder itself. */

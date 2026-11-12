@@ -3,8 +3,12 @@ import { Divider, Group } from '@mantine/core';
 
 interface GroupHeaderProps {
   label: string;
-  /** `divider` heads a list section with a rule; `plain` names a sub-group inside a panel, card or picker. */
-  variant?: 'divider' | 'plain';
+  /**
+   * `divider` heads a list section with a rule; `plain` names a sub-group inside a panel, card or
+   * picker; `sub` is a group inside a sidebar section (the time groups under 「對話」), a step
+   * quieter than the section's own heading.
+   */
+  variant?: 'divider' | 'plain' | 'sub';
   icon?: React.ReactNode;
   mb?: number;
 }
@@ -17,6 +21,14 @@ const LABEL_WEIGHT = 600;
 const LABEL_COLOR = 'var(--text-muted)';
 
 export const GroupHeader: React.FC<GroupHeaderProps> = ({ label, variant = 'divider', icon, mb }) => {
+  if (variant === 'sub') {
+    return (
+      <Group gap={6} wrap="nowrap" mb={mb} h={26} fz={LABEL_SIZE} c={LABEL_COLOR}>
+        {icon}
+        {label}
+      </Group>
+    );
+  }
   if (variant === 'plain') {
     return (
       <Group gap={6} wrap="nowrap" mb={mb} fz={LABEL_SIZE} fw={LABEL_WEIGHT} c={LABEL_COLOR}>

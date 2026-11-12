@@ -1,11 +1,11 @@
 /**
- * Blanking a JPEG's location before it is sent.
+ * Finding a JPEG's location data before it is sent.
  *
  * LINE's apps blank the GPS part of a JPEG's EXIF data before they send it, as a photo or as a file,
- * so a photo does not tell where it was taken. This does the same, and more thoroughly: LINE blanks
- * the GPS entries only, leaving the coordinates they pointed to in the file, while this also blanks
- * those values. The bytes are zeroed as the file is uploaded, so the size stays the same and the
- * file on disk is not changed.
+ * so a photo does not tell where it was taken. Yobi does the same, and more thoroughly: LINE blanks
+ * the GPS entries only, leaving the coordinates they pointed to in the file, while Yobi also blanks
+ * those values. The zeroing itself happens in the native core as the file is uploaded; this only
+ * finds the ranges, so the send plan can mark the file gps_removed.
  */
 import { open } from 'node:fs/promises';
 
@@ -86,7 +86,7 @@ export function tiffByteOrder(t: Buffer): ByteOrder | null {
 }
 
 /** The GPS IFD in EXIF (TIFF) data that starts at `base` in the file. */
-export function tiffGPSRanges(t: Buffer, base: number): ByteRange[] {
+function tiffGPSRanges(t: Buffer, base: number): ByteRange[] {
   const bo = tiffByteOrder(t);
   if (!bo || bo.u16(t, 2) !== 42) return [];
   let gps = -1;
@@ -121,14 +121,5 @@ function tiffTypeSize(typ: number): number {
     case 4: case 9: case 11: return 4; // LONG, SLONG, FLOAT
     case 5: case 10: case 12: return 8; // RATIONAL, SRATIONAL, DOUBLE
     default: return 0;
-  }
-}
-
-/** Zeroes, in place, the parts of `chunk` (which starts at file offset `off`) inside `ranges`. */
-export function blankRanges(chunk: Buffer, off: number, ranges: readonly ByteRange[]): void {
-  for (const rg of ranges) {
-    const from = Math.max(rg.off, off);
-    const to = Math.min(rg.off + rg.n, off + chunk.length);
-    if (from < to) chunk.fill(0, from - off, to - off);
   }
 }

@@ -43,14 +43,14 @@ function quoted(names: readonly string[]): string {
   return names.map((name) => `"${name}"`).join(', ');
 }
 
-function targetError(query: string, target: Exclude<EditTarget, { kind: 'found' }>): string {
+export function targetError(query: string, target: Exclude<EditTarget, { kind: 'found' }>, tool = 'edit_flow'): string {
   if (target.candidates.length === 0) {
     return 'ERROR: The user has no saved flows yet. Build one with "build_flow" instead.';
   }
   const lead = target.kind === 'ambiguous'
     ? `"${query}" fits more than one flow.`
     : query ? `No flow is called "${query}".` : 'No flow was made or changed earlier in this conversation, so which one is meant is unclear.';
-  return `ERROR: ${lead} Ask the user which one with "ask_user", offering these as choices: ${quoted(target.candidates.map((flow) => flow.name))}. Then call "edit_flow" again with its name in "flow".`;
+  return `ERROR: ${lead} Ask the user which one with "ask_user", offering these as choices: ${quoted(target.candidates.map((flow) => flow.name))}. Then call "${tool}" again with its name in "flow".`;
 }
 
 /**

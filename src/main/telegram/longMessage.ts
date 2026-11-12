@@ -33,6 +33,15 @@ function foldedQuote(markdown: string): { before: string; body: string; after: s
 }
 
 /**
+ * Far more than the messages could hold, whatever Markdown drops. Each cut renders the text again,
+ * and this runs on the main process: 80,000 characters of short paragraphs took 16 s to come to
+ * the same null. Twice the room, because escapes and quote marks count here and not on screen.
+ */
+function plainlyTooLong(markdown: string, maxChunkChars: number, maxChunks: number): boolean {
+  return markdown.replace(/\]\([^)\n]*\)/g, ']').length > maxChunkChars * maxChunks * 2;
+}
+
+/**
  * The messages for a text a chat should get whole: one while it fits, else split at paragraphs into
  * at most `maxChunks` of about `maxChunkChars`; null when that is not enough, for the caller to send
  * it some other way. A folded quote is cut out of the quote and each piece folded again: cut as
@@ -41,6 +50,7 @@ function foldedQuote(markdown: string): { before: string; body: string; after: s
  */
 export function telegramMessageChunks(markdown: string, maxChunkChars: number, maxChunks: number): string[] | null {
   if (!markdown) return [];
+  if (plainlyTooLong(markdown, maxChunkChars, maxChunks)) return null;
   if (fitsOneMessage(markdown)) return [markdown];
   // One over: enough to know the text is too long without cutting all of it.
   const chunksOf = (text: string): string[] => telegramCompactChunks(text, maxChunkChars, maxChunks + 1);

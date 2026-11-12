@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ActionIcon, Badge, Box, Group, Loader, Text, Tooltip } from '@mantine/core';
-import { Check, Copy, Languages, RefreshCw, Trash2, TriangleAlert, X } from 'lucide-react';
+import { Check, Copy, Languages, RefreshCw, Trash, TriangleExclamationPoint, X } from 'lucide-react';
 import type { TurnTranslation } from '../../../../../shared/conversationDoc';
 import { isTranslateLanguage, languageDisplayName } from '../../../../../shared/translateLanguages';
 import { clipboardApi } from '../../../api/electronApi';
@@ -68,7 +68,7 @@ export const TranslationBlock: React.FC<TranslationBlockProps> = ({
   if (job?.status === 'error') {
     return (
       <Group data-selection-ignore data-find-omit mt={10} px={12} py={8} gap={8} wrap="nowrap" align="flex-start" style={FRAME_STYLE}>
-        <Box c="var(--mantine-color-error)" style={{ lineHeight: 0, paddingTop: 2 }}><TriangleAlert size={14} /></Box>
+        <Box c="var(--mantine-color-error)" style={{ lineHeight: 0, paddingTop: 2 }}><TriangleExclamationPoint size={14} /></Box>
         <Text component="div" fz="var(--font-size-sm)" c="var(--mantine-color-error)" style={{ flex: 1 }}>{job.error}</Text>
         <AppButton
           size="compact-sm"
@@ -151,7 +151,7 @@ export const TranslationBlock: React.FC<TranslationBlockProps> = ({
               aria-label={t('chat.translate.remove')}
               onClick={() => { void removeTurnTranslation(path, turnIndex, response); }}
             >
-              <Trash2 size={14} />
+              <Trash size={14} />
             </ActionIcon>
           </Tooltip>
         </Group>
@@ -159,7 +159,7 @@ export const TranslationBlock: React.FC<TranslationBlockProps> = ({
 
       {translation.unmatched && view !== 'original' && (
         <Group data-find-omit gap={6} px={12} pt={6} wrap="nowrap" align="flex-start">
-          <Box c="var(--mantine-color-warning)" style={{ lineHeight: 0, paddingTop: 2 }}><TriangleAlert size={13} /></Box>
+          <Box c="var(--mantine-color-warning)" style={{ lineHeight: 0, paddingTop: 2 }}><TriangleExclamationPoint size={13} /></Box>
           <Text component="div" fz="var(--font-size-sm)" c="var(--text-secondary)">{t('chat.translate.unmatched')}</Text>
         </Group>
       )}

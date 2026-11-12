@@ -18,7 +18,11 @@ interface Props {
 }
 
 export const AppearanceSection: React.FC<Props> = ({ t, showSection, sectionGap }) => {
-  const { preference, setTheme, previewTheme } = useThemeStore();
+  const { preference, setTheme, previewTheme } = useThemeStore(useShallow((s) => ({
+    preference: s.preference,
+    setTheme: s.setTheme,
+    previewTheme: s.previewTheme,
+  })));
   const reading = useReadingStore((s) => s.prefs);
   const setReadingPrefs = useReadingStore((s) => s.setReadingPrefs);
   const settingsVisible = useAppStore((s) => s.currentView === 'settings');
@@ -26,14 +30,16 @@ export const AppearanceSection: React.FC<Props> = ({ t, showSection, sectionGap 
     if (!settingsVisible) previewTheme(null);
   }, [settingsVisible, previewTheme]);
   const {
-    layoutMode, markdownZoom, showTokenUsage,
-    setLayoutMode, zoomInMarkdown, zoomOutMarkdown, resetMarkdownZoom, setShowTokenUsage,
+    layoutMode, markdownZoom, showTokenUsage, showRecap,
+    setLayoutMode, zoomInMarkdown, zoomOutMarkdown, resetMarkdownZoom, setShowTokenUsage, setShowRecap,
   } = useAppStore(
     useShallow((s) => ({
       layoutMode: s.layoutMode,
       markdownZoom: s.markdownZoom,
       showTokenUsage: s.showTokenUsage,
       setShowTokenUsage: s.setShowTokenUsage,
+      showRecap: s.showRecap,
+      setShowRecap: s.setShowRecap,
       setLayoutMode: s.setLayoutMode,
       zoomInMarkdown: s.zoomInMarkdown,
       zoomOutMarkdown: s.zoomOutMarkdown,
@@ -116,6 +122,12 @@ export const AppearanceSection: React.FC<Props> = ({ t, showSection, sectionGap 
           label={t('settings.appearance.tokenUsage')}
           hint={t('settings.appearance.tokenUsage.hint')}
           control={<ToggleSwitch checked={showTokenUsage} onChange={() => setShowTokenUsage(!showTokenUsage)} />}
+        />
+        <SettingDivider my={14} />
+        <SettingRow
+          label={t('settings.appearance.recap')}
+          hint={t('settings.appearance.recap.hint')}
+          control={<ToggleSwitch checked={showRecap} onChange={() => setShowRecap(!showRecap)} />}
         />
       </SectionCard>
     </Box>

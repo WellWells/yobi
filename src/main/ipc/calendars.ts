@@ -61,8 +61,8 @@ export function registerCalendarHandlers(): void {
     return calDavSnapshot();
   });
   ipcMain.handle(IPC.CALENDAR_LIST, (): CalendarSummary[] => listCalendars());
-  ipcMain.handle(IPC.CALENDAR_SAVE, (_event, request: CalendarSaveRequest): CalendarSaveResult => {
-    const result = saveCalendar(request ?? { name: '', url: '' });
+  ipcMain.handle(IPC.CALENDAR_SAVE, async (_event, request: CalendarSaveRequest): Promise<CalendarSaveResult> => {
+    const result = await saveCalendar(request ?? { name: '', url: '' });
     if (result.ok) sendLog(`📅 Calendar ${request?.id ? 'updated' : 'added'}: ${String(request.name).trim()}`);
     return result;
   });

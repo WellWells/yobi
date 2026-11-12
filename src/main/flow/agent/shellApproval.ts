@@ -1,5 +1,9 @@
 import { AGENT_ASK_TOOL } from '../../../shared/types';
+import { UNSEEN_CHARACTER } from '../../../shared/agentStepLabel';
 import { LINE_TEXT_MAX, TELEGRAM_MESSAGE_MAX } from '../../../shared/botMessageLimits';
+import { hiddenShellCharacter } from '../../../shared/shellHiddenCharacter';
+
+export { withoutUnseen } from '../../../shared/agentStepLabel';
 
 /**
  * A shell command asked about in the chat instead of a desktop dialog (a Telegram / LINE run).
@@ -26,18 +30,6 @@ export const BOT_QUESTION_TEXT_MAX = Math.min(TELEGRAM_MESSAGE_MAX, LINE_TEXT_MA
 /** Kept free under the question for the reply hint the bot appends (`bot.builtin.answerHint` + a blank line). */
 export const BOT_QUESTION_HINT_RESERVE = 200;
 
-/**
- * Format and direction controls render as nothing, or reorder what is around them, so the string a
- * user reads is not the string the shell gets: bidi embeddings, overrides and isolates (U+202A–E,
- * U+2066–9), marks (U+200E/F, U+061C), zero-width characters (U+200B–D, U+2060, U+FEFF) and the
- * rest of `\p{Cf}`; line and paragraph separators, which a chat breaks a line at and a shell does
- * not; and C0/C1 controls (escape sequences, backspace) other than tab, line feed and carriage return.
- */
-const HIDDEN_CHARACTER = /[\p{Cf}\p{Zl}\p{Zp}\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u;
-
-/** Everything that does not show as itself in a chat line: the above plus tab, line feed and carriage return. */
-const UNSEEN_CHARACTER = /[\p{Cf}\p{Zl}\p{Zp}\p{Cc}]/gu;
-
 const WRITTEN_OUT: Record<string, string> = { '\n': '\\n', '\r': '\\r', '\t': '\\t' };
 
 /**
@@ -50,17 +42,8 @@ export function writeOutUnseen(text: string): string {
     ?? `\\u${(char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')}`);
 }
 
-/** Prose with the unseen characters taken out and line breaks turned into spaces (the model's own sentence). */
-export function withoutUnseen(text: string): string {
-  return text.replace(UNSEEN_CHARACTER, (char) => (char === '\n' || char === '\r' || char === '\t' ? ' ' : ''));
-}
-
 /** The shells a model may name on macOS/Linux; anything else is a program, not a shell. */
 const KNOWN_UNIX_SHELLS = new Set(['sh', 'bash', 'zsh', 'fish', 'pwsh', 'powershell', 'cmd']);
-
-function codePointLabel(char: string): string {
-  return `U+${(char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')}`;
-}
 
 /**
  * Why this shell call cannot be shown honestly, or null. Checked for every origin, the desktop
@@ -70,9 +53,9 @@ function codePointLabel(char: string): string {
  */
 export function shellTextDenyReason(config: Record<string, string>, platform: NodeJS.Platform): string | null {
   for (const [field, value] of [['command', config.command ?? ''], ['shell', config.shell ?? '']] as const) {
-    const hidden = HIDDEN_CHARACTER.exec(value);
+    const hidden = hiddenShellCharacter(value);
     if (hidden) {
-      return `refused: the ${field} contains an invisible or text-direction control character (${codePointLabel(hidden[0])}), so what the user would approve is not what would run. Write it again with plain visible characters only.`;
+      return `refused: the ${field} contains an invisible or text-direction control character (${hidden}), so what the user would approve is not what would run. Write it again with plain visible characters only.`;
     }
   }
   if (platform === 'win32') return null;

@@ -95,7 +95,9 @@ export function createMainWindow(options?: MainWindowOptions): void {
     ...restoredWindowOptions(),
     // A login start must never be mapped: hiding it afterwards still flashes it and takes focus.
     show: !startHidden,
-    minWidth: 700,
+    // A third of a 1536px-wide screen (1920 at 125%) is 512: the window snaps into it. Under 800 the
+    // sidebars open as drawers (`NARROW_WINDOW_BELOW`), so the views have the whole width.
+    minWidth: 480,
     minHeight: 500,
     title: 'Yobi',
     frame: false,
@@ -241,6 +243,16 @@ export function createWorkerWindow(initialUrl: string, mode: WorkerWindowMode = 
   workerWindowMode = mode;
 
   workerWin.setMenuBarVisibility(false);
+  // Popups (a "Continue with Google" sign-in) are sandboxed by default, and since Electron 45 a
+  // popup whose sandbox differs from its opener's gets its own process and no `window.opener`, so
+  // the page never hears back. The automation worker is unsandboxed: matching it keeps the opener.
+  // The popup still gets no preload and keeps context isolation.
+  if (mode === 'automation') {
+    workerWin.webContents.setWindowOpenHandler(() => ({
+      action: 'allow',
+      overrideBrowserWindowOptions: { webPreferences: { sandbox: false } },
+    }));
+  }
 
   // Transparent BEFORE it is mapped so it never flashes, parked AFTER because the position
   // only sticks once macOS has a frame to clamp — see parkWindowOffscreen.

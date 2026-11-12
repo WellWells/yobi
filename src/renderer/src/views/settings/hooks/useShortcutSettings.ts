@@ -6,7 +6,7 @@ import {
 } from '../../../../../shared/shortcuts';
 import type { FlowHotkeyRef, ShortcutDef, ShortcutId, ShortcutOverride } from '../../../../../shared/shortcuts';
 import { allResolvedBindings, useShortcutStore } from '../../../store/shortcutStore';
-import { useFlowStore } from '../../../store/useFlowStore';
+import { useSavedFlows } from '../../../store/useSavedFlows';
 import { useI18nStore } from '../../../store/i18nStore';
 import { settingsApi } from '../../../api/electronApi';
 import { isMac } from '../../../utils/keyLabels';
@@ -28,7 +28,7 @@ export function useShortcutSettings(legacyCombos: Record<string, string> = {}) {
   const { overrides, setOverrides } = useShortcutStore(
     useShallow((s) => ({ overrides: s.overrides, setOverrides: s.setOverrides })),
   );
-  const flows = useFlowStore((s) => s.flows);
+  const flows = useSavedFlows();
   const t = useI18nStore((s) => s.t);
   const [messages, setMessages] = useState<Record<string, ShortcutRowMessage | null>>({});
 

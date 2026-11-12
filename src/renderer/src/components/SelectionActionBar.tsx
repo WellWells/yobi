@@ -1,6 +1,6 @@
 import React from 'react';
 import { ActionIcon, Checkbox, Group, Stack, Text, Tooltip } from '@mantine/core';
-import { Trash2, X } from 'lucide-react';
+import { Trash, X } from 'lucide-react';
 import { fillTemplate } from '../../../shared/fillTemplate';
 
 interface SelectionActionBarProps {
@@ -77,7 +77,7 @@ export const SelectionActionBar: React.FC<SelectionActionBarProps> = ({
             aria-label={t('common.delete')}
             style={{ flexShrink: 0 }}
           >
-            <Trash2 size={14} />
+            <Trash size={14} />
           </ActionIcon>
         </Tooltip>
       </Group>

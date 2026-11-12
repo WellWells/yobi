@@ -4,6 +4,7 @@ export type { SkillType };
 import { PROVIDER_URLS, UPLOAD_CAPABLE_PROVIDER_LABELS } from './types';
 import { DEFAULT_CAPTURE_PALETTE } from './capturePalettes';
 import { LINK_SITE_ROWS } from './linkSites/rows';
+import { SYSINFO_DEFAULT_FIELDS } from './sysinfoFields';
 
 /**
  * The sites the video skills take, by their row labels ("YouTube, bilibili, SoundCloud or Vimeo"). Named once
@@ -14,11 +15,14 @@ const VIDEO_SITE_NAMES = VIDEO_SITE_LABELS.length > 1
   ? `${VIDEO_SITE_LABELS.slice(0, -1).join(', ')} or ${VIDEO_SITE_LABELS.at(-1)}`
   : VIDEO_SITE_LABELS.join('');
 
+/** What `x_thread` writes into `.platform`: a post row's label, quoted as a condition compares it. */
+const POST_PLATFORM_VALUES = LINK_SITE_ROWS.filter((row) => row.shape === 'post').map((row) => `"${row.label}"`).join(', ');
+
 export const DEFAULT_SKILL_CONFIG: Record<SkillType, Record<string, string>> = {
   shell: { command: '', shell: '' },
   run: { path: '', args: '' },
   js: { code: '' },
-  browser: { url: '', includeImage: 'false', emitFailFlag: 'false' },
+  browser: { url: '', includeImage: 'false', requireAll: 'false', emitFailFlag: 'false' },
   browser_open: { url: '', show: 'false' },
   browser_js: { page: '', code: '', emitFailFlag: 'false' },
   browser_close: { page: '' },
@@ -29,10 +33,12 @@ export const DEFAULT_SKILL_CONFIG: Record<SkillType, Record<string, string>> = {
     saveToHistory: 'false',
     emitFailFlag: 'false',
     exportFormat: '',
+    exportWidth: '',
     exportTitle: '',
     exportFileName: '',
-    exportShowProvider: 'false',
-    exportShowTimestamp: 'false',
+    // On, as the form, the runner and the spec read a step without the key (AI-built, imported).
+    exportShowProvider: 'true',
+    exportShowTimestamp: 'true',
     palette: '',
     useMemory: 'false',
     useUserMemory: 'false',
@@ -64,7 +70,7 @@ export const DEFAULT_SKILL_CONFIG: Record<SkillType, Record<string, string>> = {
   on_change: { value: '', withDiff: 'false' },
   break: {},
   continue: {},
-  sysinfo: { format: 'text', fields: '' },
+  sysinfo: { format: 'text', fields: SYSINFO_DEFAULT_FIELDS.join(',') },
   http: { method: 'GET', url: '', headers: '', body: '' },
   youtube: { url: '', fallbackProvider: '' },
   youtube_subs: { channels: '', perChannel: '3', skipShorts: 'true' },
@@ -84,6 +90,7 @@ export const DEFAULT_SKILL_CONFIG: Record<SkillType, Record<string, string>> = {
   file_download: { url: '', filename: '', folder: '', maxSizeMb: '100' },
   email_send: { to: '', subject: '', body: '', fromName: '', attachments: '', account: '' },
   text: { text: '' },
+  translate: { text: '', to: '', from: '', emitFailFlag: 'false' },
   stock: { symbol: '', period: '', date: '' },
   forex: { base: 'USD', target: '', amount: '', precision: '4', period: '', date: '' },
   weather: { location: '', units: 'metric', date: '', hours: '' },
@@ -132,9 +139,20 @@ export function isDeliverableSkill(type: string): boolean {
 
 export const SKILL_SPECS: SkillSpec[] = [
   {
+    type: 'translate',
+    brief: 'Use for free machine translation with Microsoft: no model or API key. Translate text into a chosen language.',
+    summary: 'Translate plain text with Microsoft. Sends text to Microsoft, line by line without surrounding context; names, tone and jokes may need review. Use llm for contextual translation and translate_subtitle on Free Translate for subtitle files.',
+    fields: [
+      { key: 'text', desc: 'text to translate; may embed {{variables}}', required: true },
+      { key: 'to', desc: 'target language tag, e.g. "zh-TW", "zh-CN", "en", "ja", "ko"', required: true },
+      { key: 'from', desc: 'source language tag; blank = automatic detection' },
+      { key: 'emitFailFlag', desc: '"true"|"false" — on failure, return empty text and set .isFailed="1" instead of stopping' },
+    ],
+  },
+  {
     type: 'llm',
     brief: "Ask an AI to write, summarize, translate, classify or judge text. Use when the step needs judgement, not data.",
-    summary: 'Send a prompt to the AI web UI and capture the answer.',
+    summary: 'Ask an AI once; keep .text and optionally export several file formats.',
     fields: [
       { key: 'prompt', desc: 'the prompt text; may embed {{variables}}', required: true },
       { key: 'provider', desc: `provider URL, one of [${PROVIDER_URL_LIST}] or "" to use the default provider` },
@@ -142,23 +160,25 @@ export const SKILL_SPECS: SkillSpec[] = [
       { key: 'emitFailFlag', desc: '"true"|"false" — on failure set {{<outputKey>.isFailed}}=1 and continue instead of aborting' },
       { key: 'useMemory', desc: '"true"|"false" — load this flow\'s memory into the prompt and let the model append to it via a "new_memory:" line' },
       { key: 'useUserMemory', desc: '"true"|"false" — add what the user asked Yobi to remember about them (read-only); only when the result goes to the user themself' },
-      { key: 'attachments', desc: `optional local file paths to upload with the prompt (comma or newline separated) — typically {{file}} from an earlier share/capture/file_write step. Only files produced by this run or living in the app output folder are allowed. Supported by ${UPLOAD_CAPABLE_PROVIDER_LABELS}; other providers send the prompt as text and log a note` },
-      { key: 'exportFormat', desc: '""|"png"|"webp"|"pdf" — when set, render the answer to an image/pdf file' },
-      { key: 'exportTitle', desc: 'when exportFormat is set, the heading shown on the exported card; may embed {{variables}}; blank = the heading the answer opens with' },
-      { key: 'exportFileName', desc: 'when exportFormat is set, the output file name (blank auto-generates a unique name)' },
-      { key: 'exportShowProvider', desc: '"true"|"false" — when exportFormat is set, show the AI provider name on the exported card (default "true")' },
-      { key: 'exportShowTimestamp', desc: '"true"|"false" — when exportFormat is set, show a timestamp on the exported card (default "true")' },
+      { key: 'attachments', desc: `local file paths, comma/newline-separated (e.g. {{file}}). Only this run's files or files in the app output folder. Upload supported by ${UPLOAD_CAPABLE_PROVIDER_LABELS}; others send only text` },
+      { key: 'exportFormat', desc: 'comma-separated png|webp|pdf (e.g. "png,pdf"); "" = text only' },
+      { key: 'exportWidth', desc: '720 (phone)|1000 (standard)|1200 (wide); blank = Card style width' },
+      { key: 'exportTitle', desc: 'export heading; accepts {{variables}}; blank = the heading the answer opens with' },
+      { key: 'exportFileName', desc: 'output file name stem; blank auto-generates a unique name' },
+      { key: 'exportShowProvider', desc: '"true"|"false" — show the provider on the export (default "true")' },
+      { key: 'exportShowTimestamp', desc: '"true"|"false" — show the export time (default "true")' },
       { key: 'palette', desc: `when exportFormat is set, the card colour theme by key — dark: aurora|mint|rose|ocean|sunset|forest|violet|steel|ember; light: dawn|mist|sand|sage|sky|peach|lavender|linen (blank = the user's Card style setting, which also sets background style and width)` },
     ],
   },
   {
     type: 'browser',
     brief: "Read one web page (or several) as text. Use to get an article's body after a list step handed you links.",
-    summary: "Read a human web PAGE and return its visible text (renders JavaScript). For articles/SPA pages. Accepts one URL, a JSON array of URLs, or a comma/newline list. NOT for JSON APIs — use http instead. With includeImage=\"true\" (single URL only) it also exposes the page's cover image as {{<outputKey>.image}} (og:image URL, or '' if none).",
+    summary: 'Read web pages as visible text, including JavaScript. Accepts a URL, a JSON URL array or a comma/newline list. Use http for JSON APIs. includeImage adds .image on a single URL.',
     fields: [
       { key: 'url', desc: 'the page URL (or list); may embed {{variables}}', required: true },
-      { key: 'includeImage', desc: '"true"|"false" — also extract the cover image (og:image) into {{<outputKey>.image}}; single URL only (default "false")' },
-      { key: 'emitFailFlag', desc: '"true"|"false" — when a page cannot be fetched, set {{<outputKey>}}="" and {{<outputKey>.isFailed}}=1 and continue instead of aborting; essential inside a loop, where one dead link would otherwise kill the whole run' },
+      { key: 'includeImage', desc: '"true" exposes the og:image cover URL as .image; single URL only (default "false")' },
+      { key: 'requireAll', desc: '"true" fails if any page fails or has no text; default "false" keeps readable pages' },
+      { key: 'emitFailFlag', desc: '"true" sets .isFailed=1 and empty output on failure instead of aborting; use inside loops' },
     ],
   },
   {
@@ -204,8 +224,8 @@ export const SKILL_SPECS: SkillSpec[] = [
   },
   {
     type: 'run',
-    brief: "Launch a program and carry on without waiting. Use to open an app or a file; no output is captured.",
-    summary: 'Launch a local program/executable with arguments and continue immediately (fire-and-forget; does not wait or capture output). For shell commands with pipes/redirects use "shell" instead.',
+    brief: "Start an app and carry on without waiting. Use to open a program (an .exe, a .bat/.cmd script, a macOS .app); no output is captured.",
+    summary: 'Launch a local program/executable with arguments and continue immediately (fire-and-forget; does not wait or capture output). The path must be the program itself, not a document: it does not open a .pdf/.txt in its default app. The step fails when the program cannot be started. For shell commands with pipes/redirects use "shell" instead.',
     fields: [
       { key: 'path', desc: 'path to the executable; may embed {{variables}}', required: true },
       { key: 'args', desc: 'space-separated arguments; may embed {{variables}} (e.g. "{{a}} {{b}}")' },
@@ -265,8 +285,8 @@ export const SKILL_SPECS: SkillSpec[] = [
     fields: [
       { key: 'query', desc: 'the question to research (a question, not keywords); may embed {{variables}}', required: true },
       { key: 'urls', desc: 'optional — read exactly these pages instead of searching: a JSON array of URLs, or a comma/newline separated list. Use it when the pages to read are already known (the user pasted links, or an earlier step produced them)' },
-      { key: 'depth', desc: '"standard" (default), "quick" (3 pages + result summaries: much faster, shorter) or "deep" (sub-questions, gaps re-searched: minutes slower)' },
-      { key: 'sources', desc: 'how many pages to read, 1-8; blank = the per-provider default (3 on a web provider, 12 on BYOK)' },
+      { key: 'depth', desc: '"standard" (default), "quick" (5 pages + result summaries: much faster, shorter) or "deep" (sub-questions, gaps re-searched: minutes slower); ignored when urls is set' },
+      { key: 'sources', desc: 'how many pages to read, 1-8; blank = quick 5, standard 6 on a web provider or 12 on BYOK; ignored by deep' },
       { key: 'emitFailFlag', desc: '"true"|"false" — when the research fails, set {{<outputKey>}}="" and {{<outputKey>.isFailed}}=1 and continue instead of aborting; essential inside a loop' },
     ],
   },
@@ -378,7 +398,7 @@ export const SKILL_SPECS: SkillSpec[] = [
     summary: 'Collect local system/hardware/network info (OS, CPU, memory, GPU, motherboard, BIOS, disks, displays, network) — read WMI-free, so it works even when Windows WMI is broken. "json" format returns a grouped/nested document. Great as input for a following llm step to analyze.',
     fields: [
       { key: 'format', desc: '"text" (human-readable) | "json" (grouped/nested: system/cpu/memory/gpu/displays/motherboard/storage/network)' },
-      { key: 'fields', desc: 'OPTIONAL comma-separated subset of field keys to narrow the output — os,platform,hostname,manufacturer,locale,timezone,uptime,time,timeLocal,cpu,cpuSpeed,cpuCores (logical processors/threads, not physical cores),memoryTotal,memoryFree,memoryType,memoryModules,gpu,graphics,displays,motherboard,bios,disks,volumes,printers,localIp,publicIp,macAddress,gateway,netInterface,networkAdapters,dns,appVersion. OMIT this key entirely to collect the standard local fields. The deep-hardware fields (manufacturer,cpuSpeed,memoryType,memoryModules,graphics,displays,motherboard,bios,disks,volumes,printers,macAddress,gateway,netInterface,networkAdapters,dns) and publicIp are only collected when listed explicitly — they run extra hardware probes or an external network request.' },
+      { key: 'fields', desc: `comma-separated field keys to collect — os,platform,hostname,manufacturer,locale,timezone,uptime,time,timeLocal,cpu,cpuSpeed,cpuCores (logical processors/threads, not physical cores),memoryTotal,memoryFree,memoryType,memoryModules,gpu,graphics,displays,motherboard,bios,disks,volumes,printers,localIp,publicIp,macAddress,gateway,netInterface,networkAdapters,dns,appVersion. Always list the fields you want; the standard local set is "${SYSINFO_DEFAULT_FIELDS.join(',')}". The deep-hardware fields (manufacturer,cpuSpeed,memoryType,memoryModules,graphics,displays,motherboard,bios,disks,volumes,printers,macAddress,gateway,netInterface,networkAdapters,dns) and publicIp are only collected when listed explicitly — they run extra hardware probes or an external network request.` },
     ],
   },
   {
@@ -561,7 +581,7 @@ export const SKILL_SPECS: SkillSpec[] = [
     brief: "Delete a local file. Use after a step consumed it, to clean up a temporary file.",
     summary: 'Delete a local file (no error if it is already gone). Place it after a step that consumed the file — e.g. after a bot upload — to clean up a temporary file. Side-effect only, no outputKey.',
     fields: [
-      { key: 'path', desc: 'the file path to delete; usually a prior file_write output, e.g. {{file_write_1}} or {{file}}', required: true },
+      { key: 'path', desc: 'the file path to delete; usually {{file}}, the file the latest file step made (file_write has no output key of its own)', required: true },
     ],
   },
   {
@@ -746,11 +766,11 @@ export const SKILL_OUTPUT: Record<SkillType, string> = {
   shell: '{{<outputKey>}} = the command stdout, trimmed (falls back to stderr when stdout is empty); no sub-variables.',
   run: '',
   js: '{{<outputKey>}} = your `return` value coerced to a string — objects/arrays are JSON-stringified (return an array to drive a following loop), numbers/booleans are stringified, and null/undefined/no-return give ""; no sub-variables.',
-  browser: '{{<outputKey>}} = the page\'s visible text (multiple URLs are joined with a "---" separator); with includeImage="true" on a SINGLE url, {{<outputKey>.image}} = the cover image URL ("" if none). With emitFailFlag="true", {{<outputKey>.isFailed}} = "0"/"1" and a fetch failure sets {{<outputKey>}}="" instead of aborting the flow.',
+  browser: '{{<outputKey>}} = page text, joined with "---" for multiple URLs. .page1, .page2, ... = each URL\'s text in input order; failed positions stay empty. includeImage="true" on one URL adds .image (cover URL or ""). emitFailFlag="true" adds .isFailed="0"/"1"; failure clears the output instead of aborting.',
   browser_open: '{{<outputKey>}} = the page handle id (pass it to browser_js / browser_close); {{<outputKey>.title}} = page title; {{<outputKey>.url}} = current URL.',
   browser_js: '{{<outputKey>}} = the value you `return` (objects JSON-stringified; undefined/null/empty give ""). A screenshot() path comes back via {{<outputKey>}} only — browser_js does NOT set {{file}}. With emitFailFlag="true", {{<outputKey>.isFailed}} = "0"/"1".',
   browser_close: '',
-  llm: '{{<outputKey>}} = the AI answer text. BUT when exportFormat is set, {{<outputKey>}} instead becomes the saved file PATH and the magic {{file}} is set to it (chain the file via {{file}}). With emitFailFlag="true", {{<outputKey>.isFailed}} = "0"/"1".',
+  llm: '{{<outputKey>.text}} = answer text. .png/.webp/.pdf = files actually produced (unused = ""). .file = last export or "". {{<outputKey>}} = text, or last file (also {{file}}). Images too tall become PDF. emitFailFlag="true" adds .isFailed="0"/"1".',
   clipboard: '{{<outputKey>}} = the clipboard text when action="read"; "" when action="write".',
   delay: '',
   notify: '',
@@ -781,7 +801,7 @@ export const SKILL_OUTPUT: Record<SkillType, string> = {
   youtube_subs: '{{<outputKey>}} = a JSON array of {title, link, image} ("[]" if none); loop (e.g. loopVar "video") and use {{video.title}} / {{video.link}} / {{video.image}} (image = the thumbnail URL, usable as a bot attachment).',
   x_posts: '{{<outputKey>}} = a JSON array of NEW {title, link, author, name, date, text, image, replies, likes} ("[]" if none), newest first; loop (e.g. loopVar "post") and use {{post.link}} / {{post.text}} (the full post text) / {{post.author}} ("@handle") / {{post.name}} (display name) / {{post.date}} / {{post.image}} (first image, "" if none; usable as a bot attachment) / {{post.replies}} and {{post.likes}} (counts). title = the first line of the text.',
   x_trends: '{{<outputKey>}} = a JSON array of {title, link, context, volume, rank, posts} in X\'s order: title = the trend (phrase, #hashtag or name), link = the X search page for it, context = where or what it trends in ("" if X gives none), volume = X\'s count line such as "12.3K posts" ("" if none), rank = "1", "2", …, posts = the trend\'s top posts as {author, name, date, text, link, likes} ([] when none could be read); interpolate the whole array into one llm prompt.',
-  x_thread: '{{<outputKey>}} = the post and its replies as readable text (each with author, time and text; only the post keeps its link), ready to hand to an llm step; {{<outputKey>.text}} / .author / .name / .date / .link / .image = the post itself; {{<outputKey>.replyText}} = the replies only, same layout; {{<outputKey>.replies}} = a JSON array of {author, name, date, text, link, likes} (loop over it to handle replies one by one); {{<outputKey>.shown}} = how many replies were read, {{<outputKey>.replyCount}} = how many the post has in total; {{<outputKey>.platform}} = "X", "Threads", "Instagram" or "Facebook". An Instagram profile link reads the account instead: {{<outputKey>}} = its bio, latest posts and comments under the top ones, {{<outputKey>.subject}} = "account" (else "post"). With emitFailFlag="true", a failure sets {{<outputKey>}}="" and {{<outputKey>.isFailed}}="1" instead of aborting.',
+  x_thread: `{{<outputKey>}} = the post and its replies as readable text (each with author, time and text; only the post keeps its link), ready to hand to an llm step; {{<outputKey>.text}} / .author / .name / .date / .link / .image = the post itself; {{<outputKey>.replyText}} = the replies only, same layout; {{<outputKey>.replies}} = a JSON array of {author, name, date, text, link, likes} (loop over it to handle replies one by one); {{<outputKey>.shown}} = how many replies were read, {{<outputKey>.replyCount}} = how many the post has in total; {{<outputKey>.platform}} = the site, one of ${POST_PLATFORM_VALUES}. An Instagram profile link reads the account instead: {{<outputKey>}} = its bio, latest posts and comments under the top ones, {{<outputKey>.subject}} = "account" (else "post"). With emitFailFlag="true", a failure sets {{<outputKey>}}="" and {{<outputKey>.isFailed}}="1" instead of aborting.`,
   x_media: '{{<outputKey>}} = the media, one per line ("" if none): file paths (telegram/local; also {{file}}) or https URLs (line); .count, .kind, .previews, .message (who + text + link), .caption (.message, or who + link when over Telegram\'s caption limit), .overflow (the full .message when .caption dropped it — send it first), .lead (or instead: who + the start of the text + link, for under the media) with .rest (the text left over, "" when none — send it after the media), .text, .author, .name, .date, .link, .prompt, .videoText, .savedLocally, .summary (where it was saved), .notice (a no-media sentence).',
   ptt_board: '{{<outputKey>}} = a JSON array of NEW {title, link, board, author, score, date} ("[]" if none), newest first; loop (e.g. loopVar "post") and use {{post.title}} / {{post.link}} / {{post.author}} (PTT id) / {{post.score}} (net score) / {{post.date}}. No article text.',
   power: '',
@@ -793,6 +813,7 @@ export const SKILL_OUTPUT: Record<SkillType, string> = {
   file_download: 'No {{<outputKey>}} — the downloaded file PATH (extension derived from Content-Type) is set as the magic {{file}}; reference {{file}} in a later bot/email_send/file_delete step.',
   email_send: '',
   text: '{{<outputKey>}} = the interpolated text string (no sub-variables); delivered as a plain text message when fed to a bot step.',
+  translate: '{{<outputKey>}} = the translated plain text, with line breaks preserved; no JSON wrapper. With emitFailFlag="true", .isFailed="0" on success; a failure returns "" and .isFailed="1". Never returns a partial translation.',
   stock: '{{<outputKey>}} = a JSON quote object; a SINGLE symbol also exposes {{<outputKey>.symbol/.name/.currency/.price/.open/.high/.low/.volume/.previousClose/.change/.changePct/.marketTime/.session/.isFailed}} (some may be ""; .marketTime = exchange-local time with UTC offset; .session = "open" (price is intraday, NOT a close) / "closed" / ""); MULTIPLE symbols give a JSON array (a failed symbol appears as {symbol, isFailed} only; no sub-vars) — loop and use {{item.symbol}} / {{item.price}}. With period/date each quote adds history {source,from,to,timezone,points,values,start,end,change,changePct,high,low,volume,at,series} and one symbol adds .startClose/.endClose/.periodChangePct/.dateClose.',
   forex: '{{<outputKey>}} = a JSON object {base,target,rate,amount,converted,asOf,session,previousClose,changePct} plus sub-vars {{<outputKey>.rate/.converted/.amount/.base/.target/.asOf/.session/.previousClose/.changePct/.isFailed}} (.asOf = quote time with UTC offset; .session = "open"/"closed", "" when unknown; .previousClose/.changePct are the prior session close and the move against it, and are "" when only the daily fallback source was reachable; .isFailed="1" on an unknown currency). With period/date it adds history (same shape as stock\'s, no volume) and .startClose/.endClose/.periodChangePct/.dateClose.',
   on_change: '{{<outputKey>}} = the value you passed in when it differs from the previous run (or on the first run), otherwise "". Only with withDiff="true": {{<outputKey>.diff}} = the changed lines ("- old", "+ new", "@@" between far-apart changes; "" on the first run), .added/.removed = line counts, .isFirstRun = "1"/"0", .hasDiff = "0" when no earlier text could be compared, .truncated = "1" when .diff was cut, .previous = the earlier text, .previousAt/.checkedAt = "YYYY-MM-DD HH:MM".',

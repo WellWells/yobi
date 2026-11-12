@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Anchor, Box, Chip, Flex, Group, Pill, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Anchor, Box, Chip, CopyButton, Flex, Group, Pill, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../store/appStore';
@@ -7,7 +7,8 @@ import { useI18nStore } from '../store/i18nStore';
 import { clipboardApi, systemApi } from '../api/electronApi';
 import { PanelToolbar, ToolbarIconButton, ToolbarSearchInput } from './PanelToolbar';
 import { EmptyState } from './EmptyState';
-import { FolderOpen, ScrollText, Trash2, Upload } from 'lucide-react';
+import { CopyIconButton } from './CopyIconButton';
+import { Check, Copy, FolderOpen, ScrollText, Trash, Upload } from 'lucide-react';
 import {
   LOG_LEVELS,
   filterLogs,
@@ -62,6 +63,7 @@ interface LogEntryProps {
 export const LogEntry = React.memo<LogEntryProps>(({
   log, index, onLevelClick, onScopeClick, levelHint, levelLabels, scopeHint,
 }) => {
+  const t = useI18nStore((s) => s.t);
   const { time, scope, depth, text, level, tone, startsRun } = parseLogLine(log);
   const rowClass = [
     styles.logEntry,
@@ -83,15 +85,17 @@ export const LogEntry = React.memo<LogEntryProps>(({
           {time}
         </Text>
       )}
-      <Flex gap={6} align="baseline" style={{ flex: 1, minWidth: 0, paddingLeft: depth * 14 }}>
+      <Flex gap={6} align="baseline" className={styles.message} style={{ paddingLeft: Math.min(depth, 4) * 14 }}>
         {scope && (
-          <UnstyledButton
-            className={styles.scope}
-            onClick={() => onScopeClick(scope)}
-            aria-label={`${scopeHint}: ${scope}`}
-          >
-            {scope}
-          </UnstyledButton>
+          <Tooltip label={scope} multiline>
+            <UnstyledButton
+              className={styles.scope}
+              onClick={() => onScopeClick(scope)}
+              aria-label={`${scopeHint}: ${scope}`}
+            >
+              {scope}
+            </UnstyledButton>
+          </Tooltip>
         )}
         <Text
           component="span"
@@ -102,21 +106,27 @@ export const LogEntry = React.memo<LogEntryProps>(({
           className={styles.logText}
         >
           {splitLogUrls(text).map((segment, i) => (segment.href ? (
-            <Anchor key={i} href={segment.href} inherit c="var(--mantine-color-accent)" underline={tone === 'active' ? 'always' : 'hover'} onClick={openLogLink}>
-              {segment.text}
-            </Anchor>
+            <Tooltip key={i} label={segment.href} inline multiline>
+              <Anchor href={segment.href} inherit c="var(--mantine-color-accent)" underline={tone === 'active' ? 'always' : 'hover'} onClick={openLogLink}>
+                {segment.text}
+              </Anchor>
+            </Tooltip>
           ) : (
             <React.Fragment key={i}>{segment.text}</React.Fragment>
           )))}
         </Text>
       </Flex>
+      <Box className={styles.copyEntry}>
+        <CopyIconButton value={log} copyLabel={t('log.copy.entry')} copiedLabel={t('common.copied')} size={22} />
+      </Box>
     </Flex>
   );
 });
 
 LogEntry.displayName = 'LogEntry';
 
-export const LogPanel: React.FC = () => {
+/** A page of Settings: it takes no props, so the redraws of Settings around it never reach it. */
+export const LogPanel = React.memo(() => {
   const { logs, clearLogs, logLevelRequest, clearLogLevelRequest } = useAppStore(
     useShallow((s) => ({
       logs: s.logs,
@@ -125,7 +135,7 @@ export const LogPanel: React.FC = () => {
       clearLogLevelRequest: s.clearLogLevelRequest,
     })),
   );
-  const { t } = useI18nStore();
+  const t = useI18nStore((s) => s.t);
   const viewportRef = useRef<HTMLDivElement>(null);
   const filterInputRef = useRef<HTMLInputElement>(null);
   const isNearBottomRef = useRef(true);
@@ -164,8 +174,10 @@ export const LogPanel: React.FC = () => {
     setLevels((current) => isolateLevel(current, level));
   }, []);
 
+  // With "All" on, the level chips show unchecked and picking one narrows to it; otherwise
+  // they toggle, and turning the last level off (or the last missing one on) goes back to "All".
   const handleLevelToggle = useCallback((level: LogLevel) => {
-    setLevels((current) => toggleLevel(current, level));
+    setLevels((current) => (isAllLevels(current) ? [level] : toggleLevel(current, level)));
   }, []);
 
   const handleAllLevels = useCallback(() => setLevels([...LOG_LEVELS]), []);
@@ -223,61 +235,71 @@ export const LogPanel: React.FC = () => {
   }), [t]);
 
   return (
-    <Stack gap={0} h="100%" style={{ overflow: 'hidden' }}>
-      <PanelToolbar>
-        <Group gap={8} wrap="nowrap" style={{ minWidth: 0 }}>
-          <ToolbarSearchInput
-            ref={filterInputRef}
-            flex="0 1 220px"
-            miw={110}
-            value={query}
-            onChange={setQuery}
-            placeholder={t('log.filter.placeholder')}
-            clearLabel={t('log.filter.clear')}
-          />
+    <Stack gap={0} h="100%" className={styles.panel} style={{ overflow: 'hidden' }}>
+      {/* The pane beside the settings nav is narrow in a small window: there the level chips take a
+          row of their own under the rest (by the pane's width, not the window's; LogPanel.module.css). */}
+      <PanelToolbar className={styles.toolbar} justify="flex-start">
+        <ToolbarSearchInput
+          ref={filterInputRef}
+          flex="0 1 220px"
+          miw={110}
+          value={query}
+          onChange={setQuery}
+          placeholder={t('log.filter.placeholder')}
+          clearLabel={t('log.filter.clear')}
+        />
 
-          <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+        <Group gap={4} wrap="nowrap" className={styles.levels} style={{ flexShrink: 0 }}>
+          <Chip
+            size="xs"
+            variant="outline"
+            color="brand"
+            checked={allLevels}
+            onChange={handleAllLevels}
+          >
+            {t('log.level.all')}
+          </Chip>
+          {LOG_LEVELS.map((level) => (
             <Chip
+              key={level}
               size="xs"
               variant="outline"
               color="brand"
-              checked={allLevels}
-              onChange={handleAllLevels}
+              checked={!allLevels && levels.includes(level)}
+              onChange={() => handleLevelToggle(level)}
             >
-              {t('log.level.all')}
+              {levelLabels[level]}
             </Chip>
-            {LOG_LEVELS.map((level) => (
-              <Chip
-                key={level}
-                size="xs"
-                variant="outline"
-                color="brand"
-                checked={levels.includes(level)}
-                onChange={() => handleLevelToggle(level)}
-              >
-                {levelLabels[level]}
-              </Chip>
-            ))}
-          </Group>
-
-          {scope && (
-            <Pill
-              size="sm"
-              withRemoveButton
-              onRemove={handleScopeClear}
-              removeButtonProps={{ 'aria-label': t('log.scope.clear') }}
-              style={{ flexShrink: 0, maxWidth: 200 }}
-            >
-              {scope}
-            </Pill>
-          )}
+          ))}
         </Group>
 
-        <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+        {scope && (
+          <Pill
+            size="sm"
+            withRemoveButton
+            onRemove={handleScopeClear}
+            removeButtonProps={{ 'aria-label': t('log.scope.clear') }}
+            style={{ minWidth: 60, maxWidth: 200 }}
+          >
+            {scope}
+          </Pill>
+        )}
+
+        <Group gap={4} wrap="nowrap" ml="auto" style={{ flexShrink: 0 }}>
           <Text fz="var(--font-size-sm)" c="dimmed" mr={4} style={{ whiteSpace: 'nowrap' }}>
             {isFiltering ? `${visibleLogs.length}/${logs.length}` : logs.length} {t('log.entries')}
           </Text>
           <ToolbarIconButton icon={FolderOpen} label={t('log.openFolder')} onClick={handleOpenFolder} />
+          <CopyButton value={visibleLogs.join('\n')}>
+            {({ copied, copy }) => (
+              <ToolbarIconButton
+                icon={copied ? Check : Copy}
+                label={copied ? t('common.copied') : t('log.copy.filtered')}
+                onClick={copy}
+                disabled={visibleLogs.length === 0}
+              />
+            )}
+          </CopyButton>
           <ToolbarIconButton
             icon={Upload}
             label={t('log.export')}
@@ -285,7 +307,7 @@ export const LogPanel: React.FC = () => {
             disabled={visibleLogs.length === 0}
           />
           <ToolbarIconButton
-            icon={Trash2}
+            icon={Trash}
             label={t('log.clear')}
             onClick={handleClear}
             disabled={logs.length === 0}
@@ -336,4 +358,6 @@ export const LogPanel: React.FC = () => {
       </Box>
     </Stack>
   );
-};
+});
+
+LogPanel.displayName = 'LogPanel';

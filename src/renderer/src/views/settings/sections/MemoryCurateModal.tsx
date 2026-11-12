@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Group, Loader, Stack, Text } from '@mantine/core';
-import { CalendarX, Check, Merge, Pencil, RotateCcw, Scale, Shrink, Sparkles, TriangleAlert, Undo2 } from 'lucide-react';
+import { CalendarX, Check, Merge, Pencil, RotateCcw, Scale, Shrink, Sparkles, TriangleExclamationPoint, Undo2 } from 'lucide-react';
 import { AppButton } from '../../../components/AppButton';
 import { AppModal } from '../../../components/AppModal';
 import { AppTextarea } from '../../../components/AppTextarea';
@@ -304,7 +304,7 @@ export const MemoryCurateModal: React.FC<Props> = ({ open, focus, snapshot, onCl
 
         {screen === 'failed' && (
           <Stack gap="xs">
-            <Alert color="var(--mantine-color-error)" icon={<TriangleAlert size={14} />} p="xs">
+            <Alert color="var(--mantine-color-error)" icon={<TriangleExclamationPoint size={14} />} p="xs">
               <Stack gap={2}>
                 <Text fz="xs" fw={600}>{t('settings.memory.curate.failed')}</Text>
                 {error && <Text fz="xs" style={{ overflowWrap: 'anywhere' }}>{error}</Text>}

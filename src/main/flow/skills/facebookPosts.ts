@@ -169,8 +169,23 @@ export function readVideoPage(page: FacebookPage, ref: FacebookRef): FacebookRea
 /**
  * A photo's own page, read by the photo's id: that photo alone, whichever post it is in, with its
  * own comments. One photo of several has no text of its own, so the post's (`container_story`)
- * comes after its fields. Null when the page does not show this photo.
+ * comes after its fields; a page that no longer carries the post's text leaves it to the reader to
+ * read the post's page (`photoPostId`). Null when the page does not show this photo.
  */
+/**
+ * The post a photo of several is in, by the post's id; "" when the page names none. The photo's
+ * `container_story` names it, or names the object that does.
+ */
+export function photoPostId(page: FacebookPage, photoId: string): string {
+  for (const o of page.byId.get(photoId) ?? []) {
+    const container = obj(o.container_story);
+    if (!container) continue;
+    const id = str(container.post_id) || (page.byId.get(str(container.id)) ?? []).map((c) => str(c.post_id)).find(Boolean);
+    if (id) return id;
+  }
+  return '';
+}
+
 export function readPhotoLinkPage(page: FacebookPage, ref: FacebookRef): FacebookRead | null {
   const photo = photoMedia(page, ref.id);
   if (!photo) return null;

@@ -105,7 +105,7 @@ export interface VideoSiteBase {
    * and subtitles are offered). Throws the `FlowUserError` the person can act on: unreadable,
    * live, not started, restricted. `access.signIn` of `none`: a site with a sign-in in Settings
    * (bilibili) reads without it, and offers nothing only it gives (a video's download never needs
-   * it); `full`, `others` or absent: used when signed in.
+   * it); `full`, `posts`, `others` or absent: used when signed in.
    */
   info(ref: VideoRef, signal?: AbortSignal, access?: Pick<ReadAccess, 'signIn'>): Promise<VideoInfo>;
   /**
@@ -164,7 +164,7 @@ export interface SelfDownloadVideoSite extends VideoSiteBase {
    * Downloads `request.info.ref` at the pick the menu offered into `request.jobDir` and returns
    * the file (an `.mp4`, or for `mp3` an `.mp3`; its extension names the saved file), checked to
    * hold what it should. Throws the stream errors; `downloadSiteVideo` words them
-   * (`streamFailure`), holds the app-wide download slot and makes a Stop an AbortError.
+   * (`streamFailure`), holds the site's download slot and makes a Stop an AbortError.
    */
   download(request: SelfDownloadRequest): Promise<YtdlDownloadResult>;
   downloadArgs?: never;

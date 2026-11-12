@@ -12,14 +12,13 @@ export function collectPastedFiles(data: DataTransfer | null): File[] {
   const types = Array.from(data.types ?? []);
   if (types.includes('text/plain')) return [];
 
+  // `files` is the file items themselves, but a clipboard picture is a new File (stamped "now") on
+  // every getAsFile(), so merging the two lists attached one screenshot twice. Items only fill in
+  // when `files` came back empty.
   const files = Array.from(data.files ?? []);
-  for (const item of Array.from(data.items ?? [])) {
-    if (item.kind !== 'file') continue;
-    const file = item.getAsFile();
-    if (!file) continue;
-    const duplicate = files.some((known) =>
-      known.name === file.name && known.size === file.size && known.lastModified === file.lastModified);
-    if (!duplicate) files.push(file);
-  }
-  return files;
+  if (files.length > 0) return files;
+  return Array.from(data.items ?? [])
+    .filter((item) => item.kind === 'file')
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => file !== null);
 }

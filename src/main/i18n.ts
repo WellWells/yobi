@@ -2,12 +2,15 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { getLanguageDir, getUserLanguageDir } from './files';
 import { fillTemplate } from '../shared/fillTemplate';
+import { MAP_REPORT_PROMPT_TOO_LONG } from '../shared/mapReviewsPrompt';
 import { formatResetTime, parseClaudeUsageLimit } from './providers/claudeUsageLimit';
 import { CLAUDE_BUSY, CLAUDE_LEFT_CONVERSATION } from './providers/claudeReadScript';
 import { parseGeminiPromptTooLong } from './providers/geminiPromptTooLong';
 import { GEMINI_SIGNED_OUT_PROMPT_CAP } from './providers/geminiSignInState';
 import { WORKER_WINDOW_UNAVAILABLE } from './workerWindowError';
+import { ATTACHMENT_HAS_NUL, ATTACHMENT_NETWORK_PATH, ATTACHMENT_OUTSIDE_OUTPUT } from './attachmentGuard';
 import { NATIVE_CORE_UNAVAILABLE_TEXT } from './line/nativeContract';
+import { LINE_CHAT_KEY_MISSING_TEXT, LINE_GROUP_KEY_MISSING_TEXT, LINE_SEALING_OFF_TEXT } from './line/sendKeyErrors';
 import { QUEUE_CANCELLED } from './flow/flowQueue';
 import { parseFlowRequestTooLong, parseFlowTooLongToRevise } from './flow/flowBuildTooLong';
 import { mtprotoErrorKey } from './telegram/mtproto/errors';
@@ -91,7 +94,7 @@ export function t(
   return vars ? fillTemplate(result, vars) : result;
 }
 
-const LOGIN_REQUIRED_RE = /\b(GEMINI|CHATGPT|CLAUDE|PERPLEXITY)_LOGIN_REQUIRED\b/;
+const LOGIN_REQUIRED_RE = /\b(GEMINI|CHATGPT|CLAUDE|PERPLEXITY|DEEPSEEK)_LOGIN_REQUIRED\b/;
 /** `siteVerification.ts`'s two English diagnostics: `<site> needs a one-time verification…` / `<site> verification was not completed…`. */
 const SITE_VERIFICATION_RE = /^(\S+) (needs) a one-time verification in Yobi on this computer|^(\S+) verification was not completed/;
 /** `verificationWallMessage`'s English: `<site> shows a human-verification check…`. */
@@ -101,6 +104,7 @@ const LOGIN_REQUIRED_PROVIDERS: Record<string, string> = {
   CHATGPT: 'ChatGPT',
   CLAUDE: 'Claude',
   PERPLEXITY: 'Perplexity',
+  DEEPSEEK: 'DeepSeek',
 };
 
 /**
@@ -110,12 +114,12 @@ const LOGIN_REQUIRED_PROVIDERS: Record<string, string> = {
  * (flowErrorReason, metrics) are unaffected.
  */
 const PROVIDER_ERROR_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
-  [/^(ChatGPT|Claude|Gemini|Perplexity) automation timed out\b/, 'main.error.answerTimeout'],
-  [/^Timeout: (Perplexity) response stopped updating/, 'main.error.answerTimeout'],
+  [/^(ChatGPT|Claude|Gemini|Perplexity|DeepSeek) automation timed out\b/, 'main.error.answerTimeout'],
+  [/^Timeout: (Perplexity|DeepSeek) response stopped updating/, 'main.error.answerTimeout'],
   [/^(Gemini) is still generating but produced no visible answer/, 'main.error.answerTimeout'],
-  [/^(ChatGPT|Claude|Gemini|Perplexity) (?:composer )?never (?:accepted|registered)\b/, 'main.error.promptNotTaken'],
+  [/^(ChatGPT|Claude|Gemini|Perplexity|DeepSeek) (?:composer )?never (?:accepted|registered)\b/, 'main.error.promptNotTaken'],
   [/^(Gemini) send button never became clickable/, 'main.error.promptNotTaken'],
-  [/^(Claude) send button is not available/, 'main.error.promptNotTaken'],
+  [/^(Claude|DeepSeek) send button is not available/, 'main.error.promptNotTaken'],
   [/^(Gemini) accepted the prompt but never started generating/, 'main.error.answerNotStarted'],
 ];
 
@@ -127,12 +131,13 @@ const PROVIDER_ERROR_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
 const TELEGRAM_CHAT_NOT_FOUND_RE = /\bBad Request: chat not found\b/i;
 const PAGE_READ_TIMEOUT_RE = /^DOM serialization timed out after \d+s$/;
 
-const AUTOMATION_FAILED_RE =/^(ChatGPT|Claude|Gemini|Perplexity) automation failed: ([\s\S]*)$/;
+const AUTOMATION_FAILED_RE =/^(ChatGPT|Claude|Gemini|Perplexity|DeepSeek) automation failed: ([\s\S]*)$/;
 const AUTOMATION_FAILED_KEYS: Record<string, string> = {
   ChatGPT: 'main.error.chatgptAutomationFailed',
   Claude: 'main.error.claudeAutomationFailed',
   Gemini: 'main.error.geminiAutomationFailed',
   Perplexity: 'main.error.pplxAutomationFailed',
+  DeepSeek: 'main.error.deepseekAutomationFailed',
 };
 
 const MCP_EXACT_KEYS: Record<string, string> = {
@@ -168,6 +173,7 @@ function localizeMcpError(raw: string, strings: Record<string, string>): string 
 
 function localizeKnownError(raw: string, strings: Record<string, string>): string | null {
   const exactMap: Record<string, string> = {
+    [MAP_REPORT_PROMPT_TOO_LONG]: t(strings, 'linkAnalysis.error.promptTooLong'),
     'ChatGPT returned empty response': t(strings, 'main.error.chatgptEmptyResponse'),
     'ChatGPT input area not found': t(strings, 'main.error.chatgptInputNotFound'),
     'ChatGPT response block not found': t(strings, 'main.error.chatgptResponseBlockNotFound'),
@@ -182,6 +188,9 @@ function localizeKnownError(raw: string, strings: Record<string, string>): strin
     'Perplexity response block not found': t(strings, 'main.error.pplxResponseBlockNotFound'),
     'Perplexity response is empty': t(strings, 'main.error.pplxResponseEmpty'),
     'Perplexity asked to sign in': t(strings, 'main.error.pplxSignInWall'),
+    'DeepSeek returned empty response': t(strings, 'main.error.deepseekEmptyResponse'),
+    'DeepSeek response is empty': t(strings, 'main.error.deepseekEmptyResponse'),
+    'DeepSeek conversation is no longer available': t(strings, 'main.error.deepseekConversationGone'),
     'capture renderer not ready': t(strings, 'main.error.captureRendererNotReady'),
     'webp screenshot data is empty': t(strings, 'main.error.webpDataEmpty'),
     'export failed': t(strings, 'main.error.exportFailed'),
@@ -192,7 +201,11 @@ function localizeKnownError(raw: string, strings: Record<string, string>): strin
     'BYOK group has no key that takes images': t(strings, 'main.error.byokNoImageKey', { providers: BYOK_IMAGE_PROVIDER_LABELS }),
     'Telegram bot is not running': t(strings, 'main.error.botNotRunning', { bot: 'Telegram' }),
     'LINE bot is not running': t(strings, 'main.error.botNotRunning', { bot: 'LINE' }),
+    'LINE PC bot is not running': t(strings, 'main.error.botNotRunning', { bot: 'LINE PC' }),
     [QUEUE_CANCELLED]: t(strings, 'main.error.cancelledInQueue'),
+    [ATTACHMENT_OUTSIDE_OUTPUT]: t(strings, 'main.error.attachmentOutsideOutput'),
+    [ATTACHMENT_NETWORK_PATH]: t(strings, 'main.error.attachmentNetworkPath'),
+    [ATTACHMENT_HAS_NUL]: t(strings, 'main.error.attachmentInvalidPath'),
     [TELEGRAM_LARGE_UPLOAD_FAILED]: t(strings, 'main.error.telegramLargeUploadFailed'),
     [TELEGRAM_LARGE_UPLOAD_NOT_READY]: t(strings, 'main.error.telegramLargeUploadNotReady'),
   };
@@ -205,6 +218,9 @@ function localizeKnownError(raw: string, strings: Record<string, string>): strin
   if (upload) return t(strings, upload.key, upload.vars);
   if (raw.startsWith(WORKER_WINDOW_UNAVAILABLE)) return t(strings, 'main.error.workerWindowUnavailable');
   if (raw.startsWith(NATIVE_CORE_UNAVAILABLE_TEXT)) return t(strings, 'main.error.lineCoreUnavailable');
+  // A LINE send refused for its keys (E2EE_KEY_MISSING / E2EE_DISABLED), on any send path.
+  if (raw.includes(LINE_GROUP_KEY_MISSING_TEXT) || raw.includes(LINE_CHAT_KEY_MISSING_TEXT)) return t(strings, 'main.error.lineKeyMissing');
+  if (raw.includes(LINE_SEALING_OFF_TEXT)) return t(strings, 'main.error.lineSealingOff');
   const overChars = parseFlowRequestTooLong(raw);
   if (overChars !== null) return t(strings, 'main.error.flowRequestTooLong', { chars: overChars.toLocaleString('en-US') });
   const flowOverChars = parseFlowTooLongToRevise(raw);

@@ -37,7 +37,7 @@ function progressReporter(deps: FlowExecutorDeps) {
   };
   return {
     onProgress: emit ? (progress: SearchProgress) => set(reduceResearchProgress(state, progress)) : undefined,
-    finish: (sources: number) => { if (emit) set(finishResearch(state, sources)); },
+    finish: (usedUrls: string[]) => { if (emit) set(finishResearch(state, usedUrls.length, usedUrls)); },
     fail: () => { if (emit) set(failResearch(state)); },
   };
 }
@@ -68,7 +68,7 @@ export async function execResearch(
       query, providerUrl, config.locale, progress.onProgress, mode, maxSources, '', urls, plannedQuestion, deps.researchAsker,
     );
     sendLog(`🔬 [Flow] Research: ${outcome.sources.length} source(s) → ${outcome.answer.length} chars`);
-    progress.finish(outcome.sources.length);
+    progress.finish(outcome.sources.map((doc) => doc.url));
     const asker = deps.researchAsker;
     const foreign = asker !== undefined
       && answeredInAnotherLanguage(outcome.answer, asker.words, config.locale, asker.uiLanguage === true);

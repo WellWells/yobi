@@ -177,7 +177,7 @@ function getPage(id: string): BrowserWindow | undefined {
 
 export async function runPageScript(id: string, code: string, timeoutMs: number): Promise<string> {
   const win = getPage(id);
-  if (!win) throw new Error(`browser_js: page handle "${id}" is not open`);
+  if (!win) throw new FlowUserError('flow.error.pageNotOpen', {}, `browser_js: page handle "${id}" is not open`);
 
   const script =
     BROWSER_HELPER_PREAMBLE + '\n' +

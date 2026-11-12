@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActionIcon, Badge, Button, Group, Menu, Pill, Stack, Text, Tooltip } from '@mantine/core';
-import { Check, ContactRound, Plus, ShieldOff, Trash2 } from 'lucide-react';
+import { Check, ContactRound, Plus, ShieldOff, Trash } from 'lucide-react';
 import { botApi } from '../../../api/electronApi';
 import { WebDialog } from '../../../components/WebDialog';
 import { Z_POPOVER } from '../../../config/zLayers';
@@ -145,7 +145,7 @@ const ChatRow: React.FC<{
           {onForget && (
             <Tooltip label={t('settings.telegram.channels.forget')} position="top">
               <ActionIcon variant="subtle" size={26} onClick={onForget} aria-label={t('settings.telegram.channels.forget')}>
-                <Trash2 size={13} />
+                <Trash size={13} />
               </ActionIcon>
             </Tooltip>
           )}

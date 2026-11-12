@@ -11,6 +11,18 @@ import { PICTURES_META_KEY } from './mcpTypes';
 
 const SERVER_VERSION = '1.0.0';
 
+/**
+ * An in-process connector's server. It is the SDK's low-level `Server`, whose doc comment is marked
+ * deprecated in favour of `McpServer` "for the high-level API", keeping `Server` for "advanced use
+ * cases" — this is one: a fixed tool list with hand-written JSON Schemas and one lenient dispatch.
+ * `McpServer` (SDK 1.32) installs its own tool handlers as soon as the tools capability is declared,
+ * takes zod schemas, and parses every call's arguments with them before the handler runs: the
+ * old names the connectors still accept (`x-also-named`, the rail aliases) would be stripped or
+ * refused, and each lenient read (a limit sent as "5") would become an InvalidParams error. The
+ * deprecated name is spelt only here; connectors use this alias.
+ */
+export type ToolServer = Server;
+
 /** A dispatch result that also carries pictures for the answer; its `value` is what the model reads. */
 export class ToolResultWithPictures {
   constructor(readonly value: unknown, readonly files: readonly string[]) {}
@@ -48,7 +60,7 @@ export interface ToolServerSpec {
   dispatch: (toolName: string, args: Record<string, unknown>, signal: AbortSignal) => Promise<unknown>;
 }
 
-export function createToolServer(spec: ToolServerSpec): Server {
+export function createToolServer(spec: ToolServerSpec): ToolServer {
   const server = new Server({ name: spec.name, version: SERVER_VERSION }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: spec.tools }));
   server.setRequestHandler(CallToolRequestSchema, async (req, extra): Promise<CallToolResult> => {
@@ -82,7 +94,7 @@ export interface InProcessConnection {
   close: () => Promise<void>;
 }
 
-export async function connectInProcess(server: Server, clientName: string, clientVersion: string): Promise<InProcessConnection> {
+export async function connectInProcess(server: ToolServer, clientName: string, clientVersion: string): Promise<InProcessConnection> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: clientName, version: clientVersion });

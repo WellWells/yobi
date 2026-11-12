@@ -1,7 +1,9 @@
 import type {
-  SkillType, AgentChatLine, AgentPendingFlow, AgentReplyContext, AgentTraceEvent, AgentTurnRecord, FlowBuildEvent, FlowDefinition,
+  SkillType, AgentChatLine, AgentHelperStep, AgentLinkedPage, AgentPendingFlow, AgentReplyContext, AgentTraceEvent, AgentTurnRecord,
+  FlowBuildEvent, FlowDefinition, FlowExecutionResult,
 } from '../../../shared/types';
 import { AGENT_ASK_TOOL, isByokTargetUrl } from '../../../shared/types';
+import { stepParam } from '../../../shared/agentStepLabel';
 import { isDeliverableSkill } from '../../../shared/flowSkillSchema';
 import type { ResearchProgress } from '../../../shared/researchProgress';
 import { asksForDeepResearch, researchDepthFor } from '../../../shared/researchIntent';
@@ -14,7 +16,7 @@ import { askJson, createProviderSession, rejectedReplyPreview } from './structur
 import type { AskJsonResult, ProviderSession, Validation } from './structuredLlm';
 import {
   AGENT_FIELD_DEFAULTS, AGENT_HELP_TOOL, AgentRunError, AgentScopeError, buildToolCatalog, describeToolSpec, FULL_TOOL_SCOPE,
-  isHelpTool, OPTS_MARKER, readOnlyScope, scopeHasFlowTools, validateAgentAction, validateFinalAnswer,
+  isHelpTool, OPTS_MARKER, readOnlyScope, scopeHasFlowTools, skillNamedTools, validateAgentAction, validateFinalAnswer,
 } from './agentTools';
 import type { AgentAction, AgentToolScope, AskGate, FinalAnswer } from './agentTools';
 import {
@@ -24,8 +26,9 @@ import {
   buildTurnPrompt, emptyPlan, historyThatFits, planComplete, scratchFitFor, SCRATCH_IN_PROMPT,
   SCRATCH_IN_PROMPT_MCP_CAPPED, SCRATCH_TOTAL_BUDGET,
   capGoalForProvider, CHANGE_RULES_EST, INSTRUCTION_EST, MAX_SELF_ASSESSED_STEPS, SYNTH_SCRATCH_BUDGET_LEAN,
-  chatSections, fitChatToProvider, type ChatContext,
+  chatSections, fitChatToProvider, fitLinkedPageToProvider, type ChatContext,
 } from './agentPrompts';
+import { NON_LATIN_LETTER } from './agentDoing';
 import { resetByokTranscript, transcriptChars } from './byokTranscript';
 import { measureFor, promptCapFor } from '../../chat/conversationContext';
 import type { AgentPlan, DeltaRuleState, HeldFinish, PromptFit, ScratchEntry, TurnPromptOptions } from './agentPrompts';
@@ -50,10 +53,14 @@ import type { AgentWriteOutcome } from './writeOutcome';
 import type { BuiltinDeps, BuiltinOutcome } from './agentBuiltins';
 import type { DrawImage } from './agentDrawImage';
 import type { ExportFile } from './agentExportFile';
+import { SKILLS_CATALOG_BUDGET, SKILLS_CATALOG_BUDGET_BYOK, offeredSkills, renderSkillCatalog, skillsLoadedBefore } from './agentSkillTool';
+import { listAgentSkills } from '../../agentSkills/skillStore';
+import type { AgentSkillEntry } from '../../agentSkills/skillStore';
 import type { FlowRef } from '../flowEdit';
 import type { RecipientDirectory } from '../../../shared/botRecipients';
 import { runCall } from './agentCall';
 import type { AgentConfirmRequest, CallContext, ShellConfirmRequest } from './agentCall';
+import type { TrustKey } from './shellTrust';
 import { createCitationPool, relinkCitations, withSourcesSection } from './agentCitations';
 import type { CitationSource } from '../../../shared/citations';
 import {
@@ -92,6 +99,8 @@ interface CallResult {
   config: Record<string, string>;
   /** The model's reasoning, carried by the first call of a batch only — the rest share it. */
   thought: string;
+  /** The model's title for this step. Never in the scratch, so no prompt carries it back. */
+  doing?: string;
   observation: string;
   status: 'ok' | 'error';
   startedAt: number;
@@ -118,6 +127,8 @@ export interface ResearchAnswerContext {
   changesSomething: boolean;
   /** Items in the model's plan; two or more means more work follows. */
   planItems: number;
+  /** The run loaded an installed skill: its rules govern the reply, which research never saw. */
+  skillLoaded?: boolean;
 }
 
 /**
@@ -128,9 +139,11 @@ export interface ResearchAnswerContext {
  * then save it" ends on the research and nothing is saved). Never when the research came
  * back partly blocked, or in another language than the user wrote in, or cites none of the pages
  * it read (the model never gets a turn to search differently), or the user's preferences change how an answer reads: then the model decides.
+ * Never once the run has loaded a skill: research is another model call that never sees the
+ * skill's rules (no spoilers, figures read from their pages), so the reply is written under them.
  */
 export function answersAsResearched(result: CallResult, ctx: ResearchAnswerContext): boolean {
-  if (ctx.batched || ctx.readOnly || ctx.prefsReshape || ctx.changesSomething) return false;
+  if (ctx.batched || ctx.readOnly || ctx.prefsReshape || ctx.changesSomething || ctx.skillLoaded) return false;
   if (result.label !== 'research' || result.status !== 'ok') return false;
   if (result.partial === true || result.foreign === true || result.unsourced === true) return false;
   if (!result.answer?.trim()) return false;
@@ -162,10 +175,10 @@ const BROWSER_DELTA_OBSERVATION_LIMIT = 24_000;
 const MIN_EVIDENCE_ROOM = BROWSER_OBSERVATION_LIMIT;
 
 /** Whether the provider's cap leaves room for the full tool catalog; BYOK always does. */
-export function catalogFitsInFull(providerUrl: string, scope: AgentToolScope): boolean {
+export function catalogFitsInFull(providerUrl: string, scope: AgentToolScope, extraChars = 0): boolean {
   if (isByokTargetUrl(providerUrl)) return true;
   const room = promptCapFor(providerUrl) - INSTRUCTION_EST - MIN_EVIDENCE_ROOM;
-  return buildToolCatalog(scope).length <= room;
+  return buildToolCatalog(scope).length + extraChars <= room;
 }
 // BYOK re-sends its whole conversation every turn (the endpoint keeps no thread; a cache hit cuts
 // the price, not a free key's quota), so tokens, not steps, are what stops a long BYOK run; sized
@@ -255,6 +268,8 @@ export interface AgentRunOptions {
   maxTurns?: number;
   totalBudgetMs?: number;
   onConfirm?: (request: AgentConfirmRequest) => Promise<boolean>;
+  /** The desktop user's always-allowed programs and actions (`CallContext.trustedShell`). */
+  trustedShell?: () => readonly TrustKey[];
   /**
    * Fired whenever the run's step ceiling changes. Persist it: a resume re-enters `runAgent`
    * from scratch, and without the ceiling a run that self-assessed 30 steps and paused at
@@ -265,8 +280,10 @@ export interface AgentRunOptions {
   onSaveFlow?: (flow: FlowDefinition) => Promise<FlowDefinition>;
   /** Saves a changed flow over the saved one with the same id — what `edit_flow` writes through. */
   onReplaceFlow?: (flow: FlowDefinition) => Promise<FlowDefinition>;
-  /** The saved flows `edit_flow` chooses among. */
+  /** The saved flows `edit_flow` and `run_flow` choose among. */
   listFlows?: () => readonly FlowDefinition[];
+  /** Runs a saved flow once for `run_flow`, the way Run in the editor does. */
+  onRunFlow?: (flowId: string) => Promise<FlowExecutionResult>;
   /** Flows earlier runs of this conversation made or changed, oldest first. */
   conversationFlows?: readonly FlowRef[];
   /** The paired chats a bot step can reach; read live when omitted. */
@@ -358,6 +375,8 @@ export interface AgentRunOptions {
   recentChat?: readonly AgentChatLine[];
   /** The GOAL is about the group's talk itself: no conversation history, only `recentChat`. */
   chatRecap?: boolean;
+  /** The page the GOAL's link points at, read before the run. */
+  linkedPage?: AgentLinkedPage;
   /**
    * The user's answer preferences (tone, length, and for the user themself the nickname and custom
    * instructions), pre-rendered by the caller. Shares the memory block's slot and reserve; a helper
@@ -375,6 +394,10 @@ export interface AgentRunOptions {
    * the answer follows the user's own words. Never a helper's: its goal is the model's own wording.
    */
   answerLanguage?: string;
+  /** Names the step titles' language for a helper, whose `answerLanguage` stays unset. */
+  doingLanguage?: string;
+  /** The user reads a non-Latin script, so an all-Latin step title is one in the wrong language: dropped. */
+  rejectLatinDoing?: boolean;
   /**
    * What `draw_image` calls: draws on a web page and keeps the pictures for the answer. Only used
    * when the scope offers `draw_image` (`AgentToolScope.pictures`); a helper never gets either.
@@ -390,6 +413,10 @@ export interface AgentRunOptions {
    * when the scope offers `export_file` (`AgentToolScope.documents`); a helper never gets either.
    */
   exportFile?: ExportFile;
+  /** The installed skills to offer, instead of reading the skills folder (which is what absent means). */
+  skillEntries?: readonly AgentSkillEntry[];
+  /** A folder for an offered skill that is not installed: the staged draft a skill's test run loads. */
+  skillDirOf?: (name: string) => string | null;
 }
 
 interface RunEvidence {
@@ -586,11 +613,21 @@ export async function runAgent(
   const answerLanguage = readOnly ? undefined : options.answerLanguage;
   const askable = goalIsAskable(trimmedGoal, options);
   const baseScope = options.toolScope ?? FULL_TOOL_SCOPE;
-  // A helper never delegates again.
+  // Skills the user installed, for a run with `builtins` or one scoped to skills (a skill's test
+  // run). Never a helper's: it is handed a task, not the user's request, and the main run has
+  // already loaded whatever skill that needs.
+  const skillsOffered = readOnly || !(baseScope.builtins || baseScope.agentSkills)
+    ? []
+    : offeredSkills(options.skillEntries ?? await listAgentSkills().catch(() => []), trimmedGoal);
+  const skillCatalog = renderSkillCatalog(skillsOffered, isByokTargetUrl(providerUrl) ? SKILLS_CATALOG_BUDGET_BYOK : SKILLS_CATALOG_BUDGET);
+  // `use_skill` only with a SKILLS section to pick from. A helper never delegates again.
+  const { agentSkills: _skillsAsked, ...scopeRest } = baseScope;
   const toolScope: AgentToolScope = readOnly
     ? readOnlyScope(baseScope)
-    : { ...baseScope, delegate: baseScope.builtins };
-  const catalog = buildToolCatalog(toolScope, !catalogFitsInFull(providerUrl, toolScope));
+    : { ...scopeRest, delegate: baseScope.builtins, ...(skillCatalog ? { agentSkills: true } : {}) };
+  const toolCatalog = buildToolCatalog(toolScope, !catalogFitsInFull(providerUrl, toolScope, skillCatalog.length));
+  // Part of the catalog, so every budget measured off `catalog` charges it (the MCP room first).
+  const catalog = skillCatalog ? `${toolCatalog}\n${skillCatalog}` : toolCatalog;
   // The web switch off removes these from the catalog; the prose and the worked examples follow it.
   const webTools = toolScope.skills.includes('research');
   // The answer preferences and the recap rule share the memory block's slot: all shape the final
@@ -610,16 +647,19 @@ export async function runAgent(
     userDataSources: true,
     userMemory,
     answerLanguage,
+    doingLanguage: options.doingLanguage,
     // Same reason: a run the user watches may be shown the batch shape, so the baseline carries it.
     batchGrammar: !readOnly,
     ...over,
   });
   // The group talk yields first, so a long recap never costs the request its own words.
-  const chat: ChatContext = readOnly ? {} : fitChatToProvider(providerUrl, {
+  const fitted = (context: ChatContext): string => baseline({ goal: trimmedGoal, ...context });
+  const chat: ChatContext = readOnly ? {} : fitChatToProvider(providerUrl, fitLinkedPageToProvider(providerUrl, {
     ...(options.replyTo ? { replyTo: options.replyTo } : {}),
     ...(options.recentChat?.length ? { recentChat: options.recentChat } : {}),
     ...(options.chatRecap ? { chatRecap: true } : {}),
-  }, (fitted) => baseline({ goal: trimmedGoal, ...fitted }));
+    ...(options.linkedPage ? { linkedPage: options.linkedPage } : {}),
+  }, fitted), fitted);
   const promptGoal = capGoalForProvider(providerUrl, trimmedGoal, baseline({ goal: '', ...chat }));
   const fileRoots = await getAgentFileRoots();
   const workspaceDir = await agentWorkspaceDir();
@@ -840,6 +880,8 @@ export async function runAgent(
       // unanswered dialog denies itself after 10 minutes, and uncapped refunds let an abandoned run
       // hold the external queue slot indefinitely.
       pausedMs = Math.min(MAX_CONFIRM_REFUND_MS, pausedMs + (Date.now() - at));
+      // The approved work runs under this stage otherwise, and the line would say it waits on the user.
+      options.onTrace?.({ kind: 'answered', turn: activeStep });
     }
   };
   const scratch: ScratchEntry[] = (options.resumeFrom ?? []).map((entry) => ({
@@ -887,6 +929,9 @@ export async function runAgent(
   let intentOpen = true;
   const gate = { blocked: 0, autoContext: 0 };
 
+  /** Step number → what the helper of that `delegate` step did, for the step's record. */
+  const helperSteps = new Map<number, AgentHelperStep[]>();
+
   /**
    * The main agent hands a reading job to a helper with a clean context, and gets back findings
    * plus the evidence the helper actually read — so an id the helper found satisfies this run's
@@ -905,10 +950,16 @@ export async function runAgent(
         ...(allowedIds ? { allowedMcpServerIds: allowedIds } : {}),
         ...(deniedIds ? { deniedMcpServerIds: deniedIds } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
+        // The title's language alone: the helper's own answer still follows its task.
+        ...(answerLanguage ? { doingLanguage: answerLanguage } : {}),
+        ...(options.rejectLatinDoing ? { rejectLatinDoing: true } : {}),
         onTrace: (event) => {
           if (event.kind !== 'tool') return;
           used.push(event.tool);
-          options.onTrace?.({ kind: 'stage', turn: step, label: 'delegating', detail: event.tool });
+          const param = stepParam(event.tool, event.config);
+          const helperStep: AgentHelperStep = { tool: event.tool, ...(param ? { param } : {}), ...(event.doing ? { doing: event.doing } : {}) };
+          helperSteps.set(step, [...(helperSteps.get(step) ?? []), helperStep]);
+          options.onTrace?.({ kind: 'helper', turn: step, step: helperStep });
         },
       });
       ledger.absorb(helper.evidence);
@@ -943,6 +994,7 @@ export async function runAgent(
     ...(options.onSaveFlow ? { saveFlow: options.onSaveFlow } : {}),
     ...(options.onReplaceFlow ? { replaceFlow: options.onReplaceFlow } : {}),
     ...(options.listFlows ? { listFlows: options.listFlows } : {}),
+    ...(options.onRunFlow ? { runFlow: options.onRunFlow } : {}),
     ...(options.recipients ? { recipients: options.recipients } : {}),
     recentFlows: [...(options.conversationFlows ?? [])],
     // This run's words only. The ledger also holds every earlier prompt of the conversation, and
@@ -956,6 +1008,9 @@ export async function runAgent(
     ...(toolScope.delegate ? { runSubtask } : {}),
     ...(toolScope.pictures && options.drawImage ? { drawImage: options.drawImage } : {}),
     ...(toolScope.documents && options.exportFile ? { exportFile: options.exportFile } : {}),
+    ...(toolScope.agentSkills
+      ? { skills: { entries: skillsOffered, loaded: skillsLoadedBefore(skillsOffered, options.resumeFrom ?? []), shell: toolScope.skills.includes('shell'), namedTools: skillNamedTools(toolScope), ...(options.skillDirOf ? { dirOf: options.skillDirOf } : {}) } }
+      : {}),
   };
   const citations = createCitationPool();
   const callCtx: CallContext = {
@@ -973,6 +1028,7 @@ export async function runAgent(
     unattended: options.unattended === true,
     askUser,
     ...(options.shellApproval ? { deferShell: options.shellApproval } : {}),
+    ...(options.trustedShell ? { trustedShell: options.trustedShell } : {}),
     ...(options.connectorApproval ? { deferChanges: true } : {}),
     builtins: builtinCtx,
     fileRoots,
@@ -1073,10 +1129,13 @@ export async function runAgent(
     noteDepth(config);
     const signature = callSignature(label, config);
     const startedAt = Date.now();
+    // The call was proposed on the question's turn, and so was its title.
+    const doing = options.resumeFrom?.at(-1)?.doing;
+    const titled = doing ? { doing } : {};
     toolCalls++;
     const serverName = call.action === 'call_mcp' ? findMcpServer(mcpIndex, call.server)?.serverName : undefined;
     options.onProgress?.(toolProgress(label, config, serverName));
-    options.onTrace?.({ kind: 'tool', turn: step, tool: label, config });
+    options.onTrace?.({ kind: 'tool', turn: step, tool: label, config, ...titled });
     sendLog(`🤖 [Agent] running the approved ${label} ${maskSecrets(JSON.stringify(config), true)}`);
     const approvedCtx: CallContext = approvedInChat
       ? { ...callCtx, deferShell: undefined, deferChanges: false, askUser: async () => true }
@@ -1095,6 +1154,7 @@ export async function runAgent(
       index: step,
       turn: resumedTurns,
       thought: '',
+      ...titled,
       tool: label,
       config,
       observation: stored,
@@ -1196,6 +1256,7 @@ export async function runAgent(
       ...(held ? { held } : {}),
       ...chat,
       answerLanguage,
+      doingLanguage: options.doingLanguage,
     };
     const capAtBuild = promptCapFor(providerUrl);
     const buildTurn = (h: string): string => buildTurnPrompt({ ...turnOptions, history: h });
@@ -1265,7 +1326,7 @@ export async function runAgent(
         transcriptRepair: buildTranscriptRepair,
         onReject: (error, attempt, preview) => {
           sendLog(`↻ [Agent] turn ${turn}: response rejected (${error}) — asking again (${attempt}); reply: "${preview}"`);
-          options.onTrace?.({ kind: 'stage', turn: nextStep, label: 'repairing', detail: String(attempt) });
+          options.onTrace?.({ kind: 'stage', turn: nextStep, label: 'repairing' });
         },
         signal: options.signal,
       });
@@ -1430,12 +1491,15 @@ export async function runAgent(
       const repeatedAt = signatures.get(signature);
       if (repeatedAt === undefined) signatures.set(signature, step);
       const thought = step === firstStep ? action.thought : '';
+      // A title written for the whole batch goes where its thought goes.
+      const written = call.doing ?? (step === firstStep ? action.doing : undefined);
+      const titled = written && !(options.rejectLatinDoing && !NON_LATIN_LETTER.test(written)) ? { doing: written } : {};
       const startedAt = Date.now();
 
       toolCalls++;
       const serverName = call.action === 'call_mcp' ? findMcpServer(mcpIndex, call.server)?.serverName : undefined;
       options.onProgress?.(toolProgress(toolLabel, recordConfig, serverName));
-      options.onTrace?.({ kind: 'tool', turn: step, tool: toolLabel, config: recordConfig, ...(thought ? { thought } : {}) });
+      options.onTrace?.({ kind: 'tool', turn: step, tool: toolLabel, config: recordConfig, ...(thought ? { thought } : {}), ...titled });
       // Masked: `sendLog` appends to yobi.log in plaintext, and a shell command is the one config
       // that routinely carries a token (`curl -H "Authorization: ..."`, `gh auth token`).
       sendLog(`🤖 [Agent] turn ${turn}${batched ? ` · step ${step}` : ''}: ${toolLabel} ${maskSecrets(JSON.stringify(recordConfig), true)}`);
@@ -1443,7 +1507,7 @@ export async function runAgent(
       const settle = (observation: string, status: 'ok' | 'error', research?: ResearchProgress): CallResult => {
         options.onTrace?.({ kind: 'observation', turn: step, tool: toolLabel, status, preview: truncate(observation, 200) });
         return {
-          label: toolLabel, config: recordConfig, thought, observation, status, startedAt, ms: Date.now() - startedAt,
+          label: toolLabel, config: recordConfig, thought, ...titled, observation, status, startedAt, ms: Date.now() - startedAt,
           ...(research ? { research } : {}),
         };
       };
@@ -1486,7 +1550,7 @@ export async function runAgent(
         toolCalls--;
         signatures.delete(signature);
         return {
-          label: toolLabel, config: recordConfig, thought, observation: '', status: 'ok', startedAt, ms: 0, deferred: outcome.deferred,
+          label: toolLabel, config: recordConfig, thought, ...titled, observation: '', status: 'ok', startedAt, ms: 0, deferred: outcome.deferred,
         };
       }
       if (outcome.write) {
@@ -1551,6 +1615,7 @@ export async function runAgent(
         index: firstStep,
         turn,
         thought: results[0].thought,
+        ...(results[0].doing ? { doing: results[0].doing } : {}),
         tool: AGENT_ASK_TOOL,
         config,
         observation: '',
@@ -1587,10 +1652,13 @@ export async function runAgent(
         observation: stored,
         ...(forDelta === stored ? {} : { deltaObservation: forDelta }),
       });
+      const helped = helperSteps.get(step);
       options.onTurn?.({
         index: step,
         turn,
         thought: result.thought,
+        ...(result.doing ? { doing: result.doing } : {}),
+        ...(helped ? { helperSteps: helped } : {}),
         tool: result.label,
         config: result.config,
         observation: stored,
@@ -1610,6 +1678,7 @@ export async function runAgent(
       firstCall: firstStep === 1,
       changesSomething: (intent?.change.length ?? 0) > 0,
       planItems: plan.steps.length,
+      skillLoaded: (builtinCtx.skills?.loaded.length ?? 0) > 0,
     })) {
       sendLog(`📤 [Agent] research step ${firstStep} answers the goal as written — no rewrite turn`);
       return answered('', results[0].answer ?? '', turn, COMPLETE);

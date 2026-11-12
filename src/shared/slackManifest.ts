@@ -4,7 +4,7 @@
  * in DMs) and no channel history, so it never reads what nobody said to it; interactivity for its
  * buttons; the Messages tab so people can DM it. Each scope is for one call the bot makes.
  */
-export const SLACK_BOT_SCOPES = [
+const SLACK_BOT_SCOPES = [
   'app_mentions:read',
   'chat:write',
   'im:history',
@@ -16,7 +16,7 @@ export const SLACK_BOT_SCOPES = [
   'files:write',
 ] as const;
 
-export const SLACK_BOT_EVENTS = ['app_mention', 'message.im'] as const;
+const SLACK_BOT_EVENTS = ['app_mention', 'message.im'] as const;
 
 export function slackAppManifest(name = 'Yobi'): string {
   return JSON.stringify({

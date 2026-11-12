@@ -9,7 +9,9 @@ import { FlowUserError } from '../userError';
 import {
   ALL_COMMENTS, COMMENTS_QUERY, commentsRequestBody, isQueryError, readBundleUrls, readCommentPage, readCommentsQueryId, readPageTokens,
 } from './facebookComments';
-import { postPhotoIds, readFacebookPage, readPhotoLinkPage, readPhotoPage, readPostPage, readVideoPage, type FacebookRead } from './facebookPosts';
+import {
+  photoPostId, postPhotoIds, readFacebookPage, readPhotoLinkPage, readPhotoPage, readPostPage, readVideoPage, type FacebookRead,
+} from './facebookPosts';
 import { readStoryBucket, storyBucketPost } from './facebookStories';
 import type { Json } from './jsonPick';
 import { notForOthersError, signedInOnlyError } from './readAccess';
@@ -224,14 +226,30 @@ interface ReadOptions {
   /**
    * False: the sign-in is not used even when Facebook is signed in, nor asked about
    * (`SiteReadOptions.signedIn`); what only it shows fails as such. Absent: used when signed in.
+   * Someone else's read is a visitor's alone (`SiteReader.othersAsVisitor`): the page names no
+   * audience Yobi reads, so what only the sign-in shows is theirs only as "shown only signed in".
    */
   signedIn?: boolean;
-  /**
-   * Read with the sign-in for someone else (`SiteReadOptions.forOthers`), after a visitor's read
-   * got nothing: whatever the sign-in reads is shown to some people only, marked `restricted`
-   * (they are refused it), with no photo pages and no comments. Read signed out, nothing is marked.
-   */
-  forOthers?: boolean;
+}
+
+/**
+ * One photo of several, whose page no longer carries the post's text: the text from the post's own
+ * page (`/<owner>/posts/<id>/` opens for a visitor). The photo stays what was read; a post page
+ * that cannot be read leaves it without text.
+ */
+async function withPostText(read: FacebookRead, postId: string, signedIn: boolean, signal?: AbortSignal): Promise<FacebookRead> {
+  const owner = parseFacebookUrl(read.thread.focal.link) ? new URL(read.thread.focal.link).pathname.split('/')[1] : '';
+  const post = postId && owner ? parseFacebookUrl(`${ORIGIN}/${owner}/posts/${postId}/`) : null;
+  if (!post) return read;
+  try {
+    const { status, text } = await page(post.url, signedIn, signal);
+    const words = status < 400 ? readPostPage(readFacebookPage(text), post)?.thread.focal.text ?? '' : '';
+    return words ? { ...read, thread: { ...read.thread, focal: { ...read.thread.focal, text: words } } } : read;
+  } catch (err) {
+    signal?.throwIfAborted();
+    sendLog(`📘 [Facebook] The photo's post text was unreadable: ${err instanceof Error ? err.message : String(err)}`);
+    return read;
+  }
 }
 
 async function readWith(ref: FacebookRef, signedIn: boolean, options: ReadOptions): Promise<PageRead> {
@@ -249,17 +267,15 @@ async function readWith(ref: FacebookRef, signedIn: boolean, options: ReadOption
     throw unsupportedLanding(finalUrl);
   }
   const facebookPage = readFacebookPage(text);
-  // The sign-in reading for someone else what a visitor could not: shown to some people only. It
-  // goes no further than its page.
-  const restricted = signedIn && options.forOthers === true;
   let read: FacebookRead | null;
   if (target.kind === 'post') {
     read = readPostPage(facebookPage, target);
-    if (read && signedIn && !restricted) {
+    if (read && signedIn) {
       read = readPostPage(facebookPage, target, await readPhotoPages(postPhotoIds(facebookPage, target), signal));
     }
   } else if (target.kind === 'photo') {
     read = readPhotoLinkPage(facebookPage, target);
+    if (read && !read.thread.focal.text) read = await withPostText(read, photoPostId(facebookPage, target.id), signedIn, signal);
   } else {
     read = readVideoPage(facebookPage, target);
   }
@@ -271,20 +287,19 @@ async function readWith(ref: FacebookRef, signedIn: boolean, options: ReadOption
     postLink: focal.link,
     fallbackUrl: target.kind === 'reel' ? facebookVideoLink(target.id) : '',
   };
-  const replies = options.comments && !restricted
+  const replies = options.comments
     ? await readComments(source, signedIn, signal).catch((err: unknown) => {
       signal?.throwIfAborted();
       sendLog(`📘 [Facebook] Comments unreadable: ${err instanceof Error ? err.message : String(err)}`);
       return [];
     })
     : [];
-  const shown = { ...focal, replyCount: Math.max(focal.replyCount, replies.length), ...(restricted ? { audience: 'restricted' as const } : {}) };
-  return { status, value: { focal: shown, replies }, wall: false };
+  return { status, value: { focal: { ...focal, replyCount: Math.max(focal.replyCount, replies.length) }, replies }, wall: false };
 }
 
 /**
- * Not allowed to use the sign-in (someone else's bot message): said to show only signed in (the
- * sign-in may still read it for them, `readLinkedThread`), never "sign in".
+ * Not allowed to use the sign-in (someone else's bot message): said to show only signed in, never
+ * "sign in". It is their answer: for them Facebook is read as a visitor alone (`othersAsVisitor`).
  */
 function signInRequired(url: string, allowed: boolean): FlowUserError {
   if (!allowed) return signedInOnlyError('facebook', url);

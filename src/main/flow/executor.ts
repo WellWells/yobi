@@ -11,6 +11,8 @@ import { parseFlowButtons, withButtonImages } from '../../shared/ytdl';
 import type { FlowStepOutcome } from '../../shared/flowMetrics';
 import { METRIC_SILENT_STEP_TYPES } from '../../shared/flowMetrics';
 import { escapeRegExp } from '../../shared/regex';
+import { parseJsonStringArray } from '../../shared/urlRows';
+import { flowBotCommand as botCommandOf } from '../../shared/flowBotCommand';
 import { sendLog } from '../helpers';
 import { getLangCache, t } from '../i18n';
 import { measureTokens } from '../tokenMeter';
@@ -19,6 +21,8 @@ import type { FlowExecutorDeps, LogCallback } from './types';
 import {
   getProducedFiles,
   interpolate,
+  interpolateBrowserUrls,
+  interpolateCode,
   interpolateConfig,
   isFileOutputStep,
   PRODUCED_FILES_KEY,
@@ -46,14 +50,7 @@ import { FLOW_VAR_PREFIX } from '../../shared/flowVariables';
 import { botStepTargets } from '../../shared/botRecipients';
 import { checkBlockStructure, describeBlockIssue } from '../../shared/flowBlockStructure';
 import { TRIGGER_IS_INPUT_VARIABLE } from '../../shared/builtin/steps';
-
-/**
- * Skills whose `emitFailFlag` turns a throw into `{{key.isFailed}}`="1" and sets "0" on success.
- * One list for both paths: a skill in only one of them leaves `.isFailed` unset on success.
- */
-const FAIL_SOFT_SKILLS: ReadonlySet<SkillType> = new Set<SkillType>([
-  'llm', 'browser', 'browser_js', 'bot', 'research', 'share', 'x_thread', 'x_media', 'youtube_download', 'mcp', 'calendar', 'mail_fetch',
-]);
+import { FAIL_SOFT_SKILLS } from '../../shared/flowFailSoft';
 
 interface RunProgress {
   completed: number;
@@ -123,10 +120,17 @@ export function titleHintFor(type: SkillType, subVars: Record<string, string>): 
  * What a step contributes to the chat answer. A download's output is a file path; the person
  * reading the chat wants the sentence that says where it went.
  */
+const LLM_EXPORT_FIELDS = ['png', 'webp', 'pdf'] as const;
+
 function resultTextFor(type: SkillType, output: string, subVars: Record<string, string>): string {
   if (type === 'youtube_download') return (subVars.summary ?? '').trim() || output;
   // The post itself, then where its media went (or that it had none).
   if (type === 'x_media') return [subVars.message, subVars.summary || subVars.notice].filter((part) => part?.trim()).join('\n\n') || output;
+  // Several export formats: every file, one per line, not only the last one (the step's output).
+  if (type === 'llm') {
+    const files = [...new Set(LLM_EXPORT_FIELDS.map((format) => subVars[format] ?? '').filter(Boolean))];
+    if (files.length > 1) return files.join('\n');
+  }
   return output;
 }
 
@@ -217,8 +221,9 @@ export const INTERACTIVE_RUN_KEY = '__run.interactive';
 
 /**
  * How far a run may read a pasted link with the site sign-ins in Settings: `full` (runs not
- * started by a bot, an admin in their private chat) or `others` (anyone else's bot message: no post
- * marked as shown to some people only, no stories or profiles; `signInUseForRun`).
+ * started by a bot, an admin in their private chat), `posts` (an admin in a group: their pasted
+ * post as `full`, no stories or profiles) or `others` (anyone else's bot message: no post marked
+ * as shown to some people only, no stories or profiles; `signInUseForRun`).
  * `FlowManager` sets it and drops it from anything a caller hands it; a run without it reads
  * every link as a visitor.
  */
@@ -230,18 +235,24 @@ export const SIGNED_IN_RUN_KEY = '__run.signedIn';
  */
 export const BOT_RUN_KEY = '__run.bot';
 
-const RUN_KEY_PREFIX = '__run.';
+/**
+ * The run's own marks, and who asked from which chat (`bot.triggerChatId`, `bot.triggerUserId`…):
+ * a LINE PC bot step may send anywhere only to the chat the run was asked from, and the asker's id
+ * decides download caps and whether a reply names a folder on this computer.
+ */
+const SEALED_KEY_PREFIXES = ['__run.', 'bot.trigger'] as const;
 
 /**
- * A run's variables. Once the run's own marks are in (`sealed`), no step can write a `__run.` key:
+ * A run's variables. Once the run's own marks are in (`sealed`), no step can write a sealed key:
  * a step whose output key is `__run.bot` would otherwise clear the mark that keeps a bot-started
- * run from changing a connector's data, or forge a sign-in mark.
+ * run from changing a connector's data, or forge a sign-in mark; a loop whose variable is `bot`
+ * would otherwise turn any id into the chat the run was asked from.
  */
 class RunContext extends Map<string, string> {
   sealed = false;
 
   override set(key: string, value: string): this {
-    if (this.sealed && key.startsWith(RUN_KEY_PREFIX)) return this;
+    if (this.sealed && SEALED_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))) return this;
     return super.set(key, value);
   }
 }
@@ -257,9 +268,7 @@ const LINK_READING_STEPS: ReadonlySet<string> = new Set(['x_media', 'x_thread', 
 
 /** The flow's own bot command, which its bot steps' buttons run again. */
 export function flowBotCommand(flow: FlowDefinition): string {
-  const trigger = [flow.trigger, ...(flow.extraTriggers ?? [])]
-    .find((t) => t?.type === 'bot' && (t.botCommand ?? '').trim());
-  return (trigger?.botCommand ?? '').trim().replace(/^\//, '');
+  return botCommandOf([flow.trigger, ...(flow.extraTriggers ?? [])]);
 }
 
 export async function resolveStepConfig(
@@ -269,6 +278,15 @@ export async function resolveStepConfig(
   botCommand = '',
 ): Promise<Record<string, string>> {
   const resolvedConfig = interpolateConfig(step.config, context);
+  if (step.type === 'js' || step.type === 'browser_js') {
+    // A value is data, never code: quoted where it sits in a string, a literal elsewhere.
+    resolvedConfig.code = interpolateCode(step.config.code ?? '', context);
+  }
+  if (step.type === 'browser') {
+    resolvedConfig.url = interpolateBrowserUrls(step.config.url ?? '', context);
+    // The editor's URL rows: each keeps its page position (`.pageN`), a bad row included.
+    if (parseJsonStringArray(step.config.url ?? '')) resolvedConfig.__urlRows = 'true';
+  }
   if (step.type === 'bot') {
     const messageTemplate = step.config.message ?? '';
     const magicFile = await resolveMagicUploadFile(messageTemplate, context);
@@ -307,7 +325,7 @@ export async function resolveStepConfig(
     resolvedConfig.__interactive = context.get(INTERACTIVE_RUN_KEY) === '1' ? '1' : '';
   }
   if (LINK_READING_STEPS.has(step.type)) {
-    // Someone else's bot message reads a link through the owner's sign-ins only as far as `others` allows.
+    // A bot message reads a link through the owner's sign-ins only as far as its mark allows.
     const signIn = signInUseOf(context.get(SIGNED_IN_RUN_KEY));
     resolvedConfig.__signedIn = signIn === 'none' ? '' : signIn;
   }
@@ -346,7 +364,7 @@ async function runStep(
   }
   // `withStepTimeout` gives up on the work but cannot cancel it, so the skill gets a signal of its
   // own that fires on Stop AND on the timeout: a shell command or a download is killed rather than
-  // finishing later for nobody (and holding the one download slot meanwhile).
+  // finishing later for nobody (and holding its site's download slot meanwhile).
   const stepController = new AbortController();
   const stopStep = (): void => stepController.abort();
   if (signal?.aborted) stopStep();
@@ -494,6 +512,22 @@ function markAbortedFromHere(
   progress.aborted = true;
 }
 
+function clearStepOutputFields(step: SkillInstance, context: Map<string, string>): void {
+  if (!step.outputKey) return;
+  if (step.type === 'llm') {
+    for (const field of ['text', 'file', 'png', 'webp', 'pdf']) {
+      context.set(`${step.outputKey}.${field}`, '');
+    }
+  }
+  if (step.type !== 'browser') return;
+  const prefix = `${step.outputKey}.`;
+  for (const key of context.keys()) {
+    if (!key.startsWith(prefix)) continue;
+    const field = key.slice(prefix.length);
+    if (/^page[1-9]\d*$/.test(field) || field === 'image') context.set(key, '');
+  }
+}
+
 async function runRange(
   flow: FlowDefinition,
   startIndex: number,
@@ -519,10 +553,19 @@ async function runRange(
     }
 
     const startedAt = Date.now();
+    const additionalFields: Record<string, string> = {};
+    clearStepOutputFields(step, context);
     try {
       const resolvedConfig = await resolveStepConfig(step, context, flow.id, flowBotCommand(flow));
-      const rawOutput = await runStep(step, resolvedConfig, deps, signal);
+      // Only commit the collected strings when this invocation finishes. A timed-out skill may
+      // still call back later, but it cannot write into the run's live context.
+      const stepDeps: FlowExecutorDeps = {
+        ...deps,
+        onStepOutput: (fields) => { Object.assign(additionalFields, fields); },
+      };
+      const rawOutput = await runStep(step, resolvedConfig, stepDeps, signal);
       const { output, subVars } = unwrapStepOutput(step.type, rawOutput);
+      Object.assign(subVars, additionalFields);
 
       if (step.outputKey) {
         context.set(step.outputKey, output);
@@ -532,6 +575,11 @@ async function runRange(
       }
       context.set(`${step.id}.output`, output);
       if (isFileOutputStep(step.type, resolvedConfig) && output) {
+        if (step.type === 'llm') {
+          for (const format of LLM_EXPORT_FIELDS) {
+            if (additionalFields[format]) recordProducedFile(context, additionalFields[format]);
+          }
+        }
         context.set('file', output);
         recordProducedFile(context, output);
       }
@@ -596,7 +644,10 @@ async function runRange(
         sendLog(depth === 0
           ? `⏹️ [${trace}] ${stepLabel} stopped this run: ${err.message}`
           : `↪️ [${trace}] ${stepLabel} skipped this item: ${err.message}`);
-        for (let j = i + 1; j < flow.steps.length; j++) {
+        // In a loop only the rest of this pass is skipped: the steps after the loop still run, so
+        // marking them skipped here would show them skipped until the loop gets there.
+        const skipUntil = depth === 0 ? flow.steps.length : endIndex;
+        for (let j = i + 1; j < skipUntil; j++) {
           emitLog(onLog, flow.id, flow.steps[j].id, j, 'skipped');
         }
         if (depth === 0) {
@@ -638,6 +689,7 @@ async function runRange(
         if (step.outputKey) {
           context.set(step.outputKey, '');
           context.set(`${step.outputKey}.isFailed`, '1');
+          for (const field of Object.keys(additionalFields)) context.set(`${step.outputKey}.${field}`, '');
         }
         context.set(`${step.id}.output`, '');
         emitLog(onLog, flow.id, step.id, i, 'completed', '', msg, localizeStepError(err, getLangCache()));

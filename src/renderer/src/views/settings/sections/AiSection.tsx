@@ -1,10 +1,12 @@
 import React from 'react';
-import { Box, Stack, Text } from '@mantine/core';
+import { Box, Group, Stack, Text } from '@mantine/core';
 import { Eye, RotateCcw, SlidersHorizontal, Timer, MonitorPlay } from 'lucide-react';
 import { NumberStepper } from '../NumberStepper';
 import { AppButton } from '../../../components/AppButton';
 import { AppTextarea } from '../../../components/AppTextarea';
 import { AppTextInput } from '../../../components/AppTextInput';
+import { PromptAuthorButton } from '../../../components/PromptAuthorButton';
+import { StatusLine } from '../../../components/StatusLine';
 import {
   SectionCard, SettingRow, SettingField, SegmentedControl, ToggleSwitch, SectionTitle,
 } from '../components';
@@ -16,6 +18,8 @@ import type { useSystemSettings } from '../hooks/useSystemSettings';
 import { buildPromptPreview } from '../hooks/usePromptPrefs';
 import type { usePromptPrefs } from '../hooks/usePromptPrefs';
 import { fillTemplate } from '../../../../../shared/fillTemplate';
+import { PROMPT_TEMPLATE_MAX_CHARS } from '../../../../../shared/promptAuthor';
+import { replacePromptWithUndo } from '../replacePromptWithUndo';
 
 type SystemSettings = ReturnType<typeof useSystemSettings>;
 type PromptPrefs = ReturnType<typeof usePromptPrefs>;
@@ -37,6 +41,7 @@ interface Props {
   localeLabel: string;
   showSection: (tags: readonly string[], category: 'ai') => boolean;
   sectionGap: number;
+  children?: React.ReactNode;
 }
 
 const PromptPreviewCard: React.FC<{
@@ -88,7 +93,7 @@ const PromptPreviewCard: React.FC<{
 };
 
 export const AiSection: React.FC<Props> = ({
-  system, prefs, t, localeLabel, showSection, sectionGap,
+  system, prefs, t, localeLabel, showSection, sectionGap, children,
 }) => (
   <Box>
     <Box display={showSection(TAG_SETS.prompt, 'ai') ? 'block' : 'none'}>
@@ -109,10 +114,7 @@ export const AiSection: React.FC<Props> = ({
             }
           />
 
-          <SettingField
-            label={t('settings.prompt.nickname.label')}
-            hint={t('settings.prompt.nickname.hint')}
-          >
+          <SettingField label={t('settings.prompt.nickname.label')}>
             <AppTextInput
               value={prefs.promptPrefs.nickname ?? ''}
               tone="body"
@@ -151,7 +153,19 @@ export const AiSection: React.FC<Props> = ({
             />
           </SettingField>
 
-          <SettingField label={t('settings.prompt.custom.label')}>
+          <SettingField
+            label={t('settings.prompt.custom.label')}
+            action={(
+              <PromptAuthorButton
+                kind="instructions"
+                currentPrompt={prefs.promptPrefs.customInstructions}
+                t={t}
+                fieldLabel={t('settings.prompt.custom.label')}
+                context={{ tone: prefs.promptPrefs.tone, length: prefs.promptPrefs.length }}
+                onApply={prefs.commitCustomInstructions}
+              />
+            )}
+          >
             <AppTextarea
               value={prefs.promptPrefs.customInstructions}
               onChange={(e) => prefs.setPromptPrefs({ ...prefs.promptPrefs, customInstructions: e.target.value })}
@@ -180,29 +194,48 @@ export const AiSection: React.FC<Props> = ({
           icon={<MonitorPlay size={15} />}
           label={t('settings.youtube.prompt.title')}
           mb={8}
-          rightSection={prefs.youtubeCustomized && (
-            <AppButton
-              variant="default"
-              size="xs"
-              leftSection={<RotateCcw size={13} />}
-              onClick={() => { void prefs.commitYoutubePrompt(''); }}
-            >
-              {t('settings.youtube.prompt.reset')}
-            </AppButton>
+          rightSection={(
+            <Group gap={8}>
+              <PromptAuthorButton kind="youtube" currentPrompt={prefs.youtubePromptText} t={t} onApply={prefs.commitYoutubePrompt} />
+              {prefs.youtubeCustomized && (
+                <AppButton
+                  variant="default"
+                  size="xs"
+                  leftSection={<RotateCcw size={13} />}
+                  onClick={() => {
+                    void replacePromptWithUndo({
+                      previous: prefs.youtubePromptText,
+                      next: '',
+                      edited: true,
+                      commit: prefs.commitYoutubePrompt,
+                      message: t('settings.youtube.prompt.replaced'),
+                      undoLabel: t('settings.youtube.prompt.undo'),
+                    });
+                  }}
+                >
+                  {t('settings.youtube.prompt.reset')}
+                </AppButton>
+              )}
+            </Group>
           )}
         />
         <AppTextarea
           value={prefs.youtubePromptText}
           onChange={(e) => prefs.setYoutubeDraft(e.target.value)}
           onBlur={(e) => { void prefs.commitYoutubePrompt(e.target.value); }}
+          aria-label={t('settings.youtube.prompt.title')}
+          maxLength={PROMPT_TEMPLATE_MAX_CHARS}
           autosize
           minRows={3}
           maxRows={12}
           styles={PROMPT_INPUT_STYLES}
         />
         <Text fz="var(--font-size-sm)" mt={6} c="dimmed">{t('settings.youtube.prompt.hint')}</Text>
+        {prefs.youtubeSaveFailed && <StatusLine tone="error">{t('settings.youtube.prompt.saveFailed')}</StatusLine>}
       </SectionCard>
     </Box>
+
+    {children}
 
     <SectionCard style={{ marginBottom: sectionGap, display: showSection(TAG_SETS.timeout, 'ai') ? 'block' : 'none' }}>
       <SectionTitle icon={<Timer size={15} />} label={t('settings.responseTimeout.title')} />

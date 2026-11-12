@@ -74,6 +74,10 @@ function findBestLocaleMatch(availableLocales: string[], targetLocale: string): 
   return availableLocales.find((locale) => getBaseLanguage(locale) === base) ?? null;
 }
 
+function sameLocales(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((locale, index) => locale === b[index]);
+}
+
 export const useI18nStore = create<I18nState>((set, get) => ({
   locale: FALLBACK_LOCALE,
   translations: {},
@@ -133,6 +137,9 @@ export const useI18nStore = create<I18nState>((set, get) => ({
         return [locale, content as Translations | null] as const;
       }),
     );
+    // Opening Settings asks every time. Nothing new must leave the store alone: a fresh list and
+    // map would re-render everything that reads them, while the answer is almost always the same.
+    if (!loaded.some(([, content]) => content) && sameLocales(list, get().availableLocales)) return;
     set((state) => {
       const localeTranslations = { ...state.localeTranslations };
       for (const [locale, content] of loaded) {

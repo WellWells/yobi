@@ -1,3 +1,4 @@
+import { PROVIDER_ATTACHMENT_POLICIES } from './types';
 import type { Provider } from './types';
 
 const UPLOADABLE_MIMES = new Set([
@@ -106,8 +107,34 @@ const SOURCE_FILE_ATTACHMENT_ACCEPT = [
 ].join(',');
 
 /** Providers whose composers accept source and data files as uploads, not just images and documents. */
-const SOURCE_FILE_PROVIDERS: ReadonlySet<Provider> = new Set(['chatgpt', 'claude']);
+const SOURCE_FILE_PROVIDERS: ReadonlySet<Provider> = new Set(['chatgpt', 'claude', 'deepseek']);
 
 export function attachmentAcceptFor(provider: Provider): string {
-  return SOURCE_FILE_PROVIDERS.has(provider) ? SOURCE_FILE_ATTACHMENT_ACCEPT : ATTACHMENT_ACCEPT;
+  const accept = SOURCE_FILE_PROVIDERS.has(provider) ? SOURCE_FILE_ATTACHMENT_ACCEPT : ATTACHMENT_ACCEPT;
+  const refused = PROVIDER_ATTACHMENT_POLICIES[provider].refusedExtensions;
+  if (!refused?.length) return accept;
+  return accept.split(',').filter((entry) => !refused.includes(entry.replace(/^\./, ''))).join(',');
+}
+
+export type AttachmentRefusal =
+  | { kind: 'tooLarge'; maxBytes: number }
+  | { kind: 'format'; extension: string };
+
+/**
+ * Why this provider's page would refuse the file, from its measured policy; null when nothing
+ * measured stands in the way. The renderer asks before holding a file, main before uploading one.
+ */
+export function attachmentRefusalFor(provider: Provider, fileName: string, size: number): AttachmentRefusal | null {
+  const policy = PROVIDER_ATTACHMENT_POLICIES[provider];
+  const extension = extensionOf(fileName);
+  if (extension && policy.refusedExtensions?.includes(extension)) return { kind: 'format', extension };
+  if (policy.maxFileBytes !== undefined && size > policy.maxFileBytes) {
+    return { kind: 'tooLarge', maxBytes: policy.maxFileBytes };
+  }
+  return null;
+}
+
+/** A byte ceiling as whole megabytes for messages ("100"). */
+export function megabytesLabel(bytes: number): string {
+  return String(Math.floor(bytes / (1024 * 1024)));
 }

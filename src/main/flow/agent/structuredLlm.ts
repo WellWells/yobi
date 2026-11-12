@@ -13,6 +13,7 @@ import { maskSecrets } from './secretMask';
 import { acceptReply, createByokTranscript, dropPending, openTurn, rejectReply } from './byokTranscript';
 import type { ByokTranscript } from './byokTranscript';
 import { workerWindowUnavailable } from '../../workerWindowError';
+import { clickStopGeneration } from '../../providers/stopGeneration';
 
 export interface ProviderSession {
   threadUrl: string | null;
@@ -79,10 +80,21 @@ export async function runProviderText(
     const prepared = preparePromptForProvider(prompt, providerUrl);
     const win = deps.ensureWorkerWin ? await deps.ensureWorkerWin() : deps.getWorkerWin();
     if (!win || win.isDestroyed()) throw workerWindowUnavailable();
-    // A session goes on in the same thread, so it is a normal chat; a sessionless ask is a
-    // one-shot and follows the temporary-chat setting.
-    return runAutomation(win, prepared.prompt, timeoutMs, providerUrl, uploads, resumeThread, false, session ? false : undefined);
+    // Stopped while the page answers: the site's own stop ends it, so the worker is free at once.
+    const stopPage = (): void => {
+      if (!win.isDestroyed()) void clickStopGeneration(win.webContents, providerUrl);
+    };
+    signal?.addEventListener('abort', stopPage, { once: true });
+    try {
+      // A session goes on in the same thread, so it is a normal chat; a sessionless ask is a
+      // one-shot and follows the temporary-chat setting.
+      return await runAutomation(win, prepared.prompt, timeoutMs, providerUrl, uploads, resumeThread, false, session ? false : undefined);
+    } finally {
+      signal?.removeEventListener('abort', stopPage);
+    }
   });
+  // A cut-short answer from a stopped page is not an answer.
+  if (signal?.aborted) throw new FlowAbortError();
   if (session) {
     if (result.threadLost) {
       session.threadUrl = null;
@@ -210,6 +222,8 @@ export interface AskJsonOptions<T> {
   maxRepairs?: number;
   /** `preview` is `rejectedReplyPreview(raw)`: for a log line, never for a prompt. */
   onReject?: (error: string, attempt: number, preview: string) => void;
+  /** Just before each request goes out: 0 for the first, then one per repair. */
+  onAttempt?: (attempt: number) => void;
   signal?: AbortSignal;
   session?: ProviderSession;
   sessionPrompt?: string;
@@ -229,11 +243,29 @@ export interface AskJsonResult<T> {
 }
 
 /**
- * `askJson` for a BYOK run that keeps a conversation: each request is the conversation so far plus
- * this turn's message; a rejected reply and its repair ride along until a reply passes, and only
- * that reply is kept.
+ * `askJson` with any reading of the reply: `read` parses and checks the raw text (it may take time —
+ * a skill draft runs its scripts' tests there), and a rejection is repaired like a bad JSON reply,
+ * from the same repair budget.
  */
-async function askJsonInTranscript<T>(opts: AskJsonOptions<T>, transcript: ByokTranscript): Promise<AskJsonResult<T>> {
+export interface AskStructuredOptions<T> extends Omit<AskJsonOptions<T>, 'validate'> {
+  read: (raw: string) => Validation<T> | Promise<Validation<T>>;
+}
+
+const NO_JSON_ERROR = 'No JSON object was found in the response';
+
+function jsonReader<T>(validate: (json: unknown) => Validation<T>): (raw: string) => Validation<T> {
+  return (raw) => {
+    const json = extractJsonFromLlmResponse(raw);
+    return json === null ? { ok: false, error: NO_JSON_ERROR } : validate(json);
+  };
+}
+
+/**
+ * `askStructured` for a BYOK run that keeps a conversation: each request is the conversation so far
+ * plus this turn's message; a rejected reply and its repair ride along until a reply passes, and
+ * only that reply is kept.
+ */
+async function askInTranscript<T>(opts: AskStructuredOptions<T>, transcript: ByokTranscript): Promise<AskJsonResult<T>> {
   const maxRepairs = opts.maxRepairs ?? 2;
   // No delta means there is nothing to append to: the full prompt starts the conversation over.
   const delta = transcript.messages.length > 0 ? opts.sessionPrompt : undefined;
@@ -247,6 +279,7 @@ async function askJsonInTranscript<T>(opts: AskJsonOptions<T>, transcript: ByokT
     // A one-message conversation goes out as the plain prompt it is — the same request as before
     // a conversation existed.
     const payload: ByokPrompt = messages.length === 1 ? messages[0].content : messages;
+    opts.onAttempt?.(attempt);
     try {
       raw = await callWithTransportRetry(opts.providerUrl, payload, opts.deps, opts.timeoutMs, opts.signal, opts.session);
     } catch (err) {
@@ -255,21 +288,16 @@ async function askJsonInTranscript<T>(opts: AskJsonOptions<T>, transcript: ByokT
     }
     lastRaw = raw;
 
-    const json = extractJsonFromLlmResponse(raw);
-    if (json === null) {
-      lastError = 'No JSON object was found in the response';
-    } else {
-      const verdict = opts.validate(json);
-      if (verdict.ok) {
-        acceptReply(transcript, raw);
-        return { ok: true, value: verdict.value, raw };
-      }
-      if (attempt === maxRepairs && verdict.otherwise !== undefined) {
-        acceptReply(transcript, raw);
-        return { ok: true, value: verdict.otherwise, raw };
-      }
-      lastError = verdict.error;
+    const verdict = await opts.read(raw);
+    if (verdict.ok) {
+      acceptReply(transcript, raw);
+      return { ok: true, value: verdict.value, raw };
     }
+    if (attempt === maxRepairs && verdict.otherwise !== undefined) {
+      acceptReply(transcript, raw);
+      return { ok: true, value: verdict.otherwise, raw };
+    }
+    lastError = verdict.error;
 
     if (attempt < maxRepairs) {
       opts.onReject?.(lastError, attempt + 1, rejectedReplyPreview(raw));
@@ -282,9 +310,9 @@ async function askJsonInTranscript<T>(opts: AskJsonOptions<T>, transcript: ByokT
   return { ok: false, error: lastError, reason: 'invalid_output', raw: lastRaw };
 }
 
-export async function askJson<T>(opts: AskJsonOptions<T>): Promise<AskJsonResult<T>> {
+export async function askStructured<T>(opts: AskStructuredOptions<T>): Promise<AskJsonResult<T>> {
   const transcript = isByokTargetUrl(opts.providerUrl) ? opts.session?.transcript : undefined;
-  if (transcript) return askJsonInTranscript(opts, transcript);
+  if (transcript) return askInTranscript(opts, transcript);
   const maxRepairs = opts.maxRepairs ?? 2;
   let prompt = opts.session ? (opts.sessionPrompt ?? opts.basePrompt) : opts.basePrompt;
   let lastRaw = '';
@@ -292,6 +320,7 @@ export async function askJson<T>(opts: AskJsonOptions<T>): Promise<AskJsonResult
 
   for (let attempt = 0; attempt <= maxRepairs; attempt++) {
     const session = opts.session;
+    opts.onAttempt?.(attempt);
     const raw = session
       ? await runSessionText(
         opts.providerUrl,
@@ -304,15 +333,10 @@ export async function askJson<T>(opts: AskJsonOptions<T>): Promise<AskJsonResult
       : await callWithTransportRetry(opts.providerUrl, prompt, opts.deps, opts.timeoutMs, opts.signal);
     lastRaw = raw;
 
-    const json = extractJsonFromLlmResponse(raw);
-    if (json === null) {
-      lastError = 'No JSON object was found in the response';
-    } else {
-      const verdict = opts.validate(json);
-      if (verdict.ok) return { ok: true, value: verdict.value, raw };
-      if (attempt === maxRepairs && verdict.otherwise !== undefined) return { ok: true, value: verdict.otherwise, raw };
-      lastError = verdict.error;
-    }
+    const verdict = await opts.read(raw);
+    if (verdict.ok) return { ok: true, value: verdict.value, raw };
+    if (attempt === maxRepairs && verdict.otherwise !== undefined) return { ok: true, value: verdict.otherwise, raw };
+    lastError = verdict.error;
 
     if (attempt < maxRepairs) {
       opts.onReject?.(lastError, attempt + 1, rejectedReplyPreview(raw));
@@ -321,4 +345,9 @@ export async function askJson<T>(opts: AskJsonOptions<T>): Promise<AskJsonResult
   }
 
   return { ok: false, error: lastError, reason: 'invalid_output', raw: lastRaw };
+}
+
+export function askJson<T>(opts: AskJsonOptions<T>): Promise<AskJsonResult<T>> {
+  const { validate, ...rest } = opts;
+  return askStructured({ ...rest, read: jsonReader(validate) });
 }

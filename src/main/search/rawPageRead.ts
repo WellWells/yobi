@@ -36,7 +36,7 @@ function frontmatterValue(block: string, key: string): string {
 }
 
 /** A markdown answer as a page: its frontmatter gives the title and date, the rest is the text. */
-export function markdownPage(markdown: string): Pick<RawPage, 'text' | 'title' | 'publishedAt'> {
+function markdownPage(markdown: string): Pick<RawPage, 'text' | 'title' | 'publishedAt'> {
   const front = FRONTMATTER.exec(markdown);
   const block = front?.[1] ?? '';
   const body = (front ? markdown.slice(front[0].length) : markdown).trim();

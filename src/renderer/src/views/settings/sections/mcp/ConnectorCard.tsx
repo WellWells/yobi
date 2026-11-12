@@ -1,6 +1,6 @@
 import React from 'react';
 import { ActionIcon, Badge, Box, Group, Loader, Menu, Stack, Text, Tooltip } from '@mantine/core';
-import { KeyRound, LogIn, MoreVertical, Pencil, Plug, Trash2, Unplug } from 'lucide-react';
+import { KeyRound, LogIn, EllipsisVertical, Pencil, Plug, Trash, Unplug } from 'lucide-react';
 import { AppButton } from '../../../../components/AppButton';
 import { connectorTint, renderConnectorIcon } from '../../../../config/connectorIcons';
 import { Z_POPOVER } from '../../../../config/zLayers';
@@ -138,7 +138,7 @@ export const ConnectorCard: React.FC<ConnectorCardProps> = ({
               <Menu.Target>
                 <Tooltip label={t('common.moreActions')} position="bottom">
                   <ActionIcon variant="subtle" size={30} aria-label={t('common.moreActions')}>
-                    <MoreVertical size={15} />
+                    <EllipsisVertical size={15} />
                   </ActionIcon>
                 </Tooltip>
               </Menu.Target>
@@ -151,7 +151,7 @@ export const ConnectorCard: React.FC<ConnectorCardProps> = ({
                 <Menu.Item leftSection={<Pencil size={14} />} onClick={onEdit}>
                   {t('settings.mcp.edit')}
                 </Menu.Item>
-                <Menu.Item leftSection={<Trash2 size={14} />} c="red" onClick={onRemove}>
+                <Menu.Item leftSection={<Trash size={14} />} c="red" onClick={onRemove}>
                   {t('settings.mcp.delete')}
                 </Menu.Item>
               </Menu.Dropdown>

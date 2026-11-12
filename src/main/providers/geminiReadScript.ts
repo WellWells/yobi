@@ -11,6 +11,13 @@ export const GEMINI_INPUT_SELECTOR =
 
 export const GEMINI_COPY_BTN_SELECTOR = 'copy-button button';
 
+/**
+ * The read loop went idle after the send with no text, no picture and no generation running, on a
+ * page that still has its composer: certain that Gemini produced nothing. Provider fallback moves
+ * on from it; gemini.ts turns it into a sign-in error when the session is signed out.
+ */
+export const GEMINI_NO_ANSWER = 'GEMINI_NO_ANSWER';
+
 /** Either half of the send control while a generation is running. */
 export const GEMINI_STOP_SELECTOR =
   '[data-test-id="send-button-container"] mat-icon[fonticon="stop"], [data-test-id="stop-button"]';
@@ -213,7 +220,13 @@ export const INJECTED_GEMINI_WAIT_AND_READ_JS = `async function geminiWaitAndRea
       if (isGenerating()) {
         throw new Error('Gemini is still generating but produced no visible answer before the response timeout');
       }
-      throw new Error('GEMINI_LOGIN_REQUIRED: Gemini produced no answer (sign-in required or blocked)');
+      if (!document.querySelector(${JSON.stringify(GEMINI_INPUT_SELECTOR)}) &&
+          document.querySelector('a[href^="https://accounts.google.com/"]')) {
+        throw new Error('GEMINI_LOGIN_REQUIRED: Gemini shows a sign-in page without a composer');
+      }
+      // A signed-in page carries accounts.google.com links too, so the page cannot tell a sign-in
+      // wall from a send that silently died; gemini.ts asks the session cookie instead.
+      throw new Error('Gemini automation timed out waiting for a visible answer (${GEMINI_NO_ANSWER}: idle, nothing generating)');
     }
     await sleep(POLL_MS);
   }

@@ -4,19 +4,38 @@ import type { GeminiModelChoice, GeminiModelState } from '../shared/geminiModels
 import type { ClaudeModelChoice, ClaudeModelState } from '../shared/claudeModels';
 import type { ChatgptModelChoice, ChatgptModelState } from '../shared/chatgptModels';
 import type { MemoryEditResult, MemoryNote, BotSelfChange, UserMemorySnapshot } from '../shared/userMemory';
+import type { AiNameRequest, AiNameResult } from '../shared/aiName';
+import type {
+  FlowAssistEditRequest, FlowAssistEditResult, FlowAssistExplainRequest, FlowAssistExplainResult, FlowAssistNamesRequest, FlowAssistNamesResult,
+} from '../shared/flowAssist';
 import type {
   MemoryCurateApplyResult,
   MemoryCuratePick,
   MemoryCurateProposeRequest,
   MemoryCurateProposeResult,
 } from '../shared/memoryCurate';
+import type { AgentSkillView, BundledSkillChange, SkillImportResult, SkillImportSource, SkillInstallResult, SkillSaveResult } from '../shared/agentSkills';
+import type { TrustedCommand } from '../shared/trustedCommands';
+import type {
+  SkillDraftProgress, SkillDraftRequest, SkillDraftResult, SkillFilesView, SkillTestRequest,
+  SkillTestResult, SkillTextFiles, SkillTryRequest, SkillTryResult,
+} from '../shared/skillAuthoring';
 import type { WritingToolsProgress, WritingToolsRequest, WritingToolsResult } from '../shared/writingTools';
+import type { PromptAuthorRequest, PromptAuthorResult } from '../shared/promptAuthor';
 import type { DocAssistantProgress, DocAssistantRequest, DocAssistantResult } from '../shared/docAssistant';
 import type {
   ConversationTranslateProgress, ConversationTranslateRequest, ConversationTranslateResult,
   TranslateProgress, TranslateRequest, TranslateResult, TurnTranslationRequest, TurnTranslationResult,
 } from '../shared/translate';
 import type { ReadingPrefs } from '../shared/readingPrefs';
+import type { FlowFolder, FlowFolderDeleteResult, FlowFolderMoveResult, FlowFolderResult } from '../shared/flowFolders';
+import type {
+  FlowSortApplyResult,
+  FlowSortPick,
+  FlowSortProposeRequest,
+  FlowSortProposeResult,
+  FlowSortUndoResult,
+} from '../shared/flowFolderSort';
 import type { YtdlToolsState } from '../shared/ytdl';
 import type { DownloadsKeep } from '../shared/downloads';
 import type { McpFlowToolsRequest, McpFlowToolsResult } from '../shared/mcpFlowStep';
@@ -42,15 +61,16 @@ import type {
   BackupImportResult, BackupInspectResult, BotBuiltinCommands, BotByokCommandInfo, BotLlmDirectConfig, ByokConnectionProbe, ByokGroupSaveRequest, ByokInstanceSaveRequest, ByokModelsResult,
   ByokSettingsSnapshot, ByokTestResult, CaptureSettings, ChatCommandResult, ChatTurnEvent, HotkeyBindResult,
   ShellInfo, ShellOutputEvent, ShellRunReply, ShellRunRequest,
-  QuickExportSettings,
+  QuickExportSettings, LinkAnalysisPreferences,
   FeedCandidate, FlowDefinition, FlowExecutionEvent, FlowExecutionLog, FlowExecutionResult, HiddenSources,
   ScraperPickRequest, ScraperPickResult,
-  FlowBuildOutcome, FlowBuildPayload, FlowBuildRequestPayload, MarkdownCaptureRequest, MarkdownCaptureResult, MetricsSnapshot, NotifyEventPrefs, OutputFile, PromptPreferences, StartedConversation, ConversationImportResult, ConversationPinRequest, ResponseEditRequest, ResponseEditResult,
+  FlowBuildOutcome, FlowBuildPayload, FlowBuildRequestPayload, MarkdownCaptureRequest, MarkdownCaptureResult, MetricsSnapshot, NotifyEventPrefs, OutputFile, PromptPreferences, StartedConversation, ConversationImportResult, ConversationPinRequest, ResponseEditRequest, ResponseEditResult, PromptRewindRequest, PromptRewindResult,
   SchedulePreview, ShareLinkRequest, ShareLinkResult, ShareSettings, StashedAttachment, TriggerConfig, TurnFileAction,
   SiteAccount, SiteAccountStatus,
 } from '../shared/types';
 import type {
   BotAudienceSnapshot, BotPlatform, ReadingZoomCommand, TrackpadGestureEvent, TrashedConversation, TrashResult,
+  FlowBuildBlocker, SkillType,
 } from '../shared/types';
 import type { FlowMetricsSnapshot } from '../shared/flowMetrics';
 import type { ConversationMenuCommandEvent, ConversationMenuTarget } from '../shared/conversationMenu';
@@ -71,7 +91,7 @@ import type { ShortcutOverride } from '../shared/shortcuts';
 import type {
   PromptTriggerOptions, Provider, QueueState, EmailSettingsSnapshot, DataKeyStatus, AgentCommandResult, AgentRunState, AgentRunSummary, AgentTracePayload, AgentConfirmPayload, AgentConfirmChoice, MailAccountInput, MailAccountSaveResult,
   SelectPathRequest, SelectPathResult, SettingsSnapshot, TempChatResult, BotProviderCommand, TelegramRuntimeSnapshot,
-  TelegramSettingsSnapshot, LineSettingsSnapshot, LineRuntimeSnapshot, LineCredentialsUpdate, LineChatListResult,
+  TelegramSettingsSnapshot, LineSettingsSnapshot, LineRuntimeSnapshot, LineCredentialsUpdate, LineChatListResult, LineSelfTargetListResult,
   SocketBotPlatform, SocketBotRuntimeSnapshot, SocketBotSettingsSnapshot, SocketBotActionResult,
   McpServerView, McpServerSaveRequest, McpServerActionResult, SecretHealth, SecretTarget,
   UpdateAvailablePayload, UpdateSource, UiNotificationPayload, ComposerEditorEventPayload, ExternalEditorSettings,
@@ -131,10 +151,43 @@ export type ElectronAPI = {
   cancelMemoryCuration: () => Promise<boolean>;
   applyMemoryCuration: (proposalId: string, picks: MemoryCuratePick[]) => Promise<MemoryCurateApplyResult>;
   undoMemoryCuration: () => Promise<{ ok: boolean }>;
+  listSkills: () => Promise<AgentSkillView[]>;
+  restoreBundledSkill: (change: BundledSkillChange) => Promise<SkillSaveResult>;
+  setSkillEnabled: (name: string, enabled: boolean) => Promise<AgentSkillView[]>;
+  /** Opens the picker; null when the user cancelled it. */
+  pickSkillImport: (kind: 'folder' | 'file') => Promise<SkillImportResult | null>;
+  inspectSkillImport: (source: Exclude<SkillImportSource, { kind: 'path' }>) => Promise<SkillImportResult>;
+  installSkills: (previewId: string, keys: string[]) => Promise<SkillInstallResult>;
+  discardSkillImport: (previewId: string) => Promise<void>;
+  readSkill: (name: string) => Promise<SkillFilesView | null>;
+  saveSkill: (name: string, files: SkillTextFiles) => Promise<SkillSaveResult>;
+  createSkill: (files: SkillTextFiles) => Promise<SkillSaveResult>;
+  deleteSkill: (name: string) => Promise<AgentSkillView[]>;
+  exportSkill: (name: string) => Promise<boolean>;
+  /** No name opens the skills folder itself. */
+  openSkillFolder: (name?: string) => Promise<boolean>;
+  onSkillsChanged: (cb: (skills: AgentSkillView[]) => void) => () => void;
+  /** The agent's always-allowed programs and actions; only main adds to it. */
+  listTrustedCommands: () => Promise<TrustedCommand[]>;
+  removeTrustedCommand: (entry: Pick<TrustedCommand, 'program' | 'verb'>) => Promise<TrustedCommand[]>;
+  onTrustedCommandsChanged: (cb: (list: TrustedCommand[]) => void) => () => void;
+  draftSkill: (request: SkillDraftRequest) => Promise<SkillDraftResult>;
+  onSkillDraftProgress: (cb: (progress: SkillDraftProgress) => void) => () => void;
+  trySkill: (request: SkillTryRequest) => Promise<SkillTryResult>;
+  testSkill: (request: SkillTestRequest) => Promise<SkillTestResult>;
+  cancelSkillDraft: () => Promise<void>;
+  getSkillDraftModel: () => Promise<string>;
+  checkSkillUpdates: () => Promise<AgentSkillView[]>;
   getWritingToolsModel: () => Promise<string>;
   runWritingTools: (request: WritingToolsRequest) => Promise<WritingToolsResult>;
   cancelWritingTools: (id: string) => Promise<boolean>;
   onWritingToolsProgress: (cb: (progress: WritingToolsProgress) => void) => () => void;
+  suggestAiName: (request: AiNameRequest) => Promise<AiNameResult>;
+  cancelAiName: (id: string) => Promise<boolean>;
+  assistFlowEdit: (request: FlowAssistEditRequest) => Promise<FlowAssistEditResult>;
+  assistFlowExplain: (request: FlowAssistExplainRequest) => Promise<FlowAssistExplainResult>;
+  assistFlowNames: (request: FlowAssistNamesRequest) => Promise<FlowAssistNamesResult>;
+  cancelFlowAssist: (id: string) => Promise<boolean>;
   runDocAssistant: (request: DocAssistantRequest) => Promise<DocAssistantResult>;
   cancelDocAssistant: (id: string) => Promise<boolean>;
   onDocAssistantProgress: (cb: (progress: DocAssistantProgress) => void) => () => void;
@@ -177,6 +230,7 @@ export type ElectronAPI = {
   setConversationMenuTarget: (target: ConversationMenuTarget | null) => Promise<boolean>;
   onConversationMenuCommand: (cb: (event: ConversationMenuCommandEvent) => void) => () => void;
   editTurnResponse: (request: ResponseEditRequest) => Promise<ResponseEditResult>;
+  rewindConversation: (request: PromptRewindRequest) => Promise<PromptRewindResult>;
   listConversationVersions: (filePath: string) => Promise<ConversationHistoryList>;
   getConversationVersion: (filePath: string, vid: string) => Promise<string | null>;
   restoreConversationVersion: (filePath: string, vid: string) => Promise<ConversationRestoreResult>;
@@ -236,8 +290,10 @@ export type ElectronAPI = {
   setLocaleAuto: (lang: string) => Promise<boolean>;
 
   checkForUpdates: () => Promise<boolean>;
+  installUpdate: () => Promise<boolean>;
   getUpdateSource: () => Promise<UpdateSource>;
   onUpdateAvailable: (cb: (payload: UpdateAvailablePayload) => void) => () => void;
+  onUpdateDownloaded: (cb: (payload: UpdateAvailablePayload) => void) => () => void;
   onUpdateNotAvailable: (cb: () => void) => () => void;
   onUpdateError: (cb: () => void) => () => void;
   openExternalUrl: (url: string) => Promise<boolean>;
@@ -255,6 +311,10 @@ export type ElectronAPI = {
   getNotifyEvents: () => Promise<NotifyEventPrefs>;
   updateNotifyEvents: (prefs: NotifyEventPrefs) => Promise<boolean>;
   getPromptPreferences: () => Promise<PromptPreferences>;
+  getLinkAnalysisPreferences: () => Promise<LinkAnalysisPreferences>;
+  updateLinkAnalysisPreferences: (prefs: LinkAnalysisPreferences) => Promise<LinkAnalysisPreferences>;
+  generatePromptDraft: (request: PromptAuthorRequest) => Promise<PromptAuthorResult>;
+  cancelPromptDraft: (id: string) => Promise<boolean>;
   updatePromptPreferences: (prefs: PromptPreferences) => Promise<boolean>;
   getYoutubePrompt: () => Promise<string>;
   updateYoutubePrompt: (prompt: string) => Promise<boolean>;
@@ -263,6 +323,8 @@ export type ElectronAPI = {
   resetSettings: () => Promise<SettingsSnapshot | null>;
 
   triggerPromptWithOptions: (options: PromptTriggerOptions) => Promise<string | null>;
+  /** The composer's Stop for one chat send; false when it has already ended. */
+  stopChatSend: (sendId: string) => Promise<boolean>;
   cancelQueueTask: (taskId: string) => Promise<boolean>;
   forceSkipActiveTask: () => Promise<boolean>;
   setCurrentLocale: (lang: string) => Promise<boolean>;
@@ -270,6 +332,7 @@ export type ElectronAPI = {
   copyTextToClipboard: (text: string) => Promise<boolean>;
   stashAttachmentBytes: (request: AttachmentStashRequest) => Promise<StashedAttachment>;
   attachmentFromClipboard: () => Promise<StashedAttachment | null>;
+  clipboardPastePaths: () => Promise<string[]>;
   getPathForFile: (file: File) => string;
   showInFolder: (filePath: string) => Promise<void>;
   exportConversationMarkdown: (filePath: string) => Promise<MarkdownCaptureResult>;
@@ -316,6 +379,7 @@ export type ElectronAPI = {
 
   getLineSettings: () => Promise<LineSettingsSnapshot>;
   listLineChats: () => Promise<LineChatListResult>;
+  listLineSelfTargets: () => Promise<LineSelfTargetListResult>;
   updateLineEnabled: (enabled: boolean) => Promise<{ ok: boolean; message?: string }>;
   updateLineCredentials: (creds: LineCredentialsUpdate) => Promise<{ ok: boolean; message?: string }>;
   updateLinePort: (port: number) => Promise<{ ok: boolean; message?: string }>;
@@ -418,6 +482,8 @@ export type ElectronAPI = {
   updateLayoutMode: (mode: string) => Promise<boolean>;
   getShowTokenUsage: () => Promise<boolean>;
   updateShowTokenUsage: (show: boolean) => Promise<boolean>;
+  getShowRecap: () => Promise<boolean>;
+  updateShowRecap: (show: boolean) => Promise<boolean>;
   getLinkRecognition: () => Promise<LinkRecognitionState>;
   setLinkRecognition: (target: LinkRecognitionTarget, on: boolean) => Promise<LinkRecognitionState>;
   onLinkRecognitionChanged: (cb: (state: LinkRecognitionState) => void) => () => void;
@@ -443,25 +509,40 @@ export type ElectronAPI = {
   deleteFlows: (flowIds: string[]) => Promise<boolean>;
   setFlowsEnabled: (flowIds: string[], enabled: boolean) => Promise<FlowDefinition[]>;
   duplicateFlow: (flowId: string) => Promise<FlowDefinition | null>;
-  moveFlow: (flowId: string, direction: 'up' | 'down') => Promise<FlowDefinition[]>;
   reorderFlows: (orderedIds: string[]) => Promise<FlowDefinition[]>;
+  listFlowFolders: () => Promise<FlowFolder[]>;
+  /** `restoreIds`: undoing a delete — those still at the top level go back in. */
+  createFlowFolder: (name: string, restoreIds?: string[]) => Promise<FlowFolderResult>;
+  renameFlowFolder: (from: string, to: string) => Promise<FlowFolderResult>;
+  deleteFlowFolder: (name: string) => Promise<FlowFolderDeleteResult>;
+  /** `folder`: '' for the top level; `before`: the flow they were dropped on. */
+  moveFlowsToFolder: (flowIds: string[], folder: string, before?: string) => Promise<FlowFolderMoveResult>;
+  onFlowFoldersChanged: (cb: (folders: FlowFolder[]) => void) => () => void;
+  getFlowSortModel: () => Promise<string>;
+  proposeFlowSort: (request: FlowSortProposeRequest) => Promise<FlowSortProposeResult>;
+  cancelFlowSort: () => Promise<boolean>;
+  applyFlowSort: (proposalId: string, picks: FlowSortPick[]) => Promise<FlowSortApplyResult>;
+  undoFlowSort: () => Promise<FlowSortUndoResult>;
   executeFlow: (flowId: string) => Promise<FlowExecutionResult>;
   runChatCommand: (flowId: string, command: string, input: string, conversationPath?: string, progressId?: string, modelUrl?: string) => Promise<ChatCommandResult>;
   onChatCommandProgress: (cb: (payload: { progressId: string; progress: StepProgress }) => void) => () => void;
   runAgentCommand: (goal: string, targetUrl: string, runId: string, conversationPath?: string, attachments?: string[], mcpServerIds?: string[], web?: boolean) => Promise<AgentCommandResult>;
   setConversationConnectors: (filePath: string, serverIds: string[], web?: boolean, agent?: boolean) => Promise<boolean>;
-  resumeAgentRun: (runId: string, answer?: string) => Promise<AgentCommandResult>;
+  resumeAgentRun: (runId: string, answer?: string, providerUrl?: string) => Promise<AgentCommandResult>;
   cancelAgentRun: (runId: string) => Promise<boolean>;
   listResumableAgentRuns: () => Promise<AgentRunSummary[]>;
   getAgentRun: (runId: string) => Promise<AgentRunState | null>;
   discardAgentRun: (runId: string) => Promise<boolean>;
   onAgentTrace: (cb: (payload: AgentTracePayload) => void) => () => void;
   abortFlow: (flowId: string) => Promise<boolean>;
+  /** The composer's Stop for a chat command, by the progress id it was started with. */
+  stopChatCommand: (progressId: string) => Promise<boolean>;
   generateFlow: (request: FlowBuildRequestPayload) => Promise<FlowBuildOutcome>;
   onFlowBuildProgress: (cb: (payload: FlowBuildPayload) => void) => () => void;
   getFlowAiUrl: () => Promise<string>;
   previewSchedule: (trigger: TriggerConfig) => Promise<SchedulePreview>;
   getWatchMissing: () => Promise<string[]>;
+  getFlowSetupBlockers: (skills: SkillType[]) => Promise<FlowBuildBlocker[]>;
   onWatchMissing: (cb: (flowIds: string[]) => void) => () => void;
   exportFlow: (flow: FlowDefinition) => Promise<boolean>;
   exportFlowResult: (content: string, defaultFileName: string) => Promise<boolean>;
@@ -488,6 +569,8 @@ export type ElectronAPI = {
   xPostsClearCheckpoint: (stepId: string) => Promise<boolean>;
   pttBoardHasCheckpoint: (stepId: string) => Promise<boolean>;
   pttBoardClearCheckpoint: (stepId: string) => Promise<boolean>;
+  lineReadHasCheckpoint: (stepId: string) => Promise<boolean>;
+  lineReadClearCheckpoint: (stepId: string) => Promise<boolean>;
   pttFindBoards: (query: string) => Promise<PttBoardChoice[]>;
   pttPreviewBoard: (request: PttBoardPreviewRequest) => Promise<PttBoardPreviewResult>;
   pttCancelPreview: (slot: string) => Promise<boolean>;
@@ -607,9 +690,51 @@ const api: ElectronAPI = {
   cancelMemoryCuration: () => ipcRenderer.invoke(IPC.MEMORY_CURATE_CANCEL),
   applyMemoryCuration: (proposalId, picks) => ipcRenderer.invoke(IPC.MEMORY_CURATE_APPLY, proposalId, picks),
   undoMemoryCuration: () => ipcRenderer.invoke(IPC.MEMORY_CURATE_UNDO),
+  listSkills: () => ipcRenderer.invoke(IPC.SKILLS_LIST),
+  restoreBundledSkill: (change) => ipcRenderer.invoke(IPC.SKILLS_RESTORE_BUNDLED, change),
+  setSkillEnabled: (name, enabled) => ipcRenderer.invoke(IPC.SKILLS_SET_ENABLED, name, enabled),
+  pickSkillImport: (kind) => ipcRenderer.invoke(IPC.SKILLS_PICK_IMPORT, kind),
+  inspectSkillImport: (source) => ipcRenderer.invoke(IPC.SKILLS_INSPECT, source),
+  installSkills: (previewId, keys) => ipcRenderer.invoke(IPC.SKILLS_INSTALL, previewId, keys),
+  discardSkillImport: (previewId) => ipcRenderer.invoke(IPC.SKILLS_DISCARD, previewId),
+  readSkill: (name) => ipcRenderer.invoke(IPC.SKILLS_READ, name),
+  saveSkill: (name, files) => ipcRenderer.invoke(IPC.SKILLS_SAVE, name, files),
+  createSkill: (files) => ipcRenderer.invoke(IPC.SKILLS_CREATE, files),
+  deleteSkill: (name) => ipcRenderer.invoke(IPC.SKILLS_DELETE, name),
+  exportSkill: (name) => ipcRenderer.invoke(IPC.SKILLS_EXPORT, name),
+  openSkillFolder: (name) => ipcRenderer.invoke(IPC.SKILLS_OPEN_FOLDER, name ?? ''),
+  onSkillsChanged: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, skills: AgentSkillView[]) => cb(skills);
+    ipcRenderer.on(IPC.SKILLS_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.SKILLS_CHANGED, handler);
+  },
+  listTrustedCommands: () => ipcRenderer.invoke(IPC.AGENT_TRUSTED_COMMANDS_LIST),
+  removeTrustedCommand: (entry) => ipcRenderer.invoke(IPC.AGENT_TRUSTED_COMMANDS_REMOVE, { program: entry.program, verb: entry.verb }),
+  onTrustedCommandsChanged: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, list: TrustedCommand[]) => cb(list);
+    ipcRenderer.on(IPC.AGENT_TRUSTED_COMMANDS_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.AGENT_TRUSTED_COMMANDS_CHANGED, handler);
+  },
+  draftSkill: (request) => ipcRenderer.invoke(IPC.SKILLS_DRAFT, request),
+  onSkillDraftProgress: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, progress: SkillDraftProgress) => cb(progress);
+    ipcRenderer.on(IPC.SKILLS_DRAFT_PROGRESS, handler);
+    return () => ipcRenderer.removeListener(IPC.SKILLS_DRAFT_PROGRESS, handler);
+  },
+  trySkill: (request) => ipcRenderer.invoke(IPC.SKILLS_TRY, request),
+  testSkill: (request) => ipcRenderer.invoke(IPC.SKILLS_TEST, request),
+  cancelSkillDraft: () => ipcRenderer.invoke(IPC.SKILLS_DRAFT_CANCEL),
+  getSkillDraftModel: () => ipcRenderer.invoke(IPC.SKILLS_DEFAULT_MODEL),
+  checkSkillUpdates: () => ipcRenderer.invoke(IPC.SKILLS_CHECK_UPDATES),
   getWritingToolsModel: () => ipcRenderer.invoke(IPC.WRITING_TOOLS_GET_MODEL),
   runWritingTools: (request) => ipcRenderer.invoke(IPC.WRITING_TOOLS_RUN, request),
   cancelWritingTools: (id) => ipcRenderer.invoke(IPC.WRITING_TOOLS_CANCEL, id),
+  suggestAiName: (request) => ipcRenderer.invoke(IPC.AI_NAME_SUGGEST, request),
+  cancelAiName: (id) => ipcRenderer.invoke(IPC.AI_NAME_CANCEL, id),
+  assistFlowEdit: (request) => ipcRenderer.invoke(IPC.FLOW_ASSIST_EDIT, request),
+  assistFlowExplain: (request) => ipcRenderer.invoke(IPC.FLOW_ASSIST_EXPLAIN, request),
+  assistFlowNames: (request) => ipcRenderer.invoke(IPC.FLOW_ASSIST_NAMES, request),
+  cancelFlowAssist: (id) => ipcRenderer.invoke(IPC.FLOW_ASSIST_CANCEL, id),
   onWritingToolsProgress: (cb) => {
     const handler = (_event: Electron.IpcRendererEvent, progress: WritingToolsProgress) => cb(progress);
     ipcRenderer.on(IPC.WRITING_TOOLS_PROGRESS, handler);
@@ -694,6 +819,7 @@ const api: ElectronAPI = {
     return () => ipcRenderer.removeListener(IPC.CONVERSATION_MENU_COMMAND, handler);
   },
   editTurnResponse: (request) => ipcRenderer.invoke(IPC.EDIT_TURN_RESPONSE, request),
+  rewindConversation: (request) => ipcRenderer.invoke(IPC.REWIND_CONVERSATION, request),
   listConversationVersions: (filePath) => ipcRenderer.invoke(IPC.CONVERSATION_HISTORY_LIST, filePath),
   getConversationVersion: (filePath, vid) => ipcRenderer.invoke(IPC.CONVERSATION_HISTORY_GET, filePath, vid),
   restoreConversationVersion: (filePath, vid) => ipcRenderer.invoke(IPC.CONVERSATION_HISTORY_RESTORE, filePath, vid),
@@ -766,11 +892,17 @@ const api: ElectronAPI = {
   setLocaleAuto: (lang) => ipcRenderer.invoke(IPC.SET_LOCALE_AUTO, lang),
 
   checkForUpdates: () => ipcRenderer.invoke(IPC.UPDATE_CHECK),
+  installUpdate: () => ipcRenderer.invoke(IPC.UPDATE_INSTALL),
   getUpdateSource: () => ipcRenderer.invoke(IPC.GET_UPDATE_SOURCE),
   onUpdateAvailable: (cb) => {
     const handler = (_: Electron.IpcRendererEvent, payload: UpdateAvailablePayload) => cb(payload);
     ipcRenderer.on(IPC.UPDATE_AVAILABLE, handler);
     return () => ipcRenderer.removeListener(IPC.UPDATE_AVAILABLE, handler);
+  },
+  onUpdateDownloaded: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, payload: UpdateAvailablePayload) => cb(payload);
+    ipcRenderer.on(IPC.UPDATE_DOWNLOADED, handler);
+    return () => ipcRenderer.removeListener(IPC.UPDATE_DOWNLOADED, handler);
   },
   onUpdateNotAvailable: (cb) => {
     const handler = () => cb();
@@ -797,6 +929,10 @@ const api: ElectronAPI = {
   getNotifyEvents: () => ipcRenderer.invoke(IPC.GET_NOTIFY_EVENTS),
   updateNotifyEvents: (prefs) => ipcRenderer.invoke(IPC.UPDATE_NOTIFY_EVENTS, prefs),
   getPromptPreferences: () => ipcRenderer.invoke(IPC.GET_PROMPT_PREFERENCES),
+  getLinkAnalysisPreferences: () => ipcRenderer.invoke(IPC.GET_LINK_ANALYSIS_PREFERENCES),
+  updateLinkAnalysisPreferences: (prefs) => ipcRenderer.invoke(IPC.UPDATE_LINK_ANALYSIS_PREFERENCES, prefs),
+  generatePromptDraft: (request) => ipcRenderer.invoke(IPC.PROMPT_AUTHOR_GENERATE, request),
+  cancelPromptDraft: (id) => ipcRenderer.invoke(IPC.PROMPT_AUTHOR_CANCEL, id),
   updatePromptPreferences: (prefs) => ipcRenderer.invoke(IPC.UPDATE_PROMPT_PREFERENCES, prefs),
   getYoutubePrompt: () => ipcRenderer.invoke(IPC.GET_YOUTUBE_PROMPT),
   updateYoutubePrompt: (prompt) => ipcRenderer.invoke(IPC.UPDATE_YOUTUBE_PROMPT, prompt),
@@ -805,6 +941,7 @@ const api: ElectronAPI = {
   resetSettings: () => ipcRenderer.invoke(IPC.RESET_SETTINGS),
 
   triggerPromptWithOptions: (options) => ipcRenderer.invoke(IPC.TRIGGER_PROMPT_WITH_OPTIONS, options),
+  stopChatSend: (sendId) => ipcRenderer.invoke(IPC.CHAT_STOP_SEND, sendId),
   cancelQueueTask: (taskId) => ipcRenderer.invoke(IPC.CANCEL_QUEUE_TASK, taskId),
   forceSkipActiveTask: () => ipcRenderer.invoke(IPC.FORCE_SKIP_ACTIVE_TASK),
   setCurrentLocale: (lang) => ipcRenderer.invoke(IPC.SET_CURRENT_LOCALE, lang),
@@ -812,6 +949,7 @@ const api: ElectronAPI = {
   copyTextToClipboard: (text) => ipcRenderer.invoke(IPC.COPY_TEXT_TO_CLIPBOARD, text),
   stashAttachmentBytes: (request) => ipcRenderer.invoke(IPC.ATTACHMENT_STASH_BYTES, request),
   attachmentFromClipboard: () => ipcRenderer.invoke(IPC.ATTACHMENT_FROM_CLIPBOARD),
+  clipboardPastePaths: () => ipcRenderer.invoke(IPC.CLIPBOARD_PASTE_PATHS),
   getPathForFile: (file) => webUtils.getPathForFile(file),
   showInFolder: (filePath) => ipcRenderer.invoke(IPC.SHOW_IN_FOLDER, filePath),
   exportConversationMarkdown: (filePath) => ipcRenderer.invoke(IPC.EXPORT_CONVERSATION_MARKDOWN, filePath),
@@ -862,6 +1000,7 @@ const api: ElectronAPI = {
 
   getLineSettings: () => ipcRenderer.invoke(IPC.GET_LINE_SETTINGS),
   listLineChats: () => ipcRenderer.invoke(IPC.LIST_LINE_CHATS),
+  listLineSelfTargets: () => ipcRenderer.invoke(IPC.LIST_LINE_SELF_TARGETS),
   updateLineEnabled: (enabled) => ipcRenderer.invoke(IPC.UPDATE_LINE_ENABLED, enabled),
   updateLineCredentials: (creds) => ipcRenderer.invoke(IPC.UPDATE_LINE_CREDENTIALS, creds),
   updateLinePort: (port) => ipcRenderer.invoke(IPC.UPDATE_LINE_PORT, port),
@@ -1021,6 +1160,8 @@ const api: ElectronAPI = {
   updateLayoutMode: (mode) => ipcRenderer.invoke(IPC.UPDATE_LAYOUT_MODE, mode),
   getShowTokenUsage: () => ipcRenderer.invoke(IPC.GET_SHOW_TOKEN_USAGE),
   updateShowTokenUsage: (show) => ipcRenderer.invoke(IPC.UPDATE_SHOW_TOKEN_USAGE, show),
+  getShowRecap: () => ipcRenderer.invoke(IPC.GET_SHOW_RECAP),
+  updateShowRecap: (show) => ipcRenderer.invoke(IPC.UPDATE_SHOW_RECAP, show),
   getLinkRecognition: () => ipcRenderer.invoke(IPC.GET_LINK_RECOGNITION),
   setLinkRecognition: (group, on) => ipcRenderer.invoke(IPC.SET_LINK_RECOGNITION, group, on),
   onLinkRecognitionChanged: (cb) => {
@@ -1055,8 +1196,22 @@ const api: ElectronAPI = {
   deleteFlows: (flowIds) => ipcRenderer.invoke(IPC.FLOW_DELETE_MANY, flowIds),
   setFlowsEnabled: (flowIds, enabled) => ipcRenderer.invoke(IPC.FLOW_SET_ENABLED_MANY, flowIds, enabled),
   duplicateFlow: (flowId) => ipcRenderer.invoke(IPC.FLOW_DUPLICATE, flowId),
-  moveFlow: (flowId, direction) => ipcRenderer.invoke(IPC.FLOW_MOVE, flowId, direction),
   reorderFlows: (orderedIds) => ipcRenderer.invoke(IPC.FLOW_REORDER, orderedIds),
+  listFlowFolders: () => ipcRenderer.invoke(IPC.FLOW_FOLDER_LIST),
+  createFlowFolder: (name, restoreIds) => ipcRenderer.invoke(IPC.FLOW_FOLDER_CREATE, name, restoreIds),
+  renameFlowFolder: (from, to) => ipcRenderer.invoke(IPC.FLOW_FOLDER_RENAME, from, to),
+  deleteFlowFolder: (name) => ipcRenderer.invoke(IPC.FLOW_FOLDER_DELETE, name),
+  moveFlowsToFolder: (flowIds, folder, before) => ipcRenderer.invoke(IPC.FLOW_FOLDER_MOVE, flowIds, folder, before),
+  onFlowFoldersChanged: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, folders: FlowFolder[]) => cb(folders);
+    ipcRenderer.on(IPC.FLOW_FOLDERS_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.FLOW_FOLDERS_CHANGED, handler);
+  },
+  getFlowSortModel: () => ipcRenderer.invoke(IPC.FLOW_FOLDER_SORT_GET_MODEL),
+  proposeFlowSort: (request) => ipcRenderer.invoke(IPC.FLOW_FOLDER_SORT_PROPOSE, request),
+  cancelFlowSort: () => ipcRenderer.invoke(IPC.FLOW_FOLDER_SORT_CANCEL),
+  applyFlowSort: (proposalId, picks) => ipcRenderer.invoke(IPC.FLOW_FOLDER_SORT_APPLY, proposalId, picks),
+  undoFlowSort: () => ipcRenderer.invoke(IPC.FLOW_FOLDER_SORT_UNDO),
   executeFlow: (flowId) => ipcRenderer.invoke(IPC.FLOW_EXECUTE, flowId),
   runChatCommand: (flowId, command, input, conversationPath, progressId, modelUrl) =>
     ipcRenderer.invoke(IPC.FLOW_RUN_CHAT_COMMAND, flowId, command, input, conversationPath, progressId, modelUrl),
@@ -1069,12 +1224,13 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC.AGENT_RUN, goal, targetUrl, runId, conversationPath, attachments, mcpServerIds, web),
   setConversationConnectors: (filePath, serverIds, web, agent) =>
     ipcRenderer.invoke(IPC.AGENT_SET_CONNECTORS, filePath, serverIds, web, agent),
-  resumeAgentRun: (runId, answer) => ipcRenderer.invoke(IPC.AGENT_RESUME, runId, answer),
+  resumeAgentRun: (runId, answer, providerUrl) => ipcRenderer.invoke(IPC.AGENT_RESUME, runId, answer, providerUrl),
   cancelAgentRun: (runId) => ipcRenderer.invoke(IPC.AGENT_CANCEL, runId),
   listResumableAgentRuns: () => ipcRenderer.invoke(IPC.AGENT_LIST_RESUMABLE),
   getAgentRun: (runId) => ipcRenderer.invoke(IPC.AGENT_GET_RUN, runId),
   discardAgentRun: (runId) => ipcRenderer.invoke(IPC.AGENT_DISCARD, runId),
   abortFlow: (flowId) => ipcRenderer.invoke(IPC.FLOW_ABORT, flowId),
+  stopChatCommand: (progressId) => ipcRenderer.invoke(IPC.FLOW_STOP_CHAT_COMMAND, progressId),
   generateFlow: (request) => ipcRenderer.invoke(IPC.FLOW_GENERATE, request),
   getFlowAiUrl: () => ipcRenderer.invoke(IPC.FLOW_GET_AI_URL),
   onFlowBuildProgress: (cb) => {
@@ -1084,6 +1240,7 @@ const api: ElectronAPI = {
   },
   previewSchedule: (trigger) => ipcRenderer.invoke(IPC.FLOW_PREVIEW_SCHEDULE, trigger),
   getWatchMissing: () => ipcRenderer.invoke(IPC.FLOW_WATCH_MISSING_GET),
+  getFlowSetupBlockers: (skills) => ipcRenderer.invoke(IPC.FLOW_SETUP_BLOCKERS, skills),
   onWatchMissing: (cb) => {
     const handler = (_: Electron.IpcRendererEvent, flowIds: string[]) => cb(flowIds);
     ipcRenderer.on(IPC.FLOW_WATCH_MISSING, handler);
@@ -1138,6 +1295,8 @@ const api: ElectronAPI = {
   xPostsClearCheckpoint: (stepId) => ipcRenderer.invoke(IPC.X_POSTS_CLEAR_CHECKPOINT, stepId),
   pttBoardHasCheckpoint: (stepId) => ipcRenderer.invoke(IPC.PTT_BOARD_HAS_CHECKPOINT, stepId),
   pttBoardClearCheckpoint: (stepId) => ipcRenderer.invoke(IPC.PTT_BOARD_CLEAR_CHECKPOINT, stepId),
+  lineReadHasCheckpoint: (stepId) => ipcRenderer.invoke(IPC.LINE_READ_HAS_CHECKPOINT, stepId),
+  lineReadClearCheckpoint: (stepId) => ipcRenderer.invoke(IPC.LINE_READ_CLEAR_CHECKPOINT, stepId),
   pttFindBoards: (query) => ipcRenderer.invoke(IPC.PTT_FIND_BOARDS, query),
   pttPreviewBoard: (request) => ipcRenderer.invoke(IPC.PTT_PREVIEW_BOARD, request),
   pttCancelPreview: (slot) => ipcRenderer.invoke(IPC.PTT_CANCEL_PREVIEW, slot),

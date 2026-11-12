@@ -26,6 +26,8 @@ export interface VariableFieldProps {
   onChangeMany?: (patch: Record<string, string>) => void;
   /** The flow's steps. Given, a feed address (and a URL an rss step reads as is) shows its latest items. */
   steps?: readonly SkillInstance[];
+  /** Replaces the "required" error, for a value that is filled in but unusable (a relative folder). */
+  error?: string;
 }
 
 function toBound(raw: string | undefined): number | undefined {
@@ -35,11 +37,11 @@ function toBound(raw: string | undefined): number | undefined {
 }
 
 export const VariableField: React.FC<VariableFieldProps> = ({
-  variable, onChange, t, asQuestion = false, onBeforeNavigate, allVariables, onChangeMany, steps,
+  variable, onChange, t, asQuestion = false, onBeforeNavigate, allVariables, onChangeMany, steps, error: errorOverride,
 }) => {
   const label = asQuestion ? (variable.question?.trim() || variable.label) : variable.label;
   const isBlank = !variable.value.trim();
-  const error = variable.required && isBlank ? t('flow.variables.required') : undefined;
+  const error = errorOverride ?? (variable.required && isBlank ? t('flow.variables.required') : undefined);
 
   const pickPath = useCallback(async (mode: 'file' | 'folder') => {
     const picked = await systemApi.selectPath({ mode });
@@ -79,7 +81,7 @@ export const VariableField: React.FC<VariableFieldProps> = ({
         label={label}
         hint={variable.hint}
         error={error}
-        emptyHint={t('flow.skill.bot.chatId.noPaired')}
+        emptyHint={t('flow.skill.bot.recipients.noPaired')}
         onBeforeNavigate={onBeforeNavigate}
       />
     );

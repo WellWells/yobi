@@ -1,5 +1,8 @@
 import { FlowUserError } from '../userError';
-import { addDays, dateAtOffset, daysBetween, localToday, parseDay, splitSpan, utcToday, weekdayOf } from './dateSpan';
+import { dateAtOffset, weekdayOf } from './dateSpan';
+import {
+  FORECAST_AHEAD_DAYS, FORECAST_MAX_SPAN_DAYS, FORECAST_PAST_DAYS, readForecastWindow, type ForecastRequest,
+} from '../../../shared/lookupDateWindows';
 import { offsetFromZone, utcOffsetLabel } from './quoteTime';
 
 const WMO_CODE_TEXT: Record<number, string> = {
@@ -34,22 +37,7 @@ export function severityOf(code: number): number {
 }
 
 /** Open-Meteo's range is counted from the UTC date: 92 days back, 15 ahead. */
-export const FORECAST_PAST_DAYS = 92;
-export const FORECAST_AHEAD_DAYS = 15;
-export const FORECAST_MAX_SPAN_DAYS = 16;
-
-export interface ForecastRequest {
-  from: string;
-  to: string;
-  startHour: number;
-  endHour: number;
-  /**
-   * The days actually requested: one more on each side where the source allows. Open-Meteo cuts
-   * the span at today's offset, so a London summer date asked for in winter lost its 00:00 hour.
-   */
-  fetchFrom: string;
-  fetchTo: string;
-}
+export { FORECAST_AHEAD_DAYS, FORECAST_MAX_SPAN_DAYS, FORECAST_PAST_DAYS, type ForecastRequest };
 
 function badDate(value: string): FlowUserError {
   return new FlowUserError(
@@ -65,43 +53,19 @@ function badHours(value: string): FlowUserError {
   );
 }
 
-function readHours(raw: string): [number, number] {
-  if (!raw) return [0, 23];
-  const m = /^(\d{1,2})(?::00)?\s*(?:(?:-|~|～|到|至|–|—|\bto\b)\s*(\d{1,2})(?::00)?)?$/i.exec(raw);
-  if (!m) throw badHours(raw);
-  const start = Number(m[1]);
-  const end = m[2] === undefined ? start : Number(m[2]);
-  if (start > 23 || end > 23 || start > end) throw badHours(raw);
-  return [start, end];
-}
-
-/** null when both fields are blank: the step then runs exactly as it did before they existed. */
+/**
+ * null when both fields are blank: the step then runs exactly as it did before they existed. The
+ * reading itself is `readForecastWindow`, which the step editor runs too.
+ */
 export function readForecastRequest(config: Record<string, string>, now: Date): ForecastRequest | null {
-  const dateRaw = (config.date ?? '').trim();
-  const hoursRaw = (config.hours ?? '').trim();
-  if (!dateRaw && !hoursRaw) return null;
-  const [startHour, endHour] = readHours(hoursRaw);
-  const today = localToday(now);
-  const ends = dateRaw ? splitSpan(dateRaw) ?? [dateRaw, dateRaw] : [today, today];
-  const from = parseDay(ends[0], today);
-  const to = parseDay(ends[1], today);
-  if (!from || !to || from > to || daysBetween(from, to) + 1 > FORECAST_MAX_SPAN_DAYS) throw badDate(dateRaw);
-  const first = addDays(utcToday(now), -FORECAST_PAST_DAYS);
-  const last = addDays(utcToday(now), FORECAST_AHEAD_DAYS);
-  if (from < first || to > last) {
-    const value = dateRaw || today;
-    throw new FlowUserError(
-      'flow.error.weatherRange', { value, first, last },
-      `Weather has data from ${first} to ${last}; "${value}" is outside that range.`,
-    );
-  }
-  const before = addDays(from, -1);
-  const after = addDays(to, 1);
-  return {
-    from, to, startHour, endHour,
-    fetchFrom: before < first ? first : before,
-    fetchTo: after > last ? last : after,
-  };
+  const window = readForecastWindow(config, now);
+  if (window.ok) return window.request;
+  if (window.reason !== 'range') throw window.reason === 'hours' ? badHours(window.value) : badDate(window.value);
+  const { value, first, last } = window;
+  throw new FlowUserError(
+    'flow.error.weatherRange', { value, first, last },
+    `Weather has data from ${first} to ${last}; "${value}" is outside that range.`,
+  );
 }
 
 export function forecastUrl(latitude: number, longitude: number, req: ForecastRequest, imperial: boolean): string {

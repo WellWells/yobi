@@ -1,6 +1,7 @@
 import { stripConversationMarkers } from '../../../shared/conversationDoc';
 import type { ConversationDoc } from '../../../shared/conversationDoc';
 import { formatCardTime } from '../../../shared/captureCard';
+import { resolveCardTitle } from '../../../shared/markdownTitle';
 import { notionDocParts } from '../../../shared/notion/notionDoc';
 import { notionToDisplay, plainNotionTitle } from '../../../shared/notion/notionDisplay';
 import type {
@@ -72,6 +73,16 @@ export function captureTurnsFor(
   }];
 }
 
+/**
+ * What the export dialog opens with: the card title and the file name are both the document's H1,
+ * so a note imported as `report-2026-11-12.md` exports under its heading; without an H1 both are
+ * the file name less `.md`. Main makes the name safe for the disk.
+ */
+export function exportDefaultNames(fileName: string, docTitle: string | null): { title: string; fileName: string } {
+  const name = docTitle?.trim() || fileName.replace(/\.md$/i, '');
+  return { title: name, fileName: name };
+}
+
 export interface ConversationCaptureSource {
   /** The file as stored, markers and all. */
   content: string;
@@ -121,7 +132,11 @@ export function conversationCaptureRequest(
 ): MarkdownCaptureRequest {
   const source = readableCaptureSource(original, choice.t);
   const { blocks, conversation } = source;
-  const contentToCapture = stripConversationMarkers(blocks.response || source.content);
+  // A note with no answer section is captured whole, its own H1 at the top: the card prints that
+  // title once (`resolveCardTitle`, the rule every other card follows).
+  const contentToCapture = blocks.response
+    ? stripConversationMarkers(blocks.response)
+    : resolveCardTitle(source.title, stripConversationMarkers(source.content)).body;
   const turnMetas = conversation?.turns ?? [];
   return buildCaptureRequest({
     ...choice.look,

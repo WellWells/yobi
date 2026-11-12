@@ -14,6 +14,7 @@ export const FileReadConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }
       onChange={(path) => onChange({ ...step.config, path })}
       size="sm"
     />
+    <Text fz="xs" c="var(--text-muted)">{t('flow.skill.file.relativePath')}</Text>
     <Text fz="xs" c="dimmed">{t('flow.skill.file_read.hint')}</Text>
   </Stack>
 );

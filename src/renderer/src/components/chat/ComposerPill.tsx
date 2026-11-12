@@ -16,7 +16,12 @@ interface ComposerPillProps extends React.ComponentPropsWithoutRef<typeof Unstyl
   ariaLabel?: string;
   /** Off for a pill that toggles instead of opening a menu. */
   chevron?: boolean;
+  /** Its words go when the composer's footer is narrow (`COMPOSER_FOOTER`); the icon names it, the menu says the rest. */
+  collapsible?: boolean;
 }
+
+/** The composer's footer row: the pills in it lay themselves out by its width (a container query). */
+export const COMPOSER_FOOTER = styles.footer;
 
 export const ComposerPill = React.forwardRef<HTMLButtonElement, ComposerPillProps>(({
   icon,
@@ -28,6 +33,7 @@ export const ComposerPill = React.forwardRef<HTMLButtonElement, ComposerPillProp
   accent = false,
   ariaLabel,
   chevron = true,
+  collapsible = false,
   ...rest
 }, ref) => {
   const outlined = variant === 'outline';
@@ -66,10 +72,12 @@ export const ComposerPill = React.forwardRef<HTMLButtonElement, ComposerPillProp
         cursor: disabled ? 'not-allowed' : 'pointer',
         opacity: disabled ? 0.45 : 1,
         transition: 'background 0.15s ease, border-color 0.15s ease',
+        // Gives way before the row overflows: its words end in an ellipsis, never wrap a letter a line.
+        minWidth: 0,
       }}
     >
       {icon}
-      {label}
+      <span className={collapsible ? `${styles.label} ${styles.collapsible}` : styles.label}>{label}</span>
       {chevron && (
         <ChevronDown
           size={12}

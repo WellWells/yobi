@@ -26,7 +26,7 @@ const MAX_LIMIT = 8;
  * Without TDX, the THSR searches that list the day's full-length trains, both ways: 南港–左營, and
  * 台北–左營 for the trains that start or end at 台北 instead of 南港.
  */
-export const THSR_WHOLE_LINE: readonly [RailNode, RailNode][] = [
+const THSR_WHOLE_LINE: readonly [RailNode, RailNode][] = [
   ['thsr:0990', 'thsr:1070'], ['thsr:1070', 'thsr:0990'],
   ['thsr:1000', 'thsr:1070'], ['thsr:1070', 'thsr:1000'],
 ];
@@ -55,7 +55,7 @@ const OVERNIGHT_REACH_MIN = 8 * 60;
  * The trains of service day `serviceDay` from midnight on, as times of the next day, each marked
  * with the day it started; trains done by then are left out.
  */
-export function afterMidnight(trains: readonly RailTrain[], serviceDay: string): RailTrain[] {
+function afterMidnight(trains: readonly RailTrain[], serviceDay: string): RailTrain[] {
   return trains.flatMap((train) => {
     const stops = train.stops
       .filter((stop) => stop.dep >= DAY_MINUTES)

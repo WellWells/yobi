@@ -2,9 +2,11 @@ import { IPC, SECRET_SCOPE_META } from '../../shared/types';
 import { sendLog, sendSecurityNotification, sendToRenderer, setSecretSettingsReveal } from '../helpers';
 import { getLangCache, t } from '../i18n';
 import { reEncryptSensitiveConfig } from '../config';
-import { probeDataKeys, reEncryptDataKeys } from '../dataKeyStore';
-import { probeAuthRecords, reEncryptAuthRecords } from '../mcp/mcpTokenStore';
+import { hasPendingSecretWrites, openSecrets, secretWritesSettled } from '../configEncryption';
+import { probeDataKeys, reEncryptDataKeys, storedDataKeys } from '../dataKeyStore';
+import { probeAuthRecords, reEncryptAuthRecords, storedAuthRecords } from '../mcp/mcpTokenStore';
 import { probeCalendars, reEncryptCalendars } from '../calendar/calendarStore';
+import { calendarFile } from '../calendar/calendarFile';
 import { checkSecretKey, getSecretHealth, refreshCanary, setSecretHealthListener } from '../secretHealth';
 import { getMainWin } from '../windows';
 
@@ -25,11 +27,31 @@ export function initSecretHealthBridge(): void {
   });
 }
 
-/** Decrypts every stored secret up front so a broken one is known at boot, not mid-task. */
-export function probeStoredSecrets(): void {
+/**
+ * Decrypts every stored secret up front, which the stores' synchronous reads depend on, and so a
+ * broken one is known at boot, not mid-task. The config's own secrets come with `initSensitiveConfig`.
+ */
+export async function probeStoredSecrets(): Promise<void> {
+  await openSecrets([storedAuthRecords(), storedDataKeys(), calendarFile().store]);
   probeAuthRecords();
   probeDataKeys();
   probeCalendars();
+}
+
+const QUIT_WAIT_FOR_SECRETS_MS = 3_000;
+let quitHeldForSecrets = false;
+
+/**
+ * Holds the first quit until the secrets still being encrypted are written (a token saved a
+ * moment before quitting), at most a few seconds; true when it did. Quitting again goes through.
+ */
+export function holdQuitForSecretWrites(event: { preventDefault: () => void }, quit: () => void): boolean {
+  if (quitHeldForSecrets || !hasPendingSecretWrites()) return false;
+  quitHeldForSecrets = true;
+  event.preventDefault();
+  const limit = new Promise<void>((resolve) => setTimeout(resolve, QUIT_WAIT_FOR_SECRETS_MS));
+  void Promise.race([secretWritesSettled(), limit]).finally(quit);
+  return true;
 }
 
 /**
@@ -41,11 +63,8 @@ export async function reportSecretHealth(): Promise<void> {
   const { state, shouldReEncrypt } = await checkSecretKey();
 
   if (shouldReEncrypt) {
-    reEncryptSensitiveConfig();
-    reEncryptAuthRecords();
-    reEncryptDataKeys();
-    reEncryptCalendars();
-    refreshCanary();
+    await Promise.all([reEncryptSensitiveConfig(), reEncryptAuthRecords(), reEncryptDataKeys(), reEncryptCalendars()]);
+    await refreshCanary();
     sendLog('🔐 Stored secrets re-encrypted under the OS key provider that replaced the old one');
   }
 

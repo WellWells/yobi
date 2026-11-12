@@ -95,6 +95,8 @@ export function initFlowManager(deps: {
           cardTheme: options?.cardTheme ?? 'dark',
         },
       });
+      // Stopped while the card was rendering: nothing asks for this file any more.
+      options?.signal?.throwIfAborted();
       const outputDir = await getOutputDir();
       const wantsZip = options?.zip === true;
       const filePath = await getUniquePath(
@@ -111,7 +113,9 @@ export function initFlowManager(deps: {
     getShareSettings: () => config.share,
     createShareLink: (markdown, opts) => createPaste(config.share.instanceUrl, markdown, opts),
     getPairedUsers: () => config.telegram.pairing.pairedUsers,
-    getBotRecipients: () => loadRecipientDirectory(),
+    // A saved flow is the user's (another admin's that acts as them is kept off until reviewed),
+    // so a name in its LINE PC step may be any group or friend LINE PC has.
+    getBotRecipients: () => loadRecipientDirectory({ lineSelfChats: true }),
     onSaveHistory: async ({ prompt, response, providerLabel }) => {
       const outputDir = await getOutputDir();
       const langData = await loadLanguageData(config.locale);

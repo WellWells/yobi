@@ -4,12 +4,11 @@
  * Takes an injected service so the tool surface is tested offline with a fake; the real one,
  * which loads x.com pages, is wired in xConnection.ts.
  */
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { localIsoString } from '../../shared/localTime';
 import { parseXHandle, parseXPostUrl } from '../../shared/xHandles';
 import type { XPost, XThread, XTrend } from '../flow/skills/xPosts';
-import { createToolServer } from '../mcp/inProcessServer';
+import { createToolServer, type ToolServer } from '../mcp/inProcessServer';
 
 export const X_SERVER_NAME = 'X';
 
@@ -160,7 +159,7 @@ async function dispatch(service: XServiceLike, name: string, args: Record<string
   }
 }
 
-export function createXMcpServer(service: XServiceLike): Server {
+export function createXMcpServer(service: XServiceLike): ToolServer {
   // The X readers cannot be cancelled, so the call's abort signal is not passed on.
   return createToolServer({ name: X_SERVER_NAME, tools: X_TOOLS, dispatch: (name, args) => dispatch(service, name, args) });
 }

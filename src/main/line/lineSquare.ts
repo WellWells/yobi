@@ -9,8 +9,6 @@ import type { MessageRow } from './schema';
 export const SQUARE_PAGE_SIZE = 100;
 
 export const SQ_DIR_BACKWARD = 2;
-export const SQ_MSG_STATE_DELETED = 2;
-export const SQ_MSG_STATE_UNSENT = 4;
 
 /**
  * One request. A thread is read with its threadMid: forward without a token, then backward from the

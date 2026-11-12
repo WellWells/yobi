@@ -9,6 +9,7 @@ import { ensureWritingModel } from '../../components/chat/writingToolsActions';
 import { Z_POPOVER } from '../../config/zLayers';
 import { threadOf, useDocAssistantStore, type AssistantEditCard } from '../../store/docAssistantStore';
 import { useWritingToolsStore } from '../../store/writingToolsStore';
+import { useNarrowCaptionPane } from '../../store/captionStore';
 import { AssistantReply } from './AssistantReply';
 import {
   ASSISTANT_MAX_ATTEMPTS, applyAssistantEdits, cancelAssistant, highlightEdit, revealEdit, revertAssistantEdits, sendAssistantMessage,
@@ -53,6 +54,9 @@ function useResize(): (event: React.PointerEvent<HTMLElement>) => void {
  * Notion changes only when the user syncs.
  */
 export const DocAssistantPanel: React.FC<DocAssistantPanelProps> = ({ path, contentAreaRef, applyBlocked, t }) => {
+  // The panel holds the window's right edge beside a document: the caption controls over its
+  // first row keep to their icons.
+  useNarrowCaptionPane('chat');
   const thread = useDocAssistantStore((s) => threadOf(s.threads, path));
   const width = useDocAssistantStore((s) => s.width);
   const setOpen = useDocAssistantStore((s) => s.setOpen);
@@ -129,15 +133,22 @@ export const DocAssistantPanel: React.FC<DocAssistantPanelProps> = ({ path, cont
         onPointerDown={startResize}
         aria-hidden
       />
-      <PanelToolbar>
+      {/* The panel ends at the window's right edge, so its top row is the title bar there, with the
+          caption controls floating at its end: room for the panel's name only. Its controls take
+          the row under it. */}
+      <PanelToolbar caption="right" withBottomBorder={false}>
         <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
           <Sparkles size={15} color="var(--text-secondary)" />
           <Text fz="var(--font-size-sm)" fw={600} truncate>{t('notion.assistant.title')}</Text>
         </Group>
-        <Group gap={2} wrap="nowrap">
+      </PanelToolbar>
+      <PanelToolbar>
+        <Box style={{ minWidth: 0 }}>
           {modelUrl && (
             <ModelDropdown value={modelUrl} onChange={chooseModel} menuDirection="down" zIndex={Z_POPOVER} tooltipLabel={t('notion.assistant.model')} />
           )}
+        </Box>
+        <Group gap={2} wrap="nowrap">
           <ToolbarIconButton
             icon={MessageSquarePlus}
             label={t('notion.assistant.newChat')}

@@ -78,7 +78,7 @@ function text(html: string): string {
 }
 
 /** "上行（往岡山車站）" → 上行 + 岡山車站; "順行方向" → 順行. */
-export function directionLabel(raw: string): { label: string; toward?: string } {
+function directionLabel(raw: string): { label: string; toward?: string } {
   const words = text(raw).replace(/\s+/gu, '');
   const toward = /[（(]往([^）)]+)[）)]/u.exec(words)?.[1];
   const label = words.replace(/[（(][^）)]*[）)]/gu, '').replace(/方向$/u, '');

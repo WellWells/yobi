@@ -5,6 +5,7 @@ import { SelectDropdown } from '../../../components/SelectDropdown';
 import { SettingRow } from '../../../components/SettingRow';
 import { ToggleSwitch } from '../../../components/ToggleSwitch';
 import type { SkillConfigProps } from './types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 export const YoutubeInfoConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => (
   <Stack gap="xs">
@@ -29,7 +30,7 @@ export const YoutubeInfoConfig: React.FC<SkillConfigProps> = ({ step, onChange, 
     />
     <SettingRow
       label={t('flow.skill.browser.emitFailFlag')}
-      hint={t('flow.skill.browser.emitFailFlag.hint')}
+      hint={fillTemplate(t('flow.skill.youtube_info.emitFailFlag.hint'), { flag: `{{${step.outputKey}.isFailed}}` })}
       control={
         <ToggleSwitch
           checked={step.config.emitFailFlag === 'true'}
@@ -37,6 +38,8 @@ export const YoutubeInfoConfig: React.FC<SkillConfigProps> = ({ step, onChange, 
         />
       }
     />
-    <Text fz="xs" c="dimmed">{t('flow.skill.youtube_info.hint')}</Text>
+    <Text fz="xs" c="var(--text-muted)">
+      {fillTemplate(t('flow.skill.youtube_info.hint'), { output: `{{${step.outputKey}}}` })}
+    </Text>
   </Stack>
 );

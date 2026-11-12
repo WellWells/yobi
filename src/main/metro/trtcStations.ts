@@ -158,12 +158,7 @@ export const TRTC_SUBNAMES: Readonly<Record<string, { zh: string; en: string }>>
   ROWS.filter((row) => row[4]).map(([sid, , , , subZh = '', subEn = '']) => [sid, { zh: subZh, en: subEn }]),
 );
 
-const BY_SID = new Map(TRTC_STATIONS.map((station) => [station.ref ?? '', station]));
 const BY_CODE = new Map(TRTC_STATIONS.flatMap((station) => station.codes.map((code) => [code, station] as const)));
-
-export function trtcStationBySid(sid: string): MetroStation | undefined {
-  return BY_SID.get(sid);
-}
 
 /** Any of a station's codes finds it ("R10" and "BL12" are both 台北車站). */
 export function trtcStationByCode(code: string): MetroStation | undefined {

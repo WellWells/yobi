@@ -1,21 +1,30 @@
 import React from 'react';
 import { Minus, Plus, X } from 'lucide-react';
-import { isMac } from '../../utils/keyLabels';
 
 export const noDrag: React.CSSProperties = { WebkitAppRegion: 'no-drag' };
 
-export const titleBarDynStyle: React.CSSProperties = {
-  padding: isMac ? '0 10px' : '0 0 0 10px',
-  WebkitAppRegion: 'drag' as React.CSSProperties['WebkitAppRegion'],
-};
+/*
+ * The window has no title bar band: each view's top row is its title bar. A row marks itself with
+ * `CAPTION_ROW` (globals.css makes it the drag region and the controls in it clickable), and the
+ * row at the window's edge leaves room for the caption controls floating there (`TitleBar`). The
+ * room is measured, not assumed: the queue pill comes and goes.
+ */
+export const CAPTION_ROW = { 'data-caption-row': '' } as const;
+/** Width of the controls floating at the window's top right. */
+export const CAPTION_RIGHT = 'var(--caption-right, 0px)';
+/** Width of the macOS traffic lights at the top left; nothing on the other platforms. */
+export const CAPTION_LEFT = 'var(--caption-left, 0px)';
+
+/** Which of a top row's sides is the window's edge. */
+export type CaptionEdge = 'left' | 'right' | 'both';
+
+/** A top row's padding on one side: its own, plus the caption controls' room when that side is the window's edge. */
+export function captionPad(edge: CaptionEdge | undefined, side: 'left' | 'right', base: number): number | string {
+  if (edge !== side && edge !== 'both') return base;
+  return `calc(${base}px + ${side === 'left' ? CAPTION_LEFT : CAPTION_RIGHT})`;
+}
 
 export const macInactiveColor = 'rgba(140, 140, 140, 0.45)';
-export const navScrollStyle: React.CSSProperties = {
-  ...noDrag,
-  minWidth: 0,
-  flexShrink: 1,
-  scrollbarWidth: 'none' as React.CSSProperties['scrollbarWidth'],
-};
 export const statusWrapperStyle: React.CSSProperties = { ...noDrag, flexShrink: 0 };
 
 export function doWindowAction(action: 'minimize' | 'maximize' | 'close'): void {

@@ -1,0 +1,3 @@
+# Built-in skills ship byte-for-byte: their content hash decides "modified" and "update available",
+# so a CRLF checkout (core.autocrlf=true on Windows) must not change them. Binary files stay as-is.
+assets/skills/** text=auto eol=lf

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Alert, Group, Stack, Text } from '@mantine/core';
-import { TriangleAlert } from 'lucide-react';
+import { TriangleExclamationPoint } from 'lucide-react';
 import type { NotionConflictView } from '../../../../shared/notion/notionSyncTypes';
 import { AppButton } from '../../components/AppButton';
 import { RenderedDiff } from '../../components/chat/RenderedDiff';
@@ -28,7 +28,7 @@ export const ConflictCard: React.FC<ConflictCardProps> = ({ conflict, disabled, 
     <Alert
       color="var(--mantine-color-warning)"
       variant="light"
-      icon={<TriangleAlert size={16} />}
+      icon={<TriangleExclamationPoint size={16} />}
       title={t('notion.conflict.title')}
       data-selection-ignore
       data-find-omit

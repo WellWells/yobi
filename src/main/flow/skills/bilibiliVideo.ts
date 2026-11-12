@@ -99,6 +99,10 @@ export function viewUrl(id: string): string {
   return `https://api.bilibili.com/x/web-interface/wbi/view?${query}`;
 }
 
+/** Asking why a page has no video, while the page may be navigating away (about 1 read in 8). */
+export const VIEW_ATTEMPTS = 3;
+export const VIEW_RETRY_MS = 1_000;
+
 function site(): string {
   return siteLabel('bilibili');
 }
@@ -133,12 +137,21 @@ async function resolveLink(ref: VideoRef, signal?: AbortSignal): Promise<{ id: s
   return { id: link.id, part: link.part };
 }
 
-async function missingError(page: SitePage, id: string): Promise<FlowUserError> {
+/** The asked answer's code, null when the page gave none: it may still be moving to the error page, which ends a script. */
+async function viewCode(page: SitePage, id: string): Promise<number | null> {
   const body = await page.evaluate(apiScript(viewUrl(id))).catch(() => '');
-  let code: number | null = null;
   try {
-    code = apiCode(JSON.parse(String(body)));
+    return apiCode(JSON.parse(String(body)));
   } catch {
+    return null;
+  }
+}
+
+async function missingError(page: SitePage, id: string): Promise<FlowUserError> {
+  let code = await viewCode(page, id);
+  for (let attempt = 1; code === null && attempt < VIEW_ATTEMPTS; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, VIEW_RETRY_MS));
+    code = await viewCode(page, id);
   }
   const reason = missingReason(code);
   if (reason === 'hidden') {

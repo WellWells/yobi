@@ -96,13 +96,14 @@ async function loadCapturePage(win: BrowserWindow): Promise<void> {
 }
 
 function attachCaptureConsoleForwarder(win: BrowserWindow): void {
-  win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+  // The details object only: the positional level/message/line/sourceId are deprecated.
+  win.webContents.on('console-message', ({ level, message, lineNumber, sourceId }) => {
     const text = (message ?? '').trim();
     if (!text) return;
-    const isErrorLevel = level === 3;
+    const isErrorLevel = level === 'error';
     const isErrorLikeMessage = /\b(error|uncaught|exception)\b/i.test(text);
     if (!isErrorLevel && !isErrorLikeMessage) return;
-    const source = sourceId ? `${sourceId}:${line}` : `line ${line}`;
+    const source = sourceId ? `${sourceId}:${lineNumber}` : `line ${lineNumber}`;
     sendLog(`🧪 [captureWin:console] ${source} ${text}`);
   });
 }

@@ -1,4 +1,4 @@
-import type { FlowErrorSample, FlowMetricsSnapshot, FlowRunMetrics } from '../shared/flowMetrics';
+import type { FlowErrorSample, FlowLastRun, FlowMetricsSnapshot, FlowRunMetrics } from '../shared/flowMetrics';
 import {
   MAX_ERROR_SAMPLES,
   MAX_SAMPLE_CHARS,
@@ -75,10 +75,20 @@ export function applyStepEvent(
   }
 }
 
+function lastRun(event: FlowRunEvent): FlowLastRun {
+  const last: FlowLastRun = { at: event.at, outcome: event.outcome };
+  const lost = event.outcome !== 'success' || event.degraded;
+  if (event.outcome === 'success' && event.degraded) last.degraded = true;
+  if (lost && event.message) last.message = sampleMessage(event.message);
+  return last;
+}
+
 export function applyRunEvent(data: FlowMetricsSnapshot, today: string, event: FlowRunEvent): void {
-  for (const flow of flowEntries(data, today, event.flowId)) {
+  for (const [index, flow] of flowEntries(data, today, event.flowId).entries()) {
     flow.runs[event.outcome] += 1;
     if (event.degraded) flow.degraded += 1;
+    // On the day only, like the samples: it carries error text.
+    if (index === DAILY_ENTRY) flow.last = lastRun(event);
   }
 }
 

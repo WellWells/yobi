@@ -67,6 +67,14 @@ function plainText(text: string): string {
   return text.replace(MARKUP, '').replace(/\s+/g, ' ').trim();
 }
 
+/** Music notes around the words. An engine moves them into the line, so they are not sent. */
+function aroundNotes(text: string): { lead: string; words: string; trail: string } {
+  const lead = /^(?:[♪♫]\s*)+/.exec(text)?.[0] ?? '';
+  const trail = /(?:\s*[♪♫])+$/.exec(text.slice(lead.length))?.[0] ?? '';
+  const words = text.slice(lead.length, text.length - trail.length);
+  return words ? { lead, words, trail } : { lead: '', words: text, trail: '' };
+}
+
 function markedSpan(source: string, start: number, end: number): SubtitleSpan | null {
   const raw = source.slice(start, end);
   const override = LEADING_OVERRIDE.exec(raw)?.[0] ?? '';
@@ -74,17 +82,28 @@ function markedSpan(source: string, start: number, end: number): SubtitleSpan | 
   const wrapped = WRAPPED.exec(rest);
   const plain = plainText(wrapped ? wrapped[3] : rest);
   const dash = DASH.exec(plain)?.[0] ?? '';
-  const text = plain.slice(dash.length);
-  if (!text) return null;
-  return { start, end, prefix: `${override.trim()}${wrapped?.[1] ?? ''}${dash}`, text, suffix: wrapped?.[4] ?? '' };
+  const { lead, words, trail } = aroundNotes(plain.slice(dash.length));
+  if (!words) return null;
+  return { start, end, prefix: `${override.trim()}${wrapped?.[1] ?? ''}${dash}${lead}`, text: words, suffix: `${trail}${wrapped?.[4] ?? ''}` };
 }
 
-/** One sentence broken over lines goes as one span; a dialogue cue keeps each speaker's line. */
+/**
+ * A dash starts a speaker; a line without one goes on with the speaker before it. A leading dash
+ * alone often marks a change of speaker from the cue before, so it does not split the cue.
+ */
+function speakerTurns(lines: readonly SourceLine[]): SourceLine[][] {
+  const turns: SourceLine[][] = [];
+  for (const line of lines) {
+    const turn = turns.at(-1);
+    if (turn && !DASH.test(plainText(line.text))) turn.push(line);
+    else turns.push([line]);
+  }
+  return turns;
+}
+
+/** Each speaker's lines go as one span, one sentence broken over lines included. */
 function cueSpans(source: string, lines: readonly SourceLine[]): SubtitleSpan[] {
-  if (lines.length === 0) return [];
-  const dialogue = lines.length > 1 && lines.some((line) => DASH.test(plainText(line.text)));
-  const groups = dialogue ? lines.map((line) => [line]) : [lines];
-  return groups.flatMap((group) => markedSpan(source, group[0].start, group[group.length - 1].end) ?? []);
+  return speakerTurns(lines).flatMap((turn) => markedSpan(source, turn[0].start, turn[turn.length - 1].end) ?? []);
 }
 
 function isCueNumber(lines: readonly SourceLine[], i: number): boolean {

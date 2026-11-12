@@ -23,8 +23,9 @@ export const PAIRING_REQUEST_RENEW_MS = 7 * 24 * 60 * 60 * 1_000;
 
 /**
  * How many request cards a platform sends its managers per local calendar day. Over it, a request
- * is still recorded (settings lists it) but nobody is messaged — a LINE push costs quota. The
- * socket platforms and LINE PC send no card, only the desktop notification under the same count.
+ * is still recorded (settings lists it) but nobody is messaged — a LINE push costs quota. Discord
+ * and Slack send no card, only the desktop notification under the same count; LINE PC also posts
+ * the request into the owner's one-person group (the owner's own message, no quota).
  */
 export const PAIRING_REQUEST_DAILY_CARDS: Readonly<Record<BotPlatform, number>> = { telegram: 20, line: 5, discord: 20, slack: 20, lineSelf: 20 } as const;
 
@@ -193,7 +194,6 @@ export async function setBotUserBlockedAnsweringRequest(request: unknown): Promi
 
 export function __resetPairingRequests(): void {
   pairers.clear();
-  cards.telegram.reset();
-  cards.line.reset();
+  for (const platform of BOT_PLATFORMS) cards[platform].reset();
   queue = Promise.resolve();
 }

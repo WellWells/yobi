@@ -18,7 +18,7 @@ export const ShikiCodeBlock = React.memo<ShikiCodeBlockProps>(({ lang, code }) =
   const forcedTheme = useContext(CaptureContentThemeContext);
   const theme = forcedTheme ?? storeTheme;
   const staticRender = forcedTheme !== null;
-  const { t } = useI18nStore();
+  const t = useI18nStore((s) => s.t);
   // A block seen before (switching back to a conversation) is coloured on its first paint.
   const [html, setHtml] = useState<string | null>(() => getCachedHighlight(code, lang, theme) ?? null);
   const latest = useRef({ code, lang, theme });

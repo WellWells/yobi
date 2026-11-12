@@ -1,5 +1,6 @@
 import { useI18nStore } from '../store/i18nStore';
 import { stripConversationMarkers } from '../../../shared/conversationDoc';
+import { fencedLines } from '../../../shared/markdownFences';
 import type { ConversationHeadingAliases } from '../../../shared/conversationDoc';
 
 export interface MarkdownBlocks {
@@ -46,10 +47,6 @@ function buildHeadingAliases(): HeadingAliases {
   };
 }
 
-export function getResponseAliases(): Set<string> {
-  return buildHeadingAliasSet(HEADING_KEY_BY_KIND.response);
-}
-
 export function conversationAliases(): ConversationHeadingAliases {
   const aliases = buildHeadingAliases();
   return {
@@ -68,9 +65,27 @@ function classifyHeading(heading: string, headingAliases: HeadingAliases): Headi
   return null;
 }
 
+/** The line the page title is read from: the first `# ` heading outside a code fence, or -1. */
+function titleLineIndex(lines: string[]): number {
+  const fenced = fencedLines(lines);
+  return lines.findIndex((line, index) => !fenced[index] && /^#\s+/.test(line));
+}
+
+/**
+ * The file as the reading column draws it under the page title: markers dropped, and the title's
+ * own line taken out, or a note with no Prompt/Response sections shows its H1 twice.
+ */
+export function markdownBodyWithoutTitle(raw: string): string {
+  const lines = stripConversationMarkers(raw).split('\n');
+  const index = titleLineIndex(lines);
+  if (index < 0) return lines.join('\n');
+  return [...lines.slice(0, index), ...lines.slice(index + 1)].join('\n');
+}
+
 export function parseMarkdownBlocks(raw: string): MarkdownBlocks {
   const lines = stripConversationMarkers(raw).split('\n');
   const headingAliases = buildHeadingAliases();
+  const titleIdx = titleLineIndex(lines);
 
   let title: string | null = null;
   let providerIdx = -1;
@@ -84,7 +99,7 @@ export function parseMarkdownBlocks(raw: string): MarkdownBlocks {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    if (title === null && /^#\s+/.test(line)) {
+    if (i === titleIdx) {
       title = line.replace(/^#+\s+/, '').trim();
       continue;
     }

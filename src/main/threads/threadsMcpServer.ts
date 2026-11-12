@@ -4,11 +4,10 @@
  * Takes an injected reader; the real one, which reads threads.com with the user's sign-in, is
  * wired in threadsConnection.ts.
  */
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { parseThreadsPostUrl } from '../../shared/threadsLinks';
 import { localIso } from '../x/xMcpServer';
-import { createToolServer } from '../mcp/inProcessServer';
+import { createToolServer, type ToolServer } from '../mcp/inProcessServer';
 import type { XMedia, XPost, XThread } from '../flow/skills/xPosts';
 
 export const THREADS_SERVER_NAME = 'Threads';
@@ -76,7 +75,7 @@ async function dispatch(service: ThreadsServiceLike, name: string, args: Record<
   };
 }
 
-export function createThreadsMcpServer(service: ThreadsServiceLike): Server {
+export function createThreadsMcpServer(service: ThreadsServiceLike): ToolServer {
   return createToolServer({
     name: THREADS_SERVER_NAME,
     tools: THREADS_TOOLS,

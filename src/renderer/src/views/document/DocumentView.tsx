@@ -107,7 +107,7 @@ export const DocumentView: React.FC<DocumentViewProps> = ({
   return (
     <Flex flex={1} miw={0} bg="var(--mantine-color-body)" style={{ overflow: 'hidden' }}>
     <Stack gap={0} flex={1} miw={0} pos="relative" style={{ overflow: 'hidden' }}>
-      <ChatHeaderRow>
+      <ChatHeaderRow atWindowEdge={!assistantOpen}>
         <HeaderTitleField {...titleEdit} t={t} icon={NotionIcon} extra={<SyncStatusLabel line={line} t={t} />} />
         {/* The document's two actions sit in the header, where they are at hand wherever the page is scrolled to. */}
         <Group gap={6} wrap="nowrap" ml="auto" style={{ flexShrink: 0 }}>

@@ -48,6 +48,9 @@ user-memory/
 /trash/
 # Done-flag of the one-time move of bot conversations into their folders (same flow data dir)
 /conversation-folders.json
+# Which flow is in which sidebar folder, and an unreadable copy set aside (same flow data dir)
+/flow-folders.json
+/flow-folders.json.bak
 flow-schedule-state.json
 data-keys.json
 secret-health.json

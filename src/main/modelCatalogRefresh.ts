@@ -72,7 +72,7 @@ export async function refreshStaleModelCatalogs(now: number = Date.now()): Promi
 
 let started = false;
 
-export function resetModelCatalogRefreshForTests(): void {
+export function resetModelCatalogRefresh(): void {
   failures.clear();
   started = false;
 }

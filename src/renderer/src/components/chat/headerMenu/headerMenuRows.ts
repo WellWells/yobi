@@ -17,6 +17,8 @@ export interface ActionRowsInput {
   fileContent: string | null;
   conversation: ConversationDoc | null;
   hasHistory: boolean;
+  /** "Save as skill…": a conversation with turns only. */
+  hasSaveAsSkill?: boolean;
   /** Given only when the translate slot is drawn. */
   translateMenuLabel?: string;
   /** False where re-asking means nothing (a Notion document); the row is left out. */
@@ -30,7 +32,7 @@ export interface ActionRowsInput {
  * draws them; re-ask and translate stay one row each (their lists are long or dynamic).
  */
 export function headerActionSearchRows({
-  t, fileContent, conversation, hasHistory, translateMenuLabel, canReask = true, leadingLabel,
+  t, fileContent, conversation, hasHistory, hasSaveAsSkill = false, translateMenuLabel, canReask = true, leadingLabel,
 }: ActionRowsInput): HeaderMenuSearchRow[] {
   const hasContent = Boolean(fileContent);
   const link = threadLink(conversation);
@@ -47,6 +49,7 @@ export function headerActionSearchRows({
     hasContent && { id: 'export.card', side: 'actions', labels: t('header.menu.export.card'), parents: exportParents },
     hasContent && { id: 'export.markdown', side: 'actions', labels: t('header.menu.export.markdown'), parents: exportParents },
     hasContent && { id: 'export.share', side: 'actions', labels: t('header.menu.export.share'), parents: exportParents },
+    hasSaveAsSkill && { id: 'saveAsSkill', side: 'actions', labels: t('header.menu.saveAsSkill') },
     hasHistory && { id: 'history', side: 'actions', labels: t('header.menu.history') },
     // "Show in Finder" on macOS.
     { id: 'showInFolder', side: 'actions', labels: t(isMac ? 'header.showInFolder.mac' : 'header.showInFolder') },

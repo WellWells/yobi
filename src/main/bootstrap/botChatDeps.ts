@@ -54,9 +54,9 @@ export function botChatDeps<E extends BotChatEvent>(
     getProviderCommands: () => resolveBotCommands(getFlowManager).providers,
     getByokCommands: () => resolveBotCommands(getFlowManager).byok,
     getBuiltinCommands: () => resolveBotCommands(getFlowManager).builtins,
-    onBuiltinCommand: (key, input, targetUrl, chatId, userId) => runBotBuiltinCommand(
+    onBuiltinCommand: (key, input, targetUrl, chatId, userId, run) => runBotBuiltinCommand(
       builtinDeps,
-      { key, input, targetUrl, chatKey: botChatKey(platform, chatId, userId) },
+      { key, input, targetUrl, chatKey: botChatKey(platform, chatId, userId), ...run },
     ),
     canUseBuiltin: (key, chatId, userId) => botBuiltinAllowed(platform, key, userId, chatId),
     canUseDownloader: (chatId, userId) => botDownloadAllowed(platform, userId, chatId),

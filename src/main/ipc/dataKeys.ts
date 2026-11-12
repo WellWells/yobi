@@ -10,10 +10,10 @@ export function registerDataKeyHandlers(): void {
     return { hasKey: Boolean(key.trim()), preview: maskToken(key) };
   });
 
-  ipcMain.handle(IPC.UPDATE_DATA_KEY, (_event, name: string, value: string) => {
+  ipcMain.handle(IPC.UPDATE_DATA_KEY, async (_event, name: string, value: string) => {
     const id = String(name ?? '').trim();
     if (!id) return { ok: false as const };
-    setDataKey(id, String(value ?? ''));
+    await setDataKey(id, String(value ?? ''));
     sendLog(`Data source key "${id}" ${String(value ?? '').trim() ? 'updated' : 'cleared'}`);
     return { ok: true as const };
   });

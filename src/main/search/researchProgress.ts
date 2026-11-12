@@ -1,6 +1,10 @@
 import { RESEARCH_PHASE_ORDER } from '../../shared/researchProgress';
-import type { ResearchPhase, ResearchPhaseId, ResearchProgress } from '../../shared/researchProgress';
+import type {
+  ResearchPhase, ResearchPhaseId, ResearchProgress, ResearchResult, ResearchResultState, ResearchSearch,
+} from '../../shared/researchProgress';
+import { hitKey } from './fuse';
 import type { SearchProgress } from './index';
+import type { SerpHit } from './types';
 
 /*
  * Pure: the pipeline's events in, the checklist out. Every function returns a new object, because
@@ -8,6 +12,53 @@ import type { SearchProgress } from './index';
  */
 
 export const EMPTY_RESEARCH: ResearchProgress = { phases: [] };
+
+/* The snapshot is kept in the run file and sent whole on every event: the result lists are bounded. */
+export const MAX_RESULTS_PER_SEARCH = 20;
+export const MAX_SEARCHES = 12;
+export const MAX_RESULT_TITLE = 160;
+export const MAX_RESULT_URL = 2_048;
+
+function clipTitle(title: string): string {
+  const trimmed = title.trim();
+  return trimmed.length > MAX_RESULT_TITLE ? `${trimmed.slice(0, MAX_RESULT_TITLE - 1)}…` : trimmed;
+}
+
+function toSearch(query: string, hits: readonly SerpHit[], refused: boolean): ResearchSearch {
+  const results: ResearchResult[] = hits
+    .filter((hit) => hit.url.length <= MAX_RESULT_URL)
+    .slice(0, MAX_RESULTS_PER_SEARCH)
+    .map((hit) => ({ title: clipTitle(hit.title) || hit.url, url: hit.url, ...(hit.date ? { date: hit.date } : {}) }));
+  return { query, results, ...(refused ? { refused: true as const } : {}) };
+}
+
+/** A query sent again (the retry without a recency filter) replaces its earlier list. */
+function withSearch(progress: ResearchProgress, search: ResearchSearch): ResearchProgress {
+  const searches = progress.searches ?? [];
+  const at = searches.findIndex((entry) => entry.query === search.query);
+  if (at >= 0) return { ...progress, searches: searches.map((entry, index) => (index === at ? search : entry)) };
+  if (searches.length >= MAX_SEARCHES) return progress;
+  return { ...progress, searches: [...searches, search] };
+}
+
+const STATE_RANK: Record<ResearchResultState, number> = { unreadable: 1, read: 2, used: 3 };
+
+/** Marks every listed copy of these pages; a mark only ever goes up (used > read > unreadable). */
+function markResults(progress: ResearchProgress, urls: readonly string[], state: ResearchResultState): ResearchProgress {
+  if (!progress.searches || urls.length === 0) return progress;
+  const keys = new Set(urls.map(hitKey));
+  const mark = (result: ResearchResult): ResearchResult => (
+    keys.has(hitKey(result.url)) && (result.state ? STATE_RANK[result.state] : 0) < STATE_RANK[state]
+      ? { ...result, state }
+      : result
+  );
+  return { ...progress, searches: progress.searches.map((search) => ({ ...search, results: search.results.map(mark) })) };
+}
+
+/** The links-only `search` tool's step: its one search's results, no checklist. */
+export function searchSnapshot(query: string, hits: readonly SerpHit[], refused: boolean): ResearchProgress {
+  return { phases: [], searches: [toSearch(query, hits, refused)] };
+}
 
 function withPhase(progress: ResearchProgress, id: ResearchPhaseId): ResearchPhase[] {
   if (progress.phases.some((phase) => phase.id === id)) return progress.phases;
@@ -60,20 +111,22 @@ export function reduceResearchProgress(progress: ResearchProgress, event: Search
           : progress,
         'search',
       );
+    case 'results':
+      return withSearch(progress, toSearch(event.query, event.hits, event.refused));
     case 'searched':
       return finishPhase(progress, 'search', { hits: event.hits });
     case 'fetching':
       return start(progress, 'read', { done: 0, total: event.count });
     case 'read':
-      return update(progress, 'read', (phase) => ({ done: (phase.done ?? 0) + 1 }));
+      return markResults(update(progress, 'read', (phase) => ({ done: (phase.done ?? 0) + 1 })), [event.url], 'read');
     case 'readFailed':
-      return update(progress, 'read', (phase) => {
+      return markResults(update(progress, 'read', (phase) => {
         const hosts = phase.failedHosts ?? [];
         return {
           failed: (phase.failed ?? 0) + 1,
           failedHosts: hosts.includes(event.host) ? hosts : [...hosts, event.host],
         };
-      });
+      }), [event.url], 'unreadable');
     case 'analyzing':
       return finishPhase(progress, 'read');
     case 'summarizing':
@@ -104,11 +157,13 @@ export function reduceResearchProgress(progress: ResearchProgress, event: Search
   }
 }
 
-export function finishResearch(progress: ResearchProgress, sources: number): ResearchProgress {
-  return {
+/** `usedUrls`: the answer's sources, a result summary it cited included. */
+export function finishResearch(progress: ResearchProgress, sources: number, usedUrls: readonly string[] = []): ResearchProgress {
+  return markResults({
+    ...progress,
     phases: progress.phases.map((phase) => (phase.status === 'failed' ? phase : { ...phase, status: 'done' })),
     sources,
-  };
+  }, usedUrls, 'used');
 }
 
 /** Marks where it stopped: the phase that was running, or the first one that never started. */

@@ -24,7 +24,7 @@ interface ConversationSearchOverlayProps {
 }
 
 export const ConversationSearchOverlay: React.FC<ConversationSearchOverlayProps> = ({ opened, onClose }) => {
-  const { t } = useI18nStore();
+  const t = useI18nStore((s) => s.t);
   const files = useAppStore((s) => s.files);
   const selectFile = useAppStore((s) => s.selectFile);
   const setFileContent = useAppStore((s) => s.setFileContent);

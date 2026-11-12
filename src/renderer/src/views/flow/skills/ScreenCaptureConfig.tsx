@@ -1,21 +1,24 @@
 import React from 'react';
-import { Stack, Text } from '@mantine/core';
-import { SelectDropdown } from '../../../components/SelectDropdown';
+import { Input, Stack, Text } from '@mantine/core';
+import { AppSegmentedControl } from '../../../components/AppSegmentedControl';
 import { PathInput } from '../../../components/PathInput';
 import type { SkillConfigProps } from './types';
 
 export const ScreenCaptureConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => (
   <Stack gap="xs">
-    <SelectDropdown
-      label={t('flow.skill.capture.format')}
-      options={[
-        { value: 'png', label: 'PNG' },
-        { value: 'jpg', label: 'JPG' },
-      ]}
-      value={step.config.format ?? 'png'}
-      onChange={(value) => onChange({ ...step.config, format: value })}
-      size="sm"
-    />
+    {/* The runner captures the primary display only; there is nothing to pick, so it is said, not asked. */}
+    <Text fz="xs" c="var(--text-muted)" data-capture-scope="">{t('flow.skill.capture.scope')}</Text>
+    <Input.Wrapper label={t('flow.skill.capture.format')}>
+      <AppSegmentedControl
+        value={step.config.format === 'jpg' ? 'jpg' : 'png'}
+        onChange={(value) => onChange({ ...step.config, format: value })}
+        options={[
+          { value: 'png', label: 'PNG' },
+          { value: 'jpg', label: 'JPG' },
+        ]}
+        size="sm"
+      />
+    </Input.Wrapper>
     <PathInput
       label={t('flow.skill.capture.output')}
       placeholder={t('flow.skill.capture.output.placeholder')}
@@ -25,6 +28,6 @@ export const ScreenCaptureConfig: React.FC<SkillConfigProps> = ({ step, onChange
       onChange={(output) => onChange({ ...step.config, output })}
       size="sm"
     />
-    <Text fz="xs" c="dimmed">{t('flow.skill.capture.output.hint')}</Text>
+    <Text fz="xs" c="var(--text-muted)">{t('flow.skill.capture.output.hint')}</Text>
   </Stack>
 );

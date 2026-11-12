@@ -26,6 +26,7 @@ export function toSummary(state: AgentRunState): AgentRunSummary {
   return {
     runId: state.runId,
     goal: state.goal,
+    providerUrl: state.providerUrl,
     ...(state.conversationPath ? { conversationPath: state.conversationPath } : {}),
     status: state.status,
     turns: state.turns.length,

@@ -5,6 +5,7 @@ import {
   isBotGrant,
   isBotGroupGrant,
   isDefaultableGrant,
+  isExplicitGrant,
   isGrantAvailableOn,
   normalizeBlockedUsers,
   normalizeDefaultGrantList,
@@ -58,7 +59,8 @@ function currentPermissions(platform: BotPlatform): Record<string, BotGrant[]> {
 
 /**
  * Replaces one paired account's grants. Strict, unlike the config normalizer: a request naming
- * an unknown token or offering admin on LINE is refused whole rather than quietly trimmed, so
+ * an unknown token or offering admin where the platform has no admins (Discord, Slack) is
+ * refused whole rather than quietly trimmed, so
  * the settings page never shows a change that was not saved.
  */
 export function setBotPermissions(request: unknown): BotSetPermissionsResult {
@@ -85,9 +87,11 @@ export function setBotPermissions(request: unknown): BotSetPermissionsResult {
 }
 
 /**
- * Replaces what a platform's accounts get the moment they pair. Strict like the account grants,
- * and shell or admin refuse the whole request: a pairing code passes through other hands.
- * Accounts already paired keep what they have.
+ * Replaces what a platform's accounts get the moment they pair. Strict like the account grants:
+ * shell or admin (`explicitGrant`), and local, all connectors or a private connector
+ * (`ownerOnlyGrant`), refuse the whole request — whoever an admin lets in gets the defaults, so
+ * they may hold only what an admin could hand out (`isDefaultableGrant`). Accounts already paired
+ * keep what they have.
  */
 export function setBotDefaultGrants(request: unknown): BotSetDefaultGrantsResult {
   const body = (request && typeof request === 'object') ? request as Record<string, unknown> : {};
@@ -98,7 +102,8 @@ export function setBotDefaultGrants(request: unknown): BotSetDefaultGrantsResult
   for (const value of body.grants) {
     const token = typeof value === 'string' ? value.trim() : value;
     if (!isBotGrant(token)) return { ok: false, reason: 'invalidGrant' };
-    if (!isDefaultableGrant(token)) return { ok: false, reason: 'explicitGrant' };
+    if (isExplicitGrant(token)) return { ok: false, reason: 'explicitGrant' };
+    if (!isDefaultableGrant(token)) return { ok: false, reason: 'ownerOnlyGrant' };
     unique.add(token);
   }
   const grants = sortBotGrants([...unique]);

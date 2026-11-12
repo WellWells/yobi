@@ -3,11 +3,17 @@ import { SEARCH_BLOCKED_KEY, SearchBlockedError } from '../../search/blocked';
 import { config } from '../../config';
 import { getLangCache, t } from '../../i18n';
 import { sendLog } from '../../helpers';
+import { searchSnapshot } from '../../search/researchProgress';
+import type { FlowExecutorDeps } from '../types';
 
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 10;
 
-export async function execSearch(skillConfig: Record<string, string>): Promise<string> {
+/** `deps.onResearchProgress` (the agent's step): its results show under the step, the way research's do. */
+export async function execSearch(
+  skillConfig: Record<string, string>,
+  deps?: Pick<FlowExecutorDeps, 'onResearchProgress'>,
+): Promise<string> {
   const query = (skillConfig.query ?? '').trim();
   if (!query) {
     sendLog('🔎 [Flow] Search: empty query — returning []');
@@ -21,6 +27,7 @@ export async function execSearch(skillConfig: Record<string, string>): Promise<s
   try {
     const hits = await searchSourceList(query, config.locale, limit);
     sendLog(`🔎 [Flow] Search: ${hits.length} result(s)`);
+    deps?.onResearchProgress?.(searchSnapshot(query, hits, false));
     return JSON.stringify(hits.map((hit) => ({ title: hit.title, link: hit.url, snippet: hit.snippet ?? '' })));
   } catch (err) {
     const message = err instanceof SearchPipelineError
@@ -29,7 +36,9 @@ export async function execSearch(skillConfig: Record<string, string>): Promise<s
     sendLog(`⚠️ [Flow] Search failed: ${message}`);
     // Blocked is not "no results": [] would make /agent retry into the block and a stop step see
     // nothing new. Same error `research` raises.
-    if (err instanceof SearchPipelineError && err.i18nKey === SEARCH_BLOCKED_KEY) throw new SearchBlockedError(message);
+    const blocked = err instanceof SearchPipelineError && err.i18nKey === SEARCH_BLOCKED_KEY;
+    deps?.onResearchProgress?.(searchSnapshot(query, [], blocked));
+    if (blocked) throw new SearchBlockedError(message);
     return '[]';
   }
 }

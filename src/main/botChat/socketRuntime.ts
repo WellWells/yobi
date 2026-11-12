@@ -73,11 +73,13 @@ export abstract class SocketBotRuntime<E extends BotChatEvent> {
       notePairingRequest, ...routerDeps
     } = deps;
     const output = this.output();
+    const ownerCommands = this.ownerCommands();
     this.router = new BotChatRouter<E>({
       ...routerDeps,
       platform,
       pace: createBotRequestPace(),
       output,
+      ...(ownerCommands ? { ownerCommands } : {}),
       ...(notePairingRequest ? {
         onPairingRequest: async (event: E) => {
           const inGroup = event.chatKind !== 'user';
@@ -87,9 +89,11 @@ export abstract class SocketBotRuntime<E extends BotChatEvent> {
             deps.onLog(`[${platform}] could not record ${event.userId}'s request: ${err instanceof Error ? err.message : String(err)}`);
             return false;
           });
-          // Everyone in a group reads the reply: it is said once, when the owner heard of the request.
-          if (inGroup && !told) return;
-          await output.reply(event, t(deps.getStrings(), inGroup ? 'bot.socket.groupPairingRequested' : 'bot.socket.pairingRequested'));
+          if (told) this.onPairingRequestTold({ userId: event.userId, ...(displayName ? { displayName } : {}) }, group);
+          // Everyone in a group reads the reply, and on a platform whose every message is the
+          // owner's own (`quietStart`) each one rings the other side: said once, when the owner heard of it.
+          if ((inGroup || output.quietStart) && !told) return;
+          await output.reply(event, t(deps.getStrings(), this.pairingRequestedKey(inGroup)));
         },
       } : {}),
     });
@@ -100,6 +104,21 @@ export abstract class SocketBotRuntime<E extends BotChatEvent> {
    * subclass's own fields exist — so its functions may read them only when called, never eagerly.
    */
   protected abstract output(): BotChatOutput<E>;
+
+  /**
+   * The management commands this platform answers in a chat (LINE PC's `/users`, `/groups`); none
+   * by default. Called once, from this constructor like `output()`, so its handlers may read the
+   * subclass's fields only when they run. Each handler checks who typed it and where.
+   */
+  protected ownerCommands(): BotChatRouterDeps<E>['ownerCommands'] {
+    return undefined;
+  }
+
+  /**
+   * A pairing request the owner was just told of (`notePairingRequest` said so). Nothing more by
+   * default; LINE PC also posts it into the owner's own chat.
+   */
+  protected onPairingRequestTold(_user: BotPairingProfileInput, _group?: { title: string }): void {}
   /** Connects with these secrets; resolves with the bot's account once it is ready to receive. */
   protected abstract connect(secrets: Record<string, string>): Promise<SocketBotAccountInfo>;
   protected abstract disconnect(): Promise<void>;
@@ -223,6 +242,11 @@ export abstract class SocketBotRuntime<E extends BotChatEvent> {
       })().catch((err: unknown) => this.deps.onLog(`[${this.platform}] could not tell ${userId} they were let in: ${err instanceof Error ? err.message : String(err)}`));
     }
     return 'paired';
+  }
+
+  /** What someone not let in yet is told when they ask (`onPairingRequest`), by where they asked. */
+  protected pairingRequestedKey(inGroup: boolean): string {
+    return inGroup ? 'bot.socket.groupPairingRequested' : 'bot.socket.pairingRequested';
   }
 
   /** What someone the owner let in is told, where `sendToChat(theirId)` reaches them: their command list. */

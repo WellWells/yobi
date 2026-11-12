@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Badge, Code, Collapse, Group, ScrollArea, Stack, Text } from '@mantine/core';
-import { ChevronDown, ChevronRight, TriangleAlert, ShieldCheck, Terminal, Workflow } from 'lucide-react';
+import { ChevronDown, ChevronRight, TriangleExclamationPoint, ShieldCheck, Terminal, Workflow } from 'lucide-react';
 import type { AgentConfirmChoice, AgentConfirmPayload, AgentConfirmRow } from '../../../shared/types';
 import { fillTemplate } from '../../../shared/fillTemplate';
 import { FlowEditRows } from './FlowEditRows';
@@ -14,14 +14,18 @@ function rowValue(row: AgentConfirmRow, t: (key: string) => string): string {
   return row.valueKey ? fillTemplate(t(row.valueKey), row.vars ?? {}) : row.value;
 }
 
-/** The facts behind a connector action, each on its own line — the JSON stays one click away. */
-function ConfirmRows({ rows, t }: { rows: AgentConfirmRow[]; t: (key: string) => string }) {
+/**
+ * The facts behind an action, each on its own line: a connector's JSON stays one click away, a
+ * shell command stays in full below them. Labels are `agent.mcp.confirm.row.*` or, for a command,
+ * `agent.shell.confirm.row.*`.
+ */
+function ConfirmRows({ rows, shell, t }: { rows: AgentConfirmRow[]; shell: boolean; t: (key: string) => string }) {
   return (
     <Stack gap={8}>
       {rows.map((row) => (
         <Group key={`${row.key}-${row.value}`} gap={12} wrap="nowrap" align="flex-start">
           <Text fz="var(--font-size-xs)" c="dimmed" w={72} style={{ flexShrink: 0, lineHeight: 1.6 }}>
-            {t(`agent.mcp.confirm.row.${row.key}`)}
+            {shell ? t(`agent.shell.confirm.row.${row.key}`) : t(`agent.mcp.confirm.row.${row.key}`)}
           </Text>
           <Text fz="var(--font-size-sm)" c="var(--text-primary)" style={{ lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
             {rowValue(row, t)}
@@ -66,11 +70,13 @@ export const AgentConfirmDialog: React.FC = () => {
   // Shell is dangerous by construction — there is no "safe" arbitrary command — where a flow is
   // only dangerous when one of its steps is.
   const isMcp = current.kind === 'mcp';
-  const rows = isMcp ? current.rows ?? [] : [];
-  const summary = isMcp ? current.summary ?? '' : '';
+  const rows = current.kind === 'mcp' || current.kind === 'shell' ? current.rows ?? [] : [];
+  const summary = current.kind === 'mcp' || current.kind === 'shell' ? current.summary ?? '' : '';
   const dangerous = isShell || (isFlow && current.sensitiveTypes.length > 0) || (isMcp && current.danger === true);
+  // A command offers it only for the programs and actions main could vouch for.
+  const alwaysFor = current.kind === 'shell' ? current.alwaysFor ?? [] : [];
   // Older payloads carry no flag; only an explicit false hides the button.
-  const allowAlways = isMcp && current.allowAlways !== false;
+  const allowAlways = (isMcp && current.allowAlways !== false) || alwaysFor.length > 0;
   const flowTitleKey = flowEdit ? 'agent.flow.edit.title' : 'agent.flow.confirm.title';
   const flowMessageKey = flowEdit ? 'agent.flow.edit.message' : 'agent.flow.confirm.message';
   const flowSaveKey = flowEdit ? 'agent.flow.edit.save' : 'agent.flow.confirm.save';
@@ -90,7 +96,7 @@ export const AgentConfirmDialog: React.FC = () => {
       onClose={() => respond('deny')}
       zIndex={Z_MODAL_CONFIRM}
       size={isFlow ? 'md' : 'lg'}
-      icon={isShell ? <Terminal size={18} /> : dangerous ? <TriangleAlert size={18} /> : isFlow ? <Workflow size={18} /> : <ShieldCheck size={18} />}
+      icon={isShell ? <Terminal size={18} /> : dangerous ? <TriangleExclamationPoint size={18} /> : isFlow ? <Workflow size={18} /> : <ShieldCheck size={18} />}
       title={t(titleKey)}
     >
       <Stack gap={14}>
@@ -142,7 +148,7 @@ export const AgentConfirmDialog: React.FC = () => {
         ) : (rows.length > 0 || summary) && !isShell ? (
           // Something readable is above, so the arguments fold away behind "Details".
           <Stack gap={10}>
-            {rows.length > 0 && <ConfirmRows rows={rows} t={t} />}
+            {rows.length > 0 && <ConfirmRows rows={rows} shell={false} t={t} />}
             <AppButton
               variant="subtle"
               size="compact-sm"
@@ -162,6 +168,8 @@ export const AgentConfirmDialog: React.FC = () => {
           </Stack>
         ) : (
           <Stack gap={6}>
+            {/* Above the command, never instead of it: what is shown is what runs. */}
+            {isShell && rows.length > 0 && <ConfirmRows rows={rows} shell t={t} />}
             <ScrollArea.Autosize mah={220}>
               <Code
                 block
@@ -190,14 +198,20 @@ export const AgentConfirmDialog: React.FC = () => {
           {t(detailKey)}
         </Text>
 
+        {alwaysFor.length > 0 && (
+          <Text fz="var(--font-size-xs)" c="dimmed" style={{ lineHeight: 1.6 }}>
+            {fillTemplate(t('agent.shell.confirm.alwaysHint'), { what: alwaysFor.join(t('flow.build.recipient.separator')) })}
+          </Text>
+        )}
+
         <Group justify="flex-end" gap={8}>
           <AppButton variant="default" onClick={() => respond('deny')}>
             {t(denyKey)}
           </AppButton>
-          {/* MCP only. A shell command is approved one at a time, on purpose — see confirmShell. */}
+          {/* A command's "always" covers only its own programs and actions — see confirmShell. */}
           {allowAlways && (
             <AppButton variant="subtle" onClick={() => respond('approveAlways')}>
-              {t('agent.mcp.confirm.always')}
+              {isShell ? t('agent.shell.confirm.always') : t('agent.mcp.confirm.always')}
             </AppButton>
           )}
           <AppButton color={dangerous ? 'red' : undefined} onClick={() => respond('approve')}>

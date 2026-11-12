@@ -1,6 +1,6 @@
 import React from 'react';
 import { ActionIcon, Group, Menu, Stack, Text, Tooltip } from '@mantine/core';
-import { Copy, ExternalLink, Link, MoreVertical, XCircle } from 'lucide-react';
+import { Copy, ExternalLink, Link, EllipsisVertical, CircleX } from 'lucide-react';
 import type { TelegramPendingCode } from '../../../../../shared/types';
 
 interface Props {
@@ -52,7 +52,7 @@ export const TelegramPairingPanel: React.FC<Props> = ({
               <Menu.Target>
                 <Tooltip label={t('common.moreActions')} position="bottom">
                   <ActionIcon variant="subtle" size={26} aria-label={t('common.moreActions')}>
-                    <MoreVertical size={13} />
+                    <EllipsisVertical size={13} />
                   </ActionIcon>
                 </Tooltip>
               </Menu.Target>
@@ -64,7 +64,7 @@ export const TelegramPairingPanel: React.FC<Props> = ({
                   {t('settings.telegram.pairing.copyLink')}
                 </Menu.Item>
                 <Menu.Divider />
-                <Menu.Item color="red" leftSection={<XCircle size={13} />} onClick={() => onRevoke(item.code)}>
+                <Menu.Item color="red" leftSection={<CircleX size={13} />} onClick={() => onRevoke(item.code)}>
                   {t('settings.telegram.pairing.revoke')}
                 </Menu.Item>
               </Menu.Dropdown>

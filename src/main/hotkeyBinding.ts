@@ -10,8 +10,8 @@ import {
   isClipboardCaptureInFlight,
   promptMacosAccessibility,
 } from './clipboard';
-import { getLangCache, t } from './i18n';
-import { resolveUrlPrompt } from './urlParser';
+import { getLangCache, localizeUserFacingError, t } from './i18n';
+import { pinsProvider, resolveUrlPrompt } from './urlParser';
 import { runQuickExport } from './quickExport';
 import { runRegionCapture } from './regionCapture';
 import type { QueueManager } from './queueManager';
@@ -66,13 +66,22 @@ export function bindHotkey(deps: HotkeyDeps): boolean {
       t(langData, 'notify.queued.body', { prompt: compactPreview(rawText, 36) }),
       'info',
     );
-    const resolved = await resolveUrlPrompt(rawText, {
-      langData,
-      youtubePrompt: config.youtubePrompt,
-      targetUrl: config.targetUrl,
-      onLog: sendLog,
-      hotelReviews: true,
-    });
+    let resolved: Awaited<ReturnType<typeof resolveUrlPrompt>>;
+    try {
+      resolved = await resolveUrlPrompt(rawText, {
+        langData,
+        youtubePrompt: config.youtubePrompt,
+        targetUrl: config.targetUrl,
+        onLog: sendLog,
+        hotelReviews: true,
+      });
+    } catch (err) {
+      // The "queued" banner already went out: the press ends with its failure, not in silence.
+      const raw = err instanceof Error ? err.message : String(err);
+      sendLog(`⚠️ Hotkey prompt not queued: ${raw}`);
+      sendWebNotification(t(langData, 'notify.chat.failure.title'), localizeUserFacingError(raw, langData), 'error');
+      return;
+    }
     const prompt = resolved.prompt;
     const targetUrl = resolved.forceProviderUrl ?? config.targetUrl;
 
@@ -86,7 +95,7 @@ export function bindHotkey(deps: HotkeyDeps): boolean {
       source: 'hotkey',
       clipboardFingerprint: clipboardAtPress,
       ...(resolved.map ? { mapPlace: resolved.map } : {}),
-      ...(resolved.forceProviderUrl ? { providerPinned: true as const } : {}),
+      ...(pinsProvider(resolved) ? { providerPinned: true as const } : {}),
     });
     sendLog(`[${id}] 🔥 Queued for ${getProviderLabel(targetUrl)} (queue size: ${queue.size + 1})`);
   });

@@ -1,5 +1,5 @@
 import { fnv1a } from '../fnv1a';
-import { isLockedNotionText } from './notionBlocks';
+import { isLockedNotionText, joinNotionBlocks, notionBlockSeparator } from './notionBlocks';
 
 /*
  * Block-level changes between versions of a Notion page, the three-way merge that brings someone
@@ -107,21 +107,32 @@ function occurrences(haystack: string, needle: string): number {
   return count;
 }
 
-function segment(blocks: readonly string[], before: boolean, after: boolean, collapse: boolean): string {
-  if (blocks.length === 0) return collapse && before && after ? '\n' : '';
-  return `${before ? '\n' : ''}${blocks.join('\n')}${after ? '\n' : ''}`;
+/** Where each block starts and ends in `joinNotionBlocks(blocks)`. */
+function blockSpans(blocks: readonly string[]): Array<{ start: number; end: number }> {
+  const spans: Array<{ start: number; end: number }> = [];
+  let at = 0;
+  blocks.forEach((block, index) => {
+    if (index > 0) at += notionBlockSeparator(blocks[index - 1] ?? '', block).length;
+    spans.push({ start: at, end: at + block.length });
+    at += block.length;
+  });
+  return spans;
 }
 
 /**
  * The `update_content` pair for one change. The old text is whole lines (a newline on each side
  * where there is a neighbour), widened with unchanged neighbours until it occurs once on the page as
  * `base` has it; `extra` widens it further, for a page someone else has since given a duplicate.
- * A pure insertion anchors on the block before it (the one after, at the top of the page). Null for
- * a page with no blocks at all, which takes `insert_content` instead.
+ * Both strings are cut from the page text before and after the change, so the blank lines between
+ * blocks are exactly the ones Notion writes there. A pure insertion anchors on the block before it
+ * (the one after, at the top of the page). Null for a page with no blocks at all, which takes
+ * `insert_content` instead.
  */
 export function buildUpdate(base: readonly string[], hunk: BlockHunk, extra = 0): NotionUpdate | null {
   if (base.length === 0) return null;
-  const page = base.join('\n');
+  const page = joinNotionBlocks(base);
+  const nextPage = joinNotionBlocks(applyHunks(base, [hunk]));
+  const spans = blockSpans(base);
   const old = base.slice(hunk.start, hunk.end);
   // A table or child page is never part of what is sent, not even as an anchor: Notion would
   // rebuild it from the Markdown. Neighbours on that side are not used.
@@ -134,15 +145,17 @@ export function buildUpdate(base: readonly string[], hunk: BlockHunk, extra = 0)
     else if (hunk.start > 0) left = 1;
     else right = 1;
   }
-  const build = (): NotionUpdate => {
-    const prefix = base.slice(hunk.start - left, hunk.start);
-    const suffix = base.slice(hunk.end, hunk.end + right);
-    const before = hunk.start - left > 0;
-    const after = hunk.end + right < base.length;
-    return {
-      old_str: segment([...prefix, ...old, ...suffix], before, after, false),
-      new_str: segment([...prefix, ...hunk.next, ...suffix], before, after, true),
-    };
+  // Null when the text kept on both sides would overlap in the new page (a block removed between
+  // two items that then join into one list): the old text needs a neighbour.
+  const build = (): NotionUpdate | null => {
+    const from = hunk.start - left;
+    const to = hunk.end + right;
+    const cut = (spans[from]?.start ?? 0) - (from > 0 ? 1 : 0);
+    const resume = (spans[to - 1]?.end ?? page.length) + (to < base.length ? 1 : 0);
+    const prefix = page.slice(0, cut);
+    const suffix = page.slice(resume);
+    if (prefix.length + suffix.length > nextPage.length || !nextPage.startsWith(prefix) || !nextPage.endsWith(suffix)) return null;
+    return { old_str: page.slice(cut, resume), new_str: nextPage.slice(prefix.length, nextPage.length - suffix.length) };
   };
   const grow = (): boolean => {
     const canLeft = usable(hunk.start - left - 1);
@@ -152,8 +165,17 @@ export function buildUpdate(base: readonly string[], hunk: BlockHunk, extra = 0)
     else right += 1;
     return true;
   };
-  while (occurrences(page, build().old_str) > 1 && grow()) { /* widen until unique */ }
+  const unique = (): boolean => {
+    const update = build();
+    return update !== null && occurrences(page, update.old_str) === 1;
+  };
+  while (!unique() && grow()) { /* widen until unique */ }
   for (let n = 0; n < extra && grow(); n += 1) { /* widen past unique on request */ }
+  // Only locked neighbours left to widen with: the whole page, which callers refuse to send.
+  if (build() === null) {
+    left = hunk.start;
+    right = base.length - hunk.end;
+  }
   return build();
 }
 

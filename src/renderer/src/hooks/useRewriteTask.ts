@@ -37,7 +37,7 @@ export function useRewriteTask(setExportToast: (toast: ExportToast) => void) {
     })),
   );
   const { extraModels } = useProviderModels();
-  const { t } = useI18nStore();
+  const t = useI18nStore((s) => s.t);
 
   const [rewriteTaskId, setRewriteTaskId] = useState<string | null>(null);
   const [rewriteSourcePath, setRewriteSourcePath] = useState<string | null>(null);

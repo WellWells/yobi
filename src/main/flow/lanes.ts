@@ -33,9 +33,10 @@ export class Semaphore {
   /**
    * Waits for a slot. An aborted `signal` rejects a caller that is still WAITING and takes it out of
    * the queue, so Stop is not held up behind someone else's request; once a slot is granted the
-   * caller owns it and must `release` it, abort or not.
+   * caller owns it and must `release` it, abort or not. `ahead` waits in front of everyone already
+   * waiting (a run taking back a slot it lent goes before runs that have not started).
    */
-  async acquire(signal?: AbortSignal): Promise<void> {
+  async acquire(signal?: AbortSignal, ahead = false): Promise<void> {
     if (this.active < this.max) {
       this.active++;
       return;
@@ -51,7 +52,8 @@ export class Semaphore {
         signal?.removeEventListener('abort', onAbort);
         resolve();
       };
-      this.waiters.push(granted);
+      if (ahead) this.waiters.unshift(granted);
+      else this.waiters.push(granted);
       signal?.addEventListener('abort', onAbort, { once: true });
     });
   }

@@ -1,6 +1,7 @@
 import { t } from '../i18n';
 import { BOT_PLATFORM_NAMES, BUILTIN_NEW_COMMAND } from '../../shared/types';
 import { linkCommandFor } from '../../shared/builtinFlows';
+import { pageAnalyzeLink } from '../../shared/pageAnalyzeLine';
 import { linkRequestText } from './wakeWord';
 import { builtinCommandGrant } from '../../shared/botPermissions';
 import { botAccessDeniedText } from '../botPermissions/denial';
@@ -11,6 +12,7 @@ import { UNPACED, botPaceNotice, type BotPaceTicket } from '../botRequestPace';
 import { createAttemptLimiter } from './attemptLimiter';
 import { createBotChatAccess, type BotChatAccess } from './access';
 import { botFlowEndText } from './texts';
+import { HeldMediaStore, type HeldMedia } from './heldMedia';
 import {
   isHelpCommand,
   listProviderCommands,
@@ -20,7 +22,7 @@ import {
   resolveProviderTarget,
   type BotCommand,
 } from './commands';
-import type { BotChatEvent, BotChatRouterDeps, BotFlowCommandDef } from './types';
+import type { BotAgentContext, BotAgentMedia, BotChatEvent, BotChatRouterDeps, BotFlowCommandDef, BotRunExtras } from './types';
 
 /**
  * When a message was sent at the latest, to tell whether it can answer a question: the earlier of
@@ -49,6 +51,8 @@ export class BotChatRouter<E extends BotChatEvent> {
   private readonly pendingLogged = new Set<string>();
   /** Names looked up this run, by user id. */
   private readonly names = new Map<string, string>();
+  /** The media of runs paused on a question, until the answer's run ends. */
+  private readonly heldMedia = new HeldMediaStore();
   protected readonly access: BotChatAccess;
   protected readonly tag: string;
 
@@ -116,14 +120,19 @@ export class BotChatRouter<E extends BotChatEvent> {
    */
   async dispatchButtonLine(event: E): Promise<void> {
     const text = event.text.trim();
+    // "Analyze" under a page takes the right to talk here, not the downloader's.
+    const analyzes = pageAnalyzeLink(text) !== null;
     const isLink = !text.startsWith('/') && linkCommandFor(text) !== null;
-    if (!text || (!isLink && !text.startsWith('/'))) {
+    if (!text || (!isLink && !analyzes && !text.startsWith('/'))) {
       this.deps.onLog(`${this.tag} menu tap from ${event.userId} with a line no menu sends — ignored`);
       return;
     }
     const typed: E = { ...event, text, mentionsBot: true, fromMenu: true };
     const pending = event.chatKind !== 'user' && this.deps.isGroupPending?.(event.chatId) === true;
-    if (isLink && !pending && this.deps.canUseDownloader && !(await this.access.mayDownload(event.chatId, event.userId))) {
+    // Someone not let in who may not talk here: their pick goes the way their typing would (a
+    // request told once, or nothing), never a refusal per pick from the owner's own account (LINE PC).
+    const stranger = !this.deps.isPairedUser(event.userId) && !(await this.access.mayChat(event.chatId, event.userId));
+    if (isLink && !analyzes && !pending && !stranger && this.deps.canUseDownloader && !(await this.access.mayDownload(event.chatId, event.userId))) {
       this.deps.onLog(`${this.tag} downloader button refused for ${event.userId} — no download grant`);
       await this.reply(typed, botAccessDeniedText(this.deps.getStrings(), 'download'));
       return;
@@ -167,7 +176,10 @@ export class BotChatRouter<E extends BotChatEvent> {
   }
 
   private async dispatchPrivateMessage(event: E, received: BotMessageSent): Promise<void> {
-    const pairCode = parsePairCommand(event.text);
+    // No codes to check: someone not let in asks the owner like any other line, told once, instead
+    // of hearing "invalid code" (then "too many attempts") on every line.
+    const takesCodes = this.deps.output.pairingCodes !== false || this.deps.isPairedUser(event.userId);
+    const pairCode = takesCodes ? parsePairCommand(event.text) : null;
     if (pairCode !== null) {
       await this.handlePairCommand(event, pairCode);
       return;
@@ -245,6 +257,7 @@ export class BotChatRouter<E extends BotChatEvent> {
       return;
     }
     this.deps.onDropAgentAsk(event.chatId, event.userId);
+    await this.heldMedia.release(event.chatId, event.userId);
 
     if (command.name === BUILTIN_NEW_COMMAND) {
       const had = await this.deps.onNewConversation(event.chatId, event.userId);
@@ -303,7 +316,7 @@ export class BotChatRouter<E extends BotChatEvent> {
       await this.reply(event, t(this.deps.getStrings(), 'bot.chat.usage', { command: command.name }));
       return;
     }
-    await this.runBuiltin(event, 'agent', command.argument, targetUrl, command.name);
+    await this.runBuiltin(event, 'agent', command.argument, targetUrl, command.name, { modelNamed: true });
   }
 
   private async runBuiltinCommand(event: E, command: BotCommand, builtin: ResolvedBuiltinCommand): Promise<void> {
@@ -320,19 +333,80 @@ export class BotChatRouter<E extends BotChatEvent> {
     await this.runBuiltin(event, builtin.key, command.argument, builtin.targetUrl, command.name);
   }
 
-  private async runBuiltin(event: E, key: BotRunKind, input: string, targetUrl: string, label: string): Promise<void> {
+  private async runBuiltin(event: E, key: BotRunKind, input: string, targetUrl: string, label: string, modelNamed?: { modelNamed: true }): Promise<void> {
     const s = this.deps.getStrings();
     const ticket = await this.admitPaced(event);
     if (!ticket) return;
     await this.acknowledge(event);
+    // A new request replaces a question still waiting: its run's media is no longer needed.
+    await this.heldMedia.release(event.chatId, event.userId);
+    let media: BotAgentMedia | null = null;
     try {
-      const result = await this.deps.onBuiltinCommand(key, input, targetUrl, event.chatId, event.userId);
-      await this.pushResult(event, result);
+      media = key === 'agent' ? await this.agentMedia(event, targetUrl) : null;
+      if (media?.refusal) {
+        await this.reply(event, media.refusal);
+        return;
+      }
+      const context = key === 'agent' ? await this.agentContext(event, input) : {};
+      const run: BotRunExtras = {
+        ...modelNamed,
+        ...context,
+        ...(media?.replyTo ? { replyTo: media.replyTo } : {}),
+        ...(media?.attachments.length ? { attachments: media.attachments } : {}),
+      };
+      const extras = Object.keys(run).length > 0 ? [run] as const : [];
+      const result = await this.deps.onBuiltinCommand(key, input, media?.targetUrl ?? targetUrl, event.chatId, event.userId, ...extras);
+      await this.pushResult(event, !result.ok && media?.failureText ? { ...result, text: media.failureText } : result);
     } catch (err: unknown) {
       this.deps.onLog(`${this.tag} built-in /${label} failed: ${err instanceof Error ? err.message : String(err)}`);
       await this.deps.output.push(event, t(s, 'bot.chat.queueFailed'));
     } finally {
+      if (media) await this.keepOrDispose(event, media);
       ticket.done();
+    }
+  }
+
+  /** A run's media once it returns: kept while its question waits for an answer, else deleted. */
+  private async keepOrDispose(event: E, media: HeldMedia & { refusal?: string }): Promise<void> {
+    if (!media.refusal && this.deps.hasPendingAgentAsk(event.chatId, event.userId)) {
+      this.heldMedia.hold(event.chatId, event.userId, media);
+      return;
+    }
+    await media.dispose().catch(() => undefined);
+  }
+
+  /**
+   * The request's pictures and files for its run's model, fetched now that it is taken. One that
+   * cannot be prepared costs the run its media, never the run.
+   */
+  private async agentMedia(event: E, targetUrl: string): Promise<BotAgentMedia | null> {
+    const prepare = this.deps.output.agentMedia;
+    if (!prepare) return null;
+    try {
+      return await prepare(event, targetUrl);
+    } catch (err: unknown) {
+      this.deps.onLog(`${this.tag} could not prepare the media of ${event.userId}'s request: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+  }
+
+  /**
+   * The chat's part of an agent run, only what it holds. One that cannot be read costs the run its
+   * context, never the run: it is logged and the request is answered on its own words.
+   */
+  private async agentContext(event: E, input: string): Promise<BotAgentContext> {
+    const read = this.deps.output.agentContext;
+    if (!read) return {};
+    try {
+      const context = await read(event, input);
+      return {
+        ...(context.replyTo ? { replyTo: context.replyTo } : {}),
+        ...(context.recentChat?.length ? { recentChat: context.recentChat } : {}),
+        ...(context.chatRecap ? { chatRecap: true as const } : {}),
+      };
+    } catch (err: unknown) {
+      this.deps.onLog(`${this.tag} could not read the chat around ${event.userId}'s request: ${err instanceof Error ? err.message : String(err)}`);
+      return {};
     }
   }
 
@@ -340,10 +414,11 @@ export class BotChatRouter<E extends BotChatEvent> {
    * The pace check of a request that starts work (an agent run, a flow): null = not taken, the
    * sender told once why (`botRequestPace.ts`). Deliveries run side by side, so a burst would
    * otherwise be that many runs at once. A button's line and an answer to the agent's question
-   * follow the bot's own message and are never paced.
+   * follow the bot's own message and are never paced, except "analyze" under a page: behind it is
+   * a model call, and in a group anyone can press it.
    */
   private async admitPaced(event: E): Promise<BotPaceTicket | null> {
-    if (!this.deps.pace || event.fromMenu) return UNPACED;
+    if (!this.deps.pace || (event.fromMenu && !pageAnalyzeLink(event.text))) return UNPACED;
     const verdict = this.deps.pace.admit(event.userId, {
       sentAt: event.sentAt ?? Date.now(),
       paired: this.deps.isPairedUser(event.userId),
@@ -363,16 +438,20 @@ export class BotChatRouter<E extends BotChatEvent> {
   private async runAgentAnswer(event: E, answer: string): Promise<void> {
     const s = this.deps.getStrings();
     await this.acknowledge(event);
+    // The paused run's pictures and files: the resumed run uploads them again.
+    const media = this.heldMedia.take(event.chatId, event.userId);
     try {
       const result = await this.deps.onAgentAnswer(answer, event.chatId, event.userId);
       if (!result) {
         await this.deps.output.push(event, t(s, 'bot.builtin.notResumable'));
         return;
       }
-      await this.pushResult(event, result);
+      await this.pushResult(event, !result.ok && media?.failureText ? { ...result, text: media.failureText } : result);
     } catch (err: unknown) {
       this.deps.onLog(`${this.tag} agent answer failed: ${err instanceof Error ? err.message : String(err)}`);
       await this.deps.output.push(event, t(s, 'bot.chat.queueFailed'));
+    } finally {
+      if (media) await this.keepOrDispose(event, media);
     }
   }
 
@@ -476,10 +555,12 @@ export class BotChatRouter<E extends BotChatEvent> {
       // Lists are only shown in a private chat, whose chat id is the account's own id.
       if (await this.access.mayUseBuiltin(bc.key, userId, userId)) builtins.push(`/${bc.command}`);
     }
-    // Managing groups, accounts and invites is the owner's alone; the handler checks again when typed.
+    // Managing groups, accounts and invites is for admins (some only the owner's, `listsOwnerCommand`);
+    // the handler checks again when typed.
     const ownerCommands = this.ownerCommands();
     if (ownerCommands.length > 0 && (await this.access.isFlowAdmin(userId, userId))) {
-      builtins.push(...ownerCommands.map((entry) => `/${entry.name}`));
+      const listed = this.deps.output.listsOwnerCommand;
+      builtins.push(...ownerCommands.filter((entry) => listed?.(entry.name, userId) ?? true).map((entry) => `/${entry.name}`));
     }
     const builtinCommands = [`/${BUILTIN_NEW_COMMAND}`, ...builtins];
     const flowCommands: string[] = [];

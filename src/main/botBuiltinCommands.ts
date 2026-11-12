@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_AGENT_ASK_TTL_MINUTES } from '../shared/types';
-import type { AgentChatLine, AgentReplyContext, AgentRunState, BotPlatform, BotRunKind } from '../shared/types';
+import type { AgentChatLine, AgentReplyContext, AgentRunState, BotPageForward, BotPlatform, BotRunKind } from '../shared/types';
 import { config } from './config';
 import { executeAgentRun } from './chat/agentCommand';
 import {
@@ -14,7 +14,7 @@ import type { ImageRunOutcome } from './chat/imageCommand';
 import { parseImageRequest, pictureIsWholeJob } from '../shared/imageRequest';
 import type { AgentRunOutcome, AgentRunRequest } from './chat/agentCommand';
 import type { SearchRunOutcome } from './chat/searchCommand';
-import { getBotConversation, setBotConversation } from './botConversations';
+import { getBotConversation, markBotConversationOthersText, setBotConversation } from './botConversations';
 import { botConversationFileLabel } from './botConversationLabel';
 import { applyAnswer, loadRunState, runHasEnded } from './flow/agent/agentRunStore';
 import { sendLog } from './helpers';
@@ -24,6 +24,7 @@ import type { FlowManager } from './flow';
 import { botChatMemoryResolver } from './chat/agentMemory';
 import { withMemoryNotes } from './memory';
 import { applyBotRunGrants, botAccessDeniedText, botChatApprovesConnectorChanges, botChatFlowBuilder, botChatRights } from './botPermissions';
+import { othersTextApprovals, othersTextRights, runCarriesOthersText } from './botPermissions/othersText';
 import { parseBotChatKey } from './memory/memoryContext';
 import { discloseBotConnectors, rememberBotConnectors } from './botConnectorScope';
 import { builtinCommandGrant, rightsAllowBuiltin } from '../shared/botPermissions';
@@ -57,6 +58,8 @@ export interface BotBuiltinRunResult {
   files?: string[];
   /** Files that go with the text as files, not photos (a PDF of an answer), kept in the chat's media folder. */
   documents?: string[];
+  /** `text` is a page forwarded as it stands: where it came from, and the site's own media for it. */
+  pageForward?: BotPageForward;
 }
 
 /**
@@ -126,10 +129,6 @@ export function takePendingAgentAnswer(chatKey: string): { runId: string; number
   return pending.expiresAt > Date.now() ? { runId: pending.runId, numbered: pending.numbered } : null;
 }
 
-export function takePendingAgentAsk(chatKey: string): string | null {
-  return takePendingAgentAnswer(chatKey)?.runId ?? null;
-}
-
 export function clearPendingAgentAsk(chatKey: string): void {
   pendingAsks.delete(chatKey);
 }
@@ -161,12 +160,10 @@ export function markAgentAskShown(chatKey: string, shown: AgentAskShown): void {
   if (shown.messageId !== undefined) pending.shownMessageId = shown.messageId;
 }
 
-function rememberPendingAsk(chatKey: string, runId: string): void {
+export function rememberPendingAsk(chatKey: string, runId: string): void {
   const now = Date.now();
   pendingAsks.set(chatKey, { runId, expiresAt: now + askTtlMs(), askedAt: now, numbered: true });
 }
-
-export const __rememberPendingAskForTest = rememberPendingAsk;
 
 /** The name a new conversation file gets for this chat; a lookup that fails only costs the name. */
 export function newConversationLabel(chatKey: string): Promise<string> {
@@ -180,12 +177,15 @@ function toResult(
   startedAt: number,
   askChatKey: string | undefined,
   sessionKey: string,
+  othersText = false,
 ): BotBuiltinRunResult {
   const elapsedSeconds = ((Date.now() - startedAt) / 1_000).toFixed(1);
   const providerLabel = getProviderLabel(targetUrl);
   const answer = outcome.answer?.trim() ?? '';
 
   if (!outcome.success || !answer) {
+    // A failed turn may still be in the file, someone else's words with it: the mark is kept.
+    if (othersText && outcome.filePath) void markBotConversationOthersText(sessionKey, outcome.filePath);
     return {
       ok: false,
       text: outcome.error?.trim() || t(strings, 'bot.builtin.failed'),
@@ -202,7 +202,8 @@ function toResult(
   const awaitingAnswer = Boolean(question && runId && askChatKey);
   if (awaitingAnswer && askChatKey && runId) rememberPendingAsk(askChatKey, runId);
 
-  if (outcome.filePath) void setBotConversation(sessionKey, outcome.filePath);
+  // Marked once someone else's words came in; a plain turn leaves the mark as it is.
+  if (outcome.filePath) void setBotConversation(sessionKey, outcome.filePath, ...(othersText ? [true] as const : []));
 
   const memoryNotes = 'memoryNotes' in outcome ? outcome.memoryNotes ?? [] : [];
   const choices = 'choices' in outcome ? outcome.choices ?? [] : [];
@@ -224,6 +225,7 @@ function toResult(
     ...(awaitingAnswer && question && runId && choices.length > 0 ? { question: { runId, text: question, choices } } : {}),
     ...(files.length > 0 ? { files } : {}),
     ...(documents.length > 0 ? { documents } : {}),
+    ...('pageForward' in outcome && outcome.pageForward ? { pageForward: outcome.pageForward } : {}),
   };
 }
 
@@ -252,13 +254,14 @@ interface BotChatApprovals {
   flows: { owner: boolean; requester: { platform: BotPlatform; userId: string } } | null;
 }
 
-async function botChatApprovals(chatKey: string): Promise<BotChatApprovals> {
+/** `othersText`: the run carries someone else's words, so nothing is put to them to approve. */
+async function botChatApprovals(chatKey: string, othersText: boolean): Promise<BotChatApprovals> {
   const [connectorChanges, builder] = await Promise.all([botChatApprovesConnectorChanges(chatKey), botChatFlowBuilder(chatKey)]);
   const parsed = parseBotChatKey(chatKey);
-  return {
+  return othersTextApprovals<BotChatApprovals>({
     connectorChanges,
     flows: builder && parsed ? { owner: builder.owner, requester: { platform: parsed.platform, userId: parsed.userId } } : null,
-  };
+  }, othersText);
 }
 
 /**
@@ -334,6 +337,10 @@ export interface BotBuiltinRunRequest {
   recentChat?: AgentChatLine[];
   /** The request is about the group's talk itself. */
   chatRecap?: true;
+  /** A model command (`/gemini …`), not a plain message. */
+  modelNamed?: true;
+  /** Pictures or files the request is about, uploaded with the run; an agent run only. */
+  attachments?: string[];
 }
 
 /**
@@ -361,12 +368,12 @@ export async function runBotBuiltinCommand(
   // Decided here as well as in the chat handlers, which refuse before anything is queued: whoever
   // calls this, someone who may not talk to the bot in this chat (unpaired outside a group that
   // grants it, or blocked) gets no run, and a typed command it was not granted never runs.
-  const rights = await botChatRights(request.chatKey);
-  if (!rights.chat) {
+  const granted = await botChatRights(request.chatKey);
+  if (!granted.chat) {
     sendLog(`[bot] ${request.key} refused for ${request.chatKey}: may not use the bot here`);
     return deniedResult(targetUrl, t(strings, 'bot.builtin.failed'));
   }
-  if (request.key !== 'agent' && !rightsAllowBuiltin(rights, request.key)) {
+  if (request.key !== 'agent' && !rightsAllowBuiltin(granted, request.key)) {
     sendLog(`[bot] /${request.key} refused for ${request.chatKey}: not granted`);
     return deniedResult(targetUrl, botAccessDeniedText(strings, builtinCommandGrant(request.key)));
   }
@@ -375,6 +382,10 @@ export async function runBotBuiltinCommand(
 
   const conversationPath = await getBotConversation(request.chatKey);
   const fileLabel = conversationPath ? '' : await newConversationLabel(request.chatKey);
+  // Someone else's words in the run (the group's talk, a quoted message) or in the conversation it
+  // continues: what a group may have.
+  const othersText = request.key === 'agent' && await runCarriesOthersText(request.chatKey, request, conversationPath);
+  const rights = othersTextRights(granted, othersText);
 
   if (request.key === 'search') {
     const outcome = await runSearchCommand(flowManager, {
@@ -397,6 +408,7 @@ export async function runBotBuiltinCommand(
     ...(request.replyTo ? { replyTo: request.replyTo } : {}),
     ...(request.recentChat?.length ? { recentChat: request.recentChat } : {}),
     ...(request.chatRecap ? { chatRecap: true as const } : {}),
+    ...(request.attachments?.length ? { attachments: [...request.attachments] } : {}),
     // Everyone allowed to talk here is answered; the agent grant decides how much the answer may use.
     botScope: rights.agent ? 'agent' : 'chat',
     status: 'running',
@@ -414,7 +426,7 @@ export async function runBotBuiltinCommand(
   // connector named, the web, a flow) goes to it, as do a reply to someone else's message and a
   // recap of the group's talk. That uses the owner's web account as a search does, so it takes the same grant.
   if (
-    request.key === 'agent' && rights.web && !request.replyTo && !request.chatRecap
+    request.key === 'agent' && rights.web && !request.replyTo && !request.chatRecap && !request.attachments?.length
     && pictureIsWholeJob(request.input, disclosed.named.length > 0) && parseImageRequest(request.input)
   ) {
     const outcome = await runImageCommand(flowManager, {
@@ -434,14 +446,15 @@ export async function runBotBuiltinCommand(
       strings,
       ...(request.replyTo ? { deliveredPrompt: promptWithReply(request.input, request.replyTo) } : {}),
       origin: 'bot',
-      memory: botChatMemoryResolver(request.chatKey),
-      ...botRunScope(state, await botChatApprovals(request.chatKey), request.chatKey),
+      ...(request.modelNamed ? { modelNamed: true } : {}),
+      memory: othersText ? { surface: 'bot' } : botChatMemoryResolver(request.chatKey),
+      ...botRunScope(state, await botChatApprovals(request.chatKey, othersText), request.chatKey),
       ...(fileLabel ? { fileLabel } : {}),
       ...(request.onProgressText ? { onProgressText: request.onProgressText } : {}),
     },
   );
   if (disclosed.remember && outcome.filePath) await rememberBotConnectors(outcome.filePath, disclosed.remember);
-  return toResult(outcome, targetUrl, strings, startedAt, request.chatKey, request.chatKey);
+  return toResult(outcome, state.providerUrl, strings, startedAt, request.chatKey, request.chatKey, othersText);
 }
 
 export async function resumeBotAgentAsk(
@@ -465,7 +478,10 @@ export async function resumeBotAgentAsk(
   // Re-read now: a grant taken away while the question was pending applies to the answer too.
   // Someone who may no longer talk to the bot here (unpaired, blocked, the group's grant gone)
   // gets nothing; otherwise the answer goes on, on the chat kit if the agent grant is gone.
-  const rights = await botChatRights(params.chatKey);
+  // Read off the saved run and its conversation: someone else's words narrow the answer's run as
+  // they did its start.
+  const othersText = await runCarriesOthersText(params.chatKey, state, state.conversationPath);
+  const rights = othersTextRights(await botChatRights(params.chatKey), othersText);
   if (!rights.chat) {
     sendLog(`[bot] agent run ${params.runId} not resumed: ${params.chatKey} may no longer use the bot here`);
     return deniedResult(state.providerUrl, t(strings, 'bot.builtin.failed'));
@@ -492,11 +508,11 @@ export async function resumeBotAgentAsk(
       strings,
       deliveredPrompt: answer || state.goal,
       origin: 'bot',
-      memory: botChatMemoryResolver(params.chatKey),
+      memory: othersText ? { surface: 'bot' } : botChatMemoryResolver(params.chatKey),
       // Read again: no longer marked as the owner (or no longer an admin), a waiting change or flow is not saved on this answer.
-      ...botRunScope(state, await botChatApprovals(params.chatKey), params.chatKey),
+      ...botRunScope(state, await botChatApprovals(params.chatKey, othersText), params.chatKey),
       ...(params.onProgressText ? { onProgressText: params.onProgressText } : {}),
     },
   );
-  return toResult(outcome, state.providerUrl, strings, startedAt, params.chatKey, params.chatKey);
+  return toResult(outcome, state.providerUrl, strings, startedAt, params.chatKey, params.chatKey, othersText);
 }

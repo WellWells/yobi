@@ -5,10 +5,12 @@ import { getFlowDataDir } from '../flow';
 import { getOutputDir } from '../files';
 import { USER_MEMORY_DIR, userMemoryDir } from '../memory/memoryStore';
 import { HISTORY_DIR_NAME } from '../history/historyPaths';
+import { skillsRoot } from '../agentSkills/skillPaths';
 import { BACKUP_CATEGORY_IDS } from '../../shared/types';
 import type { BackupCategoryId } from '../../shared/types';
 import { toIsoDate } from '../../shared/localTime';
 import { isBackupConversationPath } from './fsUtils';
+import { FLOW_FOLDERS_FILE } from '../../shared/flowFolders';
 
 export const BACKUP_TYPE = 'yobi-backup';
 export const BACKUP_VERSION = 1;
@@ -31,6 +33,8 @@ export interface CategoryDef {
   /** Which files belong to the category, by their `/`-separated path inside its folder. */
   fileFilter?: (relativePath: string) => boolean;
   replaceMode?: 'whole-dir' | 'by-filter';
+  /** A file category's other files, saved beside it at the zip's root when they exist. */
+  companions?: () => string[];
 }
 
 export const CATEGORY_DEFS: Record<BackupCategoryId, CategoryDef> = {
@@ -45,6 +49,8 @@ export const CATEGORY_DEFS: Record<BackupCategoryId, CategoryDef> = {
     kind: 'file',
     zipPrefix: 'flows.json',
     resolveSource: () => path.join(getFlowDataDir(), 'flows.json'),
+    // The sidebar folders the flows are sorted into travel with them.
+    companions: () => [path.join(getFlowDataDir(), FLOW_FOLDERS_FILE)],
   },
   checkpoints: {
     id: 'checkpoints',
@@ -65,6 +71,14 @@ export const CATEGORY_DEFS: Record<BackupCategoryId, CategoryDef> = {
     kind: 'dir',
     zipPrefix: USER_MEMORY_DIR,
     resolveSource: () => userMemoryDir(),
+    replaceMode: 'whole-dir',
+  },
+  // Agent Skills with their on/off state (`.state.json`); a skill is the user's own, like a flow.
+  skills: {
+    id: 'skills',
+    kind: 'dir',
+    zipPrefix: 'skills',
+    resolveSource: () => skillsRoot(),
     replaceMode: 'whole-dir',
   },
   outputs: {

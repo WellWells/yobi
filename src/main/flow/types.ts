@@ -21,6 +21,8 @@ export interface SaveHistoryInfo {
 
 export interface FlowExecutorDeps {
   getWorkerWin: () => BrowserWindow | null;
+  /** A skill's extra outputs, kept separate from model-authored text and scoped to one step. */
+  onStepOutput?: (fields: Record<string, string>) => void;
   /** A research call's checklist, re-sent whole each time a phase or a count changes. */
   onResearchProgress?: (progress: ResearchProgress) => void;
   /** Set by `/agent` only: the person its research keywords were written for. A flow's query is its own. */
@@ -43,8 +45,8 @@ export interface FlowExecutorDeps {
   /** A picture, its text and buttons to tap as one card (`line/flowMenu.ts`). */
   sendLineMenu?: (userId: string, menu: LineFlowMenu) => Promise<void>;
   getLinePairedUsers?: () => Array<{ userId: string; displayName?: string }>;
-  /** Discord's and Slack's sends: one message (text, the run's files, buttons standing for lines) to a chat id. */
-  sendSocketBot?: (platform: SocketBotPlatform, chatId: string, message: SocketBotOutgoing) => Promise<void>;
+  /** Discord's, Slack's and LINE PC's sends: one message (text, the run's files, buttons standing for lines) to a chat id. */
+  sendSocketBot?: (platform: SocketBotPlatform, chatId: string, message: FlowBotMessage) => Promise<void>;
   getSocketBotPairedUsers?: (platform: SocketBotPlatform) => Array<{ userId: string; displayName?: string }>;
   /** The chats a bot step may name instead of giving an id ("me", a person, a channel). */
   getBotRecipients?: () => Promise<RecipientDirectory>;
@@ -65,6 +67,8 @@ export interface FlowExecutorDeps {
       /** Blank = 1x. */
       pixelRatio?: number;
       zip?: boolean;
+      /** Stopped while rendering: the file is not written (the render itself is not cancelled). */
+      signal?: AbortSignal;
     },
   ) => Promise<string>;
   captureScreen?: (format: 'png' | 'jpg', targetDir?: string) => Promise<string>;
@@ -93,6 +97,17 @@ export interface FlowExecutorDeps {
 }
 
 export type TelegramSendAs = 'photo' | 'document' | 'auto' | 'video' | 'audio';
+
+/** A bot step's message to one chat, and how the step came to name that chat. */
+export interface FlowBotMessage extends SocketBotOutgoing {
+  /**
+   * LINE PC: the step names this chat itself — written in the saved step (or resolved from a name
+   * written there), or the chat the run was asked from. Only such a chat may be any group or friend
+   * LINE PC has; a chat a variable filled in, or a blank field's paired person, reaches only where
+   * it did before (where that person asked Yobi, a group Yobi was used in).
+   */
+  picked?: true;
+}
 
 /** Buttons under a bot message: pressing one runs `flowId` again with the button's input. */
 export interface BotSendExtras {

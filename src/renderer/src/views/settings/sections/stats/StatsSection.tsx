@@ -1,13 +1,13 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { Box, Group, Stack, Text } from '@mantine/core';
-import { ChartLine, Trash2 } from 'lucide-react';
+import { ChartLine, Trash } from 'lucide-react';
 import { SectionCard, SettingRow, ToggleSwitch } from '../../components';
 import { AppButton } from '../../../../components/AppButton';
 import { AppSegmentedControl } from '../../../../components/AppSegmentedControl';
 import { EmptyState } from '../../../../components/EmptyState';
 import { WebDialog } from '../../../../components/WebDialog';
 import { useAppStore } from '../../../../store/appStore';
-import { useFlowStore } from '../../../../store/useFlowStore';
+import { useSavedFlows } from '../../../../store/useSavedFlows';
 import { TAG_SETS } from '../../hooks/useSettingsNav';
 import type { useMetrics } from '../../hooks/useMetrics';
 import { DEFAULT_RANGE_DAYS, RANGE_DAYS, SCOPES, aggregateStats, hasStoredStats } from './aggregate';
@@ -35,7 +35,7 @@ export const StatsSection: React.FC<Props> = ({ metrics, t, showSection, section
   const [scope, setScope] = useState<StatsScope>('all');
   const [confirmReset, setConfirmReset] = useState(false);
   const openLogsFiltered = useAppStore((state) => state.openLogsFiltered);
-  const flows = useFlowStore((state) => state.flows);
+  const flows = useSavedFlows();
 
   const stats = useMemo(
     () => aggregateStats(snapshot, rangeDays, scope),
@@ -77,7 +77,7 @@ export const StatsSection: React.FC<Props> = ({ metrics, t, showSection, section
         variant="outline"
         color="red"
         size="xs"
-        leftSection={<Trash2 size={13} />}
+        leftSection={<Trash size={13} />}
         onClick={() => setConfirmReset(true)}
       >
         {t('settings.stats.reset')}

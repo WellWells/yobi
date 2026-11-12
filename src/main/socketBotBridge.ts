@@ -4,7 +4,7 @@
  * changes the settings page makes. One module for both platforms; everything takes the platform.
  */
 import { IPC, SOCKET_BOT_PLATFORMS, SOCKET_BOT_SECRET_FIELDS } from '../shared/types';
-import type { PendingPairingCode, SocketBotPlatform, SocketBotRuntimeSnapshot, SocketBotSettingsSnapshot } from '../shared/types';
+import type { SocketBotPlatform, SocketBotRuntimeSnapshot, SocketBotSettingsSnapshot } from '../shared/types';
 import { config, saveConfig } from './config';
 import { dropBotPermissions, grantPairingDefaults } from './botPermissions';
 import { maskToken, sendLog, sendToRenderer } from './helpers';
@@ -95,17 +95,6 @@ export function revokeSocketBotPairingCode(platform: SocketBotPlatform, code: st
   config[platform].pairing = revokeBotPairingCode(config[platform].pairing, String(code ?? ''));
   saveConfig({ [platform]: config[platform] });
   announceSocketBotRuntime(platform);
-}
-
-/** The codes still valid, expired ones pruned (and the prune saved) first. */
-export function validSocketBotPairingCodes(platform: SocketBotPlatform): PendingPairingCode[] {
-  const current = config[platform].pairing;
-  const pruned = normalizeBotPairingState(current);
-  if (pruned.pendingCodes.length !== current.pendingCodes.length) {
-    config[platform].pairing = pruned;
-    saveConfig({ [platform]: config[platform] });
-  }
-  return pruned.pendingCodes;
 }
 
 /** A secret field's value, by name (`SOCKET_BOT_SECRET_FIELDS`). */

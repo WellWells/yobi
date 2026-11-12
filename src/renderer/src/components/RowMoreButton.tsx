@@ -1,6 +1,6 @@
 import React from 'react';
 import { ActionIcon } from '@mantine/core';
-import { MoreHorizontal } from 'lucide-react';
+import { Ellipsis } from 'lucide-react';
 
 export interface MenuAnchor {
   x: number;
@@ -53,6 +53,6 @@ export const RowMoreButton: React.FC<RowMoreButtonProps> = ({ label, menuOpen, o
       onOpen(menuAnchorBelow(e.currentTarget.getBoundingClientRect()));
     }}
   >
-    <MoreHorizontal size={15} />
+    <Ellipsis size={15} />
   </ActionIcon>
 );

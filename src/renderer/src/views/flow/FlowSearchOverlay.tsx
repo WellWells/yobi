@@ -5,6 +5,8 @@ import type { FlowDefinition } from '../../../../shared/types';
 import { SearchPalette } from '../../components/SearchPalette';
 import { useFlowStore } from '../../store/useFlowStore';
 import { useI18nStore } from '../../store/i18nStore';
+import { useFlowFolderStore } from '../../store/flowFolderStore';
+import { folderOfFlow } from './flowSidebarRows';
 
 function flowKey(flow: FlowDefinition): string {
   return flow.id;
@@ -16,10 +18,11 @@ interface FlowSearchOverlayProps {
 }
 
 export const FlowSearchOverlay: React.FC<FlowSearchOverlayProps> = ({ opened, onClose }) => {
-  const { t } = useI18nStore();
+  const t = useI18nStore((s) => s.t);
   const { flows, selectFlow } = useFlowStore(
     useShallow((s) => ({ flows: s.flows, selectFlow: s.selectFlow })),
   );
+  const folders = useFlowFolderStore((s) => s.folders);
   const [query, setQuery] = useState('');
 
   const visibleFlows = useMemo(() => {
@@ -38,7 +41,9 @@ export const FlowSearchOverlay: React.FC<FlowSearchOverlayProps> = ({ opened, on
   }, [onClose, selectFlow]);
 
   // Stable between renders, so the palette's memoised rows re-render only when their highlight changes.
-  const renderRow = useCallback((flow: FlowDefinition) => (
+  const renderRow = useCallback((flow: FlowDefinition) => {
+    const folder = folderOfFlow(folders, flow.id);
+    return (
     <Stack gap={2}>
       <Text fz="var(--font-size-sm)" fw={500} lineClamp={1} c="var(--mantine-color-text)">
         {flow.name || t('flow.flowName')}
@@ -51,9 +56,12 @@ export const FlowSearchOverlay: React.FC<FlowSearchOverlayProps> = ({ opened, on
         <Text fz="var(--font-size-xs)" c="dimmed">
           {flow.steps.length} {t('flow.steps').toLowerCase()}
         </Text>
+        {/* The folder it is in, as the chat search marks a conversation's. */}
+        {folder && <Text component="span" fz="var(--font-size-xs)" c="dimmed" truncate>{`· ${folder}`}</Text>}
       </Group>
     </Stack>
-  ), [t]);
+    );
+  }, [t, folders]);
 
   return (
     <SearchPalette

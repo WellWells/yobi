@@ -1,0 +1,17 @@
+/* The sidebar out over a narrow window: it slides in from the window's left edge, once. */
+.drawer {
+  box-shadow: 0 0 24px rgba(0, 0, 0, 0.35);
+  animation: drawerIn 160ms ease-out;
+}
+
+@keyframes drawerIn {
+  from {
+    transform: translateX(-100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer {
+    animation: none;
+  }
+}

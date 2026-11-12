@@ -20,6 +20,9 @@ import {
   truncateText,
 } from './formatter';
 import { telegramMessageChunks } from './longMessage';
+import { pageAnalyzeChoice, pageForwardFolded } from '../botChat/pageForward';
+import { PAGE_ANALYZE_FLOW_ID } from '../../shared/pageAnalyzeLine';
+import type { BotPageForward } from '../../shared/types';
 import { TELEGRAM_MESSAGE_MAX } from '../../shared/botMessageLimits';
 import { unfoldExpandableQuotes } from '../../shared/expandableQuote';
 import type { AgentAskShown, BotBuiltinRunResult } from '../botBuiltinCommands';
@@ -37,6 +40,17 @@ import { TELEGRAM_LARGE_UPLOAD_FAILED, TELEGRAM_LARGE_UPLOAD_NOT_READY } from '.
 import { MTPROTO_ERROR_PREFIX } from './mtproto/errors';
 import type { TelegramContext } from './commandHandlers';
 import { jpegName, webpFileAsJpeg, type WebpDecoder } from './webpPhoto';
+import {
+  botIdOf,
+  forgetFileId,
+  isFileIdRefused,
+  rememberFileId,
+  savedFileId,
+  sendWithSavedFileId,
+  uploadIdentity,
+  type UploadIdentity,
+} from './fileIdCache';
+import type { Message } from 'grammy/types';
 
 const TELEGRAM_MSG_LIMIT = TELEGRAM_MESSAGE_MAX;
 const TELEGRAM_CAPTION_LIMIT = 1024;
@@ -239,20 +253,42 @@ async function sendLargeFile(
   sendAs: TelegramSendAs,
   opts: CaptionedOpts,
 ): Promise<void> {
+  const botId = botIdOf(bot.token);
+  const label = path.basename(file);
   if (sendAs === 'video' && /\.mp4$/i.test(file)) {
     const video = videoMeta(await probeMedia(file).catch(() => null));
-    const fileId = await largeFileId(mctx, chatId, { path: file, kind: 'video', video });
-    await bot.api.sendVideo(chatId, fileId, { ...opts, supports_streaming: true, ...video });
+    const sendOpts = { ...opts, supports_streaming: true, ...video };
+    await sendWithSavedFileId({
+      identity: await uploadIdentity(botId, 'video', file),
+      byId: (fileId) => bot.api.sendVideo(chatId, fileId, sendOpts),
+      upload: async () => bot.api.sendVideo(chatId, await largeFileId(mctx, chatId, { path: file, kind: 'video', video }), sendOpts),
+      idOf: (message) => message.video?.file_id,
+      onLog: mctx.onLog,
+      label,
+    });
     return;
   }
   if (sendAs === 'audio' && AUDIO_FILE_RE.test(file)) {
     const audio = audioMeta(await probeMedia(file).catch(() => null));
-    const fileId = await largeFileId(mctx, chatId, { path: file, kind: 'audio', audio });
-    await bot.api.sendAudio(chatId, fileId, { ...opts, ...audio });
+    const sendOpts = { ...opts, ...audio };
+    await sendWithSavedFileId({
+      identity: await uploadIdentity(botId, 'audio', file),
+      byId: (fileId) => bot.api.sendAudio(chatId, fileId, sendOpts),
+      upload: async () => bot.api.sendAudio(chatId, await largeFileId(mctx, chatId, { path: file, kind: 'audio', audio }), sendOpts),
+      idOf: (message) => message.audio?.file_id,
+      onLog: mctx.onLog,
+      label,
+    });
     return;
   }
-  const fileId = await largeFileId(mctx, chatId, { path: file, kind: 'document' });
-  await bot.api.sendDocument(chatId, fileId, opts);
+  await sendWithSavedFileId({
+    identity: await uploadIdentity(botId, 'document', file),
+    byId: (fileId) => bot.api.sendDocument(chatId, fileId, opts),
+    upload: async () => bot.api.sendDocument(chatId, await largeFileId(mctx, chatId, { path: file, kind: 'document' }), opts),
+    idOf: (message) => message.document?.file_id,
+    onLog: mctx.onLog,
+    label,
+  });
 }
 
 export async function sendProactiveFile(
@@ -289,11 +325,22 @@ export async function sendProactiveFile(
       return;
     }
 
+    // A local file this bot sent before goes by its file_id, not uploaded again (`fileIdCache.ts`).
+    const botId = botIdOf(bot.token);
+    const label = path.basename(resolvedLocal);
     if (sendAs === 'video' && !isRemote && /\.mp4$/i.test(resolvedLocal)) {
       // Width, height and length let Telegram size the player before it has the file; without
       // them it guesses, and a portrait Short shows up letterboxed.
       const probe = await probeMedia(resolvedLocal).catch(() => null);
-      await bot.api.sendVideo(chatId, media(), { ...captionOpts, supports_streaming: true, ...videoMeta(probe) });
+      const sendOpts = { ...captionOpts, supports_streaming: true, ...videoMeta(probe) };
+      await sendWithSavedFileId({
+        identity: await uploadIdentity(botId, 'video', resolvedLocal),
+        byId: (fileId) => bot.api.sendVideo(chatId, fileId, sendOpts),
+        upload: () => bot.api.sendVideo(chatId, media(), sendOpts),
+        idOf: (message) => message.video?.file_id,
+        onLog: mctx.onLog,
+        label,
+      });
       return;
     }
 
@@ -301,7 +348,15 @@ export async function sendProactiveFile(
       // Without a title and an artist Telegram's player shows the file name; an MP3 Yobi made
       // carries the video's title and channel (`--embed-metadata`).
       const probe = await probeMedia(resolvedLocal).catch(() => null);
-      await bot.api.sendAudio(chatId, media(), { ...captionOpts, ...audioMeta(probe) });
+      const sendOpts = { ...captionOpts, ...audioMeta(probe) };
+      await sendWithSavedFileId({
+        identity: await uploadIdentity(botId, 'audio', resolvedLocal),
+        byId: (fileId) => bot.api.sendAudio(chatId, fileId, sendOpts),
+        upload: () => bot.api.sendAudio(chatId, media(), sendOpts),
+        idOf: (message) => message.audio?.file_id,
+        onLog: mctx.onLog,
+        label,
+      });
       return;
     }
 
@@ -323,16 +378,35 @@ export async function sendProactiveFile(
     const jpeg = !isRemote && mode === 'photo' ? await webpPhotoJpeg(mctx, resolvedLocal) : null;
     const photo = (): string | InputFile => (jpeg ? new InputFile(jpeg, jpegName(resolvedLocal)) : media());
 
+    // What goes up is keyed by its own bytes: the JPEG a WebP photo became, else the file.
+    const identityOf = async (kind: 'photo' | 'document', bytes: Buffer | null) =>
+      (isRemote ? null : await uploadIdentity(botId, kind, resolvedLocal, bytes ?? undefined));
+    const sendDocument = async (input: () => string | InputFile, bytes: Buffer | null) => sendWithSavedFileId({
+      identity: await identityOf('document', bytes),
+      byId: (fileId) => bot.api.sendDocument(chatId, fileId, captionOpts),
+      upload: () => bot.api.sendDocument(chatId, input(), captionOpts),
+      idOf: (message) => message.document?.file_id,
+      onLog: mctx.onLog,
+      label,
+    });
     try {
       if (mode === 'photo') {
-        await bot.api.sendPhoto(chatId, photo(), captionOpts);
+        await sendWithSavedFileId({
+          identity: await identityOf('photo', jpeg),
+          byId: (fileId) => bot.api.sendPhoto(chatId, fileId, captionOpts),
+          upload: () => bot.api.sendPhoto(chatId, photo(), captionOpts),
+          // Telegram keeps several sizes; the last is the largest.
+          idOf: (message) => message.photo?.at(-1)?.file_id,
+          onLog: mctx.onLog,
+          label,
+        });
       } else {
-        await bot.api.sendDocument(chatId, media(), captionOpts);
+        await sendDocument(media, null);
       }
     } catch (sendErr: unknown) {
       if (sendAs === 'auto' && mode === 'photo') {
         mctx.onLog(`[telegram] photo send failed, retrying as document: ${String(sendErr)}`);
-        await bot.api.sendDocument(chatId, photo(), captionOpts);
+        await sendDocument(photo, jpeg);
       } else {
         throw sendErr;
       }
@@ -395,6 +469,69 @@ async function sendByFileId(bot: TelegramBot, chatId: number, file: AlbumFile, f
   else await bot.api.sendDocument(chatId, fileId, opts);
 }
 
+/** An album file on Telegram's servers: by a single message (to delete once the album is made) or none. */
+interface StagedFile {
+  messageId: number | null;
+  fileId: string | undefined;
+  /** The id is a saved one (`fileIdCache.ts`): nothing went up for it this time. */
+  saved?: boolean;
+}
+
+/** The file_id a sent message carries, only when it came back as the kind it was sent as. */
+function sentFileId(kind: AlbumFile['kind'], message: Message): string | undefined {
+  if (kind === 'video') return message.video?.file_id;
+  if (kind === 'audio') return message.audio?.file_id;
+  // Telegram keeps several sizes; the last is the largest.
+  if (kind === 'photo') return message.photo?.at(-1)?.file_id;
+  return message.document?.file_id;
+}
+
+/** What each album file's send is keyed by: the bytes that go up (a WebP photo's JPEG) as its kind. */
+function albumIdentities(bot: TelegramBot, group: readonly AlbumFile[]): Promise<Array<UploadIdentity | null>> {
+  const botId = botIdOf(bot.token);
+  return Promise.all(group.map((file) => uploadIdentity(botId, file.kind, file.path, file.jpeg)));
+}
+
+/**
+ * An album every file of which this bot sent before: sent by the saved file_ids, nothing uploaded.
+ * False when one is not saved, or Telegram refused a saved id (all of them are then forgotten and
+ * the album goes up as usual).
+ */
+async function sendSavedAlbum(
+  mctx: TelegramMessagingContext,
+  bot: TelegramBot,
+  chatId: number,
+  group: readonly AlbumFile[],
+  identities: ReadonlyArray<UploadIdentity | null>,
+  caption: CaptionOpts,
+  quote: ReplyQuote,
+): Promise<boolean> {
+  const known = identities.filter((id): id is UploadIdentity => id !== null);
+  if (known.length !== group.length) return false;
+  const saved = await Promise.all(known.map((id) => savedFileId(id).catch(() => null)));
+  if (!saved.every((id): id is string => Boolean(id))) return false;
+  try {
+    await bot.api.sendMediaGroup(chatId, albumMedia(group, saved, caption), quote);
+  } catch (err: unknown) {
+    if (!isFileIdRefused(err)) throw err;
+    await Promise.all(known.map((id) => forgetFileId(id).catch(() => {})));
+    mctx.onLog(`[telegram] album by saved file_ids refused (${String(err)}); uploading it again`);
+    return false;
+  }
+  mctx.onLog(`♻️ [telegram] Album of ${group.length} sent by their saved file_ids — no upload`);
+  await Promise.all(known.map((id, index) => rememberFileId(id, saved[index]).catch(() => {})));
+  return true;
+}
+
+/** Notes the ids an uploaded album's messages came back with, in the album's order. */
+async function rememberAlbum(group: readonly AlbumFile[], identities: ReadonlyArray<UploadIdentity | null>, messages: readonly Message[]): Promise<void> {
+  for (const [index, file] of group.entries()) {
+    const identity = identities[index];
+    const fileId = messages[index] ? sentFileId(file.kind, messages[index]) : undefined;
+    if (identity && fileId) await rememberFileId(identity, fileId).catch(() => {});
+  }
+}
+
 function albumMedia(group: readonly AlbumFile[], media: ReadonlyArray<string | InputFile>, caption: CaptionOpts) {
   return group.map((file, index) => {
     const captioned = index === 0 ? caption : {};
@@ -434,37 +571,35 @@ async function sendAlbumByFileId(
   caption: CaptionOpts,
   quote: ReplyQuote = {},
 ): Promise<void> {
-  const staged: Array<{ messageId: number | null; fileId: string | undefined }> = [];
-  for (const [index, file] of group.entries()) {
+  const identities = await albumIdentities(bot, group);
+  /** Puts file `index` on Telegram's servers: a single message, or over MTProto when it alone is too large. */
+  const stage = async (index: number): Promise<StagedFile> => {
+    const file = group[index];
+    let entry: StagedFile;
     if (overUploadLimit(file.sizeBytes)) {
       const fileId = await largeFileId(mctx, chatId, { path: file.path, kind: file.kind, video: file.video, audio: file.audio });
-      staged.push({ messageId: null, fileId });
-      continue;
-    }
-    // The first carries the caption and the quote, for when it stays as a message of its own.
-    const opts = { ...(index === 0 ? { ...caption, ...quote } : {}), disable_notification: true };
-    const upload = albumUpload(file);
-    let fileId: string | undefined;
-    let messageId: number;
-    if (file.kind === 'video') {
-      const message = await bot.api.sendVideo(chatId, upload, { ...opts, supports_streaming: true, ...file.video });
-      fileId = message.video?.file_id;
-      messageId = message.message_id;
-    } else if (file.kind === 'audio') {
-      const message = await bot.api.sendAudio(chatId, upload, { ...opts, ...file.audio });
-      fileId = message.audio?.file_id;
-      messageId = message.message_id;
-    } else if (file.kind === 'photo') {
-      const message = await bot.api.sendPhoto(chatId, upload, opts);
-      // Telegram keeps several sizes; the last is the largest.
-      fileId = message.photo?.at(-1)?.file_id;
-      messageId = message.message_id;
+      entry = { messageId: null, fileId };
     } else {
-      const message = await bot.api.sendDocument(chatId, upload, opts);
-      fileId = message.document?.file_id;
-      messageId = message.message_id;
+      // The first carries the caption and the quote, for when it stays as a message of its own.
+      const opts = { ...(index === 0 ? { ...caption, ...quote } : {}), disable_notification: true };
+      const upload = albumUpload(file);
+      let message: Message;
+      if (file.kind === 'video') message = await bot.api.sendVideo(chatId, upload, { ...opts, supports_streaming: true, ...file.video });
+      else if (file.kind === 'audio') message = await bot.api.sendAudio(chatId, upload, { ...opts, ...file.audio });
+      else if (file.kind === 'photo') message = await bot.api.sendPhoto(chatId, upload, opts);
+      else message = await bot.api.sendDocument(chatId, upload, opts);
+      entry = { messageId: message.message_id, fileId: sentFileId(file.kind, message) };
     }
-    staged.push({ messageId, fileId });
+    const identity = identities[index];
+    if (identity && entry.fileId) await rememberFileId(identity, entry.fileId).catch(() => {});
+    return entry;
+  };
+  const staged: StagedFile[] = [];
+  for (const index of group.keys()) {
+    // A file this bot sent before is on Telegram's servers already: no message, no upload.
+    const identity = identities[index];
+    const saved = identity ? await savedFileId(identity).catch(() => null) : null;
+    staged.push(saved ? { messageId: null, fileId: saved, saved: true } : await stage(index));
   }
   // The large files have no message of their own yet: alone by file id, the first with the
   // caption when no single message carries it already.
@@ -474,19 +609,42 @@ async function sendAlbumByFileId(
       await sendByFileId(bot, chatId, group[index], entry.fileId, index === 0 ? { ...caption, ...quote } : {});
     }
   };
-  const fileIds = staged.map((entry) => entry.fileId);
-  if (!fileIds.every((id): id is string => Boolean(id))) {
-    mctx.onLog('[telegram] a file did not come back as the expected media; leaving the files as separate messages');
-    await sendLargeAlone();
-    return;
-  }
-  try {
+  const sendAlbum = async (): Promise<boolean> => {
+    const fileIds = staged.map((entry) => entry.fileId);
+    if (!fileIds.every((id): id is string => Boolean(id))) {
+      mctx.onLog('[telegram] a file did not come back as the expected media; leaving the files as separate messages');
+      await sendLargeAlone();
+      return false;
+    }
     await bot.api.sendMediaGroup(chatId, albumMedia(group, fileIds, caption), quote);
+    return true;
+  };
+  try {
+    if (!(await sendAlbum())) return;
   } catch (err: unknown) {
-    mctx.onLog(`[telegram] album of uploaded files failed (${String(err)}); leaving them as separate messages`);
-    await sendLargeAlone();
-    return;
+    const reused = [...staged.keys()].filter((index) => staged[index].saved);
+    if (reused.length === 0 || !isFileIdRefused(err)) {
+      mctx.onLog(`[telegram] album of uploaded files failed (${String(err)}); leaving them as separate messages`);
+      await sendLargeAlone();
+      return;
+    }
+    // A saved id may be the one refused: those files go up after all, and the album is tried once more.
+    mctx.onLog(`[telegram] album with saved file_ids refused (${String(err)}); uploading those ${reused.length} file(s) again`);
+    for (const index of reused) {
+      const identity = identities[index];
+      if (identity) await forgetFileId(identity).catch(() => {});
+      staged[index] = await stage(index);
+    }
+    try {
+      if (!(await sendAlbum())) return;
+    } catch (again: unknown) {
+      mctx.onLog(`[telegram] album of uploaded files failed (${String(again)}); leaving them as separate messages`);
+      await sendLargeAlone();
+      return;
+    }
   }
+  const reusedCount = staged.filter((entry) => entry.saved).length;
+  if (reusedCount > 0) mctx.onLog(`♻️ [telegram] Album sent with ${reusedCount} file(s) by their saved file_id — not uploaded`);
   const singles = staged.flatMap((entry) => (entry.messageId === null ? [] : [entry.messageId]));
   if (singles.length === 0) return;
   await bot.api.deleteMessages(chatId, singles).catch((err: unknown) => {
@@ -551,19 +709,23 @@ export async function sendProactiveAlbum(
         await sendProactiveFile(mctx, chatId, group[0].path, sendAs, start === 0 ? caption : undefined, authorizedPaths, extras);
         continue;
       }
+      const identities = await albumIdentities(bot, group);
+      if (await sendSavedAlbum(mctx, bot, chatId, group, identities, groupCaption, groupQuote)) continue;
       const totalBytes = group.reduce((sum, file) => sum + file.sizeBytes, 0);
       if (totalBytes > TELEGRAM_UPLOAD_LIMIT_BYTES) {
         await sendAlbumByFileId(mctx, bot, chatId, group, groupCaption, groupQuote);
         continue;
       }
       try {
-        await bot.api.sendMediaGroup(chatId, albumMedia(group, group.map(albumUpload), groupCaption), groupQuote);
+        const messages = await bot.api.sendMediaGroup(chatId, albumMedia(group, group.map(albumUpload), groupCaption), groupQuote);
+        await rememberAlbum(group, identities, messages);
       } catch (err: unknown) {
         if (isPhotoRefused(err) && group.some((file) => file.kind === 'photo')) {
           // A tall capture is past a photo's size rules; as documents the same files go through.
           mctx.onLog(`[telegram] album photos refused (${String(err)}); sending the album as documents`);
           const asDocuments = group.map((file): AlbumFile => ({ path: file.path, sizeBytes: file.sizeBytes, kind: 'document', jpeg: file.jpeg }));
-          await bot.api.sendMediaGroup(chatId, albumMedia(asDocuments, asDocuments.map(albumUpload), groupCaption), groupQuote);
+          const messages = await bot.api.sendMediaGroup(chatId, albumMedia(asDocuments, asDocuments.map(albumUpload), groupCaption), groupQuote);
+          await rememberAlbum(asDocuments, await albumIdentities(bot, asDocuments), messages);
           continue;
         }
         if (!isTooLargeError(err)) throw err;
@@ -697,11 +859,40 @@ export async function sendBuiltinReply(
   // Whatever ran (a new request, an answer, a newer question), the question this person had waiting
   // no longer is: its buttons come off rather than stay looking answerable.
   await clearRetiredButtons(mctx.getBot()?.api, retireAskButtons(target.chatId, target.userId), mctx.getStrings());
+  if (result.pageForward) {
+    await sendPageForward(mctx, target, result.pageForward);
+    return true;
+  }
   if (result.question) return sendQuestionReply(mctx, target, result, result.question);
   if (result.verbatim) return sendVerbatimReply(mctx, target, result);
   if (result.awaitingAnswer) return sendPlainQuestion(mctx, target, result.text);
   await sendTaskSuccess(mctx, target, result.text);
   return true;
+}
+
+/** The site's pictures above the words. Any that does not go is only logged: the words still do. */
+async function sendPageImages(mctx: TelegramMessagingContext, target: TelegramReplyTarget, images: readonly string[]): Promise<boolean> {
+  const bot = mctx.getBot();
+  if (!bot || images.length === 0) return false;
+  try {
+    if (images.length === 1) await bot.api.sendPhoto(target.chatId, images[0], replyQuote(target));
+    else await bot.api.sendMediaGroup(target.chatId, images.map((image) => InputMediaBuilder.photo(image)), replyQuote(target));
+    return true;
+  } catch (err: unknown) {
+    mctx.onLog(`[telegram] page pictures not sent: ${String(err)}`);
+    return false;
+  }
+}
+
+/** A page as it stands: pictures, the text folded, "analyze" under the last message. */
+async function sendPageForward(mctx: TelegramMessagingContext, target: TelegramReplyTarget, forward: BotPageForward): Promise<void> {
+  const quoted = await sendPageImages(mctx, target, forward.images);
+  const { label, line } = pageAnalyzeChoice(forward, mctx.getStrings());
+  await sendProactive(mctx, target.chatId, pageForwardFolded(forward), {
+    buttons: { flowId: PAGE_ANALYZE_FLOW_ID, userId: target.userId, items: [{ label, input: line }] },
+    ...(!quoted && target.requestMessageId ? { replyTo: target.requestMessageId } : {}),
+  });
+  await deleteQueuedMessage(mctx, target);
 }
 
 /**

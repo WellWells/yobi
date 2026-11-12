@@ -5,6 +5,10 @@ import type { UpdateAvailablePayload } from '../../../shared/types';
 interface UpdateState {
   isChecking: boolean;
   hasUpdate: boolean;
+  /** The app is fetching the update itself. */
+  isDownloading: boolean;
+  /** The update is downloaded and installs on restart. */
+  isReady: boolean;
   checkFailed: boolean;
   /** True only after a check actually came back with "no newer release". */
   upToDate: boolean;
@@ -13,15 +17,18 @@ interface UpdateState {
   releaseUrl: string | null;
   initializeListeners: () => void;
   checkForUpdates: () => Promise<void>;
+  installUpdate: () => Promise<boolean>;
   openReleaseUrl: () => Promise<boolean>;
 }
 
-export type UpdateStatus = 'available' | 'checking' | 'failed' | 'latest' | 'unchecked';
+export type UpdateStatus = 'ready' | 'downloading' | 'available' | 'checking' | 'failed' | 'latest' | 'unchecked';
 
 /** "Latest" needs a check that succeeded; no result yet (dev builds never check) is "unchecked". */
 export function updateStatus(
-  state: Pick<UpdateState, 'hasUpdate' | 'isChecking' | 'checkFailed' | 'upToDate'>,
+  state: Pick<UpdateState, 'hasUpdate' | 'isDownloading' | 'isReady' | 'isChecking' | 'checkFailed' | 'upToDate'>,
 ): UpdateStatus {
+  if (state.isReady) return 'ready';
+  if (state.isDownloading) return 'downloading';
   if (state.hasUpdate) return 'available';
   if (state.isChecking) return 'checking';
   if (state.checkFailed) return 'failed';
@@ -34,6 +41,7 @@ let listenerCleanups: Array<() => void> = [];
 
 function normalizePayload(payload: UpdateAvailablePayload): UpdateAvailablePayload {
   return {
+    ...payload,
     version: payload.version.trim(),
     releaseUrl: payload.releaseUrl.trim(),
   };
@@ -42,6 +50,8 @@ function normalizePayload(payload: UpdateAvailablePayload): UpdateAvailablePaylo
 export const useUpdateStore = create<UpdateState>((set, get) => ({
   isChecking: false,
   hasUpdate: false,
+  isDownloading: false,
+  isReady: false,
   checkFailed: false,
   upToDate: false,
   isStoreBuild: false,
@@ -58,6 +68,22 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
         set({
           isChecking: false,
           hasUpdate: true,
+          isDownloading: payload.autoDownload,
+          isReady: false,
+          checkFailed: false,
+          upToDate: false,
+          newVersion: payload.version,
+          releaseUrl: payload.releaseUrl,
+        });
+      }),
+
+      updateApi.onUpdateDownloaded((rawPayload) => {
+        const payload = normalizePayload(rawPayload);
+        set({
+          isChecking: false,
+          hasUpdate: true,
+          isDownloading: false,
+          isReady: true,
           checkFailed: false,
           upToDate: false,
           newVersion: payload.version,
@@ -69,6 +95,8 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
         set({
           isChecking: false,
           hasUpdate: false,
+          isDownloading: false,
+          isReady: false,
           checkFailed: false,
           upToDate: true,
           newVersion: null,
@@ -76,9 +104,12 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
         });
       }),
 
+      // hasUpdate stays: a failed download falls back to the GitHub button.
       updateApi.onUpdateError(() => {
         set({
           isChecking: false,
+          isDownloading: false,
+          isReady: false,
           checkFailed: true,
           upToDate: false,
         });
@@ -107,6 +138,8 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       set({ isChecking: false, checkFailed: true, upToDate: false });
     }
   },
+
+  installUpdate: () => updateApi.installUpdate(),
 
   openReleaseUrl: async () => {
     const releaseUrl = get().releaseUrl;

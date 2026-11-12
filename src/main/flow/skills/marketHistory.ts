@@ -1,25 +1,14 @@
 import { FlowUserError } from '../userError';
 import { BROWSER_UA, fetchJson } from './skillFetch';
-import { addDays, addMonths, addYears, epochSecOf, localToday, parseDay, splitSpan } from './dateSpan';
+import { addDays, epochSecOf } from './dateSpan';
+import { MAX_HISTORY_YEARS, readHistoryWindow, type HistoryRequest } from '../../../shared/lookupDateWindows';
 import { exchangeDateOf, exchangeOffsetSec, marketSession, utcOffsetLabel } from './quoteTime';
 import type { YahooMeta } from './quoteTime';
 import { parseNumberField } from './numberField';
 
-export const MAX_HISTORY_YEARS = 10;
+export { MAX_HISTORY_YEARS, type HistoryRequest };
 /** Calendar days fetched before the window, so "the close on or before" survives a Lunar New Year closure. */
 export const HISTORY_LOOKBACK_DAYS = 21;
-
-export interface HistoryRequest {
-  /** The summarised window: the period, or the date to today when no period was given. */
-  from: string;
-  to: string;
-  date?: string;
-  /** `to` is today (blank or clamped), so it may move to the exchange's own today. */
-  openEnd: boolean;
-  /** The fetched span: the window widened to hold `date`, which never moves the window itself. */
-  fetchFrom: string;
-  fetchTo: string;
-}
 
 function badPeriod(value: string): FlowUserError {
   return new FlowUserError(
@@ -36,63 +25,14 @@ export function badMarketDate(value: string): FlowUserError {
   );
 }
 
-const PRESET = /^(\d{1,3})\s*(d|days?|w|wk|weeks?|m|mo|mos|months?|y|yr|years?)$/i;
-
-function presetStart(raw: string, today: string): string | null {
-  const text = raw.toLowerCase();
-  if (text === 'ytd') return `${today.slice(0, 4)}-01-01`;
-  if (text === 'max') return addYears(today, -MAX_HISTORY_YEARS);
-  const m = PRESET.exec(text);
-  if (!m) return null;
-  const n = Number(m[1]);
-  const unit = m[2][0];
-  if (unit === 'd') return addDays(today, -n);
-  if (unit === 'w') return addDays(today, -7 * n);
-  if (unit === 'm') return addMonths(today, -n);
-  return addYears(today, -n);
-}
-
-/** null when both fields are blank: the step then runs exactly as it did before they existed. */
+/**
+ * null when both fields are blank: the step then runs exactly as it did before they existed. The
+ * reading itself is `readHistoryWindow`, which the step editor runs too.
+ */
 export function readHistoryRequest(config: Record<string, string>, now: Date): HistoryRequest | null {
-  const periodRaw = (config.period ?? '').trim();
-  const dateRaw = (config.date ?? '').trim();
-  if (!periodRaw && !dateRaw) return null;
-  const today = localToday(now);
-  const earliest = addYears(today, -MAX_HISTORY_YEARS);
-
-  let from: string | null = null;
-  let to = today;
-  let openEnd = true;
-  if (periodRaw) {
-    const span = splitSpan(periodRaw);
-    if (span) {
-      from = parseDay(span[0], today);
-      const end = parseDay(span[1], today);
-      if (!from || !end) throw badPeriod(periodRaw);
-      openEnd = end >= today;
-      to = openEnd ? today : end;
-      // A span that ends before the limit reads fine but has nothing to show: name its end date.
-      if (from <= to && to < earliest) throw badMarketDate(span[1].trim());
-    } else {
-      from = presetStart(periodRaw, today) ?? parseDay(periodRaw, today);
-    }
-    if (!from || from > to) throw badPeriod(periodRaw);
-    if (from < earliest) from = earliest;
-  }
-
-  let date: string | undefined;
-  if (dateRaw) {
-    const day = parseDay(dateRaw, today);
-    // One day past the computer's: an exchange east of it may already be trading tomorrow.
-    if (!day || day > addDays(today, 1) || day < earliest) throw badMarketDate(dateRaw);
-    date = day;
-  }
-  // Date only: the history runs from it to today. With a period, the date is read from the
-  // fetched bars and the period's own figures stay those of the period asked for.
-  const windowFrom = from ?? (date as string);
-  const fetchFrom = date && date < windowFrom ? date : windowFrom;
-  const fetchTo = date && date > to ? (date > today ? today : date) : to;
-  return { from: windowFrom, to, date, openEnd, fetchFrom, fetchTo };
+  const window = readHistoryWindow(config, now);
+  if (window.ok) return window.request;
+  throw window.reason === 'period' ? badPeriod(window.value) : badMarketDate(window.value);
 }
 
 export interface HistoryBar { date: string; close: number; volume: number | null }

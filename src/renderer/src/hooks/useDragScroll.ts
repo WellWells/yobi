@@ -56,6 +56,18 @@ export function createDragScroll(threshold: number = DRAG_SCROLL_THRESHOLD_PX) {
   };
 }
 
+/**
+ * A rail that hides its scrollbar has to move with a plain wheel too: a Windows mouse has no
+ * horizontal axis. Left alone when the gesture is already horizontal (a trackpad swipe) or when
+ * there is nothing to scroll.
+ */
+export function wheelScrollsSideways(e: React.WheelEvent<HTMLDivElement>): void {
+  const rail = e.currentTarget;
+  if (rail.scrollWidth <= rail.clientWidth) return;
+  if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+  rail.scrollLeft += e.deltaY;
+}
+
 export interface DragScrollHandlers {
   onPointerDown: React.PointerEventHandler<HTMLDivElement>;
   onPointerMove: React.PointerEventHandler<HTMLDivElement>;

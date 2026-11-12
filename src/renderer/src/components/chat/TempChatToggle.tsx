@@ -10,7 +10,7 @@ import { useResolvedCombo } from '../../store/shortcutStore';
 
 export const TempChatToggle: React.FC = () => {
   const tempChatMode = useAppStore((s) => s.tempChatMode);
-  const { t } = useI18nStore();
+  const t = useI18nStore((s) => s.t);
   const hint = comboLabel(useResolvedCombo('app.tempChat'), isMac);
   const action = t(tempChatMode ? 'chat.tempMode.disable' : 'chat.tempMode.enable');
   const label = hint ? `${action} (${hint})` : action;

@@ -5,6 +5,8 @@ import { fileApi, promptApi, ipcEvents, shellApi } from '../api/electronApi';
 import { NEW_CONVERSATION_KEY, useAppStore } from '../store/appStore';
 import { remapPathValues, useConversationMoves } from '../store/conversationMoves';
 import { resolveSendTarget } from './sendTarget';
+import { pendingPromptOf } from './useCommandTurn';
+import { consumeSendStopped, giveBackStoppedPrompt } from '../utils/stoppedSends';
 
 export interface SendTurnRequest {
   prompt: string;
@@ -117,8 +119,15 @@ async function handleChatTurn(
   const origin = origins.get(event.sendId);
   origins.delete(event.sendId);
 
-  if (event.phase === 'error') {
+  if (event.stopped) {
+    // Stop pressed: no error to show, and the question goes back into the composer (a `!`
+    // command's turn was kept with its output, so there is nothing to give back).
+    consumeSendStopped(event.sendId);
+    if (!event.kept) giveBackStoppedPrompt(pendingPromptOf(event.sendId));
+  } else if (event.phase === 'error') {
     onError(event.error ?? '');
+  }
+  if (event.phase === 'error') {
     // A `!` command's turn was written without an answer: reloaded like an answered one.
     if (!event.kept) {
       store.clearPendingTurn(event.sendId);

@@ -1,7 +1,11 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { access } from 'node:fs/promises';
 import { Worker } from 'node:worker_threads';
 import { sendLog } from '../../helpers';
 import { FlowUserError } from '../userError';
+import { RANDOM_DEFAULT_MAX, RANDOM_DEFAULT_MIN, RANDOM_MAX_COUNT } from '../../../shared/flowRandom';
+import { JS_PARAM_NAMES, isInjectableIdentifier } from '../../../shared/jsStep';
+import { DEFAULT_STEP_TIMEOUT_MS } from '../../../shared/flowStepTimeout';
 
 /**
  * Split a command line the way a shell would, minus backslash escapes (Windows paths stay literal):
@@ -45,9 +49,16 @@ export async function execRun(config: Record<string, string>): Promise<string> {
   if (!path) return '';
   const argv = parseArgs(config.args ?? '');
   const commandLine = argv.length > 0 ? `${path} ${argv.join(' ')}` : path;
+  const viaLauncher = (process.platform === 'darwin' && path.toLowerCase().endsWith('.app'))
+    || (process.platform === 'win32' && /\.(bat|cmd)$/i.test(path));
+  // `open` and `cmd.exe` start whether or not the target exists, so only a check first sees it missing.
+  if (viaLauncher && isAbsoluteLaunchPath(path) && !(await pathExists(path))) {
+    sendLog(`⚠️ [Flow] Launch failed for "${path}": not found`);
+    throw runLaunchError(path, 'ENOENT', 'not found');
+  }
 
+  let child: ChildProcess;
   try {
-    let child;
     if (process.platform === 'darwin' && path.toLowerCase().endsWith('.app')) {
       const openArgs = argv.length > 0 ? ['-a', path, '--args', ...argv] : ['-a', path];
       child = spawn('open', openArgs, { detached: true, stdio: 'ignore' });
@@ -56,27 +67,53 @@ export async function execRun(config: Record<string, string>): Promise<string> {
     } else {
       child = spawn(path, argv, { detached: true, stdio: 'ignore', windowsHide: false });
     }
-
-    child.on('error', (err: Error) => {
-      sendLog(`⚠️ [Flow] Launch failed for "${path}": ${err.message}`);
-    });
-    child.unref();
   } catch (err) {
-    sendLog(`⚠️ [Flow] Launch failed for "${path}": ${err instanceof Error ? err.message : String(err)}`);
-    return commandLine;
+    const message = err instanceof Error ? err.message : String(err);
+    sendLog(`⚠️ [Flow] Launch failed for "${path}": ${message}`);
+    throw runLaunchError(path, (err as { code?: unknown }).code, message);
   }
+
+  // A program that cannot start (ENOENT, EACCES) reports it in an `error` event after `spawn()`
+  // returns; the step waits for `spawn` or `error` so a launch that never happened is a failure.
+  const started = child;
+  await new Promise<void>((resolve, reject) => {
+    started.on('spawn', () => resolve());
+    started.on('error', (err: Error) => {
+      sendLog(`⚠️ [Flow] Launch failed for "${path}": ${err.message}`);
+      reject(runLaunchError(path, (err as { code?: unknown }).code, err.message));
+    });
+  });
+  started.unref();
 
   sendLog(`🚀 [Flow] Launched: ${commandLine}`);
   return commandLine;
 }
 
+function isAbsoluteLaunchPath(path: string): boolean {
+  return process.platform === 'win32' ? /^(?:[a-z]:[\\/]|\\\\)/i.test(path) : path.startsWith('/');
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** A launch that did not happen: a missing program and a refused one read differently. */
+function runLaunchError(path: string, code: unknown, detail: string): FlowUserError {
+  if (code === 'ENOENT') return new FlowUserError('flow.error.runNotFound', { path }, `Program not found: ${path}`);
+  if (code === 'EACCES' || code === 'EPERM') {
+    return new FlowUserError('flow.error.runNoPermission', { path }, `No permission to start: ${path}`);
+  }
+  return new FlowUserError('flow.error.runLaunchFailed', { path }, `Could not start ${path}: ${detail}`);
+}
+
 export function execText(config: Record<string, string>): string {
   return config.text ?? '';
 }
-
-const RANDOM_MAX_COUNT = 10_000;
-const RANDOM_DEFAULT_MIN = 1;
-const RANDOM_DEFAULT_MAX = 100;
 
 function parseIntOr(raw: string | undefined, fallback: number): number {
   const n = Number.parseInt((raw ?? '').trim(), 10);
@@ -157,25 +194,7 @@ export function coerceJsOutput(value: unknown): string {
   }
 }
 
-const JS_PARAM_NAMES = [
-  'vars', 'JSON', 'Math', 'Date', 'console', 'fetch', 'URL', 'URLSearchParams',
-  'TextEncoder', 'TextDecoder', 'Buffer', 'structuredClone', 'crypto',
-] as const;
-
-// A `const` named like a function parameter is a SyntaxError in the body, so context
-// keys that collide with a parameter stay reachable only through `vars[...]`.
-const JS_RESERVED = new Set<string>([
-  ...JS_PARAM_NAMES,
-  'arguments', 'await', 'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger',
-  'default', 'delete', 'do', 'else', 'enum', 'eval', 'export', 'extends', 'false', 'finally',
-  'for', 'function', 'if', 'implements', 'import', 'in', 'instanceof', 'interface', 'let', 'new',
-  'null', 'package', 'private', 'protected', 'public', 'return', 'static', 'super', 'switch',
-  'this', 'throw', 'true', 'try', 'typeof', 'var', 'void', 'while', 'with', 'yield',
-]);
-
-export function isInjectableIdentifier(key: string): boolean {
-  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) && !JS_RESERVED.has(key);
-}
+export { isInjectableIdentifier };
 
 function parseContextJson(raw: string | undefined): Record<string, string> {
   if (!raw) return {};
@@ -224,7 +243,7 @@ interface JsWorkerResult {
   error?: string;
 }
 
-export async function execJs(config: Record<string, string>, timeoutMs = 60_000): Promise<string> {
+export async function execJs(config: Record<string, string>, timeoutMs = DEFAULT_STEP_TIMEOUT_MS): Promise<string> {
   const code = config.code ?? '';
   if (!code.trim()) return '';
 

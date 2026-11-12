@@ -27,6 +27,7 @@ export interface HeaderMenuDropdownProps {
   /** Absent when the open file is not a conversation with turns; the info area is left out then. */
   onOpenInfo?: () => void;
   onOpenHistory?: () => void;
+  onSaveAsSkill?: () => void;
   translateMenu?: React.ReactNode;
   /** What the search box matches the translate slot by. */
   translateMenuLabel?: string;
@@ -45,7 +46,7 @@ const SEARCH_STYLES = { input: APP_INPUT.input, section: APP_INPUT.section } as 
  */
 export const HeaderMenuDropdown: React.FC<HeaderMenuDropdownProps> = ({
   t, filePath, fileContent, conversation, captureBusy, onOpenCaptureDialog, onOpenShareDialog,
-  onStartRewrite, leadingAction, showLayout: layoutWanted, onOpenInfo, onOpenHistory, translateMenu, translateMenuLabel, onClose,
+  onStartRewrite, leadingAction, showLayout: layoutWanted, onOpenInfo, onOpenHistory, onSaveAsSkill, translateMenu, translateMenuLabel, onClose,
 }) => {
   const [query, setQuery] = useState('');
   const showLayout = (layoutWanted ?? true) && Boolean(fileContent);
@@ -56,12 +57,13 @@ export const HeaderMenuDropdown: React.FC<HeaderMenuDropdownProps> = ({
       fileContent,
       conversation,
       hasHistory: Boolean(onOpenHistory),
+      hasSaveAsSkill: Boolean(onSaveAsSkill),
       ...(translateMenu ? { translateMenuLabel: translateMenuLabel ?? '' } : {}),
       canReask: Boolean(onStartRewrite),
       ...(leadingAction ? { leadingLabel: leadingAction.label } : {}),
     }),
     ...headerDisplaySearchRows(t, showLayout),
-  ]), [query, t, fileContent, conversation, onOpenHistory, translateMenu, translateMenuLabel, onStartRewrite, leadingAction, showLayout]);
+  ]), [query, t, fileContent, conversation, onOpenHistory, onSaveAsSkill, translateMenu, translateMenuLabel, onStartRewrite, leadingAction, showLayout]);
   const show = (id: string): boolean => plan.visible.has(id);
 
   // Searching hides a side with nothing left on it, and the divider with it.
@@ -102,6 +104,7 @@ export const HeaderMenuDropdown: React.FC<HeaderMenuDropdownProps> = ({
           onStartRewrite={onStartRewrite}
           leadingAction={leadingAction?.node}
           onOpenHistory={onOpenHistory}
+          onSaveAsSkill={onSaveAsSkill}
           translateMenu={translateMenu}
           searching={plan.searching}
           show={show}

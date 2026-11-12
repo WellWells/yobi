@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ActionIcon, Badge, Box, Group, Stack, Text } from '@mantine/core';
-import { ChevronDown, ChevronRight, ExternalLink, LogIn, Pencil, Plus, Star, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, ExternalLink, LogIn, Pencil, Plus, Star, Trash } from 'lucide-react';
 import { AppButton } from '../../../../components/AppButton';
 import { AppNumberInput } from '../../../../components/AppNumberInput';
 import { AppPasswordInput } from '../../../../components/AppPasswordInput';
@@ -334,7 +334,7 @@ export const MailAccountSetup: React.FC<Props> = ({ t, onSaved }) => {
                     aria-label={t('settings.mail.account.remove')}
                     onClick={() => setConfirmRemove(account)}
                   >
-                    <Trash2 size={13} />
+                    <Trash size={13} />
                   </ActionIcon>
                 </Group>
               </Group>

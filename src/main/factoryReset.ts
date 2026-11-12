@@ -2,7 +2,7 @@ import { app, session } from 'electron';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { config, getDefaultConfig, saveConfig, wipeSensitiveConfig } from './config';
+import { config, getDefaultConfig, saveConfig, unsettleChatTarget, wipeSensitiveConfig } from './config';
 import { clearAllDataKeys } from './dataKeyStore';
 import { clearAllAuthRecords } from './mcp/mcpTokenStore';
 import { clearAllCalendars } from './calendar/calendarStore';
@@ -26,6 +26,7 @@ import { PTT_BOARDS_FILE } from './ptt/pttBoards';
 import { clearWebHostPolicy } from './net/hostPolicyStore';
 import { telegramUploadSessionPath } from './telegram/mtproto/sessionPath';
 import { wipeGroupChatArchive } from './telegram/groupChatArchive';
+import { telegramFileIdsPath } from './telegram/fileIdCache';
 
 const FACTORY_RESET_PARTITIONS = [
   'persist:gemini',
@@ -55,6 +56,8 @@ export async function applyPendingFactoryReset(): Promise<void> {
     const defaults = getDefaultConfig();
     Object.assign(config, defaults);
     saveConfig(defaults);
+    // Back to a new install: the boot step after this decides the chat model by language again.
+    unsettleChatTarget();
     wipeSensitiveConfig();
     // Both live in their own files, so emptying the config does not touch them: the OAuth
     // tokens and the data-source keys would stay on disk under ids nothing references.
@@ -64,6 +67,8 @@ export async function applyPendingFactoryReset(): Promise<void> {
     clearAllCalendars();
     // The bot's MTProto sign-in for big uploads, also in its own file: an auth key for the bot.
     await fs.rm(telegramUploadSessionPath(), { force: true }).catch(() => {});
+    // The file_ids of what the bot sent (`fileIdCache.ts`): the next send uploads again.
+    await fs.rm(telegramFileIdsPath(), { force: true }).catch(() => {});
     applyLaunchAtStartup(config.launchAtStartup, config.closeToTray);
     resetMetrics();
     resetFlowMetrics();

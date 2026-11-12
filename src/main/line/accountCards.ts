@@ -37,9 +37,12 @@ export function lineAccountActionData(action: AccountAdminAction): string {
   return linePostbackData(LINE_ACCOUNT_ADMIN_PREFIX, accountActionPayload(action));
 }
 
-/** The payload after `ua:`; null for anything this module did not write (LINE has no admin toggle). */
+/**
+ * The payload after `ua:`; null for anything this module did not write. The admin toggle parses
+ * for anyone: only the owner's press of it writes (`applyAccountPress`).
+ */
 export function parseLineAccountAction(payload: string): AccountAdminAction | null {
-  return parseAccountActionPayload(payload, { userIdPattern: LINE_USER_ID, adminGrant: false });
+  return parseAccountActionPayload(payload, { userIdPattern: LINE_USER_ID, adminGrant: true });
 }
 
 export interface LineAccountCardEnv {
@@ -104,6 +107,7 @@ export function lineAccountCardMessage(
     buttons.push(flexButton(t(strings, 'telegram.users.btn.unblock'), action('unblock'), 'secondary'));
   } else if (account.state === 'paired') {
     if (account.owner) lines.push(flexText(t(strings, 'telegram.users.card.ownerMark')));
+    else if (account.admin) lines.push(flexText(t(strings, 'telegram.users.card.adminMark')));
     if (account.grants.includes('shell')) lines.push(flexText(t(strings, 'telegram.users.card.shellReadOnly')));
     if (rights.readOnly) {
       lines.push(flexText(t(strings, rights.readOnly), { color: MUTED }));
@@ -113,6 +117,13 @@ export function lineAccountCardMessage(
         buttons.push(flexButton(
           `${toggle.on ? CHECKED : UNCHECKED} ${accountGrantLabel(toggle.grant, strings)}`,
           lineAccountActionData({ op: 'toggle', userId: account.id, index: toggle.index }),
+          'secondary',
+        ));
+      }
+      if (rights.toggleAdmin) {
+        buttons.push(flexButton(
+          `${account.admin ? CHECKED : UNCHECKED} ${t(strings, 'telegram.users.grant.admin')}`,
+          lineAccountActionData({ op: 'admin', userId: account.id }),
           'secondary',
         ));
       }

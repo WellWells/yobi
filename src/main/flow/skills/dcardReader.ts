@@ -9,7 +9,8 @@ import { isDcardHost, parseDcardUrl, type DcardLink } from '../../../shared/link
 import { siteLabel } from '../../../shared/linkSites/rows';
 import { FlowUserError } from '../userError';
 import {
-  dcardComments, dcardPostFromApi, dcardPostFromLd, dcardPostFromMeta, dcardPostFromNextData, type DcardComment, type DcardPageMeta,
+  dcardComments, dcardPostFromApi, dcardPostFromFlight, dcardPostFromLd, dcardPostFromMeta, dcardPostFromNextData, flightPostKey,
+  type DcardComment, type DcardPageMeta,
 } from './dcardPosts';
 import { stayOnHosts } from './siteFetch';
 import type { XPost, XThread } from './xPosts';
@@ -48,6 +49,8 @@ export interface DcardPageRead {
   api?: string;
   /** The page's `__NEXT_DATA__` text, when it holds the post: then the API was not asked. */
   next?: string;
+  /** The same on Dcard's newer pages: the line of the `self.__next_f` stream that holds the post. */
+  flight?: string;
   ld?: string[];
   meta?: DcardPageMeta;
 }
@@ -75,11 +78,12 @@ export function pageProbe(id: string): string {
     if (document.readyState === 'loading') return null;
     const ld = Array.from(document.querySelectorAll('script[type="application/ld+json"]')).map((s) => s.textContent || '');
     const meta = (name) => Array.from(document.querySelectorAll('meta[property="' + name + '"]')).map((m) => m.getAttribute('content') || '');
-    const answer = (status, api, next) => JSON.stringify({
+    const answer = (status, api, next, flight) => JSON.stringify({
       phase: 'done',
       status,
       api,
       next,
+      flight,
       ld,
       meta: { title: meta('og:title')[0] || document.title, description: meta('og:description')[0] || '', images: meta('og:image') },
     });
@@ -94,6 +98,20 @@ export function pageProbe(id: string): string {
       }
     })();
     if (rendered) return answer(200, '', nextData);
+    // The same post on the pages Next.js streams. A line holds it whole; a chunk may not. Read off
+    // the scripts themselves: once the page has started, chunks no longer stay in \`self.__next_f\`.
+    const stream = Array.from(document.scripts).map((script) => {
+      const text = script.textContent || '';
+      if (!text.startsWith('self.__next_f.push([1,')) return '';
+      try {
+        return JSON.parse(text.slice(text.indexOf('['), text.lastIndexOf(']') + 1))[1];
+      } catch (e) {
+        return '';
+      }
+    }).join('');
+    const flightKey = ${JSON.stringify(flightPostKey(id))};
+    const flight = stream.split('\\n').find((line) => line.includes(flightKey));
+    if (flight) return answer(200, '', '', flight);
     const state = window.__yobiDcard;
     if (state === undefined) {
       window.__yobiDcard = null;
@@ -167,7 +185,8 @@ export function postFromPage(read: DcardPageRead, link: DcardLink): { post: XPos
   if (read.status === 404) return { post: null, ldComments: [], source: 'none' };
   const ld = dcardPostFromLd(read.ld ?? [], link.id, link.url);
   const ldComments = ld?.comments ?? [];
-  const rendered = read.next ? dcardPostFromNextData(read.next, link.id, link.url) : null;
+  const rendered = (read.next ? dcardPostFromNextData(read.next, link.id, link.url) : null)
+    ?? (read.flight ? dcardPostFromFlight(read.flight, link.id, link.url) : null);
   if (rendered) return { post: rendered, ldComments, source: 'page data' };
   if (read.status === 200 && read.api) {
     try {

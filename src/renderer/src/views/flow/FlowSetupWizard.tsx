@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Group, Stack, Text } from '@mantine/core';
-import { TriangleAlert } from 'lucide-react';
+import { TriangleExclamationPoint } from 'lucide-react';
 import { AppModal } from '../../components/AppModal';
 import { VariableField } from './VariableField';
 import { analyzeFlow } from './flowCapabilities';
@@ -10,11 +10,13 @@ import { YtdlToolsSetup } from '../../components/ytdl/YtdlToolsSetup';
 import { GroupHeader } from '../../components/GroupHeader';
 import { useI18nStore } from '../../store/i18nStore';
 import { useAppStore } from '../../store/appStore';
-import { telegramApi, lineApi, socketBotApi } from '../../api/electronApi';
+import { flowApi, telegramApi, lineApi, socketBotApi } from '../../api/electronApi';
 import { SOCKET_BOT_PLATFORMS } from '../../../../shared/types';
-import { missingRequiredVariables } from '../../../../shared/flowVariables';
+import { isUsableWatchFolder } from '../../../../shared/flowFileTrigger';
+import { fillTemplate } from '../../../../shared/fillTemplate';
+import { WIZARD_SETUP_NEEDS, setupMissing, setupNeedsCategory, setupQuestions, watchFolderQuestion, withWatchFolder } from './setupQuestions';
 import type { FlowTemplate } from './examples';
-import type { FlowDefinition, FlowVariable } from '../../../../shared/types';
+import type { FlowDefinition, FlowSetupNeed, SkillType } from '../../../../shared/types';
 import { Z_MODAL_NESTED } from '../../config/zLayers';
 
 export interface FlowSetupWizardProps {
@@ -34,6 +36,7 @@ export const FlowSetupWizard: React.FC<FlowSetupWizardProps> = ({ template, t, o
   const openSettingsCategory = useAppStore((s) => s.openSettingsCategory);
   const [flow, setFlow] = useState<FlowDefinition | null>(null);
   const [botConfigured, setBotConfigured] = useState<boolean | null>(null);
+  const [connectionNeeds, setConnectionNeeds] = useState<FlowSetupNeed[]>([]);
 
   useEffect(() => {
     setFlow(template ? template.build(t, locale) : null);
@@ -41,6 +44,11 @@ export const FlowSetupWizard: React.FC<FlowSetupWizardProps> = ({ template, t, o
 
   const needsBot = useMemo(() => (flow ? analyzeFlow(flow).setup.includes('bot') : false), [flow]);
   const needsYtdlTools = useMemo(() => (flow ? flow.steps.some((s) => s.type === 'youtube_download') : false), [flow]);
+  // A string, so typing an answer (a new `flow` every keystroke) does not ask main again.
+  const stepTypes = useMemo(
+    () => (flow ? [...new Set(flow.steps.map((s) => s.type))].sort().join(' ') : ''),
+    [flow],
+  );
 
   useEffect(() => {
     if (!needsBot) { setBotConfigured(true); return; }
@@ -58,13 +66,33 @@ export const FlowSetupWizard: React.FC<FlowSetupWizardProps> = ({ template, t, o
     return () => { alive = false; };
   }, [needsBot]);
 
+  // A mailbox or the LINE reader that is not set up yet stops the flow at its first run, after
+  // "Add" said nothing: the same check "Create with AI" runs before it builds, asked of main.
+  useEffect(() => {
+    setConnectionNeeds([]);
+    if (!stepTypes) return undefined;
+    let alive = true;
+    void flowApi.setupBlockers(stepTypes.split(' ') as SkillType[]).then((blocked) => {
+      if (!alive) return;
+      const needs = new Set(blocked.map((b) => b.need));
+      setConnectionNeeds(WIZARD_SETUP_NEEDS.filter((need) => needs.has(need)));
+    });
+    return () => { alive = false; };
+  }, [stepTypes]);
+
   if (!template || !flow) return null;
 
   const variables = flow.variables ?? [];
-  const missing = missingRequiredVariables(flow);
+  const questions = setupQuestions(flow, t);
+  const folderQuestion = watchFolderQuestion(flow, t);
+  const missing = setupMissing(flow, t);
   const missingNames = missing.map((v) => v.label || v.key).join(', ');
 
   const setVarValue = (key: string, value: string): void => {
+    if (folderQuestion && key === folderQuestion.key) {
+      setFlow((f) => (f ? withWatchFolder(f, value) : f));
+      return;
+    }
     setVarValues({ [key]: value });
   };
 
@@ -76,6 +104,13 @@ export const FlowSetupWizard: React.FC<FlowSetupWizardProps> = ({ template, t, o
   };
 
   const goToSettings = (): void => { openSettingsCategory('bots'); onNavigateAway(); };
+  const goToConnectors = (): void => { openSettingsCategory(setupNeedsCategory(connectionNeeds)); onNavigateAway(); };
+
+  const folderError = (value: string): string | undefined =>
+    value.trim() && !isUsableWatchFolder(value) ? t('flow.trigger.file.folderInvalid') : undefined;
+
+  const connectionList = new Intl.ListFormat(locale, { type: 'conjunction' })
+    .format(connectionNeeds.map((need) => t(`flow.build.need.${need}`)));
 
   return (
     <AppModal
@@ -89,11 +124,11 @@ export const FlowSetupWizard: React.FC<FlowSetupWizardProps> = ({ template, t, o
       <Stack gap="md">
         <Group gap="sm" align="flex-start" wrap="nowrap">
           <TemplateIcon template={template} size={40} />
-          <Text fz="sm" c="dimmed" style={{ lineHeight: 1.6 }}>{t(template.descKey)}</Text>
+          <Text fz="sm" c="var(--text-muted)" style={{ lineHeight: 1.6 }}>{t(template.descKey)}</Text>
         </Group>
 
         {needsBot && botConfigured === false && (
-          <Alert color="var(--mantine-color-warning)" icon={<TriangleAlert size={14} />} p="xs">
+          <Alert color="var(--mantine-color-warning)" icon={<TriangleExclamationPoint size={14} />} p="xs">
             <Stack gap={6}>
               <Text fz="xs" style={{ lineHeight: 1.6 }}>
                 {t(template.category === 'command'
@@ -107,6 +142,19 @@ export const FlowSetupWizard: React.FC<FlowSetupWizardProps> = ({ template, t, o
           </Alert>
         )}
 
+        {connectionNeeds.length > 0 && (
+          <Alert color="var(--mantine-color-warning)" icon={<TriangleExclamationPoint size={14} />} p="xs">
+            <Stack gap={6}>
+              <Text fz="xs" style={{ lineHeight: 1.6 }}>
+                {fillTemplate(t('flow.setup.needsConnection'), { needs: connectionList })}
+              </Text>
+              <Button variant="light" color="var(--mantine-color-warning)" size="xs" onClick={goToConnectors} style={{ alignSelf: 'flex-start' }}>
+                {t('flow.setup.openSettings')}
+              </Button>
+            </Stack>
+          </Alert>
+        )}
+
         {needsYtdlTools && (
           <Stack gap={6}>
             <GroupHeader label={t('ytdl.tools.title')} variant="plain" />
@@ -114,17 +162,18 @@ export const FlowSetupWizard: React.FC<FlowSetupWizardProps> = ({ template, t, o
           </Stack>
         )}
 
-        {variables.length === 0 ? (
-          <Text fz="sm" c="dimmed">{t('flow.setup.nothingToSetUp')}</Text>
+        {questions.length === 0 ? (
+          <Text fz="sm" c="var(--text-muted)">{t('flow.setup.nothingToSetUp')}</Text>
         ) : (
           <Stack gap="sm">
-            {variables.filter((v: FlowVariable) => !v.hiddenInSetup).map((variable: FlowVariable) => (
+            {questions.map((variable) => (
               <VariableField
                 key={variable.key}
                 variable={variable}
                 allVariables={variables}
                 steps={flow.steps}
                 asQuestion
+                error={variable.key === folderQuestion?.key ? folderError(variable.value) : undefined}
                 onChange={(value) => setVarValue(variable.key, value)}
                 onChangeMany={setVarValues}
                 onBeforeNavigate={onNavigateAway}
@@ -136,8 +185,8 @@ export const FlowSetupWizard: React.FC<FlowSetupWizardProps> = ({ template, t, o
 
         {missing.length > 0 && (
           <Group gap={6} align="center" wrap="nowrap">
-            <TriangleAlert size={13} color="var(--mantine-color-warning)" style={{ flexShrink: 0 }} />
-            <Text fz="xs" c="dimmed">{t('flow.setup.missingPrefix')}{missingNames}</Text>
+            <TriangleExclamationPoint size={13} color="var(--mantine-color-warning)" style={{ flexShrink: 0 }} />
+            <Text fz="xs" c="var(--text-muted)">{t('flow.setup.missingPrefix')}{missingNames}</Text>
           </Group>
         )}
 

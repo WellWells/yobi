@@ -1,5 +1,5 @@
-import { app } from 'electron';
 import { existsSync } from 'node:fs';
+import { getAppVersion } from '../appVersion';
 import AdmZip from 'adm-zip';
 import { BACKUP_CATEGORY_IDS } from '../../shared/types';
 import type { BackupCategoryId, BackupCategoryInfo } from '../../shared/types';
@@ -41,6 +41,13 @@ export async function buildBackupZip(
       } catch {
         continue;
       }
+      for (const companion of def.companions?.() ?? []) {
+        if (!existsSync(companion)) continue;
+        try {
+          zip.addLocalFile(companion, '');
+        } catch {
+        }
+      }
       included.push(id);
       counts[id] = 1;
       continue;
@@ -67,7 +74,7 @@ export async function buildBackupZip(
     type: BACKUP_TYPE,
     version: BACKUP_VERSION,
     createdAt: new Date().toISOString(),
-    appVersion: app.getVersion(),
+    appVersion: getAppVersion(),
     categories: included,
     counts,
   };

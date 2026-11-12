@@ -4,9 +4,8 @@
  * Native-free: it imports only the LineServiceLike type and takes an injected service. The native
  * wiring that builds a real LineService lives in lineConnection.ts.
  */
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { createToolServer, ToolError, ToolResultWithNotes } from '../mcp/inProcessServer';
+import { createToolServer, ToolError, ToolResultWithNotes, type ToolServer } from '../mcp/inProcessServer';
 import { ALSO_NAMED } from '../mcp/schemaAliases';
 import { isLineError } from './errors';
 import { REACTION_NAMES } from './lineMessageParts';
@@ -337,7 +336,7 @@ function lineToolError(err: unknown): Error {
   return new ToolError(err.code, message, candidates.length > 0 ? { candidates } : {});
 }
 
-export function createLineMcpServer(service: LineServiceLike): Server {
+export function createLineMcpServer(service: LineServiceLike): ToolServer {
   return createToolServer({
     name: SERVER_NAME,
     tools: LINE_TOOLS,

@@ -165,12 +165,49 @@ export function dcardPostFromNextData(text: string, id: string, link: string): X
   } catch {
     return null;
   }
-  for (const raw of arr(obj(obj(obj(data)?.props)?.dehydratedState)?.queries)) {
+  return postInQueries(arr(obj(obj(obj(data)?.props)?.dehydratedState)?.queries), id, link);
+}
+
+function postInQueries(queries: unknown[], id: string, link: string): XPost | null {
+  for (const raw of queries) {
     const query = obj(raw);
     const key = arr(query?.queryKey);
     if (key[0] === 'post' && String(key[1] ?? '') === id) return dcardPostFromApi(obj(query?.state)?.data, id, link);
   }
   return null;
+}
+
+/** Every `queries` list anywhere under a parsed row of the stream. */
+function queryListsIn(node: unknown): unknown[][] {
+  if (Array.isArray(node)) return node.flatMap(queryListsIn);
+  const record = obj(node);
+  if (!record) return [];
+  const here = Array.isArray(record.queries) ? [record.queries as unknown[]] : [];
+  return [...here, ...Object.values(record).flatMap(queryListsIn)];
+}
+
+/**
+ * The same post where Dcard's newer pages keep it: the script stream `self.__next_f`,
+ * whose lines are `<row>:<JSON>`, with the React Query state inside one of them.
+ */
+export function dcardPostFromFlight(flight: string, id: string, link: string): XPost | null {
+  for (const line of flight.split('\n')) {
+    if (!line.includes(flightPostKey(id))) continue;
+    try {
+      for (const queries of queryListsIn(JSON.parse(line.slice(line.indexOf(':') + 1)))) {
+        const post = postInQueries(queries, id, link);
+        if (post) return post;
+      }
+    } catch {
+      // A row that is not JSON holds no post.
+    }
+  }
+  return null;
+}
+
+/** How the post's query key reads in the stream. */
+export function flightPostKey(id: string): string {
+  return `"post","${id}"`;
 }
 
 /** A schema.org count by its interaction type (`LikeAction`, `CommentAction`). */

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Anchor, Group, Loader, Text, Tooltip } from '@mantine/core';
-import { Check, CircleAlert, CloudOff } from 'lucide-react';
+import { Check, CircleExclamationPoint, CloudOff } from 'lucide-react';
 import { useFormatTime } from '../../hooks/useFormatTime';
 import { useAppStore } from '../../store/appStore';
 import type { SyncLine } from './documentSync';
@@ -34,18 +34,18 @@ export const SyncStatusLabel: React.FC<{ line: SyncLine | null; t: (key: string)
         </Group>
       );
     case 'conflicts':
-      return text(fillTemplate(t('notion.status.conflicts'), { count: String(line.count) }), 'var(--mantine-color-warning)', <CircleAlert size={12} color="var(--mantine-color-warning)" />);
+      return text(fillTemplate(t('notion.status.conflicts'), { count: String(line.count) }), 'var(--mantine-color-warning)', <CircleExclamationPoint size={12} color="var(--mantine-color-warning)" />);
     case 'locked':
       return text(
         fillTemplate(t('notion.status.locked'), { count: String(line.count) }),
         'var(--mantine-color-warning)',
-        <CircleAlert size={12} color="var(--mantine-color-warning)" />,
+        <CircleExclamationPoint size={12} color="var(--mantine-color-warning)" />,
         t('notion.sync.lockedReason'),
       );
     case 'error':
-      return text(t(`notion.error.${line.error}`), 'var(--mantine-color-error)', <CircleAlert size={12} color="var(--mantine-color-error)" />);
+      return text(t(`notion.error.${line.error}`), 'var(--mantine-color-error)', <CircleExclamationPoint size={12} color="var(--mantine-color-error)" />);
     case 'unsynced':
-      return text(t('notion.status.unsynced'), 'var(--mantine-color-warning)', <CircleAlert size={12} color="var(--mantine-color-warning)" />);
+      return text(t('notion.status.unsynced'), 'var(--mantine-color-warning)', <CircleExclamationPoint size={12} color="var(--mantine-color-warning)" />);
     case 'synced':
       return text(
         line.at ? fillTemplate(t('notion.status.syncedAt'), { time: formatTime(line.at) }) : t('notion.status.synced'),

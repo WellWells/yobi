@@ -80,6 +80,16 @@ export function isSystemFolder(name: string): boolean {
   return Object.values(SYSTEM_FOLDERS).some((system) => folderKey(system) === key);
 }
 
+// A name that is only a label (a flow folder) still may not hold control characters.
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+
+/**
+ * Which names a folder may take: `disk` for a conversation folder, a real folder in outputs;
+ * `label` for a flow folder, which is only a name, so Windows' rules and Yobi's own folder names
+ * do not apply to it.
+ */
+export type FolderNameRules = 'disk' | 'label';
+
 /**
  * The problem with `raw` as a folder name among `existing`, or null when it can be used.
  * `renaming` is the folder being renamed: it does not collide with itself (a change of case is fine).
@@ -88,17 +98,20 @@ export function folderNameProblem(
   raw: string,
   existing: readonly string[],
   renaming?: string,
+  rules: FolderNameRules = 'disk',
 ): FolderNameProblem | null {
   const name = normalizeFolderName(raw);
   if (!name) return 'empty';
   if ([...name].length > FOLDER_NAME_MAX) return 'tooLong';
-  if (INVALID_CHARS.test(name)) return 'invalidChars';
-  if (name.startsWith('.')) return 'leadingDot';
-  if (/[. ]$/.test(name)) return 'trailingDotOrSpace';
-  if (WINDOWS_RESERVED.test(name)) return 'reserved';
+  if ((rules === 'disk' ? INVALID_CHARS : CONTROL_CHARS).test(name)) return 'invalidChars';
+  if (rules === 'disk') {
+    if (name.startsWith('.')) return 'leadingDot';
+    if (/[. ]$/.test(name)) return 'trailingDotOrSpace';
+    if (WINDOWS_RESERVED.test(name)) return 'reserved';
+  }
   const key = folderKey(name);
   const own = renaming === undefined ? null : folderKey(renaming);
-  if (isSystemFolder(name) && key !== own) return 'system';
+  if (rules === 'disk' && isSystemFolder(name) && key !== own) return 'system';
   if (existing.some((other) => folderKey(other) === key && folderKey(other) !== own)) return 'duplicate';
   return null;
 }

@@ -1,25 +1,17 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Box, Group } from '@mantine/core';
 import type { ConversationDoc } from '../../../../shared/conversationDoc';
+import { SkillEditorModal } from '../../views/settings/sections/skills/SkillEditorModal';
+import type { SkillEditTarget } from '../../views/settings/sections/skills/SkillEditorModal';
 import { ChatHeaderRow } from './ChatHeaderRow';
-import { HeaderTitleField } from './HeaderTitleField';
 import { HeaderMenuDropdown } from './headerMenu/HeaderMenuDropdown';
 import { HeaderMoreMenu } from './headerMenu/HeaderMoreMenu';
 
 interface FileHeaderBarProps {
-  /** The conversation's H1 (the file name without `.md` when it has none); see `conversationHeaderTitle`. */
-  title: string;
   filePath: string;
   fileContent: string | null;
   /** The parsed conversation; `null` for a file that is not one. */
   conversation: ConversationDoc | null;
-  titleEditing: boolean;
-  titleEditValue: string;
-  setTitleEditValue: (value: string) => void;
-  onCommitTitleEdit: () => void;
-  onCancelTitleEdit: () => void;
-  onStartTitleEdit: () => void;
-  titleInputRef: React.RefObject<HTMLInputElement | null>;
   viewMenuRef: React.RefObject<HTMLDivElement | null>;
   viewMenuOpen: boolean;
   onToggleViewMenu: () => void;
@@ -40,18 +32,14 @@ interface FileHeaderBarProps {
   translateMenuLabel?: string;
 }
 
+/**
+ * The open file's top row: only ⋮. The conversation's H1 is the reading column's own heading,
+ * renamed there (`ConversationTitle`), so the row does not repeat it.
+ */
 export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
-  title,
   filePath,
   fileContent,
   conversation,
-  titleEditing,
-  titleEditValue,
-  setTitleEditValue,
-  onCommitTitleEdit,
-  onCancelTitleEdit,
-  onStartTitleEdit,
-  titleInputRef,
   viewMenuRef,
   viewMenuOpen,
   onToggleViewMenu,
@@ -65,20 +53,12 @@ export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
   onOpenHistory,
   translateMenu,
   translateMenuLabel,
-}) => (
+}) => {
+  // "Save as skill…" opens the skill editor here, over the conversation, with the draft starting at once.
+  const [skillTarget, setSkillTarget] = useState<SkillEditTarget | null>(null);
+  const canSaveAsSkill = (conversation?.turns.length ?? 0) > 0;
+  return (
   <ChatHeaderRow>
-    <HeaderTitleField
-      title={title}
-      titleEditing={titleEditing}
-      titleEditValue={titleEditValue}
-      setTitleEditValue={setTitleEditValue}
-      onCommitTitleEdit={onCommitTitleEdit}
-      onCancelTitleEdit={onCancelTitleEdit}
-      onStartTitleEdit={onStartTitleEdit}
-      titleInputRef={titleInputRef}
-      t={t}
-    />
-
     <Group gap={6} wrap="nowrap" ml="auto" style={{ flexShrink: 0 }}>
       <Box ref={viewMenuRef} pos="relative">
         <HeaderMoreMenu opened={viewMenuOpen} onToggle={onToggleViewMenu} onClose={onCloseViewMenu} t={t}>
@@ -94,6 +74,7 @@ export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
             onStartRewrite={onStartRewrite}
             onOpenInfo={onOpenInfo}
             onOpenHistory={onOpenHistory}
+            {...(canSaveAsSkill ? { onSaveAsSkill: () => setSkillTarget({ kind: 'conversation', path: filePath }) } : {})}
             translateMenu={translateMenu}
             translateMenuLabel={translateMenuLabel}
             onClose={onCloseViewMenu}
@@ -101,5 +82,7 @@ export const FileHeaderBar: React.FC<FileHeaderBarProps> = ({
         </HeaderMoreMenu>
       </Box>
     </Group>
+    <SkillEditorModal target={skillTarget} onClose={() => setSkillTarget(null)} t={t} />
   </ChatHeaderRow>
-);
+  );
+};

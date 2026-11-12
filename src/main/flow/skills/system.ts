@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { isIP } from 'node:net';
 import * as os from 'node:os';
 import { app } from 'electron';
+import { getAppVersion } from '../../appVersion';
 import { ensureHttpScheme } from '../../urlParser';
 import { relaunchApp, sendLog } from '../../helpers';
 import { resolveSysInfoSelection, SYSINFO_FIELDS } from '../../../shared/sysinfoFields';
@@ -198,7 +199,7 @@ export async function execSysInfo(config: Record<string, string>): Promise<strin
     cpuCores: () => cpus.length,
     memoryTotal: () => formatBytes(os.totalmem()),
     memoryFree: () => formatBytes(os.freemem()),
-    appVersion: () => app.getVersion(),
+    appVersion: () => getAppVersion(),
     electron: () => process.versions.electron,
     node: () => process.versions.node,
     chrome: () => process.versions.chrome,
@@ -353,11 +354,15 @@ export async function execPower(config: Record<string, string>): Promise<string>
     return '';
   }
   if (!POWER_ACTIONS.has(action)) {
-    throw new Error(`Unknown power action: ${action}`);
+    throw new FlowUserError('flow.error.powerUnknown', { action }, `Unknown power action: ${action}`);
   }
   const resolved = resolvePowerCommand(action as PowerAction);
   if (!resolved) {
-    throw new Error(`Power action "${action}" is not supported on ${process.platform}`);
+    throw new FlowUserError(
+      'flow.error.powerUnsupported',
+      { action },
+      `Power action "${action}" is not supported on ${process.platform}`,
+    );
   }
 
   const child = spawn(resolved.cmd, resolved.args, { detached: true, stdio: 'ignore', windowsHide: true });

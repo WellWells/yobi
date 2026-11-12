@@ -108,9 +108,15 @@ export function isBotGrant(value: unknown): value is BotGrant {
   return CONNECTOR_ID_PATTERN.test(value.slice(CONNECTOR_GRANT_PREFIX.length));
 }
 
-/** Admin is three Telegram commands; LINE has none of them, so it is never offered there. */
+/**
+ * The platforms with admins: an admin manages accounts and groups from the chat and runs the flow
+ * commands kept for admins. Telegram, LINE and LINE PC have those; Discord and Slack do not, so
+ * admin is never offered there.
+ */
+export const ADMIN_PLATFORMS: readonly BotPlatform[] = ['telegram', 'line', 'lineSelf'] as const;
+
 export function isGrantAvailableOn(grant: BotGrant, platform: BotPlatform): boolean {
-  return grant !== 'admin' || platform === 'telegram';
+  return grant !== 'admin' || ADMIN_PLATFORMS.includes(platform);
 }
 
 function grantRank(grant: BotGrant): number {
@@ -148,12 +154,23 @@ export function normalizeGrantList(raw: unknown, platform: BotPlatform): BotGran
 }
 
 /**
- * Whether a grant may be one the owner hands every new pairing: anything but the grants always
- * given by name. A pairing code is passed around; shell or admin for whoever redeems it would be
- * the computer or the bot's settings for whoever gets hold of the code.
+ * What an admin who is not the owner may switch on someone from a chat: agent, web, the downloader,
+ * the preview and the public-data connectors — nothing that reads this computer or the owner's own
+ * data (local, `connector:*`, a private connector), which an admin could otherwise hand a friend.
+ */
+export function isAdminGrantable(grant: BotGrant): boolean {
+  if (grant === 'agent' || grant === 'web' || grant === 'download' || grant === 'preview') return true;
+  return grant.startsWith(CONNECTOR_GRANT_PREFIX) && PUBLIC_DATA_CONNECTOR_IDS.includes(grant.slice(CONNECTOR_GRANT_PREFIX.length));
+}
+
+/**
+ * Whether a grant may be one every new pairing gets: only what an admin may hand out by hand. An
+ * admin lets people in, and the defaults reach each of them, so they may not be more than that
+ * admin could give: never shell or admin (the computer, the bot's settings), nor local, all
+ * connectors or a private connector (this computer, the owner's own data).
  */
 export function isDefaultableGrant(grant: BotGrant): boolean {
-  return !isExplicitGrant(grant);
+  return isAdminGrantable(grant);
 }
 
 /** The stored defaults for new pairings, kept to tokens the platform offers and may default. */
@@ -196,7 +213,7 @@ export function ownerImpliesGrant(grant: BotGrant): boolean {
  * One paired account's rights in one chat, from the capability table (`botCapabilities.ts`): a
  * capability counts when the owner mark implies it, every paired account has it, or the account
  * holds its grant — and only where it reaches (a private chat, or a group for what goes there).
- * Shell also needs agent; admin is Telegram only. The preview is the grant alone: the downloader
+ * Shell also needs agent; admin only where the platform has admins (`ADMIN_PLATFORMS`). The preview is the grant alone: the downloader
  * it needs may be a group's, so it is checked where a preview is made (`ytdlAccessFor`). Unpaired
  * people never come here.
  */
@@ -226,7 +243,7 @@ export function resolveBotRights(input: BotRightsInput): BotRights {
     preview: has('preview'),
     local: has('local'),
     shell: has('shell') && has('agent'),
-    admin: input.platform === 'telegram' && has('admin'),
+    admin: isGrantAvailableOn('admin', input.platform) && has('admin'),
     connectors,
   };
 }
@@ -400,6 +417,7 @@ export interface BotSetPermissionsRequest {
   grants: BotGrant[];
 }
 
+/** `adminUnavailable`: admin on a platform without admins (`ADMIN_PLATFORMS`). */
 export type BotSetPermissionsFailure = 'invalidRequest' | 'notPaired' | 'invalidGrant' | 'adminUnavailable';
 
 /** Replaces what a platform's accounts are given the moment they pair. */
@@ -408,8 +426,11 @@ export interface BotSetDefaultGrantsRequest {
   grants: BotGrant[];
 }
 
-/** `explicitGrant`: shell or admin, which are never a default. */
-export type BotSetDefaultGrantsFailure = 'invalidRequest' | 'invalidGrant' | 'explicitGrant';
+/**
+ * `explicitGrant`: shell or admin, which are never a default. `ownerOnlyGrant`: local, all
+ * connectors or a private connector — more than an admin may hand out (`isDefaultableGrant`).
+ */
+export type BotSetDefaultGrantsFailure = 'invalidRequest' | 'invalidGrant' | 'explicitGrant' | 'ownerOnlyGrant';
 
 export type BotSetDefaultGrantsResult =
   | { ok: true; grants: BotGrant[] }

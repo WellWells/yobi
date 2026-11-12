@@ -11,6 +11,28 @@
   margin: 4px 8px;
 }
 
+/* A flow inside an open folder: its name starts under the folder's name (the frame's 8px, the
+   folder row's 10px padding, FolderRow's 15px icon and 8px gap, less this row's 12px padding). */
+.frame[data-indented] {
+  margin-left: 29px;
+}
+
+/* A section heading or folder row (the chat sidebar's own parts), in the flow rows' column. */
+.groupRow {
+  margin: 2px 8px;
+}
+
+/* Space above the second section heading, so the sections read as blocks. */
+.groupRow[data-section-gap] {
+  margin-top: 10px;
+}
+
+/* A flow dragged over the 「流程」 heading would be moved out of its folder. */
+.groupRow[data-drop-target] {
+  border-radius: 8px;
+  background: var(--mantine-color-accent-dim);
+}
+
 .row {
   padding: 6px 10px 6px 12px;
   border-radius: 8px;
@@ -29,8 +51,8 @@
   background: var(--mantine-color-accent-dim);
 }
 
-/* dnd-kit drags this row in place — there is no DragOverlay, the original just gets
-   opacity 0.9 — so a transparent fill would let the rows underneath show through it. */
+/* The dragged copy in dnd-kit's DragOverlay floats over the other rows, so a transparent fill
+   would let the rows underneath show through it. */
 .sortableWrap[data-dragging='true'] .row {
   background: var(--mantine-color-default);
 }

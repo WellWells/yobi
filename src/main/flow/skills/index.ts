@@ -20,6 +20,7 @@ import { execGmapReviews } from './mapReviews';
 import { execLineRead } from './lineMessages';
 import { execTelegramRead } from './telegramRead';
 import { execMcp } from './mcpCall';
+import { execTranslate } from './translate';
 import { execXPosts, execXThread, execXTrends } from './x';
 import { execXMedia } from './xMedia';
 import { execPttBoard } from './pttBoard';
@@ -40,6 +41,8 @@ import {
   execShell,
 } from './actions';
 
+export { execTrustedCalls } from './actions';
+
 export async function executeSkill(
   type: SkillType,
   stepId: string,
@@ -57,10 +60,12 @@ export async function executeSkill(
       return execJs(config, timeoutMs);
     case 'text':
       return execText(config);
+    case 'translate':
+      return execTranslate(config, signal);
     case 'random':
       return execRandom(config);
     case 'browser':
-      return execBrowser(config);
+      return execBrowser(config, deps.onStepOutput);
     case 'browser_open':
       return execBrowserOpen(config);
     case 'browser_js':
@@ -86,7 +91,7 @@ export async function executeSkill(
     case 'scraper':
       return execScraper(config, stepId);
     case 'search':
-      return execSearch(config);
+      return execSearch(config, deps);
     case 'research':
       return execResearch(config, deps);
     case 'gmap_reviews':

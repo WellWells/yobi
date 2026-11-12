@@ -25,7 +25,19 @@ export interface RecipientEntry {
   kind: 'person' | 'chat';
   /** Marked as the user themself in Settings, and still paired. */
   self: boolean;
+  /**
+   * A LINE PC group or friend read from LINE's own database, not a paired account. It resolves a
+   * name the user wrote, and names an id in the confirmation; it is never offered as a choice in a
+   * question (those words reach the model in /agent) and never counted in what the model reads.
+   */
+  live?: true;
 }
+
+/**
+ * At most this many LINE PC chats per bot step: every message goes from the user's own account,
+ * and one account messaging many chats at once is what LINE is most likely to restrict.
+ */
+export const LINE_SELF_MAX_RECIPIENTS = 20;
 
 export interface RecipientDirectory {
   connected: Record<BotPlatform, boolean>;
@@ -50,9 +62,11 @@ interface PairedPeopleSource {
 type StringIdPlatform = Exclude<BotPlatform, 'telegram'>;
 const STRING_ID_PLATFORMS: readonly StringIdPlatform[] = ['line', 'discord', 'slack', 'lineSelf'];
 
-export interface RecipientSources extends Partial<Record<Exclude<StringIdPlatform, 'line'>, PairedPeopleSource>> {
+export interface RecipientSources extends Partial<Record<Exclude<StringIdPlatform, 'line' | 'lineSelf'>, PairedPeopleSource>> {
   telegram: { connected: boolean; pairedUsers: readonly TelegramPairedUser[]; channels: readonly TelegramChannel[] };
   line: PairedPeopleSource;
+  /** LINE PC: its paired people, and the groups and friends LINE PC has (`chats`), when read for this build. */
+  lineSelf?: PairedPeopleSource & { chats?: readonly { id: string; label: string }[] };
   /** The ids ticked as "this is me" in Settings, per platform. */
   self: Partial<Record<BotPlatform, readonly string[]>>;
 }
@@ -104,7 +118,20 @@ export function buildRecipientDirectory(src: RecipientSources): RecipientDirecto
       });
     }
   }
+  if (src.lineSelf?.connected) {
+    const paired = new Set(entries.filter((entry) => entry.platform === 'lineSelf').map((entry) => entry.id));
+    for (const chat of src.lineSelf.chats ?? []) {
+      if (paired.has(chat.id)) continue;
+      // A chat, never a person: people decide what "me", a blank field and the recipient question mean.
+      entries.push({ platform: 'lineSelf', id: chat.id, label: chat.label, kind: 'chat', keys: keysOf(chat.label), self: false, live: true });
+    }
+  }
   return { connected, entries };
+}
+
+/** The entries the recipient question and the setup line may use: never LINE PC's own chat list. */
+export function pairedEntries(dir: RecipientDirectory): RecipientEntry[] {
+  return dir.entries.filter((entry) => !entry.live);
 }
 
 /**
@@ -145,6 +172,16 @@ const RECIPIENT_ID_PATTERNS: Readonly<Record<StringIdPlatform, RegExp>> = {
 };
 const SELF_TOKENS = new Set(['me', 'myself', 'self', '我', '我自己', '自己', '本人', '我本人']);
 const ALL_TOKENS = new Set(['all', 'everyone', '*', '所有人', '全部', '大家']);
+
+/** "me", "我自己"…: the user themself, as the run reads the word. */
+export function namesSelf(token: string): boolean {
+  return SELF_TOKENS.has(normalizeRecipientName(token));
+}
+
+/** "all", "所有人"…: every paired person, as the run reads the word. */
+export function namesEveryone(token: string): boolean {
+  return ALL_TOKENS.has(normalizeRecipientName(token));
+}
 
 export function isRecipientId(token: string, platform: BotPlatform): boolean {
   const value = token.trim();

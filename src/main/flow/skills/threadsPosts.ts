@@ -171,15 +171,6 @@ function restrictedRoute(html: string): Json | undefined {
 }
 
 /**
- * Whether the page is the one Threads serves in place of a post it does not show to everyone
- * ("this content isn't available to everyone"): HTTP 200, no post. Told by the route the page names
- * in its `data-sjs` data, not by its words, which follow the session's language.
- */
-export function isThreadsRestrictedPage(html: string): boolean {
-  return restrictedRoute(html) !== undefined;
-}
-
-/**
  * Who that page was served to, by the `actorID` on its route: "0" is a visitor — sent with the
  * sign-in's cookies, Threads no longer counts them as signed in — anything else an account. null
  * when the page is not that one.

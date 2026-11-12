@@ -83,7 +83,7 @@ const VERIFY_RETRY_DELAYS_MS: readonly number[] = [2_000, 4_000];
 let retryDelays = VERIFY_RETRY_DELAYS_MS;
 
 /** Overrides the verify retry delays; the defaults add six seconds to every not-found case. */
-export function setVerifyRetryDelaysForTests(delays: readonly number[] = VERIFY_RETRY_DELAYS_MS): void {
+export function setVerifyRetryDelays(delays: readonly number[] = VERIFY_RETRY_DELAYS_MS): void {
   retryDelays = delays;
 }
 

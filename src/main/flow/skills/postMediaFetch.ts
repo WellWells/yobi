@@ -3,14 +3,15 @@ import * as path from 'node:path';
 import { once } from 'node:events';
 import { getLangCache, t } from '../../i18n';
 import { destinationLimitBytes, isAccountLink, isStoryLink, pickVariant, variantBytes } from '../../../shared/xMedia';
-import type { SizedVariant, XMediaDestination, XMediaInput } from '../../../shared/xMedia';
+import type { PostSource, SizedVariant, XMediaDestination, XMediaInput } from '../../../shared/xMedia';
+import { ReadCache } from '../../downloader/readCache';
 import { formatLimit, formatMegabytes, safeFolderName, safeVideoFileName } from '../../../shared/ytdl';
 import { toIsoDate } from '../../../shared/flowScheduleCore';
 import { ensureFaststart } from '../../downloader/faststart';
 import { fetchLimitFor } from '../../downloader/fetchLimits';
 import { FlowUserError } from '../userError';
 import { downloadsFolder } from './fileOps';
-import { postFileStem, siteName } from './postReader';
+import { POST_READ_TTL_MS, postFileStem, siteName } from './postReader';
 import { diskFullError, fetchPostStream } from './postStream';
 import type { XMedia, XPost, XVideoVariant } from './xPosts';
 
@@ -31,8 +32,19 @@ export function isLocked(variant: Pick<XVideoVariant, 'headers' | 'stream'>): bo
   return variant.headers !== undefined || variant.stream !== undefined;
 }
 
+/** A version's size, as its HEAD answered, kept as long as a post read is (`POST_READ_TTL_MS`): a kept read asks again for nothing. */
+const sizes = new ReadCache<number>(500);
+
 async function sizeOf(variant: XVideoVariant, signal?: AbortSignal): Promise<number | null> {
   if (variant.sizeBytes !== undefined && variant.sizeBytes > 0) return variant.sizeBytes;
+  const known = sizes.get(variant.url);
+  if (known !== undefined) return known;
+  const size = await headSize(variant, signal);
+  if (size !== null) sizes.set(variant.url, size, POST_READ_TTL_MS);
+  return size;
+}
+
+async function headSize(variant: XVideoVariant, signal?: AbortSignal): Promise<number | null> {
   try {
     // The URL came from a page: no redirect is followed anywhere off it.
     const res = await fetch(variant.url, {
@@ -145,6 +157,23 @@ export async function chooseVariant(
     { size, limit: formatLimit(limit ?? 0) },
     `Even the smallest version of this video (${size}) is over the ${formatLimit(limit ?? 0)} this chat takes`,
   );
+}
+
+/**
+ * What a saved media file is a copy of, for the downloads ledger (`findSourcedDownload`): the site,
+ * the post, the item's place, which version (`what`: a video's quality and bitrate, a photo's
+ * size) and the address's path without its query — the signature in the query changes on every
+ * read, the path does not. A key that no longer matches (a story list that moved, a site whose
+ * paths change per read) only means fetching it again, never another item's file.
+ */
+export function mediaSource(source: PostSource, post: Pick<XPost, 'id'>, index: number, what: string, url: string): string {
+  let pathname = '';
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    // A version made of streams may carry no single address: the rest still names it.
+  }
+  return ['post', source, post.id, String(index), what, pathname].join('|');
 }
 
 /** The file name of the post's item `index` of `count`: `<stem>.mp4`, or `<stem>-2.mp4` among several. */

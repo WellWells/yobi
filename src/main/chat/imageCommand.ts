@@ -19,6 +19,7 @@ import { IMAGE_CONTEXT_TURNS, buildImagePrompt, pointsBack } from './imagePrompt
 import { ensureWorkerWindow } from '../windows';
 import { workerWindowUnavailable } from '../workerWindowError';
 import { llmLane } from '../flow/lanes';
+import { yieldRunSlot } from '../flow/flowQueue';
 import { busyUntilSettled } from '../conversationBusy';
 import { answerTextWithPictures, keepAnswerPictures } from './answerPictures';
 import { deliverCommandResultToTempChat, saveCommandOutput } from './commandOutput';
@@ -43,6 +44,11 @@ export interface ImageRunRequest {
   /** Name prefix for the file the answer starts when there is no conversation yet (a bot chat's). */
   fileLabel?: string;
   clientToken?: string;
+  /**
+   * The composer's Stop. A picture still queued is not drawn; one being drawn is let finish on the
+   * page (the send is not cancellable there) but is not written into the conversation.
+   */
+  signal?: AbortSignal;
 }
 
 export interface ImageRunOutcome {
@@ -92,7 +98,8 @@ interface Drawn {
  * once the picture is saved: the picture is what was asked for, not the conversation.
  */
 async function drawOnWeb(prompt: string, providerUrl: string): Promise<Drawn> {
-  return llmLane.runExclusive(async () => {
+  // Drawing is the model's work: the wait and the drawing lend the run's queue slot.
+  return yieldRunSlot(() => llmLane.runExclusive(async () => {
     // The request ends the prompt: refused rather than cut, at the cap that holds once it is our turn.
     const prepared = preparePromptForProvider(prompt, providerUrl, { refuseCut: true });
     const worker = await ensureWorkerWindow(config.targetUrl, 'automation');
@@ -120,7 +127,7 @@ async function drawOnWeb(prompt: string, providerUrl: string): Promise<Drawn> {
       await discardChatgptConversation(worker.webContents, result.threadUrl);
     }
     return { response: pictured.response, title: pictured.title, files };
-  });
+  }));
 }
 
 /** What `/agent`'s `draw_image` got back: the kept pictures, or why there are none. */
@@ -242,7 +249,13 @@ export function runImageCommand(flowManager: FlowManager | undefined, request: I
     return { success: true, filePath, answer: response, title, files, providerLabel };
   };
 
+  const stopped = (): ImageRunOutcome => {
+    sendLog('⏹️ [Image] Stopped from the composer — nothing is added to the conversation');
+    return { success: false, error: localizeUserFacingError('Aborted by user', strings), providerLabel };
+  };
+
   const run = async (): Promise<ImageRunOutcome> => {
+    if (request.signal?.aborted) return stopped();
     startedAt = Date.now();
     sendLog(`🖼️ [Image] Drawing on ${providerLabel}${detectProvider(providerUrl) === 'chatgpt' ? ' (conversation deleted afterwards)' : ''}: "${compactPreview(prompt, 80)}"`);
     try {
@@ -250,6 +263,7 @@ export function runImageCommand(flowManager: FlowManager | undefined, request: I
       const earlier = await earlierTurns(conversationPath, tempChat);
       if (earlier.length > 0 && pointsBack(pagePrompt)) sendLog(`🧵 [Image] Sending the last ${Math.min(earlier.length, IMAGE_CONTEXT_TURNS)} turn(s) along as context`);
       const drawn = await drawOnWeb(buildImagePrompt(pagePrompt, earlier), providerUrl);
+      if (request.signal?.aborted) return stopped();
       const { files } = drawn;
       if (files.length === 0) {
         const miss = classifyImageMiss(drawn.response);
@@ -276,6 +290,7 @@ export function runImageCommand(flowManager: FlowManager | undefined, request: I
       }),
       undefined,
       (request.clientToken ?? '').trim() || undefined,
+      conversationPath,
     )
     : run();
   // Busy from queued to delivered: the answer is written into this conversation.

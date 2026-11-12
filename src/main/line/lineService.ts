@@ -23,6 +23,7 @@ import { nativeAction, nativeDownloadFile, nativeSend, nativeSendFile, nativeSen
 import type { NativeClientEnv } from './nativeContract';
 import { reactToMessage, unsendMessage, type ActionPlan, type ReactOptions, type UnsendOptions } from './lineAction';
 import { runDownload } from './lineDownload';
+import { downloadChatMessage, type MessageDownloadRequest } from './lineMessageDownload';
 import type { DownloadQuery, DownloadResult, PreviewQuery, PreviewResult } from './lineMediaRows';
 import { runPreview } from './linePreview';
 import { connectSquare, type SquareCaller } from './lineSquareServer';
@@ -315,6 +316,25 @@ export class LineService implements LineServiceLike {
     });
   }
 
+  /**
+   * One message's picture or file for a bot request, read on a fresh handle (it was just stored):
+   * only from the chat named, into the caller's folder and name, with the caller's tokens.
+   */
+  async downloadMessage(req: MessageDownloadRequest): Promise<DownloadResult> {
+    const { reader, close } = await this.openFresh();
+    try {
+      return await downloadChatMessage(reader, req, {
+        nativeDownloadFile,
+        clientEnv: () => this.clientEnv(),
+        now: () => Date.now(),
+        pause: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        exePath: process.execPath,
+      });
+    } finally {
+      close();
+    }
+  }
+
   /** line_preview: cached thumbnails, decrypted into Downloads/Yobi/previews. Offline. */
   async preview(q: PreviewQuery): Promise<PreviewResult[]> {
     const reader = await this.getReader();
@@ -329,9 +349,9 @@ export class LineService implements LineServiceLike {
   private async resolveKey(dbPath: string): Promise<string> {
     const stored = loadStoredLineKey();
     if (stored && probeKey(dbPath, stored)) return stored;
-    if (stored) forgetStoredLineKey();
+    if (stored) await forgetStoredLineKey();
     const scanned = await extractLineKey(dbPath, probeKey);
-    rememberLineKey(scanned);
+    await rememberLineKey(scanned);
     return scanned;
   }
 

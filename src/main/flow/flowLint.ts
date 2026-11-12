@@ -1,13 +1,15 @@
 import type {
   FlowBuildBlocker, FlowBuildIssue, FlowDefinition, SkillInstance, SkillType,
 } from '../../shared/types';
+import { parseBotPlatform } from '../../shared/types';
 import { SKILL_SPECS } from '../../shared/flowSkillSpecs';
+import { botStepTargets, LINE_SELF_MAX_RECIPIENTS, splitTargets } from '../../shared/botRecipients';
 import type { RecipientIssue } from '../../shared/botRecipients';
 
 /**
  * What the verify phase adds on top of `validateFlowCandidate`. That one already rejects unknown
  * variables, unbalanced loop/if blocks and duplicate output keys, and a flow that fails it never
- * reaches here. These three are the faults it lets through — each one produces a flow that saves
+ * reaches here. These are the faults it lets through — each one produces a flow that saves
  * cleanly and then does nothing useful at run time, which is the failure the user cannot see.
  */
 
@@ -80,6 +82,20 @@ function setupIssues(
   return issues;
 }
 
+/**
+ * A LINE PC step naming more chats than one step may send to: the run refuses it, so the flow
+ * would fail every time. `detail` is how many it names.
+ */
+function recipientCapIssues(steps: readonly SkillInstance[]): FlowBuildIssue[] {
+  const issues: FlowBuildIssue[] = [];
+  steps.forEach((step, index) => {
+    if (step.type !== 'bot' || parseBotPlatform(step.config.platform) !== 'lineSelf') return;
+    const count = new Set(splitTargets(botStepTargets(step.config))).size;
+    if (count > LINE_SELF_MAX_RECIPIENTS) issues.push({ kind: 'tooManyRecipients', step: index + 1, skill: 'bot', detail: String(count) });
+  });
+  return issues;
+}
+
 /** Every issue worth telling the user about, in step order within each kind. */
 export function lintGeneratedFlow(
   flow: FlowDefinition,
@@ -89,6 +105,7 @@ export function lintGeneratedFlow(
     ...blankIssues(flow.steps),
     ...failSoftIssues(flow.steps),
     ...setupIssues(flow.steps, blocked),
+    ...recipientCapIssues(flow.steps),
   ];
 }
 

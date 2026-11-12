@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Group, ScrollArea, Stack, Text } from '@mantine/core';
-import { RotateCcw, Trash2 } from 'lucide-react';
+import { RotateCcw, Trash } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import type { FlowChangeSummary, FlowVersionView } from '../../../../shared/flowVersions';
 import { flowVersionNoneKey, isEmptyFlowChange } from '../../../../shared/flowVersions';
@@ -132,7 +132,7 @@ export const FlowVersionsDialog: React.FC<FlowVersionsDialogProps> = ({ open, on
               </Stack>
             </ScrollArea>
             <Group justify="flex-end" gap={8}>
-              <AppButton variant="subtle" color="red" leftSection={<Trash2 size={14} />} onClick={() => { void deleteOne(); }}>
+              <AppButton variant="subtle" color="red" leftSection={<Trash size={14} />} onClick={() => { void deleteOne(); }}>
                 {t('history.deleteOne')}
               </AppButton>
               <AppButton

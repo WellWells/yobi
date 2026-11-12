@@ -4,11 +4,10 @@
  * Takes an injected reader; the real one, which reads facebook.com with the user's sign-in, is
  * wired in facebookConnection.ts.
  */
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { parseFacebookUrl } from '../../shared/facebookLinks';
 import { localIso } from '../x/xMcpServer';
-import { createToolServer } from '../mcp/inProcessServer';
+import { createToolServer, type ToolServer } from '../mcp/inProcessServer';
 import type { XMedia, XPost, XThread } from '../flow/skills/xPosts';
 
 export const FACEBOOK_SERVER_NAME = 'Facebook';
@@ -79,7 +78,7 @@ async function dispatch(service: FacebookServiceLike, name: string, args: Record
   };
 }
 
-export function createFacebookMcpServer(service: FacebookServiceLike): Server {
+export function createFacebookMcpServer(service: FacebookServiceLike): ToolServer {
   return createToolServer({
     name: FACEBOOK_SERVER_NAME,
     tools: FACEBOOK_TOOLS,

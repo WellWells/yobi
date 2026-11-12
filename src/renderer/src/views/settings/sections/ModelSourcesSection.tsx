@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ActionIcon, Box, Group, Menu, Stack, Text, Tooltip } from '@mantine/core';
-import { CircleUserRound, LogIn, LogOut, MoreVertical, RotateCcw } from 'lucide-react';
+import { CircleUserRound, LogIn, LogOut, EllipsisVertical, RotateCcw } from 'lucide-react';
 import {
   GroupHeader, SectionCard, SectionTitle, SettingRow, ToggleSwitch, VisibilityToggle,
 } from '../components';
@@ -37,7 +37,7 @@ const RowMenu: React.FC<{
     <Menu.Target>
       <Tooltip label={t('common.moreActions')} position="bottom">
         <ActionIcon variant="default" size={30} aria-label={t('common.moreActions')} loading={busy}>
-          <MoreVertical size={14} />
+          <EllipsisVertical size={14} />
         </ActionIcon>
       </Tooltip>
     </Menu.Target>
@@ -120,6 +120,13 @@ export const ModelSourcesSection: React.FC<Props> = ({ account, t, showSection, 
                         <Text fz="var(--font-size-sm)" c="dimmed" lh={1.5}>
                           {t(`settings.accounts.necessity.${provider}`)}
                         </Text>
+                        {provider === 'deepseek' && (
+                          // DeepSeek has no temporary chat: every chat Yobi opens there is deleted
+                          // once read, whatever the temporary-chat switch below says.
+                          <Text fz="var(--font-size-sm)" c="dimmed" lh={1.5}>
+                            {t('providers.deepseek.chatsDeleted')}
+                          </Text>
+                        )}
                       </Stack>
                     </Group>
 

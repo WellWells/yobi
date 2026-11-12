@@ -2,9 +2,8 @@
  * In-process MCP server for Taiwan's railways (THSR + TRA) and metros, backed by `railService.ts`
  * and `metro/metroService.ts`, which it takes as parameters.
  */
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { createToolServer } from '../mcp/inProcessServer';
+import { createToolServer, type ToolServer } from '../mcp/inProcessServer';
 import type { RailService, TrainArgs, TripArgs } from './railService';
 import { METRO_MAP_SYSTEMS } from '../metro/metroMaps';
 import { STATUS_SYSTEM_NAMES, TICKET_SYSTEM_NAMES } from '../metro/metroService';
@@ -205,7 +204,7 @@ async function dispatch(service: RailService, metro: MetroService, name: string,
   throw new Error(`Unknown tool: ${name}`);
 }
 
-export function createRailMcpServer(service: RailService, metro: MetroService): Server {
+export function createRailMcpServer(service: RailService, metro: MetroService): ToolServer {
   return createToolServer({
     name: RAIL_SERVER_NAME,
     tools: RAIL_TOOLS,

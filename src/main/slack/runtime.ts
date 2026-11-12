@@ -13,6 +13,7 @@ import {
   createBotButtonRegistry,
   parseButtonData,
 } from '../botChat/buttons';
+import { pageAnalyzeChoice, pageForwardForChat } from '../botChat/pageForward';
 import { unfoldExpandableQuotes } from '../../shared/expandableQuote';
 import { SLACK_AUTH_ERRORS, SlackApiError, createSlackApi, type SlackApi, type SlackBlock, type SlackButton } from './api';
 import { SlackSocketMode } from './socketMode';
@@ -200,6 +201,14 @@ export class SlackRuntime extends SocketBotRuntime<SlackTextEvent> {
     }
     if (!result.ok) {
       await this.post(event.channel, { text: `${t(s, 'bot.chat.runFailed', { provider: result.providerLabel })}\n${result.text}` }, { threadTs: event.threadTs });
+      return true;
+    }
+    if (result.pageForward) {
+      await this.post(event.channel, withPictureLinks({
+        text: pageForwardForChat(result.pageForward, s),
+        pictures: result.pageForward.images,
+        buttons: [pageAnalyzeChoice(result.pageForward, s)],
+      }), { markdown: true, threadTs: event.threadTs });
       return true;
     }
     await this.post(event.channel, {

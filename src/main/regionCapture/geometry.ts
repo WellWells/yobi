@@ -84,21 +84,6 @@ export function displayAtPoint<D extends DisplayLike>(displays: readonly D[], po
   return nearest;
 }
 
-/** A virtual-desktop rectangle in the display's own coordinates (origin at its top-left corner). */
-export function toDisplayLocal(rect: Rect, display: DisplayLike): Rect {
-  return { ...rect, x: rect.x - display.bounds.x, y: rect.y - display.bounds.y };
-}
-
-/** The box a drag spans, whichever way the mouse went. */
-export function rectFromDrag(start: Point, end: Point): Rect {
-  return {
-    x: Math.min(start.x, end.x),
-    y: Math.min(start.y, end.y),
-    width: Math.abs(end.x - start.x),
-    height: Math.abs(end.y - start.y),
-  };
-}
-
 /** Cut to the area `[0, 0, area.width, area.height]`; an empty or non-finite box comes back 0×0. */
 export function clampToArea(rect: Rect, area: Size): Rect {
   const finite = [rect.x, rect.y, rect.width, rect.height].every(Number.isFinite);

@@ -55,6 +55,8 @@ export const AppTextarea = React.forwardRef<HTMLTextAreaElement, AppTextareaProp
         size="sm"
         variant="default"
         styles={mergeInputStyles(buildInputStyles({ tone, mono, resize }), styles)}
+        // Mono = code (a script, JSON, a selector): no spelling squiggles, as in AppTextInput.
+        spellCheck={mono ? false : undefined}
         {...props}
       />
     );

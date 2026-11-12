@@ -37,8 +37,11 @@ jobs:
             build_script: build:win
             artifact_name: dist-win
             artifact_path: |
+              dist/Yobi-*-Setup.exe
+              dist/Yobi-*-Setup.exe.blockmap
               dist/*.zip
               dist/*.yml
+              dist/install.ps1
 
     steps:
       # ── Checkout ──────────────────────────────────────────────
@@ -98,6 +101,12 @@ jobs:
           } else {
             Write-Error "No .exe found in dist\"
           }
+
+      # ── One-line install: reachable at releases/latest/download/install.ps1 ──
+      - name: Add Windows install script
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Copy-Item scripts\install.ps1 dist\
 
       # ── Upload artifacts for the Release Job ──────────────────────
       - name: Upload artifact
@@ -207,7 +216,13 @@ jobs:
 
             ${{ steps.downloads.outputs.table }}
 
-            > **Windows** — The download is a `.zip` archive. Extract it and run the `.exe` installer inside.
+            > **Windows** — Paste this into PowerShell to install or update, no download page needed:
+            >
+            > ```powershell
+            > irm https://github.com/WellWells/yobi/releases/latest/download/install.ps1 | iex
+            > ```
+            >
+            > Or download the `.zip`, extract it and run the `.exe` installer inside. It is unsigned, so Windows asks you to choose **More info → Run anyway**.
 
             > **macOS — not sure which version?**
             > Check **Apple menu → About This Mac**.

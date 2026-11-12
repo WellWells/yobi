@@ -1,6 +1,6 @@
 import { BOT_PLATFORM_NAMES } from './types';
 import type { BotPlatform, FlowAssessment, TriggerType } from './types';
-import { PLATFORM_ORDER, connectedPlatforms, namedIn, saysEveryone, saysForMe } from './botRecipients';
+import { PLATFORM_ORDER, connectedPlatforms, namedIn, pairedEntries, saysEveryone, saysForMe } from './botRecipients';
 import type { RecipientDirectory } from './botRecipients';
 
 /**
@@ -54,10 +54,13 @@ export function recipientQuestion(
 ): string | null {
   if (!skills.includes('bot') || trigger === BOT_COMMAND_TRIGGER) return null;
   const platforms = platformsFromWords(words, dir);
-  const pool = dir.entries.filter((entry) => platforms.includes(entry.platform));
+  // LINE PC's own chat list is never a choice (this question reaches the model in /agent), but a
+  // group or friend of it the words name is an answer all the same: nothing is asked then.
+  const pool = pairedEntries(dir).filter((entry) => platforms.includes(entry.platform));
   const people = pool.filter((entry) => entry.kind === 'person');
   if (people.length <= 1) return null;
-  if (saysEveryone(words) || namedIn(words, pool).length === 1) return null;
+  const nameable = dir.entries.filter((entry) => platforms.includes(entry.platform));
+  if (saysEveryone(words) || namedIn(words, nameable).length === 1) return null;
   if (saysForMe(words) && people.filter((entry) => entry.self).length === 1) return null;
 
   const ordered = [...people.filter((entry) => entry.self), ...people.filter((entry) => !entry.self), ...pool.filter((entry) => entry.kind === 'chat')];
@@ -87,7 +90,7 @@ export function describeRecipientSetup(dir: RecipientDirectory): string[] {
   const lines = described.map((platform) => {
     const name = BOT_PLATFORM_NAMES[platform];
     if (!dir.connected[platform]) return `${name} bot: not connected.`;
-    const own = dir.entries.filter((entry) => entry.platform === platform);
+    const own = pairedEntries(dir).filter((entry) => entry.platform === platform);
     const people = own.filter((entry) => entry.kind === 'person');
     const chats = own.length - people.length;
     const selfNote = people.some((entry) => entry.self) ? ' (one is the user)' : '';

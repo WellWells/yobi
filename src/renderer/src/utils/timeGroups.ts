@@ -8,13 +8,22 @@ import type { TitleCompare } from './sidebarOrder';
 export type TimeGroupKey = 'today' | 'yesterday' | 'past7' | 'past30' | 'older' | 'undated';
 
 /**
- * A sidebar group: the pinned conversations on top, one per time bucket, and `conversations` over
- * the top-level ones when they are not grouped by date but something is drawn above them.
+ * The sidebar's three sections, in drawn order, as ChatGPT's, Claude's and Perplexity's sidebars
+ * have them: the pinned conversations, the folders, the other (top-level) conversations. Each has
+ * a heading that closes and opens it.
  */
-export type SidebarGroupKey = TimeGroupKey | 'pinned' | 'conversations';
+export const SIDEBAR_SECTIONS = ['pinned', 'folders', 'conversations'] as const;
+export type SidebarSectionKey = typeof SIDEBAR_SECTIONS[number];
+
+export function isSidebarSectionKey(value: unknown): value is SidebarSectionKey {
+  return typeof value === 'string' && (SIDEBAR_SECTIONS as readonly string[]).includes(value);
+}
 
 export type SidebarRow =
-  | { kind: 'header'; key: SidebarGroupKey }
+  /** `empty`: the folders heading drawn with no folder yet, so a first one can be made from it. */
+  | { kind: 'section'; key: SidebarSectionKey; collapsed: boolean; empty?: true }
+  /** A time bucket inside the conversations section. */
+  | { kind: 'header'; key: TimeGroupKey }
   | { kind: 'folder'; folder: ConversationFolder; count: number; expanded: boolean }
   | {
     kind: 'file';
@@ -32,6 +41,10 @@ export interface SidebarRowModel {
   rowIndexByFileIndex: number[];
   /** The conversations drawn, in drawn order; `fileIndex` and the keyboard walk this list. */
   visibleFiles: OutputFile[];
+  /** The models the top-level conversations came from, the most used first: what the filter offers. */
+  providers: string[];
+  /** The model the 「對話」 section is narrowed to, or null — also when none of its conversations has it. */
+  providerFilter: string | null;
 }
 
 export interface SidebarRowOptions {
@@ -43,6 +56,10 @@ export interface SidebarRowOptions {
   compareTitles?: TitleCompare;
   /** The name a folder is shown (and ordered) under. */
   folderLabel?: (folder: ConversationFolder) => string;
+  /** Sections drawn closed: their heading stays, their rows are not drawn. */
+  collapsed?: ReadonlySet<SidebarSectionKey>;
+  /** Only the top-level conversations answered by this model (the name saved in the file). */
+  provider?: string | null;
 }
 
 function startOfDay(date: Date): number {
@@ -77,15 +94,36 @@ export function buildTimeGroupHeads(timestamps: readonly string[], now: Date): (
   return groups.map((group, index) => (group === groups[index - 1] ? null : group));
 }
 
-/** A row's key in the virtual list: a conversation's path, a folder's `folderRowKey`, a group's name. */
+/** A section heading's row key; never a path (paths are absolute) nor a `folderRowKey`. */
+export function sectionRowKey(key: string): string {
+  return `section:${key}`;
+}
+
+/** The section a row key names, or null for any other row. */
+export function sectionOfRowKey(rowKey: string): SidebarSectionKey | null {
+  const key = rowKey.startsWith('section:') ? rowKey.slice('section:'.length) : null;
+  return isSidebarSectionKey(key) ? key : null;
+}
+
+/**
+ * A row's key in the virtual list: a conversation's path, a folder's `folderRowKey`, a section's
+ * `sectionRowKey`, a time group's name.
+ */
 export function sidebarRowKey(row: SidebarRow): string {
   if (row.kind === 'header') return `group:${row.key}`;
+  if (row.kind === 'section') return sectionRowKey(row.key);
   return row.kind === 'folder' ? folderRowKey(row.folder.name) : row.file.path;
 }
 
-/** The keys of the rows the keyboard walks (folders and conversations), in drawn order. */
+/** The keys of the rows the keyboard walks (section headings, folders and conversations), in drawn order. */
 export function focusableRowKeys(rows: readonly SidebarRow[]): string[] {
   return rows.filter((row) => row.kind !== 'header').map(sidebarRowKey);
+}
+
+/** The section the open conversation is drawn in (a folder's conversations are in "folders"). */
+export function sectionOfFile(file: Pick<OutputFile, 'pinned' | 'folder'>): SidebarSectionKey {
+  if (file.pinned) return 'pinned';
+  return file.folder ? 'folders' : 'conversations';
 }
 
 const byLocale: TitleCompare = (a, b) => a.localeCompare(b);
@@ -102,17 +140,32 @@ function foldersToDraw(files: readonly OutputFile[], options: SidebarRowOptions)
   return [...seen.values()].sort((a, b) => compare(label(a), label(b)));
 }
 
+/** Each model named by `files`, the one with the most conversations first (ties keep their order). */
+function providersByUse(files: readonly OutputFile[]): string[] {
+  const counts = new Map<string, number>();
+  for (const file of files) {
+    if (file.provider) counts.set(file.provider, (counts.get(file.provider) ?? 0) + 1);
+  }
+  return [...counts.keys()].sort((a, b) => counts.get(b)! - counts.get(a)!);
+}
+
 /**
- * Header, folder and file rows for `files` as main sends them (latest activity first), drawn like
- * Apple Notes' sidebar: 「已釘選」 (pinned from any folder, in the order given, not repeated below),
- * then each folder — its conversations, indented and sorted, under it while it is open — then the
- * top-level conversations, sorted and, when grouping by date (never under the title sort), split
- * into time groups. Folders hold no time groups of their own: two levels, as Apple's sidebars.
+ * Section, folder and file rows for `files` as main sends them (latest activity first), in three
+ * sections: 「已釘選」 (pinned from any folder, in the order given, not repeated below), the folders
+ * — each one's conversations, indented and sorted, under it while it is open — and 「對話」, the
+ * top-level conversations (only one model's, when filtered), sorted and, when grouping by date
+ * (never under the title sort), split into time groups. Folders hold no time groups of their own:
+ * two levels, as Apple's sidebars. A section with nothing in it is not drawn — except the folders
+ * heading, drawn without folders whenever there are conversations, as the place to make the first
+ * one; a closed section is drawn as its heading alone.
  */
 export function buildSidebarRows(files: readonly OutputFile[], now: Date, options: SidebarRowOptions = {}): SidebarRowModel {
   const rows: SidebarRow[] = [];
   const rowIndexByFileIndex: number[] = [];
   const visibleFiles: OutputFile[] = [];
+  let providers: string[] = [];
+  let providerFilter: string | null = null;
+  const model = (): SidebarRowModel => ({ rows, rowIndexByFileIndex, visibleFiles, providers, providerFilter });
   const sort = options.view?.sort ?? 'activity';
   const pushFile = (file: OutputFile, group: TimeGroupKey, time: string, inFolder?: string): void => {
     const fileIndex = visibleFiles.length;
@@ -120,37 +173,51 @@ export function buildSidebarRows(files: readonly OutputFile[], now: Date, option
     rowIndexByFileIndex.push(rows.length);
     rows.push({ kind: 'file', file, group, fileIndex, time, ...(inFolder ? { inFolder } : {}) });
   };
+  /** Draws the section's heading; true when its rows should follow. */
+  const openSection = (key: SidebarSectionKey): boolean => {
+    const collapsed = options.collapsed?.has(key) ?? false;
+    rows.push({ kind: 'section', key, collapsed });
+    return !collapsed;
+  };
 
   const compareTitles = options.compareTitles ?? byLocale;
   const pinned = files.filter((file) => file.pinned);
-  if (pinned.length > 0) {
-    rows.push({ kind: 'header', key: 'pinned' });
+  if (pinned.length > 0 && openSection('pinned')) {
     for (const file of pinned) pushFile(file, resolveTimeGroup(file.timestamp, now), file.timestamp);
   }
 
   const folders = foldersToDraw(files, options);
   const known = new Set(folders.map((folder) => folderKey(folder.name)));
-  for (const folder of folders) {
-    const key = folderKey(folder.name);
-    const inside = files.filter((file) => file.folder && folderKey(file.folder) === key);
-    const expanded = options.expanded?.has(key) ?? false;
-    rows.push({ kind: 'folder', folder, count: inside.length, expanded });
-    if (!expanded) continue;
-    for (const file of sortConversations(inside.filter((entry) => !entry.pinned), sort, compareTitles)) {
-      const time = sortTime(file, sort);
-      pushFile(file, resolveTimeGroup(time, now), time, folder.name);
+  if (folders.length === 0 && files.length > 0) {
+    rows.push({ kind: 'section', key: 'folders', collapsed: false, empty: true });
+  } else if (folders.length > 0 && openSection('folders')) {
+    for (const folder of folders) {
+      const key = folderKey(folder.name);
+      const inside = files.filter((file) => file.folder && folderKey(file.folder) === key);
+      const expanded = options.expanded?.has(key) ?? false;
+      rows.push({ kind: 'folder', folder, count: inside.length, expanded });
+      if (!expanded) continue;
+      for (const file of sortConversations(inside.filter((entry) => !entry.pinned), sort, compareTitles)) {
+        const time = sortTime(file, sort);
+        pushFile(file, resolveTimeGroup(time, now), time, folder.name);
+      }
     }
   }
 
-  const root = sortConversations(
-    files.filter((file) => !file.pinned && !(file.folder && known.has(folderKey(file.folder)))),
+  const root = files.filter((file) => !file.pinned && !(file.folder && known.has(folderKey(file.folder))));
+  providers = providersByUse(root);
+  // A filter on a model no top-level conversation has any more is no filter: the section — and
+  // the button on its heading that clears it — would otherwise vanish.
+  providerFilter = options.provider && providers.includes(options.provider) ? options.provider : null;
+  const shown = sortConversations(
+    providerFilter ? root.filter((file) => file.provider === providerFilter) : root,
     sort,
     compareTitles,
   );
+  if (shown.length === 0 || !openSection('conversations')) return model();
   const byDate = (options.view?.groupByDate ?? true) && sort !== 'title';
-  let previousGroup: SidebarGroupKey | null = null;
-  if (!byDate && root.length > 0 && rows.length > 0) rows.push({ kind: 'header', key: 'conversations' });
-  for (const file of root) {
+  let previousGroup: TimeGroupKey | null = null;
+  for (const file of shown) {
     const time = sortTime(file, sort);
     const group = resolveTimeGroup(time, now);
     if (byDate && group !== previousGroup) {
@@ -160,5 +227,5 @@ export function buildSidebarRows(files: readonly OutputFile[], now: Date, option
     pushFile(file, group, time);
   }
 
-  return { rows, rowIndexByFileIndex, visibleFiles };
+  return model();
 }

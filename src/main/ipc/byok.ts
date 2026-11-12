@@ -57,7 +57,7 @@ function pruneHiddenByokIds(): void {
   saveConfig({ hiddenByokIds: nextKeys, hiddenByokGroupIds: nextGroups });
 }
 
-function resetDanglingLlmDirectTargets(): void {
+function resetDanglingModelTargets(): void {
   let changed = false;
   if (isDanglingByokTarget(config.telegram.llmDirect.targetUrl)) {
     config.telegram.llmDirect = { ...config.telegram.llmDirect, targetUrl: '' };
@@ -67,7 +67,15 @@ function resetDanglingLlmDirectTargets(): void {
     config.line.llmDirect = { ...config.line.llmDirect, targetUrl: '' };
     changed = true;
   }
-  if (changed) saveConfig({ telegram: config.telegram, line: config.line });
+  const linkAnalysis = { ...config.linkAnalysis };
+  for (const field of ['mapsTargetUrl', 'articleTargetUrl'] as const) {
+    if (!isDanglingByokTarget(linkAnalysis[field])) continue;
+    linkAnalysis[field] = '';
+    changed = true;
+  }
+  if (!changed) return;
+  config.linkAnalysis = linkAnalysis;
+  saveConfig({ telegram: config.telegram, line: config.line, linkAnalysis });
 }
 
 function resolveProbeKey(req: ByokConnectionProbe): string {
@@ -187,7 +195,7 @@ export function registerByokHandlers(ctx: IpcContext): void {
     });
     sendLog(`🗑️ BYOK instance removed: ${removed.name}`);
     pruneHiddenByokIds();
-    resetDanglingLlmDirectTargets();
+    resetDanglingModelTargets();
     refreshTelegramMenu();
     return { ok: true as const, snapshot: buildByokSnapshot() };
   });
@@ -238,7 +246,7 @@ export function registerByokHandlers(ctx: IpcContext): void {
     }
     sendLog(`🗑️ BYOK group removed: ${removed.name}`);
     pruneHiddenByokIds();
-    resetDanglingLlmDirectTargets();
+    resetDanglingModelTargets();
     refreshTelegramMenu();
     return { ok: true as const, snapshot: buildByokSnapshot() };
   });

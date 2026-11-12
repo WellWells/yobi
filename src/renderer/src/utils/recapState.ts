@@ -1,7 +1,7 @@
 import type { RecapView } from '../../../shared/recap';
 
 /*
- * When the composer's recap line shows. Being away and opening an older conversation are events;
+ * When the recap is put in front of the user (see `presentRecap`). Being away and opening an older conversation are events;
  * everything else (enough turns, nothing in flight, not dismissed) is state. An event arms the line
  * for one conversation and one recap, and the state decides whether an armed line is drawn — so an
  * answer that was already on its way when the user came back cannot pop the line when it lands.
@@ -101,6 +101,28 @@ export function shouldShowRecap(state: RecapState, ctx: RecapContext & { current
   if (!ctx.recap || ctx.recap.at !== armed.at) return null;
   if (ctx.turnCount < RECAP_MIN_TURNS || ctx.pending) return null;
   return state.dismissed.has(recapKey(armed.path, armed.at)) ? null : 'recap';
+}
+
+export interface RecapPresentation {
+  /** The open line above the composer: only for `/recap`, which the user asked for. */
+  line: RecapDisplay;
+  /** The floating icon whose card opens on hover; `fresh` marks a recap armed by coming back. */
+  icon: { fresh: boolean } | null;
+}
+
+/**
+ * Coming back never opens the line by itself: it only marks the icon, and hovering the icon shows
+ * the recap. The setting hides the icon; `/recap` still opens the line.
+ */
+export function presentRecap(
+  state: RecapState,
+  ctx: RecapContext & { currentView: string; enabled: boolean },
+): RecapPresentation {
+  const display = shouldShowRecap(state, ctx);
+  const line = state.armed?.manual ? display : null;
+  if (line || !ctx.enabled || ctx.currentView !== 'chat') return { line, icon: null };
+  if (!ctx.recap || ctx.turnCount < RECAP_MIN_TURNS) return { line, icon: null };
+  return { line, icon: { fresh: display === 'recap' } };
 }
 
 export interface ActivityState {

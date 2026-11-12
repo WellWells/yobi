@@ -1,13 +1,14 @@
 /**
- * Managing the bot's groups from LINE itself: `/groups` in the owner's private chat lists the
+ * Managing the bot's groups from LINE itself: `/groups` in a manager's private chat lists the
  * groups the bot is in, and each one opens a card with "Allow" (pending) or its grants as toggles
  * plus "Revoke" (allowed) — the same writes the settings page makes. When the bot joins a group
- * still waiting for approval, the owner gets that group's card in their private chat.
+ * still waiting for approval, the managers get that group's card in their private chat.
  *
- * LINE has no admin grant, so the manager is the owner ("me"), still paired, in their own private
- * chat. Every tap is checked again: postback data comes back from the client as it likes, so it
- * only ever names a group and a grant index, never a right. Answers go through the reply token
- * (free); only the join card is a push (the owner's monthly quota), once per group per run.
+ * The managers are the owner ("me") and the admin-grant holders, still paired, in their own
+ * private chat. Every tap is checked again: postback data comes back from the client as it likes,
+ * so it only ever names a group and a grant index, never a right. Answers go through the reply
+ * token (free); only the join card is a push (the owner's monthly quota), once per group per run
+ * and within today's pushes to managers (`LINE_MANAGER_PUSHES_DAILY`, owner first).
  */
 import type { messagingApi } from '@line/bot-sdk';
 import { t } from '../i18n';
@@ -18,7 +19,7 @@ import type { ManagedGroup } from '../botPermissions/groupAdminPlan';
 import type { LineClient } from './client';
 import type { LinePostbackEvent, LineTextEvent } from './events';
 import { replyByToken } from './postbackRouter';
-import { isLineManager } from './manager';
+import { LINE_MANAGER_PUSHES_DAILY, isLineManager, takeLineManagerPush } from './manager';
 import { lineGroupCardMessage, lineGroupListMessage, parseLineGroupAction } from './groupCards';
 import type { LineGroupCardEnv } from './groupCards';
 
@@ -38,7 +39,7 @@ export interface LineGroupAdminSource {
   setGrants: (chatId: string, grants: BotGroupGrant[] | null) => boolean;
   /** Whether a built-in connector is switched on; an off one is offered only to take it away. */
   isConnectorOn: (serverId: string) => boolean;
-  /** The private chats that get a joined group's card: the owner, paired. */
+  /** The private chats that get a joined group's card: the managers, paired, owner first. */
   getManagerIds: () => Promise<string[]>;
 }
 
@@ -48,8 +49,10 @@ export interface LineGroupAdminDeps {
   getStrings: () => Record<string, string>;
   onLog: (message: string) => void;
   isPairedUser: (userId: string) => boolean;
-  /** The owner in their own private chat (`botFlowAdminAllowed`); absent = nobody. */
+  /** An admin in their own private chat (`botFlowAdminAllowed`); absent = nobody. */
   isFlowAdmin?: (chatId: string, userId: string) => Promise<boolean>;
+  /** Takes one push to a manager from today's allowance (`takeLineManagerPush` unless a test gives its own). */
+  takePush?: () => boolean;
 }
 
 export interface LineGroupAdmin {
@@ -65,6 +68,7 @@ const errorText = (err: unknown): string => (err instanceof Error ? err.message 
 
 export function createLineGroupAdmin(deps: LineGroupAdminDeps): LineGroupAdmin {
   const { source, onLog } = deps;
+  const takePush = deps.takePush ?? takeLineManagerPush;
   const env = (): LineGroupCardEnv => ({ strings: deps.getStrings(), isConnectorOn: source.isConnectorOn });
 
   const isManager = (event: { userId: string; chatId: string; chatKind: string }): Promise<boolean> => isLineManager(event, deps);
@@ -80,7 +84,7 @@ export function createLineGroupAdmin(deps: LineGroupAdminDeps): LineGroupAdmin {
 
   async function handleCommand(event: LineTextEvent): Promise<void> {
     if (!(await isManager(event))) {
-      onLog(`[line] /groups refused for ${event.userId} — not the owner in a private chat`);
+      onLog(`[line] /groups refused for ${event.userId} — not an admin in a private chat`);
       await reply(event.replyToken, t(deps.getStrings(), 'line.groups.ownerOnly'));
       return;
     }
@@ -100,7 +104,7 @@ export function createLineGroupAdmin(deps: LineGroupAdminDeps): LineGroupAdmin {
     }
     const s = deps.getStrings();
     if (!(await isManager(event))) {
-      onLog(`[line] group-management tap refused for ${event.userId} — not the owner`);
+      onLog(`[line] group-management tap refused for ${event.userId} — not an admin`);
       await reply(event.replyToken, t(s, 'line.groups.ownerOnly'));
       return;
     }
@@ -146,6 +150,10 @@ export function createLineGroupAdmin(deps: LineGroupAdminDeps): LineGroupAdmin {
     }
     let sent = 0;
     for (const managerId of managerIds) {
+      if (!takePush()) {
+        onLog(`[line] group ${group.chatId}'s approval card not pushed to ${managerId} — today's ${LINE_MANAGER_PUSHES_DAILY} pushes to managers are used`);
+        break;
+      }
       try {
         await client.pushFlex(managerId, card);
         sent += 1;

@@ -1,6 +1,6 @@
 import React from 'react';
 import { ActionIcon, Menu as MMenu, Tooltip } from '@mantine/core';
-import { Folder, FolderInput, FolderOutput, FolderPlus, Pencil, Trash2 } from 'lucide-react';
+import { Folder, FolderInput, FolderOutput, FolderPlus, Pencil, Trash } from 'lucide-react';
 import type { ConversationFolder } from '../../../../shared/conversationFolders';
 import type { OutputFile } from '../../../../shared/types';
 import { useResolvedCombo } from '../../store/shortcutStore';
@@ -27,16 +27,21 @@ interface MoveToFolderItemsProps {
   /** Makes a new folder and files the conversations into it. */
   onMoveToNew: () => void;
   t: Translate;
+  /**
+   * The name a folder is shown under. Conversation folders by default (Yobi's flow results
+   * folder is translated); the flow list's folders are labels and show as named.
+   */
+  label?: (name: string) => string;
 }
 
 /** The rows under 「移至資料夾 ▸」: each other folder, 「移出資料夾」, then 「新增資料夾…」. */
-export const MoveToFolderItems: React.FC<MoveToFolderItemsProps> = ({ files, folders, onMove, onMoveToNew, t }) => {
+export const MoveToFolderItems: React.FC<MoveToFolderItemsProps> = ({ files, folders, onMove, onMoveToNew, t, label }) => {
   const { targets, canMoveOut } = moveMenuModel(files, folders);
   return (
     <>
       {targets.map((folder) => (
         <MMenu.Item key={folder.name} leftSection={<Folder size={13} />} onClick={() => onMove(folder.name)}>
-          {folderLabel(folder.name, t)}
+          {label ? label(folder.name) : folderLabel(folder.name, t)}
         </MMenu.Item>
       ))}
       {canMoveOut && (
@@ -115,7 +120,7 @@ export const FolderContextMenu: React.FC<FolderContextMenuProps> = ({ menu, onCl
         </MMenu.Item>
       )}
       <MMenu.Item
-        leftSection={<Trash2 size={13} />}
+        leftSection={<Trash size={13} />}
         color="red"
         rightSection={<ShortcutHint combo={deleteCombo} />}
         onClick={() => { onClose(); onDelete(folder); }}

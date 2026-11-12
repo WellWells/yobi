@@ -2,6 +2,7 @@ import React from 'react';
 import { Stack, Text } from '@mantine/core';
 import { AppTextarea } from '../../../components/AppTextarea';
 import type { SkillConfigProps } from './types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 export const TextConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => (
   <Stack gap="xs">
@@ -11,9 +12,10 @@ export const TextConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) =>
       value={step.config.text ?? ''}
       onChange={(e) => onChange({ ...step.config, text: e.currentTarget.value })}
       minRows={3}
+      maxRows={15}
       autosize
       size="sm"
     />
-    <Text fz="xs" c="dimmed">{t('flow.skill.text.hint')}</Text>
+    <Text fz="xs" c="var(--text-muted)">{fillTemplate(t('flow.skill.text.hint'), { output: `{{${step.outputKey}}}` })}</Text>
   </Stack>
 );

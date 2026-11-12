@@ -2,7 +2,7 @@ import React, { useCallback, useState } from 'react';
 import { ActionIcon, Badge, Box, Group, Text, Tooltip } from '@mantine/core';
 import { Check, Copy, FileText, FolderOpen, Image, Pencil, X } from 'lucide-react';
 import type { TurnMeta } from '../../../../shared/conversationDoc';
-import { readTurnButtons, readTurnFiles, readTurnMedia, readTurnXPost, revealTargets } from '../../../../shared/conversationDoc';
+import { readStepTitle, readTurnButtons, readTurnFiles, readTurnMedia, readTurnXPost, revealTargets } from '../../../../shared/conversationDoc';
 import { isUntypedBuiltinCommand } from '../../../../shared/imageRequest';
 import { isAccountLink, parseXMediaInput } from '../../../../shared/xMedia';
 import { TurnMedia } from './TurnMedia';
@@ -14,6 +14,7 @@ import type { TokenUsage } from '../../../../shared/tokenEstimate';
 import { useAppStore } from '../../store/appStore';
 import { useAgentRunStore, type AgentChoicePick } from '../../store/useAgentRunStore';
 import { clipboardApi, fileApi } from '../../api/electronApi';
+import { positiveCount } from '../../utils/conversationInfo';
 import { isMac } from '../../utils/keyLabels';
 import { AppButton } from '../AppButton';
 import { TokenUsageLabel } from './TokenUsageLabel';
@@ -207,6 +208,15 @@ export const AssistantTurn = React.memo<AssistantTurnProps>(({
         )}
       </Group>
       <ProviderSwitchNote meta={meta} t={t} />
+      {meta.r && (
+        <TurnTrace
+          key={meta.r}
+          runId={meta.r}
+          title={readStepTitle(meta) ?? t('chat.trace.toggle')}
+          durationMs={positiveCount(meta.d) || undefined}
+          t={t}
+        />
+      )}
 
       {editing && editPath && turnIndex !== undefined ? (
         <AnswerEditor
@@ -231,7 +241,7 @@ export const AssistantTurn = React.memo<AssistantTurnProps>(({
           display={hideOriginal ? 'none' : undefined}
           style={{ ...READING_TEXT_STYLE, lineHeight: 1.75, color: 'var(--text-primary)' }}
         >
-          <MessageMarkdown>{response}</MessageMarkdown>
+          <MessageMarkdown citationChips>{response}</MessageMarkdown>
         </Box>
         </>
       )}
@@ -333,8 +343,6 @@ export const AssistantTurn = React.memo<AssistantTurnProps>(({
           ))}
         </Group>
       )}
-
-      {meta.r && <TurnTrace runId={meta.r} t={t} />}
 
       {!editing && (
       <Group

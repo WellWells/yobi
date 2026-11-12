@@ -1,4 +1,4 @@
-import { MoreHorizontal, Pin, PinOff, Trash2 } from 'lucide-react';
+import { Ellipsis, Pin, PinOff, Trash } from 'lucide-react';
 import type { SwipeAction } from '../hooks/useRowSwipe';
 
 export interface TrailingSwipeLabels {
@@ -34,8 +34,8 @@ interface LeadingSwipeState {
  */
 export function conversationTrailingActions(labels: TrailingSwipeLabels, handlers: TrailingSwipeHandlers): SwipeAction[] {
   return [
-    { id: 'more', label: labels.more, icon: MoreHorizontal, tone: 'neutral', onTrigger: handlers.onMore },
-    { id: 'delete', label: labels.delete, icon: Trash2, tone: 'destructive', onTrigger: handlers.onDelete, fullSwipe: true },
+    { id: 'more', label: labels.more, icon: Ellipsis, tone: 'neutral', onTrigger: handlers.onMore },
+    { id: 'delete', label: labels.delete, icon: Trash, tone: 'destructive', onTrigger: handlers.onDelete, fullSwipe: true },
   ];
 }
 
@@ -57,7 +57,7 @@ export function conversationLeadingActions(labels: LeadingSwipeLabels, state: Le
 /** A flow row's left swipe: More, then Delete. No full swipe: a deleted flow has no trash to come back from. */
 export function flowTrailingActions(labels: TrailingSwipeLabels, handlers: TrailingSwipeHandlers): SwipeAction[] {
   return [
-    { id: 'more', label: labels.more, icon: MoreHorizontal, tone: 'neutral', onTrigger: handlers.onMore },
-    { id: 'delete', label: labels.delete, icon: Trash2, tone: 'destructive', onTrigger: handlers.onDelete },
+    { id: 'more', label: labels.more, icon: Ellipsis, tone: 'neutral', onTrigger: handlers.onMore },
+    { id: 'delete', label: labels.delete, icon: Trash, tone: 'destructive', onTrigger: handlers.onDelete },
   ];
 }

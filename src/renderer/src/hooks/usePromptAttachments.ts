@@ -9,7 +9,14 @@ import {
   type PromptAttachment,
   type StashedAttachment,
 } from '../../../shared/types';
-import { BYOK_IMAGE_ACCEPT, attachmentAcceptFor, isByokImageFile } from '../../../shared/attachmentFormats';
+import {
+  BYOK_IMAGE_ACCEPT,
+  attachmentAcceptFor,
+  attachmentRefusalFor,
+  isByokImageFile,
+  megabytesLabel,
+  type AttachmentRefusal,
+} from '../../../shared/attachmentFormats';
 import { fillTemplate } from '../../../shared/fillTemplate';
 import { attachmentApi, systemApi } from '../api/electronApi';
 import { imageThumbnailDataUrl } from '../utils/imageThumbnail';
@@ -119,6 +126,18 @@ export function usePromptAttachments(
     [imagesOnly, providerLabel, t],
   );
 
+  /** What the web page itself would refuse (its measured size and format limits); BYOK has its own rules. */
+  const pageRefusal = useCallback(
+    (name: string, size: number): AttachmentRefusal | null => (isByokTarget ? null : attachmentRefusalFor(provider, name, size)),
+    [isByokTarget, provider],
+  );
+
+  const refusalNotice = useCallback((refusal: AttachmentRefusal): string => (
+    refusal.kind === 'tooLarge'
+      ? fillTemplate(t('attach.tooLargeFor'), { provider: providerLabel, size: megabytesLabel(refusal.maxBytes) })
+      : fillTemplate(t('attach.formatRefused'), { provider: providerLabel, ext: refusal.extension })
+  ), [providerLabel, t]);
+
   const commit = useCallback((accepted: PromptAttachment[]): number => {
     const current = attachmentsRef.current;
     const room = Math.max(0, maxFiles - current.length);
@@ -136,10 +155,17 @@ export function usePromptAttachments(
       setNotice(unsupportedReason);
       return;
     }
-    const incoming = imagesOnly ? dropped.filter((file) => isByokImageFile(file.type, file.name)) : dropped;
-    const refused = dropped.length - incoming.length;
+    const typed = imagesOnly ? dropped.filter((file) => isByokImageFile(file.type, file.name)) : dropped;
+    const refused = dropped.length - typed.length;
+    const pageRefusals: AttachmentRefusal[] = [];
+    const incoming = typed.filter((file) => {
+      const refusal = pageRefusal(file.name, file.size);
+      if (refusal) pageRefusals.push(refusal);
+      return !refusal;
+    });
+    const pageNotices = [...new Set(pageRefusals.map(refusalNotice))];
     if (incoming.length === 0) {
-      setNotice(restriction);
+      setNotice(pageNotices.length > 0 ? pageNotices.join(' ') : restriction);
       return;
     }
     const room = Math.max(0, maxFiles - attachmentsRef.current.length);
@@ -155,12 +181,13 @@ export function usePromptAttachments(
 
       const notices: string[] = [];
       if (refused > 0 && restriction) notices.push(restriction);
+      notices.push(...pageNotices);
       if (resolved.includes('tooLarge')) notices.push(t('attach.tooLarge'));
       if (resolved.includes('noPath')) notices.push(t('attach.noPath'));
       if (incoming.length > room || stored < accepted.length) notices.push(limitNotice());
       setNotice(notices.length > 0 ? notices.join(' ') : null);
     })();
-  }, [commit, imagesOnly, limitNotice, maxFiles, restriction, t, unsupportedReason]);
+  }, [commit, imagesOnly, limitNotice, maxFiles, pageRefusal, refusalNotice, restriction, t, unsupportedReason]);
 
   /** Why the composer cannot take one more file right now, or null when it can. */
   const refusal = useCallback((): string | null => {
@@ -179,8 +206,13 @@ export function usePromptAttachments(
       setNotice(restriction);
       return;
     }
+    const pageRefused = pageRefusal(stashed.name, stashed.size);
+    if (pageRefused) {
+      setNotice(refusalNotice(pageRefused));
+      return;
+    }
     setNotice(commit([fromStashed(stashed)]) > 0 ? null : limitNotice());
-  }, [commit, imagesOnly, limitNotice, refusal, restriction]);
+  }, [commit, imagesOnly, limitNotice, pageRefusal, refusal, refusalNotice, restriction]);
 
   const addFromClipboard = useCallback(() => {
     const refused = refusal();

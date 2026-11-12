@@ -18,6 +18,18 @@ export function isTaiwanUser(systemLanguages: readonly string[], cfg: Pick<Confi
   return cfg.localeSetByUser && cfg.locale === 'zh-TW';
 }
 
+const SIMPLIFIED_CHINESE = /^zh-(cn|sg|hans(-[a-z]{2})?)$/iu;
+
+/**
+ * Simplified Chinese when the system's first language is (mainland, Singapore, or any `zh-Hans`),
+ * or the user picked Simplified Chinese for Yobi themselves. Same reasoning as `isTaiwanUser`.
+ */
+export function isSimplifiedChineseUser(systemLanguages: readonly string[], cfg: Pick<Config, 'locale' | 'localeSetByUser'>): boolean {
+  const first = systemLanguages[0]?.trim() ?? '';
+  if (SIMPLIFIED_CHINESE.test(first)) return true;
+  return cfg.localeSetByUser && cfg.locale === 'zh-CN';
+}
+
 /** Taiwan as above; Chinese when that, or the system's first language or Yobi's is any Chinese. */
 export function userRegion(systemLanguages: readonly string[], cfg: Pick<Config, 'locale' | 'localeSetByUser'>): LinkRecognitionRegion {
   const taiwan = isTaiwanUser(systemLanguages, cfg);

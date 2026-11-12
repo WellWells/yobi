@@ -16,6 +16,9 @@ import { mapsLinksRecognized } from './linkRecognition';
 import type { MapPlaceRef } from '../shared/conversationDoc';
 import { withVideoSlots } from '../shared/youtubePrompt';
 import { fillTemplate } from '../shared/fillTemplate';
+import { fenceUntrusted } from '../shared/promptFencing';
+import { withPromptLanguage } from '../shared/promptLanguage';
+import { config } from './config';
 import { isVerificationWall, VerificationWallError } from './net/verificationWall';
 
 export { fetchRawText, fetchRawResponse, ensureHttpScheme, runParserBlocks, runCssSelector, parseRssFeed, extractFeedLinks, withVideoSlots };
@@ -142,9 +145,8 @@ export function buildUrlAnalysisPrompt(
   promptTemplate: string,
   truncatedLabel: string,
 ): string {
-  const body = result.truncated
-    ? `${result.cleanedText}\n\n${truncatedLabel}`
-    : result.cleanedText;
+  const page = fenceUntrusted('page', result.cleanedText);
+  const body = result.truncated ? `${page}\n\n${truncatedLabel}` : page;
 
   return promptTemplate
     .replace(/\{\{title\}\}/g, () => result.title)
@@ -280,12 +282,16 @@ interface UrlPromptContext {
   youtubePrompt: string;
   /** Where the prompt will be sent; fetched content is fitted to this model's input limit. */
   targetUrl: string;
+  /** A provider explicitly named for this request wins over link analysis settings. */
+  preserveTarget?: boolean;
   onLog: (msg: string) => void;
   /**
    * Reads an Agoda hotel link's reviews (alone or with a question) instead of its page. Desktop
    * chat and the hotkey only: a bot or /agent run leaves it off and gets today's page read.
    */
   hotelReviews?: boolean;
+  /** A run's Stop, for the page read: it can take half a minute. */
+  signal?: AbortSignal;
 }
 
 export interface ResolvedPrompt {
@@ -295,6 +301,15 @@ export interface ResolvedPrompt {
   displayPrompt?: string;
   /** The Maps place the prompt carries reviews of. */
   map?: MapPlaceRef;
+}
+
+/**
+ * Whether the provider `resolveUrlPrompt` chose is the only one that can take this prompt: a video
+ * without captions needs Gemini to watch it. A Maps analysis model is a preference, so a send that
+ * gets no answer there may still move on to another provider like any other.
+ */
+export function pinsProvider(resolved: ResolvedPrompt): boolean {
+  return Boolean(resolved.forceProviderUrl) && !resolved.map;
 }
 
 export async function resolveUrlPrompt(text: string, ctx: UrlPromptContext): Promise<ResolvedPrompt> {
@@ -325,7 +340,7 @@ export async function resolveUrlPrompt(text: string, ctx: UrlPromptContext): Pro
   ctx.onLog(logFetching);
 
   try {
-    const parsed = await readLinkedPage(text.trim()) ?? await fetchAndParse(text);
+    const parsed = await readLinkedPage(text.trim(), ctx.signal) ?? await fetchAndParse(text);
     const promptTemplate = ctx.langData['urlParser.prompt'] ?? '';
     // Only a truncated page carries the "say it is incomplete" request. Asking the model to judge
     // truncation on every page made it add "no truncation found" notes to complete summaries.
@@ -337,6 +352,7 @@ export async function resolveUrlPrompt(text: string, ctx: UrlPromptContext): Pro
     // The record shows the link as typed; the summary template and page text go to the model only.
     return { prompt, displayPrompt: text.trim() };
   } catch (err) {
+    if (ctx.signal?.aborted) throw err;
     const errMsg = err instanceof Error ? err.message : String(err);
     const logError = fillTemplate(ctx.langData['urlParser.log.error'] ?? '❌ URL fetch failed: {{error}} (sending raw URL instead)', { error: errMsg });
     ctx.onLog(logError);
@@ -345,14 +361,14 @@ export async function resolveUrlPrompt(text: string, ctx: UrlPromptContext): Pro
 }
 
 /** The text alone, or null to read the page the usual way. Loaded on the first pasted link. */
-async function readLinkedPage(link: string): Promise<UrlParseResult | null> {
-  return (await import('./pageRead/pageUrlPrompt')).pagePromptFor(link);
+async function readLinkedPage(link: string, signal?: AbortSignal): Promise<UrlParseResult | null> {
+  return (await import('./pageRead/pageUrlPrompt')).pagePromptFor(link, signal);
 }
 
 async function resolveYoutubePrompt(text: string, ctx: UrlPromptContext): Promise<ResolvedPrompt> {
   ctx.onLog(ctx.langData['youtube.log.fetching'] ?? '▶️ YouTube URL detected — fetching transcript...');
 
-  const template = withVideoSlots(ctx.youtubePrompt.trim() || ctx.langData['youtube.prompt.default'] || '');
+  const template = withVideoSlots(withPromptLanguage(ctx.youtubePrompt.trim() || ctx.langData['youtube.prompt.default'] || '', config.locale));
   const result = await fetchYoutubeVideo(text).catch(() => ({ title: '', transcript: '', ok: false }));
 
   if (result.ok) {

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Alert, Box, Group, Text, Tooltip } from '@mantine/core';
-import { Info, PencilLine, TriangleAlert } from 'lucide-react';
+import { Info, PencilLine, TriangleExclamationPoint } from 'lucide-react';
 import { AppButton } from '../AppButton';
 import { AppSegmentedControl } from '../AppSegmentedControl';
 import { AppTextarea } from '../AppTextarea';
@@ -213,7 +213,7 @@ export const AnswerEditor: React.FC<AnswerEditorProps> = ({
           <Alert
             color="var(--mantine-color-warning)"
             variant="light"
-            icon={<TriangleAlert size={16} />}
+            icon={<TriangleExclamationPoint size={16} />}
             title={t('chat.edit.conflict.title')}
           >
             <Text fz="var(--font-size-sm)" mb={8}>{t('chat.edit.conflict.body')}</Text>

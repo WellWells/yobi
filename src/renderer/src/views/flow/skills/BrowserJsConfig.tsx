@@ -1,9 +1,10 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useId, useState } from 'react';
 import { Box, Code, Collapse, Group, Paper, Stack, Text } from '@mantine/core';
 import { BookOpen, Check, ChevronDown, ChevronUp, Copy } from 'lucide-react';
 import { AppButton } from '../../../components/AppButton';
-import { AppTextInput } from '../../../components/AppTextInput';
 import { CodeEditor } from '../../../components/CodeEditor';
+import { FieldLabelRow } from './FieldLabelRow';
+import { TabPicker } from './TabPicker';
 import { ToggleSwitch } from '../../../components/ToggleSwitch';
 import { SettingRow } from '../../../components/SettingRow';
 import { clipboardApi } from '../../../api/electronApi';
@@ -39,6 +40,9 @@ const BROWSER_JS_LLM_REFERENCE = [
   '- await screenshot(name?) — save a PNG of the page and return its file path.',
   '(await is required for waitFor/sleep/screenshot; optional on the others.)',
   '',
+  'An earlier step\'s output can be used as {{name}} in the code. It is filled in before the code runs, as a',
+  'JavaScript value: inside quotes it is that text (escaped), elsewhere a string, number or parsed JSON.',
+  '',
   'Example — log in (a submit that navigates: defer the click so the step returns first):',
   "await fill('#user', 'me');",
   "await fill('#pass', 'secret');",
@@ -59,6 +63,7 @@ export const BrowserJsConfig: React.FC<SkillConfigProps> = ({ step, onChange, t 
   const formatHint = formatKeys
     ? fillTemplate(t('flow.skill.browser_js.formatHint'), { shortcut: formatKeys })
     : '';
+  const codeId = useId();
   const [helpOpen, setHelpOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -68,20 +73,20 @@ export const BrowserJsConfig: React.FC<SkillConfigProps> = ({ step, onChange, t 
     setTimeout(() => setCopied(false), 1_200);
   }, []);
 
+  const code = step.config.code ?? '';
+
   return (
     <Stack gap="xs">
-      <AppTextInput
+      <TabPicker
+        stepId={step.id}
         label={t('flow.skill.browser_js.page')}
-        placeholder={t('flow.skill.browser_js.page.placeholder')}
         value={step.config.page ?? ''}
-        onChange={(e) => onChange({ ...step.config, page: e.currentTarget.value })}
-        size="sm"
-        mono
+        onChange={(page) => onChange({ ...step.config, page })}
+        t={t}
       />
 
       <Box>
-        <Group justify="space-between" align="center" mb={4} wrap="nowrap">
-          <Text fz="sm" fw={500}>{t('flow.skill.browser_js.code')}</Text>
+        <FieldLabelRow htmlFor={codeId} label={t('flow.skill.browser_js.code')}>
           <AppButton
             variant="subtle"
             size="xs"
@@ -91,14 +96,21 @@ export const BrowserJsConfig: React.FC<SkillConfigProps> = ({ step, onChange, t 
           >
             {t('flow.skill.browser_js.helpers')}
           </AppButton>
-        </Group>
+        </FieldLabelRow>
 
-        <CodeEditor
-          value={step.config.code ?? ''}
-          onChange={(v) => onChange({ ...step.config, code: v })}
-          placeholder={t('flow.skill.browser_js.code.placeholder')}
-          ariaLabel={t('flow.skill.browser_js.code')}
-        />
+        <Box mt={6}>
+          <CodeEditor
+            id={codeId}
+            value={code}
+            onChange={(v) => onChange({ ...step.config, code: v })}
+            placeholder={t('flow.skill.browser_js.code.placeholder')}
+            ariaLabel={t('flow.skill.browser_js.code')}
+          />
+        </Box>
+        {code.trim() === '' && (
+          <Text fz="xs" c="var(--mantine-color-warning)" mt={4} data-code-empty="">{t('flow.skill.browser_js.code.empty')}</Text>
+        )}
+        <Text fz="xs" c="var(--text-muted)" mt={4}>{t('flow.skill.browser_js.code.hint')}</Text>
         {formatHint && <Text fz="xs" c="dimmed" mt={4}>{formatHint}</Text>}
       </Box>
 
@@ -127,7 +139,7 @@ export const BrowserJsConfig: React.FC<SkillConfigProps> = ({ step, onChange, t 
 
       <SettingRow
         label={t('flow.skill.browser_js.emitFailFlag')}
-        hint={t('flow.skill.browser_js.emitFailFlag.hint')}
+        hint={fillTemplate(t('flow.skill.browser_js.emitFailFlag.hint'), { flag: `{{${step.outputKey}.isFailed}}` })}
         control={
           <ToggleSwitch
             checked={step.config.emitFailFlag === 'true'}

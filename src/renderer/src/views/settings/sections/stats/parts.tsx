@@ -1,6 +1,6 @@
 import React from 'react';
 import { Box, Group, Progress, Text, Tooltip, UnstyledButton } from '@mantine/core';
-import { CircleHelp } from 'lucide-react';
+import { CircleQuestionMark } from 'lucide-react';
 import { formatShare } from './aggregate';
 import classes from './stats.module.css';
 
@@ -25,7 +25,7 @@ export const Figure: React.FC<{ value: string; caption: React.ReactNode }> = ({ 
 export const HelpDot: React.FC<{ hint: string }> = ({ hint }) => (
   <Tooltip label={hint} position="top" maw={300} multiline>
     <Box c="dimmed" style={{ display: 'flex', alignItems: 'center', flexShrink: 0, cursor: 'help' }}>
-      <CircleHelp size={13} />
+      <CircleQuestionMark size={13} />
     </Box>
   </Tooltip>
 );

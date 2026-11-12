@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Stack, Text } from '@mantine/core';
-import { Info, RefreshCw, Settings, TriangleAlert } from 'lucide-react';
+import { Info, RefreshCw, Settings, TriangleExclamationPoint } from 'lucide-react';
 import { AppButton } from '../../../components/AppButton';
 import { AppTextarea } from '../../../components/AppTextarea';
 import { SelectDropdown } from '../../../components/SelectDropdown';
+import { StatusLine } from '../../../components/StatusLine';
 import { ToggleSwitch } from '../../../components/ToggleSwitch';
 import { mcpApi } from '../../../api/electronApi';
 import { useAppStore } from '../../../store/appStore';
@@ -11,10 +12,15 @@ import { useMcpStore } from '../../../store/useMcpStore';
 import { fillTemplate } from '../../../../../shared/fillTemplate';
 import { reachableOnSend } from '../../../../../shared/mcpConnectOnUse';
 import {
+  argumentsAreEmpty,
   argumentsSkeleton,
+  blankRequiredArguments,
+  effectiveMcpAccess,
+  findStepServer,
   interpolateMcpArguments,
   missingRequiredArguments,
   storedMcpAccess,
+  unknownArguments,
   type McpFlowTool,
   type McpFlowToolField,
   type McpFlowToolsResult,
@@ -30,13 +36,13 @@ const ACCESS_ORDER: readonly McpStepAccess[] = ['read', 'write', 'delete'];
 
 type Translate = (key: string) => string;
 
-/** The step names its server by id; an AI-built step may name it instead. */
-function findServer(servers: readonly McpServerView[], ref: string): McpServerView | undefined {
-  const wanted = ref.trim();
-  if (!wanted) return undefined;
-  const folded = wanted.replace(/^\//, '').normalize('NFKC').toLowerCase();
-  return servers.find((server) => server.id === wanted)
-    ?? servers.find((server) => server.name.normalize('NFKC').toLowerCase() === folded);
+/**
+ * The arguments a newly picked tool starts with: its skeleton when there is nothing to keep (blank
+ * or `{}`), else what is there, so a hand-written call is never thrown away; keys the new tool
+ * does not take are then listed under the field (`unknownArguments`), not deleted.
+ */
+export function argumentsForTool(current: string, tool: Pick<McpFlowTool, 'fields'> | undefined): string {
+  return argumentsAreEmpty(current) ? argumentsSkeleton(tool?.fields ?? []) : current;
 }
 
 function serverLabel(server: McpServerView, t: Translate): string {
@@ -69,7 +75,7 @@ export const McpConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
   const serverRef = step.config.server ?? '';
   const toolName = step.config.tool ?? '';
   const argsText = step.config.arguments ?? '';
-  const server = findServer(servers, serverRef);
+  const server = findStepServer(servers, serverRef);
   const serverId = server?.id ?? '';
   const serverStatus = server?.status;
 
@@ -95,13 +101,19 @@ export const McpConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
   }, [currentView, serverId, serverStatus, toolName, argsText, retry]);
 
   // What the tool does with these arguments is what the step stores, so the import gate and a
-  // bot-started run read the same answer the editor shows. Keyed on the answer alone: the config
-  // read here is the one rendered with it.
+  // bot-started run read the same answer the editor shows. Stored only after the user edited the
+  // step here: expanding a card never changes the flow, and a silent write would count as
+  // confirming a deleting tool. Keyed on the answer: the config read here is the one rendered with it.
+  const userEdited = useRef(false);
+  const edit = (next: Record<string, string>): void => {
+    userEdited.current = true;
+    onChange(next);
+  };
   const liveAccess = result?.selectedAccess;
   useEffect(() => {
-    if (!liveAccess || liveAccess === step.config.access) return;
+    if (!userEdited.current || !liveAccess || liveAccess === step.config.access) return;
     onChange({ ...step.config, access: liveAccess });
-  }, [liveAccess]);
+  }, [result]);
 
   const tools: McpFlowTool[] = useMemo(() => result?.tools ?? [], [result]);
   const picked = tools.find((tool) => tool.name === toolName);
@@ -125,13 +137,20 @@ export const McpConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
 
   const parsed = interpolateMcpArguments(argsText, (name) => `{{${name}}}`);
   const missing = parsed.ok && picked ? missingRequiredArguments(parsed.value, picked.fields) : [];
+  const blank = parsed.ok && picked ? blankRequiredArguments(parsed.value, picked.fields) : [];
+  const unknown = parsed.ok && picked ? unknownArguments(parsed.value, picked.fields) : [];
   const argsError = !parsed.ok
     ? t(parsed.reason === 'notObject' ? 'flow.skill.mcp.arguments.notObject' : 'flow.skill.mcp.arguments.invalid')
     : missing.length > 0 ? fillTemplate(t('flow.skill.mcp.arguments.missing'), { fields: missing.join(', ') }) : undefined;
 
-  const access = storedMcpAccess(step.config.access);
+  const storedAccess = storedMcpAccess(step.config.access);
+  const access = liveAccess ? effectiveMcpAccess(storedAccess, liveAccess) : storedAccess;
   const status = result?.status;
   const serverName = server?.name ?? serverRef;
+  // The tool list came back and no longer has the stored tool: the run would fail on it.
+  const toolGone = Boolean(toolName) && status === 'connected' && !loading && !picked;
+  // Deleting now, stored as less: the run refuses (`mcpDeleteUnconfirmed`) until the tool is picked again.
+  const unconfirmedDelete = liveAccess === 'delete' && storedAccess !== 'delete';
 
   return (
     <Stack gap="xs">
@@ -140,13 +159,14 @@ export const McpConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
         placeholder={t('flow.skill.mcp.server.placeholder')}
         options={serverOptions}
         value={server?.id ?? (serverRef || null)}
-        onChange={(next) => onChange({ ...step.config, server: next, tool: '', access: '' })}
+        // Another connector's arguments mean nothing to this one's tools.
+        onChange={(next) => edit({ ...step.config, server: next, tool: '', access: '', arguments: '' })}
         searchable
         nothingFoundMessage={t('flow.skill.mcp.noServers')}
         size="sm"
       />
       {servers.length === 0 && (
-        <Text fz="xs" c="dimmed">{t('flow.skill.mcp.noServers')}</Text>
+        <Text fz="xs" c="var(--text-muted)">{t('flow.skill.mcp.noServers')}</Text>
       )}
 
       {server && status === 'needsSignIn' && (
@@ -192,24 +212,28 @@ export const McpConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
         value={toolName || null}
         onChange={(next) => {
           const tool = tools.find((entry) => entry.name === next);
-          onChange({
+          edit({
             ...step.config,
             tool: next,
             access: tool?.access ?? '',
-            arguments: argsText.trim() ? argsText : argumentsSkeleton(tool?.fields ?? []),
+            arguments: argumentsForTool(argsText, tool),
           });
         }}
         searchable
         disabled={!server}
+        error={toolGone ? t('flow.skill.mcp.tool.gone') : undefined}
         size="sm"
       />
       {toolName && access === 'read' && (
-        <Text fz="xs" c="dimmed">{t('flow.skill.mcp.access.read.hint')}</Text>
+        <Text fz="xs" c="var(--text-muted)">{t('flow.skill.mcp.access.read.hint')}</Text>
+      )}
+      {toolName && unconfirmedDelete && (
+        <StatusLine tone="error">{t('flow.skill.mcp.access.unconfirmedDelete')}</StatusLine>
       )}
       {toolName && (access === 'write' || access === 'delete') && (
         <Alert
           color={access === 'delete' ? 'var(--mantine-color-error)' : 'var(--mantine-color-warning)'}
-          icon={<TriangleAlert size={14} />}
+          icon={<TriangleExclamationPoint size={14} />}
           p="xs"
         >
           <Text fz="xs" style={{ lineHeight: 1.6 }}>
@@ -222,8 +246,9 @@ export const McpConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
         label={t('flow.skill.mcp.arguments')}
         placeholder={t('flow.skill.mcp.arguments.placeholder')}
         value={argsText}
-        onChange={(e) => onChange({ ...step.config, arguments: e.currentTarget.value })}
+        onChange={(e) => edit({ ...step.config, arguments: e.currentTarget.value })}
         minRows={3}
+        maxRows={16}
         autosize
         mono
         size="sm"
@@ -234,8 +259,14 @@ export const McpConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
           {fillTemplate(t('flow.skill.mcp.arguments.readAs'), { json: JSON.stringify(parsed.value) })}
         </Text>
       )}
+      {unknown.length > 0 && (
+        <StatusLine tone="warning">{fillTemplate(t('flow.skill.mcp.arguments.unknown'), { fields: unknown.join('、') })}</StatusLine>
+      )}
+      {blank.length > 0 && (
+        <StatusLine tone="warning">{fillTemplate(t('flow.skill.mcp.arguments.blank'), { fields: blank.join('、') })}</StatusLine>
+      )}
       {picked && picked.fields.length > 0 && (
-        <Text fz="xs" c="dimmed">
+        <Text fz="xs" c="var(--text-muted)">
           {fillTemplate(t('flow.skill.mcp.fields'), { fields: picked.fields.map(fieldLine).join(' · ') })}
         </Text>
       )}
@@ -247,12 +278,12 @@ export const McpConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
         onChange={(e) => onChange({ ...step.config, emitFailFlag: e.currentTarget.checked ? 'true' : 'false' })}
       />
       {step.config.emitFailFlag === 'true' && (
-        <Text fz="xs" c="dimmed">
+        <Text fz="xs" c="var(--text-muted)">
           {fillTemplate(t('flow.skill.mcp.emitFailFlag.hint'), { flag: `{{${step.outputKey}.isFailed}}` })}
         </Text>
       )}
 
-      <Text fz="xs" c="dimmed">
+      <Text fz="xs" c="var(--text-muted)">
         {fillTemplate(t('flow.skill.mcp.outputHint'), { outputKey: `{{${step.outputKey}}}` })}
       </Text>
     </Stack>

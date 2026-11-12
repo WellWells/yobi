@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { Box, Group, Stack, Text, Tooltip } from '@mantine/core';
-import { KeyRound, Snowflake, TriangleAlert } from 'lucide-react';
+import { KeyRound, Snowflake, TriangleExclamationPoint } from 'lucide-react';
 import { SectionCard, SectionTitle } from '../../components';
 import { formatTokenCount } from '../../../../../../shared/tokenEstimate';
 import { fillTemplate } from '../../../../../../shared/fillTemplate';
@@ -102,7 +102,7 @@ export const KeysCard: React.FC<Props> = ({ stats, instances, t }) => {
                 )}
                 {row.failures > 0 && (
                   <Badge
-                    icon={<TriangleAlert size={13} />}
+                    icon={<TriangleExclamationPoint size={13} />}
                     label={t('settings.stats.keys.failures')}
                     value={row.failures}
                     color={OUTCOME_COLORS.failure}

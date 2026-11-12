@@ -1,6 +1,6 @@
 import * as fs from 'node:fs/promises';
 import { withConversationId } from '../../shared/conversationHistory';
-import { isLockedNotionText, spaceNotionBlocks, splitNotionBlocks, unspaceNotionBlocks } from '../../shared/notion/notionBlocks';
+import { isLockedNotionText, joinNotionBlocks, spaceNotionBlocks, splitNotionBlocks } from '../../shared/notion/notionBlocks';
 import {
   carryConflicts, conflictKey, hunkInConflict, liveConflicts, uniqueConflicts, withTheirs,
 } from '../../shared/notion/notionConflicts';
@@ -60,7 +60,7 @@ interface LoadedDoc {
 
 /** Stand-in state for a document with none: base = its own text, so nothing reads as pending. */
 function freshState(parts: NotionDocParts): NotionSyncState {
-  return { v: 1, base: unspaceNotionBlocks(parts.body), baseTitle: parts.title, baseEditedAt: '', syncedAt: '', conflicts: [] };
+  return { v: 1, base: spaceNotionBlocks(parts.body), baseTitle: parts.title, baseEditedAt: '', syncedAt: '', conflicts: [] };
 }
 
 async function loadDoc(filePath: string): Promise<LoadedDoc | null> {
@@ -120,7 +120,7 @@ export async function notionDocStatus(filePath: string): Promise<NotionDocStatus
   const doc = await loadDoc(filePath);
   if (!doc) return null;
   const base = blocksOf(doc.state.base);
-  const local = blocksOf(unspaceNotionBlocks(doc.parts.body));
+  const local = blocksOf(doc.parts.body);
   const conflicts = liveConflicts(doc.state.conflicts, local, base);
   // Hunks come in order: each one's place in the local text is its base place moved by those before it.
   let shift = 0;
@@ -185,7 +185,7 @@ async function mergeRemote(filePath: string, input: MergeInput): Promise<{ updat
     const raw = await fs.readFile(filePath, 'utf-8').catch(() => null);
     const parts = raw === null ? null : notionDocParts(raw);
     if (!raw || !parts) return null;
-    const local = blocksOf(unspaceNotionBlocks(parts.body));
+    const local = input.base && spacingOnly(parts.body, input.base) ? [...input.base] : blocksOf(parts.body);
     const remoteBlocks = blocksOf(input.remote.body);
 
     let merged: string[];
@@ -211,7 +211,7 @@ async function mergeRemote(filePath: string, input: MergeInput): Promise<{ updat
       if (parts.title === titleText(input.baseTitle)) title = input.remote.title;
     }
 
-    const body = spaceNotionBlocks(merged.join('\n'));
+    const body = joinNotionBlocks(merged);
     const now = new Date().toISOString();
     const titleMoved = titleText(title) !== parts.title;
     if (body !== parts.body || titleMoved) {
@@ -232,6 +232,26 @@ async function mergeRemote(filePath: string, input: MergeInput): Promise<{ updat
     }));
     return { updated: updated + (titleMoved ? 1 : 0), conflicts: conflicts.length };
   });
+}
+
+/**
+ * Notion holds what both last agreed on. Its edit time alone does not say so: when Notion changed
+ * how it writes pages, a page nobody touched came back in other text, and every
+ * `old_str` built from the stored base would miss.
+ */
+function unchangedSinceBase(doc: LoadedDoc, remote: NotionPage): boolean {
+  return remote.editedAt === doc.state.baseEditedAt && remote.body === doc.state.base;
+}
+
+/**
+ * The file holds the base's text with only blank lines moved. Pages imported before Yobi read
+ * Notion's newer Markdown had every table row split off and spaced apart; the user changed
+ * nothing, and a merge takes the base's blocks for them.
+ */
+function spacingOnly(body: string, base: readonly string[]): boolean {
+  const squeeze = (text: string): string => text.replace(/\r\n?/g, '\n').replace(/\n{2,}/g, '\n').trim();
+  const page = joinNotionBlocks(base);
+  return body !== page && squeeze(body) === squeeze(page);
 }
 
 function mergeInputFor(doc: LoadedDoc, id: string, remote: NotionPage): MergeInput {
@@ -258,7 +278,7 @@ export function pullNotionDoc(filePath: string): Promise<NotionPullResult> {
       if (remote.error !== 'notPage') await recordError(doc.id, remote.error);
       return { ok: false, reason: remote.error };
     }
-    if (doc.known && doc.id && remote.editedAt === doc.state.baseEditedAt) {
+    if (doc.known && doc.id && unchangedSinceBase(doc, remote) && !spacingOnly(doc.parts.body, blocksOf(doc.state.base))) {
       await updateNotionSync(doc.id, (state) => (state ? { ...state, syncedAt: new Date().toISOString(), lastError: undefined } : state));
       return { ok: true, updated: 0, conflicts: 0 };
     }
@@ -288,7 +308,7 @@ export function pushNotionDoc(filePath: string, ids: readonly string[], title: s
       if (before.error !== 'notPage') await recordError(doc.id, before.error);
       return { ok: false, reason: before.error };
     }
-    if (!doc.known || !doc.id || before.editedAt !== doc.state.baseEditedAt) {
+    if (!doc.known || !doc.id || !unchangedSinceBase(doc, before)) {
       const id = doc.id ?? await ensureId(filePath);
       if (!id) return { ok: false, reason: 'missing' };
       const merged = await mergeRemote(filePath, mergeInputFor(doc, id, before));
@@ -299,7 +319,7 @@ export function pushNotionDoc(filePath: string, ids: readonly string[], title: s
 
     // Notion holds exactly the base: every update is built from, and matched against, this text.
     const base = blocksOf(before.body);
-    const local = blocksOf(unspaceNotionBlocks(doc.parts.body));
+    const local = blocksOf(doc.parts.body);
     const wanted = new Set(ids);
     const conflicts = liveConflicts(doc.state.conflicts, local, base);
     const hunks = diffBlocks(base, local)
@@ -313,7 +333,7 @@ export function pushNotionDoc(filePath: string, ids: readonly string[], title: s
     for (const hunk of [...hunks].reverse()) {
       const update = buildUpdate(current, hunk);
       if (update && (isLockedNotionText(update.old_str) || isLockedNotionText(update.new_str))) continue;
-      let result = update ? await api.update(page, update) : await api.insert(page, hunk.next.join('\n'));
+      let result = update ? await api.update(page, update) : await api.insert(page, joinNotionBlocks(hunk.next));
       if (!result.ok && result.error === 'ambiguous' && update) {
         const wider = buildUpdate(current, hunk, 2);
         if (wider && !isLockedNotionText(wider.old_str)) result = await api.update(page, wider);
@@ -363,7 +383,7 @@ export function pushNotionDoc(filePath: string, ids: readonly string[], title: s
     // pull merges whatever Notion holds by then (a queued change on both sides is taken once).
     await updateNotionSync(id, (state) => ({
       ...(state ?? freshState(doc.parts)),
-      base: current.join('\n'),
+      base: joinNotionBlocks(current),
       baseTitle,
       ...(failed ? { lastError: { kind: failed, at: new Date().toISOString() } } : { lastError: undefined }),
     }));
@@ -377,13 +397,13 @@ export function revertNotionChange(filePath: string, changeId: string): Promise<
     const doc = await loadDoc(filePath);
     if (!doc?.id) return false;
     const base = blocksOf(doc.state.base);
-    const local = blocksOf(unspaceNotionBlocks(doc.parts.body));
+    const local = blocksOf(doc.parts.body);
     let offset = 0;
     for (const hunk of diffBlocks(base, local)) {
       const at = hunk.start + offset;
       if (hunk.id === changeId) {
         const next = [...local.slice(0, at), ...base.slice(hunk.start, hunk.end), ...local.slice(at + hunk.next.length)];
-        const written = writeNotionDoc(doc.raw, { body: spaceNotionBlocks(next.join('\n')), at: new Date().toISOString() });
+        const written = writeNotionDoc(doc.raw, { body: joinNotionBlocks(next), at: new Date().toISOString() });
         if (written === null) return false;
         await recordConversationVersion(doc.id, doc.raw, 'edit');
         await writeFileAtomic(filePath, written);
@@ -403,14 +423,14 @@ export function resolveNotionConflict(filePath: string, key: string, choice: 'mi
   return exclusive(filePath, () => withConversationFile(filePath, async () => {
     const doc = await loadDoc(filePath);
     if (!doc?.id) return false;
-    const local = blocksOf(unspaceNotionBlocks(doc.parts.body));
+    const local = blocksOf(doc.parts.body);
     const conflicts = liveConflicts(doc.state.conflicts, local, blocksOf(doc.state.base));
     const conflict = conflicts.find((candidate) => conflictKey(candidate) === key);
     if (!conflict) return false;
     if (choice === 'theirs') {
       const next = withTheirs(local, conflict);
       if (!next) return false;
-      const written = writeNotionDoc(doc.raw, { body: spaceNotionBlocks(next.join('\n')), at: new Date().toISOString() });
+      const written = writeNotionDoc(doc.raw, { body: joinNotionBlocks(next), at: new Date().toISOString() });
       if (written === null) return false;
       await recordConversationVersion(doc.id, doc.raw, 'edit');
       await writeFileAtomic(filePath, written);

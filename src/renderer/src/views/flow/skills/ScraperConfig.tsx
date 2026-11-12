@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Badge, Button, Group, Stack, Text } from '@mantine/core';
+import { Box, Group, SimpleGrid, Stack, Text } from '@mantine/core';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { AppNumberInput } from '../../../components/AppNumberInput';
 import { AppButton } from '../../../components/AppButton';
-import { Trash2, BookmarkCheck, MousePointerClick } from 'lucide-react';
+import { StatusLine } from '../../../components/StatusLine';
+import { Trash, MousePointerClick } from 'lucide-react';
 import { scraperApi, ipcEvents } from '../../../api/electronApi';
 import { isValidUrlOrVar } from './validation';
 import type { FlowVariable } from '../../../../../shared/types';
@@ -15,16 +16,31 @@ function resolveVars(raw: string, vars: FlowVariable[] | undefined): string {
     vars?.find((v) => v.key === name)?.value ?? '');
 }
 
+/** What the runner takes when the field is blank (`feeds.ts`), on every run, not only the first. */
+const SCRAPER_DEFAULT_MAX = '5';
+
+/** Title and link side by side once the card is this wide; the 560px column keeps them stacked. */
+const SELECTOR_PAIR_FROM = '640px';
+
+/**
+ * What the pick's match count still says: the number it found, or that a selector or the address
+ * changed since, so the number no longer describes these selectors.
+ */
+type PickCount = { count: number } | 'stale' | null;
+
+/** What the checkpoint row shows: one is stored, it was just reset, or there is none (no row). */
+type CheckpointRow = 'stored' | 'cleared' | null;
+
 export const ScraperConfig: React.FC<SkillConfigProps> = ({ step, onChange, t, flowVariables }) => {
   const url = step.config.url ?? '';
   const urlError = !isValidUrlOrVar(url);
   const itemSelector = step.config.itemSelector ?? '';
   const titleSelector = step.config.titleSelector ?? '';
   const linkSelector = step.config.linkSelector ?? '';
-  const maxItems = step.config.maxItems ?? '5';
-  const [hasCheckpoint, setHasCheckpoint] = useState(false);
+  const maxItems = step.config.maxItems ?? SCRAPER_DEFAULT_MAX;
+  const [checkpoint, setCheckpoint] = useState<CheckpointRow>(null);
   const [picking, setPicking] = useState(false);
-  const [pickCount, setPickCount] = useState<number | null>(null);
+  const [pickCount, setPickCount] = useState<PickCount>(null);
 
   const configRef = useRef(step.config);
   configRef.current = step.config;
@@ -35,19 +51,18 @@ export const ScraperConfig: React.FC<SkillConfigProps> = ({ step, onChange, t, f
   const canPick = resolvedUrl.length > 0 && !resolvedUrl.includes('{{');
 
   useEffect(() => {
-    void scraperApi.hasCheckpoint(step.id).then(setHasCheckpoint);
-  }, [step.id]);
-
-  useEffect(() => {
-    const unsub = ipcEvents.onFlowExecutionEnded(() => {
-      void scraperApi.hasCheckpoint(step.id).then(setHasCheckpoint);
-    });
-    return unsub;
+    const refresh = (): void => {
+      void scraperApi.hasCheckpoint(step.id).then((stored) => {
+        setCheckpoint((current) => (stored ? 'stored' : current === 'cleared' ? 'cleared' : null));
+      });
+    };
+    refresh();
+    return ipcEvents.onFlowExecutionEnded(refresh);
   }, [step.id]);
 
   const handleClearCheckpoint = useCallback(async () => {
     await scraperApi.clearCheckpoint(step.id);
-    setHasCheckpoint(false);
+    setCheckpoint('cleared');
   }, [step.id]);
 
   const handlePick = useCallback(async () => {
@@ -63,14 +78,17 @@ export const ScraperConfig: React.FC<SkillConfigProps> = ({ step, onChange, t, f
         titleSelector: res.titleSelector,
         linkSelector: res.linkSelector,
       });
-      setPickCount(res.count);
+      setPickCount({ count: res.count });
     } finally {
       setPicking(false);
     }
   }, [onChange]);
 
-  const matchCount = (count: number): string =>
-    fillTemplate(t('flow.skill.scraper.matchCount'), { count: String(count) });
+  /** A hand edit of the address or a selector leaves the count describing something else. */
+  const edit = (field: 'url' | 'itemSelector' | 'titleSelector' | 'linkSelector', value: string): void => {
+    onChange({ ...step.config, [field]: value });
+    setPickCount((current) => (current === null ? null : 'stale'));
+  };
 
   return (
     <Stack gap="xs">
@@ -78,25 +96,15 @@ export const ScraperConfig: React.FC<SkillConfigProps> = ({ step, onChange, t, f
         label={t('flow.skill.scraper.url')}
         placeholder={t('flow.skill.scraper.url.placeholder')}
         value={url}
-        onChange={(e) => onChange({ ...step.config, url: e.currentTarget.value })}
+        onChange={(e) => edit('url', e.currentTarget.value)}
         size="sm"
+        mono
         error={urlError ? t('flow.skill.scraper.url.error') : undefined}
       />
 
-      {!canPick && (
-        <Text fz="xs" c="dimmed">{t('flow.skill.scraper.pickNeedsUrl')}</Text>
-      )}
-
+      {/* Picking on the page fills all three selectors at once: the main way to set this step up. */}
       <Stack gap={4}>
-        <Group gap="xs" wrap="nowrap" align="flex-end">
-          <AppTextInput
-            label={t('flow.skill.scraper.itemSelector')}
-            placeholder={t('flow.skill.scraper.itemSelector.placeholder')}
-            value={itemSelector}
-            onChange={(e) => { onChange({ ...step.config, itemSelector: e.currentTarget.value }); setPickCount(null); }}
-            size="sm"
-            style={{ flex: 1 }}
-          />
+        <Group gap="sm" wrap="wrap" align="center">
           <AppButton
             variant="default"
             size="sm"
@@ -107,29 +115,54 @@ export const ScraperConfig: React.FC<SkillConfigProps> = ({ step, onChange, t, f
           >
             {t('flow.skill.scraper.pickList')}
           </AppButton>
+          {pickCount !== null && (
+            <Text fz="xs" c="var(--text-muted)" data-pick-count={pickCount === 'stale' ? 'stale' : 'fresh'} style={{ fontVariantNumeric: 'tabular-nums' }}>
+              {pickCount === 'stale'
+                ? t('flow.skill.scraper.matchCount.stale')
+                : fillTemplate(t('flow.skill.scraper.matchCount'), { count: String(pickCount.count) })}
+            </Text>
+          )}
         </Group>
-        {pickCount !== null && <Text fz="xs" c="dimmed">{matchCount(pickCount)}</Text>}
-        <Text fz="xs" c="dimmed">{t('flow.skill.scraper.itemSelector.hint')}</Text>
+        {!canPick && (
+          <Text fz="xs" c="var(--text-muted)">{t('flow.skill.scraper.pickNeedsUrl')}</Text>
+        )}
       </Stack>
 
-      <AppTextInput
-        label={t('flow.skill.scraper.titleSelector')}
-        placeholder={t('flow.skill.scraper.titleSelector.placeholder')}
-        value={titleSelector}
-        onChange={(e) => onChange({ ...step.config, titleSelector: e.currentTarget.value })}
-        size="sm"
-      />
+      <Stack gap={4}>
+        <AppTextInput
+          label={t('flow.skill.scraper.itemSelector')}
+          placeholder={t('flow.skill.scraper.itemSelector.placeholder')}
+          value={itemSelector}
+          onChange={(e) => edit('itemSelector', e.currentTarget.value)}
+          size="sm"
+          mono
+        />
+        <Text fz="xs" c="var(--text-muted)">{t('flow.skill.scraper.itemSelector.hint')}</Text>
+      </Stack>
 
-      <AppTextInput
-        label={t('flow.skill.scraper.linkSelector')}
-        placeholder={t('flow.skill.scraper.linkSelector.placeholder')}
-        value={linkSelector}
-        onChange={(e) => onChange({ ...step.config, linkSelector: e.currentTarget.value })}
-        size="sm"
-      />
+      <SimpleGrid type="container" cols={{ base: 1, [SELECTOR_PAIR_FROM]: 2 }} spacing="xs" verticalSpacing="xs">
+        <AppTextInput
+          label={t('flow.skill.scraper.titleSelector')}
+          placeholder={t('flow.skill.scraper.titleSelector.placeholder')}
+          value={titleSelector}
+          onChange={(e) => edit('titleSelector', e.currentTarget.value)}
+          size="sm"
+          mono
+        />
+        <AppTextInput
+          label={t('flow.skill.scraper.linkSelector')}
+          placeholder={t('flow.skill.scraper.linkSelector.placeholder')}
+          value={linkSelector}
+          onChange={(e) => edit('linkSelector', e.currentTarget.value)}
+          size="sm"
+          mono
+        />
+      </SimpleGrid>
 
       <AppNumberInput
         label={t('flow.skill.scraper.maxItems')}
+        description={t('flow.skill.scraper.hint')}
+        placeholder={SCRAPER_DEFAULT_MAX}
         value={maxItems}
         onChange={(v) => onChange({ ...step.config, maxItems: v === '' ? '' : String(v) })}
         size="sm"
@@ -139,36 +172,30 @@ export const ScraperConfig: React.FC<SkillConfigProps> = ({ step, onChange, t, f
         allowNegative={false}
       />
 
-      <Text fz="xs" c="dimmed">
-        {t('flow.skill.scraper.hint')}
-      </Text>
-
-      {hasCheckpoint && (
-        <Group gap="xs" align="center">
-          <Badge
-            variant="light"
-            color="var(--mantine-color-success)"
-            size="sm"
-            leftSection={<BookmarkCheck size={12} />}
-          >
-            {t('flow.skill.scraper.stateActive')}
-          </Badge>
+      {checkpoint !== null && (
+        <Group justify="space-between" gap="xs" wrap="nowrap" align="flex-start" data-scraper-checkpoint={checkpoint}>
+          <Box style={{ flex: 1, minWidth: 0 }}>
+            {checkpoint === 'stored'
+              ? <StatusLine tone="success">{t('flow.skill.scraper.stateActive')}</StatusLine>
+              : <Text fz="var(--font-size-sm)" c="var(--text-muted)">{t('flow.skill.scraper.stateCleared')}</Text>}
+          </Box>
+          {checkpoint === 'stored' && (
+            <AppButton
+              variant="subtle"
+              color="red"
+              size="compact-sm"
+              leftSection={<Trash size={14} />}
+              onClick={() => void handleClearCheckpoint()}
+              style={{ flexShrink: 0 }}
+            >
+              {t('flow.skill.scraper.clearState')}
+            </AppButton>
+          )}
         </Group>
       )}
 
-      <Button
-        variant="light"
-        color="red"
-        size="xs"
-        leftSection={<Trash2 size={14} />}
-        onClick={() => void handleClearCheckpoint()}
-        disabled={!hasCheckpoint}
-      >
-        {t('flow.skill.scraper.clearState')}
-      </Button>
-
-      <Text fz="xs" c="dimmed">
-        {fillTemplate(t('flow.skill.browser.outputHint'), { outputKey: `{{${step.outputKey}}}` })}
+      <Text fz="xs" c="var(--text-muted)">
+        {fillTemplate(t('flow.skill.scraper.outputHint'), { outputKey: `{{${step.outputKey}}}` })}
       </Text>
     </Stack>
   );

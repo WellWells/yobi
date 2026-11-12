@@ -218,10 +218,6 @@ export function findFutureLines(text: string): FutureLine[] {
     .map((hit) => hit.entry);
 }
 
-export function findFutureLine(text: string): FutureLine | undefined {
-  return findFutureLines(text)[0];
-}
-
 /** What the model reads: the line without its matching words or the self-test's phrases. */
 export function futureLineView(entry: FutureLine): Omit<FutureLine, 'words' | 'places' | 'checkPhrases'> {
   const { words: _words, places: _places, checkPhrases: _phrases, ...view } = entry;

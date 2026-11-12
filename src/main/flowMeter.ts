@@ -21,6 +21,10 @@ export interface FlowRunEvent {
   outcome: MetricOutcome;
   /** The run finished, but at least one step failed inside it. */
   degraded: boolean;
+  /** ISO timestamp of when it ended. */
+  at: string;
+  /** Why it failed or lost a step, as the user was told; raw, so the sink masks and cuts it. */
+  message?: string;
 }
 
 export interface FlowMeterSinks {

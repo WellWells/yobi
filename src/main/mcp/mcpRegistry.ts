@@ -537,7 +537,7 @@ export class McpRegistry {
       targetId = server.id;
     }
     const token = (req.token ?? '').trim();
-    if (token) setAuthRecord(targetId, { ...(getAuthRecord(targetId) ?? {}), manualToken: token });
+    if (token) await setAuthRecord(targetId, { ...(getAuthRecord(targetId) ?? {}), manualToken: token });
 
     saveConfig({ mcpServers: config.mcpServers });
     this.broadcastAll();

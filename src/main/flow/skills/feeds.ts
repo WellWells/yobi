@@ -4,8 +4,10 @@ import { feedItemTitle, readFeed, RSS_BURST_CAP } from './rssRead';
 import { pageFetchLane, Semaphore } from '../lanes';
 import { extractYoutubeVideoId, youtubeThumbnailUrl } from '../../youtubeTranscript';
 import { sendLog } from '../../helpers';
+import { FlowUserError } from '../userError';
 import { makeCheckpointStore } from '../checkpoint';
 import { cacheWindowMs, readSeenEntries, reconcileSeenCache, type SeenCheckpoint } from '../seenCache';
+import { YOUTUBE_SUBS_MAX_PER_RUN } from '../../../shared/flowFeedCaps';
 
 export { buildYoutubeEnvelope, execYoutube } from './youtube';
 
@@ -36,15 +38,28 @@ function pushResolved(
   }
 }
 
+/** The step's read of its feed; an error status reaches the run panel in the user's language. */
+async function readStepFeed(url: string): ReturnType<typeof readFeed> {
+  try {
+    return await readFeed(url);
+  } catch (err) {
+    const status = /^HTTP (\d{3})$/.exec(err instanceof Error ? err.message : '')?.[1];
+    if (status) throw new FlowUserError('flow.error.rssHttp', { status }, `HTTP ${status}`);
+    throw err;
+  }
+}
+
 export async function execRss(
   config: Record<string, string>,
   stepId: string,
 ): Promise<string> {
-  const url = config.url ?? '';
-  if (!url) return '[]';
+  const url = (config.url ?? '').trim();
+  if (!url) throw new FlowUserError('flow.error.requiredRssUrl', {}, 'The RSS step has no feed URL');
 
   if (config.fetchContent === 'true') {
-    throw new Error(
+    throw new FlowUserError(
+      'flow.error.rssFetchContentRemoved',
+      {},
       'The RSS "fetch linked content" option has been removed. Feed the RSS output into a loop and fetch each article with a browser step. See the "RSS Article Summary" template.',
     );
   }
@@ -54,30 +69,47 @@ export async function execRss(
 
   sendLog(`📡 [Flow] RSS step — fetching feed: ${url}`);
 
-  const { items: allItems } = await readFeed(url);
+  const { items: allItems } = await readStepFeed(url);
 
   if (allItems.length === 0) {
     sendLog('📡 [Flow] RSS: feed returned 0 items');
     return '[]';
   }
 
-  const byLink = new Map(allItems.map((item) => [item.link, item]));
-  const { fresh, isFirstRun } = await reconcileSeenCache(
-    rssCheckpoints,
-    stepId,
-    allItems.map((item) => item.link),
-    undefined,
-  );
+  const byLink = new Map(allItems.map((item) => [item.link.trim(), item]));
+  const links = [...byLink.keys()].filter(Boolean);
+  // The address is a seen key of its own (as ptt_board's query): another feed in the same step
+  // seeds like a first run instead of handing on five of its old articles. A record from before
+  // the address was kept, already holding this feed's links, is the same feed.
+  const feedKey = `rss-feed:${url}`;
+  const { fresh, isFirstRun, lapsed } = await reconcileSeenCache(rssCheckpoints, stepId, [feedKey, ...links], undefined);
+  const freshSet = new Set(fresh);
+  // A record that only expired (a weekly schedule, the app closed for a week) is the same feed:
+  // its recent articles are new, and the window check below drops the older ones.
+  const newFeed = !lapsed && freshSet.has(feedKey) && links.every((link) => freshSet.has(link));
 
-  let newLinks = fresh;
-  if (isFirstRun) {
-    sendLog(`📡 [Flow] RSS: first run — seeding the checkpoint, returning the latest ${FIRST_RUN_COUNT} item`);
-    newLinks = allItems.slice(0, FIRST_RUN_COUNT).map((item) => item.link);
-  } else if (newLinks.length > BURST_CAP) {
-    sendLog(`📡 [Flow] RSS: burst of ${newLinks.length} — returning the first ${BURST_CAP} unseen in feed order`);
-    newLinks = fresh.slice(0, BURST_CAP);
+  let newLinks = links.filter((link) => freshSet.has(link));
+  if (isFirstRun || newFeed) {
+    sendLog(`📡 [Flow] RSS: ${isFirstRun ? 'first run' : 'new feed address'} — seeding the checkpoint, returning the latest ${FIRST_RUN_COUNT} item`);
+    newLinks = links.slice(0, FIRST_RUN_COUNT);
   } else {
-    sendLog(`📡 [Flow] RSS: found ${newLinks.length} new items since checkpoint`);
+    // An article published before the seen window may be unseen only because its entry expired
+    // (a weekly schedule): it is not new.
+    const oldest = Date.now() - cacheWindowMs(undefined);
+    const recent = newLinks.filter((link) => {
+      const published = Date.parse(byLink.get(link)?.pubDate ?? '');
+      return !Number.isFinite(published) || published >= oldest;
+    });
+    if (recent.length < newLinks.length) {
+      sendLog(`📡 [Flow] RSS: ${newLinks.length - recent.length} unseen item(s) published before the seen window — dropped`);
+    }
+    newLinks = recent;
+    if (newLinks.length > BURST_CAP) {
+      sendLog(`📡 [Flow] RSS: burst of ${newLinks.length} — returning the first ${BURST_CAP} unseen in feed order`);
+      newLinks = newLinks.slice(0, BURST_CAP);
+    } else {
+      sendLog(`📡 [Flow] RSS: found ${newLinks.length} new items since checkpoint`);
+    }
   }
 
   if (newLinks.length === 0) return '[]';
@@ -382,7 +414,7 @@ export async function execYoutubeSubs(
   config: Record<string, string>,
   stepId: string,
 ): Promise<string> {
-  const MAX_NEW_PER_RUN = 5;
+  const MAX_NEW_PER_RUN = YOUTUBE_SUBS_MAX_PER_RUN;
 
   const channels = (config.channels ?? '')
     .split(/\r?\n/)

@@ -1,6 +1,6 @@
-/* Template gallery: one horizontally scrolling rail per category; descriptions live in a
-   tooltip, so nothing here truncates. These rules override UnstyledButton's reset, which only
-   holds because main.tsx imports Mantine's stylesheet before any app CSS. */
+/* Template gallery: one horizontally scrolling rail per category (`TemplateRail`); descriptions
+   live in a tooltip, so nothing here truncates. These rules override UnstyledButton's reset, which
+   only holds because main.tsx imports Mantine's stylesheet before any app CSS. */
 .rail {
   display: flex;
   /* Stretch is what keeps a title safe: a tile whose name wraps to a second line grows
@@ -10,8 +10,8 @@
   overflow-x: auto;
   overflow-y: hidden;
   /* Scrollbars are the platform's own and are never restyled; on Windows that is a bar with end
-     arrows, heavy under a short rail. Hide it instead: the half-visible edge tile and the wheel
-     handler stand in for it. */
+     arrows, heavy under a short rail. Hide it instead: the chevrons beside the heading, the
+     half-visible edge tile and the wheel handler stand in for it. */
   scrollbar-width: none;
   /* Dragging the rail with a mouse would otherwise sweep a text selection across the tiles.
      `touch-action` is left at its default: the browser already pans this axis on touch, and
@@ -59,15 +59,6 @@
   /* CJK breaks anywhere anyway; this only bites if a future translation coins a Latin
      word wider than the tile, and breaking it beats letting it overflow the rail. */
   overflow-wrap: anywhere;
-}
-
-/* The blank tile's chip: same footprint as `TemplateIcon`, but no hue, since it is about
-   nothing yet. */
-.blankChip {
-  flex-shrink: 0;
-  border-radius: var(--mantine-radius-md);
-  border: 1px dashed var(--mantine-color-default-border);
-  color: var(--text-muted);
 }
 
 /* Pins the command chip / setup count to the bottom edge whether the title above it took

@@ -1,6 +1,6 @@
 import * as fs from 'node:fs/promises';
 import { writeFileAtomic } from '../../atomicWrite';
-import { decryptTokenChecked, encryptToken } from '../../configEncryption';
+import { encryptSecret, openSecretChecked } from '../../configEncryption';
 import { telegramUploadSessionPath } from './sessionPath';
 
 /**
@@ -41,13 +41,13 @@ export function createUploadSessionStore(filePath: () => string = telegramUpload
       const stored = await fs.readFile(filePath(), 'utf-8').catch(() => '');
       if (!stored) return null;
       // Unreadable (another OS key, a damaged file) only costs one more sign-in.
-      const { value, failed } = decryptTokenChecked(stored.trim(), 'telegram.uploadSession');
+      const { value, failed } = await openSecretChecked(stored.trim(), 'telegram.uploadSession');
       if (failed || !value) return null;
       return parse(value);
     },
     async save(value) {
       const plaintext = JSON.stringify({ v: VERSION, fingerprint: value.fingerprint, session: value.session });
-      await writeFileAtomic(filePath(), encryptToken(plaintext));
+      await writeFileAtomic(filePath(), await encryptSecret(plaintext));
     },
     async remove() {
       await fs.rm(filePath(), { force: true });

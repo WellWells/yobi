@@ -1,6 +1,6 @@
 import React from 'react';
 import { Group, Stack, Text } from '@mantine/core';
-import { TriangleAlert } from 'lucide-react';
+import { TriangleExclamationPoint } from 'lucide-react';
 import { assignMcpCommandNames } from '../../../../../../shared/mcpCommand';
 import type { McpCommandAssignment, McpCommandClash, McpCommandOwner } from '../../../../../../shared/mcpCommand';
 import type { McpServerConfig } from '../../../../../../shared/types';
@@ -63,7 +63,7 @@ export const CommandClashNotice: React.FC<{ lines: readonly string[] }> = ({ lin
     <Stack gap={2}>
       {lines.map((line) => (
         <Group key={line} gap={6} align="flex-start" wrap="nowrap">
-          <TriangleAlert size={13} color="var(--mantine-color-warning)" style={{ marginTop: 2, flexShrink: 0 }} />
+          <TriangleExclamationPoint size={13} color="var(--mantine-color-warning)" style={{ marginTop: 2, flexShrink: 0 }} />
           <Text fz="xs" c="var(--mantine-color-warning)" lh={1.5}>{line}</Text>
         </Group>
       ))}

@@ -48,7 +48,7 @@ export function visibleText(root: HTMLElement): VisibleText {
 }
 
 /** DOM ranges covering `[from, to)` of a `visibleText`, one per text node it crosses. */
-export function rangesFor(index: VisibleText, from: number, to: number): Range[] {
+function rangesFor(index: VisibleText, from: number, to: number): Range[] {
   const ranges: Range[] = [];
   for (const { node, start } of index.spans) {
     const end = start + node.data.length;

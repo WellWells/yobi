@@ -1,12 +1,17 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Box, Flex, Stack, Title } from '@mantine/core';
+import { Box, Divider, Flex, Stack, Title } from '@mantine/core';
 
-import { Search } from 'lucide-react';
+import { Info, ScrollText, Search } from 'lucide-react';
 import { PanelToolbar, ToolbarSearchInput } from '../components/PanelToolbar';
+import { useWidthBelow } from '../hooks/useWidthBelow';
+import { SettingsTabStrip } from './settings/SettingsTabStrip';
+import { LogPanel } from '../components/LogPanel';
+import { AboutView } from './AboutView';
+import { useUpdateStore } from '../store/useUpdateStore';
 import { EmptyState } from '../components/EmptyState';
 import { useShallow } from 'zustand/react/shallow';
 import { useI18nStore } from '../store/i18nStore';
-import { useAppStore } from '../store/appStore';
+import { isMainView, useAppStore } from '../store/appStore';
 import { applyShortcutSnapshot } from '../shortcuts/applyShortcutSnapshot';
 import { useSecretHealthStore } from '../store/secretHealthStore';
 import { useFlowStore } from '../store/useFlowStore';
@@ -15,16 +20,19 @@ import { initReadingFromConfig } from '../store/readingStore';
 import { initSidebarViewFromConfig } from '../store/sidebarViewStore';
 import { initLinkRecognitionFromConfig } from '../store/linkRecognitionStore';
 import { settingsApi, fileApi, systemApi } from '../api/electronApi';
+import { initChatDisplayFromConfig } from '../hooks/useAppBootstrap';
 import { SECRET_SCOPE_META } from '../../../shared/types';
 import type { BackupImportResult, SettingsSnapshot } from '../../../shared/types';
 
 import { GroupHeader, NavItem } from './settings/components';
+import { FreezeWhileHidden } from './settings/FreezeWhileHidden';
 import { useHotkeyRecorder, useRegionHotkeyRecorder } from './settings/hooks/useHotkeyRecorder';
 import { useQuickExportRecorder } from './settings/hooks/useQuickExportRecorder';
 import { useExportPreferences } from './settings/hooks/useExportPreferences';
 import { useShareSettings } from './settings/hooks/useShareSettings';
 import { useMetrics } from './settings/hooks/useMetrics';
 import { usePromptPrefs } from './settings/hooks/usePromptPrefs';
+import { useLinkAnalysisPreferences } from './settings/hooks/useLinkAnalysisPreferences';
 import { useSystemSettings } from './settings/hooks/useSystemSettings';
 import { useTelegramSettings } from './settings/hooks/useTelegramSettings';
 import { useLineSettings } from './settings/hooks/useLineSettings';
@@ -45,8 +53,11 @@ import { ExportSection } from './settings/sections/ExportSection';
 import { NotificationsSection } from './settings/sections/NotificationsSection';
 import { AiSection } from './settings/sections/AiSection';
 import { ModelSourcesSection } from './settings/sections/ModelSourcesSection';
+import { AnalysisModelSettings } from './settings/sections/AnalysisModelSettings';
+import { MapsPromptSetting } from './settings/sections/MapsPromptSetting';
 import { ByokSection } from './settings/sections/ByokSection';
 import { McpSection } from './settings/sections/McpSection';
+import { SkillsSection } from './settings/sections/skills/SkillsSection';
 import { BotCommandsSection } from './settings/sections/BotCommandsSection';
 import { TelegramSection } from './settings/sections/TelegramSection';
 import { LineSection } from './settings/sections/LineSection';
@@ -61,8 +72,23 @@ import type { DangerAction } from './settings/sections/SystemSection';
 
 const SECTION_GAP = 12;
 
+/**
+ * Below this width of Settings itself the nav is a row of tabs above the page, as Claude's
+ * settings on a narrow window: beside a 240px nav the column would be under ~480px.
+ */
+export const SETTINGS_NAV_COMPACT_BELOW = 760;
+
 export const SettingsView: React.FC = () => {
-  const { t, locale, setLocale, availableLocales, localeTranslations, refreshLocales } = useI18nStore();
+  const { t, locale, setLocale, availableLocales, localeTranslations, refreshLocales } = useI18nStore(
+    useShallow((s) => ({
+      t: s.t,
+      locale: s.locale,
+      setLocale: s.setLocale,
+      availableLocales: s.availableLocales,
+      localeTranslations: s.localeTranslations,
+      refreshLocales: s.refreshLocales,
+    })),
+  );
   const { setFiles, selectFile, setFileContent } = useAppStore(
     useShallow((s) => ({
       setFiles: s.setFiles,
@@ -71,6 +97,7 @@ export const SettingsView: React.FC = () => {
     })),
   );
   const setTheme = useThemeStore((s) => s.setTheme);
+  const hasUpdate = useUpdateStore((s) => s.hasUpdate);
 
   const hotkey = useHotkeyRecorder();
   const quickExport = useQuickExportRecorder();
@@ -78,6 +105,7 @@ export const SettingsView: React.FC = () => {
   const exportPreferences = useExportPreferences();
   const shareSettings = useShareSettings();
   const prefs = usePromptPrefs();
+  const analysis = useLinkAnalysisPreferences();
   const system = useSystemSettings();
   const metrics = useMetrics();
   const telegram = useTelegramSettings();
@@ -94,10 +122,20 @@ export const SettingsView: React.FC = () => {
   const lineSelf = useSocketBotSettings('lineSelf');
   const botAccess = useBotAccess({ telegram, line, discord, slack, lineSelf, memory: userMemory, mcp, t });
   const nav = useSettingsNav();
+  // Logs and About are pages of Settings (Alt+3, Alt+5, an error notice's 查看日誌 and the update
+  // notice open them): the nav stays beside them.
+  const page = useAppStore((s) => (s.currentView === 'logs' || s.currentView === 'about' ? s.currentView : 'settings'));
+  // Whether the dialog is open, not which view is behind it: switching chat and flow must not
+  // redraw Settings.
+  const open = useAppStore((s) => !isMainView(s.currentView));
+  const onSettingsPage = open && page === 'settings';
 
   // Back to the top when the category changes: the view never unmounts, so any entry point would
   // land at the previous offset. Keyed on `isSearching`, not the query, or it scrolls per keystroke.
   const contentRef = useRef<HTMLDivElement>(null);
+  // The nav becomes a row of tabs when the dialog itself is narrow — its own width, not the
+  // window's: the column keeps room to read.
+  const [rootRef, compactNav] = useWidthBelow(SETTINGS_NAV_COMPACT_BELOW);
   useLayoutEffect(() => {
     contentRef.current?.scrollTo({ top: 0 });
   }, [nav.activeCategory, nav.isSearching]);
@@ -114,6 +152,7 @@ export const SettingsView: React.FC = () => {
   const applySettingsSnapshot = useCallback(async (snapshot: SettingsSnapshot) => {
     await applyShortcutSnapshot(snapshot);
     prefs.applyPromptReset(snapshot.promptPreferences, snapshot.syncSystemLanguageToModel, snapshot.youtubePrompt);
+    analysis.applyReset(snapshot.linkAnalysis);
     system.applySystemReset(
       snapshot.notifyOnComplete,
       snapshot.responseTimeout,
@@ -128,6 +167,7 @@ export const SettingsView: React.FC = () => {
     // Reading prefs are not in the snapshot: re-read them so the store, mirror and root attributes follow the restored config.
     initReadingFromConfig();
     initSidebarViewFromConfig();
+    initChatDisplayFromConfig();
     // The restored config already holds the language and whether the user picked it: applying it
     // must not mark it user-picked, or an auto-detected zh-TW would make the user a Taiwan user.
     await setLocale(snapshot.locale, { persist: false });
@@ -138,14 +178,13 @@ export const SettingsView: React.FC = () => {
     await line.loadLineSettings();
     await botCommands.loadBotCommands();
     await byok.reload();
-  }, [prefs, system, metrics, applyOneShotTemporaryChatReset, applyProviderFallbackReset, telegram, line, botCommands, byok, setTheme, setLocale]);
+  }, [prefs, analysis, system, metrics, applyOneShotTemporaryChatReset, applyProviderFallbackReset, telegram, line, botCommands, byok, setTheme, setLocale]);
 
   const getLocaleLabel = useCallback((localeCode: string): string => {
     const selfName = localeTranslations[localeCode]?.['language.name.self'];
     return typeof selfName === 'string' && selfName.trim() ? selfName : localeCode;
   }, [localeTranslations]);
 
-  const currentView = useAppStore((s) => s.currentView);
   const setView = useAppStore((s) => s.setView);
   const selectFlow = useFlowStore((s) => s.selectFlow);
 
@@ -154,8 +193,8 @@ export const SettingsView: React.FC = () => {
     setView('flow');
   }, [selectFlow, setView]);
   useEffect(() => {
-    if (currentView === 'settings') void refreshLocales();
-  }, [currentView, refreshLocales]);
+    if (onSettingsPage) void refreshLocales();
+  }, [onSettingsPage, refreshLocales]);
 
   const handleOpenLanguagesFolder = useCallback(async (): Promise<void> => {
     await settingsApi.openLanguagesFolder();
@@ -192,57 +231,122 @@ export const SettingsView: React.FC = () => {
     else if (action === 'clear-history') await handleClearHistory();
   }, [dangerAction, handleResetSettings, handleClearHistory]);
 
-  const categoryBlock = (category: Category, content: React.ReactNode): React.ReactNode => (
-    <Box display={nav.showCategory(category) ? 'block' : 'none'}>
-      {nav.isSearching && <GroupHeader label={t(`settings.group.${category}`)} />}
-      {content}
-    </Box>
-  );
+  // Every category stays mounted; the ones not on screen keep what they drew last.
+  const categoryBlock = (category: Category, content: React.ReactNode): React.ReactNode => {
+    const shown = nav.showCategory(category);
+    return (
+      <Box display={shown ? 'block' : 'none'}>
+        {nav.isSearching && <GroupHeader label={t(`settings.group.${category}`)} />}
+        <FreezeWhileHidden shown={onSettingsPage && shown} pending={nav.searchPending}>{content}</FreezeWhileHidden>
+      </Box>
+    );
+  };
 
   const anyBotEnabled = anyRosterBotEnabled(botAccess.roster);
 
+  /* The dialog opens on the search, as Claude's: typing finds a setting. Atop the nav, or atop
+     the row of tabs. */
+  const searchInput = (
+    <ToolbarSearchInput
+      dialogFocus
+      ref={nav.searchInputRef}
+      value={nav.searchQuery}
+      onChange={(query) => {
+        nav.setSearchQuery(query);
+        // Results are settings: searching from Logs or About shows them.
+        if (query && page !== 'settings') setView('settings');
+      }}
+      placeholder={t('settings.search.placeholder')}
+      clearLabel={t('settings.search.clear')}
+    />
+  );
+
+  /* The same entries either way: a column of rows beside the page, or a row of tabs above it. */
+  const navEntries = (
+    <>
+      {nav.navCategoryDefs.map((cat) => (
+        <NavItem
+          key={cat.id}
+          icon={cat.icon}
+          label={cat.label}
+          active={page === 'settings' && !nav.isSearching && nav.activeCategory === cat.id}
+          hasMatch={nav.isSearching && nav.showCategory(cat.id)}
+          alert={alertCategories.has(cat.id)}
+          tab={compactNav}
+          onClick={() => { nav.setSearchQuery(''); nav.setActiveCategory(cat.id); setView('settings'); }}
+        />
+      ))}
+      {/* Not settings categories but the app's own pages, shown in the same pane. */}
+      {compactNav ? <Divider orientation="vertical" my={6} mx={4} /> : <Divider my={4} />}
+      <NavItem
+        icon={<ScrollText size={14} />}
+        label={t('nav.logs')}
+        active={page === 'logs'}
+        hasMatch={false}
+        tab={compactNav}
+        onClick={() => { nav.setSearchQuery(''); setView('logs'); }}
+      />
+      <NavItem
+        icon={<Info size={14} />}
+        label={t('nav.about')}
+        active={page === 'about'}
+        hasMatch={false}
+        notice={hasUpdate}
+        tab={compactNav}
+        onClick={() => { nav.setSearchQuery(''); setView('about'); }}
+      />
+    </>
+  );
+
   return (
-    <Flex flex={1} bg="var(--mantine-color-body)" style={{ overflow: 'hidden' }}>
+    <Flex ref={rootRef} flex={1} bg="var(--mantine-color-body)" style={{ overflow: 'hidden' }}>
 
-      <Stack
-        gap={0}
-        component="nav"
-        w={240}
-        miw={160}
-        bg="var(--mantine-color-default)"
-        style={{ borderRight: '1px solid var(--mantine-color-default-border)', overflow: 'hidden', flexShrink: 0 }}
+      {!compactNav && (
+        <Stack
+          gap={0}
+          component="nav"
+          w={240}
+          miw={160}
+          bg="var(--mantine-color-default)"
+          style={{ borderRight: '1px solid var(--mantine-color-default-border)', overflow: 'hidden', flexShrink: 0 }}
+        >
+          {/* No bottom border: the pane beside it has none either, so the rule would stop dead at
+              the divider. No way back: the dialog's ✕ and Escape close Settings. */}
+          <PanelToolbar withBottomBorder={false}>{searchInput}</PanelToolbar>
+          <Box px="8px" py="8px" flex={1} style={{ overflowY: 'auto', minHeight: 0 }}>
+            <Stack gap={4}>{navEntries}</Stack>
+          </Box>
+        </Stack>
+      )}
+
+      <Stack flex={1} gap={0} miw={0} style={{ overflow: 'hidden' }}>
+      {compactNav && (
+        <>
+          <PanelToolbar withBottomBorder={false}>{searchInput}</PanelToolbar>
+          <SettingsTabStrip activeKey={page === 'settings' ? (nav.isSearching ? '' : nav.activeCategory) : page}>
+            {navEntries}
+          </SettingsTabStrip>
+        </>
+      )}
+      {/* All three stay mounted, as the views do: opening Logs or About must not rebuild every
+          section, and the log keeps its filter and place. */}
+      <Flex display={page === 'logs' ? 'flex' : 'none'} direction="column" flex={1} mih={0}>
+        <LogPanel />
+      </Flex>
+      <Flex display={page === 'about' ? 'flex' : 'none'} flex={1} mih={0}>
+        <AboutView />
+      </Flex>
+      {/* The scrollbar's lane is kept even on pages too short to scroll, so the centred column does
+          not shift sideways when switching between a short page and a long one. The 8px top puts
+          the page title level with the first nav row. */}
+      <Box
+        display={page === 'settings' ? 'block' : 'none'}
+        flex={1}
+        mih={0}
+        ref={contentRef}
+        p="8px 20px 40px"
+        style={{ overflowY: 'auto', scrollbarGutter: 'stable' }}
       >
-        {/* No bottom border: the pane beside this rail has no top strip, so the rule would
-            stop dead at the divider instead of crossing the window. */}
-        <PanelToolbar withBottomBorder={false}>
-          <ToolbarSearchInput
-            ref={nav.searchInputRef}
-            value={nav.searchQuery}
-            onChange={nav.setSearchQuery}
-            placeholder={t('settings.search.placeholder')}
-            clearLabel={t('settings.search.clear')}
-          />
-        </PanelToolbar>
-        <Box px="8px" py="8px" flex={1} style={{ overflowY: 'auto', minHeight: 0 }}>
-          <Stack gap={4}>
-            {nav.navCategoryDefs.map((cat) => (
-              <NavItem
-                key={cat.id}
-                icon={cat.icon}
-                label={cat.label}
-                active={!nav.isSearching && nav.activeCategory === cat.id}
-                hasMatch={nav.isSearching && nav.showCategory(cat.id)}
-                alert={alertCategories.has(cat.id)}
-                onClick={() => { nav.setSearchQuery(''); nav.setActiveCategory(cat.id); }}
-              />
-            ))}
-          </Stack>
-        </Box>
-      </Stack>
-
-      {/* The scrollbar's lane is kept even on pages too short to scroll, so the centred column
-          does not shift sideways when switching between a short page and a long one. */}
-      <Box flex={1} ref={contentRef} p="24px 20px 40px" style={{ overflowY: 'auto', scrollbarGutter: 'stable' }}>
         {/* Blocks follow CATEGORY_IDS (the nav order): multi-category search results stack this way. */}
         {/* 720px, the width ChatGPT's and Claude's settings give their content: wide enough for
             two connector tiles side by side, and the same on every page so nothing jumps. */}
@@ -255,6 +359,12 @@ export const SettingsView: React.FC = () => {
           )}
           {categoryBlock('accounts', (
             <>
+              <AnalysisModelSettings
+                analysis={analysis}
+                t={t}
+                visible={nav.showSection(TAG_SETS.modelDefaults, 'accounts')}
+                sectionGap={SECTION_GAP}
+              />
               <ModelSourcesSection
                 account={account}
                 t={t}
@@ -279,7 +389,14 @@ export const SettingsView: React.FC = () => {
               localeLabel={getLocaleLabel(locale)}
               showSection={(tags) => nav.showSection(tags, 'ai')}
               sectionGap={SECTION_GAP}
-            />
+            >
+              <MapsPromptSetting
+                analysis={analysis}
+                t={t}
+                visible={nav.showSection(TAG_SETS.mapsPrompt, 'ai')}
+                sectionGap={SECTION_GAP}
+              />
+            </AiSection>
           ))}
 
           {categoryBlock('memory', (
@@ -299,6 +416,14 @@ export const SettingsView: React.FC = () => {
               roster={botAccess.roster}
               t={t}
               showSection={(tags) => nav.showSection(tags, 'connectors')}
+              sectionGap={SECTION_GAP}
+            />
+          ))}
+
+          {categoryBlock('skills', (
+            <SkillsSection
+              t={t}
+              showSection={(tags) => nav.showSection(tags, 'skills')}
               sectionGap={SECTION_GAP}
             />
           ))}
@@ -436,6 +561,7 @@ export const SettingsView: React.FC = () => {
           )}
         </Box>
       </Box>
+      </Stack>
     </Flex>
   );
 };

@@ -9,8 +9,6 @@ import { FlowAbortError } from '../runtime';
  * module only words it.
  */
 
-export const EXPORT_FILE_TOOL = 'export_file';
-
 /** Where the file's text came from, for the observation. */
 export type ExportSourceKind = 'content' | 'reply' | 'answer';
 

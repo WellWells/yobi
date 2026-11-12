@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ActionIcon, Badge, Box, Group, Stack, Text } from '@mantine/core';
-import { ExternalLink, LogIn, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { ExternalLink, LogIn, Pencil, Plus, RefreshCw, Trash } from 'lucide-react';
 import { SelectDropdown, StatusLine } from '../../components';
 import { AppButton } from '../../../../components/AppButton';
 import { AppTextInput } from '../../../../components/AppTextInput';
@@ -256,7 +256,7 @@ export const CalDavAccounts: React.FC<Props> = ({ t, mailboxesVersion, onChanged
                     aria-label={t('settings.calendars.caldav.remove')}
                     onClick={() => setConfirmDelete(account)}
                   >
-                    <Trash2 size={13} />
+                    <Trash size={13} />
                   </ActionIcon>
                 </Group>
               </Group>

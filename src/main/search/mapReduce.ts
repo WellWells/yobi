@@ -1,10 +1,12 @@
 import { byokConcurrencyCeiling, runByokCompletion } from '../providers/byokClient';
+import { yieldRunSlot } from '../flow/flowQueue';
 import { Semaphore } from '../flow/lanes';
 import { sendLog } from '../helpers';
 import { isByokTargetUrl } from '../../shared/types';
 import { charsPlusBreaks, truncateToCharsPlusBreaks } from '../../shared/textBudget';
 import { languageForLocale, runWorkerCompletion } from './synthesize';
 import { mapDocInputChars } from './budgets';
+import { relevantWindows } from './extract';
 import type { SourceDoc } from './types';
 
 const MAP_IDLE_TIMEOUT_MS = 90_000;
@@ -72,21 +74,39 @@ function lastBoundary(head: string): number {
   return head.length;
 }
 
-function runMapCompletion(targetUrl: string, prompt: string): Promise<string> {
+export function runMapCompletion(targetUrl: string, prompt: string): Promise<string> {
   if (isByokTargetUrl(targetUrl)) {
-    return runByokCompletion(targetUrl, prompt, MAP_IDLE_TIMEOUT_MS).then(({ response }) => response);
+    return yieldRunSlot(() => runByokCompletion(targetUrl, prompt, MAP_IDLE_TIMEOUT_MS)).then(({ response }) => response);
   }
   return runWorkerCompletion(prompt, targetUrl, WEB_MAP_TIMEOUT_MS, 'map');
 }
 
-export function createDocumentMapper(query: string, targetUrl: string, locale: string): DocumentMapper {
+/**
+ * A BYOK page longer than this is cut to its best paragraphs before its summary (`relevantWindows`).
+ * A web provider keeps its own chunking: it summarizes at most 3 pages, and its cost is the round
+ * trip, not the length.
+ */
+export const MAP_TRIM_CHARS = 12_000;
+
+/**
+ * `trimFor`: the planned queries of a search (a question in one language often has pages in
+ * another). Given, a long BYOK page is cut to what is about the question and them before its
+ * summary; without it every page is summarized whole — pages the user named are never cut.
+ */
+export function createDocumentMapper(query: string, targetUrl: string, locale: string, trimFor?: string): DocumentMapper {
   const language = languageForLocale(locale);
   const semaphore = new Semaphore(mapConcurrency(targetUrl));
   const started = new Map<number, Promise<SourceDoc | null>>();
   const chunkBudget = mapDocInputChars(targetUrl);
+  const trims = trimFor !== undefined && isByokTargetUrl(targetUrl);
+  const scoredBy = [query, trimFor ?? ''].filter(Boolean).join('\n');
 
   const summarize = async (doc: SourceDoc): Promise<SourceDoc | null> => {
-    const pieces = splitForBudget(doc.text, chunkBudget, MAX_CHUNKS_PER_DOC);
+    const body = trims ? relevantWindows(doc.text, scoredBy, MAP_TRIM_CHARS) : doc.text;
+    if (body.length < doc.text.length) {
+      sendLog(`🔎 [Search] map ✂️ [${doc.id}] ${doc.url} — read ${doc.text.length} chars, summarizing the ${body.length} about the question`);
+    }
+    const pieces = splitForBudget(body, chunkBudget, MAX_CHUNKS_PER_DOC);
     if (pieces.length === 0) return null;
     if (pieces.length > 1) {
       sendLog(`🔎 [Search] map ✂️ [${doc.id}] ${doc.url} — ${doc.text.length} chars over ${chunkBudget}, ${pieces.length} pieces`);
@@ -151,8 +171,9 @@ export async function mapDocuments(
   targetUrl: string,
   locale: string,
   onEach?: (kept: boolean) => void,
+  trimFor?: string,
 ): Promise<SourceDoc[]> {
-  const mapper = createDocumentMapper(query, targetUrl, locale);
+  const mapper = createDocumentMapper(query, targetUrl, locale, trimFor);
   for (const doc of docs) mapper.enqueue(doc);
   return mapper.collect(docs, onEach);
 }

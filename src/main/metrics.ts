@@ -23,7 +23,9 @@ const DAILY_RETENTION_DAYS = 30;
 const store = new Store<MetricsSnapshot>({
   name: 'metrics',
   cwd: getConfigDir(),
-  defaults: emptyMetrics(),
+  // conf 16 also accepts dot-path defaults (`daily.${string}`), an index signature an interface
+  // cannot satisfy; the spread gives the same value an object-literal type, which can.
+  defaults: { ...emptyMetrics() },
   clearInvalidConfig: true,
 });
 

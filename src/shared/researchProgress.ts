@@ -25,10 +25,30 @@ export interface ResearchPhase {
   dropped?: number;
 }
 
+/** read / could not be read / cited by the answer; none: the page was never opened. */
+export type ResearchResultState = 'read' | 'unreadable' | 'used';
+
+/** One result a search returned, shown whether or not it was read. */
+export interface ResearchResult {
+  title: string;
+  url: string;
+  date?: string;
+  state?: ResearchResultState;
+}
+
+export interface ResearchSearch {
+  query: string;
+  results: ResearchResult[];
+  /** Every engine refused or failed this query. */
+  refused?: true;
+}
+
 export interface ResearchProgress {
   phases: ResearchPhase[];
   /** How many sources the written answer cites; set once it is written. */
   sources?: number;
+  /** Each query sent, with every result it returned, in the order they came back. */
+  searches?: ResearchSearch[];
 }
 
 export const RESEARCH_PHASE_ORDER: readonly ResearchPhaseId[] = ['plan', 'search', 'read', 'summarize', 'analyze', 'review', 'write'];

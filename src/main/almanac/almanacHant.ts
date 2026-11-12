@@ -35,5 +35,3 @@ export function toHant(text: string): string {
   for (const [from, to] of Object.entries(PHRASES)) out = out.split(from).join(to);
   return [...out].map((ch) => CHAR_MAP.get(ch) ?? ch).join('');
 }
-
-export const ALMANAC_HANT_TABLE = { simplified: SIMPLIFIED, traditional: TRADITIONAL, phrases: PHRASES } as const;

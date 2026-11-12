@@ -1,10 +1,11 @@
 import { session } from 'electron';
-import type { Cookie, WebContents } from 'electron';
+import type { Cookie, Session, WebContents } from 'electron';
 import { isExpiredCookie } from '../helpers';
 import { WORKER_USER_AGENTS } from '../userAgent';
 import { CHATGPT_SIGN_IN_START_URL, startChatgptSignIn } from './chatgptSignIn';
 import { CLAUDE_LOGIN_URL, isClaudeSessionCookie } from './claudeSession';
 import { isPerplexitySessionCookie } from './perplexitySession';
+import { DEEPSEEK_SIGN_IN_URL, isDeepseekSignedIn, noteDeepseekSignedIn } from './deepseekSession';
 import { PROVIDER_URLS, AUTH_PROVIDERS } from '../../shared/types';
 import type { AccountStatus, AuthProvider, Provider } from '../../shared/types';
 
@@ -16,6 +17,8 @@ interface AuthProviderConfig {
   startSignIn?: (contents: WebContents) => Promise<void>;
   userAgent: string;
   isSessionCookie: (cookie: Cookie) => boolean;
+  /** For a provider that keeps its sign-in outside cookies; replaces the cookie check. */
+  readSignedIn?: (ses: Session) => Promise<boolean>;
 }
 
 interface ProviderStorage {
@@ -56,6 +59,10 @@ const STORAGE_CONFIG: Record<Provider, ProviderStorage> = {
     cookieUrls: ['https://www.perplexity.ai/'],
     resetOrigins: ['https://www.perplexity.ai', 'https://perplexity.ai'],
   },
+  deepseek: {
+    cookieUrls: ['https://chat.deepseek.com/'],
+    resetOrigins: ['https://chat.deepseek.com', 'https://deepseek.com', 'https://www.deepseek.com'],
+  },
 };
 
 const GEMINI_SESSION_COOKIES = ['__Secure-1PSID', '__Secure-3PSID', 'SID'];
@@ -84,6 +91,13 @@ const AUTH_CONFIG: Record<AuthProvider, AuthProviderConfig> = {
     userAgent: WORKER_USER_AGENTS.perplexity,
     isSessionCookie: isPerplexitySessionCookie,
   },
+  deepseek: {
+    loginUrl: DEEPSEEK_SIGN_IN_URL,
+    userAgent: WORKER_USER_AGENTS.deepseek,
+    // The sign-in is the page's localStorage token; no cookie says anything about it.
+    isSessionCookie: () => false,
+    readSignedIn: isDeepseekSignedIn,
+  },
 };
 
 export function getAuthProviderConfig(provider: AuthProvider): AuthProviderConfig {
@@ -101,6 +115,8 @@ async function getCookiesForUrls(urls: string[]): Promise<Cookie[]> {
 }
 
 export async function getAccountStatus(provider: AuthProvider): Promise<boolean> {
+  const reader = AUTH_CONFIG[provider].readSignedIn;
+  if (reader) return reader(workerSession());
   const cookies = await getCookiesForUrls(STORAGE_CONFIG[provider].cookieUrls);
   return cookies.some(AUTH_CONFIG[provider].isSessionCookie);
 }
@@ -112,6 +128,7 @@ export async function getAllAccountStatuses(): Promise<AccountStatus[]> {
 }
 
 export async function clearProviderSession(provider: Provider): Promise<void> {
+  if (provider === 'deepseek') noteDeepseekSignedIn(null);
   await workerSession().clearData({
     origins: STORAGE_CONFIG[provider].resetOrigins,
     dataTypes: [

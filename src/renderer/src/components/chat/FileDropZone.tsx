@@ -73,6 +73,8 @@ export const FileDragArea: React.FC<{ children: React.ReactNode }> = ({ children
     <FileDragActive.Provider value={active}>
       <Flex
         flex={1}
+        // The narrow window's sidebar drawer and its backdrop are placed in this row.
+        pos="relative"
         style={{ overflow: 'hidden' }}
         onDragEnter={handleDragEnter}
         onDragLeave={handleDragLeave}

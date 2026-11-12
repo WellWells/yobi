@@ -3,7 +3,7 @@ import { agodaCanonicalUrl, isAgodaHotelUrl } from '../../agodaReviews';
 import { isAgodaPromptFailure, readAgodaPrompt } from '../../agodaUrlPrompt';
 import { sendLog } from '../../helpers';
 import { getLangCache } from '../../i18n';
-import { FlowAbortError, resolveStepTimeoutMs } from '../runtime';
+import { FlowAbortError, llmIdleTimeoutMs } from '../runtime';
 import { execLlm } from '../skills/actions';
 import type { FlowExecutorDeps } from '../types';
 
@@ -14,8 +14,6 @@ import type { FlowExecutorDeps } from '../types';
  * would not fit any observation limit. Finding the link is the agent's own step: the search
  * engines return the hotel's Agoda reviews page, which the read takes like the hotel page.
  */
-
-export const AGODA_REVIEWS_TOOL = 'agoda_reviews';
 
 /** Tier 1: when to reach for it — before research, and how to get a link it does not have. */
 export const AGODA_REVIEWS_BRIEF = '- "agoda_reviews": A hotel\'s Agoda + Booking.com guest reviews, analysed for "question" (user\'s words; blank = overview). For lodging reviews use it or gmap_reviews before research; no link: search "<hotel> agoda". config: "url" (REQUIRED).';
@@ -61,7 +59,8 @@ export async function runAgodaReviews(config: Record<string, string>, ctx: Agoda
     return { observation: `ERROR: Could not read the Agoda reviews of ${page}: ${read.detail}. Read the hotel's reviews with "research" instead.`, status: 'error' };
   }
   const deps: FlowExecutorDeps = { ...ctx.deps, getTargetUrl: () => ctx.providerUrl };
-  const analysis = (await execLlm({ prompt: read.prompt, provider: ctx.providerUrl }, deps, resolveStepTimeoutMs('llm', deps), ctx.signal)).trim();
+  // `budgetedDeps` already cut the response timeout to what is left of the run; the analysis keeps to it.
+  const analysis = (await execLlm({ prompt: read.prompt, provider: ctx.providerUrl }, deps, llmIdleTimeoutMs(deps), ctx.signal)).trim();
   if (!analysis) return { observation: `ERROR: The review analysis of ${page} came back empty.`, status: 'error' };
   return {
     observation: `Analysis of the Agoda guest reviews of ${page} — a sample of the newest and lowest-rated, not every review; keep its counts and dates as given:\n${analysis}`,

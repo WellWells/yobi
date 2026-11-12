@@ -3,10 +3,14 @@ import { AppWindow, LogOut } from 'lucide-react';
 import { Modal, Button, Group, Text, Checkbox, Box, Flex, Loader } from '@mantine/core';
 import { TitleBar } from './components/TitleBar';
 import { AgentConfirmDialog } from './components/AgentConfirmDialog';
+import { TextContextMenu } from './components/textContextMenu/TextContextMenu';
 import { ViewBoundary } from './components/ViewBoundary';
 import { ChatView } from './views/ChatView';
 import { onIdle } from './utils/idle';
-import { useAppStore } from './store/appStore';
+import { useShallow } from 'zustand/react/shallow';
+import { SettingsDialog } from './components/SettingsDialog';
+import { Z_MODAL_CONFIRM } from './config/zLayers';
+import { drawnView, isMainView, useAppStore } from './store/appStore';
 import { useI18nStore } from './store/i18nStore';
 import { useAppBootstrap } from './hooks/useAppBootstrap';
 import { useUiNotifications } from './hooks/useUiNotifications';
@@ -17,19 +21,20 @@ import { buildMarkdownLabels } from '../../shared/markdownLabels';
 
 // Only the chat view is on the first-paint path. The other views are lazy chunks prefetched on idle
 // once i18n is ready, and stay mounted once resolved, as the display-toggle lifecycle below needs.
+// Logs and About are pages of Settings and ride in its chunk; Settings is a dialog, kept mounted.
 const importSettingsView = () => import('./views/SettingsView');
-const importAboutView = () => import('./views/AboutView');
-const importLogView = () => import('./views/LogView');
 const importFlowView = () => import('./views/FlowView');
 
 const MemoSettingsView = React.memo(React.lazy(() => importSettingsView().then((m) => ({ default: m.SettingsView }))));
-const MemoAboutView = React.memo(React.lazy(() => importAboutView().then((m) => ({ default: m.AboutView }))));
-const MemoLogView = React.memo(React.lazy(() => importLogView().then((m) => ({ default: m.LogView }))));
 const MemoFlowView = React.memo(React.lazy(() => importFlowView().then((m) => ({ default: m.FlowView }))));
 
 export const App: React.FC = () => {
-  const currentView = useAppStore((s) => s.currentView);
-  const { isReady, t } = useI18nStore();
+  const { shown, settingsOpen, closeSettings } = useAppStore(useShallow((s) => ({
+    shown: drawnView(s),
+    settingsOpen: !isMainView(s.currentView),
+    closeSettings: s.closeSettings,
+  })));
+  const { isReady, t } = useI18nStore(useShallow((s) => ({ isReady: s.isReady, t: s.t })));
   const [showCloseDialog, setShowCloseDialog] = useState(false);
   const [closeRemember, setCloseRemember] = useState(false);
 
@@ -46,8 +51,6 @@ export const App: React.FC = () => {
     if (!isReady) return;
     return onIdle(() => {
       void importSettingsView();
-      void importAboutView();
-      void importLogView();
       void importFlowView();
     });
   }, [isReady]);
@@ -74,34 +77,36 @@ export const App: React.FC = () => {
   return (
     <MarkdownLabelsContext.Provider value={markdownLabels}>
     <Flex direction="column" h="100vh" bg="var(--mantine-color-body)" pos="relative" style={{ overflow: 'hidden' }}>
-      <TitleBar />
       <Flex flex={1} style={{ overflow: 'hidden' }}>
-        <Box display={currentView === 'chat' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
+        <Box display={shown === 'chat' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
           <ChatView />
         </Box>
-        <Box display={currentView === 'logs' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
-          <ViewBoundary><MemoLogView /></ViewBoundary>
-        </Box>
-        <Box display={currentView === 'settings' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
-          <ViewBoundary><MemoSettingsView /></ViewBoundary>
-        </Box>
-        <Box display={currentView === 'about' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
-          <ViewBoundary><MemoAboutView /></ViewBoundary>
-        </Box>
-        <Box display={currentView === 'flow' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
+        <Box display={shown === 'flow' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
           <ViewBoundary><MemoFlowView /></ViewBoundary>
         </Box>
       </Flex>
 
+      <TitleBar />
+
+      {/* Settings, Logs and About: a dialog over the view above, which stays drawn behind it. */}
+      <SettingsDialog opened={settingsOpen} onClose={closeSettings}>
+        <ViewBoundary><MemoSettingsView /></ViewBoundary>
+      </SettingsDialog>
+
       <AgentConfirmDialog />
 
+      {/* Cut / Copy / Paste in every text field: Electron draws no context menu of its own. */}
+      <TextContextMenu />
+
+      {/* Asked when the window's ✕ is clicked, which stays clickable over the Settings dialog
+          (and Alt+F4 reaches it over any dialog): over every dialog, never behind one. */}
       <Modal
         opened={showCloseDialog}
         onClose={() => { }}
         withCloseButton={false}
         centered
         size="sm"
-        zIndex={100}
+        zIndex={Z_MODAL_CONFIRM}
         styles={{
           content: {
             background: 'var(--mantine-color-default)',

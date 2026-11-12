@@ -11,6 +11,7 @@ import type { LineReader } from './reader';
 import { newClientMessageID } from './lineClientId';
 import { dedupeKey, mentionMeta, mentionTargets, planMentions, type MentionSpan, type MentionTarget } from './lineMention';
 import { replyTarget, type ReplyTarget } from './lineSendReply';
+import { LINE_CHAT_KEY_MISSING_TEXT, LINE_GROUP_KEY_MISSING_TEXT, LINE_SEALING_OFF_TEXT } from './sendKeyErrors';
 import type { NativeKeysRequest, NativeKeysResult, NativeSendKeys } from './nativeContract';
 
 const MAX_TEXT_CHARS = 10_000;
@@ -78,13 +79,9 @@ export async function readySendKeys(reader: LineReader, chatId: string, pick: Na
   if (!pick) throw new LineError('NATIVE_CORE_UNAVAILABLE', 'LINE native send core is not wired in');
   const km = await pick({ chatId, ...reader.sendKeyRows(chatId) });
   if (km.code) throw new LineError(km.code as LineErrorCode, km.reason || km.code);
-  if (km.state === 'disabled') {
-    throw new LineError('E2EE_DISABLED', 'this chat does not use Letter Sealing; plain-text send is not supported yet');
-  }
+  if (km.state === 'disabled') throw new LineError('E2EE_DISABLED', LINE_SEALING_OFF_TEXT);
   if (km.state === 'no_key') {
-    throw new LineError('E2EE_KEY_MISSING', km.version === 2
-      ? "the group's E2EE key is not cached locally; open this group once in the LINE app (that fetches its key), then retry"
-      : "recipient's E2EE public key is not cached locally; open this chat once in the LINE app (that exchanges keys), then retry");
+    throw new LineError('E2EE_KEY_MISSING', km.version === 2 ? LINE_GROUP_KEY_MISSING_TEXT : LINE_CHAT_KEY_MISSING_TEXT);
   }
   if (!km.keys) throw new LineError('DB_UNREADABLE', 'no usable E2EE key found');
   return { version: km.version === 2 ? 2 : 1, keys: km.keys };

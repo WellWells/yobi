@@ -1,0 +1,15 @@
+/* Settings' nav as a row of tabs (a narrow dialog). The bar is hidden on purpose: the row scrolls
+   by wheel, drag and the chevrons at its ends, and a half-visible tab at the edge shows there is
+   more. */
+.strip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  /* Dragging the row with a mouse would otherwise sweep a text selection across the tabs. */
+  user-select: none;
+  /* Room for the focus ring the scroll container would otherwise clip. */
+  padding-block: 2px;
+}

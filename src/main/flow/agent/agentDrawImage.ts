@@ -11,8 +11,6 @@ import { FlowAbortError } from '../runtime';
  * run's answer. The caller does the drawing and keeps the files, so this module only words it.
  */
 
-export const DRAW_IMAGE_TOOL = 'draw_image';
-
 /** What one drawing came back with. The files stay with the caller, which delivers them. */
 export interface DrawnPictures {
   /** Pictures kept from this drawing; 0 = none came back. */

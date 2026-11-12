@@ -1,39 +1,52 @@
 import React from 'react';
-import { Stack, Text } from '@mantine/core';
+import { Box, Group, Stack, Text } from '@mantine/core';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { AppTextarea } from '../../../components/AppTextarea';
 import { SelectDropdown } from '../../../components/SelectDropdown';
-import { isValidJsonOrEmpty, isValidUrlOrVar } from './validation';
+import { isValidJsonObjectOrEmpty, isValidUrlOrVar } from './validation';
 import type { SkillConfigProps } from './types';
 import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 
+/** Methods the runner sends a body with; GET and DELETE leave it out. */
+export function httpSendsBody(method: string): boolean {
+  return method !== 'GET' && method !== 'DELETE';
+}
+
 export const HttpConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => {
   const url = step.config.url ?? '';
   const method = step.config.method ?? 'GET';
-  const showBody = method !== 'GET' && method !== 'DELETE';
+  const showBody = httpSendsBody(method);
+  const body = step.config.body ?? '';
   const urlError = !isValidUrlOrVar(url);
-  const headersError = !isValidJsonOrEmpty(step.config.headers ?? '');
+  const headersError = !isValidJsonObjectOrEmpty(step.config.headers ?? '');
 
   return (
     <Stack gap="xs">
-      <SelectDropdown
-        label={t('flow.skill.http.method')}
-        options={METHODS.map((m) => ({ value: m, label: m }))}
-        value={method}
-        onChange={(value) => onChange({ ...step.config, method: value })}
-        size="sm"
-      />
-
-      <AppTextInput
-        label={t('flow.skill.http.url')}
-        placeholder={t('flow.skill.http.url.placeholder')}
-        value={url}
-        onChange={(e) => onChange({ ...step.config, url: e.currentTarget.value })}
-        size="sm"
-        error={urlError ? t('flow.skill.browser.url.error') : undefined}
-      />
+      {/* Method and address are one pair, as in every API tool: five short methods fit beside the URL. */}
+      <Group gap="xs" wrap="nowrap" align="flex-start">
+        <Box w={104} style={{ flexShrink: 0 }}>
+          <SelectDropdown
+            label={t('flow.skill.http.method')}
+            options={METHODS.map((m) => ({ value: m, label: m }))}
+            value={method}
+            onChange={(value) => onChange({ ...step.config, method: value })}
+            size="sm"
+            styles={{ input: { fontFamily: 'var(--font-mono)' } }}
+          />
+        </Box>
+        <AppTextInput
+          label={t('flow.skill.http.url')}
+          placeholder={t('flow.skill.http.url.placeholder')}
+          value={url}
+          onChange={(e) => onChange({ ...step.config, url: e.currentTarget.value })}
+          size="sm"
+          mono
+          style={{ flex: 1, minWidth: 0 }}
+          error={urlError ? t('flow.skill.http.url.error') : undefined}
+        />
+      </Group>
 
       <AppTextarea
         label={t('flow.skill.http.headers')}
@@ -51,7 +64,7 @@ export const HttpConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) =>
         <AppTextarea
           label={t('flow.skill.http.body')}
           placeholder={t('flow.skill.http.body.placeholder')}
-          value={step.config.body ?? ''}
+          value={body}
           onChange={(e) => onChange({ ...step.config, body: e.currentTarget.value })}
           minRows={3}
           autosize
@@ -59,9 +72,14 @@ export const HttpConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) =>
           size="sm"
         />
       )}
+      {!showBody && body.trim() !== '' && (
+        <Text fz="xs" c="var(--mantine-color-warning)" data-http-body-unsent="">
+          {fillTemplate(t('flow.skill.http.body.unsent'), { method })}
+        </Text>
+      )}
 
-      <Text fz="xs" c="dimmed">
-        {fillTemplate(t('flow.skill.browser.outputHint'), { outputKey: `{{${step.outputKey}}}` })}
+      <Text fz="xs" c="var(--text-muted)">
+        {fillTemplate(t('flow.skill.http.outputHint'), { outputKey: `{{${step.outputKey}}}` })}
       </Text>
     </Stack>
   );

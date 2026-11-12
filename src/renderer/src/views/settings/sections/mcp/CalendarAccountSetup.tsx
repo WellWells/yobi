@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ActionIcon, Box, Group, Stack, Text } from '@mantine/core';
-import { FlaskConical, Pencil, Plus, Save, Trash2 } from 'lucide-react';
+import { FlaskConical, Pencil, Plus, Save, Trash } from 'lucide-react';
 import { StatusLine } from '../../components';
 import { AppButton } from '../../../../components/AppButton';
 import { AppTextInput } from '../../../../components/AppTextInput';
@@ -198,7 +198,7 @@ export const CalendarAccountSetup: React.FC<Props> = ({ t, mailboxesVersion }) =
                     aria-label={t('settings.calendars.delete')}
                     onClick={() => setConfirmDelete(calendar)}
                   >
-                    <Trash2 size={13} />
+                    <Trash size={13} />
                   </ActionIcon>
                 </Group>
               </Group>

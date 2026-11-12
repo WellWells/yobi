@@ -18,14 +18,16 @@ import { readPage, type PageRead, type PageReaderDeps } from './pageReader';
 const POST_MAX_REPLIES = 100;
 const POST_TITLE_MAX_CHARS = 100;
 
-interface ThreadEnvelope {
+export interface ThreadEnvelope {
   output: string;
+  subject: 'post' | 'account';
   platform: string;
   text: string;
   author: string;
   name: string;
   date: string;
   link: string;
+  replyCount: string;
 }
 
 function headersFor(url: string): Record<string, string> {
@@ -34,9 +36,9 @@ function headersFor(url: string): Record<string, string> {
 
 const resolveGoogleNews = createGoogleNewsResolver((url, options) => fetchRawResponse(url, { ...options, headers: headersFor(url) }));
 
-async function readPublicPost(url: string, signal?: AbortSignal): Promise<PageRead | null> {
-  if (!parseXMediaInput(url)) return null;
-  const thread = JSON.parse(await execXThread({ url, maxReplies: String(POST_MAX_REPLIES) }, signal)) as ThreadEnvelope;
+export function pageOfThread(thread: ThreadEnvelope, url: string): PageRead {
+  const post = thread.subject === 'post';
+  const replies = Number(thread.replyCount);
   return {
     title: thread.text.split('\n')[0]?.slice(0, POST_TITLE_MAX_CHARS) ?? '',
     author: thread.name || thread.author,
@@ -46,9 +48,20 @@ async function readPublicPost(url: string, signal?: AbortSignal): Promise<PageRe
     method: 'discussion',
     siteName: thread.platform,
     truncated: false,
+    selfDeclared: false,
     site: thread.platform,
     url: thread.link || url,
+    // A post with nothing written on it is all media; a profile is a list of posts.
+    complete: post && thread.text.trim().length > 0,
+    images: [],
+    ...(post ? { mainText: thread.text } : {}),
+    ...(post && Number.isFinite(replies) ? { replyCount: replies } : {}),
   };
+}
+
+async function readPublicPost(url: string, signal?: AbortSignal): Promise<PageRead | null> {
+  if (!parseXMediaInput(url)) return null;
+  return pageOfThread(JSON.parse(await execXThread({ url, maxReplies: String(POST_MAX_REPLIES) }, signal)) as ThreadEnvelope, url);
 }
 
 const LIVE_DEPS: PageReaderDeps = {

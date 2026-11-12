@@ -89,3 +89,26 @@ export function citationHost(url: string): string {
     return url;
   }
 }
+
+/** The label before a country code that makes a two-level public suffix: `co.uk`, `com.tw`, `go.jp`. */
+const SECOND_LEVEL_SUFFIX = /^(?:com|co|org|net|gov|edu|ac|ne|or|go|gr|ed|lg|mil|idv|game|ebiz|club)$/;
+
+/**
+ * The site's own name, the way a citation chip shows it: the registrable domain's label, without
+ * subdomains or the public suffix (`redlib.ssps.io` → `ssps`, `app.cohorted.co.uk` → `cohorted`).
+ */
+export function citationSite(url: string): string {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return url;
+  }
+  if (/^[\d.]+$/.test(host) || host.includes(':') || host.startsWith('[')) return host;
+  const labels = host.replace(/^(?:www|m)\./, '').split('.').filter(Boolean);
+  if (labels.length < 2) return labels[0] ?? host;
+  const last = labels[labels.length - 1];
+  const second = labels[labels.length - 2];
+  const suffixLabels = last.length === 2 && SECOND_LEVEL_SUFFIX.test(second) ? 2 : 1;
+  return labels[Math.max(0, labels.length - suffixLabels - 1)];
+}

@@ -13,7 +13,7 @@ export const PROVIDER_FALLBACK_REASONS = ['signIn', 'limit', 'busy', 'notReady']
 export type ProviderFallbackReason = (typeof PROVIDER_FALLBACK_REASONS)[number];
 
 /** The order the other providers are tried in, the failed one skipped. */
-export const PROVIDER_FALLBACK_ORDER: readonly Provider[] = ['gemini', 'chatgpt', 'claude', 'perplexity'];
+export const PROVIDER_FALLBACK_ORDER: readonly Provider[] = ['gemini', 'chatgpt', 'claude', 'perplexity', 'deepseek'];
 
 /**
  * A turn another provider answered: `f` is the provider the user picked, `r` why it could not

@@ -7,14 +7,19 @@ import { fillTemplate } from '../../../../../shared/fillTemplate';
 
 interface Props {
   t: (key: string) => string;
+  /**
+   * False when the step writes a subtitles file: Yobi writes it from the captions itself, with
+   * no yt-dlp or FFmpeg, so neither missing tools nor a paused site stops it.
+   */
+  needsTools?: boolean;
 }
 
 /** Above a video step while the download tools are missing or a site changed (a line per site), with the way out. */
-export const YtdlToolsNotice: React.FC<Props> = ({ t }) => {
+export const YtdlToolsNotice: React.FC<Props> = ({ t, needsTools = true }) => {
   const state = useYtdlToolsState();
   const openDialog = useYtdlToolsStore((s) => s.openDialog);
 
-  if (!state) return null;
+  if (!state || !needsTools) return null;
   if (ytdlToolsUsable(state)) {
     const paused = pausedSites(state);
     if (paused.length === 0) return null;

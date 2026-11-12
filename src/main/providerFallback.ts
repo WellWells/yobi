@@ -22,9 +22,12 @@ import type { ProviderFallbackReason, TurnProviderSwitch } from '../shared/provi
  */
 const NO_ANSWER_FAILURES: ReadonlyArray<readonly [RegExp, ProviderFallbackReason]> = [
   // Checked by the runner from the session and the landed page, before anything is typed.
-  [/\b(?:CHATGPT|CLAUDE)_LOGIN_REQUIRED\b/, 'signIn'],
-  // After the send: Gemini went idle with no answer text and no generation running.
+  [/\b(?:CHATGPT|CLAUDE|DEEPSEEK)_LOGIN_REQUIRED\b/, 'signIn'],
+  // After the send: Gemini went idle with no answer text and no generation running — on a
+  // signed-out session (or a page that lost its composer to a sign-in link) a sign-in error,
+  // signed in a plain no-answer, which is not called a sign-in problem.
   [/\bGEMINI_LOGIN_REQUIRED\b/, 'signIn'],
+  [/\bGEMINI_NO_ANSWER\b/, 'busy'],
   // After the send: the whole reply was Perplexity's "sign up and repeat your request" wall.
   [/^Perplexity asked to sign in$/, 'signIn'],
   // Claude refuses before the send, or rejects the click itself with the upgrade dialog.
@@ -32,11 +35,11 @@ const NO_ANSWER_FAILURES: ReadonlyArray<readonly [RegExp, ProviderFallbackReason
   // After the send: Claude's reply ended in its over-capacity error, with no answer.
   [/\bCLAUDE_BUSY\b/, 'busy'],
   [/\b(?:Gemini|ChatGPT|Perplexity) input area not found\b/, 'notReady'],
-  [/\bTimeout waiting for: (?:ChatGPT|Perplexity) input area\b/, 'notReady'],
+  [/\bTimeout waiting for: (?:ChatGPT|Perplexity|DeepSeek) input area\b/, 'notReady'],
   // Thrown when the composer would not take the text, before the send control is clicked.
-  [/\b(?:ChatGPT|Claude) composer never registered the prompt\b/, 'notReady'],
+  [/\b(?:ChatGPT|Claude|DeepSeek) composer never registered the prompt\b/, 'notReady'],
   [/\bPerplexity never registered the prompt\b/, 'notReady'],
-  [/\bClaude send button is not available\b/, 'notReady'],
+  [/\b(?:Claude|DeepSeek) send button is not available\b/, 'notReady'],
 ];
 
 /** Uploads run before the prompt is typed. */

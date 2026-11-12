@@ -4,11 +4,10 @@
  * Takes an injected reader; the real one, which reads the video's page in the site's hidden window
  * with the user's sign-in, is wired in bilibiliConnection.ts. Never the danmaku (bullet comments).
  */
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { bilibiliVideoRef } from '../../shared/linkSites/rows';
 import { localIso } from '../x/xMcpServer';
-import { createToolServer } from '../mcp/inProcessServer';
+import { createToolServer, type ToolServer } from '../mcp/inProcessServer';
 
 export const BILIBILI_SERVER_NAME = 'bilibili';
 
@@ -93,7 +92,7 @@ async function dispatch(
   };
 }
 
-export function createBilibiliMcpServer(service: BilibiliServiceLike): Server {
+export function createBilibiliMcpServer(service: BilibiliServiceLike): ToolServer {
   return createToolServer({
     name: BILIBILI_SERVER_NAME,
     tools: BILIBILI_TOOLS,

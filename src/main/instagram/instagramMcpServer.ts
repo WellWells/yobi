@@ -4,11 +4,10 @@
  * Takes an injected reader; the real one, which reads instagram.com with the user's sign-in, is
  * wired in instagramConnection.ts.
  */
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { instagramStoriesLink, instagramStoryLink, parseInstagramUrl } from '../../shared/instagramLinks';
 import { localIso } from '../x/xMcpServer';
-import { createToolServer } from '../mcp/inProcessServer';
+import { createToolServer, type ToolServer } from '../mcp/inProcessServer';
 import type { XMedia, XPost, XThread } from '../flow/skills/xPosts';
 
 export const INSTAGRAM_SERVER_NAME = 'Instagram';
@@ -128,7 +127,7 @@ async function dispatch(service: InstagramServiceLike, name: string, args: Recor
   }
 }
 
-export function createInstagramMcpServer(service: InstagramServiceLike): Server {
+export function createInstagramMcpServer(service: InstagramServiceLike): ToolServer {
   return createToolServer({
     name: INSTAGRAM_SERVER_NAME,
     tools: INSTAGRAM_TOOLS,

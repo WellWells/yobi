@@ -7,7 +7,7 @@ export const SKILL_NOTES: Partial<Record<SkillType, string>> = {
 
   llm: 'Inside a loop set emitFailFlag="true" — one provider hiccup otherwise strands the whole batch. Put the data in the prompt by interpolation ({{browser_1}}), never ask the model to "fetch" or "open" anything: it has no tools here. Leave provider blank unless the flow genuinely needs a specific one.',
 
-  bot: 'Inside a loop set emitFailFlag="true": a transient send error otherwise kills the run after the list was already consumed. Telegram caps a photo caption at 1024 chars and a text message at 4096; LINE has no upload API, so only a public https .jpg/.png URL arrives as an image and text is cut at 5000. To send a file produced earlier, reference {{file}} — not that step\'s outputKey.',
+  bot: 'Inside a loop set emitFailFlag="true": a transient send error otherwise kills the run after the list was already consumed. Telegram caps a photo caption at 1024 chars and a text message at 4096; LINE has no upload API, so only a public https .jpg/.png URL arrives as an image and text is cut at 5000. Attach the latest {{file}}, a specific {{share_1.path}}, or {{llm_1.file}}; put {{llm_1.text}} in message.',
 
   rss: 'Returns titles and links ONLY, deliberately. Do not try to summarize the array in one llm step: N articles in one prompt hits the input cap, N summaries in one message hits the messenger cap, and one failure loses the whole batch that the seen-cache has already marked as read. The correct shape is rss → stop → loop → browser → llm → bot → end_loop, one article at a time.',
 
@@ -21,7 +21,7 @@ export const SKILL_NOTES: Partial<Record<SkillType, string>> = {
 
   js: 'Earlier step outputs are in scope as BARE identifiers named by their outputKey (rss_1, llm_1) — not as {{rss_1}}. Parse a JSON array output with JSON.parse before using it. Return an array to drive a following loop; return "" to let a following stop step halt the run.',
 
-  browser_js: 'Requires a page handle from an earlier browser_open — set page to that step\'s {{outputKey}}. The code runs in the page, so no Node APIs and no {{variables}} inside the code body. End with `return value`. A screenshot() path comes back through this step\'s own output; it does NOT set {{file}}.',
+  browser_js: 'Requires a page handle from an earlier browser_open — set page to that step\'s {{outputKey}}. The code runs in the page, so no Node APIs. A {{variable}} in the code is filled in as a JavaScript value before it runs (inside quotes it is that text, escaped), so write fill(\'#q\', \'{{input}}\'), never build code from it. End with `return value`. A screenshot() path comes back through this step\'s own output; it does NOT set {{file}}.',
 
   loop: 'An OBJECT item exposes every field as {{<loopVar>.<field>}} (e.g. {{item.title}}, {{item.link}}); a STRING item is just {{<loopVar>}}. Match this to the OUTPUT shape of the step feeding it. Every step inside the loop that can fail — browser, llm, bot, research — needs emitFailFlag="true", or one bad item ends the whole run.',
 
@@ -39,7 +39,7 @@ export const SKILL_NOTES: Partial<Record<SkillType, string>> = {
 
   file_download: 'A terminal action with no outputKey — the saved path is the magic {{file}}. The extension comes from the response Content-Type, which is what lets a following bot step route an image as a photo rather than a document.',
 
-  share: 'Use this, not file_write, whenever the user asks for a PDF, a picture of some text, a document to send, or a link to share. For a file format the path is also set as {{file}}; for format "text" it returns a URL and {{file}} is NOT set — branch on {{<outputKey>.kind}} if the format can vary.',
+  share: 'Convert existing text, without AI. For exports chosen AFTER an answer, branch then share content={{llm_1.text}}. For fixed formats, llm exportFormat="png,pdf" creates both directly. Each share .path stays available; {{file}} is only the latest file. Format "text" creates a share URL in .url and does not set {{file}}. Branch on .kind if the format can vary.',
 
   file_list: 'Returns {title, link} where title is the file name and link is the full path — loop over it and pass {{item.link}} to file_read or file_delete. Non-recursive and files only, so subfolders are not walked.',
 

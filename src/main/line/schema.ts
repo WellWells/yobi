@@ -51,14 +51,6 @@ export function contentTypeCode(name: string): number | undefined {
   return found ? Number(found[0]) : undefined;
 }
 
-/**
- * Content types whose `_contentMetadata` holds text the user would search for: a shared
- * contact's name (13), a filename (14), a link's url/title/text (16), and the ALT_TEXT of a
- * bot template/flex message (17/22). Every other type's metadata is protocol noise — sticker
- * ids, OIDs, bot tracking tokens, sequence numbers — and matching it yields only false hits.
- */
-export const SEARCHABLE_META_TYPES: readonly number[] = [13, 14, 16, 17, 22];
-
 // Official/bot accounts: `_contact._type` 8, `_contact._capableBuddy` 1, or a `_buddyDetail` row
 // (the last two are read by the reader). Their chats are marketing-heavy and
 // left out of the unread list by default.

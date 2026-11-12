@@ -1,6 +1,7 @@
+/* One line, as ChatGPT's, Claude's and Perplexity's sidebar rows: the provider's mark and the title. */
 .fileItem {
   position: relative;
-  padding: 6px 10px 6px 12px;
+  padding: 7px 10px;
   border-radius: 8px;
   margin: 0;
   background: transparent;
@@ -26,15 +27,18 @@
   cursor: text;
 }
 
-/* The row's "⋯" sits over the right end of the metadata line, so showing it moves nothing: the
-   provider, time and title keep their places. It is a pointer affordance, so it shows only while
-   the mouse is over the row or its menu is open — not for the open row or a focused one (the
-   keyboard has the context-menu key and the shortcuts) — plus when Tab lands on the button itself,
-   so focus is never on something invisible. Otherwise it is invisible and takes no clicks. */
+/* The row's "⋯" sits over the right end of the line, so showing it moves nothing: the mark and the
+   title keep their places, the title only gives up its last few characters to an earlier ellipsis.
+   It is a pointer affordance, so it shows only while the mouse is over the row or its menu is open
+   — not for the open row or a focused one (the keyboard has the context-menu key and the shortcuts)
+   — plus when Tab lands on the button itself, so focus is never on something invisible. Otherwise
+   it is invisible and takes no clicks. Centred like the folder row's (no transform: see there). */
 .rowMore {
   position: absolute;
-  top: 4px;
+  top: 0;
+  bottom: 0;
   right: 6px;
+  margin-block: auto;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.1s ease;
@@ -47,6 +51,32 @@
   pointer-events: auto;
 }
 
+.fileItem:hover .preview,
+.fileItem[data-menu-open='true'] .preview,
+.fileItem:has(.rowMore:focus-visible) .preview {
+  padding-right: 20px;
+}
+
+/* The provider's mark: muted, the accent on the open row (as the old provider pill was). */
+.providerMark {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.providerMark[data-selected='true'] {
+  color: var(--mantine-color-accent);
+}
+
+/* The unread dot at the end of the line. A flex box, so the inline icon does not open a text line
+   of its own and make an unread row taller than the others. */
+.unreadDot {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
 /* The unread dot lives where the "⋯" appears; the button covers it rather than sharing the spot. */
 .fileItem:hover .unreadDot,
 .fileItem[data-menu-open='true'] .unreadDot,
@@ -54,11 +84,12 @@
   visibility: hidden;
 }
 
-/* A folder row: one line, the same hover and focus as a conversation row. Its "⋯" sits over the
-   count at the right end, so showing it moves nothing. */
+/* A folder row: one line, the same padding, hover and focus as a conversation row, so its icon
+   stands in the same column as the conversations' provider marks. Its "⋯" sits over the count at
+   the right end, so showing it moves nothing. */
 .folderItem {
   position: relative;
-  padding: 5px 10px 5px 6px;
+  padding: 7px 10px;
   border-radius: 8px;
   cursor: pointer;
   outline: none;
@@ -83,14 +114,6 @@
   cursor: text;
 }
 
-.folderChevron {
-  transition: transform 0.15s ease;
-}
-
-.folderChevron[data-expanded='true'] {
-  transform: rotate(90deg);
-}
-
 /* Centred without `transform`: Mantine's pressed ActionIcon sets its own transform (a 1px nudge),
    which replaced a translateY(-50%) here and dropped the button half its height on every click. */
 .folderMore {
@@ -112,6 +135,15 @@
   pointer-events: auto;
 }
 
+/* The count's slot reaches as far left as the "⋯" over it (22px button at right: 6px, the row's
+   right padding 10px: 18px), so the closed flow folder's warning and running marks left of it are
+   never covered. A one-digit count alone was ~7px and the button sat on the warning icon. */
+.folderCount {
+  min-width: 18px;
+  flex-shrink: 0;
+  text-align: right;
+}
+
 .folderItem:hover .folderCount,
 .folderItem[data-menu-open='true'] .folderCount,
 .folderItem:has(.folderMore:focus-visible) .folderCount {
@@ -127,15 +159,72 @@
 }
 
 /* The row's title: this is the document's H1 (renameable in place), and the only
-   thing that tells one saved chat from another — the provider repeats and the
-   timestamp is a detail. It carries the row's contrast; everything else recedes. */
+   thing that tells one saved chat from another. One line, cut with an ellipsis; the whole
+   title is in the row's hover card. Regular weight: every row is a title, none is louder. */
 .preview {
+  flex: 1;
+  min-width: 0;
   color: var(--mantine-color-text);
   overflow: hidden;
   text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  white-space: normal;
-  line-height: 1.4;
+  white-space: nowrap;
+  line-height: 18px;
+}
+
+/* A section heading (Pinned, Folders, Recent): its name and a chevron, the whole row a toggle. */
+/* A section heading: the toggle (name, detail, chevron) fills the row, its buttons sit at the
+   right end. The row, not the toggle, lights up, so the buttons are inside the lit area. */
+.sectionRow {
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+  transition: background 0.15s ease;
+}
+
+.sectionRow:hover {
+  background: var(--mantine-color-default-hover);
+}
+
+.sectionItem {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+  color: var(--text-muted);
+}
+
+.sectionItem[data-empty] {
+  cursor: default;
+}
+
+.sectionDetail {
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.sectionActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 4px;
+  flex-shrink: 0;
+}
+
+.sectionItem:focus-visible {
+  box-shadow: 0 0 0 2px var(--mantine-color-accent-dim);
+}
+
+.sectionChevron {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.sectionChevron[data-collapsed='true'] {
+  transform: rotate(-90deg);
 }

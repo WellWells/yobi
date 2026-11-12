@@ -20,6 +20,7 @@ const NUMERIC = { fontVariantNumeric: 'tabular-nums' } as const;
 const NO_WRAP = { whiteSpace: 'nowrap', flexShrink: 0 } as const;
 /** Long enough that moving the pointer down the menu past the row does not flash the card. */
 const CARD_OPEN_DELAY_MS = 400;
+const HOVER_ONLY = { hover: true, focus: false, touch: false } as const;
 /** Wide enough for the duration row's parts and a path of INFO_CARD_PATH_CHARS on one line each. */
 const CARD_WIDTH = 300;
 
@@ -39,10 +40,13 @@ export const HeaderMenuInfo: React.FC<HeaderMenuInfoProps> = ({ t, conversation,
   return (
     // Not in a portal: a click inside the card must not count as a click outside the menu. The
     // ⋮ sits at the window's right edge, so the card opens to the left, level with the row's bottom.
+    // Hover only, as Mantine 9.6 had it: from 9.8 a HoverCard by default also opens, without the
+    // delay, when its target takes focus, which would pop the card while arrowing through the menu.
     <HoverCard
       position="left-end"
       offset={10}
       openDelay={CARD_OPEN_DELAY_MS}
+      events={HOVER_ONLY}
       withinPortal={false}
       withRoles={false}
       width={CARD_WIDTH}

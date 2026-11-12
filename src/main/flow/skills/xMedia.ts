@@ -1,5 +1,7 @@
+import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { config as appConfig } from '../../config';
+import { findSourcedDownload, recordDownloads } from '../../downloadsCache';
 import { getLangCache, t } from '../../i18n';
 import { sendLog } from '../../helpers';
 import { describeVideoFile } from '../../providers/geminiVideo';
@@ -17,7 +19,7 @@ import {
   TELEGRAM_CAPTION_CHARS,
   xPostMessage,
 } from '../../../shared/xMedia';
-import type { XMediaDestination, XMediaInput } from '../../../shared/xMedia';
+import type { PostSource, XMediaDestination, XMediaInput } from '../../../shared/xMedia';
 import { formatButtonImages, formatFlowButtons, formatMegabytes } from '../../../shared/ytdl';
 import { postAudioInput, xAnalyzeInput } from '../../../shared/builtinFlows';
 import { coverForChat, keepForChat } from '../../chatMedia';
@@ -26,11 +28,11 @@ import { telegramCaptionLead } from '../../telegram/longMessage';
 import { FlowUserError } from '../userError';
 import { downloadsFolder } from './fileOps';
 import { saveIntoFolder } from './savedDownloads';
-import { postFileStem, readLinkedThread, siteName } from './postReader';
+import { forgetLinkedThread, postFileStem, readLinkedThread, readLinkedThreadCached, siteName } from './postReader';
 import { readAccessOf } from './readAccess';
 import { formatPostTime } from './xReader';
 import { pickCover, pickMenuButtons, pickThumb, pickWindow } from './postPickMenu';
-import { chooseVariant, downloadTo, fetchVariantTo, isLocked, mediaFileName, saveFolder, sizedVariants } from './postMediaFetch';
+import { chooseVariant, downloadTo, fetchVariantTo, isLocked, mediaFileName, mediaSource, saveFolder, sizedVariants } from './postMediaFetch';
 import { postAudio, postHasSound } from './postAudio';
 import { chatLimitBytes, ytdlAccessFor } from './ytdlAccess';
 import type { PostPicks, XMedia, XPost } from './xPosts';
@@ -48,53 +50,130 @@ interface Delivered {
    * and kept on the computer, while LINE gets its poster as `target`.
    */
   kept?: string;
+  /** What the file is a copy of (`mediaSource`), noted with it in the downloads ledger. */
+  source?: string;
+  /** The file (`target`, or `kept`) is an earlier paste's, already in the folder: used where it is. */
+  reused?: boolean;
 }
 
+/** Where a forward's files go and what it reads them from. */
+interface FetchPlan {
+  post: XPost;
+  site: PostSource;
+  stem: string;
+  destination: XMediaDestination;
+  jobDir: string;
+  /** The folder the files are saved in; null for the desktop preview, which keeps them in the chat's. */
+  folder: string | null;
+  /** The folder a LINE video kept on the computer goes to. */
+  keptFolder: string;
+}
+
+/**
+ * The copy an earlier paste of the same link saved (`findSourcedDownload`): used where it is when
+ * it sits in `folder`, else copied to `file` in the job folder (another folder, the chat's
+ * preview) — either way nothing is fetched from the site. Null when there is none.
+ */
+async function earlierCopy(source: string, folder: string | null, file: string): Promise<{ target: string; bytes: number; reused: boolean } | null> {
+  let hit: Awaited<ReturnType<typeof findSourcedDownload>> = null;
+  try {
+    hit = await findSourcedDownload(source, folder ?? undefined);
+  } catch {
+    // An unreadable ledger is no earlier copy: fetch it.
+  }
+  if (!hit) return null;
+  if (folder !== null && hit.inFolder) {
+    sendLog(`♻️ [Media] Reusing ${hit.path} (${formatMegabytes(hit.size)}) — downloaded before`);
+    return { target: hit.path, bytes: hit.size, reused: true };
+  }
+  try {
+    await fs.copyFile(hit.path, file);
+  } catch {
+    return null;
+  }
+  sendLog(`♻️ [Media] Copied ${hit.path} (${formatMegabytes(hit.size)}) — downloaded before`);
+  return { target: file, bytes: hit.size, reused: false };
+}
+
+/**
+ * A post's files, all fetched at once (a 10-photo post is one round trip, not ten) and returned in
+ * the post's order. The first failure stops the rest and is the one thrown, never the stops it
+ * caused: the caller reads it to decide whether a kept read is read again.
+ */
 async function fetchItems(
-  stem: string,
+  plan: FetchPlan,
   media: XMedia[],
-  destination: XMediaDestination,
-  jobDir: string,
   signal: AbortSignal | undefined,
   chatLimitBytes: number | undefined,
 ): Promise<Delivered[]> {
-  const out: Delivered[] = [];
+  const together = new AbortController();
+  const stopAll = (): void => together.abort();
+  if (signal?.aborted) stopAll();
+  else signal?.addEventListener('abort', stopAll, { once: true });
+  let failure: { err: unknown } | undefined;
+  try {
+    const fetched = await Promise.allSettled(media.map((item, index) =>
+      fetchItem(plan, media.length, item, index, together.signal, chatLimitBytes).catch((err: unknown) => {
+        failure ??= { err };
+        stopAll();
+        throw err;
+      })));
+    if (failure) throw failure.err;
+    return fetched.map((result) => (result as PromiseFulfilledResult<Delivered>).value);
+  } finally {
+    signal?.removeEventListener('abort', stopAll);
+  }
+}
+
+async function fetchItem(
+  plan: FetchPlan,
+  count: number,
+  item: XMedia,
+  index: number,
+  signal: AbortSignal,
+  chatLimitBytes: number | undefined,
+): Promise<Delivered> {
+  const { post, site, stem, destination, jobDir, folder } = plan;
   // A chat's limit is a hard stop; the desktop preview may fall back to a version over it.
   const cap = destination === 'preview' ? null : destinationLimitBytes(destination, chatLimitBytes);
-  for (const [index, item] of media.entries()) {
-    if (item.kind === 'photo') {
-      if (destination === 'line') {
-        out.push({ target: photoUrl(item, 'medium'), preview: '', kind: 'photo', bytes: 0 });
-        continue;
-      }
-      const url = photoUrl(item, destination === 'local' ? 'orig' : 'large');
-      const ext = path.extname(new URL(url).pathname) || '.jpg';
-      const file = path.join(jobDir, mediaFileName(stem, index, media.length, ext));
-      const bytes = await downloadTo(url, file, cap, signal);
-      out.push({ target: file, preview: '', kind: 'photo', bytes });
-      continue;
-    }
-    const file = path.join(jobDir, mediaFileName(stem, index, media.length, '.mp4'));
-    if (destination === 'line' && item.variants.some(isLocked)) {
-      // LINE fetches a video's URL itself, and this one answers only Yobi: the best version is kept
-      // on the computer, as a YouTube download is, and LINE gets the poster.
-      const best = await chooseVariant(item, 'local', signal);
-      const bytes = await fetchVariantTo(best, file, null, signal);
-      sendLog(`⬇️ [Media] ${item.kind} ${best.height}p ${formatMegabytes(bytes)} → ${path.basename(file)} (kept on the computer: LINE cannot fetch it)`);
-      out.push({ target: photoUrl(item, 'medium'), preview: '', kind: 'photo', bytes, kept: file });
-      continue;
-    }
-    const variant = await chooseVariant(item, destination, signal, chatLimitBytes);
-    if (destination === 'line') {
-      // LINE refuses a preview over 1 MB; the small size, where the site serves one, keeps well under it.
-      out.push({ target: variant.url, preview: photoUrl(item, 'small'), kind: item.kind, bytes: 0 });
-      continue;
-    }
-    const bytes = await fetchVariantTo(variant, file, cap, signal);
-    sendLog(`⬇️ [Media] ${item.kind} ${variant.height}p ${formatMegabytes(bytes)} → ${path.basename(file)}`);
-    out.push({ target: file, preview: item.image, kind: item.kind, bytes });
+  if (item.kind === 'photo') {
+    if (destination === 'line') return { target: photoUrl(item, 'medium'), preview: '', kind: 'photo', bytes: 0 };
+    const size = destination === 'local' ? 'orig' : 'large';
+    const url = photoUrl(item, size);
+    const ext = path.extname(new URL(url).pathname) || '.jpg';
+    const file = path.join(jobDir, mediaFileName(stem, index, count, ext));
+    const source = mediaSource(site, post, index, `photo:${size}`, url);
+    const earlier = await earlierCopy(source, folder, file);
+    const bytes = earlier ? earlier.bytes : await downloadTo(url, file, cap, signal);
+    return { target: earlier?.target ?? file, preview: '', kind: 'photo', bytes, source, ...(earlier?.reused ? { reused: true } : {}) };
   }
-  return out;
+  const file = path.join(jobDir, mediaFileName(stem, index, count, '.mp4'));
+  if (destination === 'line' && item.variants.some(isLocked)) {
+    // LINE fetches a video's URL itself, and this one answers only Yobi: the best version is kept
+    // on the computer, as a YouTube download is, and LINE gets the poster.
+    const best = await chooseVariant(item, 'local', signal);
+    const source = mediaSource(site, post, index, `${item.kind}:${best.height}:${best.bitrate}`, best.url);
+    const earlier = await earlierCopy(source, plan.keptFolder, file);
+    const bytes = earlier ? earlier.bytes : await fetchVariantTo(best, file, null, signal);
+    if (!earlier) sendLog(`⬇️ [Media] ${item.kind} ${best.height}p ${formatMegabytes(bytes)} → ${path.basename(file)} (kept on the computer: LINE cannot fetch it)`);
+    return { target: photoUrl(item, 'medium'), preview: '', kind: 'photo', bytes, kept: earlier?.target ?? file, source, ...(earlier?.reused ? { reused: true } : {}) };
+  }
+  const variant = await chooseVariant(item, destination, signal, chatLimitBytes);
+  if (destination === 'line') {
+    // LINE refuses a preview over 1 MB; the small size, where the site serves one, keeps well under it.
+    return { target: variant.url, preview: photoUrl(item, 'small'), kind: item.kind, bytes: 0 };
+  }
+  const source = mediaSource(site, post, index, `${item.kind}:${variant.height}:${variant.bitrate}`, variant.url);
+  const earlier = await earlierCopy(source, folder, file);
+  const bytes = earlier ? earlier.bytes : await fetchVariantTo(variant, file, cap, signal);
+  if (!earlier) sendLog(`⬇️ [Media] ${item.kind} ${variant.height}p ${formatMegabytes(bytes)} → ${path.basename(file)}`);
+  return { target: earlier?.target ?? file, preview: item.image, kind: item.kind, bytes, source, ...(earlier?.reused ? { reused: true } : {}) };
+}
+
+/** An earlier paste's file used again: noted anew, so it stays as long from now as a fresh download would. */
+async function keptAgain(file: string): Promise<string> {
+  await recordDownloads([file]).catch(() => {});
+  return file;
 }
 
 /** The step's reader, `auto` meaning the first Gemini API key; "" when none is set or found. */
@@ -277,9 +356,11 @@ async function postMedia(
   const destination = resolveXMediaDestination(config.destination, config.__triggerPlatform);
   const site = siteName(input.source);
   sendLog(`🐦 [${site}] Media of ${input.id} → ${destination}`);
-  const { focal: post } = await readLinkedThread(input, 'media', signal, readAccessOf(config));
+  const access = readAccessOf(config);
+  const read = await readLinkedThreadCached(input, 'media', signal, access);
+  let post = read.value.focal;
   // A post that only quotes a video: the video it quotes is what the person wants.
-  const media = post.media.length > 0 ? post.media : post.quoteMedia;
+  let media = post.media.length > 0 ? post.media : post.quoteMedia;
   // Words besides the link ask about the post: that is answered, not forwarded, so nothing is
   // downloaded — a video too large to send must not stop the answer.
   const forwarding = input.prompt === '';
@@ -297,23 +378,47 @@ async function postMedia(
     const chatLimit = destination === 'telegram' || destination === 'lineSelf'
       ? chatLimitBytes(await ytdlAccessFor(config), destination)
       : undefined;
-    const fetched = forwarding ? await fetchItems(postFileStem(input.source, post), media, destination, jobDir, signal, chatLimit) : [];
+    // Downloads go to the downloads folder, what a Telegram or LINE PC bot step sends too; the
+    // folder's cleanup removes them.
+    const saves = destination === 'local' || destination === 'telegram' || destination === 'lineSelf';
+    const planFor = (from: XPost, items: XMedia[]): FetchPlan => ({
+      post: from,
+      site: input.source,
+      stem: postFileStem(input.source, from),
+      destination,
+      jobDir,
+      folder: saves ? saveFolder(input, from, items.length, config.folder) : null,
+      keptFolder: downloadsFolder(config.folder),
+    });
+    let plan = planFor(post, media);
+    const fetched = !forwarding ? [] : await fetchItems(plan, media, signal, chatLimit).catch(async (err: unknown) => {
+      // A kept read's media addresses may have expired: forget it, read the post once more and try again.
+      if (!read.cached || signal?.aborted || err instanceof FlowUserError) throw err;
+      forgetLinkedThread(input, 'media', access);
+      sendLog(`♻️ [${site}] The media of a kept read failed (${err instanceof Error ? err.message : String(err)}) — reading the post again`);
+      post = (await readLinkedThread(input, 'media', signal, access)).focal;
+      media = post.media.length > 0 ? post.media : post.quoteMedia;
+      plan = planFor(post, media);
+      return fetchItems(plan, media, signal, chatLimit);
+    });
     let saved = fetched;
     if (destination === 'preview' && fetched.length > 0) {
       saved = [];
       for (const item of fetched) saved.push({ ...item, target: await keepForChat(item.target, path.basename(item.target)) });
     }
-    // Downloads go to the downloads folder, what a Telegram or LINE PC bot step sends too; the
-    // folder's cleanup removes them.
-    if ((destination === 'local' || destination === 'telegram' || destination === 'lineSelf') && fetched.length > 0) {
-      const folder = saveFolder(input, post, fetched.length, config.folder);
+    if (plan.folder !== null && fetched.length > 0) {
+      const { folder } = plan;
       saved = [];
-      for (const item of fetched) saved.push({ ...item, target: await saveIntoFolder(item.target, folder, path.basename(item.target)) });
+      for (const item of fetched) {
+        const target = item.reused ? await keptAgain(item.target) : await saveIntoFolder(item.target, folder, path.basename(item.target), item.source);
+        saved.push({ ...item, target });
+      }
       sendLog(`💾 [${site}] Saved ${saved.length} file(s) to ${folder}`);
     }
     const kept: string[] = [];
     for (const item of fetched) {
-      if (item.kept) kept.push(await saveIntoFolder(item.kept, downloadsFolder(config.folder), path.basename(item.kept)));
+      if (!item.kept) continue;
+      kept.push(item.reused ? await keptAgain(item.kept) : await saveIntoFolder(item.kept, plan.keptFolder, path.basename(item.kept), item.source));
     }
     const videoText = forwarding ? '' : await readVideoContent(media, readerUrl(config.reader), signal);
     const parts = { name: post.name, author: post.author, text: post.text, link: post.link, heading: post.heading };

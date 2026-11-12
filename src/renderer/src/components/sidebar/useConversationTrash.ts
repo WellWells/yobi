@@ -14,7 +14,7 @@ interface ConversationTrashDeps {
   setFileContent: (content: string | null) => void;
   onSelect: (file: OutputFile) => Promise<void>;
   viewportRef: React.RefObject<HTMLDivElement | null>;
-  fileItemRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
+  fileItemRefs: React.RefObject<Map<string, HTMLDivElement>>;
   getFocusedFile: () => OutputFile | null;
 }
 

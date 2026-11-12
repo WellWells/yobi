@@ -7,6 +7,8 @@ import { CLAUDE_USAGE_LIMIT_JS } from './claudeUsageLimit';
  */
 export const CLAUDE_INPUT_SELECTOR = '[data-testid="chat-input"]';
 export const CLAUDE_SEND_SELECTOR = '[data-testid="chat-input-send"]';
+/** Present only while Claude answers, where the send button was. */
+export const CLAUDE_STOP_SELECTOR = '[data-testid="chat-input-stop"]';
 export const CLAUDE_USER_TURN_SELECTOR = '[data-testid="user-message"]';
 export const CLAUDE_ASSISTANT_TURN_SELECTOR = '[data-testid="assistant-message"]';
 export const CLAUDE_ATTACHMENT_TILE_SELECTOR = '[data-testid="file-thumbnail"]';

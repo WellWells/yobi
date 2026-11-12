@@ -1,0 +1,115 @@
+/* The flow's outline: the sidebar rows' vocabulary (flat, transparent, accent-dim when selected,
+   default-hover under the pointer), denser, with a reading-position rail as its own element at
+   the left edge (never a border on the row: `edgeBars`). */
+.list {
+  outline: none;
+}
+
+.row {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 4px 6px 4px 10px;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  user-select: none;
+  min-width: 0;
+}
+
+.row:hover {
+  background: var(--mantine-color-default-hover);
+}
+
+.row[data-selected='true'],
+.row[data-selected='true']:hover {
+  background: var(--mantine-color-accent-dim);
+}
+
+/* A search hit's block, drawn so the hit shows where it sits; not a result itself. */
+.row[data-context='true'] {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.row:focus-visible {
+  outline: 2px solid var(--mantine-primary-color-filled);
+  outline-offset: -2px;
+}
+
+/* An end marker: low and faint, still a place to jump to. */
+.row[data-end='true'] {
+  padding-top: 1px;
+  padding-bottom: 1px;
+}
+
+.rail {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--text-muted) 40%, transparent);
+}
+
+.number {
+  flex-shrink: 0;
+  width: 22px;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  height: 18px;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+.text {
+  flex: 1;
+  min-width: 0;
+}
+
+.status {
+  flex-shrink: 0;
+  display: inline-flex;
+  height: 18px;
+  align-items: center;
+  width: 14px;
+  justify-content: center;
+}
+
+.more {
+  flex-shrink: 0;
+  opacity: 0;
+}
+
+.row:hover .more,
+.row:focus-within .more,
+.row:focus-visible .more,
+.more[data-expanded='true'] {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .more {
+    opacity: 1;
+  }
+}
+
+.fold {
+  flex-shrink: 0;
+  display: inline-flex;
+  height: 18px;
+  width: 14px;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}

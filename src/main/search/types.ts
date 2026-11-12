@@ -16,6 +16,8 @@ export interface SerpHit {
   snippet?: string;
   /** `YYYY-MM-DD`: the page's date as the engine showed it beside the result. */
   date?: string;
+  /** Other copies of the same page (mirrors of one Reddit post), read in turn if this one fails. */
+  alternates?: string[];
 }
 
 export interface SourceDoc {

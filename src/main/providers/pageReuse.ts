@@ -33,6 +33,12 @@ import {
   PPLX_RESPONSE_SELECTOR,
   PPLX_STOP_ICON_ID,
 } from './perplexityReadScript';
+import {
+  DEEPSEEK_DISABLED_CLASS,
+  DEEPSEEK_INPUT_SELECTOR,
+  DEEPSEEK_SEND_SELECTOR,
+  DEEPSEEK_TURN_SELECTOR,
+} from './deepseekSendScript';
 
 export interface PageReusePolicy {
   /** Evaluated in the page: true when it can take another prompt in the conversation it shows. */
@@ -98,6 +104,7 @@ const THREAD_PATH_PATTERNS: Record<Provider, RegExp> = {
   chatgpt: /^\/c\/[^/]+\/?$/,
   claude: /^\/chat\/[^/]+\/?$/,
   perplexity: /^\/search\/[^/]+\/?$/,
+  deepseek: /^\/a\/chat\/s\/[^/]+\/?$/,
 };
 
 export function extractThreadUrl(provider: Provider, url: string): string | null {
@@ -177,6 +184,21 @@ const CLAUDE_READY = `(function () {
   return true;
 })()`;
 
+// Idle = the send control is disabled over an empty composer; while answering it is the enabled stop control.
+const DEEPSEEK_READY = `(function () {
+  var composer = document.querySelector(${JSON.stringify(DEEPSEEK_INPUT_SELECTOR)});
+  if (!composer || String(composer.value || '').trim()) return false;
+  var el = composer;
+  var send = null;
+  for (var i = 0; el && i < 8 && !send; i++) {
+    el = el.parentElement;
+    if (el) send = el.querySelector(${JSON.stringify(DEEPSEEK_SEND_SELECTOR)});
+  }
+  if (!send) return false;
+  return (' ' + send.className + ' ').indexOf(${JSON.stringify(` ${DEEPSEEK_DISABLED_CLASS} `)}) !== -1
+    || send.getAttribute('aria-disabled') === 'true';
+})()`;
+
 function emptyOf(selector: string): string {
   return `document.querySelectorAll(${JSON.stringify(selector)}).length === 0`;
 }
@@ -201,6 +223,12 @@ export const PAGE_REUSE: Record<Provider, PageReusePolicy> = {
   perplexity: {
     readyExpression: PERPLEXITY_READY,
     emptyExpression: emptyOf(PPLX_RESPONSE_SELECTOR),
+  },
+  // A missing thread loads at its URL, then the app sends it home ("conversation does not exist").
+  deepseek: {
+    readyExpression: DEEPSEEK_READY,
+    emptyExpression: emptyOf(DEEPSEEK_TURN_SELECTOR),
+    threadSettledExpression: `!(${emptyOf(DEEPSEEK_TURN_SELECTOR)})`,
   },
 };
 

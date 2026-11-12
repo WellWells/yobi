@@ -2,6 +2,9 @@ import { UNSENT_NOTICE_KEYS } from './toolContracts';
 import type { InterpretedResult, OutcomeNotice, VerificationResult } from './toolContracts';
 import type { ActionRecord } from './evidenceLedger';
 import { toolTitleKey } from './contractRegistry';
+import { readableToolId } from '../../../shared/agentStepLabel';
+
+export { readableToolId };
 
 /**
  * Turns what a change really did into the three places that must agree about it: the line the model
@@ -140,17 +143,6 @@ function footerNotice(record: ActionRecord, later: readonly ActionRecord[]): Out
 }
 
 type Translate = (key: string, vars: Record<string, string>) => string;
-
-/** `saveDraft` → "Save draft", `create_issue` → "Create issue": the last resort, never a raw id. */
-export function readableToolId(id: string): string {
-  const words = id
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/[_\-.:/]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
-  return words ? `${words[0].toUpperCase()}${words.slice(1)}` : id;
-}
 
 /**
  * What a result line calls the tool: Yobi's own translated name (connectors it describes), then

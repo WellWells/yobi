@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Button, Divider, Group, NavLink, Popover, Stack, Text } from '@mantine/core';
+import { ActionIcon, Box, Button, Divider, Group, NavLink, Popover, Stack, Text, Tooltip } from '@mantine/core';
 import { Plus, Search } from 'lucide-react';
 import { ShortcutHint } from '../../components/ShortcutHint';
 import { AppTextInput } from '../../components/AppTextInput';
@@ -14,10 +14,15 @@ export interface AddStepMenuProps {
   position?: 'top' | 'bottom';
   t: (k: string) => string;
   onAdd: (type: SkillType) => void;
+  /** An icon button with this label (a card's "insert below") instead of the full-width button. */
+  iconLabel?: string;
+  /** Opens as it mounts: the icon variant is mounted on its first click. */
+  defaultOpened?: boolean;
+  onClose?: () => void;
 }
 
-export const AddStepMenu: React.FC<AddStepMenuProps> = ({ position = 'bottom', t, onAdd }) => {
-  const [opened, setOpened] = useState(false);
+export const AddStepMenu: React.FC<AddStepMenuProps> = ({ position = 'bottom', t, onAdd, iconLabel, defaultOpened = false, onClose }) => {
+  const [opened, setOpened] = useState(defaultOpened);
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
   const itemRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -30,7 +35,9 @@ export const AddStepMenu: React.FC<AddStepMenuProps> = ({ position = 'bottom', t
     if (!opened) {
       setQuery('');
       setActiveIndex(0);
+      onClose?.();
     }
+    // Only the menu closing calls onClose; a new onClose is not a reason to run.
   }, [opened]);
 
   const select = (type: SkillType) => {
@@ -65,6 +72,13 @@ export const AddStepMenu: React.FC<AddStepMenuProps> = ({ position = 'bottom', t
   return (
     <Popover opened={opened} onChange={setOpened} position={position} width={360} withArrow shadow="md" trapFocus>
       <Popover.Target>
+        {iconLabel ? (
+          <Tooltip label={iconLabel} position="top" disabled={opened}>
+            <ActionIcon variant="subtle" size="sm" aria-label={iconLabel} onClick={() => setOpened((o) => !o)}>
+              <Plus size={14} />
+            </ActionIcon>
+          </Tooltip>
+        ) : (
         <Button
           variant={position === 'top' ? 'light' : 'default'}
           size="sm"
@@ -75,6 +89,7 @@ export const AddStepMenu: React.FC<AddStepMenuProps> = ({ position = 'bottom', t
         >
           {t('flow.addStep')}
         </Button>
+        )}
       </Popover.Target>
       <Popover.Dropdown p={0}>
         <Stack gap={0}>

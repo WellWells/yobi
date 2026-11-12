@@ -1,8 +1,10 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import type { CaptureFormat, SkillType } from '../../shared/types';
-import { isShareLinkFormat } from '../../shared/shareFormat';
 import { extractTemplateVariables } from '../../shared/templateVariables';
+import { looksLikeWebUrl, parseJsonStringArray, splitUrlListText } from '../../shared/urlRows';
+
+export { isFileOutputStep } from '../../shared/fileOutputStep';
+export { interpolateCode } from './codeInterpolation';
 
 export function interpolate(template: string, context: Map<string, string>): string {
   return template.replace(/\{\{([^}]+)\}\}/g, (_, varName: string) => {
@@ -21,8 +23,26 @@ export function interpolateConfig(
   return result;
 }
 
-export function isCaptureFormat(value: string | undefined): value is CaptureFormat {
-  return value === 'png' || value === 'webp' || value === 'pdf';
+/**
+ * URL rows keep their JSON structure; a whole-row variable may expand into several sources. A JSON
+ * array value is taken as it is; a newline or comma list is split like a whole-field list and
+ * keeps only the addresses (a model's "Here are the URLs:" is not a source). A list with nothing
+ * usable, or an empty array, still holds its row's place, so `requireAll` sees the gap.
+ */
+export function interpolateBrowserUrls(template: string, context: Map<string, string>): string {
+  const rows = parseJsonStringArray(template);
+  if (!rows) return interpolate(template, context);
+  const resolved = rows.flatMap((row) => {
+    const value = interpolate(row, context);
+    if (!/^\s*\{\{[^{}]+\}\}\s*$/.test(row)) return [value];
+    const expanded = parseJsonStringArray(value);
+    if (expanded) return expanded.length > 0 ? expanded : [''];
+    const pieces = splitUrlListText(value);
+    if (pieces.length < 2) return [value];
+    const urls = pieces.filter(looksLikeWebUrl);
+    return urls.length > 0 ? urls : [''];
+  });
+  return JSON.stringify(resolved);
 }
 
 export function inferTelegramSendAs(filePath: string): 'photo' | 'video' | 'audio' | 'document' | 'auto' {
@@ -36,17 +56,6 @@ export function inferTelegramSendAs(filePath: string): 'photo' | 'video' | 'audi
   if (ext === '.mp3' || ext === '.m4a') return 'audio';
   if (ext === '') return 'auto';
   return 'document';
-}
-
-export function isFileOutputStep(type: SkillType, config: Record<string, string>): boolean {
-  if (type === 'capture') return true;
-  if (type === 'share') return !isShareLinkFormat(config.format);
-  if (type === 'file_write') return true;
-  if (type === 'file_download') return true;
-  if (type === 'youtube_download') return true;
-  if (type === 'x_media') return true;
-  if (type === 'llm') return isCaptureFormat(config.exportFormat);
-  return false;
 }
 
 export const PRODUCED_FILES_KEY = '__producedFiles';

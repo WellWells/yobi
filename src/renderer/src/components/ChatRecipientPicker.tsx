@@ -1,13 +1,21 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Button, Chip, Group, Stack, Text, Tooltip } from '@mantine/core';
+import { Group, Stack, Text } from '@mantine/core';
 import { Settings } from 'lucide-react';
-import { AppTextInput } from './AppTextInput';
+import { AppButton } from './AppButton';
+import { LineSelfRecipientPicker } from './LineSelfRecipientPicker';
+import { RecipientNotes } from './RecipientNotes';
+import { MultiSelectDropdown } from './MultiSelectDropdown';
 import { lineApi, socketBotApi, telegramApi } from '../api/electronApi';
 import { SOCKET_BOT_PLATFORMS } from '../../../shared/types';
+import { fillTemplate } from '../../../shared/fillTemplate';
 import { useI18nStore } from '../store/i18nStore';
 import { useAppStore } from '../store/appStore';
 import { lineAccountLabel, namedTelegramRecipients, telegramAccountChoiceLabel } from '../utils/botAccountLabel';
-import type { BotContact, BotPlatform, LinePairedUser, TelegramChannel, TelegramPairedUser } from '../../../shared/types';
+import {
+  recipientTokens, unlistedRecipientCount, withOtherRecipients, withTypedRecipient,
+} from '../utils/recipientChoices';
+import type { RecipientOptions } from '../utils/recipientChoices';
+import type { BotContact, BotPlatform, FlowVariable, LinePairedUser, TelegramChannel, TelegramPairedUser } from '../../../shared/types';
 
 interface RecipientChoice {
   id: string;
@@ -33,17 +41,23 @@ export interface ChatRecipientPickerProps {
   platform?: BotPlatform | 'auto';
   label?: string;
   hint?: string;
-  placeholder?: string;
   emptyHint?: string;
   blankHint?: string;
   error?: string;
-  multiple?: boolean;
+  /** The bot step also offers the chat that started the flow and the flow's chat settings. */
+  offerStepChoices?: boolean;
+  variables?: readonly FlowVariable[];
   onBeforeNavigate?: () => void;
 }
 
-export const ChatRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
-  value, onChange, platform = 'auto', label, hint, placeholder, emptyHint, blankHint, error,
-  multiple = true, onBeforeNavigate,
+/**
+ * The recipients of a bot step or a template's chat question, as one searchable list of names:
+ * paired people, channels, and the "Other" group (`withOtherRecipients`). There is no field to type
+ * an id into — nobody knows a chat's id, and every value the step holds is shown by name.
+ */
+const PairedRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
+  value, onChange, platform = 'auto', label, hint, emptyHint, blankHint, error,
+  offerStepChoices, variables, onBeforeNavigate,
 }) => {
   const t = useI18nStore((s) => s.t);
   const openSettingsCategory = useAppStore((s) => s.openSettingsCategory);
@@ -54,19 +68,22 @@ export const ChatRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
   /** Paired people on the platforms with string ids (LINE, Discord, Slack). */
   const [stringIdUsers, setStringIdUsers] = useState<Partial<Record<BotPlatform, LinePairedUser[]>>>({});
 
+  /** Every list has answered, so a saved id none of them has is really not found. */
+  const [loaded, setLoaded] = useState(false);
+
   useEffect(() => {
     if (currentView !== 'flow') return;
-    void telegramApi.getSettings().then((s) => {
-      setTelegramUsers(s.pairing.pairedUsers);
-      setTelegramChannels(s.channels);
-      setTelegramContacts(s.contacts);
-    });
-    void lineApi.getSettings().then((s) => setStringIdUsers((prev) => ({ ...prev, line: s.pairing.pairedUsers })));
-    for (const socketPlatform of SOCKET_BOT_PLATFORMS) {
-      void socketBotApi.getSettings(socketPlatform).then((s) => {
+    void Promise.allSettled([
+      telegramApi.getSettings().then((s) => {
+        setTelegramUsers(s.pairing.pairedUsers);
+        setTelegramChannels(s.channels);
+        setTelegramContacts(s.contacts);
+      }),
+      lineApi.getSettings().then((s) => setStringIdUsers((prev) => ({ ...prev, line: s.pairing.pairedUsers }))),
+      ...SOCKET_BOT_PLATFORMS.map((socketPlatform) => socketBotApi.getSettings(socketPlatform).then((s) => {
         if (s) setStringIdUsers((prev) => ({ ...prev, [socketPlatform]: s.pairing.pairedUsers }));
-      });
-    }
+      })),
+    ]).then(() => setLoaded(true));
   }, [currentView]);
 
   const goToSettings = (): void => {
@@ -83,89 +100,60 @@ export const ChatRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
   ), [isTelegram, platform, stringIdUsers, telegramUsers, t]);
   const channels = useMemo(() => (isTelegram ? telegramChannels : []), [isTelegram, telegramChannels]);
 
-  const raw = value.trim();
-  const knownIdSet = useMemo(
-    () => new Set([...pairedUsers.map((u) => u.id), ...channels.map((c) => String(c.chatId))]),
-    [pairedUsers, channels],
-  );
-  const parsedIds = useMemo(
-    () => (raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : []),
-    [raw],
-  );
-  const selectedIds = useMemo(() => parsedIds.filter((id) => knownIdSet.has(id)), [parsedIds, knownIdSet]);
-  const unknownIds = useMemo(() => parsedIds.filter((id) => !knownIdSet.has(id)), [parsedIds, knownIdSet]);
-  /** Recipients the picker cannot offer as chips, named once the startup backfill has asked Telegram. */
-  const namedUnknowns = useMemo(() => {
-    if (!isTelegram) return [];
-    return namedTelegramRecipients(unknownIds, { contacts: telegramContacts }, t);
-  }, [isTelegram, unknownIds, telegramContacts, t]);
+  const tokens = useMemo(() => recipientTokens(value), [value]);
+  /** Saved Telegram ids the lists do not offer, named once the startup backfill has asked Telegram. */
+  const names = useMemo(() => {
+    if (!isTelegram) return undefined;
+    return new Map(namedTelegramRecipients(tokens, { contacts: telegramContacts }, t).map((entry) => [entry.id, entry.label]));
+  }, [isTelegram, tokens, telegramContacts, t]);
   const hasChoices = pairedUsers.length > 0 || channels.length > 0;
+  const lostChannelPicked = channels.some((channel) => !channel.canPost && tokens.includes(String(channel.chatId)));
 
-  const handleMultiple = (next: string[]) => {
-    onChange([...new Set([...next, ...unknownIds])].join(','));
-  };
-
-  const renderChannelChip = (channel: TelegramChannel) => {
-    const choice = channelChoice(channel);
-    const isSelected = selectedIds.includes(choice.id);
-    const chip = (
-      <Chip
-        key={choice.id}
-        value={choice.id}
-        size="xs"
-        variant="light"
-        color={channel.canPost ? undefined : 'gray'}
-        disabled={!channel.canPost && !isSelected}
-      >
-        {choice.label}
-      </Chip>
-    );
-    if (channel.canPost) return chip;
-    return (
-      <Tooltip key={choice.id} label={t('flow.recipient.channelLost')} position="top">
-        <Group gap={0}>{chip}</Group>
-      </Tooltip>
-    );
-  };
-
-  const chips = (
-    <Stack gap={6}>
-      {pairedUsers.length > 0 && (
-        <Stack gap={4}>
-          {channels.length > 0 && <Text fz="xs" c="dimmed">{t('flow.recipient.users')}</Text>}
-          <Group gap={4} wrap="wrap">
-            {pairedUsers.map((u) => (
-              <Chip key={u.id} value={u.id} size="xs" variant="light">{u.label}</Chip>
-            ))}
-          </Group>
-        </Stack>
-      )}
-      {channels.length > 0 && (
-        <Stack gap={4}>
-          <Text fz="xs" c="dimmed">{t('flow.recipient.channels')}</Text>
-          <Group gap={4} wrap="wrap">
-            {channels.map(renderChannelChip)}
-          </Group>
-        </Stack>
-      )}
-    </Stack>
-  );
+  const source = useMemo(() => {
+    const base: RecipientOptions = [];
+    if (pairedUsers.length > 0) {
+      base.push({ group: t('flow.recipient.users'), items: pairedUsers.map((user) => ({ value: user.id, label: user.label })) });
+    }
+    if (channels.length > 0) {
+      base.push({
+        group: t('flow.recipient.channels'),
+        items: channels.map((channel) => {
+          const choice = channelChoice(channel);
+          if (channel.canPost) return { value: choice.id, label: choice.label };
+          // A channel the bot lost stays removable once picked, and cannot be picked anew.
+          return {
+            value: choice.id,
+            label: fillTemplate(t('flow.recipient.channelLostLabel'), { name: choice.label }),
+            disabled: !tokens.includes(choice.id),
+          };
+        }),
+      });
+    }
+    return { base, ctx: { platform, t, offerStepChoices, variables, names, loading: !loaded } };
+  }, [pairedUsers, channels, tokens, platform, t, offerStepChoices, variables, names, loaded]);
+  const options = useMemo(() => withOtherRecipients(source.base, tokens, source.ctx), [source, tokens]);
+  const unlisted = useMemo(() => unlistedRecipientCount(source.base, tokens, source.ctx), [source, tokens]);
+  const [search, setSearch] = useState('');
 
   return (
     <Stack gap={4}>
-      <AppTextInput
+      <MultiSelectDropdown
         label={label}
-        value={value}
-        onChange={(e) => onChange(e.currentTarget.value)}
-        placeholder={placeholder}
+        options={withTypedRecipient(options, search, t)}
+        value={tokens}
+        onChange={(next) => onChange(next.join(','))}
+        searchable
+        searchValue={search}
+        onSearchChange={setSearch}
+        nothingFoundMessage={t('flow.recipient.noMatch')}
+        placeholder={t('flow.recipient.pick')}
         error={error || undefined}
-        tone="body"
-        mono
+        size="sm"
       />
-      {!hasChoices ? (
+      {!hasChoices && loaded && (
         <Group gap="xs" align="center" wrap="nowrap">
           {emptyHint && <Text fz="xs" c="dimmed" fs="italic" style={{ flex: 1 }}>{emptyHint}</Text>}
-          <Button
+          <AppButton
             variant="light"
             size="compact-xs"
             leftSection={<Settings size={12} />}
@@ -173,30 +161,22 @@ export const ChatRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
             style={{ flexShrink: 0 }}
           >
             {t('flow.setup.openSettings')}
-          </Button>
+          </AppButton>
         </Group>
-      ) : multiple ? (
-        <Chip.Group multiple value={selectedIds} onChange={handleMultiple}>
-          {chips}
-        </Chip.Group>
-      ) : (
-        <Chip.Group value={raw} onChange={(next) => onChange(typeof next === 'string' ? next : '')}>
-          {chips}
-        </Chip.Group>
       )}
-      {namedUnknowns.length > 0 && (
-        <Stack gap={2}>
-          {namedUnknowns.map((entry) => (
-            <Text key={entry.id} fz="xs" c="dimmed">
-              {`${entry.id} — ${entry.label}`}
-            </Text>
-          ))}
-        </Stack>
-      )}
-      {hint && <Text fz="xs" c="dimmed">{hint}</Text>}
-      {raw.length === 0 && hasChoices && blankHint && (
-        <Text fz="xs" c="dimmed" fs="italic">{blankHint}</Text>
-      )}
+      {lostChannelPicked && <Text fz="xs" c="var(--mantine-color-warning)">{t('flow.recipient.channelLost')}</Text>}
+      <RecipientNotes tokens={tokens} unlisted={unlisted} blankHint={blankHint} hint={hint} />
     </Stack>
   );
 };
+
+/**
+ * LINE PC sends from the user's own account, so its recipients are any group or friend LINE PC has,
+ * not only the paired people: it has its own picker. Two components, so switching the platform
+ * remounts rather than changing which hooks run.
+ */
+export const ChatRecipientPicker: React.FC<ChatRecipientPickerProps> = (props) => (
+  props.platform === 'lineSelf'
+    ? <LineSelfRecipientPicker {...props} />
+    : <PairedRecipientPicker {...props} />
+);

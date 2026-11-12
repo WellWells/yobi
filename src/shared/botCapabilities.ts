@@ -37,7 +37,9 @@ export interface BotCapability {
  * - agent: the full kit acts on the owner's computer and accounts (LLM steps, notifications,
  *   connector calls), so a group never grants it; a paired account's own grant still works there.
  * - local, shell: this computer; private chats only. shell is never implied, not even by "me".
- * - admin: /status, /restart — the owner's queue and app, so private chats only.
+ * - admin: managing accounts and groups from the chat and the flow commands kept for admins (on
+ *   Telegram also /status, /restart) — the owner's bot and data, so private chats only. Telegram,
+ *   LINE and LINE PC (`ADMIN_PLATFORMS`).
  * - connectors: the owner's own data; private chats only. A connector of public data alone
  *   (`publicDataConnector`) is the exception.
  */

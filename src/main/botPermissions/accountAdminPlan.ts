@@ -9,11 +9,12 @@ import {
   ALL_CONNECTORS_GRANT,
   CONNECTOR_GRANT_PREFIX,
   connectorGrant,
-  isDefaultableGrant,
+  isAdminGrantable,
+  isExplicitGrant,
   sortBotGrants,
 } from '../../shared/botPermissions';
 import type { BotApprovePairingResult, BotGrant } from '../../shared/botPermissions';
-import { BUILTIN_CALENDAR_SERVER_ID, BUILTIN_CONNECTORS, BUILTIN_PAGE_SERVER_ID, BUILTIN_PTT_SERVER_ID, BUILTIN_TRANSLATE_SERVER_ID, PUBLIC_DATA_CONNECTOR_IDS } from '../../shared/builtinConnectors';
+import { BUILTIN_CALENDAR_SERVER_ID, BUILTIN_CONNECTORS, BUILTIN_PAGE_SERVER_ID, BUILTIN_PTT_SERVER_ID, BUILTIN_TRANSLATE_SERVER_ID } from '../../shared/builtinConnectors';
 import { clipLine } from '../../shared/textBudget';
 
 /** Built-in connectors added later than the rest, in the order they came. */
@@ -21,8 +22,8 @@ const LATER_CONNECTORS: readonly string[] = [BUILTIN_PTT_SERVER_ID, BUILTIN_CALE
 
 /**
  * Every grant a card may toggle, in a fixed order: a toggle names its grant by index here. Shell
- * and admin are never in it (`isDefaultableGrant`): shell is changed on the computer only, admin
- * has a button of its own that only the owner sees (Telegram). Added servers are left to settings.
+ * and admin are never in it (`isExplicitGrant`): shell is changed on the computer only, admin has
+ * a button of its own that only the owner sees. Added servers are left to settings.
  * A grant added later goes last, so a card sent before it still names the same grant by each
  * index; the card shows them in display order (`visibleGrantToggles`).
  */
@@ -31,16 +32,10 @@ export const ACCOUNT_GRANT_CANDIDATES: readonly BotGrant[] = ([
   ...BUILTIN_CONNECTORS.filter((connector) => !LATER_CONNECTORS.includes(connector.id)).map((connector) => connectorGrant(connector.id)),
   'preview',
   ...LATER_CONNECTORS.map(connectorGrant),
-] as BotGrant[]).filter(isDefaultableGrant);
+] as BotGrant[]).filter((grant) => !isExplicitGrant(grant));
 
 /** Where each candidate shows on a card: the display order of every grant list. */
 const DISPLAY_ORDER: readonly BotGrant[] = sortBotGrants(ACCOUNT_GRANT_CANDIDATES);
-
-/** What a manager who is not the owner may hand out: nothing that reads this computer or private data. */
-const NON_OWNER_GRANTS: ReadonlySet<BotGrant> = new Set<BotGrant>([
-  'agent', 'web', 'download', 'preview',
-  ...PUBLIC_DATA_CONNECTOR_IDS.map((id) => connectorGrant(id)),
-]);
 
 /** How many of each kind a list shows; the rest are left to the settings page. */
 export const LISTED_PAIRED_MAX = 60;
@@ -59,7 +54,7 @@ export interface ManagedAccount {
   owner: boolean;
   /** The memory file could not be read, so whether this is the owner's account is unknown. */
   ownerUnknown?: boolean;
-  /** Holds the admin grant (paired only; Telegram only). */
+  /** Holds the admin grant (paired only; platforms with admins only). */
   admin: boolean;
   grants: readonly BotGrant[];
   /** An allowed group where they used the bot, and how often they used it at all. */
@@ -85,7 +80,8 @@ export function accountActionPayload(action: AccountAdminAction): string {
 
 /**
  * Reads a payload back; null for anything this module did not write. `userIdPattern` is the
- * platform's id shape; `adminGrant: false` (LINE) refuses the admin toggle outright.
+ * platform's id shape; `adminGrant: false` refuses the admin toggle outright (a platform without
+ * admins). Who may press it is decided at the press (`accountAuthority`: the owner alone).
  */
 export function parseAccountActionPayload(
   payload: string,
@@ -141,7 +137,7 @@ export function accountAuthority(actor: AccountActor, target: ManagedAccount): {
  */
 export function mayToggleGrant(actor: AccountActor, grant: BotGrant): boolean {
   if (!ACCOUNT_GRANT_CANDIDATES.includes(grant)) return false;
-  return actor.owner || NON_OWNER_GRANTS.has(grant);
+  return actor.owner || isAdminGrantable(grant);
 }
 
 /** The built-in connector a grant names, or '' (not a connector grant, or all of them). */

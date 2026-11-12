@@ -41,7 +41,7 @@ function validTime(value: unknown): number | null {
   return Number.isNaN(ms) ? null : ms;
 }
 
-function positiveCount(value: unknown): number {
+export function positiveCount(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
 }
 

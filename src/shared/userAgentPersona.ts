@@ -1,9 +1,9 @@
-const GEMINI_APP_VERSION = '1.13.1';
+const GEMINI_APP_VERSION = '1.18.0';
 
 const GEMINI_APP_TOKEN = 'GeminiWindowsApp/';
 
 export function buildGeminiAppUserAgent(chromeVersion: string): string {
-  return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) gemini/${GEMINI_APP_VERSION} Chrome/${chromeVersion} Safari/537.36 ${GEMINI_APP_TOKEN}${GEMINI_APP_VERSION}`;
+  return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) gemini/${GEMINI_APP_VERSION} Chrome/${chromeVersion} Safari/537.36 ${GEMINI_APP_TOKEN}${GEMINI_APP_VERSION} (prod)`;
 }
 
 export function claimsGeminiApp(userAgent: string): boolean {

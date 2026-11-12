@@ -6,6 +6,7 @@ import { INSTRUCTION_EST, readPlanFields, readStepBudget, USER_DATA_MARKER } fro
 import { AGENT_HELP_TOOL, OPTS_MARKER } from './agentTools';
 import { readIntent } from './actionGate';
 import type { GoalIntent } from './actionGate';
+import { readDoing } from './agentDoing';
 import { resolveToolContract } from './contractRegistry';
 import { toolNouns } from './mcpToolNouns';
 import { withoutUnseen } from './shellApproval';
@@ -704,6 +705,8 @@ export interface McpAction {
   /** Same field as on `AgentAction`: the validator is chosen per RESPONSE, so both shapes read it. */
   stepsNeeded?: number;
   intent?: GoalIntent;
+  /** Same field as on `AgentAction`: the title of this step (`readDoing`). */
+  doing?: string;
   /**
    * The model's one-sentence description of a change, in the user's language, for the confirmation
    * the user approves from. The model's words, not a check: the confirmation also shows what the
@@ -764,7 +767,7 @@ export function validateMcpAction(obj: Record<string, unknown>, index: McpRuntim
     ok: true,
     value: {
       thought, action: 'call_mcp', server: handle.handle, name, arguments: args,
-      ...readPlanFields(obj), ...readStepBudget(obj), ...readIntent(obj), ...readConfirm(obj),
+      ...readPlanFields(obj), ...readStepBudget(obj), ...readIntent(obj), ...readConfirm(obj), ...readDoing(obj, name),
     },
   };
 }

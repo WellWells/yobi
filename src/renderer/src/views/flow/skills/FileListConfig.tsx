@@ -15,5 +15,6 @@ export const FileListConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }
       size="sm"
     />
     <Text fz="xs" c="dimmed">{t('flow.skill.file_list.hint')}</Text>
+    <Text fz="xs" c="var(--text-muted)">{t('flow.skill.file_list.scope')}</Text>
   </Stack>
 );

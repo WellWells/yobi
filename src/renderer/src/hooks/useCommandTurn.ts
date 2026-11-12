@@ -3,6 +3,16 @@ import { attachmentMetaNames } from '../../../shared/conversationDoc';
 import { fileApi } from '../api/electronApi';
 import { NEW_CONVERSATION_KEY, useAppStore } from '../store/appStore';
 import { remapPathValues, useConversationMoves } from '../store/conversationMoves';
+import { consumeSendStopped, giveBackStoppedPrompt } from '../utils/stoppedSends';
+
+/** The question a pending send shows, wherever its conversation is. */
+export function pendingPromptOf(sendId: string): string {
+  for (const turns of Object.values(useAppStore.getState().pendingTurns)) {
+    const turn = turns.find((candidate) => candidate.sendId === sendId);
+    if (turn) return turn.prompt;
+  }
+  return '';
+}
 
 let commandSendCounter = 0;
 function nextCommandSendId(): string {
@@ -25,6 +35,7 @@ export function useCommandTurn() {
       {
         sendId,
         prompt,
+        beganAt: Date.now(),
         ...(runId ? { runId } : {}),
         ...(attached.length > 0 ? { attachments: attached, attachmentFiles: attachments } : {}),
         ...(command ? { command } : {}),
@@ -33,9 +44,13 @@ export function useCommandTurn() {
     return sendId;
   }, []);
 
-  const fail = useCallback((sendId: string): void => {
+  /** True when the user stopped it: nothing went wrong, so the caller shows no error. */
+  const fail = useCallback((sendId: string): boolean => {
     originBySendId.current.delete(sendId);
+    const stoppedByUser = consumeSendStopped(sendId);
+    if (stoppedByUser) giveBackStoppedPrompt(pendingPromptOf(sendId));
     useAppStore.getState().clearPendingTurn(sendId);
+    return stoppedByUser;
   }, []);
 
   const finish = useCallback(async (sendId: string, filePath?: string): Promise<void> => {

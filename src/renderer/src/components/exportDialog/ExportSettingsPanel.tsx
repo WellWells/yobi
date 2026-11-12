@@ -6,6 +6,8 @@ import { CAPTURE_WIDTHS, captureWidthLabelKey } from '../../../../shared/types';
 import { AppSegmentedControl } from '../AppSegmentedControl';
 import { ToggleSwitch } from '../ToggleSwitch';
 import { AppTextInput } from '../AppTextInput';
+import { RenameInput } from '../RenameInput';
+import type { AiNameSource } from '../../../../shared/aiName';
 import { BackgroundStylePicker, DirectionGrid, PaletteSwatchGrid } from '../capture/PalettePicker';
 import type {
   CaptureBackgroundStyle,
@@ -36,6 +38,8 @@ export interface ExportSettingsPanelProps {
   setTitle: (value: string) => void;
   fileName: string;
   setFileName: (value: string) => void;
+  /** What the file name's ✨ names it from (the open file); null = nothing to name it from. */
+  fileNameAi: AiNameSource | null;
   format: CaptureFormat;
   setFormat: (value: CaptureFormat) => void;
   cardLayout: CardLayout;
@@ -96,6 +100,7 @@ export const ExportSettingsPanel: React.FC<ExportSettingsPanelProps> = ({
   setTitle,
   fileName,
   setFileName,
+  fileNameAi,
   format,
   setFormat,
   cardLayout,
@@ -198,15 +203,16 @@ export const ExportSettingsPanel: React.FC<ExportSettingsPanelProps> = ({
 
       <Box>
         <SectionLabel>{t('capture.fileName')}</SectionLabel>
-        <AppTextInput
+        {/* The ✨ names the file from the open conversation, as quick export's does. A form field:
+            Enter does not save the dialog, Escape stops a running name before it closes the dialog. */}
+        <RenameInput
+          mode="field"
           value={fileName}
-          onChange={(e) => setFileName(e.currentTarget.value)}
+          onChange={setFileName}
+          ai={fileNameAi}
           size="sm"
-          rightSection={
-            <Text fz="var(--font-size-sm)" c="var(--text-muted)" pr={4}>{`.${zip ? 'zip' : format}`}</Text>
-          }
-          rightSectionWidth={54}
-          rightSectionPointerEvents="none"
+          suffix={<Text fz="var(--font-size-sm)" c="var(--text-muted)">{`.${zip ? 'zip' : format}`}</Text>}
+          rightSectionWidth={zip || format === 'webp' ? 78 : 70}
         />
       </Box>
 

@@ -2,9 +2,8 @@
  * In-process MCP server for the user's own mailbox (IMAP to read, the shared SMTP account to send),
  * backed by `mailService.ts`, which it takes as a parameter.
  */
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { createToolServer } from '../mcp/inProcessServer';
+import { createToolServer, type ToolServer } from '../mcp/inProcessServer';
 import { SEARCH_LIMIT_DEFAULT, SEARCH_LIMIT_MAX, type ComposeArgs, type MailService } from './mailService';
 
 export const MAIL_SERVER_NAME = 'mail';
@@ -213,7 +212,7 @@ async function dispatch(service: MailService, name: string, args: Record<string,
   }
 }
 
-export function createMailMcpServer(service: MailService): Server {
+export function createMailMcpServer(service: MailService): ToolServer {
   return createToolServer({
     name: MAIL_SERVER_NAME,
     tools: MAIL_TOOLS,

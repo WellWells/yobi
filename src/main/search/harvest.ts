@@ -8,6 +8,7 @@ import type { HostPolicy } from '../net/hostPolicy';
 import { isVerificationWall } from '../net/verificationWall';
 import { searchRenderLane } from './renderLane';
 import { hitKey } from './fuse';
+import { postKey } from './hitQuality';
 import { recalledPage, rememberFailure, rememberPage } from './pageCache';
 import type { ReadPage } from './pageCache';
 import { sendLog } from '../helpers';
@@ -50,8 +51,30 @@ export function isVideoPage(url: string): boolean {
 
 /** `forReading`: the hits become pages to read as sources, not links to hand back. */
 export function selectTargets(hits: SerpHit[], limit: number, forReading = false): SerpHit[] {
-  const candidates = forReading ? hits.filter((hit) => !isVideoPage(hit.url)) : hits;
-  return dedupeHits(candidates).slice(0, limit);
+  if (!forReading) return dedupeHits(hits).slice(0, limit);
+  return groupCopies(dedupeHits(hits.filter((hit) => !isVideoPage(hit.url)))).slice(0, limit);
+}
+
+/**
+ * Copies of one Reddit post on its mirrors become one target, the highest-ranked copy, carrying
+ * the others as `alternates`: a post is lost only when every copy fails, and the copies do not
+ * take the slots of different pages.
+ */
+function groupCopies(hits: SerpHit[]): SerpHit[] {
+  const first = new Map<string, SerpHit>();
+  const grouped: SerpHit[] = [];
+  for (const hit of hits) {
+    const key = postKey(hit.url);
+    const kept = key ? first.get(key) : undefined;
+    if (kept) {
+      kept.alternates = [...(kept.alternates ?? []), hit.url];
+      continue;
+    }
+    const copy = { ...hit };
+    if (key) first.set(key, copy);
+    grouped.push(copy);
+  }
+  return grouped;
 }
 
 interface RunningRead {
@@ -67,6 +90,11 @@ export interface HarvestOptions {
    * pages now, and may have just changed one.
    */
   recall?: boolean;
+  /**
+   * Once `after` pages are read, the rest get `graceMs` before they are cancelled: reading more
+   * pages must not make the answer wait on the slowest site.
+   */
+  settle?: { after: number; graceMs: number };
 }
 
 /**
@@ -96,12 +124,18 @@ export function harvest(
 
   return new Promise((resolve) => {
     const running = new Map<number, RunningRead>();
+    /** The next copy of a post whose read failed: it takes that slot before any other page. */
+    const copies: SerpHit[] = [];
     let cursor = 0;
+    let started = 0;
     let settled = false;
+    let graceTimer: ReturnType<typeof setTimeout> | undefined;
+    const pending = (): boolean => copies.length > 0 || cursor < targets.length;
 
     const finish = (): void => {
       if (settled) return;
       settled = true;
+      clearTimeout(graceTimer);
       for (const read of running.values()) {
         clearTimeout(read.hedgeTimer);
         read.controller.abort(new Error('enough sources were read'));
@@ -114,13 +148,23 @@ export function harvest(
     const fill = (): void => {
       if (settled) return;
       const covering = (): number => [...running.values()].filter((read) => !read.slow).length;
-      while (cursor < targets.length && covering() < maxSources - docs.length) start(cursor++);
+      while (pending() && covering() < maxSources - docs.length) start(next());
       if (running.size === 0) finish();
     };
 
-    const start = (index: number): void => {
-      const hit = targets[index];
-      if (index >= maxSources) sendLog(`🔎 [Search] reading spare result ${hit.url}`);
+    const next = (): SerpHit => {
+      const copy = copies.shift();
+      if (copy) {
+        sendLog(`🔎 [Search] reading another copy of the same post ${copy.url}`);
+        return copy;
+      }
+      const index = cursor++;
+      if (index >= maxSources) sendLog(`🔎 [Search] reading spare result ${targets[index].url}`);
+      return targets[index];
+    };
+
+    const start = (hit: SerpHit): void => {
+      const id = started++;
       const controller = new AbortController();
       const startedAt = Date.now();
       const read: RunningRead = {
@@ -128,16 +172,16 @@ export function harvest(
         slow: false,
         hedgeTimer: setTimeout(() => {
           read.slow = true;
-          if (cursor < targets.length) sendLog(`🔎 [Search] ${hit.url} still loading after ${HEDGE_DELAY_MS / 1_000}s`);
+          if (pending()) sendLog(`🔎 [Search] ${hit.url} still loading after ${HEDGE_DELAY_MS / 1_000}s`);
           fill();
         }, HEDGE_DELAY_MS),
       };
-      running.set(index, read);
+      running.set(id, read);
 
       const done = (): boolean => {
         if (settled) return false;
         clearTimeout(read.hedgeTimer);
-        running.delete(index);
+        running.delete(id);
         return true;
       };
 
@@ -155,13 +199,25 @@ export function harvest(
           sendLog(`🔎 [Search] ✓ ${hit.url} (${page.text.length} chars, ${how})`);
           notify(onRead, hit.url);
           notify(onDoc, doc);
-          if (docs.length >= maxSources) finish();
-          else fill();
+          if (docs.length >= maxSources) {
+            finish();
+            return;
+          }
+          const settle = options.settle;
+          if (settle && docs.length === settle.after) {
+            graceTimer = setTimeout(() => {
+              sendLog(`🔎 [Search] ${docs.length} page(s) read — not waiting past ${settle.graceMs} ms for the rest`);
+              finish();
+            }, settle.graceMs);
+          }
+          fill();
         },
         (err: unknown) => {
           if (!done()) return;
           sendLog(`🔎 [Search] ✗ ${hit.url} — ${err instanceof Error ? err.message : String(err)} (${Date.now() - startedAt} ms)`);
           notify(onFail, hit.url);
+          const [alternate, ...rest] = hit.alternates ?? [];
+          if (alternate) copies.push({ ...hit, url: alternate, alternates: rest });
           fill();
         },
       );

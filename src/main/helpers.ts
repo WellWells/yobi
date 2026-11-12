@@ -56,8 +56,15 @@ export function applyLaunchAtStartup(enabled: boolean, hideOnStart: boolean = fa
   }
 }
 
+let beforeRelaunch: () => void = () => {};
+
+export function setBeforeRelaunch(callback: () => void): void {
+  beforeRelaunch = callback;
+}
+
 export function relaunchApp(reason = 'restart requested'): void {
   sendLog(`🔄 Relaunching Yobi (${reason})...`);
+  beforeRelaunch();
   app.relaunch({ args: relaunchArgs() });
   setTimeout(() => app.quit(), 600);
 }

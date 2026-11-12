@@ -1,15 +1,26 @@
-import type { SocketBotAccountInfo } from '../../shared/types';
+import type { LineSelfTargetOption, SocketBotAccountInfo } from '../../shared/types';
 import { t } from '../i18n';
+import { LineError } from '../line/errors';
 import type { BotBuiltinRunResult } from '../botBuiltinCommands';
 import { FlowUserError } from '../flow/userError';
+import type { FlowBotMessage } from '../flow/types';
 import { SocketBotRuntime, type SocketBotOutgoing, type SocketBotRuntimeDeps } from '../botChat/socketRuntime';
-import type { BotChatEvent, BotChatOutput } from '../botChat/types';
+import { pageAnalyzeChoice, pageForwardForLine } from '../botChat/pageForward';
+import { singleLinkOf } from '../../shared/linkQuestion';
+import { targetMessage } from '../line/lineSendReply';
+import type { BotAgentContext, BotAgentMedia, BotChatEvent, BotChatOutput, BotChatRouterDeps, BotPairingProfileInput } from '../botChat/types';
 import { formatLineReply, formatLineText, verbatimLineText } from '../line/format';
 import type { SendFilesRequest, SendRequest } from '../line/lineService';
+import type { DownloadResult } from '../line/lineMediaRows';
+import type { MessageDownloadRequest } from '../line/lineMessageDownload';
 import type { SendFilesPlan } from '../line/lineSendFiles';
 import type { SendPlan } from '../line/lineSendText';
 import type { WatchedMessage } from '../line/ownMessages';
 import type { LineReader } from '../line/reader';
+import { createLineSelfAdmin, LINE_SELF_OWNER_ONLY_COMMANDS, type LineSelfAdmin, type LineSelfAdminSource } from './admin';
+import { lineSelfChatContext } from './chatContext';
+import { defaultMediaPrompt, lineSelfMediaUnavailable, prepareLineSelfMedia } from './media';
+import { requestMedia, type LineSelfMediaRef } from './mediaRows';
 import { isLineDirectChat, isLineGroupChat } from './chats';
 import { createLineSelfSender, type LineSelfFileOptions, type LineSelfQuote, type LineSelfSender, type LineSelfSenderDeps } from './sender';
 import { addressedText, groupRequest, isYobiReply, menuPick, numberedMenu, withReplyPrefix } from './text';
@@ -20,6 +31,14 @@ export interface LineSelfTextEvent extends BotChatEvent {
   /** The LINE chat it was typed in, where the answer goes. */
   lineChatId: string;
   messageId: string;
+  /** The message the line quotes (LINE's Reply), when it does. */
+  replyToId?: string;
+  /** The request is the one link the quoted message is made of: that message is the request, not context. */
+  fromQuotedLink?: true;
+  /** The photos or file it is about (quoted, or its sender's just before), fetched when its run starts. */
+  media?: LineSelfMediaRef;
+  /** A bare "Yobi": the words are what the user would have asked of `media`, so it cannot run without it. */
+  mediaOnly?: true;
 }
 
 /** What the bot needs of LINE PC: the reader for names and members, fresh reads, and sending. */
@@ -29,6 +48,8 @@ export interface LineSelfService {
   databasePath: () => string | null;
   send: (req: SendRequest) => Promise<SendPlan>;
   sendFiles: (req: SendFilesRequest) => Promise<SendFilesPlan>;
+  /** One message's picture or file from LINE's server (a request's photo); absent = only copies saved on this computer. */
+  downloadMessage?: (req: MessageDownloadRequest) => Promise<DownloadResult>;
 }
 
 export interface LineSelfRuntimeDeps extends SocketBotRuntimeDeps<LineSelfTextEvent> {
@@ -50,12 +71,28 @@ export interface LineSelfRuntimeDeps extends SocketBotRuntimeDeps<LineSelfTextEv
   /** The groups Yobi has been used in, kept across runs: where a flow's message may go. */
   knownChats: () => Promise<readonly string[]>;
   /**
+   * A group or friend LINE PC has on this computer, by id (the flow editor's recipient list, read
+   * fresh), or null. Without it a flow reaches only the chats Yobi was used in.
+   */
+  liveChat?: (chatId: string) => Promise<LineSelfTargetOption | null>;
+  /**
    * A flow's picture on the web (a video menu's cover) as a photo file LINE can send, or "" — its
    * link then goes in the text. Without it every picture goes as its link.
    */
   pictureFile?: (url: string) => Promise<string>;
   /** A file on this computer as the photo LINE sends (a WebP made a JPEG); without it a WebP goes as a file. */
   photoFile?: (file: string) => Promise<string>;
+  /** The model that reads a request's photos when the run's own takes no uploads ('' or absent = none). */
+  uploadFallbackUrl?: () => string;
+  /** The app's model, which a bot model left empty follows. */
+  appModelUrl?: () => string;
+  /** Where a request's photos and files are copied for its run; absent = the bots' scratch folder. */
+  mediaDir?: string;
+  /**
+   * What `Yobi /users` and `Yobi /groups` read and write (the settings page's own writes); it also
+   * lets a pairing request be posted into the owner's one-person group. Absent = neither.
+   */
+  admin?: LineSelfAdminSource;
   platformSupported?: () => boolean;
   watcher?: Partial<Pick<LineSelfWatcherDeps, 'statMs' | 'now' | 'intervalMs'>>;
   sender?: Partial<Pick<LineSelfSenderDeps, 'gapMs' | 'sleep' | 'now'>>;
@@ -70,8 +107,8 @@ const MENU_TTL_MS = 30 * 60_000;
  * The LINE PC bot: no server and no public address. It watches LINE PC's own database and answers
  * as the user through LINE PC's session, each answer marked so it is never read back as a request.
  * Nothing to bind: the account pairs itself as the user's when it connects, and a line starting
- * with "Yobi" is a request in any group, and from the user in any 1:1 chat. In a group someone
- * else may ask too, on their own rights; with none, their "Yobi" asks the owner to let them in.
+ * with "Yobi" is a request in any group and in any 1:1 chat, from either side. Someone else asks
+ * on their own rights; with none, their "Yobi" asks the owner to let them in.
  * A group with nobody but the user is their private chat (owner rights, memory), where the answer
  * to Yobi's question or a flow menu's number needs no "Yobi".
  */
@@ -92,11 +129,58 @@ export class LineSelfRuntime extends SocketBotRuntime<LineSelfTextEvent> {
   /** The user's own group they last asked in, and the ones registered for flows this run. */
   private homeChat = '';
   private readonly homes = new Set<string>();
+  private readonly adminMenus: LineSelfAdmin;
 
   constructor(private readonly selfDeps: LineSelfRuntimeDeps) {
     // Only the user has a private chat here: everyone else's command, and the user's own outside
     // their one-person group, is typed in a group or a 1:1 chat.
     super('lineSelf', { ...selfDeps, groupPairingRequests: true, groupCommands: true });
+    const asked = (event: BotChatEvent): LineSelfTextEvent => event as LineSelfTextEvent;
+    this.adminMenus = createLineSelfAdmin({
+      source: () => selfDeps.admin,
+      ownMid: () => this.ownMid,
+      isFlowAdmin: (chatId, userId) => selfDeps.isFlowAdmin?.(chatId, userId) ?? Promise.resolve(false),
+      getStrings: selfDeps.getStrings,
+      send: (event, message) => this.sendToTarget(asked(event).lineChatId, {
+        text: message.text,
+        buttons: message.buttons,
+        ...(asked(event).messageId ? { replyTo: asked(event).messageId } : {}),
+      }),
+      reply: (event, text) => this.post(asked(event).lineChatId, text, { replyTo: asked(event).messageId }),
+      onLog: selfDeps.onLog,
+    });
+  }
+
+  /**
+   * `Yobi /users` and `Yobi /groups`, when the setup gives what they manage. Called from the base
+   * constructor, before this class's fields exist: the handlers read them only when they run.
+   */
+  protected ownerCommands(): BotChatRouterDeps<LineSelfTextEvent>['ownerCommands'] {
+    if (!(this.deps as LineSelfRuntimeDeps).admin) return undefined;
+    return {
+      users: (event) => this.adminMenus.users(event),
+      groups: (event) => this.adminMenus.groups(event),
+    };
+  }
+
+  /**
+   * A request the owner was told of also goes into their one-person group, "allow" and "block" as
+   * numbers. Anyone unpaired sets one off, whenever they like: while another menu there is still
+   * open (a flow's, `/users`, an earlier request's), or an agent question waits there, it goes
+   * without numbers, so a number the owner types for that menu or question never allows or blocks
+   * someone else, and a "1" meant to allow someone never approves the question.
+   */
+  protected onPairingRequestTold(user: BotPairingProfileInput, group?: { title: string }): void {
+    if (!this.selfDeps.admin) return;
+    void (async () => {
+      const target = await this.privateChat(await this.selfDeps.knownChats());
+      if (!target) {
+        this.deps.onLog(`[lineSelf] no one-person group to post ${user.userId}'s request in`);
+        return;
+      }
+      const notice = (numbered: boolean): SocketBotOutgoing => this.adminMenus.requestNotice(user, group, numbered);
+      await this.sendToTarget(target, notice(true), { unlessMenuOpen: notice(false) });
+    })().catch((err: unknown) => this.deps.onLog(`[lineSelf] could not post ${user.userId}'s request: ${err instanceof Error ? err.message : String(err)}`));
   }
 
   /**
@@ -110,11 +194,100 @@ export class LineSelfRuntime extends SocketBotRuntime<LineSelfTextEvent> {
       push: (event, text) => this.post(event.lineChatId, text, { replyTo: event.messageId }),
       // Every line sent here is the user's own message, read by everyone in the chat.
       quietStart: true,
+      pairingCodes: false,
+      listsOwnerCommand: (name, userId) => !LINE_SELF_OWNER_ONLY_COMMANDS.has(name) || userId === this.ownMid,
       pushResult: (event, result) => this.pushResult(event, result),
       displayName: (event) => this.nameOf(event.userId),
       groupName: (chatId) => this.chatName(chatId),
       replyRef: (event) => event.messageId,
+      agentContext: (event, input) => this.agentContext(event, input),
+      agentMedia: (event, targetUrl) => this.agentMedia(event, targetUrl),
     };
+  }
+
+  /**
+   * The photos or file a request is about, ready for its run (fetched now that it is taken, with
+   * the tokens the sends keep). Someone no longer let in gets none.
+   */
+  private async agentMedia(event: LineSelfTextEvent, targetUrl: string): Promise<BotAgentMedia | null> {
+    if (!event.media || !this.deps.isPairedUser(event.userId)) return null;
+    // A bare "Yobi" or a quote is about its media; words typed after a photo or file also stand alone.
+    const aboutMedia = event.media.quoted || event.mediaOnly === true;
+    let media: BotAgentMedia;
+    try {
+      media = await this.prepareMedia(event.media, event, targetUrl);
+    } catch (err: unknown) {
+      this.deps.onLog(`[lineSelf] could not prepare the media of message ${event.messageId}: ${err instanceof Error ? err.message : String(err)}`);
+      return aboutMedia ? lineSelfMediaUnavailable(targetUrl, this.deps.getStrings()) : null;
+    }
+    if (!media.refusal || aboutMedia) return media;
+    this.deps.onLog(`[lineSelf] the file before message ${event.messageId} cannot be read — answering its words alone`);
+    return null;
+  }
+
+  private async prepareMedia(ref: LineSelfMediaRef, event: LineSelfTextEvent, targetUrl: string): Promise<BotAgentMedia> {
+    const service = await this.selfDeps.service();
+    const download = service.downloadMessage?.bind(service);
+    const sender = this.sender;
+    const effective = targetUrl || (this.selfDeps.appModelUrl?.() ?? '');
+    const media = await prepareLineSelfMedia(ref, { chatId: event.lineChatId, userId: event.userId, targetUrl: effective }, {
+      ...(download ? { download } : {}),
+      tokens: () => (sender ? sender.tokens() : this.selfDeps.scanTokens()),
+      fallbackUrl: this.selfDeps.uploadFallbackUrl?.() ?? '',
+      strings: this.deps.getStrings(),
+      onLog: this.deps.onLog,
+      ...(this.selfDeps.mediaDir ? { dir: this.selfDeps.mediaDir } : {}),
+    });
+    // The run's own model stays as the router had it (empty = the app's); only the stand-in replaces it.
+    return media.targetUrl === effective ? { ...media, targetUrl } : media;
+  }
+
+  /**
+   * The photos or file a paired person's "Yobi" line is about, read fresh: the message it quotes,
+   * else their own one just before. None while Yobi waits for their answer (the line answers it),
+   * and never for someone not let in: nothing of theirs is fetched.
+   */
+  private async requestMediaOf(chatId: string, speaker: string, request: { id: string; createdMs: number; replyTo?: string }): Promise<LineSelfMediaRef | null> {
+    if (!this.deps.isPairedUser(speaker)) return null;
+    if (this.deps.hasPendingAgentAsk(chatId, speaker) || this.deps.hasPendingAgentAsk(this.ownMid, speaker)) return null;
+    try {
+      const { reader, close } = await (await this.selfDeps.service()).openFresh();
+      try {
+        return requestMedia(reader, {
+          chatId,
+          userId: speaker,
+          messageId: request.id,
+          sentAt: request.createdMs,
+          ...(request.replyTo ? { replyToId: request.replyTo } : {}),
+          sentByBot: (messageId) => this.sender?.sentByBot(messageId) === true,
+        });
+      } finally {
+        close();
+      }
+    } catch (err: unknown) {
+      this.deps.onLog(`[lineSelf] could not read what message ${request.id} is about: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+  }
+
+  /** The quoted message and, in a group with other people, its talk: read fresh, as LINE stored them. */
+  private async agentContext(event: LineSelfTextEvent, input: string): Promise<BotAgentContext> {
+    const { reader, close } = await (await this.selfDeps.service()).openFresh();
+    try {
+      const ownGroup = event.chatKind === 'user' && isLineGroupChat(event.lineChatId);
+      return lineSelfChatContext(reader, {
+        lineChatId: event.lineChatId,
+        userId: event.userId,
+        sentAt: event.sentAt ?? Date.now(),
+        ...(event.replyToId ? { replyToId: event.replyToId } : {}),
+        ...(event.fromQuotedLink ? { fromQuotedLink: true } : {}),
+        privateChat: ownGroup,
+        sharedGroup: isLineGroupChat(event.lineChatId) && !ownGroup,
+        ownName: this.ownName,
+      }, input);
+    } finally {
+      close();
+    }
   }
 
   protected async connect(): Promise<SocketBotAccountInfo> {
@@ -199,21 +372,36 @@ export class LineSelfRuntime extends SocketBotRuntime<LineSelfTextEvent> {
     // A line from someone else proves the chat is not the user's alone, whatever was read before.
     if (group && !fromMe) this.audience.set(chatId, { solo: false, at: Date.now() });
     if (message.type !== 'text' || message.undecryptable) return;
-    const request = this.requestIn(chatId, fromMe, speaker, text, mentions) ?? (await this.ownReply(chatId, fromMe, text));
+    const asked = this.requestIn(chatId, fromMe, speaker, text, mentions);
+    const said = asked ?? (await this.ownReply(chatId, fromMe, text));
+    const linked = said === '' && message.reply_to ? await this.quotedLink(chatId, message.reply_to) : '';
+    // A photo or file a "Yobi" line is about (not an answer or a menu number): a bare "Yobi" then
+    // asks what the user would have asked of it.
+    const media = asked !== null && !linked
+      ? await this.requestMediaOf(chatId, speaker, { id, createdMs, ...(message.reply_to ? { replyTo: message.reply_to } : {}) })
+      : null;
+    const request = linked || said || (media ? defaultMediaPrompt(media, this.deps.getStrings()) : '');
     if (!request) return;
     const solo = group && fromMe && (await this.isSolo(chatId));
+    // The other side of a 1:1 chat asks in their own chat with the user (its id is theirs): the
+    // router's private path, so someone not let in yet asks the owner, and once let in has their own rights.
+    const theirs = isLineDirectChat(chatId) && !fromMe;
     if (solo) await this.rememberHome(chatId);
     else if (group && !fromMe) this.askedIn.set(speaker, chatId);
     else if (isLineDirectChat(chatId)) this.directChats.add(chatId);
     const event: LineSelfTextEvent = {
       userId: speaker,
       chatId: solo ? this.ownMid : chatId,
-      chatKind: solo ? 'user' : 'group',
+      chatKind: solo || theirs ? 'user' : 'group',
       text: request,
       mentionsBot: true,
       sentAt: createdMs,
       lineChatId: chatId,
       messageId: id,
+      ...(message.reply_to ? { replyToId: message.reply_to } : {}),
+      ...(linked ? { fromQuotedLink: true as const } : {}),
+      ...(media ? { media } : {}),
+      ...(media && !linked && !said ? { mediaOnly: true as const } : {}),
     };
     const line = this.menuLine(chatId, request);
     if (line && !this.deps.hasPendingAgentAsk(event.chatId, event.userId)) {
@@ -227,28 +415,47 @@ export class LineSelfRuntime extends SocketBotRuntime<LineSelfTextEvent> {
 
   /**
    * What a line asks Yobi, or null when it is not addressed to Yobi.
-   * - A 1:1 chat: only the user's own "Yobi" line, answered there for whoever reads it (no memory:
-   *   the other person sees the answer). The other side is never read, and Keep (the user's own
-   *   id) holds personal notes and is never used.
+   * - A 1:1 chat: a "Yobi" line from either side, answered there. The user's runs on their rights
+   *   without memory (the other person sees the answer); the other person's is their own request
+   *   in their own chat — nothing else of theirs is read, so their answer to Yobi's question needs
+   *   "Yobi" too. Keep (the user's own id) holds personal notes and is never used.
    * - A group: anyone's "Yobi" line, or one @-mentioning the user from someone already let in. An
    *   @-mention from anyone else is people talking to the user — counted, it would ask the owner
    *   to let in half of every work group.
    * Other chats (open chats, multi-person rooms) are not the bot's.
    */
   private requestIn(chatId: string, fromMe: boolean, speaker: string, text: string, mentions: WatchedMessage['mentions']): string | null {
-    if (isLineDirectChat(chatId)) return fromMe && chatId !== this.ownMid ? addressedText(text) : null;
+    if (isLineDirectChat(chatId)) {
+      if (chatId === this.ownMid) return null;
+      return fromMe || speaker === chatId ? addressedText(text) : null;
+    }
     if (!isLineGroupChat(chatId)) return null;
     return groupRequest(text, this.deps.isPairedUser(speaker) ? mentions : [], this.ownMid);
   }
 
+  /** "Yobi" alone, quoting a message that is one link: that link. A quote it cannot read is no request. */
+  private async quotedLink(chatId: string, id: string): Promise<string> {
+    try {
+      const { reader, close } = await (await this.selfDeps.service()).openFresh();
+      try {
+        return singleLinkOf(targetMessage(reader, chatId, id, 'reply_to', 'replied to').message.content ?? '') ?? '';
+      } finally {
+        close();
+      }
+    } catch {
+      return '';
+    }
+  }
+
   /**
    * In the user's own group (nobody else in it), a reply needs no "Yobi": the answer to the question
-   * Yobi asked there, or a number from a flow's menu. Anything else there is the user's own note.
+   * Yobi asked there, or a number of the menu open there. Anything else there is the user's own note
+   * — also while a menu is open: someone's pairing request can put one there.
    */
   private async ownReply(chatId: string, fromMe: boolean, text: string): Promise<string | null> {
     const line = text.trim();
     if (!fromMe || !line || !isLineGroupChat(chatId)) return null;
-    const awaited = this.menus.has(chatId) || this.deps.hasPendingAgentAsk(this.ownMid, this.ownMid);
+    const awaited = this.menuLine(chatId, line) !== null || this.deps.hasPendingAgentAsk(this.ownMid, this.ownMid);
     return awaited && (await this.isSolo(chatId)) ? line : null;
   }
 
@@ -261,15 +468,20 @@ export class LineSelfRuntime extends SocketBotRuntime<LineSelfTextEvent> {
     this.deps.onGroupSeen?.({ chatId, chatKind: 'group', ...(title ? { title } : {}) });
   }
 
-  /** A typed number picks a line of the last numbered menu a flow sent here. */
-  private menuLine(chatId: string, text: string): string | null {
+  /** The last numbered menu sent here while a typed number still picks from it (an expired one is dropped). */
+  private openMenu(chatId: string): { lines: string[]; at: number } | undefined {
     const menu = this.menus.get(chatId);
-    if (!menu) return null;
-    if (Date.now() - menu.at > MENU_TTL_MS) {
+    if (menu && Date.now() - menu.at > MENU_TTL_MS) {
       this.menus.delete(chatId);
-      return null;
+      return undefined;
     }
-    return menuPick(text, menu.lines);
+    return menu;
+  }
+
+  /** A typed number picks a line of the last numbered menu sent here. */
+  private menuLine(chatId: string, text: string): string | null {
+    const menu = this.openMenu(chatId);
+    return menu ? menuPick(text, menu.lines) : null;
   }
 
   /**
@@ -311,6 +523,16 @@ export class LineSelfRuntime extends SocketBotRuntime<LineSelfTextEvent> {
   private async pushResult(event: LineSelfTextEvent, result: BotBuiltinRunResult): Promise<boolean> {
     const s = this.deps.getStrings();
     const quote = { replyTo: event.messageId };
+    if (result.ok && result.pageForward) {
+      const choice = pageAnalyzeChoice(result.pageForward, s);
+      await this.sendToTarget(event.lineChatId, {
+        text: pageForwardForLine(result.pageForward, s, Array.from(withReplyPrefix(numberedMenu('x', [choice.label]))).length),
+        pictures: result.pageForward.images,
+        buttons: [choice],
+        ...(event.messageId ? { replyTo: event.messageId } : {}),
+      });
+      return true;
+    }
     if (result.ok && result.verbatim) {
       const verbatim = verbatimLineText(result.text);
       if (verbatim === null) return false;
@@ -349,23 +571,86 @@ export class LineSelfRuntime extends SocketBotRuntime<LineSelfTextEvent> {
   }
 
   /**
-   * A flow's message. The user's own id is their private chat: the one-person group they last asked
-   * in, else the first one Yobi was used in — never a group with other people, who would read what
-   * was meant for the user. Someone else's id is the 1:1 chat with them when the user asked Yobi
-   * there since the app started (a flow started there answers there), else the group they last
-   * addressed Yobi in; a group id must be one Yobi was used in.
+   * A flow's message, or the notice that the owner let someone in. The user's own id is their
+   * private chat: the one-person group they last asked in, else the first one Yobi was used in —
+   * never a group with other people, who would read what was meant for the user. Any other id is, in
+   * order: the 1:1 chat the user asked Yobi in since the app started (a flow started there answers
+   * there); only when the step picked it (`picked`), a group or friend LINE PC has (`liveChat`: the
+   * flow editor's list — a person's id is their 1:1 chat, a flow started in a group answers in that
+   * group); the group that person last addressed Yobi in; a group Yobi was used in. Else it fails,
+   * worded for the user, as do LINE's refusals the user can fix (no key yet, sealing off, LINE closed).
+   *
+   * Not picked — a variable's chat, a blank field's paired person, the approval notice — never looks
+   * in LINE PC's list: a variable would otherwise reach the owner's whole address book, and the
+   * approval ("ask in this group") would land in a 1:1 the person never used, often with no key.
    */
-  async sendToChat(chatId: string, message: SocketBotOutgoing): Promise<void> {
+  async sendToChat(chatId: string, message: FlowBotMessage): Promise<void> {
     if (!this.sender) throw new Error('LINE PC bot is not running');
-    const known = await this.selfDeps.knownChats();
-    const target = chatId === this.ownMid
-      ? await this.privateChat(known)
-      : this.directChats.has(chatId) ? chatId : this.askedIn.get(chatId) ?? (known.includes(chatId) ? chatId : '');
-    if (!target) throw new Error(`LINE PC bot has no chat to reach ${chatId} in`);
+    const { picked, ...outgoing } = message;
+    const target = await this.flowTarget(chatId, picked === true);
+    try {
+      await this.sendToTarget(target.id, outgoing);
+    } catch (err: unknown) {
+      throw await this.flowSendFailure(err, target);
+    }
+  }
+
+  /** Where `sendToChat` sends a flow's message for this id, with the name LINE PC shows for it when known. */
+  private async flowTarget(chatId: string, picked: boolean): Promise<{ id: string; name?: string }> {
+    if (chatId === this.ownMid) {
+      const own = await this.privateChat(await this.selfDeps.knownChats());
+      if (own) return { id: own };
+      throw new FlowUserError('flow.error.lineSelfNoOwnGroup', {}, 'LINE PC has no chat with only you in it to send to: say "Yobi" once in a LINE group that has only you');
+    }
+    if (this.directChats.has(chatId)) return { id: chatId };
+    const live = picked ? await this.liveChat(chatId) : null;
+    if (live) return { id: live.id, name: live.name };
+    const asked = this.askedIn.get(chatId);
+    if (asked) return { id: asked };
+    if ((await this.selfDeps.knownChats()).includes(chatId)) return { id: chatId };
+    throw new FlowUserError('flow.error.lineSelfChatNotFound', { id: chatId }, `LINE PC has no chat ${chatId} to send to: no group or friend with that id on this computer`);
+  }
+
+  private async liveChat(chatId: string): Promise<LineSelfTargetOption | null> {
+    if (!this.selfDeps.liveChat) return null;
+    try {
+      return await this.selfDeps.liveChat(chatId);
+    } catch (err: unknown) {
+      this.deps.onLog(`[lineSelf] could not look ${chatId} up in LINE's chats: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+  }
+
+  /** LINE's refusals the user can fix, in their words: open the chat once, sealing is off, LINE is closed. */
+  private async flowSendFailure(err: unknown, target: { id: string; name?: string }): Promise<unknown> {
+    if (!(err instanceof LineError)) return err;
+    if (err.code === 'LINE_NOT_RUNNING') {
+      return new FlowUserError('flow.error.lineSelfLineNotRunning', {}, 'LINE PC is not running on this computer: open LINE, sign in, then run again');
+    }
+    if (err.code !== 'E2EE_KEY_MISSING' && err.code !== 'E2EE_DISABLED') return err;
+    const name = target.name ?? (await this.chatName(target.id).catch(() => undefined)) ?? (await this.nameOf(target.id).catch(() => undefined)) ?? target.id;
+    return err.code === 'E2EE_KEY_MISSING'
+      ? new FlowUserError('flow.error.lineSelfKeyMissing', { name }, `LINE PC has no key for ${target.id} yet: open that chat once in LINE PC, then run again`)
+      : new FlowUserError('flow.error.lineSelfSealingOff', { name }, `${target.id} has Letter Sealing off, so LINE PC cannot send there`);
+  }
+
+  /**
+   * A step's message or a forwarded page: pictures, the words with a numbered menu, then files.
+   * `unlessMenuOpen` goes instead while a menu is still open there, checked where the menu is taken.
+   */
+  private async sendToTarget(target: string, message: SocketBotOutgoing, options: { unlessMenuOpen?: SocketBotOutgoing } = {}): Promise<void> {
     const sender = this.sender;
+    if (!sender) throw new Error('LINE PC bot is not running');
     const buttons = message.buttons ?? [];
     const files = message.files ?? [];
     const { photos, links } = await this.picturesAsPhotos(message.pictures ?? []);
+    // `unlessMenuOpen` only goes to the owner's one-person group, whose questions wait under the
+    // owner's own chat: a number typed there answers a waiting question before any menu.
+    const taken = (): boolean => Boolean(this.openMenu(target)) || this.deps.hasPendingAgentAsk(this.ownMid, this.ownMid);
+    if (options.unlessMenuOpen && buttons.length > 0 && taken()) {
+      await this.sendToTarget(target, options.unlessMenuOpen);
+      return;
+    }
     const body = formatLineText([message.text, ...links].filter(Boolean).join('\n'));
     if (buttons.length > 0) this.menus.set(target, { lines: buttons.map((button) => button.line), at: Date.now() });
     const withText = Boolean(body.trim()) || buttons.length > 0 || files.length + photos.length === 0;
@@ -401,11 +686,20 @@ export class LineSelfRuntime extends SocketBotRuntime<LineSelfTextEvent> {
   }
 
   /**
-   * Someone the owner let in hears it in the group they asked from: how to ask there, not the
-   * command list — the whole group reads it, and "Yobi /help" lists what they may use.
+   * Someone the owner let in hears it where they asked (`sendToChat`: their 1:1 chat with the user
+   * when they asked there, else the group): how to ask there, not the command list — in a group
+   * everyone reads it, and "Yobi /help" lists what they may use.
    */
-  protected async approvalText(): Promise<string> {
-    return t(this.deps.getStrings(), 'bot.lineSelf.approved');
+  protected async approvalText(userId: string): Promise<string> {
+    return t(this.deps.getStrings(), this.directChats.has(userId) ? 'bot.lineSelf.approvedDirect' : 'bot.lineSelf.approved');
+  }
+
+  /**
+   * Someone not let in asking in their 1:1 chat with the user: told once (when the owner heard of
+   * it), with no `/pair` code to type — LINE PC has none.
+   */
+  protected pairingRequestedKey(inGroup: boolean): string {
+    return inGroup ? 'bot.socket.groupPairingRequested' : 'bot.lineSelf.pairingRequested';
   }
 
   /** Checked again each time: someone may have joined the group since the user last asked there. */

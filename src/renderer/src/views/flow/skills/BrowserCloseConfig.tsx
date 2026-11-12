@@ -1,19 +1,19 @@
 import React from 'react';
 import { Stack, Text } from '@mantine/core';
-import { AppTextInput } from '../../../components/AppTextInput';
+import { TabPicker } from './TabPicker';
 import type { SkillConfigProps } from './types';
 
 export const BrowserCloseConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => (
   <Stack gap="xs">
-    <AppTextInput
+    <TabPicker
+      stepId={step.id}
       label={t('flow.skill.browser_close.page')}
-      placeholder={t('flow.skill.browser_close.page.placeholder')}
       value={step.config.page ?? ''}
-      onChange={(e) => onChange({ ...step.config, page: e.currentTarget.value })}
-      size="sm"
-      mono
+      onChange={(page) => onChange({ ...step.config, page })}
+      withAll
+      t={t}
     />
 
-    <Text fz="xs" c="dimmed">{t('flow.skill.browser_close.hint')}</Text>
+    <Text fz="xs" c="var(--text-muted)">{t('flow.skill.browser_close.hint')}</Text>
   </Stack>
 );

@@ -14,7 +14,7 @@ import {
 } from './captureTheme';
 import { buildTurnCaptureRequest } from './captureRequest';
 import type { CaptureLook } from './captureRequest';
-import { captureLookFrom, captureTurnsFor, conversationCaptureRequest } from './conversationCapture';
+import { captureLookFrom, captureTurnsFor, conversationCaptureRequest, exportDefaultNames } from './conversationCapture';
 import type { NoticeLevel } from './useUiNotifications';
 import type {
   CaptureFormat,
@@ -48,7 +48,7 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
       conversation: s.conversation,
     })),
   );
-  const { t, locale } = useI18nStore();
+  const { t, locale } = useI18nStore(useShallow((s) => ({ t: s.t, locale: s.locale })));
 
   const capture = useExportSettingsStore((s) => s.capture);
   const patchCapture = useExportSettingsStore((s) => s.patchCapture);
@@ -66,10 +66,9 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
     if (!selectedFile || !parsedBlocks) return;
     // A Notion document's title is shown without the markers Notion splits its bold runs with.
     const docTitle = conversation?.thread.notion && parsedBlocks.title ? plainNotionTitle(parsedBlocks.title) : parsedBlocks.title;
-    const defaultTitle = docTitle || selectedFile.name.replace(/\.md$/i, '');
-    const defaultFileName = selectedFile.name.replace(/\.md$/i, '');
-    setCaptureTitle(defaultTitle);
-    setCaptureFileName(defaultFileName);
+    const defaults = exportDefaultNames(selectedFile.name, docTitle);
+    setCaptureTitle(defaults.title);
+    setCaptureFileName(defaults.fileName);
   }, [selectedFile?.path, selectedFile?.name, parsedBlocks?.title, parsedBlocks?.provider, parsedBlocks?.time, conversation?.thread.notion]);
 
   const captureFormat = capture.format;

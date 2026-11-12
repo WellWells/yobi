@@ -135,7 +135,8 @@ export function useConversationMenuBridge(deps: ConversationMenuBridgeDeps): voi
         onTogglePin: current.onTogglePin,
         onEditTitle: (file) => { showChat(); showRowOf(file); void current.onEditTitle(file); },
         onReveal: (file) => { void fileApi.showInFolder(file.path); },
-        onExportCards: current.onExportCards,
+        // Its dialog belongs over the conversation: the Settings dialog, if open, closes first.
+        onExportCards: (format, file) => { useAppStore.getState().closeSettings(); current.onExportCards(format, file); },
         onExportMarkdown: (file) => { void exportConversationMarkdown(file.path, useI18nStore.getState().t); },
         onMoveToFolder: (file, folder) => { void current.onMoveToFolder([file.path], folder); },
         onMoveToNewFolder: (file) => { showChat(); void current.onMoveToNewFolder([file.path]); },

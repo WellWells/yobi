@@ -72,6 +72,11 @@ export const SYSINFO_RUNTIME_FIELDS: ReadonlySet<string> = new Set([
 
 const SYSINFO_FIELD_KEYS = new Set(SYSINFO_FIELDS.map((f) => f.key));
 
+/** The standard local set: no hardware probes, no external request, no Yobi runtime versions. */
+export const SYSINFO_DEFAULT_FIELDS: readonly string[] = SYSINFO_FIELDS
+  .map((f) => f.key)
+  .filter((key) => key !== 'publicIp' && !SYSINFO_PROBE_FIELDS.has(key) && !SYSINFO_RUNTIME_FIELDS.has(key));
+
 export function parseSysInfoFields(raw: string | undefined): string[] {
   if (!raw) return [];
   const seen = new Set<string>();
@@ -98,7 +103,5 @@ export function resolveSysInfoSelection(
     if (config.includePublicIp === 'true') legacy.push('publicIp');
     return legacy;
   }
-  return SYSINFO_FIELDS
-    .map((f) => f.key)
-    .filter((key) => key !== 'publicIp' && !SYSINFO_PROBE_FIELDS.has(key) && !SYSINFO_RUNTIME_FIELDS.has(key));
+  return [...SYSINFO_DEFAULT_FIELDS];
 }

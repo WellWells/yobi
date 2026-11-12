@@ -1,5 +1,5 @@
 /**
- * `/invite` in the owner's private chat on LINE: a pairing code from the same store as the
+ * `/invite` in a manager's (the owner's or an admin's) private chat on LINE: a pairing code from the same store as the
  * settings page (which lists it), as the `line.me/R/oaMessage` link that opens the bot's chat with
  * `/pair <code>` typed in, with when it stops working and a "Revoke" button — plus the other codes
  * still valid, each with its own. One reply (free): the link as plain text, so it can be copied
@@ -87,7 +87,7 @@ export function createLineInviteAdmin(deps: LineInviteDeps): LineInviteAdmin {
   async function handleCommand(event: LineTextEvent): Promise<void> {
     const s = deps.getStrings();
     if (!(await isLineManager(event, deps))) {
-      onLog(`[line] /invite refused for ${event.userId} — not the owner in a private chat`);
+      onLog(`[line] /invite refused for ${event.userId} — not an admin in a private chat`);
       await replyByToken(deps.getClient(), event.replyToken, t(s, 'line.invite.ownerOnly'), onLog);
       return;
     }
@@ -127,7 +127,7 @@ export function createLineInviteAdmin(deps: LineInviteDeps): LineInviteAdmin {
     }
     const s = deps.getStrings();
     if (!(await isLineManager(event, deps))) {
-      onLog(`[line] invite tap refused for ${event.userId} — not the owner`);
+      onLog(`[line] invite tap refused for ${event.userId} — not an admin`);
       await replyByToken(deps.getClient(), event.replyToken, t(s, 'line.invite.ownerOnly'), onLog);
       return;
     }

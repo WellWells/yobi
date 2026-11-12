@@ -5,13 +5,12 @@
  * On by default, so it carries no connector notes (they sit in every turn): what the model must know
  * is in the description's first sentence, the part the catalog shows.
  */
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { ToolError, createToolServer } from '../mcp/inProcessServer';
+import { ToolError, createToolServer, type ToolServer } from '../mcp/inProcessServer';
 import { ALSO_NAMED } from '../mcp/schemaAliases';
 import { PageReadError, type PageRead } from './pageReader';
 
-export const PAGE_SERVER_NAME = 'Get Page Text';
+export const PAGE_SERVER_NAME = 'Universal Page Reader';
 
 export interface PageReadMcpDeps {
   read: (url: string, signal?: AbortSignal) => Promise<PageRead>;
@@ -44,7 +43,7 @@ function noteOn(page: PageRead): Record<string, string> {
   return page.method === 'whole page' ? { note: WHOLE_PAGE_NOTE } : {};
 }
 
-export function createPageReadMcpServer(deps: PageReadMcpDeps): Server {
+export function createPageReadMcpServer(deps: PageReadMcpDeps): ToolServer {
   // Going on through a long page names the same link again, and reading it can take a hidden
   // window half a minute. Only public pages, read signed out, so any caller may share it.
   let last: { asked: string; page: PageRead } | null = null;

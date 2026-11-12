@@ -45,6 +45,11 @@ function askedScript(words: string, locale: string): Script {
   return writtenScript(words, 0) ?? languageScript(uiTargetLanguage(locale));
 }
 
+/** The script an answer to `words` is expected in: the UI language's with the switch on, else the asker's. */
+export function answerScript(words: string, locale: string, uiLanguage: boolean): Script {
+  return uiLanguage ? languageScript(uiTargetLanguage(locale)) : askedScript(words, locale);
+}
+
 /**
  * Appended to "write in <the UI language>" when the "reply in the UI language" switch is on: the
  * switch sets the default, and the asker's own "rewrite it in Japanese" still wins.
@@ -74,5 +79,5 @@ export function answerLanguageFor(words: string, locale: string, uiLanguage = fa
 export function answeredInAnotherLanguage(answer: string, words: string, locale: string, uiLanguage = false): boolean {
   const written = writtenScript(answer);
   if (written === null) return false;
-  return written !== (uiLanguage ? languageScript(uiTargetLanguage(locale)) : askedScript(words, locale));
+  return written !== answerScript(words, locale, uiLanguage);
 }

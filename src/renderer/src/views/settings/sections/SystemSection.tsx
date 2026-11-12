@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Box, Group, Stack, Button as MButton } from '@mantine/core';
-import { Download, FolderOpen, RotateCcw, ShieldAlert, Trash2, Upload } from 'lucide-react';
+import { Download, FolderOpen, RotateCcw, ShieldExclamationPoint, Trash, Upload } from 'lucide-react';
 import { SectionCard, GroupHeader, SectionTitle, SettingRow, SettingDivider } from '../components';
 import { WebDialog } from '../../../components/WebDialog';
 import { BackupExportModal } from '../backup/BackupExportModal';
@@ -81,7 +81,7 @@ export const SystemSection: React.FC<Props> = ({
 
       <Box display={showSection(TAG_SETS.danger, 'system') ? 'block' : 'none'}>
         <SectionCard danger style={{ marginBottom: 24 }}>
-          <SectionTitle icon={<ShieldAlert size={15} />} label={t('settings.danger.title')} c="var(--mantine-color-error)" />
+          <SectionTitle icon={<ShieldExclamationPoint size={15} />} label={t('settings.danger.title')} c="var(--mantine-color-error)" />
           <Stack gap={12}>
             <SettingRow
               label={t('settings.danger.clearHistory')}
@@ -89,7 +89,7 @@ export const SystemSection: React.FC<Props> = ({
                 <MButton
                   variant="filled"
                   color="red"
-                  leftSection={<Trash2 size={13} />}
+                  leftSection={<Trash size={13} />}
                   style={{ flexShrink: 0 }}
                   miw={96}
                   onClick={() => setDangerAction('clear-history')}

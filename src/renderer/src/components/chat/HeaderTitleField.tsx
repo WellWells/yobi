@@ -1,7 +1,8 @@
 import React from 'react';
 import { ActionIcon, Group, Text, Tooltip } from '@mantine/core';
 import { FileText, Pencil, type LucideIcon } from 'lucide-react';
-import { AppTextInput } from '../AppTextInput';
+import type { AiNameSource } from '../../../../shared/aiName';
+import { RenameInput } from '../RenameInput';
 
 export interface HeaderTitleEditProps {
   title: string;
@@ -12,11 +13,14 @@ export interface HeaderTitleEditProps {
   onCancelTitleEdit: () => void;
   onStartTitleEdit: () => void;
   titleInputRef: React.RefObject<HTMLInputElement | null>;
+  /** What the rename box's ✨ names it from (the open file). */
+  aiSource: AiNameSource | null;
 }
 
 /**
- * The header's title: the file's H1 with the pencil that edits it, or the field while editing.
- * Conversations and Notion documents share it, so the gesture is the same everywhere.
+ * A Notion document's header title: the page's H1 with the pencil that edits it, or the field while
+ * editing. The document's page draws no H1, so its header is where the title is; a conversation's is
+ * the reading column's own heading (`ConversationTitle`), with the same pencil and wording.
  */
 export const HeaderTitleField: React.FC<HeaderTitleEditProps & {
   t: (key: string) => string;
@@ -26,22 +30,16 @@ export const HeaderTitleField: React.FC<HeaderTitleEditProps & {
   extra?: React.ReactNode;
 }> = ({
   title, titleEditing, titleEditValue, setTitleEditValue, onCommitTitleEdit, onCancelTitleEdit, onStartTitleEdit,
-  titleInputRef, t, icon: Icon = FileText, extra,
+  titleInputRef, aiSource, t, icon: Icon = FileText, extra,
 }) => (titleEditing ? (
-  <AppTextInput
+  <RenameInput
     ref={titleInputRef}
     value={titleEditValue}
-    onChange={(event) => setTitleEditValue(event.target.value)}
-    onBlur={onCommitTitleEdit}
-    onKeyDown={(event) => {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        onCommitTitleEdit();
-      }
-      if (event.key === 'Escape') {
-        onCancelTitleEdit();
-      }
-    }}
+    onChange={setTitleEditValue}
+    ai={aiSource}
+    commitOnBlur
+    onCommit={onCommitTitleEdit}
+    onCancel={onCancelTitleEdit}
     aria-label={t('context.editH1')}
     variant="default"
     size="xs"
@@ -49,9 +47,10 @@ export const HeaderTitleField: React.FC<HeaderTitleEditProps & {
     style={{ flex: 1, minWidth: 0 }}
   />
 ) : (
-  // With a status beside it the row stays one line: the title gives way, not the header's height.
-  <Group gap={8} flex={1} wrap={extra ? 'nowrap' : undefined} style={{ minWidth: 0 }}>
-    <Group gap={6} wrap={extra ? 'nowrap' : undefined} style={{ minWidth: 0, overflow: 'hidden' }}>
+  // The row stays one line, a status beside it or a narrow window: the title gives way (an
+  // ellipsis), not the header's height — the pencil never drops under it.
+  <Group gap={8} flex={1} wrap="nowrap" style={{ minWidth: 0 }}>
+    <Group gap={6} wrap="nowrap" style={{ minWidth: 0, overflow: 'hidden' }}>
       <Icon size={13} />
       <Text
         fz="var(--font-size-base)"

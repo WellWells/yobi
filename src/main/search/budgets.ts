@@ -85,6 +85,22 @@ export function quickSynthesisBudget(targetUrl: string, history = ''): Synthesis
   };
 }
 
+/*
+ * Standard mode on a web provider reads 6 pages but packs about what 3 cleaned pages hold: filling
+ * the provider's whole window (100 KB on Claude) only makes a larger prompt and a slower answer.
+ */
+const STANDARD_WEB_BUDGET_BYTES = 90_000;
+const STANDARD_WEB_BUDGET_CPB = 30_000;
+
+/** Like quick mode's: the conversation comes out of the window, then the cap applies. */
+export function standardWebBudget(targetUrl: string, history = ''): SynthesisBudget {
+  const window = reserveForHistory(synthesisBudget(targetUrl), history);
+  return {
+    bytes: Math.min(window.bytes, STANDARD_WEB_BUDGET_BYTES),
+    charsPlusBreaks: Math.min(window.charsPlusBreaks, STANDARD_WEB_BUDGET_CPB),
+  };
+}
+
 export const MAP_DOC_INPUT_CHARS = 60_000;
 
 /** Instructions + question wrapped around the source text in one map call. */

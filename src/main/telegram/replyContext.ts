@@ -1,4 +1,5 @@
 import type { Message, MessageOrigin } from 'grammy/types';
+import { singleLinkOf } from '../../shared/linkQuestion';
 import type { AgentReplyContext } from '../../shared/types';
 
 type MediaCarrier = Partial<Pick<Message,
@@ -36,6 +37,12 @@ function originName(origin: MessageOrigin): string {
     case 'channel': return origin.chat.title?.trim() ?? '';
     default: return '';
   }
+}
+
+/** The link the replied-to message is made of: a bare tag under it asks for that link. */
+export function repliedLinkOf(message: Message | undefined): string | null {
+  const replied = message?.reply_to_message;
+  return replied ? singleLinkOf(replied.text ?? replied.caption ?? '') : null;
 }
 
 /**

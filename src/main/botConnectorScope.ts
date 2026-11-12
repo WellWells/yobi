@@ -1,5 +1,6 @@
 import { readsAnyPage } from '../shared/builtinConnectors';
 import { matchConnectorKeywords } from '../shared/connectorKeywords';
+import { pageAnalyzeLink } from '../shared/pageAnalyzeLine';
 import type { KeywordCandidate } from '../shared/connectorKeywords';
 import { reachableOnSend } from '../shared/mcpConnectOnUse';
 import type { BotConnectorRights } from '../shared/botPermissions';
@@ -45,7 +46,8 @@ export function pickBotConnectors(
   kept: readonly string[],
   candidates: readonly KeywordCandidate[],
 ): BotConnectorDisclosure {
-  const named = matchConnectorKeywords(text, candidates);
+  // The analyze button's line is a link and a word, which reads like a question about the link.
+  const named = pageAnalyzeLink(text) ? [] : matchConnectorKeywords(text, candidates);
   const reachable = new Set(candidates.filter((candidate) => candidate.connected).map((candidate) => candidate.id));
   const ids = [...new Set([...kept.filter((id) => reachable.has(id)), ...named])];
   const added = named.filter((id) => !kept.includes(id) && !readsAnyPage(id));

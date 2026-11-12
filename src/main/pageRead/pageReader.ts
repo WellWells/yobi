@@ -14,9 +14,11 @@ import { PrivateAddressRefusedError } from '../net/publicWebScope';
 import { isVerificationWall, verificationWallMessage } from '../net/verificationWall';
 import { MIN_ARTICLE_CHARS } from '../search/pageText';
 import { GoogleNewsLinkError } from './googleNewsLink';
+import { readBySite } from './readers';
+import { apiReaderFor, pageOfApiAnswer } from './readers/api';
 import { extractPageText, extractPlainText, type PageText } from './pageExtract';
 
-export type PageFailure = 'not-a-page' | 'video' | 'private' | 'missing' | 'walled' | 'sign-in' | 'refused' | 'no-text' | 'unreachable' | 'post';
+export type PageFailure = 'not-a-page' | 'video' | 'private' | 'missing' | 'walled' | 'sign-in' | 'refused' | 'no-text' | 'unreachable' | 'post' | 'subscribers';
 
 export class PageReadError extends Error {
   constructor(readonly reason: PageFailure, message: string) {
@@ -30,6 +32,14 @@ export interface PageRead extends PageText {
   site: string;
   /** Where the text was read, after Google News and any redirect. */
   url: string;
+  /** The whole of what it is, so it can go out as it stands; anything else needs a model to judge. */
+  complete: boolean;
+  /** The site's own media for this post. Empty for an article: `og:image` can sit on any host and is often the wrong picture. */
+  images: readonly string[];
+  /** The post alone, on a page whose `text` goes on with its replies. */
+  mainText?: string;
+  /** How many replies the page says it has, which can be more than it shows. */
+  replyCount?: number;
 }
 
 interface RawAnswer {
@@ -52,6 +62,8 @@ export interface PageReaderDeps {
 const SIGN_IN_ADDRESS = /\/\/[^\s'"]*\/(?:sign[-_]?in|log[-_]?in|authwall)\b/i;
 const HTML_TYPE = /^(?:text\/html|application\/xhtml\+xml)\b/i;
 const TEXT_TYPE = /^text\/(?:plain|markdown)\b/i;
+/** Shorter than this is a stub or a teaser more often than a story. */
+const MIN_COMPLETE_CHARS = 400;
 
 function reasonText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -96,13 +108,13 @@ function tryExtract(html: string, url: string, site: PageSite | null, deps: Page
 interface WindowRead {
   page: PageText | null;
   walled: boolean;
-  /** The window got as far as a page. */
-  reached: boolean;
   signIn: boolean;
 }
 
 interface FirstRead {
   page: PageText | null;
+  /** The site's own reader took the page: nothing else is needed. */
+  own?: PageRead;
   walled: boolean;
   url: string;
   /** What the site answered; 0 when the request itself failed. */
@@ -118,6 +130,20 @@ function readBody(answer: RawAnswer, url: string, deps: PageReaderDeps): PageTex
   return tryExtract(answer.text, url, findPageSite(url), deps);
 }
 
+/** The site's public API for a post, when it has one. Any failure is the plain read's to try. */
+async function readThroughApi(url: string, deps: PageReaderDeps, signal?: AbortSignal): Promise<PageRead | null> {
+  const api = apiReaderFor(url);
+  if (!api) return null;
+  try {
+    const answer = await deps.fetchPage(api.address, signal);
+    return answer.status < 400 ? pageOfApiAnswer(api.reader, answer.text, url) : null;
+  } catch (err) {
+    rethrowFinal(err, signal);
+    deps.log(`📄 [PageRead] API read failed, ${reasonText(err)}`);
+    return null;
+  }
+}
+
 async function readPlain(url: string, deps: PageReaderDeps, signal?: AbortSignal): Promise<FirstRead> {
   let answer: RawAnswer;
   try {
@@ -130,6 +156,8 @@ async function readPlain(url: string, deps: PageReaderDeps, signal?: AbortSignal
   if (answer.status === 404 || answer.status === 410) throw new PageReadError('missing', 'This page no longer exists on the site.');
   const finalUrl = answer.finalUrl || url;
   if (SIGN_IN_ADDRESS.test(finalUrl) && !SIGN_IN_ADDRESS.test(url)) throw signInFailure(url);
+  const own = answer.status < 400 ? readBySite(answer.text, finalUrl) : null;
+  if (own) return { page: null, own, url: finalUrl, walled: false, status: answer.status };
   const page = answer.status < 400 ? readBody(answer, finalUrl, deps) : null;
   const walled = isVerificationWall(answer.text, page?.text.length ?? 0);
   if (!page || walled) deps.log(`📄 [PageRead] plain read of ${finalUrl} answered ${answer.status} with ${walled ? 'a verification wall' : 'no text'}`);
@@ -142,12 +170,12 @@ async function readRendered(url: string, deps: PageReaderDeps, signal?: AbortSig
     const html = await deps.renderPage(url, signal);
     const page = tryExtract(html, url, findPageSite(url), deps);
     const walled = isVerificationWall(html, page?.text.length ?? 0);
-    return { page: walled ? null : page, walled, reached: true, signIn: false };
+    return { page: walled ? null : page, walled, signIn: false };
   } catch (err) {
     rethrowFinal(err, signal);
     const reason = reasonText(err);
     deps.log(`📄 [PageRead] window read failed, ${reason}`);
-    return { page: null, walled: false, reached: false, signIn: SIGN_IN_ADDRESS.test(reason) };
+    return { page: null, walled: false, signIn: SIGN_IN_ADDRESS.test(reason) };
   }
 }
 
@@ -160,14 +188,15 @@ function noteStaleLayout(site: PageSite | null, page: PageText, url: string, dep
 /**
  * Why neither read found any text. Only the last answer blames the page: LTN answers 403 for
  * articles it served in other runs, and "the layout may have changed" would send the reader after a
- * problem that is not there.
+ * problem that is not there. A request that failed outright says the site is not answering, even
+ * when the window then opened something: that is the site's error page, not its layout.
  */
 function readFailure(plain: FirstRead, rendered: WindowRead | null): PageReadError {
   const name = nameOf(plain.url);
   if (plain.walled || rendered?.walled) return new PageReadError('walled', verificationWallMessage(name));
   if (rendered?.signIn) return signInFailure(plain.url);
   if (plain.status >= 400) return new PageReadError('refused', `${name} answered ${plain.status} instead of the page. Try again later or use another source.`);
-  if (plain.status === 0 && !rendered?.reached) return new PageReadError('unreachable', `${name} could not be reached just now. Try again later or use another source.`);
+  if (plain.status === 0) return new PageReadError('unreachable', `${name} could not be reached just now. Try again later or use another source.`);
   return new PageReadError('no-text', `No text found at ${plain.url}. It may be an app that needs a browser, or the site's layout may have changed. Try the browser tool or another source.`);
 }
 
@@ -186,6 +215,15 @@ async function readPost(url: string, deps: PageReaderDeps, signal?: AbortSignal)
   }
 }
 
+function isComplete(page: PageText): boolean {
+  return page.selfDeclared && !page.preview && !page.truncated && page.text.length >= MIN_COMPLETE_CHARS;
+}
+
+/** A subscribers' page that gives a reader nothing but the invitation; an opening, whatever its length, is the story's. */
+function isSubscribePrompt(page: PageText): boolean {
+  return page.preview && page.method === 'whole page' && page.text.length < MIN_ARTICLE_CHARS;
+}
+
 /** One link's text; `PageReadError` when it cannot be read. */
 export async function readPage(link: string, deps: PageReaderDeps, signal?: AbortSignal): Promise<PageRead> {
   const given = link.trim();
@@ -194,7 +232,10 @@ export async function readPage(link: string, deps: PageReaderDeps, signal?: Abor
   refuseVideo(url);
   const post = await readPost(url, deps, signal);
   if (post) return post;
+  const viaApi = await readThroughApi(url, deps, signal);
+  if (viaApi) return viaApi;
   const plain = await readPlain(url, deps, signal);
+  if (plain.own) return plain.own;
   const site = findPageSite(plain.url);
   if (plain.status >= 400 && site?.signedInOnly) throw signInFailure(plain.url);
   // The window is slow (up to 35 s on a page that never settles), so it is for a read that came
@@ -205,6 +246,8 @@ export async function readPage(link: string, deps: PageReaderDeps, signal?: Abor
   const shut = rendered?.walled === true || rendered?.signIn === true;
   const page = shut ? null : [plain.page, rendered?.page].reduce((best, next) => (next && next.text.length > (best?.text.length ?? 0) ? next : best), null);
   if (!page) throw readFailure(plain, rendered);
+  const name = site?.name || page.siteName || new URL(plain.url).hostname;
+  if (isSubscribePrompt(page)) throw new PageReadError('subscribers', `${name} shows this page to subscribers only, and this tool reads signed out. Use another source.`);
   noteStaleLayout(site, page, plain.url, deps);
-  return { ...page, site: site?.name || page.siteName || new URL(plain.url).hostname, url: plain.url };
+  return { ...page, site: name, url: plain.url, complete: isComplete(page), images: [] };
 }

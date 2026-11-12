@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { ActionIcon, Box, Flex, Paper, Stack, Tooltip } from '@mantine/core';
-import { ArrowUp, Globe, SquarePen, Terminal } from 'lucide-react';
+import { ArrowUp, Globe, Square, SquarePen, Terminal } from 'lucide-react';
 import { AppTextarea } from '../AppTextarea';
 import { ModelDropdown } from './ModelDropdown';
 import { ModeDropdown } from './ModeDropdown';
+import { COMPOSER_FOOTER } from './ComposerPill';
 import { ThinkingPill } from './ThinkingPill';
 import { AttachmentChips } from './AttachmentChips';
 import { ComposerAddButton } from './ComposerAddButton';
@@ -38,6 +39,7 @@ import { IMAGE_CHAT_FLOW_ID, imageRouteFor, pictureIsWholeJob } from '../../../.
 import { useAppStore } from '../../store/appStore';
 import { useAgentRunStore } from '../../store/useAgentRunStore';
 import { endTarget, homeTarget } from '../../utils/composerKeys';
+import { isComposingKey } from '../../utils/imeKeys';
 import { withQuotedContext } from '../../utils/composerQuotes';
 import { collectPastedFiles, pasteMayHoldSystemFile } from '../../utils/pastedFiles';
 import { comboLabel } from '../../../../shared/shortcuts';
@@ -51,7 +53,7 @@ import {
   type ShellInfo,
 } from '../../../../shared/types';
 import { shellBangCommand } from '../../../../shared/shellBang';
-import { shellApi } from '../../api/electronApi';
+import { attachmentApi, shellApi } from '../../api/electronApi';
 import { composerFrameStyle, SHELL_COLOR } from './composerFrame';
 import { mcpCommandFlowId, parseMcpCommandFlowId } from '../../../../shared/mcpCommand';
 import { composerConnectors, type KeywordCandidate } from '../../../../shared/connectorKeywords';
@@ -60,6 +62,7 @@ import { currentLinkSiteFilter } from '../../store/linkRecognitionStore';
 import { useResolvedCombo } from '../../store/shortcutStore';
 import { deleteAllText, wantsComposerClear } from './composerClear';
 import { replaceAllText, useExternalEditor, wantsExternalEditor } from './composerExternalEditor';
+import { insertPathsAtCaret, wantsPathPaste } from './composerPastePath';
 import { showAppNotice } from '../../hooks/useUiNotifications';
 import { fillTemplate } from '../../../../shared/fillTemplate';
 
@@ -116,6 +119,13 @@ interface PromptInputAreaProps {
   onRemoveConnectors: (ids: readonly string[]) => void;
   /** Empty chat: the composer sits under the greeting instead of docking at the bottom edge. */
   centered?: boolean;
+  /** Nothing above it to keep apart (an empty chat docked at the foot of a narrow window): no rule on top. */
+  bare?: boolean;
+  /**
+   * The conversation is waiting for an answer: the send button becomes Stop, as in Gemini, ChatGPT
+   * and Claude. Enter still sends the draft (it waits its turn), only the button changes.
+   */
+  onStop?: () => void;
 }
 
 /** The conversation column (720) plus the composer's padding; rows above the centred composer use it too. */
@@ -124,7 +134,34 @@ export const CENTERED_MAX_WIDTH = 760;
 export interface PromptInputAreaHandle {
   focusPrompt: () => void;
   insertQuote: (text: string) => void;
+  /**
+   * Sends `text` the way the send button sends the box's text — same modes, commands and routing —
+   * while the box's own draft, quotes and attachments stay as they are (an edited question).
+   */
+  sendText: (text: string, hasAttachments: boolean) => void;
+  /** A stopped question comes back to be edited; a draft typed meanwhile is never replaced. */
+  restoreDraft: (text: string) => void;
 }
+
+/** What one send reads from, and clears in, the composer. */
+interface SendSource {
+  withQuotes: (text: string) => string;
+  quoteCount: number;
+  hasAttachments: boolean;
+  /** The box's own text, which a command that only switches something may clear or fill. */
+  fromDraft: boolean;
+  /** The typed text went out; quotes and attachments stay. */
+  clearText: () => void;
+  /** The whole message went out. */
+  clearAll: () => void;
+  /**
+   * An edited question: always a message, never a `!` or `/` command. The conversation was cut
+   * back before it is routed, and a command (a model switch, an unknown name, `/new`) sends nothing.
+   */
+  asMessage?: boolean;
+}
+
+const NOOP = (): void => {};
 
 export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInputAreaProps>(({
   t,
@@ -158,6 +195,8 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
   onDiscloseConnectors,
   onRemoveConnectors,
   centered = false,
+  bare = false,
+  onStop,
 }, ref) => {
   const [promptInput, setPromptInput] = useState('');
   const [quotes, setQuotes] = useState<string[]>([]);
@@ -211,6 +250,23 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     insertQuote: (text: string) => {
       const quote = text.trim();
       if (quote) setQuotes((current) => [...current, quote]);
+      promptInputRef.current?.focus();
+    },
+    sendText: (text: string, hasAttachments: boolean) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      routeSendRef.current(trimmed, {
+        withQuotes: (value) => value,
+        quoteCount: 0,
+        hasAttachments,
+        fromDraft: false,
+        clearText: NOOP,
+        clearAll: NOOP,
+        asMessage: true,
+      });
+    },
+    restoreDraft: (text: string) => {
+      setPromptInput((current) => (current.trim() ? current : text));
       promptInputRef.current?.focus();
     },
   }), []);
@@ -411,22 +467,19 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     void finishEditor(false);
   }, [finishEditor]);
 
-  const handleSendPrompt = useCallback(() => {
-    const text = promptInput.trim();
-    if (!text) return;
+  const routeSend = useCallback((text: string, source: SendSource): void => {
+    const { withQuotes, clearText } = source;
+    const clearComposer = source.clearAll;
     const keepFocus = (): void => { promptInputRef.current?.focus(); };
     // Ahead of everything else: a `!` line is a command for this computer in any mode. Quotes and
     // attachments stay for the next message, since nothing here would carry them.
-    const shellCommand = onRunShell ? shellBangCommand(text) : null;
+    const shellCommand = onRunShell && !source.asMessage ? shellBangCommand(text) : null;
     if (onRunShell && shellCommand !== null) {
-      if (shellCommand && onRunShell(shellCommand)) {
-        setPromptInput('');
-        void finishEditor(false);
-      }
+      if (shellCommand && onRunShell(shellCommand)) clearText();
       keepFocus();
       return;
     }
-    const parsed = parseSlashCommand(text);
+    const parsed = source.asMessage ? null : parseSlashCommand(text);
     // Handled before the notices are cleared: switching models is not a send, so it leaves the
     // one about the last send standing.
     const modelCommand = parsed
@@ -435,8 +488,10 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     if (parsed && modelCommand) {
       if (!parsed.args) {
         // On its own it opens the list rather than doing nothing.
-        setPromptInput(`/${modelCommand.command} `);
-        setMenuDismissed(false);
+        if (source.fromDraft) {
+          setPromptInput(`/${modelCommand.command} `);
+          setMenuDismissed(false);
+        }
         keepFocus();
         return;
       }
@@ -483,7 +538,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
       }
       const mode = chatModeForCommandId(match.flowId);
       if (mode && !parsed.args) {
-        setPromptInput('');
+        if (source.fromDraft) setPromptInput('');
         pickMode(mode);
         return;
       }
@@ -491,7 +546,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
       if (connectorId) {
         const disclosed = onDiscloseConnectors([connectorId]);
         if (!parsed.args) {
-          setPromptInput('');
+          if (source.fromDraft) setPromptInput('');
           keepFocus();
           return;
         }
@@ -523,7 +578,8 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     const answering = useAgentRunStore.getState().pendingQuestion?.conversationPath
       === (useAppStore.getState().selectedFile?.path ?? '');
     // A site switched off in Settings › Recognize links is an ordinary message.
-    const linkFlow = quotes.length === 0 && attachments.length === 0 && !answering
+    const plainMessage = source.quoteCount === 0 && !source.hasAttachments && !answering;
+    const linkFlow = plainMessage
       ? desktopLinkFlowFor(text, currentLinkSiteFilter())
       : null;
     if (linkFlow) {
@@ -545,7 +601,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     // asked for and its ordinary send below brings the picture back, in its own thread. Only when
     // the picture is the whole job (`pictureIsWholeJob`); the agent below draws too.
     if (
-      quotes.length === 0 && attachments.length === 0 && !answering
+      plainMessage
       && pictureIsWholeJob(text, named.length > 0)
       && imageRouteFor(text, activeModelUrl, { agent: Boolean(modeCommand), temporary: tempChatMode })
     ) {
@@ -594,12 +650,31 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     if (onSend(withQuotes(text))) clearComposer();
     keepFocus();
   }, [
-    promptInput, chatCommands, chatMode, connectors, activeConnectorIds, web, webOff, quotes, attachments,
+    chatCommands, chatMode, connectors, activeConnectorIds, web, webOff,
     activeModelUrl, tempChatMode,
     modeCommand, handleChangeMode, pickMode, onDiscloseConnectors, onRunCommand, onUnknownCommand,
-    onSetWeb, onSend, withQuotes, clearComposer, modelStops, pickModel, onUnknownModel,
-    onRunShell, finishEditor,
+    onSetWeb, onSend, modelStops, pickModel, onUnknownModel, onRunShell,
   ]);
+
+  const handleSendPrompt = useCallback(() => {
+    const text = promptInput.trim();
+    if (!text) return;
+    routeSend(text, {
+      withQuotes,
+      quoteCount: quotes.length,
+      hasAttachments: attachments.length > 0,
+      fromDraft: true,
+      clearText: () => {
+        setPromptInput('');
+        void finishEditor(false);
+      },
+      clearAll: clearComposer,
+    });
+  }, [promptInput, quotes.length, attachments.length, withQuotes, clearComposer, finishEditor, routeSend]);
+
+  // The handle is made once; it reaches the routing as it is at the moment of the send.
+  const routeSendRef = useRef(routeSend);
+  routeSendRef.current = routeSend;
 
   const handlePaste = useCallback((event: React.ClipboardEvent<HTMLElement>) => {
     const files = collectPastedFiles(event.clipboardData);
@@ -614,8 +689,20 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     }
   }, [onAddFiles, onAddFromClipboard]);
 
+  // Ctrl+Shift+V: main answers with the copied files' paths, or — nothing copied — pastes the
+  // clipboard the ordinary way, which then reaches handlePaste exactly like Ctrl+V.
+  const pasteCopiedPaths = useCallback(async () => {
+    const paths = await attachmentApi.pastePaths().catch((): string[] => []);
+    const field = promptInputRef.current;
+    if (paths.length === 0 || !field) return;
+    const refused = insertPathsAtCaret(field, paths);
+    if (refused === null) return;
+    setPromptInput(refused);
+    setMenuDismissed(false);
+  }, []);
+
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (isComposingKey(event.nativeEvent)) return;
     const field = promptInputRef.current;
     const caret = field && field.selectionStart === field.selectionEnd ? field.selectionStart : null;
 
@@ -628,6 +715,12 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
         field.setSelectionRange(target, target);
         return;
       }
+    }
+
+    if (wantsPathPaste(event)) {
+      event.preventDefault();
+      void pasteCopiedPaths();
+      return;
     }
 
     if (wantsExternalEditor(event)) {
@@ -673,7 +766,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
     }
   }, [
     promptInput, quotes.length, menuOpen, modelMenuOpen, listLength, filteredCommands, filteredStops,
-    highlightedIndex, selectCommand, pickModel, handleSendPrompt, openEditor,
+    highlightedIndex, selectCommand, pickModel, handleSendPrompt, openEditor, pasteCopiedPaths,
   ]);
 
   return (
@@ -684,7 +777,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
       w="100%"
       maw={centered ? CENTERED_MAX_WIDTH : undefined}
       mx={centered ? 'auto' : undefined}
-      style={{ borderTop: centered ? undefined : '1px solid var(--mantine-color-default-border)', flexShrink: 0 }}
+      style={{ borderTop: centered || bare ? undefined : '1px solid var(--mantine-color-default-border)', flexShrink: 0 }}
     >
       <Box pos="relative">
       {menuOpen && (
@@ -761,8 +854,8 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
           />
         </Box>
 
-        <Flex align="center" justify="space-between" gap={8} p="8px 12px">
-          <Flex align="center" gap={6}>
+        <Flex className={COMPOSER_FOOTER} align="center" justify="space-between" gap={8} p="8px 12px">
+          <Flex align="center" gap={6} style={{ flexShrink: 0 }}>
           <ComposerAddButton
             t={t}
             onAddFiles={onAddFiles}
@@ -781,7 +874,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
             menuDirection={menuDirection}
           />
           </Flex>
-          <Flex align="center" gap={8}>
+          <Flex align="center" gap={8} miw={0}>
           <ThinkingPill url={activeModelUrl} menuDirection={menuDirection} />
           <ModelDropdown
             value={activeModelUrl}
@@ -789,6 +882,19 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
             tooltipLabel={modelTooltip}
             menuDirection={menuDirection}
           />
+          {onStop ? (
+            <Tooltip label={t('input.stop')} position="top">
+              <ActionIcon
+                onClick={onStop}
+                aria-label={t('input.stop')}
+                radius="xl"
+                size={34}
+                style={{ background: 'var(--mantine-color-accent)', color: '#fff' }}
+              >
+                <Square size={12} fill="currentColor" strokeWidth={0} />
+              </ActionIcon>
+            </Tooltip>
+          ) : (
           <Tooltip label={t('input.send')} position="top">
             <ActionIcon
               onClick={handleSendPrompt}
@@ -805,6 +911,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
               <ArrowUp size={16} strokeWidth={2.5} />
             </ActionIcon>
           </Tooltip>
+          )}
           </Flex>
         </Flex>
       </Paper>

@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { ActionIcon, Box, Group, Loader, Stack, Text, Tooltip } from '@mantine/core';
-import { Check, Copy, Quote, RotateCcw, Sparkles, TriangleAlert, X } from 'lucide-react';
+import { Check, Copy, Quote, RotateCcw, Sparkles, TriangleExclamationPoint, X } from 'lucide-react';
 import { AppButton } from '../AppButton';
 import { MessageMarkdown } from './MessageMarkdown';
 import { findModelOption } from '../../config/models';
@@ -154,7 +154,7 @@ export const RewriteResultCard: React.FC<RewriteResultCardProps> = ({ job, t }) 
 
         {job.status === 'error' && (
           <Group gap={8} wrap="nowrap" align="flex-start">
-            <Box c="var(--mantine-color-error)" style={{ lineHeight: 0, paddingTop: 2 }}><TriangleAlert size={14} /></Box>
+            <Box c="var(--mantine-color-error)" style={{ lineHeight: 0, paddingTop: 2 }}><TriangleExclamationPoint size={14} /></Box>
             <Text component="div" fz="var(--font-size-sm)" c="var(--mantine-color-error)" style={{ flex: 1 }}>{job.error}</Text>
           </Group>
         )}

@@ -21,6 +21,23 @@ export const LINE_MENU_TEXT_MAX = 2_000;
 const ROW_MAX_BUTTONS = 3;
 const ALT_TEXT_MAX = 400;
 
+const LINE_IMAGE_PATH_RE = /\.(?:jpe?g|png)$/i;
+
+/** Whether the address is https and its path, not its query, ends the way `pattern` says. */
+export function isHttpsPath(attachment: string, pattern: RegExp): boolean {
+  if (!/^https:\/\//i.test(attachment)) return false;
+  try {
+    return pattern.test(new URL(attachment).pathname);
+  } catch {
+    return false;
+  }
+}
+
+/** LINE sends a picture only from a public https jpeg or png. */
+export function isLineSendableImage(attachment: string): boolean {
+  return isHttpsPath(attachment, LINE_IMAGE_PATH_RE);
+}
+
 export interface LineMenuButton {
   label: string;
   /** What a tap stands for: the line the person would type to the bot. */

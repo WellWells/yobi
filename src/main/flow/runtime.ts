@@ -3,8 +3,10 @@ import type { FlowExecutorDeps, LogCallback } from './types';
 import { FlowUserError } from './userError';
 import { findMatchingMarker } from '../../shared/flowBlockStructure';
 import { raceAbort } from '../promiseRace';
+import { automationHardTimeoutMs } from '../providers/automationExecutor';
+import { clampIntField } from './skills/numberField';
+import { DEFAULT_STEP_TIMEOUT_MS } from '../../shared/flowStepTimeout';
 
-const DEFAULT_STEP_TIMEOUT_MS = 60_000;
 export const BROWSER_STEP_TIMEOUT_MS = 300_000;
 const DEFAULT_LLM_TIMEOUT_MS = 120_000;
 const MAX_DELAY_MS = 3_600_000;
@@ -16,8 +18,17 @@ function normalizeTimeoutMs(value: number | undefined, fallbackMs: number): numb
   return Math.max(1_000, Math.trunc(value));
 }
 
+/** An explicit 0 waits 0 ms; only a missing, blank or non-numeric value falls back to 1 s. */
 export function resolveDelayMs(config: Record<string, string> | undefined): number {
-  return Math.min(Number(config?.delayMs) || 1_000, MAX_DELAY_MS);
+  return clampIntField(config?.delayMs, 1_000, 0, MAX_DELAY_MS);
+}
+
+/**
+ * The response timeout: how long the model may go without a new word. Every provider reads it that
+ * way (the page scripts' idle limit, the BYOK stream's), chat included.
+ */
+export function llmIdleTimeoutMs(deps: FlowExecutorDeps): number {
+  return normalizeTimeoutMs(deps.getResponseTimeoutMs?.(), DEFAULT_LLM_TIMEOUT_MS);
 }
 
 export function resolveStepTimeoutMs(
@@ -26,7 +37,9 @@ export function resolveStepTimeoutMs(
   config?: Record<string, string>,
 ): number {
   if (type === 'llm') {
-    return normalizeTimeoutMs(deps.getResponseTimeoutMs?.(), DEFAULT_LLM_TIMEOUT_MS);
+    // The whole step, not the idle limit: capped at the response timeout itself, a flow cut off a
+    // long answer still arriving that chat would have waited for.
+    return automationHardTimeoutMs(llmIdleTimeoutMs(deps));
   }
   if (type === 'delay') {
     return resolveDelayMs(config) + 10_000;

@@ -9,15 +9,19 @@ import type {
   QueueTaskItem,
 } from '../../shared/types';
 import { compactPreview } from '../../shared/textBudget';
+import { withPromptLanguage } from '../../shared/promptLanguage';
 import { BOT_RUN_KEY, INTERACTIVE_RUN_KEY, SIGNED_IN_RUN_KEY, executeFlow } from './executor';
 import { signInUseForRun } from '../botPermissions/signedInReads';
 import { closeRunPages } from './skills/browserPages';
 import { runFlowBuild } from './flowBuild';
+import { runFlowEdit } from './flowEdit';
+import type { FlowEditOutcome } from './flowEdit';
 import { sendBuildEvent } from './flowBuildBroadcast';
 import type { FlowClarification } from '../../shared/flowSkillSchema';
 import type { FlowExecutorDeps } from './types';
 import { getWorkerAttention, sendLog, sendToRenderer, sendWebNotification } from '../helpers';
 import { config } from '../config';
+import { buildBuiltinWithAnalysisTarget } from '../linkAnalysis';
 import { getLangCache, localizeUserFacingError, t } from '../i18n';
 import { classifyFailure, recordTaskOutcome } from '../metrics';
 import { pruneFlowMetrics } from '../flowMetrics';
@@ -50,24 +54,25 @@ import { FILE_TRIGGER_NAME_VAR } from '../../shared/flowFileTrigger';
 import { flushScheduleState, loadScheduleState, pruneScheduleState } from './scheduleState';
 import { FlowQueue, QUEUE_CANCELLED } from './flowQueue';
 import { llmLane } from './lanes';
+import { conversationPathKey } from '../conversationPaths';
 import { launchedByRelaunch } from '../relaunchFlag';
 import { botCommandAccessMode, normalizeAllowedUserIds, readsOwnerData } from '../../shared/botCommandAccess';
 import type { BotCommandAccessMode } from '../../shared/botCommandAccess';
 import type { StepProgress } from '../../shared/stepProgress';
 
 /** A built-in is built on demand, in the app language and with the current settings. */
-function builtinBuildContext(): BuiltinBuildContext {
+export function builtinBuildContext(): BuiltinBuildContext {
   const strings = getLangCache();
   return {
     t: (key, vars) => t(strings, key, vars),
     locale: config.locale,
     // The summary uses the YouTube template from Settings, the app language's built-in one when empty.
-    summaryTemplate: () => config.youtubePrompt.trim() || strings['youtube.prompt.default'] || '',
+    summaryTemplate: () => withPromptLanguage(config.youtubePrompt.trim() || strings['youtube.prompt.default'] || '', config.locale),
   };
 }
 
 /**
- * The run's context with the sign-in mark — `full` or `others` — decided as it starts (a bot's
+ * The run's context with the sign-in mark — `full`, `posts` or `others` — decided as it starts (a bot's
  * from the memory file and grants as they are then); without one the steps read as a visitor.
  */
 async function withSignedInMark(context: Record<string, string>, botRun: boolean): Promise<Record<string, string>> {
@@ -383,16 +388,6 @@ export class FlowManager {
     return duplicated;
   }
 
-  async move(flowId: string, direction: 'up' | 'down'): Promise<FlowDefinition[]> {
-    const idx = this.flows.findIndex((f) => f.id === flowId);
-    if (idx < 0) return this.flows;
-    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
-    if (targetIdx < 0 || targetIdx >= this.flows.length) return this.flows;
-    [this.flows[idx], this.flows[targetIdx]] = [this.flows[targetIdx], this.flows[idx]];
-    await saveFlowsToDisk(this.flows);
-    return this.flows;
-  }
-
   async reorder(orderedIds: string[]): Promise<FlowDefinition[]> {
     const byId = new Map(this.flows.map((f) => [f.id, f]));
     const next: FlowDefinition[] = [];
@@ -426,9 +421,12 @@ export class FlowManager {
     makeErrorResult: (err: unknown) => T,
     agentRunId?: string,
     clientToken?: string,
+    /** The conversation the answer is written into: tasks for one conversation run one after another. */
+    conversationPath?: string,
   ): Promise<T> {
     const taskId = createEntityId();
-    return this.queue.enqueue(taskId, name, () => run(taskId), makeErrorResult, undefined, agentRunId, clientToken, 'external');
+    const conversation = conversationPath ? conversationPathKey(conversationPath) : undefined;
+    return this.queue.enqueue(taskId, name, () => run(taskId), makeErrorResult, undefined, agentRunId, clientToken, 'external', conversation);
   }
 
   setQueueTaskProgress(taskId: string, progress: string): void {
@@ -461,7 +459,8 @@ export class FlowManager {
   flowById(flowId: string): FlowDefinition | undefined {
     const saved = this.flows.find((f) => f.id === flowId);
     if (saved) return saved;
-    return builtinById(flowId)?.build(builtinBuildContext());
+    const builtin = builtinById(flowId);
+    return builtin ? buildBuiltinWithAnalysisTarget(builtin, builtinBuildContext()) : undefined;
   }
 
   private notFoundResult(flowId: string): FlowExecutionResult {
@@ -474,6 +473,7 @@ export class FlowManager {
     source: FlowExecutionSource = 'ui',
     fire?: TriggerFire,
     onStepProgress?: (progress: StepProgress) => void,
+    stopSignal?: AbortSignal,
   ): { taskId: string; result: Promise<FlowExecutionResult> } {
     const flow = this.flowById(flowId);
     const taskId = createEntityId();
@@ -528,7 +528,7 @@ export class FlowManager {
     const result = this.queue.enqueue(
       taskId,
       `[Flow] ${flow.name || flowId}`,
-      async () => this.execute(flowId, await withSignedInMark(runContext, source === 'bot'), fire, onStepProgress),
+      async () => this.execute(flowId, await withSignedInMark(runContext, source === 'bot'), fire, onStepProgress, stopSignal),
       (err) => {
         const message = err instanceof Error ? err.message : String(err);
         if (message !== QUEUE_CANCELLED) return this.failureResult(flowId, message, flow.steps.length);
@@ -560,8 +560,12 @@ export class FlowManager {
     extraContext?: Record<string, string>,
     source: FlowExecutionSource = 'ui',
     onStepProgress?: (progress: StepProgress) => void,
+    /** The chat composer's Stop: leaves the queue, or aborts the run as the run panel's stop does. */
+    stopSignal?: AbortSignal,
   ): { taskId: string; result: Promise<FlowExecutionResult> } {
-    return this.createQueueExecution(flowId, extraContext, source, undefined, onStepProgress);
+    const execution = this.createQueueExecution(flowId, extraContext, source, undefined, onStepProgress, stopSignal);
+    stopSignal?.addEventListener('abort', () => { this.cancelQueuedTask(execution.taskId); }, { once: true });
+    return execution;
   }
 
   async saveGeneratedFlow(candidate: FlowDefinition): Promise<FlowDefinition> {
@@ -647,6 +651,37 @@ export class FlowManager {
     );
   }
 
+  /**
+   * The flow editor's AI assistant changing the open draft: the same two calls `edit_flow` makes,
+   * through the same queue as a build, but the result goes back to the editor as a proposal —
+   * nothing is saved here (the user applies it to the draft, then presses Save).
+   */
+  async queueEditProposal(
+    taskId: string,
+    draft: FlowDefinition,
+    change: string,
+    options: { queueLabel?: string; providerUrl?: string },
+  ): Promise<FlowEditOutcome> {
+    return this.queue.enqueue<FlowEditOutcome>(
+      taskId,
+      `[Flow] ${options.queueLabel ?? 'AI Flow'}`,
+      async () => {
+        try {
+          return await runFlowEdit({
+            flow: draft,
+            change,
+            deps: this.deps,
+            save: async (flow) => flow,
+            ...(options.providerUrl ? { providerUrl: options.providerUrl } : {}),
+          });
+        } finally {
+          this.blankWorkerWhenIdle();
+        }
+      },
+      (err) => ({ status: 'failed', error: err instanceof Error ? err.message : String(err) }),
+    );
+  }
+
   private blankWorkerWhenIdle(): void {
     void llmLane.runExclusive(async () => {
       if (this._running.size !== 0 || getWorkerAttention() !== 'idle') return;
@@ -678,6 +713,7 @@ export class FlowManager {
     extraContext?: Record<string, string>,
     fire?: TriggerFire,
     onStepProgress?: (progress: StepProgress) => void,
+    stopSignal?: AbortSignal,
   ): Promise<FlowExecutionResult> {
     const flow = this.flowById(flowId);
     if (!flow) {
@@ -698,6 +734,9 @@ export class FlowManager {
     this._running.add(runKey);
     const controller = new AbortController();
     this._abortControllers.set(runKey, controller);
+    const stopRun = (): void => controller.abort();
+    if (stopSignal?.aborted) controller.abort();
+    else stopSignal?.addEventListener('abort', stopRun, { once: true });
     const event: FlowExecutionEvent = { flowId, name: flow.name };
     sendToRenderer(IPC.FLOW_EXECUTION_STARTED, event);
 
@@ -723,6 +762,7 @@ export class FlowManager {
       this.notifyRunOutcome(flow, result, deleted);
       return result;
     } finally {
+      stopSignal?.removeEventListener('abort', stopRun);
       closeRunPages(flowId);
       this._abortControllers.delete(runKey);
       this._running.delete(runKey);
@@ -807,7 +847,14 @@ export class FlowManager {
     recordTaskOutcome('flow', outcome);
     // Per-flow statistics are for the user's own flows; a built-in has no row to show them in.
     if (isBuiltinFlowId(result.flowId)) return;
-    recordFlowRun({ flowId: result.flowId, outcome, degraded: (result.softFailures ?? 0) > 0 });
+    recordFlowRun({
+      flowId: result.flowId,
+      outcome,
+      degraded: (result.softFailures ?? 0) > 0,
+      at: result.completedAt,
+      // What the notification said: the step that failed, in the user's language.
+      message: result.success ? result.softFailureError : (result.displayError ?? result.error),
+    });
   }
 
   /**

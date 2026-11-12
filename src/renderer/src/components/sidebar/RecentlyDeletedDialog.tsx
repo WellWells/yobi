@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Group, Loader, ScrollArea, Stack, Text } from '@mantine/core';
-import { RotateCcw, Trash2 } from 'lucide-react';
+import { RotateCcw, Trash } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import type { TrashedConversation } from '../../../../shared/types';
 import { formatCardTime } from '../../../../shared/captureCard';
@@ -68,7 +68,7 @@ export const RecentlyDeletedDialog: React.FC<RecentlyDeletedDialogProps> = ({ op
     if (items.length === 0) {
       return (
         <Stack align="center" gap={10} py={40} ta="center">
-          <Trash2 size={32} strokeWidth={1.5} color="var(--text-muted)" />
+          <Trash size={32} strokeWidth={1.5} color="var(--text-muted)" />
           <Text fz="var(--font-size-sm)" c="var(--text-secondary)">{t('trash.empty')}</Text>
         </Stack>
       );
@@ -122,7 +122,7 @@ export const RecentlyDeletedDialog: React.FC<RecentlyDeletedDialogProps> = ({ op
 
   return (
     <>
-      <AppModal opened={opened} onClose={onClose} title={t('trash.title')} icon={<Trash2 size={18} />} size="lg">
+      <AppModal opened={opened} onClose={onClose} title={t('trash.title')} icon={<Trash size={18} />} size="lg">
         <Text fz="var(--font-size-sm)" c="var(--text-secondary)" mb="sm">
           {fillTemplate(t('trash.retentionNote'), { count: TRASH_RETENTION_DAYS })}
         </Text>
@@ -132,7 +132,7 @@ export const RecentlyDeletedDialog: React.FC<RecentlyDeletedDialogProps> = ({ op
             size="xs"
             variant="subtle"
             color="red"
-            leftSection={<Trash2 size={13} />}
+            leftSection={<Trash size={13} />}
             disabled={!items || items.length === 0}
             onClick={() => setConfirmAll(true)}
           >

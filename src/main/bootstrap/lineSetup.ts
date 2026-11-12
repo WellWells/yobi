@@ -1,12 +1,11 @@
 import { IPC } from '../../shared/types';
 import {
   notifyBotGroupJoined,
-  pairedMenuAccess,
   setBotGroupPermissions,
 } from '../botPermissions';
 import { getBotAudience } from '../botPermissions/audience';
 import { isBuiltinConnectorOn } from '../botPermissions/managedAccounts';
-import { afterLineCodePairing, lineAccountAdmin, lineInvites, registerLinePairer } from './lineAccountAdmin';
+import { afterLineCodePairing, lineAccountAdmin, lineInvites, lineManagerIds, registerLinePairer } from './lineAccountAdmin';
 import { config } from '../config';
 import { sendLog, sendToRenderer } from '../helpers';
 import { LineRuntime } from '../line';
@@ -61,8 +60,7 @@ export function createLineRuntime(deps: {
         return true;
       },
       isConnectorOn: isBuiltinConnectorOn,
-      // LINE has no admin grant: the owner alone.
-      getManagerIds: async () => (await pairedMenuAccess('line')).filter((entry) => entry.flowAdmin).map((entry) => entry.userId),
+      getManagerIds: lineManagerIds,
     },
     onRuntime: (snapshot) => {
       setLineRuntimeSnapshot(snapshot);

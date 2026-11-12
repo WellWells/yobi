@@ -56,8 +56,14 @@ export interface ScrollSnapshot {
  * What opening or updating a conversation does to the scroll position. Opening one — a switch,
  * or a first mount, which is what the sidebar produces since it shows a loading state between
  * two conversations — lands on the latest turn the way the providers' web apps do.
+ *
+ * `traceHeldOpen` says the newest turn belongs to a run the user keeps expanded. Its answer landing
+ * (a first one too, which changes the path from the new-chat key) must leave them on the trace they
+ * are reading. A reader still following the bottom stays pinned by the resize observer.
  */
-export function scrollMoveFor(previous: ScrollSnapshot | null, next: ScrollSnapshot): ScrollMove {
+export function scrollMoveFor(previous: ScrollSnapshot | null, next: ScrollSnapshot, traceHeldOpen = false): ScrollMove {
+  const landed = previous !== null && next.pending < previous.pending && next.turns === previous.turns + 1;
+  if (landed && traceHeldOpen) return 'none';
   if (!previous || previous.path !== next.path) return 'jump';
   if (next.turns > previous.turns || next.pending > previous.pending) return 'follow';
   return 'none';

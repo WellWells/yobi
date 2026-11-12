@@ -1,18 +1,21 @@
 import type { BrowserWindow, WebContents } from 'electron';
+import { randomUUID } from 'node:crypto';
 import { sleep, waitForPageLoad, INJECTED_SLEEP_JS, INJECTED_WAIT_FOR_JS, INJECTED_INTERCEPT_COPY_JS } from './common';
 import { ensureOnPage, landingMayStillRender, PAGE_REUSE } from './pageReuse';
-import { executeAutomationWithTimeout, countElements, anchorCounts } from './automationExecutor';
+import { executeAutomationWithTimeout, executeWithTimeout, countElements, anchorCounts } from './automationExecutor';
 import { PROVIDER_URLS } from '../../shared/types';
 import { WORKER_USER_AGENTS } from '../userAgent';
 import { applyWorkerUserAgent } from '../clientHints';
 import { sendLog } from '../helpers';
 import { showLoginWindowIfNeeded } from '../windows';
 import { uploadFilesToGemini } from './geminiUpload';
+import { getAccountStatus } from './authStatus';
 import { syncGeminiModel } from './geminiModelSync';
 import {
   GEMINI_COPY_BTN_SELECTOR as COPY_BTN_SELECTOR,
   GEMINI_INPUT_SELECTOR as INPUT_SELECTOR,
   GEMINI_NEW_CHAT_SELECTOR,
+  GEMINI_NO_ANSWER,
   GEMINI_STOP_SELECTOR,
   INJECTED_GEMINI_TEMPORARY_JS,
   INJECTED_GEMINI_WAIT_AND_READ_JS,
@@ -45,16 +48,50 @@ export async function runGeminiAutomation(
   temporary = false,
 ): Promise<ProviderRunResult> {
   for (let attempt = 1; ; attempt++) {
+    const sendId = randomUUID();
     try {
-      return await runGeminiAttempt(workerWin, prompt, timeoutMs, targetUrl, attachments, wantTitle, continuingThread, temporary);
+      return await runGeminiAttempt(workerWin, prompt, timeoutMs, targetUrl, attachments, wantTitle, continuingThread, temporary, sendId);
     } catch (err) {
       if (err instanceof Error && err.message.includes('GEMINI_BOUNCED') && attempt < MAX_BOUNCE_ATTEMPTS) {
         const where = continuingThread ? 'the same thread' : 'a fresh chat';
         sendLog(`⚠️ Gemini aborted mid-generation and bounced the prompt back to the composer — retrying in ${where} (attempt ${attempt + 1}/${MAX_BOUNCE_ATTEMPTS})`);
         continue;
       }
+      await logGeminiFailure(workerWin, sendId);
       throw err;
     }
+  }
+}
+
+/**
+ * Where the send stood when it failed. Only this attempt's state counts: a kept page still holds
+ * the previous send's. Skipped once the worker is gone (closed, or replaced for a sign-in): there
+ * is no page to ask, and waiting on it only delays the failure.
+ */
+export async function logGeminiFailure(workerWin: BrowserWindow, sendId: string): Promise<void> {
+  try {
+    if (workerWin.isDestroyed() || workerWin.webContents.isDestroyed()) return;
+    const wc = workerWin.webContents;
+    const snapshot = await executeWithTimeout<unknown>(wc, `(function () {
+      var editor = document.querySelector(${JSON.stringify(INPUT_SELECTOR)});
+      var responses = document.querySelectorAll('model-response');
+      var last = responses[responses.length - 1];
+      var answer = last && last.querySelector('message-content');
+      var saved = window.__yobiGeminiSendState;
+      var state = saved && saved.id === ${JSON.stringify(sendId)} ? saved : null;
+      return {
+        stage: state ? state.stage : 'before-script',
+        elapsedMs: state ? Date.now() - state.startedAt : null,
+        ready: document.readyState,
+        visibility: document.visibilityState, focus: document.hasFocus(),
+        composerChars: editor ? (editor.textContent || '').length : null,
+        responses: responses.length, answerChars: answer ? (answer.textContent || '').length : 0,
+        generating: !!document.querySelector(${JSON.stringify(GEMINI_STOP_SELECTOR)})
+      };
+    })()`, 1_500);
+    sendLog(`[gemini-send] Failure state: ${JSON.stringify(snapshot)}`);
+  } catch {
+    sendLog('[gemini-send] Failure state unavailable: the page did not answer the diagnostic probe');
   }
 }
 
@@ -67,6 +104,7 @@ async function runGeminiAttempt(
   wantTitle = false,
   continuingThread = false,
   temporary = false,
+  sendId = '',
 ): Promise<ProviderRunResult> {
   const wc = workerWin.webContents;
 
@@ -110,7 +148,7 @@ async function runGeminiAttempt(
   const onFullNavigate = () => { fullyNavigated = true; };
   wc.on('did-navigate', onFullNavigate);
 
-  const autoScript = buildGeminiAutomationScript(prompt, baseline, timeoutMs, COPY_BTN_SELECTOR, wantTitle, continuingThread, temporary);
+  const autoScript = buildGeminiAutomationScript(prompt, baseline, timeoutMs, COPY_BTN_SELECTOR, wantTitle, continuingThread, temporary, sendId);
   let result: PageRunResult | null = null;
 
   try {
@@ -156,7 +194,8 @@ async function runGeminiAttempt(
       title: (result.title || '').trim(),
       ...(images.length > 0 ? { images } : {}),
     };
-  } catch (err) {
+  } catch (caught) {
+    const err = await signedOutNoAnswer(caught);
     if (err instanceof Error && err.message.includes('GEMINI_LOGIN_REQUIRED')) {
       await showLoginWindowIfNeeded('Gemini', PROVIDER_URLS.gemini);
     }
@@ -170,6 +209,20 @@ async function runGeminiAttempt(
     }
     throw err;
   }
+}
+
+/**
+ * Gemini went idle with nothing to show. Signed out, signing in is what the user can do about it:
+ * a sign-in error (login window, provider fallback as `signIn`). Signed in, it stays a no-answer
+ * failure — fallback still moves on, and nobody is told to sign in to an account that already is.
+ * An unreadable cookie store counts as signed in, so a doubt never opens a login window.
+ */
+export async function signedOutNoAnswer(err: unknown): Promise<unknown> {
+  if (!(err instanceof Error) || !err.message.includes(GEMINI_NO_ANSWER)) return err;
+  const signedIn = await getAccountStatus('gemini').catch(() => true);
+  if (signedIn) return err;
+  sendLog('⚠️ Gemini produced no answer and its session is signed out — asking for sign-in');
+  return new Error('GEMINI_LOGIN_REQUIRED: Gemini produced no answer on a signed-out session');
 }
 
 async function applyVisibilityPatch(wc: WebContents): Promise<void> {
@@ -228,6 +281,8 @@ export function buildGeminiAutomationScript(
   wantTitle: boolean,
   continuingThread = false,
   temporary = false,
+  /** Tags the page's send state, so a failure log never reads a kept page's earlier send. */
+  sendId = '',
 ): string {
   const escapedPrompt = JSON.stringify(prompt);
   const escapedSelector = JSON.stringify(copyBtnSelector);
@@ -243,6 +298,8 @@ export function buildGeminiAutomationScript(
   var WANT_TITLE = ${wantTitle};
   var CONTINUING = ${continuingThread};
   var TEMPORARY = ${temporary && !continuingThread};
+  var SEND_STATE = { id: ${JSON.stringify(sendId)}, stage: 'preparing', startedAt: Date.now() };
+  window.__yobiGeminiSendState = SEND_STATE;
   var SAFE_CAP = ${GEMINI_SIGNED_OUT_PROMPT_CAP};
   var TOO_LONG_TAG = ${JSON.stringify(GEMINI_PROMPT_TOO_LONG)};
   ${INJECTED_SLEEP_JS}
@@ -312,16 +369,10 @@ export function buildGeminiAutomationScript(
   }
 
   function fillViaEvents(el) {
-    placeCursorAtEnd(el);
-    el.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
-    el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true }));
-    el.dispatchEvent(new PointerEvent('pointerup',   { bubbles: true, composed: true }));
+    el.focus();
     document.execCommand('selectAll', false, null);
-    // Keep prompts as text instead of invoking the site's paste-to-file handler.
+    // The browser emits the editor input; adding synthetic events can stall signed-in sends.
     document.execCommand('insertText', false, PROMPT);
-    el.dispatchEvent(new InputEvent('input', {
-      bubbles: true, cancelable: true, inputType: 'insertText'
-    }));
   }
 
   function fillViaDom(el) {
@@ -448,6 +499,7 @@ export function buildGeminiAutomationScript(
   }
 
   async function submitPrompt() {
+    SEND_STATE.stage = 'filling-composer';
     var filled = await fillComposer();
     if (!filled) {
       throw new Error('Gemini composer never accepted the prompt text after retries (editor not ready)');
@@ -464,6 +516,7 @@ export function buildGeminiAutomationScript(
       throw new Error('Gemini send button never became clickable within 8s (composer had text but send stayed disabled)');
     }
     await verifyComposerHoldsPrompt(getComposer());
+    SEND_STATE.stage = 'submitting';
     sendBtn.click();
 
     var landed = false;
@@ -500,6 +553,7 @@ export function buildGeminiAutomationScript(
   await submitPrompt();
 
   var started = false;
+  SEND_STATE.stage = 'waiting-for-generation';
   try {
     await waitFor(function() {
       return countResponses() > respBaseline || generationActive();
@@ -524,6 +578,7 @@ export function buildGeminiAutomationScript(
     throw new Error('Gemini accepted the prompt but never started generating a response (reused conversation or rate limit)');
   }
 
+  SEND_STATE.stage = 'reading-response';
   return await geminiWaitAndRead(BASELINE, COPY_SEL, {
     idleMs: TIMEOUT, wantTitle: WANT_TITLE, responseBaseline: respBaseline
   });

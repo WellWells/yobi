@@ -69,7 +69,7 @@ interface SearchPaletteProps<T> {
 export function SearchPalette<T>({
   opened, onClose, query, onQueryChange, items, getKey, renderRow, onSelect, placeholder, emptyLabel, onClosed,
 }: SearchPaletteProps<T>): React.ReactElement {
-  const { t } = useI18nStore();
+  const t = useI18nStore((s) => s.t);
   const [activeIndex, setActiveIndex] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
 

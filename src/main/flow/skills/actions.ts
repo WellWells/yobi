@@ -1,15 +1,13 @@
 import { clipboard } from 'electron';
-import { exec } from 'node:child_process';
+import { exec, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { FlowButton, MarkdownCapturePayload } from '../../../shared/types';
-import { cardStyleFromSettings, formatCardTime } from '../../../shared/captureCard';
-import { resolveCardTitle } from '../../../shared/markdownTitle';
-import { config as appConfig } from '../../config';
+import type { CaptureFormat, FlowButton } from '../../../shared/types';
+import { parseLlmExportFormats } from '../../../shared/fileOutputStep';
 import { getProviderLabel, preparePromptForProvider, runAutomation } from '../../providers';
 import { byokTargetTakesImages, runByokCompletion } from '../../providers/byokClient';
 import { loadByokImages, withByokImages } from '../../providers/byokImages';
 import { resendIfGeminiCapFell } from '../../providers/geminiPromptTooLong';
-import { isByokImageFile } from '../../../shared/attachmentFormats';
+import { attachmentRefusalFor, isByokImageFile, megabytesLabel } from '../../../shared/attachmentFormats';
 import { repairSplitTableRows } from '../../../shared/markdownTableRepair';
 import {
   BOT_PLATFORM_NAMES,
@@ -22,16 +20,18 @@ import {
 } from '../../../shared/types';
 import type { BotPlatform, SocketBotPlatform } from '../../../shared/types';
 import {
-  EMPTY_RECIPIENT_DIRECTORY, botStepTargets, isRecipientId, resolveTargetsForSend, splitTargets,
+  EMPTY_RECIPIENT_DIRECTORY, LINE_SELF_MAX_RECIPIENTS, botStepTargets, isRecipientId, pairedEntries, resolveTargetsForSend, splitTargets,
 } from '../../../shared/botRecipients';
+import type { RecipientDirectory } from '../../../shared/botRecipients';
 import { parseAttachmentList, resolveSafeLocalAttachment } from '../../attachmentGuard';
 import { ensureHttpScheme, fetchAndParse } from '../../urlParser';
 import { isFetchableWebUrl } from '../../../shared/webUrl';
 import { parseWebUrlList } from './urlList';
-import { renderWithinHeightLimit } from '../../captureHeightLimit';
+import { exportLlmAnswer } from './llmExport';
 import { sendLog, sendWebNotification } from '../../helpers';
 import { clipboardLane, llmLane, pageFetchLane } from '../lanes';
-import { FlowAbortError, resolveDelayMs, withAbort, withStepTimeout } from '../runtime';
+import { yieldRunSlot } from '../flowQueue';
+import { FlowAbortError, llmIdleTimeoutMs, resolveDelayMs, withAbort, withStepTimeout } from '../runtime';
 import type { BotSendExtras, FlowExecutorDeps, TelegramSendAs } from '../types';
 import { FlowUserError } from '../userError';
 import * as fs from 'node:fs/promises';
@@ -39,11 +39,11 @@ import { getLangCache, t } from '../../i18n';
 import { formatLimit, formatMegabytes, parseFlowButtons, withButtonImages } from '../../../shared/ytdl';
 import { telegramSendLimitBytes } from '../../telegram/largeUpload';
 import { LINE_ACTION_TEXT_MAX, LINE_CAROUSEL_MAX, type LineCarouselItem } from '../../line/pickCarousel';
-import { lineMenuFits, type LineMenuButton } from '../../line/flowMenu';
+import { isHttpsPath, isLineSendableImage, lineMenuFits, type LineMenuButton } from '../../line/flowMenu';
 import { lineTextAbove } from '../../line/format';
 import { isBuiltinFlowId } from '../../../shared/builtinFlows';
 import { closePage, closeRunPages, openPage, runPageScript } from './browserPages';
-import { inferTelegramSendAs, isCaptureFormat } from '../interpolation';
+import { inferTelegramSendAs } from '../interpolation';
 import { appendMemory, buildMemoryAugmentedPrompt, parseAndStripNewMemory, readMemory } from '../flowMemory';
 import { renderFlowMemoryBlock } from '../../memory/memoryPrompt';
 import { resolveMemory } from '../../memory/memoryContext';
@@ -51,6 +51,7 @@ import { workerWindowUnavailable } from '../../workerWindowError';
 import { consoleFallbackEncoding, decodeShellOutput } from './shellOutput';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 /**
  * `cwd` is honored but deliberately not a declared spec field: `/agent` sets it after validation
@@ -66,7 +67,9 @@ export async function execShell(
   signal?: AbortSignal,
 ): Promise<string> {
   const command = config.command ?? '';
-  if (!command) return '';
+  if (!command.trim()) {
+    throw new FlowUserError('flow.error.requiredShellCommand', {}, 'The shell step has no command to run');
+  }
   let shell: string | undefined;
   if (process.platform === 'win32') {
     const selected = (config.shell ?? config.windowsShell ?? 'cmd').toLowerCase();
@@ -80,6 +83,8 @@ export async function execShell(
     }
   }
   const cwd = (config.cwd ?? '').trim();
+  // Set by `/agent` after validation, like `cwd`: an installed skill's folder for its scripts.
+  const skillDir = (config.skillDir ?? '').trim();
   const fallback = await consoleFallbackEncoding();
   try {
     const { stdout, stderr } = await execAsync(command, {
@@ -87,27 +92,88 @@ export async function execShell(
       shell,
       encoding: 'buffer',
       ...(cwd ? { cwd } : {}),
+      ...(skillDir ? { env: { ...process.env, SKILL_DIR: skillDir } } : {}),
       ...(signal ? { signal } : {}),
     });
     return (decodeShellOutput(stdout, fallback) || decodeShellOutput(stderr, fallback)).trim();
   } catch (err) {
-    throw readableShellError(err, command, fallback);
+    throw readableShellError(err, command, fallback, timeoutMs);
   }
 }
 
+/** The most of a failed command's error output the step's failure shows; the log keeps it all. */
+const SHELL_ERROR_DETAIL_MAX = 1_000;
+
 /**
  * Node builds the `Command failed` message from stderr decoded as UTF-8; rebuild it from the
- * console-decoded bytes and keep the rest of the error.
+ * console-decoded bytes and keep the rest of the error. The English message (the log, `/agent`'s
+ * observation, `flowErrorReason`) stays `Command failed: <command>\n<stderr>`; the person reading
+ * the card gets the exit code and the error output in their language, or the step timeout's own
+ * sentence when the command was stopped at the time limit.
  */
-function readableShellError(err: unknown, command: string, fallback: string | null): unknown {
+function readableShellError(err: unknown, command: string, fallback: string | null, timeoutMs: number): unknown {
   if (!(err instanceof Error)) return err;
   const stderr = (err as { stderr?: unknown }).stderr;
   if (!Buffer.isBuffer(stderr) || !err.message.startsWith('Command failed:')) return err;
-  const readable = new Error(`Command failed: ${command}\n${decodeShellOutput(stderr, fallback)}`);
+  const errorOutput = decodeShellOutput(stderr, fallback);
+  const english = `Command failed: ${command}\n${errorOutput}`;
+  const fields = err as unknown as Record<string, unknown>;
+  const detail = errorOutput.trim();
+  const code = String(fields.code ?? '?');
+  const shown = detail.length > SHELL_ERROR_DETAIL_MAX ? `${detail.slice(0, SHELL_ERROR_DETAIL_MAX)}…` : detail;
+  let readable: FlowUserError;
+  if (fields.killed === true) {
+    readable = new FlowUserError('flow.error.stepTimeout', { seconds: String(Math.ceil(timeoutMs / 1_000)) }, english);
+  } else if (detail) {
+    readable = new FlowUserError('flow.error.shellFailed', { code, detail: shown }, english);
+  } else {
+    readable = new FlowUserError('flow.error.shellFailedQuiet', { code }, english);
+  }
   for (const key of ['code', 'killed', 'signal'] as const) {
-    if (key in err) Object.assign(readable, { [key]: (err as unknown as Record<string, unknown>)[key] });
+    if (key in err) Object.assign(readable, { [key]: fields[key] });
   }
   return readable;
+}
+
+export interface TrustedCallsOptions {
+  /** The command as the model wrote it: a failure names it, as a shell's failure does. */
+  command: string;
+  cwd: string;
+  skillDir?: string;
+  timeoutMs: number;
+  signal?: AbortSignal;
+}
+
+/**
+ * A trusted command (`/agent`'s shellTrust): each `&&` part started as its own program with its
+ * parsed words, never through a shell, stopping at the first that fails — what `a && b` does.
+ * The timeout covers all the parts together, as it covers the one shell otherwise.
+ */
+export async function execTrustedCalls(
+  calls: readonly { file: string; args: readonly string[] }[],
+  options: TrustedCallsOptions,
+): Promise<string> {
+  const fallback = await consoleFallbackEncoding();
+  const deadline = Date.now() + options.timeoutMs;
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  try {
+    for (const call of calls) {
+      const result = await execFileAsync(call.file, [...call.args], {
+        ...(options.cwd ? { cwd: options.cwd } : {}),
+        timeout: Math.max(1_000, deadline - Date.now()),
+        encoding: 'buffer',
+        windowsHide: true,
+        ...(options.skillDir ? { env: { ...process.env, SKILL_DIR: options.skillDir } } : {}),
+        ...(options.signal ? { signal: options.signal } : {}),
+      });
+      stdout.push(result.stdout);
+      stderr.push(result.stderr);
+    }
+  } catch (err) {
+    throw readableShellError(err, options.command, fallback, options.timeoutMs);
+  }
+  return (decodeShellOutput(Buffer.concat(stdout), fallback) || decodeShellOutput(Buffer.concat(stderr), fallback)).trim();
 }
 
 async function fetchPage(url: string): Promise<{ text: string; image: string }> {
@@ -117,15 +183,33 @@ async function fetchPage(url: string): Promise<{ text: string; image: string }> 
   return { text: cleanedText, image };
 }
 
-const NON_WEB_URL_ERROR = 'browser: only http:// and https:// pages can be fetched.';
+/** A row that is not a web address: the user can fix it, so it is said in their language. */
+function nonWebUrlError(url: string): FlowUserError {
+  return new FlowUserError('flow.error.httpUrlOnly', { url }, 'browser: only http:// and https:// pages can be fetched.');
+}
 
-export async function execBrowser(config: Record<string, string>): Promise<string> {
+export async function execBrowser(
+  config: Record<string, string>,
+  onOutput?: FlowExecutorDeps['onStepOutput'],
+): Promise<string> {
   const url = config.url ?? '';
-  if (!url) return '';
+  const requireAll = config.requireAll === 'true';
+  // Only the editor's own rows keep their positions; a list from a variable or a model is filtered.
+  const urlArray = parseWebUrlList(url, config.__urlRows === 'true');
+  if (requireAll && (!url.trim() || urlArray?.length === 0)) {
+    throw new FlowUserError('flow.error.browserNoUrls', {}, 'browser: at least one page URL is required');
+  }
+  if (!url) {
+    onOutput?.({ page1: '' });
+    return '';
+  }
 
   const includeImage = config.includeImage === 'true';
 
-  const urlArray = parseWebUrlList(url);
+  const pageFields: Record<string, string> = Object.fromEntries(
+    Array.from({ length: urlArray?.length || 1 }, (_, index) => [`page${index + 1}`, '']),
+  );
+  onOutput?.(pageFields);
 
   // A lone URL is logged whole: the log panel shortens it on screen and opens it on click.
   const isLoneUrl = !urlArray && !/\s/.test(url.trim());
@@ -137,18 +221,35 @@ export async function execBrowser(config: Record<string, string>): Promise<strin
     sendLog(`🌐 [Flow] Batch URL input: ${urlArray.length} URLs detected`);
     const parts: string[] = [];
     let firstError: unknown;
+    let blankRow: FlowUserError | undefined;
     for (let i = 0; i < urlArray.length; i++) {
       const batchUrl = urlArray[i];
       sendLog(`🌐 [${i + 1}/${urlArray.length}] Fetching: ${batchUrl}`);
       try {
+        if (!batchUrl.trim()) {
+          // A row whose variable came out empty: said as such, not as a page that failed to load.
+          const blank = new FlowUserError('flow.error.browserBlankUrl', { number: String(i + 1) }, `browser: URL ${i + 1} is empty`);
+          blankRow ??= blank;
+          throw blank;
+        }
+        if (!isFetchableWebUrl(batchUrl)) throw nonWebUrlError(batchUrl);
         const { text } = await fetchPage(batchUrl);
+        if (requireAll && !text.trim()) throw new Error('The page returned no readable text');
         parts.push(text);
+        pageFields[`page${i + 1}`] = text;
         sendLog(`✅ [${i + 1}/${urlArray.length}] OK — ${text.length} chars`);
       } catch (err) {
         firstError ??= err;
         const msg = err instanceof Error ? err.message : String(err);
         sendLog(`❌ [${i + 1}/${urlArray.length}] Failed: ${msg}`);
       }
+    }
+    if (requireAll && parts.length !== urlArray.length) {
+      if (blankRow) throw blankRow;
+      const failed = String(urlArray.length - parts.length);
+      const total = String(urlArray.length);
+      const reason = firstError instanceof Error ? firstError.message : String(firstError);
+      throw new FlowUserError('flow.error.browserIncomplete', { failed, total }, `browser: ${failed} of ${total} required pages could not be read — ${reason}`);
     }
     // Every page failing must throw: the executor's fail-soft (`.isFailed`, soft-failure count,
     // failure notice) only sees a throw, and '' reads downstream as "nothing new".
@@ -158,13 +259,18 @@ export async function execBrowser(config: Record<string, string>): Promise<strin
       throw new Error(`browser: none of the ${urlArray.length} pages could be fetched — ${msg}`);
     }
     sendLog(`🌐 [Flow] Batch complete: ${parts.length}/${urlArray.length} succeeded`);
+    onOutput?.(pageFields);
     return parts.join('\n\n---\n\n');
   }
 
-  if (!isFetchableWebUrl(url)) throw new Error(NON_WEB_URL_ERROR);
+  if (!isFetchableWebUrl(url)) throw nonWebUrlError(url);
 
   const { text, image } = await fetchPage(url);
+  if (requireAll && !text.trim()) {
+    throw new FlowUserError('flow.error.browserIncomplete', { failed: '1', total: '1' }, 'browser: the required page returned no readable text');
+  }
   sendLog(`✅ [Flow] Browser: ${text.length} chars`);
+  onOutput?.({ page1: text });
 
   if (includeImage) {
     sendLog(`🖼️ [Flow] Browser: cover image ${image ? `→ ${image}` : 'not found'}`);
@@ -176,7 +282,7 @@ export async function execBrowser(config: Record<string, string>): Promise<strin
 
 export async function execBrowserOpen(config: Record<string, string>): Promise<string> {
   const url = ensureHttpScheme(config.url ?? '');
-  if (!url) throw new Error('browser_open requires a url');
+  if (!url) throw new FlowUserError('flow.error.browserOpenNoUrl', {}, 'browser_open requires a url');
   const flowId = (config.__flowId ?? '').trim();
   const show = config.show === 'true';
   const { id, title, url: finalUrl } = await openPage(url, { show, flowId });
@@ -209,6 +315,16 @@ export function execBrowserClose(config: Record<string, string>): string {
   const ok = closePage(handle);
   sendLog(ok ? `🧹 [Flow] Closed page ${handle}` : `⚠️ [Flow] No live page for handle ${handle}`);
   return '';
+}
+
+/** Why the web page would refuse this file (its measured size and format limits), as an English log clause. */
+async function pageRefusalOf(providerUrl: string, filePath: string): Promise<string | null> {
+  const { size } = await fs.stat(filePath);
+  const refusal = attachmentRefusalFor(providerFromUrl(providerUrl), filePath, size);
+  if (!refusal) return null;
+  return refusal.kind === 'tooLarge'
+    ? `takes files up to ${megabytesLabel(refusal.maxBytes)} MB`
+    : `does not accept .${refusal.extension} files`;
 }
 
 async function resolveLlmAttachments(
@@ -244,7 +360,13 @@ async function resolveLlmAttachments(
       continue;
     }
     try {
-      resolved.push(await resolveSafeLocalAttachment(candidate, authorizedPaths));
+      const safePath = await resolveSafeLocalAttachment(candidate, authorizedPaths);
+      const refusal = byok ? null : await pageRefusalOf(providerUrl, safePath);
+      if (refusal) {
+        sendLog(`⚠️ [Flow] Attachment skipped (${candidate}): ${providerLabel} ${refusal}`);
+        continue;
+      }
+      resolved.push(safePath);
     } catch (err) {
       sendLog(`⚠️ [Flow] Attachment skipped (${candidate}): ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -256,6 +378,10 @@ async function resolveLlmAttachments(
   return resolved;
 }
 
+/**
+ * `timeoutMs` bounds the whole step (a caller's run budget may shorten it); the provider stops on
+ * its own after the response timeout passes with no new word, as it does in chat.
+ */
 export async function execLlm(
   config: Record<string, string>,
   deps: FlowExecutorDeps,
@@ -263,7 +389,13 @@ export async function execLlm(
   signal?: AbortSignal,
 ): Promise<string> {
   const prompt = config.prompt ?? '';
-  if (!prompt) return '';
+  const files: Record<CaptureFormat, string> = { png: '', webp: '', pdf: '' };
+  deps.onStepOutput?.({ text: '', file: '', ...files });
+  // After interpolation: a prompt made only of variables that are empty this run is nothing to send.
+  if (!prompt.trim()) {
+    throw new FlowUserError('flow.error.requiredLlmPrompt', {}, 'The AI step prompt is empty, so nothing was sent');
+  }
+  const idleMs = Math.min(llmIdleTimeoutMs(deps), timeoutMs);
   const providerUrl = config.provider || deps.getTargetUrl();
   const isByokTarget = isByokTargetUrl(providerUrl);
 
@@ -292,21 +424,23 @@ export async function execLlm(
 
   const attachments = await resolveLlmAttachments(config, providerUrl);
 
+  // The wait for the model and the request lend the run's queue slot (`yieldRunSlot`); the step
+  // timeout stays inside, so taking the slot back afterwards never times out an answered step.
   let response: string;
   if (isByokTarget) {
     const byokAbort = new AbortController();
     const images = attachments.length > 0 ? await loadByokImages(attachments) : undefined;
-    const result = await withStepTimeout(
-      runByokCompletion(providerUrl, withByokImages(promptForModel, images), timeoutMs, byokAbort.signal),
+    const result = await withAbort(yieldRunSlot(() => withStepTimeout(
+      runByokCompletion(providerUrl, withByokImages(promptForModel, images), idleMs, byokAbort.signal),
       timeoutMs,
       'llm',
       () => byokAbort.abort(),
       signal,
-    );
+    )), signal);
     response = result.response;
   } else {
     const result = await withAbort(
-      llmLane.runExclusive(async () => {
+      yieldRunSlot(() => llmLane.runExclusive(async () => {
         if (signal?.aborted) throw new FlowAbortError();
         // Prepared once the lane is ours, and again when the Gemini page refused it unsent because
         // its cap fell on the way: the step is then cut to the cap that holds, as it would have been
@@ -323,14 +457,14 @@ export async function execLlm(
           const workerWin = deps.ensureWorkerWin ? await deps.ensureWorkerWin() : deps.getWorkerWin();
           if (!workerWin || workerWin.isDestroyed()) throw workerWindowUnavailable();
           return withStepTimeout(
-            runAutomation(workerWin, promptForModel, timeoutMs, providerUrl, attachments),
+            runAutomation(workerWin, promptForModel, idleMs, providerUrl, attachments),
             timeoutMs,
             'llm',
             () => { workerWin.webContents.loadURL('about:blank').catch(() => {}); },
             signal,
           );
         }, (cap) => sendLog(`✂️ [Flow] ${getProviderLabel(providerUrl)} takes only ${cap} characters now — sending the step again`));
-      }),
+      })),
       signal,
     );
     response = result.response;
@@ -362,52 +496,14 @@ export async function execLlm(
       providerLabel: getProviderLabel(providerUrl),
     });
   }
-  const exportFormat = config.exportFormat;
-  if (!isCaptureFormat(exportFormat)) {
+  const exportFormats = parseLlmExportFormats(config.exportFormat);
+  if (exportFormats.length === 0) {
+    deps.onStepOutput?.({ text: finalResponse, file: '', ...files });
     return finalResponse;
   }
-  if (!deps.captureMarkdown) {
-    throw new Error('LLM export requires captureMarkdown dependency');
-  }
-  // Blank title = the heading the answer opens with (lifted out of the body), else none.
-  const { title, body } = resolveCardTitle(config.exportTitle ?? '', finalResponse);
-  // Settings › Card style, the same as a bot export; the step's own Background, when picked,
-  // replaces only the palette. `config.background` is deliberately not read: a gradient frozen
-  // there would override Solid forever.
-  const style = cardStyleFromSettings(appConfig.captureSettings, config.palette ?? '');
-  const exportOptions = {
-    fileName: (config.exportFileName ?? '').trim(),
-    showProvider: config.exportShowProvider !== 'false',
-    showTimestamp: config.exportShowTimestamp !== 'false',
-    showTokens: false,
-    cardTheme: style.cardTheme,
-    width: style.width,
-    margin: style.margin,
-    pixelRatio: style.pixelRatio,
-  };
-  const provider = getProviderLabel(providerUrl);
-  // Printed on the card as is, so it is formatted here in local time, as a chat export reads.
-  const timestamp = formatCardTime(new Date().toISOString(), appConfig.locale);
-  // The card shows the answer only. The prompt is the flow's own instruction (memory blocks,
-  // fenced data) and never goes onto a card, so it is not handed to the capture window at all.
-  const payload: MarkdownCapturePayload = {
-    title,
-    prompt: '',
-    content: body,
-    summary: '',
-    provider,
-    timestamp,
-    turns: [{ prompt: '', response: body, provider, timestamp }],
-  };
-  // Losing the already-fetched answer to the image height limit is worse than a different file type.
-  const capture = deps.captureMarkdown;
-  const filePath = await renderWithinHeightLimit(
-    exportFormat,
-    exportOptions.pixelRatio ?? 1,
-    (format, pixelRatio) => capture(payload, format, style.background, { ...exportOptions, pixelRatio }),
-    '[Flow] LLM export',
-  );
-  sendLog(`🖼️ [Flow] LLM export generated: ${filePath}`);
+  const filePath = await exportLlmAnswer(config, deps, finalResponse, providerUrl, exportFormats, files, signal);
+  if (signal?.aborted) throw new FlowAbortError();
+  deps.onStepOutput?.({ text: finalResponse, file: filePath, ...files });
   return filePath;
 }
 
@@ -426,10 +522,11 @@ export function execComment(config: Record<string, string>): string {
   return (config.note ?? '').trim();
 }
 
+/** No output: the run panel showed the English `delayed 1000ms` under the step; the card says how long. */
 export async function execDelay(config: Record<string, string>): Promise<string> {
   const ms = resolveDelayMs(config);
   await new Promise((resolve) => setTimeout(resolve, ms));
-  return `delayed ${ms}ms`;
+  return '';
 }
 
 export function execNotify(config: Record<string, string>): string {
@@ -464,21 +561,7 @@ function resolveBotPlatform(config: Record<string, string>): BotPlatform {
   return parseBotPlatform(config.platform) ?? parseBotPlatform(config.__triggerPlatform) ?? 'telegram';
 }
 
-const LINE_IMAGE_PATH_RE = /\.(?:jpe?g|png)$/i;
 const LINE_VIDEO_PATH_RE = /\.mp4$/i;
-
-function isHttpsPath(attachment: string, pattern: RegExp): boolean {
-  if (!/^https:\/\//i.test(attachment)) return false;
-  try {
-    return pattern.test(new URL(attachment).pathname);
-  } catch {
-    return false;
-  }
-}
-
-function isLineSendableImage(attachment: string): boolean {
-  return isHttpsPath(attachment, LINE_IMAGE_PATH_RE);
-}
 
 /** LINE plays an https mp4 it fetches itself, but only with an https jpeg/png to show first. */
 function isLineSendableVideo(attachment: string, preview: string): boolean {
@@ -622,6 +705,11 @@ function attachmentAllowlist(config: Record<string, string>): string[] {
   }
 }
 
+/** Neither a message nor anything attached reached the send: the step delivered nothing. */
+function nothingToSend(): FlowUserError {
+  return new FlowUserError('flow.error.requiredBotMessage', {}, 'The bot step has no message and no attachment, so nothing was sent');
+}
+
 export async function execBot(
   config: Record<string, string>,
   deps: FlowExecutorDeps,
@@ -632,7 +720,9 @@ export async function execBot(
   const legacyMagicCaption = (config.__magicUploadCaption ?? '').trim();
 
   const platform = resolveBotPlatform(config);
-  const { targets: rawTargets, everyone } = await resolveNamedRecipients(splitTargets(botStepTargets(config)), platform, deps);
+  const tokens = splitTargets(botStepTargets(config));
+  const written = platform === 'lineSelf' ? writtenInStep(config) : undefined;
+  const { targets: rawTargets, everyone, picked } = await resolveNamedRecipients(tokens, platform, deps, written);
   const originalChatIdsTemplate = (config.__originalChatIdsTemplate ?? '').trim();
 
   if (platform === 'line') {
@@ -657,7 +747,7 @@ export async function execBot(
 
   if (isSocketBotPlatform(platform)) {
     return execBotSocket(platform, config, deps, {
-      message, explicitAttachment, legacyMagicPath, legacyMagicCaption, rawTargets, originalChatIdsTemplate, everyone,
+      message, explicitAttachment, legacyMagicPath, legacyMagicCaption, rawTargets, originalChatIdsTemplate, everyone, picked,
     });
   }
 
@@ -766,7 +856,7 @@ export async function execBot(
     return attachment;
   }
 
-  if (!message) return '';
+  if (!message.trim()) throw nothingToSend();
   if (!deps.sendTelegramMessage) throw new Error('Telegram bot is not configured in FlowExecutorDeps');
   const sendMessage = deps.sendTelegramMessage;
   await broadcast(
@@ -812,27 +902,73 @@ interface BotSendParts {
  * Names in the recipient field ("me", "Alice", a channel title) looked up among the paired
  * chats. One that matches nothing — or several — is never guessed at: if nothing else is left to
  * send to, the step fails and says which name, rather than reporting success for a message that
- * went nowhere.
+ * went nowhere. A token `written` says the step did not choose itself is looked up among the paired
+ * chats only, never LINE PC's own groups and friends; `picked` is what the step's own tokens became.
  */
 async function resolveNamedRecipients(
   tokens: string[],
   platform: BotPlatform,
   deps: FlowExecutorDeps,
-): Promise<{ targets: string[]; everyone: boolean }> {
-  if (tokens.every((token) => isRecipientId(token, platform))) return { targets: tokens, everyone: false };
-  const directory = deps.getBotRecipients
-    ? await deps.getBotRecipients().catch(() => EMPTY_RECIPIENT_DIRECTORY)
-    : EMPTY_RECIPIENT_DIRECTORY;
-  const named = resolveTargetsForSend(tokens, platform, directory);
-  if (named.missing.length > 0) {
+  written: (token: string) => boolean = () => true,
+): Promise<{ targets: string[]; everyone: boolean; picked: ReadonlySet<string> }> {
+  const own = tokens.filter(written);
+  const filled = tokens.filter((token) => !written(token));
+  if (tokens.every((token) => isRecipientId(token, platform))) return { targets: tokens, everyone: false, picked: new Set(own) };
+  const directory = await recipientDirectory(deps);
+  const mine = resolveTargetsForSend(own, platform, directory);
+  const theirs = resolveTargetsForSend(filled, platform, { ...directory, entries: pairedEntries(directory) });
+  const everyone = mine.everyone || theirs.everyone;
+  const targets = everyone ? [] : [...new Set([...mine.targets, ...theirs.targets])];
+  const missing = [...mine.missing, ...theirs.missing];
+  if (missing.length > 0) {
     const bot = BOT_PLATFORM_NAMES[platform];
-    const names = named.missing.join(', ');
-    if (named.targets.length === 0 && !named.everyone) {
+    const names = missing.join(', ');
+    if (targets.length === 0 && !everyone) {
       throw new FlowUserError('flow.error.botRecipientUnknown', { names, bot }, `No paired ${bot} chat matches: ${names}`);
     }
     sendLog(`⚠️ [Bot] No paired ${bot} chat matches ${names} — sending to the others`);
   }
-  return { targets: named.targets, everyone: named.everyone };
+  return { targets, everyone, picked: new Set(mine.targets) };
+}
+
+async function recipientDirectory(deps: FlowExecutorDeps): Promise<RecipientDirectory> {
+  return deps.getBotRecipients ? deps.getBotRecipients().catch(() => EMPTY_RECIPIENT_DIRECTORY) : EMPTY_RECIPIENT_DIRECTORY;
+}
+
+/**
+ * LINE PC: whether a recipient token is the step's own choice — written in the saved step, or the
+ * chat the run was asked from (`{{bot.triggerChatId}}`) — rather than text a variable filled in (a
+ * bot command's input, a step's output that may come from a web page). Every LINE PC message goes
+ * from the owner's own account, so only the step's own choices may be any group or friend LINE PC
+ * has; whoever or whatever fills a variable reaches only the chats it reached before.
+ */
+export function writtenInStep(config: Record<string, string>): (token: string) => boolean {
+  const template = config.__originalChatIdsTemplate;
+  if (template === undefined) return () => true;
+  const written = new Set(splitTargets(template).filter((token) => !token.includes('{{')));
+  const asking = (config.__triggerChatId ?? '').trim();
+  return (token) => written.has(token) || (asking !== '' && token === asking);
+}
+
+const UNNAMED_LINE_SELF_ERRORS: Readonly<Record<string, string>> = {
+  'flow.error.lineSelfKeyMissing': 'flow.error.lineSelfKeyMissingUnnamed',
+  'flow.error.lineSelfSealingOff': 'flow.error.lineSelfSealingOffUnnamed',
+} as const;
+
+/**
+ * A LINE PC refusal names the chat — one of the owner's own groups or friends. A run someone else
+ * started gets its failure back in their chat, so there it only says one of the step's chats
+ * refused; at the desktop, on a schedule, or asked from an account marked as the user's, the name stays.
+ */
+async function unnamedForOthers(err: unknown, config: Record<string, string>, deps: FlowExecutorDeps): Promise<unknown> {
+  if (!(err instanceof FlowUserError)) return err;
+  const unnamed = UNNAMED_LINE_SELF_ERRORS[err.key];
+  const asker = (config.__triggerUserId ?? '').trim();
+  if (!unnamed || !asker) return err;
+  const platform = parseBotPlatform(config.__triggerPlatform);
+  const directory = await recipientDirectory(deps);
+  if (directory.entries.some((entry) => entry.self && entry.platform === platform && entry.id === asker)) return err;
+  return new FlowUserError(unnamed, {}, err.message);
 }
 
 interface SocketSendParts {
@@ -843,6 +979,8 @@ interface SocketSendParts {
   rawTargets: string[];
   originalChatIdsTemplate: string;
   everyone: boolean;
+  /** The recipients the step chose itself (`writtenInStep`): on LINE PC, any group or friend it has. */
+  picked: ReadonlySet<string>;
 }
 
 /**
@@ -866,11 +1004,17 @@ async function execBotSocket(
     return attachment || message;
   }
   if (!deps.sendSocketBot) throw new Error(`${name} bot is not configured in FlowExecutorDeps`);
-  const recipients = rawTargets.length > 0
+  // Once each: a name and its id in one field are one chat.
+  const recipients = [...new Set(rawTargets.length > 0
     ? rawTargets
-    : (deps.getSocketBotPairedUsers?.(platform) ?? []).map((user) => user.userId);
+    : (deps.getSocketBotPairedUsers?.(platform) ?? []).map((user) => user.userId))];
   if (recipients.length === 0) {
     throw new FlowUserError('flow.error.noPairedUsers', { bot: name }, `No paired ${name} users found`);
+  }
+  // Every LINE PC message goes from the user's own account: refused before any goes, not cut short.
+  if (platform === 'lineSelf' && recipients.length > LINE_SELF_MAX_RECIPIENTS) {
+    const vars = { count: String(recipients.length), max: String(LINE_SELF_MAX_RECIPIENTS) };
+    throw new FlowUserError('flow.error.lineSelfTooManyRecipients', vars, `This LINE PC step names ${vars.count} chats; one step may send to at most ${vars.max}, so nothing was sent`);
   }
 
   const caption = attachment ? (explicitAttachment ? message : legacyMagicCaption).trim() : message;
@@ -885,18 +1029,23 @@ async function execBotSocket(
   }
   const text = [caption.trim(), ...links].filter(Boolean).join('\n');
   const buttons = socketButtons(config);
-  if (!text && files.length === 0 && pictures.length === 0) return '';
+  if (!text && files.length === 0 && pictures.length === 0) throw nothingToSend();
 
   const askingChat = (config.__triggerChatId ?? '').trim();
   const askingMessage = (config.__triggerMessageId ?? '').trim();
   for (const chatId of recipients) {
-    await deps.sendSocketBot(platform, chatId, {
-      text,
-      ...(files.length > 0 ? { files } : {}),
-      ...(pictures.length > 0 ? { pictures } : {}),
-      ...(buttons.length > 0 ? { buttons } : {}),
-      ...(askingMessage && chatId === askingChat ? { replyTo: askingMessage } : {}),
-    });
+    try {
+      await deps.sendSocketBot(platform, chatId, {
+        text,
+        ...(files.length > 0 ? { files } : {}),
+        ...(pictures.length > 0 ? { pictures } : {}),
+        ...(buttons.length > 0 ? { buttons } : {}),
+        ...(askingMessage && chatId === askingChat ? { replyTo: askingMessage } : {}),
+        ...(platform === 'lineSelf' && parts.picked.has(chatId) ? { picked: true as const } : {}),
+      });
+    } catch (err: unknown) {
+      throw platform === 'lineSelf' ? await unnamedForOthers(err, config, deps) : err;
+    }
     sendLog(`📤 [Bot] Sent to ${name} chat ${chatId}${files.length > 0 ? ` with ${files.length} file(s)` : ''}`);
   }
   return attachment || message;
@@ -1030,7 +1179,8 @@ async function execBotLine(
 
   if (await sendLineMenu(deps, recipients, parts)) return explicitAttachment || (parts.menuText ?? '');
 
-  const message = await sendLineCards(deps, recipients, parts) ? parts.message : parts.cardsFallback ?? parts.message;
+  const cardsSent = await sendLineCards(deps, recipients, parts);
+  const message = cardsSent ? parts.message : parts.cardsFallback ?? parts.message;
 
   const attachment = explicitAttachment || legacyMagicPath;
   const caption = (explicitAttachment ? message : legacyMagicCaption).trim();
@@ -1076,7 +1226,10 @@ async function execBotLine(
     return attachment;
   }
 
-  if (!message) return '';
+  if (!message.trim()) {
+    if (cardsSent) return '';
+    throw nothingToSend();
+  }
   await sendLineTextToAll(deps, recipients, message);
   return message;
 }

@@ -1,7 +1,8 @@
 import type {
-  AgentFlowEditSummary, AgentFlowRecipient, AgentPendingFlow, AgentPendingFlowHold, FlowBuildIssue, FlowDefinition, SkillType,
+  AgentFlowEditSummary, AgentFlowRecipient, AgentPendingFlow, AgentPendingFlowHold, BotPlatform, FlowBuildIssue, FlowDefinition, SkillType,
 } from '../../../shared/types';
 import { actsAsOwner, flowReadsOwnerData } from '../../../shared/botCommandAccess';
+import { LINE_SELF_MAX_RECIPIENTS } from '../../../shared/botRecipients';
 import { SENSITIVE_STEP_TYPES } from '../flowRevision';
 
 /**
@@ -31,10 +32,11 @@ const ISSUE_TEXT: Record<FlowBuildIssue['kind'], (issue: FlowBuildIssue) => stri
   setup: (issue) => `step ${issue.step} (${issue.skill}) needs ${issue.detail} to be set up first`,
   recipient: (issue) => `step ${issue.step} (${issue.skill}) sends to "${issue.detail}", which matches no paired chat or several — the user picks the recipient in that step`,
   broadcast: (issue) => `step ${issue.step} (${issue.skill}) sends to all ${issue.detail} paired people — say so, in case they meant only themself`,
+  tooManyRecipients: (issue) => `step ${issue.step} (${issue.skill}) sends to ${issue.detail} LINE PC chats, more than one step may (${LINE_SELF_MAX_RECIPIENTS}) — the run will refuse it until the user removes some`,
 };
 
 /** The "must say so" block: without it, a cheerful "done!" over a flow that will not work is the reply. */
-export function renderIssueLines(issues: readonly FlowBuildIssue[]): string[] {
+function renderIssueLines(issues: readonly FlowBuildIssue[]): string[] {
   if (issues.length === 0) return [];
   return [
     'Needs the user to check, and you must say so rather than report plain success:',
@@ -50,6 +52,8 @@ export function renderIssueLines(issues: readonly FlowBuildIssue[]): string[] {
  */
 export interface FlowHold {
   owner: boolean;
+  /** The account asking in the chat: a LINE PC step to anyone else acts as the owner (`actsAsOwner`). */
+  asker?: { platform: BotPlatform; userId: string };
 }
 
 /** A held flow handed from `build_flow` / `edit_flow` to the engine, which pauses the run on it. */
@@ -62,7 +66,7 @@ export interface FlowSaveRequest {
 }
 
 /** Issues that make a flow fail on its first run; the others are worth reading but do not stop it. */
-const ISSUES_THAT_HOLD = new Set<FlowBuildIssue['kind']>(['blank', 'setup', 'recipient']);
+const ISSUES_THAT_HOLD = new Set<FlowBuildIssue['kind']>(['blank', 'setup', 'recipient', 'tooManyRecipients']);
 
 /**
  * Why an admin who is not the owner may not switch this flow on, judged on the whole flow: it reads
@@ -73,7 +77,7 @@ const ISSUES_THAT_HOLD = new Set<FlowBuildIssue['kind']>(['blank', 'setup', 'rec
 export function ownerOnlyReason(flow: FlowDefinition, hold: FlowHold): 'ownerData' | 'ownerActs' | undefined {
   if (hold.owner) return undefined;
   if (flowReadsOwnerData(flow)) return 'ownerData';
-  if (actsAsOwner(flow.steps)) return 'ownerActs';
+  if (actsAsOwner(flow.steps, hold.asker)) return 'ownerActs';
   return undefined;
 }
 

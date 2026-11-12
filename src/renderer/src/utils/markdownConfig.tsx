@@ -15,6 +15,7 @@ import { citationHost } from '../../../shared/citations';
 import { isHttpUrl } from '../../../shared/webUrl';
 import { useKatexPlugins } from './katexRuntime';
 import { rehypeTightTableColumns } from './markdownTableColumns';
+import { rehypeCitationChips } from './citationChips';
 import { remarkHtmlTags } from './markdownHtmlTags';
 import { remarkAlerts } from './markdownAlerts';
 import { fillTemplate } from '../../../shared/fillTemplate';
@@ -67,7 +68,7 @@ function footnoteOptions(labels: MarkdownLabels | null, prefix: string): RemarkR
  * testing for `$$` alone: by the time it is asked, every formula worth rendering
  * already carries those delimiters.
  */
-export const BaseMarkdown: React.FC<{ children: string; components: Components }> = ({ children, components }) => {
+export const BaseMarkdown: React.FC<{ children: string; components: Components; citationChips?: boolean }> = ({ children, components, citationChips = false }) => {
   const labels = useContext(MarkdownLabelsContext);
   const id = useId().replace(/[^a-zA-Z0-9]/g, '');
   const source = useMemo(
@@ -77,7 +78,10 @@ export const BaseMarkdown: React.FC<{ children: string; components: Components }
   const katexPlugins = useKatexPlugins(source);
   const remark = useMemo(() => buildRemarkPlugins(labels), [labels]);
   const remarkRehypeOptions = useMemo(() => footnoteOptions(labels, `md${id}-`), [labels, id]);
-  const rehypePlugins = useMemo(() => [rehypeTightTableColumns, ...katexPlugins], [katexPlugins]);
+  const rehypePlugins = useMemo(
+    () => [rehypeTightTableColumns, ...(citationChips ? [rehypeCitationChips] : []), ...katexPlugins],
+    [katexPlugins, citationChips],
+  );
   return (
     <ReactMarkdown
       remarkPlugins={remark}

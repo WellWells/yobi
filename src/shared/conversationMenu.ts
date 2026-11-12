@@ -60,10 +60,6 @@ function parseMenuFolders(value: unknown): ConversationMenuFolder[] | undefined 
   return folders;
 }
 
-export function isConversationMenuCommand(value: unknown): value is ConversationMenuCommand {
-  return typeof value === 'string' && (CONVERSATION_MENU_COMMANDS as readonly string[]).includes(value);
-}
-
 /** The renderer's report: a target, null for "none open", undefined when it makes no sense. */
 export function parseConversationMenuTarget(value: unknown): ConversationMenuTarget | null | undefined {
   if (value === null) return null;

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Box, Group, Loader, Menu, ScrollArea, Text, Tooltip } from '@mantine/core';
-import { Check, ChevronDown, Copy, Quote, TriangleAlert } from 'lucide-react';
+import { Check, ChevronDown, Copy, Quote, TriangleExclamationPoint } from 'lucide-react';
 import { languageDisplayName, type TranslateLanguage } from '../../../../../shared/translateLanguages';
 import { clipboardApi } from '../../../api/electronApi';
 import { useI18nStore } from '../../../store/i18nStore';
@@ -62,7 +62,7 @@ export const SelectionTranslatePanel: React.FC<SelectionTranslatePanelProps> = (
 
       {state.status === 'error' && (
         <Group gap={8} wrap="nowrap" align="flex-start">
-          <Box c="var(--mantine-color-error)" style={{ lineHeight: 0, paddingTop: 2 }}><TriangleAlert size={14} /></Box>
+          <Box c="var(--mantine-color-error)" style={{ lineHeight: 0, paddingTop: 2 }}><TriangleExclamationPoint size={14} /></Box>
           <Text component="div" fz="var(--font-size-sm)" c="var(--mantine-color-error)">{state.error}</Text>
         </Group>
       )}

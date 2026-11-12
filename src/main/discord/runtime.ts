@@ -13,6 +13,7 @@ import {
   parseButtonData,
   type ChoicePress,
 } from '../botChat/buttons';
+import { pageAnalyzeChoice, pageForwardForChat } from '../botChat/pageForward';
 import { unfoldExpandableQuotes } from '../../shared/expandableQuote';
 import { DiscordGateway, type GatewaySocketFactory } from './gateway';
 import { DiscordApiError, createDiscordRest, type DiscordActionRow, type DiscordButton, type DiscordFile, type DiscordRest } from './rest';
@@ -224,6 +225,15 @@ export class DiscordRuntime extends SocketBotRuntime<DiscordTextEvent> {
     }
     if (!result.ok) {
       await this.post(event.channelId, { text: `${t(s, 'bot.chat.runFailed', { provider: result.providerLabel })}\n${result.text}`, ...replyTo });
+      return true;
+    }
+    if (result.pageForward) {
+      await this.post(event.channelId, withPictureLinks({
+        text: pageForwardForChat(result.pageForward, s),
+        pictures: result.pageForward.images,
+        buttons: [pageAnalyzeChoice(result.pageForward, s)],
+        ...replyTo,
+      }), { markdown: true });
       return true;
     }
     await this.post(event.channelId, {

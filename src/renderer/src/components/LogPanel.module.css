@@ -1,3 +1,22 @@
+/* The log is a page of Settings, beside its nav: the toolbar answers to the pane's width. Too
+   narrow for one line, the level chips move to a row of their own under the search, the count and
+   the buttons. Two classes: Mantine's Group sets its no-wrap from its own class. */
+.panel {
+  container-type: inline-size;
+}
+
+@container (max-width: 599px) {
+  .panel .toolbar {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  .levels {
+    order: 1;
+    flex-basis: 100%;
+  }
+}
+
 /* Baseline, not top: the 11px level/scope tags share one text line with the 14px time and message. */
 .logEntry {
   display: flex;
@@ -88,8 +107,9 @@
    enough to skip when following the message column, and clickable to narrow the
    panel to that run — hence the pointer and the hover lift. */
 .scope {
-  flex-shrink: 0;
-  max-width: 240px;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: min(240px, 35%);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -110,14 +130,78 @@
   opacity: 1;
 }
 
-/* One row per entry so the time and level columns stay aligned; the full text is in the export and
-   the log file. min-width:0 lets the flex child shrink enough to ellipsize. */
+.message {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The per-row copy button shows only on the row under the pointer or holding focus, so the list
+   is not a column of identical icons; it stays in the tab order. Touch screens keep it shown. */
+.copyEntry {
+  flex-shrink: 0;
+  align-self: flex-start;
+  line-height: 0;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.logEntry:hover .copyEntry,
+.logEntry:focus-within .copyEntry {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .copyEntry {
+    opacity: 1;
+  }
+}
+
+/* Preserve newlines and wrap long tokens; the virtualizer measures each entry's actual height. */
 .logText {
   line-height: 1.6;
   flex: 1;
   min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   user-select: text;
+}
+
+/* Keep the message readable when metadata would otherwise take most of the pane's width. */
+@container (max-width: 599px) {
+  .logEntry {
+    display: grid;
+    grid-template-columns: 54px max-content minmax(0, 1fr) 22px;
+    row-gap: 0;
+  }
+
+  .message {
+    display: contents;
+  }
+
+  .level {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .logTime {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .scope {
+    grid-column: 3;
+    grid-row: 1;
+    max-width: 100%;
+    justify-self: start;
+  }
+
+  .copyEntry {
+    grid-column: 4;
+    grid-row: 1;
+  }
+
+  .logText {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
 }

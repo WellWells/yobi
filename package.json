@@ -1,6 +1,6 @@
 {
   "name": "yobi",
-  "version": "1.11.0",
+  "version": "1.12.0",
   "description": "Desktop AI automation: scheduled flows, chat, global hotkeys and Telegram/LINE bots that drive the Gemini, Claude, ChatGPT and Perplexity web apps without an API key (or with your own).",
   "author": "WellsTsai",
   "repository": {
@@ -12,7 +12,7 @@
   },
   "homepage": "https://github.com/WellWells/yobi#readme",
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=24.0.0"
   },
   "main": "out/main/entry.cjs",
   "scripts": {
@@ -41,6 +41,7 @@
     "chatgpt",
     "gemini",
     "perplexity",
+    "deepseek",
     "telegram-bot",
     "line-bot",
     "global-hotkey",
@@ -55,44 +56,44 @@
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/modifiers": "^9.0.0",
     "@dnd-kit/sortable": "^10.0.0",
-    "@fuman/node": "0.0.22",
+    "@fuman/node": "0.0.23",
     "@grammyjs/conversations": "^2.1.1",
-    "@line/bot-sdk": "^11.2.0",
-    "@mantine/core": "^9.6.1",
-    "@mantine/hooks": "^9.6.1",
-    "@mantine/notifications": "^9.6.1",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@line/bot-sdk": "^11.4.0",
+    "@mantine/core": "^9.8.0",
+    "@mantine/hooks": "^9.8.0",
+    "@mantine/notifications": "^9.8.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@mozilla/readability": "0.6.0",
-    "@mtcute/core": "0.32.5",
-    "@mtcute/wasm": "0.32.0",
-    "@tanstack/react-virtual": "^3.14.13",
+    "@mtcute/core": "0.32.7",
+    "@mtcute/wasm": "0.32.6",
+    "@tanstack/react-virtual": "^3.14.26",
     "adm-zip": "^0.6.1",
     "better-sqlite3-multiple-ciphers": "^13.0.3",
     "cheerio": "^1.2.0",
     "country-flag-icons": "^1.6.20",
     "dayjs": "^1.11.23",
-    "electron-store": "^11.0.2",
-    "electron-updater": "^6.8.9",
+    "electron-store": "^12.0.0",
+    "electron-updater": "^6.8.11",
     "fdir": "^6.5.0",
     "grammy": "^1.46.0",
     "ical.js": "^2.2.1",
-    "imapflow": "^2.9.1",
+    "imapflow": "^2.11.0",
     "jsonrepair": "^3.15.0",
-    "katex": "^0.18.7",
-    "koffi": "^3.3.6",
-    "linkedom": "0.18.14",
-    "lucide-react": "^1.47.0",
-    "mailparser": "^3.12.4",
-    "marked": "^18.0.13",
-    "mermaid": "^12.0.0",
+    "katex": "^0.19.1",
+    "koffi": "^3.3.7",
+    "linkedom": "0.18.15",
+    "lucide-react": "^1.70.0",
+    "mailparser": "^3.14.2",
+    "marked": "^18.1.3",
+    "mermaid": "^12.3.0",
     "node-cron": "^4.6.0",
-    "nodemailer": "^10.0.10",
+    "nodemailer": "^10.4.0",
     "opencc-js": "^1.4.2",
     "openpgp": "^6.3.2",
-    "prettier": "^3.9.8",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
-    "react-dropzone": "^20.1.2",
+    "prettier": "^3.9.10",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-dropzone": "^20.2.0",
     "react-markdown": "^10.1.0",
     "react-simple-code-editor": "^0.14.1",
     "rehype-katex": "^7.0.1",
@@ -100,32 +101,32 @@
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
     "remark-parse": "^11.0.0",
-    "shiki": "^4.4.3",
-    "systeminformation": "^5.33.13",
+    "shiki": "^4.6.0",
+    "systeminformation": "^5.33.19",
     "thunderbird-mcp": "github:TKasperczyk/thunderbird-mcp#v0.7.4",
-    "tokenx": "^2.1.0",
+    "tokenx": "^2.2.0",
     "tsdav": "2.5.0",
-    "tyme4ts": "^1.5.3",
+    "tyme4ts": "^1.5.5",
     "unified": "^11.0.5",
-    "unpdf": "^1.9.1",
-    "zustand": "^5.0.15"
+    "unpdf": "^2.1.0",
+    "zustand": "^5.1.0"
   },
   "devDependencies": {
-    "@types/node": "^26.6.2",
+    "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^6.1.1",
-    "electron": "^44.4.3",
-    "electron-builder": "^26.16.1",
-    "happy-dom": "^20.14.5",
+    "@vitejs/plugin-react": "^6.3.0",
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0",
+    "happy-dom": "^21.0.4",
     "png-to-ico": "^3.0.2",
     "png2icons": "^2.0.1",
-    "postcss": "^8.5.28",
+    "postcss": "^8.5.32",
     "postcss-preset-mantine": "^1.18.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
-    "vite": "^8.3.0",
-    "vitest": "^5.0.1"
+    "vite": "^8.3.7",
+    "vitest": "^5.1.0"
   },
   "build": {
     "appId": "com.wellstsai.yobi",
@@ -139,7 +140,6 @@
       "out/**/*",
       "!out/**/*.js.map",
       "!out/**/*.css.map",
-      "!out/selftest/**",
       "!out/*.tsbuildinfo",
       "!node_modules/**/*",
       "node_modules/better-sqlite3-multiple-ciphers/package.json",
@@ -172,6 +172,13 @@
       }
     ],
     "extraResources": [
+      {
+        "from": "assets/skills/",
+        "to": "skills/",
+        "filter": [
+          "**/*"
+        ]
+      },
       {
         "from": "assets/",
         "to": "assets/",
@@ -241,6 +248,9 @@
   },
   "overrides": {
     "katex": "$katex",
-    "lodash-es": "^4.18.1"
+    "lodash-es": "^4.18.1",
+    "node-fetch": {
+      "whatwg-url": "^17.3.0"
+    }
   }
 }

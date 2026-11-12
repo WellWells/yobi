@@ -1,10 +1,10 @@
 import React from 'react';
 import { Box, Group, Text } from '@mantine/core';
-import { CheckCircle2, TriangleAlert, XCircle } from 'lucide-react';
+import { CircleCheck, TriangleExclamationPoint, CircleX } from 'lucide-react';
 
 export type StatusTone = 'success' | 'error' | 'warning';
 
-const ICONS = { success: CheckCircle2, error: XCircle, warning: TriangleAlert } as const;
+const ICONS = { success: CircleCheck, error: CircleX, warning: TriangleExclamationPoint } as const;
 const ICON_COLOR = {
   success: 'var(--mantine-color-success)',
   error: 'var(--mantine-color-error)',

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActionIcon, Box, Group, Progress, Stack, Text, Tooltip } from '@mantine/core';
-import { Brain, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { Brain, Pencil, Plus, Sparkles, Trash } from 'lucide-react';
 import { useUserMemoryStore } from '../../../store/userMemoryStore';
 import { MemoryCurateModal } from './MemoryCurateModal';
 import { AppButton } from '../../../components/AppButton';
@@ -66,7 +66,7 @@ const EntryRow: React.FC<{
           <Tooltip label={t('settings.memory.delete')} position="top">
             {/* Confirmed first: forgetting is final, no backup is kept. */}
             <ActionIcon variant="subtle" size={26} aria-label={t('settings.memory.delete')} onClick={() => onRequestDelete(entry)}>
-              <Trash2 size={13} />
+              <Trash size={13} />
             </ActionIcon>
           </Tooltip>
         </Group>
@@ -199,7 +199,7 @@ export const MemorySection: React.FC<Props> = ({
 
           {snapshot.entries.length > 0 && (
             <Group justify="flex-end" gap={8}>
-              <AppButton variant="outline" color="red" size="xs" leftSection={<Trash2 size={13} />} onClick={() => setConfirmClear(true)}>
+              <AppButton variant="outline" color="red" size="xs" leftSection={<Trash size={13} />} onClick={() => setConfirmClear(true)}>
                 {t('settings.memory.clear')}
               </AppButton>
             </Group>

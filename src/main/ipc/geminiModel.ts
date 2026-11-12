@@ -15,7 +15,12 @@ import { refreshModelList } from './modelListRefresh';
 /** Reads Gemini's model list into the cache when it is missing or stale (or `force`). */
 export function refreshGeminiModelList(force = false): Promise<void> {
   return refreshModelList(
-    { provider: 'gemini', catalog: () => config.geminiModelCatalog, refresh: refreshGeminiModels, requireSignIn: false },
+    {
+      provider: 'gemini',
+      catalog: () => config.geminiModelCatalog,
+      refresh: (worker) => refreshGeminiModels(worker, force),
+      requireSignIn: false,
+    },
     force,
   );
 }

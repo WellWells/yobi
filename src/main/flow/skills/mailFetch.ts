@@ -15,6 +15,9 @@ import { envelope } from './dataSources';
 import { LEGACY_MAIL_ACCOUNT_ID, splitMailId } from '../../mail/mailIds';
 import type { MailService } from '../../mail/mailService';
 import type { MailSummary } from '../../mail/mailMessage';
+import { MAIL_FETCH_MAX_SEARCHES, splitTerms } from '../../../shared/flowListTerms';
+
+export { splitTerms };
 
 export const MAIL_FETCH_DEFAULT_DAYS = 1;
 export const MAIL_FETCH_MAX_DAYS = 60;
@@ -22,7 +25,7 @@ export const MAIL_FETCH_DEFAULT_LIMIT = 10;
 export const MAIL_FETCH_MAX_LIMIT = 20;
 export const MAIL_FETCH_BODY_CHARS = 4_000;
 /** Searches one step may run: every sender × every keyword, each one IMAP SEARCH. */
-const MAX_SEARCHES = 12;
+const MAX_SEARCHES = MAIL_FETCH_MAX_SEARCHES;
 /** Mail remembered as carrying no attachment ("only with attachments" off Gmail), newest kept. */
 export const MAIL_FETCH_NO_ATTACHMENT_MAX = 5_000;
 
@@ -49,11 +52,6 @@ export interface MailFetchDeps {
   service: () => Promise<MailService>;
   checkpoints: CheckpointStore<MailFetchCheckpoint>;
   log: (line: string) => void;
-}
-
-/** Comma-separated words, trimmed, blanks dropped. */
-export function splitTerms(raw: string | undefined): string[] {
-  return (raw ?? '').split(/[,，、]/).map((term) => term.trim()).filter(Boolean);
 }
 
 function quoted(value: string): string {

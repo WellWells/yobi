@@ -120,11 +120,6 @@ function planJson(p: SendFilesPlan): SendFilesPlan {
   };
 }
 
-/** The MEDIA_CONTENT_INFO LINE for PC attaches to a photo. */
-export function mediaContentInfo(j: PreparedFile): string {
-  return JSON.stringify({ category: 'original', animated: false, extension: j.ext, width: j.file.width ?? 0, height: j.file.height ?? 0, fileSize: j.file.bytes });
-}
-
 function errorParts(err: unknown): { code: string; message: string } {
   if (isLineError(err)) return { code: err.code, message: err.message };
   return { code: 'SEND_FAILED', message: err instanceof Error ? err.message : String(err) };

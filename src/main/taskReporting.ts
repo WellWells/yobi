@@ -8,6 +8,7 @@ import { deleteTempAttachments } from './telegram/fileDownload';
 import { keepUnansweredShellTurn } from './chat/shellTurns';
 import { resolveTaskChatContext } from './chat/taskChatContext';
 import { isTempChatMode } from './tempChat';
+import { wasStopped } from './chat/taskStop';
 import { IPC } from '../shared/types';
 import type { ChatTurnEvent, Task } from '../shared/types';
 import type { TelegramRuntime } from './telegram';
@@ -46,7 +47,7 @@ export function claimLocalNotification(task: Task): boolean {
  * A `!` command whose output got no answer still keeps its turn: written first, then the error
  * says the file changed, so the chat reloads it rather than dropping the command.
  */
-async function reportUnansweredShellTurn(task: Task, message: string): Promise<void> {
+async function reportUnansweredShellTurn(task: Task, message: string, stopped: boolean): Promise<void> {
   const kept = task.shell
     ? await keepUnansweredShellTurn({
       prompt: task.displayPrompt ?? '',
@@ -60,8 +61,9 @@ async function reportUnansweredShellTurn(task: Task, message: string): Promise<v
     sendId: task.sendId ?? '',
     conversationPath: kept ?? task.conversationPath ?? '',
     phase: 'error',
-    error: message,
+    error: stopped ? '' : message,
     ...(kept !== null ? { kept: true as const } : {}),
+    ...(stopped ? { stopped: true as const } : {}),
   } satisfies ChatTurnEvent);
   if (kept) sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
   else if (kept === null && task.conversationPath && await discardEmptyConversation(task.conversationPath)) {
@@ -71,18 +73,28 @@ async function reportUnansweredShellTurn(task: Task, message: string): Promise<v
 
 export function reportChatTurnFailure(task: Task, message: string): void {
   if (!claimChatTurnReport(task)) return;
+  // Stopped by the user: nothing to show, whichever path reports first (the queue or the worker).
+  const stopped = wasStopped(task);
   if (task.shell) {
-    void reportUnansweredShellTurn(task, message);
+    void reportUnansweredShellTurn(task, message, stopped);
     return;
   }
+  reportSendFailure(task.sendId ?? '', task.conversationPath ?? '', stopped ? '' : message, stopped);
+}
+
+/**
+ * A chat send that ends without an answer: the one CHAT_TURN that clears its "sending" bubble.
+ * Also used for a send refused before it became a task (reading the pasted link failed).
+ */
+export function reportSendFailure(sendId: string, conversationPath: string, message: string, stopped = false): void {
   sendToRenderer(IPC.CHAT_TURN, {
-    sendId: task.sendId ?? '',
-    conversationPath: task.conversationPath ?? '',
+    sendId,
+    conversationPath,
     phase: 'error',
     error: message,
+    ...(stopped ? { stopped: true as const } : {}),
   } satisfies ChatTurnEvent);
 
-  const { conversationPath } = task;
   if (!conversationPath) return;
   void discardEmptyConversation(conversationPath).then(async (removed) => {
     if (removed) sendToRenderer(IPC.FILE_LIST, await listOutputFiles());
@@ -139,6 +151,11 @@ export async function notifyQueueLevelFailure(
   providerLabelFor: (targetUrl: string) => string,
   onLog: (message: string) => void,
 ): Promise<void> {
+  if (wasStopped(task)) {
+    onLog(`[${task.id}] 🛑 Stopped by the user`);
+    reportChatTurnFailure(task, '');
+    return;
+  }
   const strings = getLangCache();
   const message = queueFailureMessage(err, strings);
 

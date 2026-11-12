@@ -15,7 +15,7 @@ export const YTDLP_SAFETY_ARGS: readonly string[] = ['--ignore-config', '--no-pl
  * The JS runtime yt-dlp runs a site's player code with: Yobi's own executable as Node.
  * `--js-runtimes` appends to the default (deno); clearing first keeps a Deno on PATH out of it.
  */
-export function jsRuntimeArgs(nodePath: string): string[] {
+function jsRuntimeArgs(nodePath: string): string[] {
   return ['--no-js-runtimes', '--js-runtimes', `node:${nodePath}`];
 }
 

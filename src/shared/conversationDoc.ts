@@ -8,6 +8,7 @@ import type { TurnProviderSwitch } from './providerFallback';
 import { turnButtonCommands } from './builtinFlows';
 import { isStoryLink, parseXMediaInput } from './xMedia';
 import { isLocalFilePath, turnMediaKind } from './turnMedia';
+import { cleanRecap } from './recap';
 
 export interface ThreadMeta {
   v: 1;
@@ -109,6 +110,11 @@ export interface TurnMeta {
   tx?: 1;
   /** Agent run id, so the turn can reopen the reasoning trace that produced it. */
   r?: string;
+  /**
+   * The run's last step title, the finished line of its trace. Written only beside `r`; nothing
+   * replays, searches, shares or exports it. Read through `readStepTitle`, which checks the shape.
+   */
+  st?: string;
   /** Choices offered by an agent question, rendered as buttons while that question is unanswered. */
   ch?: string[];
   /** What this reply changed in the user's memory, as the program applied it. */
@@ -180,6 +186,15 @@ export interface TurnShell {
   x?: number;
   /** Stopped by the user before it finished. */
   k?: 1;
+}
+
+/** Longest stored step title drawn, the same 60 code points `readDoing` kept; the file may have been edited by hand. */
+const STEP_TITLE_MAX = 60;
+
+/** The trace's finished line, or null for no title or a hand-broken value. */
+export function readStepTitle(meta: Pick<TurnMeta, 'st'> | undefined): string | null {
+  const title: unknown = meta?.st;
+  return typeof title === 'string' ? cleanRecap(title, STEP_TITLE_MAX) || null : null;
 }
 
 /** Every item "all" takes of a person's stories (`MAX_STORY_ITEMS`), so the turn shows them all. */
@@ -391,6 +406,25 @@ export function withLeadingBom<T extends string | null>(raw: string, edit: (body
   if (!raw.startsWith(BOM)) return edit(raw);
   const edited = edit(withoutBom(raw));
   return (edited === null ? edited : `${BOM}${edited}`) as T;
+}
+
+/**
+ * The file with `# title` as its first line (after a BOM): a CRLF file keeps its line ending, and a
+ * file without an H1 gets one in front. Null when the H1 already says it, so nothing is written.
+ */
+export function withConversationTitle(raw: string, title: string): string | null {
+  const heading = `# ${title}`;
+  return withLeadingBom(raw, (body) => {
+    const lines = body.split('\n');
+    const firstLine = lines[0]?.trim() ?? '';
+    if (firstLine === heading) return null;
+    if (/^#\s+/.test(firstLine)) {
+      lines[0] = lines[0]?.endsWith('\r') ? `${heading}\r` : heading;
+    } else {
+      lines.unshift(heading, '');
+    }
+    return lines.join('\n');
+  });
 }
 
 function classify(heading: string, aliases: ConversationHeadingAliases): HeadingKind | null {
@@ -767,6 +801,27 @@ function withTurnMeta(
     const marker = inserts.get(i);
     return marker ? [marker, line] : [line];
   }).join('\n');
+}
+
+/**
+ * The file with turn `index` and every turn after it removed; `null` when there is no such turn.
+ * The title, the thread marker and the turns before it stay byte for byte (a CRLF file keeps its
+ * line endings); the cut starts at the turn's marker line, so no orphaned marker is left behind.
+ */
+export function truncateTurnsFrom(
+  raw: string,
+  aliases: ConversationHeadingAliases,
+  index: number,
+): string | null {
+  return withLeadingBom(raw, (body) => {
+    const lines = splitLines(body);
+    const target = locateTurns(lines, scan(lines, aliases))[index];
+    if (!target) return null;
+    const cut = target.markerLine >= 0 ? target.markerLine : target.start;
+    const eol = body.includes('\r\n') ? '\r\n' : '\n';
+    const kept = lines.slice(0, cut).join(eol).replace(/\s+$/, '');
+    return kept ? `${kept}${eol}` : '';
+  });
 }
 
 /** The text a reader sees: no `yobi:` marker lines and no leading BOM (it is no text either). */

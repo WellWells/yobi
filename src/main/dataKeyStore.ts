@@ -1,7 +1,7 @@
 import type Store from 'electron-store';
 import { openStoreWithRecovery } from './configStore';
 import { getConfigDir } from './configPaths';
-import { decryptToken, decryptTokenChecked, encryptToken } from './configEncryption';
+import { decryptToken, decryptTokenChecked, encryptSecret } from './configEncryption';
 import { clearSecretFailures, recordSecretFailure } from './secretHealth';
 
 export { DATA_KEY_LINE_DB, DATA_KEY_MOENV } from '../shared/types';
@@ -28,16 +28,23 @@ export function getDataKey(name: string): string {
   return value;
 }
 
-export function setDataKey(name: string, value: string): void {
+export async function setDataKey(name: string, value: string): Promise<void> {
   const trimmed = value.trim();
+  const encrypted = trimmed ? await encryptSecret(trimmed) : '';
+  // Read after the await: a write that landed meanwhile keeps its own key.
   const keys = { ...getStore().store.keys };
-  if (trimmed) {
-    keys[name] = encryptToken(trimmed);
+  if (encrypted) {
+    keys[name] = encrypted;
   } else {
     delete keys[name];
   }
   getStore().set('keys', keys);
   clearSecretFailures('dataKey', name);
+}
+
+/** What the file holds, for decrypting it ahead of the synchronous reads. */
+export function storedDataKeys(): DataKeyStoreShape {
+  return getStore().store;
 }
 
 /**
@@ -56,12 +63,12 @@ export function probeDataKeys(): void {
   for (const name of Object.keys(getStore().store.keys)) getDataKey(name);
 }
 
-export function reEncryptDataKeys(): void {
+export async function reEncryptDataKeys(): Promise<void> {
   const current = getStore().store.keys;
   const next: Record<string, string> = {};
   for (const [name, encrypted] of Object.entries(current)) {
     const plaintext = decryptToken(encrypted, `dataKey.${name}`);
-    next[name] = plaintext ? encryptToken(plaintext) : encrypted;
+    next[name] = plaintext ? await encryptSecret(plaintext, { fresh: true }) : encrypted;
   }
   getStore().set('keys', next);
 }

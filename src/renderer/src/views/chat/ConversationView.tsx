@@ -1,26 +1,26 @@
 import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Box, Flex, Group, Stack, Text } from '@mantine/core';
+import { Box, Flex, Group, Stack } from '@mantine/core';
 import { useShallow } from 'zustand/react/shallow';
 import type { ConversationDoc } from '../../../../shared/conversationDoc';
 import type { CaptureFormat, CaptureTurn } from '../../../../shared/types';
 import { sumTurnUsage } from '../../../../shared/tokenEstimate';
 import { editedAt, unsentEditedTurns } from '../../../../shared/editedReplies';
 import { NEW_CONVERSATION_KEY, useAppStore, type PendingTurn } from '../../store/appStore';
-import type { AgentChoicePick } from '../../store/useAgentRunStore';
+import { runHeldOpen, useAgentRunStore, type AgentChoicePick } from '../../store/useAgentRunStore';
 import { useI18nStore } from '../../store/i18nStore';
 import { useConversationMoves } from '../../store/conversationMoves';
 import { movedPathFor } from '../../../../shared/conversationMove';
 import { useFormatTime } from '../../hooks/useFormatTime';
 import { scrollMoveFor, useStickToBottom, type ScrollSnapshot } from '../../hooks/useStickToBottom';
-import { UserBubble } from '../../components/chat/UserBubble';
-import { PromptBody } from '../../components/chat/PromptBody';
+import { UserBubble, type PromptEditSubmit } from '../../components/chat/UserBubble';
 import { AssistantTurn } from '../../components/chat/AssistantTurn';
 import { PendingTurnBubble } from '../../components/chat/PendingTurnBubble';
 import { ShellBubble } from '../../components/chat/ShellBubble';
 import { parseShellTurnPrompt, readTurnShell } from '../../../../shared/shellBang';
 import { TokenUsageLabel } from '../../components/chat/TokenUsageLabel';
+import { ConversationTitle } from '../../components/chat/ConversationTitle';
+import type { HeaderTitleEditProps } from '../../components/chat/HeaderTitleField';
 import { readingMaxWidth, useReadingStore } from '../../store/readingStore';
-import { READING_FACE } from '../../styles/readingText';
 import { fillTemplate } from '../../../../shared/fillTemplate';
 
 const MAX_WIDTH = 720;
@@ -38,10 +38,14 @@ interface ConversationViewProps {
   onTurnButton?: (commandLine: string) => void;
   /** "Analyze" under a forwarded X post: asks the agent about the post and its replies. */
   onAnalyzeXPost?: (link: string) => void;
+  /** Renaming the open file's H1 from its title; absent for the temporary chat (no file). */
+  titleEdit?: HeaderTitleEditProps;
+  /** Sends an edited question in place of that turn and the ones after it; absent for the temporary chat. */
+  onEditPrompt?: (edit: PromptEditSubmit) => Promise<boolean>;
 }
 
-function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs, onChooseAnswer, onTurnButton, onAnalyzeXPost }: ConversationViewProps) {
-  const { t } = useI18nStore();
+function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs, onChooseAnswer, onTurnButton, onAnalyzeXPost, titleEdit, onEditPrompt }: ConversationViewProps) {
+  const t = useI18nStore((s) => s.t);
   const formatTime = useFormatTime();
   const markdownZoom = useAppStore((state) => state.markdownZoom);
   const layoutMode = useAppStore((state) => state.layoutMode);
@@ -111,17 +115,38 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
     };
   };
 
+  // An agent waiting on this conversation is answered by the next message, not by an edited one.
+  const questionWaiting = useAgentRunStore((state) => Boolean(conversationPath)
+    && state.pendingQuestion?.conversationPath === conversationPath);
+  const promptEditBlocked = pendingCount > 0
+    ? t('chat.edit.lockedSending')
+    : questionWaiting ? t('chat.edit.lockedQuestion') : null;
+  const questionBubble = (index: number, bare: boolean): React.ReactNode => {
+    const turn = conversation.turns[index];
+    return shellBubble(index, bare) ?? (
+      <UserBubble
+        prompt={turn.prompt}
+        t={t}
+        attachments={turn.meta.a}
+        attachmentFiles={turn.meta.af}
+        turnIndex={index}
+        bare={bare}
+        {...(onEditPrompt && editPath ? { onEditPrompt, editBlockedReason: promptEditBlocked } : {})}
+      />
+    );
+  };
+
   const contentRef = useRef<HTMLDivElement>(null);
   const { follow, jump } = useStickToBottom(contentRef, sideBySide ? 'side' : 'stacked');
   const seenRef = useRef<ScrollSnapshot | null>(null);
   // A layout effect, so an opened conversation is never painted at the top first.
   useLayoutEffect(() => {
     const next = { path: conversationPath, turns: turnCount, pending: pendingCount };
-    const move = scrollMoveFor(seenRef.current, next);
+    const move = scrollMoveFor(seenRef.current, next, runHeldOpen(conversation.turns.at(-1)?.meta.r));
     seenRef.current = next;
     if (move === 'jump') jump();
     else if (move === 'follow') follow();
-  }, [conversationPath, turnCount, pendingCount, follow, jump]);
+  }, [conversationPath, conversation.turns, turnCount, pendingCount, follow, jump]);
 
   /*
    * Which turn just arrived, decided during render: an effect would paint the row once at full
@@ -159,19 +184,8 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
 
   const title = conversation.title ? (
     <Group gap={10} align="flex-start" wrap="nowrap">
-      <Stack gap={4} flex={1}>
-        <Text
-          component="h1"
-          data-find-scope
-          ff={READING_FACE}
-          fz="var(--font-size-3xl)"
-          fw={700}
-          c="var(--text-primary)"
-          lh={1.4}
-          style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}
-        >
-          {conversation.title}
-        </Text>
+      <Stack gap={4} flex={1} miw={0}>
+        <ConversationTitle title={conversation.title} edit={titleEdit} t={t} />
         {totalUsage && (
           <Group gap={0}>
             <TokenUsageLabel
@@ -219,7 +233,7 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
                   paddingBottom: 20,
                 }}
               >
-                {shellBubble(index, true) ?? <Box data-find-scope><PromptBody prompt={turn.prompt} fw={500} /></Box>}
+                {questionBubble(index, true)}
               </Box>
               <Box style={{ flex: 1, minWidth: 0, borderLeft: '1px solid var(--border)', padding: '20px 4px 20px 20px' }}>
                 {turn.response ? (
@@ -258,7 +272,7 @@ function ConversationViewInner({ conversation, conversationPath, onCaptureTurnAs
               className={turnEnterClass(index)}
               onAnimationEnd={handleTurnAnimationEnd}
             >
-              {shellBubble(index, false) ?? <UserBubble prompt={turn.prompt} t={t} attachments={turn.meta.a} attachmentFiles={turn.meta.af} />}
+              {questionBubble(index, false)}
               {turn.response
                 ? (
                   <AssistantTurn

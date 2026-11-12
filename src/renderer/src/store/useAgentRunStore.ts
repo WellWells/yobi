@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AgentCommandResult, AgentRunSummary, AgentStageLabel, AgentTracePayload } from '../../../shared/types';
+import type { AgentCommandResult, AgentHelperStep, AgentRunSummary, AgentStageLabel, AgentTracePayload } from '../../../shared/types';
 import type { ResearchProgress } from '../../../shared/researchProgress';
 import { conversationMoveKey } from '../../../shared/conversationMove';
 import { readsAnyPage } from '../../../shared/builtinConnectors';
@@ -11,9 +11,56 @@ export interface AgentTraceTurn {
   status: 'thinking' | 'running' | 'ok' | 'error';
   preview?: string;
   thought?: string;
+  /** The model's own title for the step. */
+  doing?: string;
+  /** A `delegate` step: what its helper has done so far. */
+  helperSteps?: AgentHelperStep[];
   provider?: string;
   stage?: { label: AgentStageLabel; detail?: string };
   research?: ResearchProgress;
+}
+
+export interface AgentPlanState {
+  steps: string[];
+  done: number[];
+}
+
+/**
+ * The run as it stood at `done` or `question`: those events clear the rows, and the bubble stays up
+ * until the turn is written, so the line and whatever is expanded hold through that gap.
+ */
+export interface AgentRunEnding {
+  steps: AgentTraceTurn[];
+  plan?: AgentPlanState;
+  synthesizing: boolean;
+  stage?: AgentStageLabel;
+}
+
+/** One attempt of a desktop run as its one-line header shows it. */
+export interface AgentRunView {
+  startedAt: number;
+  /** The newest title the model wrote. Program text never goes here: it would outlive its step. */
+  title?: string;
+  /** Whether the user expanded it; survives a resume and carries into the finished turn. */
+  open?: boolean;
+  ending?: AgentRunEnding;
+}
+
+/** Whether the user has this run's trace expanded right now. */
+export function runHeldOpen(runId: string | undefined): boolean {
+  return Boolean(runId && useAgentRunStore.getState().runViews[runId]?.open);
+}
+
+/** Views stay after a run ends, for the finished turn to read; only so many are worth keeping. */
+const MAX_RUN_VIEWS = 32;
+
+/** Sets a view as the newest one and lets the oldest go. */
+function withRunView(views: Record<string, AgentRunView>, runId: string, view: AgentRunView): Record<string, AgentRunView> {
+  const next = { ...views };
+  delete next[runId];
+  next[runId] = view;
+  for (const oldest of Object.keys(next).slice(0, -MAX_RUN_VIEWS)) delete next[oldest];
+  return next;
 }
 
 export interface AgentPendingQuestion {
@@ -111,12 +158,14 @@ export function choiceAnswer(
 interface AgentRunStore {
   resumable: AgentRunSummary[];
   traces: Record<string, AgentTraceTurn[]>;
-  plans: Record<string, { steps: string[]; done: number[] }>;
+  plans: Record<string, AgentPlanState>;
   synthesizing: Record<string, true>;
+  runViews: Record<string, AgentRunView>;
   pendingQuestion: AgentPendingQuestion | null;
   setResumable: (list: AgentRunSummary[]) => void;
   removeResumable: (runId: string) => void;
   setPendingQuestion: (pending: AgentPendingQuestion | null) => void;
+  setRunOpen: (runId: string, open: boolean) => void;
   applyTrace: (payload: AgentTracePayload) => void;
 }
 
@@ -125,22 +174,50 @@ export const useAgentRunStore = create<AgentRunStore>((set) => ({
   traces: {},
   plans: {},
   synthesizing: {},
+  runViews: {},
   pendingQuestion: null,
 
   setResumable: (list) => set({ resumable: list }),
   removeResumable: (runId) => set((state) => ({ resumable: state.resumable.filter((r) => r.runId !== runId) })),
   setPendingQuestion: (pending) => set({ pendingQuestion: pending }),
+  setRunOpen: (runId, open) => set((state) => {
+    const view = state.runViews[runId];
+    return view ? { runViews: { ...state.runViews, [runId]: { ...view, open } } } : state;
+  }),
 
   applyTrace: ({ runId, event }) => set((state) => {
     if (event.kind === 'done' || event.kind === 'question' || event.kind === 'failed' || event.kind === 'cancelled') {
-      if (!(runId in state.traces) && !(runId in state.synthesizing) && !(runId in state.plans)) return state;
+      const abandoned = event.kind === 'failed' || event.kind === 'cancelled';
+      const view = state.runViews[runId];
+      const live = runId in state.traces || runId in state.synthesizing || runId in state.plans;
+      if (!live && !(abandoned && view)) return state;
+      const runViews = { ...state.runViews };
+      if (abandoned) delete runViews[runId];
+      // Past the guard above and only once: `question` comes twice, the second time with no rows left.
+      else if (view && !view.ending) {
+        const plan = state.plans[runId];
+        const stage = state.traces[runId]?.at(-1)?.stage?.label;
+        runViews[runId] = {
+          ...view,
+          ending: {
+            steps: state.traces[runId] ?? [],
+            synthesizing: runId in state.synthesizing,
+            ...(plan ? { plan } : {}),
+            ...(stage ? { stage } : {}),
+          },
+        };
+      }
       const traces = { ...state.traces };
       const synthesizing = { ...state.synthesizing };
       const plans = { ...state.plans };
       delete traces[runId];
       delete synthesizing[runId];
       delete plans[runId];
-      return { traces, synthesizing, plans };
+      return { traces, synthesizing, plans, runViews };
+    }
+    if (event.kind === 'started') {
+      const open = state.runViews[runId]?.open;
+      return { runViews: withRunView(state.runViews, runId, { startedAt: event.at, ...(open ? { open } : {}) }) };
     }
     if (event.kind === 'synthesizing') {
       return { synthesizing: { ...state.synthesizing, [runId]: true } };
@@ -150,16 +227,31 @@ export const useAgentRunStore = create<AgentRunStore>((set) => ({
     }
     const turns = (state.traces[runId] ?? []).slice();
     const idx = turns.findIndex((t) => t.turn === event.turn);
+    // A dialog can close after the run ended: that must not bring back an empty trace.
+    if (event.kind === 'answered' && idx < 0) return state;
     // The research checklist outlives the observation: once the step ends it is the summary line.
     const patch: Partial<AgentTraceTurn> =
       event.kind === 'thinking' ? { status: 'thinking', ...(event.provider ? { provider: event.provider } : {}) }
       : event.kind === 'tool'
-        ? { tool: event.tool, config: event.config, status: 'running', ...(event.thought ? { thought: event.thought } : {}) }
+        ? {
+          tool: event.tool,
+          config: event.config,
+          status: 'running',
+          ...(event.thought ? { thought: event.thought } : {}),
+          ...(event.doing ? { doing: event.doing } : {}),
+        }
       : event.kind === 'stage' ? { stage: { label: event.label, ...(event.detail ? { detail: event.detail } : {}) } }
+      : event.kind === 'answered' ? { stage: undefined }
       : event.kind === 'research' ? { research: event.progress }
+      : event.kind === 'helper' ? { helperSteps: [...(turns[idx]?.helperSteps ?? []), event.step] }
       : { tool: event.tool, status: event.status, preview: event.preview, stage: undefined };
     if (idx >= 0) turns[idx] = { ...turns[idx], ...patch };
     else turns.push({ turn: event.turn, status: 'thinking', ...patch });
-    return { traces: { ...state.traces, [runId]: turns } };
+    const title = event.kind === 'tool' ? event.doing : event.kind === 'helper' ? event.step.doing : undefined;
+    const view = state.runViews[runId];
+    return {
+      traces: { ...state.traces, [runId]: turns },
+      ...(title && view ? { runViews: { ...state.runViews, [runId]: { ...view, title } } } : {}),
+    };
   }),
 }));

@@ -2,9 +2,14 @@ import React, { startTransition, useCallback, useEffect, useMemo, useRef, useSta
 import { Box, Flex, Stack } from '@mantine/core';
 import { Paperclip } from 'lucide-react';
 import { Sidebar } from '../components/Sidebar';
+import { SidebarDrawer } from '../components/SidebarDrawer';
+import { closeSidebarDrawer } from '../store/sidebarDrawerStore';
+import { useNarrowWindow } from '../hooks/useNarrowWindow';
 import { MarkdownView } from '../components/MarkdownView';
 import { ExportDialog } from '../components/ExportDialog';
 import { FileHeaderBar } from '../components/chat/FileHeaderBar';
+import type { HeaderTitleEditProps } from '../components/chat/HeaderTitleField';
+import type { AiNameSource } from '../../../shared/aiName';
 import { headerTitleFor } from '../components/chat/headerMenu/headerMenuModel';
 import { useHeaderTitleEdit } from '../components/chat/headerMenu/useHeaderTitleEdit';
 import { ConversationInfoDialog } from '../components/chat/ConversationInfoDialog';
@@ -12,7 +17,7 @@ import { ConversationHistoryDialog } from '../components/chat/ConversationHistor
 import { CENTERED_MAX_WIDTH, PromptInputArea, type PromptInputAreaHandle } from '../components/chat/PromptInputArea';
 import { WelcomeHints, WelcomeScreen } from '../components/chat/WelcomeScreen';
 import { IncognitoHints, IncognitoWelcome } from '../components/chat/IncognitoWelcome';
-import { ChatHeaderRow } from '../components/chat/ChatHeaderRow';
+import { ChatHeaderRow, NewConversationContext } from '../components/chat/ChatHeaderRow';
 import { TempChatToggle } from '../components/chat/TempChatToggle';
 import { FileDragArea, FileDropZone } from '../components/chat/FileDropZone';
 import { LoginRequiredDialog } from '../components/chat/LoginRequiredDialog';
@@ -37,7 +42,8 @@ import {
 } from '../hooks/useCaptureExport';
 import { hideAppNotices, showAppNotice } from '../hooks/useUiNotifications';
 import { useExportSettingsStore } from '../store/exportSettingsStore';
-import type { AgentRunSummary, CaptureFormat, CaptureTurn } from '../../../shared/types';
+import type { AgentRunSummary, CaptureFormat, CaptureTurn, PromptRewindResult } from '../../../shared/types';
+import type { PromptEditSubmit } from '../components/chat/UserBubble';
 import { useRewriteTask } from '../hooks/useRewriteTask';
 import { builtinChatCommand, commandGroup, useChatCommands, type ChatCommand } from '../hooks/useChatCommands';
 import { useChatCommandRunner } from '../hooks/useChatCommandRunner';
@@ -57,6 +63,7 @@ import { plainNotionTitle } from '../../../shared/notion/notionDisplay';
 import { shouldShowConversationView } from './chat/conversationViewRouting';
 import { AgentResumeBanner } from '../components/chat/AgentResumeBanner';
 import { RecapLine } from '../components/chat/RecapLine';
+import { RecapButton } from '../components/chat/RecapButton';
 import { useConversationRecap } from '../hooks/useConversationRecap';
 import { useFormatTime } from '../hooks/useFormatTime';
 import { ConversationSearchOverlay } from '../components/chat/ConversationSearchOverlay';
@@ -69,6 +76,7 @@ import { TranslateConversationMenu } from '../components/chat/translate/Translat
 import { ConversationTranslateStrip } from '../components/chat/translate/ConversationTranslateStrip';
 import { useTranslateStore } from '../store/translateStore';
 import { accountApi, agentApi, fileApi, settingsApi, clipboardApi } from '../api/electronApi';
+import { useComposerStop } from '../hooks/useComposerStop';
 import { DEFAULT_MODEL_URL, visibleModels } from '../config/models';
 import { buildModelStops, nextModelStop, type ModelStop } from '../config/modelStops';
 import { chooseModelStop, modelStopSources } from '../hooks/useModelStops';
@@ -125,7 +133,7 @@ export const ChatView: React.FC = React.memo(() => {
       setAiUrl: s.setAiUrl,
     })),
   );
-  const { t } = useI18nStore();
+  const t = useI18nStore((s) => s.t);
   const pendingNewTurns = useAppStore((s) => (s.pendingTurns[NEW_CONVERSATION_KEY] ?? []).length);
   const pendingSelectedTurns = useAppStore((s) => (s.pendingTurns[s.selectedFile?.path ?? ''] ?? []).length);
 
@@ -284,10 +292,6 @@ export const ChatView: React.FC = React.memo(() => {
     void agentApi.listResumable().then((list) => useAgentRunStore.getState().setResumable(list));
   }, []);
 
-  const handleAgentResume = useCallback((entry: AgentRunSummary): void => {
-    useAgentRunStore.getState().removeResumable(entry.runId);
-    void resumeAgentRun(entry);
-  }, [resumeAgentRun]);
   const handleAgentBannerDiscard = useCallback((runId: string): void => {
     useAgentRunStore.getState().removeResumable(runId);
     void discardAgentRun(runId);
@@ -311,6 +315,12 @@ export const ChatView: React.FC = React.memo(() => {
   } = usePromptAttachments(activeModelUrl, t);
 
   const promptAreaRef = useRef<PromptInputAreaHandle>(null);
+  const composerStop = useComposerStop(promptAreaRef);
+  /**
+   * Set only while an edited question is being sent: its own attachments go with it, and the
+   * composer's — meant for the next message — stay where they are.
+   */
+  const attachmentOverrideRef = useRef<string[] | null>(null);
   const headerInputRef = useRef<HTMLInputElement>(null);
   const contentAreaRef = useRef<HTMLDivElement>(null);
   /** The document view's scroll area, when a Notion document is open. */
@@ -330,6 +340,8 @@ export const ChatView: React.FC = React.memo(() => {
     clearConnectors();
     setWeb(false);
     setAgent(loadAgentDefault());
+    // From the narrow window's drawer: the new chat is what is wanted in front.
+    closeSidebarDrawer();
     focusPromptInput();
   }, [selectFile, setFileContent, clearConnectors, setWeb, setAgent, focusPromptInput]);
 
@@ -376,6 +388,15 @@ export const ChatView: React.FC = React.memo(() => {
     setAiUrl(url);
     void settingsApi.updateAiUrl(url);
   }, [setAiUrl]);
+
+  // The banner's model menu shows the run's own model; Continue goes on with exactly that, and a
+  // model picked there replaces it. The composer follows, so an answer typed next uses it too.
+  const handleAgentResume = useCallback((entry: AgentRunSummary, providerUrl?: string): void => {
+    const target = providerUrl ?? entry.providerUrl;
+    selectModel(target);
+    useAgentRunStore.getState().removeResumable(entry.runId);
+    void resumeAgentRun(entry, target);
+  }, [resumeAgentRun, selectModel]);
 
   // Steps through each provider's own models too, not just the providers: stopping on one is the
   // same as picking its row in the model menu.
@@ -448,13 +469,14 @@ export const ChatView: React.FC = React.memo(() => {
       setPendingLoginModel({ provider: gated, url: activeModelUrl });
       return false;
     }
-    const attachmentPaths = attachments.map((a) => a.path).filter(Boolean);
+    const override = attachmentOverrideRef.current;
+    const attachmentPaths = override ?? attachments.map((a) => a.path).filter(Boolean);
     sendTurn({
       prompt: text,
       targetUrl: activeModelUrl,
       ...(attachmentPaths.length > 0 ? { attachments: attachmentPaths } : {}),
     });
-    if (attachments.length > 0) clearAttachments();
+    if (!override && attachments.length > 0) clearAttachments();
     return true;
   }, [activeModelUrl, attachments, clearAttachments, sendTurn]);
 
@@ -500,10 +522,11 @@ export const ChatView: React.FC = React.memo(() => {
       const scope = connectorIds
         ?? (directConnector ? handleDiscloseConnector(directConnector) : activeConnectorIds);
       // Attachments ride along even with a connector disclosed: a connector run keeps the built-in file tools.
-      const attachmentPaths = attachments.map((a) => a.path).filter(Boolean);
+      const override = attachmentOverrideRef.current;
+      const attachmentPaths = override ?? attachments.map((a) => a.path).filter(Boolean);
       // Web too: a send that has just turned it on has not flushed that into `web` either.
       void runAgentCommand(input, activeModelUrl, attachmentPaths, scope, webOverride ?? webForRun(web, webOff));
-      if (attachmentPaths.length > 0) clearAttachments();
+      if (!override && attachmentPaths.length > 0) clearAttachments();
       return true;
     }
     void runCommand(command, input);
@@ -512,6 +535,35 @@ export const ChatView: React.FC = React.memo(() => {
     activeModelUrl, attachments, clearAttachments, activeConnectorIds, handleDiscloseConnector,
     handleNewConversation, showRecapNow, runCommand, runAgentCommand, web, webOff, t,
   ]);
+
+  // An edited question, as Gemini, ChatGPT and Claude treat one: the conversation goes back to just
+  // before it (the turns after it stay in the version history) and the new text goes out through
+  // the composer's own routing, with the attachments the question had.
+  const handleEditPrompt = useCallback(async (edit: PromptEditSubmit): Promise<boolean> => {
+    const filePath = useAppStore.getState().selectedFile?.path;
+    if (!filePath) return false;
+    // Before anything is cut: a send the sign-in prompt stops would leave the conversation shortened.
+    const gated = loginRequiredProviderForUrl(activeModelUrl);
+    if (gated && useAppStore.getState().accountStatuses[gated] === false) {
+      setPendingLoginModel({ provider: gated, url: activeModelUrl });
+      return false;
+    }
+    const result = await fileApi.rewindConversation({ filePath, turnIndex: edit.turnIndex, expected: edit.original, text: edit.text })
+      .catch((): PromptRewindResult => ({ ok: false, reason: 'failed' }));
+    if (!result.ok) {
+      setExportToast({ message: t(result.reason === 'conflict' ? 'chat.promptEdit.conflict' : 'chat.promptEdit.failed'), level: 'error' });
+      return false;
+    }
+    if (useAppStore.getState().selectedFile?.path !== filePath) return true;
+    setFileContent(result.content);
+    attachmentOverrideRef.current = edit.attachments;
+    try {
+      promptAreaRef.current?.sendText(edit.text, edit.attachments.length > 0);
+    } finally {
+      attachmentOverrideRef.current = null;
+    }
+    return true;
+  }, [activeModelUrl, setFileContent, t]);
 
   // "Analyze" under a forwarded post: the post's site's built-in analysis — the post and its
   // replies read and summed up in one model call, no agent. The link was rebuilt from the post
@@ -566,9 +618,9 @@ export const ChatView: React.FC = React.memo(() => {
     void accountApi.openLogin(provider);
   }, [pendingLoginModel, selectModel]);
 
-  // The header shows the conversation's H1, the sidebar row's title (the row's own while the
-  // content loads), and its pencil edits that H1.
-  // A Notion document's H1 is Notion's rich-text title ("**…**"): the header shows its words.
+  // The title a rename starts from: the file's H1, or the sidebar row's while the content loads.
+  // A conversation renames it at its own H1 in the reading column; a Notion document, whose page
+  // draws no H1, shows and renames it in its header. Notion's title is rich text ("**…**"): its words.
   const headerTitle = selectedFile
     ? (selectedFile.notion ? plainNotionTitle(headerTitleFor(fileContent, selectedFile)) : headerTitleFor(fileContent, selectedFile))
     : '';
@@ -597,6 +649,26 @@ export const ChatView: React.FC = React.memo(() => {
     }
   }, [headerEdit.editing]);
 
+  // The ✨ in the title box names it from the open file: a Notion document's outline, or the
+  // conversation's first prompts and the answers' headings.
+  const titlePath = selectedFile?.path ?? null;
+  const titleAiSource = useMemo((): AiNameSource | null => (
+    titlePath ? { kind: sharingDocument ? 'document' : 'conversation', path: titlePath } : null
+  ), [titlePath, sharingDocument]);
+
+  // One object for the edit, kept while nothing about it changes: ConversationView is memoized.
+  const titleEdit = useMemo((): HeaderTitleEditProps => ({
+    title: headerTitle,
+    titleEditing: headerEdit.editing,
+    titleEditValue: headerEdit.value,
+    setTitleEditValue: headerEdit.setValue,
+    onCommitTitleEdit: headerEdit.commit,
+    onCancelTitleEdit: headerEdit.cancel,
+    onStartTitleEdit: headerEdit.start,
+    titleInputRef: headerInputRef,
+    aiSource: titleAiSource,
+  }), [headerTitle, headerEdit.editing, headerEdit.value, headerEdit.setValue, headerEdit.commit, headerEdit.cancel, headerEdit.start, titleAiSource]);
+
   // Closing the info dialog returns focus to the ⋮ it was opened from; the menu row it came from is gone.
   const focusMoreButton = useCallback(() => {
     viewMenuRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
@@ -616,10 +688,15 @@ export const ChatView: React.FC = React.memo(() => {
     && !(tempChatMode && tempChatConversation && tempChatConversation.turns.length > 0)
     && pendingNewTurns === 0
     && !(tempChatMode && tempChatContent && tempChatBlocks);
+  // A narrow window keeps it at the foot even then, the greeting centred in the room above, as
+  // Gemini and Perplexity do on a narrow window: under the greeting it would sit mid-window with
+  // the menus opening over the greeting.
+  const narrowWindow = useNarrowWindow();
+  const composerCentered = blankChat && !narrowWindow;
   // The first send (or opening a conversation) glides the composer down to the bottom edge
   // instead of jumping there; a new chat glides it back up under the greeting.
   const composerRef = useRef<HTMLDivElement>(null);
-  useGlideOnSwitch(composerRef, blankChat);
+  useGlideOnSwitch(composerRef, composerCentered);
 
   const handleCaptureTurnAs = useCallback(
     (format: CaptureFormat, turn: CaptureTurn) => captureExport.captureTurnAs(format, turn, quickExportZip),
@@ -708,8 +785,11 @@ export const ChatView: React.FC = React.memo(() => {
   }, []);
 
   return (
+    <NewConversationContext.Provider value={handleNewConversation}>
     <FileDragArea>
-      <Sidebar onNewConversation={handleNewConversation} onOpenSearch={openSearch} onOpenedByClick={handleOpenedByClick} />
+      <SidebarDrawer selection={selectedFile?.path ?? null}>
+        <Sidebar onNewConversation={handleNewConversation} onOpenSearch={openSearch} onOpenedByClick={handleOpenedByClick} />
+      </SidebarDrawer>
 
       {documentConversation && selectedFile && fileContent && (
         <DocumentView
@@ -718,16 +798,7 @@ export const ChatView: React.FC = React.memo(() => {
           content={fileContent}
           conversation={documentConversation}
           contentAreaRef={documentAreaRef}
-          titleEdit={{
-            title: headerTitle,
-            titleEditing: headerEdit.editing,
-            titleEditValue: headerEdit.value,
-            setTitleEditValue: headerEdit.setValue,
-            onCommitTitleEdit: headerEdit.commit,
-            onCancelTitleEdit: headerEdit.cancel,
-            onStartTitleEdit: headerEdit.start,
-            titleInputRef: headerInputRef,
-          }}
+          titleEdit={titleEdit}
           onOpenHistory={() => setHistoryDialogOpen(true)}
           captureBusy={captureExport.captureBusy}
           onOpenCaptureDialog={() => captureExport.setCaptureDialogOpen(true)}
@@ -754,17 +825,9 @@ export const ChatView: React.FC = React.memo(() => {
         )}
         {selectedFile && (
           <FileHeaderBar
-            title={headerTitle}
             filePath={selectedFile.path}
             fileContent={fileContent}
             conversation={conversation}
-            titleEditing={headerEdit.editing}
-            titleEditValue={headerEdit.value}
-            setTitleEditValue={headerEdit.setValue}
-            onCommitTitleEdit={headerEdit.commit}
-            onCancelTitleEdit={headerEdit.cancel}
-            onStartTitleEdit={headerEdit.start}
-            titleInputRef={headerInputRef}
             viewMenuRef={viewMenuRef}
             viewMenuOpen={viewMenuOpen}
             onToggleViewMenu={() => setViewMenuOpen((prev) => !prev)}
@@ -791,8 +854,18 @@ export const ChatView: React.FC = React.memo(() => {
         )}
 
         {/* Always rendered, so the composer below keeps its place in the tree and never remounts. */}
-        <Box flex={blankChat ? 1 : 0} />
-        <Box ref={contentAreaRef} flex={blankChat ? '0 0 auto' : 1} style={{ overflowY: 'auto' }}>
+        <Box flex={composerCentered ? 1 : 0} />
+        <Box
+          ref={contentAreaRef}
+          flex={composerCentered ? '0 0 auto' : 1}
+          style={{
+            // Let the welcome mark's halo extend above the greeting; conversations still scroll.
+            overflowY: blankChat && !tempChatMode ? 'visible' : 'auto',
+            ...(blankChat && narrowWindow
+              ? { display: 'flex', flexDirection: 'column', justifyContent: 'center' }
+              : {}),
+          }}
+        >
           <ConversationFindBar
             containerRef={contentAreaRef}
             resetKey={selectedFile?.path ?? NEW_CONVERSATION_KEY}
@@ -808,6 +881,7 @@ export const ChatView: React.FC = React.memo(() => {
               onChooseAnswer={answerAgentQuestion}
               onTurnButton={handleTurnButton}
               onAnalyzeXPost={handleAnalyzeXPost}
+              {...(selectedFile ? { titleEdit, onEditPrompt: handleEditPrompt } : {})}
             />
           ) : fileContent && parsedBlocks ? (
             <MarkdownView content={fileContent} blocks={parsedBlocks} />
@@ -828,17 +902,33 @@ export const ChatView: React.FC = React.memo(() => {
           )}
         </Box>
 
+        {/* Zero height, so the icon floats over the conversation's corner without moving the composer. */}
+        {conversationRecap.icon && (
+          <Box pos="relative" h={0} style={{ zIndex: 1 }}>
+            <Box pos="absolute" bottom={10} right={24}>
+              <RecapButton
+                title={t('chat.recap.title')}
+                lines={conversationRecap.recap?.lines ?? []}
+                emptyText={t('chat.recap.empty')}
+                timeLabel={conversationRecap.recap?.at ? formatTime(conversationRecap.recap.at) : ''}
+                fresh={conversationRecap.icon.fresh}
+                onSeen={conversationRecap.dismiss}
+              />
+            </Box>
+          </Box>
+        )}
+
         <Box px="md" pb={translatingConversation ? 'xs' : 0}>
           <ConversationTranslateStrip t={t} />
         </Box>
 
-        {conversationRecap.display && (
+        {conversationRecap.line && (
           <Box px="md" pb="xs">
             <RecapLine
               title={t('chat.recap.title')}
-              lines={conversationRecap.display === 'recap' ? conversationRecap.recap?.lines ?? [] : []}
+              lines={conversationRecap.line === 'recap' ? conversationRecap.recap?.lines ?? [] : []}
               emptyText={t('chat.recap.empty')}
-              timeLabel={conversationRecap.display === 'recap' && conversationRecap.recap?.at
+              timeLabel={conversationRecap.line === 'recap' && conversationRecap.recap?.at
                 ? formatTime(conversationRecap.recap.at)
                 : ''}
               dismissLabel={t('chat.recap.dismiss')}
@@ -849,7 +939,7 @@ export const ChatView: React.FC = React.memo(() => {
 
         {resumableAgentRuns.length > 0 && (
           // Lined up with the composer's own box: same 12px inset, same width when it is centred.
-          <Box px={12} pb={4} w="100%" maw={blankChat ? CENTERED_MAX_WIDTH : undefined} mx={blankChat ? 'auto' : undefined}>
+          <Box px={12} pb={4} w="100%" maw={composerCentered ? CENTERED_MAX_WIDTH : undefined} mx={composerCentered ? 'auto' : undefined}>
             <AgentResumeBanner
               runs={resumableAgentRuns}
               onResume={handleAgentResume}
@@ -891,10 +981,12 @@ export const ChatView: React.FC = React.memo(() => {
           onToggleConnector={handleToggleConnector}
           onDiscloseConnectors={handleDiscloseConnectors}
           onRemoveConnectors={removeConnectors}
-          centered={blankChat}
+          centered={composerCentered}
+          bare={blankChat}
+          onStop={composerStop}
         />
         </Box>
-        <Box flex={blankChat ? 1.25 : 0}>
+        <Box flex={composerCentered ? 1.25 : 0} pb={blankChat && narrowWindow ? 10 : 0}>
           {blankChat && (tempChatMode ? <IncognitoHints /> : <WelcomeHints />)}
         </Box>
       </Stack>
@@ -970,6 +1062,7 @@ export const ChatView: React.FC = React.memo(() => {
         setTitle={captureExport.setCaptureTitle}
         fileName={captureExport.captureFileName}
         setFileName={captureExport.setCaptureFileName}
+        fileNameAi={titleAiSource}
         format={captureExport.captureFormat}
         setFormat={captureExport.setCaptureFormat}
         cardLayout={captureExport.captureCardLayout}
@@ -996,6 +1089,7 @@ export const ChatView: React.FC = React.memo(() => {
 
 
     </FileDragArea>
+    </NewConversationContext.Provider>
   );
 });
 

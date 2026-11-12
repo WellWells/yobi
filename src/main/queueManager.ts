@@ -1,8 +1,12 @@
 import type { QueueState, QueueTaskItem, Task } from '../shared/types';
 import { compactPreview } from '../shared/textBudget';
 import { markConversationBusy } from './conversationBusy';
+import { stopTask } from './chat/taskStop';
 
 type QueueListener = (state: QueueState) => void;
+
+/** Stops that found no task yet; only the newest few can still be on their way. */
+const STOPPED_BEFORE_QUEUED_CAP = 32;
 
 export class TaskHardTimeoutError extends Error {
   constructor(taskId: string, readonly timeoutMinutes: number) {
@@ -29,6 +33,7 @@ export class QueueManager {
   private listener: QueueListener | null = null;
   private discardListener: ((task: Task) => void) | null = null;
   private skipCurrentTask: (() => void) | null = null;
+  private readonly stoppedBeforeQueued = new Set<string>();
   private readonly busyReleases = new Map<Task, () => void>();
   private readonly TASK_HARD_TIMEOUT_MS = 10 * 60_000;
 
@@ -49,6 +54,12 @@ export class QueueManager {
   }
 
   enqueue(task: Task): void {
+    // Stopped before it got here (a pasted link was still being read): it never runs.
+    if (task.sendId && this.stoppedBeforeQueued.delete(task.sendId)) {
+      stopTask(task);
+      this.discardListener?.(task);
+      return;
+    }
     // The conversation is busy from queued until its answer is written, which can be after the
     // queue has given up on the task (hard timeout, skip): it is released by the worker itself.
     if (task.conversationPath) this.busyReleases.set(task, markConversationBusy(task.conversationPath, 'sending'));
@@ -69,6 +80,33 @@ export class QueueManager {
     if (discarded) this.releaseBusy(discarded);
     this.notify();
     if (discarded) this.discardListener?.(discarded);
+    return true;
+  }
+
+  /**
+   * The composer's Stop for one chat send. A queued send leaves the queue; the running one is
+   * stopped (its worker sees the signal and drops the answer) and the queue stops waiting for it
+   * at once. False when no task carries that send id any more.
+   */
+  stopSend(sendId: string): boolean {
+    if (!sendId) return false;
+    const queued = this.queue.find((task) => task.sendId === sendId);
+    if (queued) {
+      stopTask(queued);
+      return this.cancel(queued.id);
+    }
+    const active = this.activeTask;
+    if (active?.sendId !== sendId) {
+      // Not here yet, or already over: remembered so a late arrival is dropped (send ids are unique).
+      this.stoppedBeforeQueued.add(sendId);
+      if (this.stoppedBeforeQueued.size > STOPPED_BEFORE_QUEUED_CAP) {
+        const oldest = this.stoppedBeforeQueued.values().next().value;
+        if (oldest !== undefined) this.stoppedBeforeQueued.delete(oldest);
+      }
+      return false;
+    }
+    stopTask(active);
+    this.skipCurrentTask?.();
     return true;
   }
 

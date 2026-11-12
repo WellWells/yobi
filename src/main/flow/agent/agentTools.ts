@@ -1,5 +1,6 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { AGENT_HELP_TOOL } from '../../../shared/agentStepLabel';
 import type { SkillType } from '../../../shared/types';
 import { SKILL_SPECS, SKILLS_WITHOUT_OUTPUT_KEY } from '../../../shared/flowSkillSchema';
 import type { SkillSpec } from '../../../shared/flowSkillSchema';
@@ -8,6 +9,7 @@ import {
   AGENT_BUILTIN_TOOLS, buildBuiltinCatalog, builtinConfigKeys, builtinRequiredFields, builtinToolEntry, isBuiltinTool,
 } from './agentBuiltins';
 import type { AgentBuiltinTool } from './agentBuiltins';
+import { readDoing } from './agentDoing';
 import { readPlanFields, readStepBudget } from './agentPrompts';
 import { readIntent } from './actionGate';
 import type { GoalIntent } from './actionGate';
@@ -74,6 +76,12 @@ export interface AgentToolScope {
    * own export.
    */
   documents?: boolean;
+  /**
+   * Offer `use_skill` and the SKILLS section. Never set by a scope constant: the engine sets it on a
+   * run with `builtins` when the user has skills switched on, and a skill's test run asks for it
+   * (`skillTestScope`). Either way only with a skill to offer. A helper never gets it (`readOnlyScope`).
+   */
+  agentSkills?: boolean;
 }
 
 /** `export_file` in or out of a scope; a helper never gets it (`readOnlyScope`). */
@@ -111,6 +119,15 @@ export function readOnlyScope(scope: AgentToolScope): AgentToolScope {
   };
 }
 
+/**
+ * A skill's test run: the tools that only read, and the skill itself (its JavaScript runs in the
+ * sandbox). Nothing that writes, sends, shows or runs a command — a test must change nothing — and
+ * no flow builders or hand-offs (`builtins` off).
+ */
+export function skillTestScope(): AgentToolScope {
+  return { skills: AGENT_ALLOWED_SKILLS.filter((skill) => !HELPER_EXCLUDED_SKILLS.has(skill)), builtins: false, agentSkills: true };
+}
+
 export const FULL_TOOL_SCOPE: AgentToolScope = {
   skills: AGENT_ALLOWED_SKILLS,
   builtins: true,
@@ -139,7 +156,7 @@ const WEB_SKILL_SET = new Set<SkillType>(WEB_SKILLS);
 
 /** A recorded step went online — what tells the composer the run used the web. */
 export function isWebTool(tool: string): boolean {
-  return WEB_SKILL_SET.has(tool as SkillType) || tool === 'agoda_reviews';
+  return WEB_SKILL_SET.has(tool as SkillType) || tool === 'agoda_reviews' || tool === 'movie_info';
 }
 
 /**
@@ -236,7 +253,7 @@ export class AgentRunError extends Error {
   }
 }
 
-export const AGENT_HELP_TOOL = 'tool_help';
+export { AGENT_HELP_TOOL };
 
 export type AgentHelpTool = typeof AGENT_HELP_TOOL;
 
@@ -285,7 +302,7 @@ const AGENT_TOOL_BRIEFS: Partial<Record<SkillType, string>> = {
 const AGENT_HIDDEN_FIELDS = new Set<string>([
   'attachments',
   'emitFailFlag', 'includeImage', 'provider', 'saveToHistory', 'useMemory', 'useUserMemory',
-  'exportFormat', 'exportTitle', 'exportFileName', 'exportShowProvider', 'exportShowTimestamp', 'palette',
+  'exportFormat', 'exportWidth', 'exportTitle', 'exportFileName', 'exportShowProvider', 'exportShowTimestamp', 'palette',
 ]);
 
 /**
@@ -298,7 +315,7 @@ export const AGENT_FIELD_DEFAULTS: Partial<Record<SkillType, Record<string, stri
 
 const AGENT_TOOL_DOCS: Partial<Record<SkillType, { summary: string; output?: string; fields?: Record<string, string> }>> = {
   browser: {
-    summary: 'Fetch a human web PAGE and return its visible text (renders JavaScript; for articles / SPA pages). Accepts one URL, a JSON array of URLs, or a comma/newline list. NOT for JSON APIs, and NOT for running a web search — open a search engine with it and you get its chrome, not results; use search or research.',
+    summary: 'Read web pages as visible text (renders JavaScript). Accepts a URL, JSON URL array or comma/newline list. JSON APIs: use http. NOT for running a web search: use search/research.',
     output: "the page's visible text (multiple URLs are joined with a '---' separator).",
   },
   search: {
@@ -399,6 +416,10 @@ const AGENT_EXTRA_FIELDS: Partial<Record<SkillType, SkillSpec['fields']>> = {
   research: [
     { key: 'answer', desc: '"false" if more steps follow it; "true" if it alone answers the GOAL (its answer goes to the user as is)' },
   ],
+  // Read by the engine, never by the skill: it sets SKILL_DIR for the command (agentCall.ts).
+  shell: [
+    { key: 'skill', desc: 'the installed skill whose scripts the command runs; puts its folder in the SKILL_DIR environment variable (default: the skill you loaded last)' },
+  ],
 };
 
 export function visibleFieldsOf(spec: SkillSpec) {
@@ -479,9 +500,21 @@ function builtinNames(scope: AgentToolScope): AgentBuiltinTool[] {
     if (tool === 'draw_image') return scope.pictures === true;
     if (tool === 'agoda_reviews') return scope.hotelReviews === true;
     if (tool === 'export_file') return scope.documents === true;
+    if (tool === 'use_skill') return scope.agentSkills === true;
+    // Named by the movie guide skill, not the catalog; it reads pages, so it goes with the web.
+    if (tool === 'movie_info') return scope.agentSkills === true && scope.skills.includes('browser');
     if (!scope.builtins) return false;
     return tool === 'delegate' ? scope.delegate === true : flows;
   });
+}
+
+/** Built-ins the catalog leaves out because a skill names them; `use_skill` hands their line over. */
+const SKILL_NAMED_TOOLS: readonly AgentBuiltinTool[] = ['movie_info'];
+
+/** The skill-named tools callable in this scope, each with its full line. */
+export function skillNamedTools(scope: AgentToolScope): Record<string, string> {
+  const callable = builtinNames(scope);
+  return Object.fromEntries(SKILL_NAMED_TOOLS.filter((tool) => callable.includes(tool)).map((tool) => [tool, builtinToolEntry(tool)]));
 }
 
 function builtinCatalogFor(scope: AgentToolScope): string {
@@ -491,6 +524,7 @@ function builtinCatalogFor(scope: AgentToolScope): string {
     scope.pictures === true,
     scope.hotelReviews === true,
     scope.documents === true,
+    scope.agentSkills === true,
   );
 }
 
@@ -577,6 +611,8 @@ export interface AgentAction {
   /** How many steps the model says the GOAL needs. Honored once, on the first action. */
   stepsNeeded?: number;
   intent?: GoalIntent;
+  /** `call_tool` only: the model's short title for this step (`readDoing`), absent when unusable. */
+  doing?: string;
   /** `ask_user` only: answers the user can pick instead of typing. */
   choices?: string[];
   /** `finish` only: the model's own word on whether the GOAL is fully achieved. Absent = not said. */
@@ -798,5 +834,8 @@ export function validateAgentAction(
     };
   }
 
-  return { ok: true, value: { thought, action: 'call_tool', tool, config, ...readPlanFields(obj), ...readStepBudget(obj), ...readIntent(obj) } };
+  return {
+    ok: true,
+    value: { thought, action: 'call_tool', tool, config, ...readPlanFields(obj), ...readStepBudget(obj), ...readIntent(obj), ...readDoing(obj, tool) },
+  };
 }

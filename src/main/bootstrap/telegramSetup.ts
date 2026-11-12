@@ -164,11 +164,14 @@ export function createTelegramRuntime(deps: {
     getByokContextBudgetChars: () => config.byokContextBudgetChars,
     onTaskRequest: async (request) => {
       const requestTarget = request.targetUrl || config.targetUrl;
-      // A link sent with a photo or file is read for the chat: the public web only.
+      // A link sent with a photo or file is read for the chat: the public web only. The model was
+      // picked to take these files (the upload fallback included), so a Maps link in the caption
+      // keeps it instead of moving to the Maps analysis model, which may take no uploads.
       const resolved = await withPublicWebOnly(() => resolveUrlPrompt(request.prompt, {
         langData: getLangCache(),
         youtubePrompt: config.youtubePrompt,
         targetUrl: requestTarget,
+        ...(request.attachments?.length ? { preserveTarget: true } : {}),
         onLog: sendLog,
       }));
       const id = createTaskId();

@@ -56,6 +56,7 @@ export const SKILL_CATALOG: SkillCategory[] = [
   ] },
   { key: 'actions', labelKey: 'flow.category.actions', skills: [
     { type: 'llm',       keywords: ['ai', 'prompt', 'gpt', 'gemini', '提示', '模型'] },
+    { type: 'translate', keywords: ['translate', 'translation', 'machine', 'microsoft', 'free', '機器翻譯', '机器翻译', '微軟', '微软', '翻譯', '翻译', '免費'] },
     { type: 'bot',       keywords: ['telegram', 'message', '機器人', '訊息'] },
     { type: 'email_send', keywords: ['email', 'mail', 'smtp', 'send', '郵件', '寄信', '信件', '電子郵件'] },
     { type: 'clipboard', keywords: ['copy', 'paste', '剪貼', '複製'] },

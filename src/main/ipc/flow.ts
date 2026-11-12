@@ -2,7 +2,7 @@ import { ipcMain, app } from 'electron';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { IPC } from '../../shared/types';
-import type { ChatCommandResult, FlowBuildOutcome, FlowBuildRequestPayload, FlowDefinition, ScraperPickRequest, TriggerConfig } from '../../shared/types';
+import type { ChatCommandResult, FlowBuildOutcome, FlowBuildRequestPayload, FlowDefinition, FlowExecutionResult, ScraperPickRequest, TriggerConfig } from '../../shared/types';
 import { buildFlowExportPayload } from '../../shared/flowExport';
 import { cleanTitle } from '../../shared/conversationTitle';
 import { CHAT_MODEL_VARIABLE, builtinById, canonicalBuiltin, isDesktopBuiltinFlowId, siteActionId } from '../../shared/builtinFlows';
@@ -19,19 +19,25 @@ import { loadLanguageData, t } from '../i18n';
 import { getCheckpointPath } from '../flow';
 import { buildFailureText } from '../flow/flowBuildBroadcast';
 import { previewSchedule } from '../flow/schedulePreview';
+import { setupBlockersFor } from '../flow/flowReadiness';
 import { discoverFeeds } from '../urlParser';
 import { pickSelector } from '../selectorPicker';
 import { parseFlowSaveSource } from '../../shared/flowVersions';
 import { registerFlowVersionHandlers } from './flowVersions';
+import { registerFlowFolderHandlers } from './flowFolders';
+import { registerFlowFolderSortHandlers } from './flowFolderSort';
 import { showSaveDialogForWin } from './context';
 import type { IpcContext } from './context';
 import type { StepProgress } from '../../shared/stepProgress';
 import { whileConversationBusy } from '../conversationBusy';
 import { IMAGE_CHAT_FLOW_ID } from '../../shared/imageRequest';
-import { runImageCommand } from '../chat/imageCommand';
+import { runImageCommand, type ImageRunOutcome } from '../chat/imageCommand';
+
+/** Chat commands running from the composer, by the progress id their bubble shows (its send id). */
+const chatCommandStops = new Map<string, AbortController>();
 
 function registerCheckpointHandlers(
-  kind: 'rss' | 'scraper' | 'youtube_subs' | 'x_posts' | 'ptt_board',
+  kind: 'rss' | 'scraper' | 'youtube_subs' | 'x_posts' | 'ptt_board' | 'line_read',
   hasChannel: string,
   clearChannel: string,
   logTag: string,
@@ -66,15 +72,20 @@ export function registerFlowHandlers(ctx: IpcContext): void {
   ipcMain.handle(IPC.FLOW_SAVE, async (_event, flow: FlowDefinition, source?: unknown, reviewed?: unknown) => {
     if (!flowManager) return null;
     // A chat-made flow's public-web-only mark is lifted only by the editor's own Save (the button or
-    // its shortcut), with the flow in front of the owner. Run, Run all, the switch, rename and the
-    // editor's auto-saves save too, and keep the mark the stored flow has; the renderer's copy is
-    // never trusted for it.
+    // its shortcut), with the flow in front of the owner. Run, the switch and rename save too, and
+    // keep the mark the stored flow has; the renderer's copy is never trusted for it.
     const { publicWebOnly: _publicWebOnly, ...owned } = flow;
     const marked = reviewed !== true && flowManager.getAll().some((stored) => stored.id === flow.id && stored.publicWebOnly === true);
     return flowManager.save(marked ? { ...owned, publicWebOnly: true } : owned, { source: parseFlowSaveSource(source) });
   });
 
   registerFlowVersionHandlers(ctx);
+  const flowFolders = registerFlowFolderHandlers(ctx);
+  registerFlowFolderSortHandlers({
+    flows: () => flowManager?.getAll() ?? [],
+    reorder: async (ids) => (flowManager ? flowManager.reorder(ids) : []),
+    store: flowFolders,
+  });
 
   ipcMain.handle(IPC.FLOW_DELETE, async (_event, flowId: string) => {
     if (!flowManager) return false;
@@ -93,12 +104,14 @@ export function registerFlowHandlers(ctx: IpcContext): void {
 
   ipcMain.handle(IPC.FLOW_DUPLICATE, async (_event, flowId: string) => {
     if (!flowManager) return null;
-    return flowManager.duplicate(flowId);
-  });
-
-  ipcMain.handle(IPC.FLOW_MOVE, async (_event, flowId: string, direction: 'up' | 'down') => {
-    if (!flowManager) return [];
-    return flowManager.move(flowId, direction);
+    const duplicated = await flowManager.duplicate(flowId);
+    // The copy sits right under its original, so it belongs in the same folder.
+    if (duplicated) {
+      await flowFolders.adoptDuplicate(flowId, duplicated.id).catch((err: unknown) => {
+        sendLog(`⚠️ [Flow] Could not file the copy into its folder: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
+    return duplicated;
   });
 
   ipcMain.handle(IPC.FLOW_REORDER, async (_event, orderedIds: string[]) => {
@@ -129,12 +142,26 @@ export function registerFlowHandlers(ctx: IpcContext): void {
     // A picture asked for that the chat's own send would not bring back: not a flow, one send that
     // draws, on the page the words name (Gemini when none).
     if (flowId === IMAGE_CHAT_FLOW_ID) {
-      const outcome = await runImageCommand(flowManager ?? undefined, {
-        prompt: (input ?? '').trim(),
-        strings: (await loadLanguageData(config.locale)) ?? {},
-        origin: 'app',
-        ...(conversationPath ? { conversationPath } : {}),
-      });
+      // The composer's Stop finds it like a flow command's: the turn ends at once, and the picture
+      // (queued: never drawn; being drawn: let finish) is not written into the conversation.
+      const stop = typeof progressId === 'string' && progressId ? new AbortController() : null;
+      if (stop) chatCommandStops.set(progressId as string, stop);
+      let outcome: ImageRunOutcome;
+      try {
+        const drawing = runImageCommand(flowManager ?? undefined, {
+          prompt: (input ?? '').trim(),
+          strings: (await loadLanguageData(config.locale)) ?? {},
+          origin: 'app',
+          ...(conversationPath ? { conversationPath } : {}),
+          ...(stop ? { signal: stop.signal } : {}),
+        });
+        const stoppedNow = stop
+          ? new Promise<ImageRunOutcome>((resolve) => stop.signal.addEventListener('abort', () => resolve({ success: false, error: '', providerLabel: '' }), { once: true }))
+          : null;
+        outcome = await (stoppedNow ? Promise.race([drawing, stoppedNow]) : drawing);
+      } finally {
+        if (stop) chatCommandStops.delete(progressId as string);
+      }
       if (!outcome.success) {
         const error = outcome.error ?? '';
         return { result: { ...failed(error).result, displayError: error } };
@@ -160,8 +187,16 @@ export function registerFlowHandlers(ctx: IpcContext): void {
     // A built-in's model call follows the model the chat has picked; a flow's own steps name theirs.
     const chatModel = typeof modelUrl === 'string' ? modelUrl.trim() : '';
     if (isDesktopBuiltinFlowId(flowId) && chatModel) vars[CHAT_MODEL_VARIABLE] = chatModel;
-    const { result } = flowManager.queueExecutionWithId(flowId, vars, 'chat', onProgress);
-    const flowResult = await result;
+    // The composer's Stop finds the run by the id its bubble shows progress under.
+    const stop = typeof progressId === 'string' && progressId ? new AbortController() : null;
+    if (stop) chatCommandStops.set(progressId as string, stop);
+    let flowResult: FlowExecutionResult;
+    try {
+      const { result } = flowManager.queueExecutionWithId(flowId, vars, 'chat', onProgress, stop?.signal);
+      flowResult = await result;
+    } finally {
+      if (stop) chatCommandStops.delete(progressId as string);
+    }
 
     const finalOutput = (flowResult.finalOutput ?? '').trim();
     if (!flowResult.success || !finalOutput) {
@@ -268,6 +303,15 @@ export function registerFlowHandlers(ctx: IpcContext): void {
     () => runFlowChatCommand(storedFlowId, command, input, conversationPath, progressId, modelUrl),
   ));
 
+  ipcMain.handle(IPC.FLOW_STOP_CHAT_COMMAND, (_event, progressId: unknown) => {
+    if (typeof progressId !== 'string') return false;
+    const stop = chatCommandStops.get(progressId);
+    if (!stop || stop.signal.aborted) return false;
+    stop.abort();
+    sendLog('⏹️ [Flow] Chat command stopped from the composer');
+    return true;
+  });
+
   ipcMain.handle(IPC.FLOW_ABORT, async (_event, flowId: string) => {
     if (!flowManager) return false;
     return flowManager.abort(flowId);
@@ -322,6 +366,8 @@ export function registerFlowHandlers(ctx: IpcContext): void {
   });
 
   ipcMain.handle(IPC.FLOW_WATCH_MISSING_GET, () => flowManager?.getWatchMissing() ?? []);
+
+  ipcMain.handle(IPC.FLOW_SETUP_BLOCKERS, (_event, skills: unknown) => setupBlockersFor(skills));
 
   ipcMain.handle(IPC.FLOW_EXPORT, async (_event, flow: FlowDefinition) => {
     try {
@@ -383,4 +429,5 @@ export function registerFlowHandlers(ctx: IpcContext): void {
   registerCheckpointHandlers('youtube_subs', IPC.YT_SUBS_HAS_CHECKPOINT, IPC.YT_SUBS_CLEAR_CHECKPOINT, 'YT Subs');
   registerCheckpointHandlers('x_posts', IPC.X_POSTS_HAS_CHECKPOINT, IPC.X_POSTS_CLEAR_CHECKPOINT, 'X Posts');
   registerCheckpointHandlers('ptt_board', IPC.PTT_BOARD_HAS_CHECKPOINT, IPC.PTT_BOARD_CLEAR_CHECKPOINT, 'PTT Board');
+  registerCheckpointHandlers('line_read', IPC.LINE_READ_HAS_CHECKPOINT, IPC.LINE_READ_CLEAR_CHECKPOINT, 'LINE read');
 }

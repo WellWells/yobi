@@ -1,4 +1,4 @@
-import { matchLink, matchVideoRef, videoHasSubtitles, videoHasSummary, videoIsAudioOnly, withoutShareTitle } from './linkSites/rows';
+import { matchVideoRef, videoHasSubtitles, videoHasSummary, videoIsAudioOnly, withoutShareTitle } from './linkSites/rows';
 import { siteChangedAt } from './linkSites/siteChanged';
 import type { SiteChangedMap } from './linkSites/siteChanged';
 import type { LinkMatch, LinkSiteId, VideoRef, VideoSiteId } from './linkSites/types';
@@ -59,14 +59,6 @@ export type DownloadKind = 'video' | 'audio';
 export type YtdlPick = number | 'best' | 'mp3';
 
 export type YtdlInputHint = '' | 'ambiguous2k';
-
-export interface YtdlInput {
-  videoId: string;
-  /** The link the video's row rebuilt (YouTube's canonical watch URL), never the text the user typed. */
-  url: string;
-  quality: YtdlQuality;
-  hint: YtdlInputHint;
-}
 
 /**
  * Menu words that are read as nothing, so a message or button carrying them still gets the menu
@@ -194,13 +186,6 @@ function menuTakes(site: VideoSiteId, word: string): boolean {
   return quality === null ? !videoIsAudioOnly(site) : offeredBy(site, quality);
 }
 
-/** `parseVideoInput`, the video given as its id and the link its row rebuilt (`url`). */
-export function parseYtdlInput(raw: string): YtdlInput | null {
-  const input = parseVideoInput(raw);
-  if (!input) return null;
-  return { videoId: input.ref.id, url: input.ref.url, quality: input.quality, hint: input.hint };
-}
-
 /**
  * Whether a link found in a message is the video menu's: a video link alone or with only the
  * menu's own words (a quality, "summary" and the subtitles where the site's menu has them,
@@ -211,15 +196,6 @@ export function isVideoMenuMatch(match: LinkMatch | null): match is LinkMatch<Vi
   if (match?.ref.shape !== 'video') return false;
   const { site } = match.ref;
   return match.prompt.split(/\s+/).filter(Boolean).every((word) => menuTakes(site, word));
-}
-
-/**
- * Whether a message holds nothing but what `/ytdl` reads: one video link and, optionally, its own
- * words. The routers' own check (`matchLink`, then `isVideoMenuMatch`), so a pasted link alone
- * goes straight to the menu and anything else to the agent.
- */
-export function isBareYtdlMessage(raw: string): boolean {
-  return isVideoMenuMatch(matchLink(raw));
 }
 
 /** One of the menu's own words beside a video link: a quality, "mp3", "summary", the subtitles, "download", "split" or the ambiguous `2k`. */

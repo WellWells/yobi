@@ -12,7 +12,7 @@ export function buildCapturePaletteOptions(t: (k: string) => string) {
 
 /**
  * An llm step's Background stores the palette key only ('' = Settings › Card style's palette).
- * Solid/gradient/mesh, direction and width come from Card style when the step runs. Picking a
+ * Solid/gradient/mesh and direction come from Card style when the step runs. Picking a
  * Background drops any stored `background` gradient, which would override Card style; nothing else
  * rewrites a saved step.
  */

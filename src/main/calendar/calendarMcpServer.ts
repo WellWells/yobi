@@ -2,9 +2,8 @@
  * In-process MCP server for the user's calendars (.ics subscriptions read only, CalDAV accounts
  * read and write), backed by `calendarService.ts`, which it takes as a parameter.
  */
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { createToolServer } from '../mcp/inProcessServer';
+import { createToolServer, type ToolServer } from '../mcp/inProcessServer';
 import { EVENTS_LIMIT_DEFAULT, EVENTS_LIMIT_MAX } from './calendarService';
 import type { CalendarService, EventArgs } from './calendarService';
 import { CalendarArgumentError } from './eventTime';
@@ -122,7 +121,7 @@ async function dispatch(service: CalendarService, name: string, args: Record<str
   }
 }
 
-export function createCalendarMcpServer(service: CalendarService): Server {
+export function createCalendarMcpServer(service: CalendarService): ToolServer {
   return createToolServer({
     name: CALENDAR_SERVER_NAME,
     tools: CALENDAR_TOOLS,

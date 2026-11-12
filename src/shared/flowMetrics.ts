@@ -1,4 +1,4 @@
-import type { MetricCounts, SkillType } from './types';
+import type { MetricCounts, MetricOutcome, SkillType } from './types';
 import type { FlowErrorReason } from './flowErrorReason';
 
 export { FLOW_ERROR_REASONS, classifyFlowError } from './flowErrorReason';
@@ -32,12 +32,28 @@ export interface FlowStepMetrics {
   samples: FlowErrorSample[];
 }
 
+/** How a flow's latest run ended, for the flow list. */
+export interface FlowLastRun {
+  /** ISO timestamp of when it ended. */
+  at: string;
+  outcome: MetricOutcome;
+  /** It finished but lost a step to `emitFailFlag`. */
+  degraded?: true;
+  /**
+   * Why it failed or lost a step, masked and cut: the run's own wording in the user's language at
+   * the time (`displayError`, naming the step), so it is not translated again on the way out.
+   */
+  message?: string;
+}
+
 export interface FlowRunMetrics {
   /** Run-level outcome; a soft step failure still counts as a success here (see `degraded`). */
   runs: MetricCounts;
   /** Runs that finished but lost at least one step on the way. */
   degraded: number;
   steps: Record<string, FlowStepMetrics>;
+  /** The day's latest run. Only on daily entries: its message expires with the retention window. */
+  last?: FlowLastRun;
 }
 
 export interface FlowMetricsSnapshot {
@@ -76,6 +92,17 @@ export function zeroFlowRun(): FlowRunMetrics {
 
 export function emptyFlowMetrics(): FlowMetricsSnapshot {
   return { flows: {}, daily: {}, since: '' };
+}
+
+/** Each flow's latest run within the retention window: the newest day that has one. */
+export function lastRunsOf(snapshot: FlowMetricsSnapshot): Record<string, FlowLastRun> {
+  const result: Record<string, FlowLastRun> = {};
+  for (const date of Object.keys(snapshot.daily).sort().reverse()) {
+    for (const [flowId, flow] of Object.entries(snapshot.daily[date])) {
+      if (flow.last && !(flowId in result)) result[flowId] = flow.last;
+    }
+  }
+  return result;
 }
 
 /** The reason bucket with the most hits, used as the one-word diagnosis on a step row. */

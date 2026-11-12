@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
+import { useShallow } from 'zustand/react/shallow';
 import { Notifications } from '@mantine/notifications';
 import '@mantine/core/styles.css';
 // Must come after the core styles, per the package's own contract.
@@ -24,10 +25,15 @@ const perfFlushTimer = window.setInterval(() => {
   performance.clearMeasures();
   performance.clearResourceTimings();
 }, PERF_FLUSH_INTERVAL_MS);
-window.addEventListener('unload', () => window.clearInterval(perfFlushTimer));
+// `pagehide`, not `unload`: Chromium is deprecating unload handlers.
+window.addEventListener('pagehide', () => window.clearInterval(perfFlushTimer));
 
 function Root() {
-  const { mantineTheme, colorScheme, cssVariablesResolver } = useThemeStore();
+  const { mantineTheme, colorScheme, cssVariablesResolver } = useThemeStore(useShallow((s) => ({
+    mantineTheme: s.mantineTheme,
+    colorScheme: s.colorScheme,
+    cssVariablesResolver: s.cssVariablesResolver,
+  })));
 
   return (
     <MantineProvider

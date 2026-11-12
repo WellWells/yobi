@@ -13,14 +13,16 @@ import type { XThread } from './xPosts';
  * owner's own accounts (`botPermissions/signedInReads.ts`):
  * - `full`: runs not started by a bot (the desktop, schedules), and an admin of the bot (the owner,
  *   or a Telegram account with the admin grant) in their own private chat.
+ * - `posts`: an admin anywhere else (a group): the post they pasted is read as in their own chat,
+ *   restricted or not, for the group they chose to show it to. Stories and profiles as for
+ *   `others`: viewing them is the owner's account seen looking.
  * - `others`: every other bot message: what can be told to be for friends only is for admins
  *   alone, everything else is public. A post is read as a visitor first; only when a
  *   visitor cannot see it, the sign-in reads it, and a post its site marks as shown to some people
- *   only is refused whole (`threadForOthers`). Stories and profiles never: viewing them is the
- *   owner's account seen looking.
+ *   only is refused whole (`threadForOthers`). Stories and profiles never.
  * - `none`: no sign-in at all; a bot run whose sender cannot be told.
  */
-export type SignInUse = 'full' | 'others' | 'none';
+export type SignInUse = 'full' | 'posts' | 'others' | 'none';
 
 export interface ReadAccess {
   /** The person started the run at the computer: a site's verification window may be shown. */
@@ -29,9 +31,9 @@ export interface ReadAccess {
   signIn: SignInUse;
 }
 
-/** The run's mark as a step reads it: exactly `full` or `others`, anything else `none` (fail closed). */
+/** The run's mark as a step reads it: exactly `full`, `posts` or `others`, anything else `none` (fail closed). */
 export function signInUseOf(mark: string | undefined): SignInUse {
-  return mark === 'full' || mark === 'others' ? mark : 'none';
+  return mark === 'full' || mark === 'posts' || mark === 'others' ? mark : 'none';
 }
 
 export function readAccessOf(config: Readonly<Record<string, string>>): ReadAccess {
@@ -72,7 +74,7 @@ function restrictedPostError(site: SiteAccount, url: string): FlowUserError {
   return new FlowUserError(
     'flow.error.othersRestricted',
     { site: label },
-    `${label} shows this post to some people only; it is read only for an admin in a private chat with the bot: ${url}`,
+    `${label} shows this post to some people only; it is read only for an admin: ${url}`,
   );
 }
 

@@ -18,6 +18,8 @@ export interface ProviderRunResult {
   response: string;
   title: string;
   images?: GeneratedImage[];
+  /** The runner deleted the conversation after reading it, so there is no thread to continue. */
+  discarded?: true;
 }
 
 /** One answer's pictures: Gemini and ChatGPT draw at most four per turn. */

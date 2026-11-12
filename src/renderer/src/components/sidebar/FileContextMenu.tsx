@@ -1,7 +1,7 @@
 import React from 'react';
 import { Menu as MMenu } from '@mantine/core';
 import {
-  AppWindow, Copy, ExternalLink, FileCode, FileText, Files, FolderOpen, Image, Link2, ListChecks, Pencil, Pin, PinOff, Trash2, Upload,
+  AppWindow, Copy, ExternalLink, FileCode, FileText, Files, FolderOpen, Image, Link2, ListChecks, Pencil, Pin, PinOff, Trash, Upload,
 } from 'lucide-react';
 import type { BatchCaptureFormat, OutputFile } from '../../../../shared/types';
 import { fileApi } from '../../api/electronApi';
@@ -162,7 +162,7 @@ export const FileContextMenu: React.FC<FileContextMenuProps> = ({
         {t('selection.selectMultiple')}
       </MMenu.Item>
       <MMenu.Item
-        leftSection={<Trash2 size={13} />}
+        leftSection={<Trash size={13} />}
         color="red"
         rightSection={<ShortcutHint combo={deleteCombo} />}
         onClick={() => onDelete(file)}

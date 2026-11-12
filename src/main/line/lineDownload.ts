@@ -37,6 +37,10 @@ export interface DownloadDeps {
   record: (files: string[]) => Promise<void>;
   /** The program the firewall has to allow: Yobi's own executable. */
   exePath: string;
+  /** The most one file may be; absent = MAX_BODY_BYTES. */
+  maxBytes?: number;
+  /** The saved file's name in `dir`; absent = `downloadFileName` (time, id, LINE's name, sniffed extension). */
+  fileName?: (res: DownloadResult) => string;
 }
 
 /** What to do when Windows blocked the connection: a firewall rule for Yobi's program, not a LINE problem. */
@@ -99,7 +103,7 @@ async function fetchJob(state: RunState, job: DownloadJob, dir: string, saved: s
       tokens: candidates,
       clientEnv: state.env,
       targetPath,
-      maxBytes: MAX_BODY_BYTES,
+      maxBytes: deps.maxBytes ?? MAX_BODY_BYTES,
     });
   } catch (err) {
     await dropTemp();
@@ -141,7 +145,7 @@ async function fetchJob(state: RunState, job: DownloadJob, dir: string, saved: s
       return { ...job.res, status: 'http_error', note: res.reason || `unexpected native status: ${String(res.status)}` };
   }
   try {
-    const name = downloadFileName(job.res.sent_at ?? '', job.res.id, job.res.filename ?? '', await readHead(targetPath));
+    const name = deps.fileName?.(job.res) ?? downloadFileName(job.res.sent_at ?? '', job.res.id, job.res.filename ?? '', await readHead(targetPath));
     const finalPath = await placeDownload(targetPath, join(dirname(targetPath), name));
     saved.push(finalPath);
     return { ...job.res, status: 'downloaded', saved_as: finalPath, bytes: res.bytes };

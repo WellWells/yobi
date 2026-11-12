@@ -14,10 +14,22 @@ import { flowApi } from '../api/electronApi';
 import type { FlowSaveSource } from '../../../shared/flowVersions';
 import { useFlowBuildStore } from './useFlowBuildStore';
 import {
-  cloneFlow, createDefaultFlow, createDefaultStep, createId, findLoopSource, findMatchingMarker, mergeSaveReply,
-  nextFreeOutputKey, stepInsertIndex, DEFAULT_OUTPUT_BASE,
+  cloneFlow, copyStepBlock, createDefaultFlow, createDefaultStep, createId, findLoopSource, findMatchingMarker, freeLoopVarName, mergeSaveReply,
+  nextFreeOutputKey, stepInsertIndex, stepRunKey, DEFAULT_OUTPUT_BASE,
 } from './flowHelpers';
 import { SKILLS_WITHOUT_OUTPUT_KEY } from '../../../shared/flowSkillSchema';
+import { checkBlockStructure } from '../../../shared/flowBlockStructure';
+
+/** Steps taken out of a flow with the places they had, ascending by place. */
+export type RemovedSteps = ReadonlyArray<{ index: number; step: SkillInstance }>;
+
+/** Why a step did not move: `edge` (first or last step) needs no message, the others do. */
+export type MoveStepResult = { ok: true } | { ok: false; reason: 'edge' | 'block' | 'outsideLoop' };
+
+export const MOVE_BLOCKED_MESSAGE = {
+  block: 'flow.editor.moveBlocked.block',
+  outsideLoop: 'flow.editor.moveBlocked.outsideLoop',
+} as const;
 
 interface ActionState {
   flows: FlowDefinition[];
@@ -27,6 +39,11 @@ interface ActionState {
   executionResult: FlowExecutionResult | null;
   isExecuting: boolean;
   runningFlowIds: string[];
+  /**
+   * Each step as it ran (`stepRunKey`), per flow, taken from the saved flow when its run started:
+   * the results say which steps were changed since. In memory only.
+   */
+  runSnapshots: Record<string, Record<string, string>>;
 
   loadFlows: () => Promise<void>;
   selectFlow: (flowId: string | null) => void;
@@ -37,8 +54,9 @@ interface ActionState {
   deleteFlows: (flowIds: string[]) => Promise<void>;
   setFlowsEnabled: (flowIds: string[], enabled: boolean) => Promise<void>;
   duplicateFlow: (flowId: string) => Promise<FlowDefinition | null>;
-  moveFlow: (flowId: string, direction: 'up' | 'down') => Promise<boolean>;
   reorderFlows: (orderedIds: string[]) => Promise<void>;
+  /** Main saved the flows in a new order (a reorder, or a move into a folder): unsaved edits stay. */
+  adoptSavedOrder: (saved: FlowDefinition[]) => void;
   executeFlow: (flowId: string) => Promise<FlowExecutionResult | null>;
   abortFlow: (flowId: string) => Promise<void>;
   buildFlow: (
@@ -53,10 +71,21 @@ interface ActionState {
   /** A flow main deleted on its own (a one-time flow after its run). */
   dropRemovedFlow: (flowId: string) => void;
   restoreFlow: (flowId: string) => void;
-  addStep: (flowId: string, type?: SkillType) => void;
-  removeStep: (flowId: string, stepId: string) => void;
+  /**
+   * An edit like any other: it is saved with the flow, on Save. `at` is the index it goes in at (a
+   * step card's "insert below"); without it, the end of the flow, inside a block left open at the end.
+   * The new step's id, or null when the flow is not there.
+   */
+  addStep: (flowId: string, type?: SkillType, at?: number) => string | null;
+  /** What it took out (a loop or condition takes its end marker too), for a way back; null when nothing. */
+  removeStep: (flowId: string, stepId: string) => RemovedSteps | null;
+  /** Puts removed steps back at the places they were taken from; ones already back are left alone. */
+  restoreRemovedSteps: (flowId: string, removed: RemovedSteps) => void;
+  /** A copy right under the step (a loop or condition: its whole block); the copy's id, or null. */
+  duplicateStep: (flowId: string, stepId: string) => string | null;
   updateStep: (flowId: string, stepId: string, patch: Partial<SkillInstance>) => void;
-  moveStep: (flowId: string, stepId: string, direction: 'up' | 'down') => void;
+  /** Swaps the step with its neighbour, unless that would leave the if/loop blocks unpaired. */
+  moveStep: (flowId: string, stepId: string, direction: 'up' | 'down') => MoveStepResult;
   reorderSteps: (flowId: string, activeId: string, overId: string) => void;
   updateTrigger: (flowId: string, trigger: TriggerConfig) => void;
   addExtraTrigger: (flowId: string) => void;
@@ -68,7 +97,7 @@ interface ActionState {
   importFlows: (flows: FlowDefinition[]) => Promise<void>;
 }
 
-// Saves can overlap (add-step auto-save, then Ctrl+S). Each request gets a number; a reply older than
+// Saves can overlap (Run saves first, then Ctrl+S). Each request gets a number; a reply older than
 // one already applied to that flow is dropped so it cannot roll the saved copy back.
 let saveRequestSeq = 0;
 const appliedSaveSeq = new Map<string, number>();
@@ -81,6 +110,7 @@ export const useFlowStore = create<ActionState>((set, get) => ({
   executionResult: null,
   isExecuting: false,
   runningFlowIds: [],
+  runSnapshots: {},
 
   loadFlows: async () => {
     const flows = await flowApi.getAll();
@@ -193,18 +223,6 @@ export const useFlowStore = create<ActionState>((set, get) => ({
     return duplicated;
   },
 
-  moveFlow: async (flowId, direction) => {
-    const moved = await flowApi.moveFlow(flowId, direction);
-    if (!Array.isArray(moved) || moved.length === 0) return false;
-    const savedFlows = Object.fromEntries(moved.map((flow) => [flow.id, cloneFlow(flow)]));
-    set((state) => ({
-      flows: moved.map((f) => state.flows.find((cur) => cur.id === f.id) ?? f),
-      selectedFlowId: state.selectedFlowId,
-      savedFlows,
-    }));
-    return true;
-  },
-
   reorderFlows: async (orderedIds) => {
     set((state) => {
       const byId = new Map(state.flows.map((f) => [f.id, f]));
@@ -217,13 +235,16 @@ export const useFlowStore = create<ActionState>((set, get) => ({
       return { flows: next };
     });
     const reordered = await flowApi.reorderFlows(orderedIds);
-    if (Array.isArray(reordered) && reordered.length > 0) {
-      const savedFlows = Object.fromEntries(reordered.map((f) => [f.id, cloneFlow(f)]));
-      set((state) => ({
-        flows: reordered.map((f) => state.flows.find((cur) => cur.id === f.id) ?? f),
-        savedFlows,
-      }));
-    }
+    if (Array.isArray(reordered)) get().adoptSavedOrder(reordered);
+  },
+
+  adoptSavedOrder: (saved) => {
+    if (saved.length === 0) return;
+    const savedFlows = Object.fromEntries(saved.map((f) => [f.id, cloneFlow(f)]));
+    set((state) => ({
+      flows: saved.map((f) => state.flows.find((cur) => cur.id === f.id) ?? f),
+      savedFlows,
+    }));
   },
 
   executeFlow: async (flowId) => {
@@ -306,18 +327,21 @@ export const useFlowStore = create<ActionState>((set, get) => ({
     }));
   },
 
-  addStep: (flowId, type = 'shell') => {
+  addStep: (flowId, type = 'shell', at) => {
     const t = useI18nStore.getState().t;
     const flow = get().flows.find(f => f.id === flowId);
-    const existing = flow?.steps ?? [];
+    if (!flow) return null;
+    const insertAt = at === undefined ? stepInsertIndex(flow.steps) : Math.max(0, Math.min(at, flow.steps.length));
+    const existing = flow.steps;
     const sameTypeCount = existing.filter(s => s.type === type).length;
     const base = DEFAULT_OUTPUT_BASE[type] ?? type;
     // Counting from sameTypeCount + 1 keeps the usual names and never re-binds a deleted step's key.
     const autoKey = SKILLS_WITHOUT_OUTPUT_KEY.includes(type) ? undefined : nextFreeOutputKey(base, existing, sameTypeCount + 1);
     const step = createDefaultStep(type, autoKey, t);
     if (type === 'loop') {
-      const source = findLoopSource(existing, stepInsertIndex(existing));
+      const source = findLoopSource(existing, insertAt);
       if (source) step.config.input = `{{${source.outputKey.trim()}}}`;
+      step.config.loopVar = freeLoopVarName(existing, insertAt);
     }
     const newSteps: SkillInstance[] = [step];
     if (type === 'loop') newSteps.push(createDefaultStep('end_loop', undefined, t));
@@ -326,26 +350,56 @@ export const useFlowStore = create<ActionState>((set, get) => ({
       flows: state.flows.map((f) => {
         if (f.id !== flowId) return f;
         const steps = [...f.steps];
-        steps.splice(stepInsertIndex(steps), 0, ...newSteps);
+        steps.splice(insertAt, 0, ...newSteps);
         return { ...f, steps };
       }),
     }));
-    const updatedFlow = get().flows.find(f => f.id === flowId);
-    if (updatedFlow) void get().saveFlow(updatedFlow);
+    return step.id;
   },
 
   removeStep: (flowId, stepId) => {
+    const flow = get().flows.find((f) => f.id === flowId);
+    const idx = flow ? flow.steps.findIndex((s) => s.id === stepId) : -1;
+    if (!flow || idx === -1) return null;
+    const matchIdx = findMatchingMarker(flow.steps, idx);
+    const at = (matchIdx === -1 ? [idx] : [idx, matchIdx]).sort((a, b) => a - b);
+    const removed: RemovedSteps = at.map((index) => ({ index, step: flow.steps[index] }));
+    const removeIds = new Set(removed.map((entry) => entry.step.id));
+    set((state) => ({
+      flows: state.flows.map((f) => (f.id === flowId ? { ...f, steps: f.steps.filter((s) => !removeIds.has(s.id)) } : f)),
+    }));
+    return removed;
+  },
+
+  restoreRemovedSteps: (flowId, removed) => {
     set((state) => ({
       flows: state.flows.map((f) => {
         if (f.id !== flowId) return f;
-        const idx = f.steps.findIndex((s) => s.id === stepId);
-        if (idx === -1) return f;
-        const removeIds = new Set<string>([stepId]);
-        const matchIdx = findMatchingMarker(f.steps, idx);
-        if (matchIdx !== -1) removeIds.add(f.steps[matchIdx].id);
-        return { ...f, steps: f.steps.filter((s) => !removeIds.has(s.id)) };
+        const steps = [...f.steps];
+        // Ascending, so each lands where it was among the ones put back before it.
+        for (const { index, step } of removed) {
+          if (steps.some((s) => s.id === step.id)) continue;
+          steps.splice(Math.min(index, steps.length), 0, step);
+        }
+        return { ...f, steps };
       }),
     }));
+  },
+
+  duplicateStep: (flowId, stepId) => {
+    const flow = get().flows.find((f) => f.id === flowId);
+    const idx = flow ? flow.steps.findIndex((s) => s.id === stepId) : -1;
+    const copied = flow && idx >= 0 ? copyStepBlock(flow.steps, idx) : null;
+    if (!copied) return null;
+    set((state) => ({
+      flows: state.flows.map((f) => {
+        if (f.id !== flowId) return f;
+        const steps = [...f.steps];
+        steps.splice(copied.insertAt, 0, ...copied.copies);
+        return { ...f, steps };
+      }),
+    }));
+    return copied.copies[0].id;
   },
 
   updateStep: (flowId, stepId, patch) => {
@@ -364,18 +418,19 @@ export const useFlowStore = create<ActionState>((set, get) => ({
   },
 
   moveStep: (flowId, stepId, direction) => {
+    const flow = get().flows.find((f) => f.id === flowId);
+    const idx = flow ? flow.steps.findIndex((s) => s.id === stepId) : -1;
+    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (!flow || idx < 0 || targetIdx < 0 || targetIdx >= flow.steps.length) return { ok: false, reason: 'edge' };
+    const steps = [...flow.steps];
+    [steps[idx], steps[targetIdx]] = [steps[targetIdx], steps[idx]];
+    // A flow that is already broken can still be moved, so the buttons remain a way to repair it.
+    const issue = checkBlockStructure(flow.steps) ? null : checkBlockStructure(steps);
+    if (issue) return { ok: false, reason: issue.kind === 'outsideLoop' ? 'outsideLoop' : 'block' };
     set((state) => ({
-      flows: state.flows.map((f) => {
-        if (f.id !== flowId) return f;
-        const idx = f.steps.findIndex((s) => s.id === stepId);
-        if (idx < 0) return f;
-        const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
-        if (targetIdx < 0 || targetIdx >= f.steps.length) return f;
-        const steps = [...f.steps];
-        [steps[idx], steps[targetIdx]] = [steps[targetIdx], steps[idx]];
-        return { ...f, steps };
-      }),
+      flows: state.flows.map((f) => (f.id === flowId ? { ...f, steps } : f)),
     }));
+    return { ok: true };
   },
 
   reorderSteps: (flowId, activeId, overId) => {
@@ -455,11 +510,17 @@ export const useFlowStore = create<ActionState>((set, get) => ({
   },
 
   markFlowRunning: (flowId) => {
-    set((state) => ({
-      runningFlowIds: state.runningFlowIds.includes(flowId)
-        ? state.runningFlowIds
-        : [...state.runningFlowIds, flowId],
-    }));
+    set((state) => {
+      const ran = state.savedFlows[flowId];
+      return {
+        runningFlowIds: state.runningFlowIds.includes(flowId)
+          ? state.runningFlowIds
+          : [...state.runningFlowIds, flowId],
+        runSnapshots: ran
+          ? { ...state.runSnapshots, [flowId]: Object.fromEntries(ran.steps.map((step) => [step.id, stepRunKey(step)])) }
+          : state.runSnapshots,
+      };
+    });
   },
 
   markFlowDone: (flowId) => {

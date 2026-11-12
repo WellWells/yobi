@@ -25,6 +25,12 @@ interface LedgerEntry {
   path: string;
   size: number;
   savedAt: number;
+  /**
+   * What the file is a copy of (`postMediaSource`: the post, the item, its version), so the same
+   * link pasted again finds it instead of fetching it anew (`findSourcedDownload`). Absent for a
+   * file saved for no link.
+   */
+  source?: string;
 }
 
 let ledgerOverride: string | null = null;
@@ -60,7 +66,8 @@ function asEntries(value: unknown): LedgerEntry[] {
   if (!Array.isArray(files)) return [];
   return files.filter((e): e is LedgerEntry => {
     const r = e as Partial<LedgerEntry> | null;
-    return typeof r?.path === 'string' && typeof r.size === 'number' && typeof r.savedAt === 'number';
+    return typeof r?.path === 'string' && typeof r.size === 'number' && typeof r.savedAt === 'number'
+      && (r.source === undefined || typeof r.source === 'string');
   });
 }
 
@@ -88,25 +95,60 @@ export function currentDownloadsKeepMs(): number | null {
 /**
  * Notes files Yobi just saved, so the sweep deletes them once they are older than the setting —
  * noted under "keep" too, so a shorter setting later still finds them. Files outside
- * Downloads/Yobi are ignored; saving the same path again restarts its time.
+ * Downloads/Yobi are ignored; saving the same path again restarts its time. `source` says what
+ * they are copies of (`findSourcedDownload`); without it, a file noted again keeps the source it
+ * had while it is still the same size.
  */
-export async function recordDownloads(files: readonly string[], now = Date.now()): Promise<void> {
+export async function recordDownloads(files: readonly string[], now = Date.now(), source?: string): Promise<void> {
   const wanted = files.filter(insideYobiDownloads).map((file) => path.resolve(file));
   if (wanted.length === 0) return;
   const added: LedgerEntry[] = [];
   for (const file of wanted) {
     try {
-      added.push({ path: file, size: (await fs.stat(file)).size, savedAt: now });
+      added.push({ path: file, size: (await fs.stat(file)).size, savedAt: now, ...(source ? { source } : {}) });
     } catch {
       // Gone already: nothing to clean up later.
     }
   }
   if (added.length === 0) return;
   await lock.runExclusive(async () => {
+    const entries = await readLedger();
+    const before = new Map(entries.map((e) => [e.path, e]));
     const paths = new Set(added.map((e) => e.path));
-    const kept = (await readLedger()).filter((e) => !paths.has(e.path));
-    await writeLedger([...kept, ...added]);
+    const kept = entries.filter((e) => !paths.has(e.path));
+    const noted = added.map((e) => {
+      const was = before.get(e.path);
+      return e.source || !was?.source || was.size !== e.size ? e : { ...e, source: was.source };
+    });
+    await writeLedger([...kept, ...noted]);
   });
+}
+
+/**
+ * A download Yobi saved as a copy of `source`, still as Yobi left it (same size) and younger than
+ * the setting keeps downloads: the newest, preferring one in `folder` (the step's), so the same
+ * link pasted again is answered from it. Null when there is none.
+ */
+export async function findSourcedDownload(
+  source: string,
+  folder?: string,
+  now = Date.now(),
+): Promise<{ path: string; size: number; inFolder: boolean } | null> {
+  const keepMs = currentDownloadsKeepMs();
+  const wanted = folder ? path.resolve(folder) : null;
+  const candidates = (await readLedger())
+    .filter((e) => e.source === source && insideYobiDownloads(e.path) && (keepMs === null || now - e.savedAt < keepMs))
+    .map((entry) => ({ entry, inFolder: wanted !== null && path.dirname(path.resolve(entry.path)) === wanted }))
+    .sort((a, b) => Number(b.inFolder) - Number(a.inFolder) || b.entry.savedAt - a.entry.savedAt);
+  for (const { entry, inFolder } of candidates) {
+    try {
+      const stat = await fs.stat(entry.path);
+      if (stat.isFile() && stat.size === entry.size) return { path: entry.path, size: entry.size, inFolder };
+    } catch {
+      // Gone: an older copy may still be there.
+    }
+  }
+  return null;
 }
 
 /**

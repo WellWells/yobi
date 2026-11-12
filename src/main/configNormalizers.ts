@@ -16,8 +16,11 @@ import { bySiteFlag } from '../shared/siteConnectors';
 import { normalizeReadingFont } from '../shared/readingPrefs';
 import { normalizeSidebarView } from '../shared/sidebarView';
 import { normalizeDownloadsKeep } from '../shared/downloads';
+import { normalizeTrustedCommands } from '../shared/trustedCommands';
 import { normalizeLinkRecognition } from '../shared/linkRecognition';
+import type { LinkAnalysisPreferences } from '../shared/types';
 import type { GeminiModelCatalog, GeminiModelChoice, GeminiModelInfo } from '../shared/geminiModels';
+import { isGeminiUpsellModeId, withModelNameFirst } from './providers/geminiModelScript';
 import type {
   ClaudeModelCatalog,
   ClaudeModelChoice,
@@ -98,7 +101,9 @@ export function normalizeConfig(raw: unknown): Config {
     targetUrl: normalizeStoredTarget(obj.targetUrl) || defaultStored.targetUrl,
     flowGenerateUrl: normalizeStoredTarget(obj.flowGenerateUrl),
     memoryCurateUrl: normalizeStoredTarget(obj.memoryCurateUrl),
+    flowSortUrl: normalizeStoredTarget(obj.flowSortUrl),
     writingToolsUrl: normalizeStoredTarget(obj.writingToolsUrl),
+    skillAuthorUrl: normalizeStoredTarget(obj.skillAuthorUrl),
     externalEditor: normalizeEditorChoice(obj.externalEditor),
     externalEditorCommand: typeof obj.externalEditorCommand === 'string' ? obj.externalEditorCommand.trim() : '',
     localeSetByUser: inferredLocaleSetByUser,
@@ -134,6 +139,7 @@ export function normalizeConfig(raw: unknown): Config {
     share: normalizeShareSettings(obj.share),
     windowBounds: normalizeWindowBounds(obj.windowBounds),
     promptPreferences: normalizePromptPreferences(obj.promptPreferences),
+    linkAnalysis: normalizeLinkAnalysisPreferences(obj.linkAnalysis),
     providerCommands: normalizeProviderCommands(
       obj.providerCommands ?? (obj.telegram as LegacyTelegramConfig | undefined)?.providerCommands,
     ),
@@ -159,6 +165,16 @@ export function normalizeConfig(raw: unknown): Config {
     chatgptModel: normalizeChatgptModelChoice(obj.chatgptModel),
     chatgptModelCatalog: normalizeChatgptModelCatalog(obj.chatgptModelCatalog),
     downloadsKeep: normalizeDownloadsKeep(obj.downloadsKeep),
+    agentTrustedCommands: normalizeTrustedCommands(obj.agentTrustedCommands, process.platform),
+  };
+}
+
+export function normalizeLinkAnalysisPreferences(raw: unknown): LinkAnalysisPreferences {
+  const obj = raw && typeof raw === 'object' ? raw as Partial<LinkAnalysisPreferences> : {};
+  return {
+    mapsTargetUrl: normalizeStoredTarget(obj.mapsTargetUrl),
+    articleTargetUrl: normalizeStoredTarget(obj.articleTargetUrl),
+    mapsPrompt: typeof obj.mapsPrompt === 'string' ? obj.mapsPrompt : '',
   };
 }
 
@@ -183,9 +199,10 @@ export function normalizeGeminiModelCatalog(raw: unknown): GeminiModelCatalog | 
   for (const entry of Array.isArray(obj.models) ? obj.models : []) {
     const id = cleanText((entry as Partial<GeminiModelInfo> | null)?.id);
     const label = cleanText((entry as Partial<GeminiModelInfo> | null)?.label);
-    if (!id || !label || seen.has(id)) continue;
+    if (!id || !label || seen.has(id) || isGeminiUpsellModeId(id)) continue;
     seen.add(id);
-    models.push({ id, label, sublabel: cleanText((entry as Partial<GeminiModelInfo>).sublabel) });
+    // A list saved before the page moved the model name to the second line reads right at once.
+    models.push(withModelNameFirst({ id, label, sublabel: cleanText((entry as Partial<GeminiModelInfo>).sublabel) }));
   }
   if (models.length === 0) return null;
   const thinkingLabel = cleanText(obj.thinking?.label);

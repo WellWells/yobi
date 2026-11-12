@@ -1,6 +1,6 @@
 import React from 'react';
 import { Box, Group, Stack, Text, UnstyledButton } from '@mantine/core';
-import { CheckCircle2, TriangleAlert } from 'lucide-react';
+import { CircleCheck, TriangleExclamationPoint } from 'lucide-react';
 import { SectionCard, SectionTitle } from '../../../components';
 import { EmptyState } from '../../../../../components/EmptyState';
 import { HelpDot } from '../parts';
@@ -87,7 +87,7 @@ export const StepIssuesCard: React.FC<Props> = ({ stats, t, onInspect }) => {
     <SectionCard>
       <Group gap={7} align="center" mb={10} wrap="nowrap">
         <SectionTitle
-          icon={<TriangleAlert size={15} />}
+          icon={<TriangleExclamationPoint size={15} />}
           label={t('settings.stats.flow.issues.title')}
           mb={0}
         />
@@ -127,7 +127,7 @@ export const StepIssuesCard: React.FC<Props> = ({ stats, t, onInspect }) => {
           ))}
         </Box>
       ) : (
-        <EmptyState icon={CheckCircle2} label={t('settings.stats.flow.issues.empty')} />
+        <EmptyState icon={CircleCheck} label={t('settings.stats.flow.issues.empty')} />
       )}
     </SectionCard>
   );

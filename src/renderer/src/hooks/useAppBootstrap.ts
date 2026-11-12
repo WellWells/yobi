@@ -16,6 +16,29 @@ import { makeByokGroupModels, makeByokModelOption } from '../config/models';
 import { useShortcutAction } from '../shortcuts/useShortcutAction';
 import { useShortcutStore } from '../store/shortcutStore';
 
+/**
+ * The chat's display settings, read from the config: at startup, and again after a backup
+ * restore brought back a config (otherwise the recap and token lines keep the old setting).
+ */
+export function initChatDisplayFromConfig(): void {
+  void settingsApi.getLayoutMode().then((mode) => {
+    if (mode === 'side-by-side' || mode === 'stacked') {
+      useAppStore.setState({ layoutMode: mode as LayoutMode });
+    }
+  });
+  void settingsApi.getMarkdownZoom().then((zoom) => {
+    if (typeof zoom === 'number' && Number.isFinite(zoom)) {
+      useAppStore.setState({ markdownZoom: zoom });
+    }
+  });
+  void settingsApi.getShowTokenUsage().then((show) => {
+    if (typeof show === 'boolean') useAppStore.setState({ showTokenUsage: show });
+  });
+  void settingsApi.getShowRecap().then((show) => {
+    if (typeof show === 'boolean') useAppStore.setState({ showRecap: show });
+  });
+}
+
 export function useAppBootstrap() {
   const appendLog = useAppStore((s) => s.appendLog);
   const setStatus = useAppStore((s) => s.setStatus);
@@ -51,19 +74,7 @@ export function useAppBootstrap() {
     void settingsApi.getAiUrl().then(hydrateAiUrl);
     void tempChatApi.getMode().then(setTempChatMode);
     initializeListeners();
-    void settingsApi.getLayoutMode().then((mode) => {
-      if (mode === 'side-by-side' || mode === 'stacked') {
-        useAppStore.setState({ layoutMode: mode as LayoutMode });
-      }
-    });
-    void settingsApi.getMarkdownZoom().then((zoom) => {
-      if (typeof zoom === 'number' && Number.isFinite(zoom)) {
-        useAppStore.setState({ markdownZoom: zoom });
-      }
-    });
-    void settingsApi.getShowTokenUsage().then((show) => {
-      if (typeof show === 'boolean') useAppStore.setState({ showTokenUsage: show });
-    });
+    initChatDisplayFromConfig();
     initLinkRecognitionFromConfig();
     void byokApi.getSettings().then((snapshot) => {
       setByokGroupModels(makeByokGroupModels(snapshot.groups, snapshot.instances));

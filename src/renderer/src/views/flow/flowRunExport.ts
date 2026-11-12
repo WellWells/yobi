@@ -42,6 +42,40 @@ export function stepLogsById(logs: FlowExecutionLog[]): Map<string, FlowExecutio
   return latest;
 }
 
+export interface RunSpot {
+  stepId: string;
+  /** The step's number as its card shows it (#N). */
+  position: number;
+  kind: 'failed' | 'running' | 'stopped';
+}
+
+/** "第 {{step}} 步失敗" and the like, for the band and the outline's run line. */
+export const RUN_SPOT_LABEL_KEY: Record<RunSpot['kind'], string> = {
+  failed: 'flow.run.failedAt',
+  running: 'flow.run.runningAt',
+  stopped: 'flow.run.stoppedAt',
+};
+
+/**
+ * The step the editor's top band points at: the first one the last run failed on, else, while the
+ * flow runs, the one it is on (the innermost: a loop stays `running` while its steps run), else
+ * the stop step that ended the last run early (not a failure: the run succeeded there).
+ */
+export function runSpot(steps: SkillInstance[], byStep: Map<string, FlowExecutionLog>, flowRunning: boolean): RunSpot | null {
+  // The step that ended the run, before one that failed but let it go on (`emitFailFlag`).
+  const hardAt = steps.findIndex((step) => byStep.get(step.id)?.status === 'error');
+  const failedAt = hardAt >= 0 ? hardAt : steps.findIndex((step) => byStep.get(step.id)?.error);
+  if (failedAt >= 0) return { stepId: steps[failedAt].id, position: failedAt + 1, kind: 'failed' };
+  if (!flowRunning) {
+    const stoppedAt = steps.findIndex((step) => byStep.get(step.id)?.note === 'stopped');
+    return stoppedAt >= 0 ? { stepId: steps[stoppedAt].id, position: stoppedAt + 1, kind: 'stopped' } : null;
+  }
+  for (let i = steps.length - 1; i >= 0; i--) {
+    if (byStep.get(steps[i].id)?.status === 'running') return { stepId: steps[i].id, position: i + 1, kind: 'running' };
+  }
+  return null;
+}
+
 export function buildFlowRunMarkdown(
   flowName: string,
   steps: SkillInstance[],

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Group, Stack, Text } from '@mantine/core';
-import { TriangleAlert, Sparkles } from 'lucide-react';
+import { TriangleExclamationPoint, Sparkles } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { AppModal } from '../../components/AppModal';
 import { AppTextarea } from '../../components/AppTextarea';
@@ -28,6 +28,8 @@ interface FlowGenerateModalProps {
     answers?: FlowClarification[],
     providerUrl?: string,
   ) => Promise<FlowBuildOutcome>;
+  /** Put in the box when the window opens: what the gallery's search held when nothing matched. */
+  initialDescription?: string;
 }
 
 /** Local to one modal session; the main process only uses it to address its event stream. */
@@ -38,9 +40,14 @@ function newBuildId(): string {
 type Screen = 'compose' | 'running' | 'questions' | 'done' | 'failed';
 
 export const FlowGenerateModal: React.FC<FlowGenerateModalProps> = ({
-  open, t, onClose, onBuild,
+  open, t, onClose, onBuild, initialDescription = '',
 }) => {
   const [description, setDescription] = useState('');
+
+  // Keyed on `open` only: the seed must not overwrite what the user has typed since.
+  useEffect(() => {
+    if (open && initialDescription) setDescription(initialDescription);
+  }, [open]);
   /**
    * Which model generates the flow. Kept apart from the chat model on purpose: this one only
    * ever has to return a large JSON object, and the provider that converses best is often not
@@ -215,7 +222,7 @@ export const FlowGenerateModal: React.FC<FlowGenerateModalProps> = ({
                   {fillTemplate(t('flow.build.done.summary'), { steps: String(state.report.steps), tools: String(state.report.skills.length) })}
                 </Text>
                 {issueRows.length > 0 && (
-                  <Alert color="var(--mantine-color-warning)" icon={<TriangleAlert size={14} />} p="xs">
+                  <Alert color="var(--mantine-color-warning)" icon={<TriangleExclamationPoint size={14} />} p="xs">
                     <Stack gap={2}>
                       <Text fz="xs" fw={600}>{t('flow.build.done.check')}</Text>
                       {issueRows.map((issue) => (
@@ -236,7 +243,7 @@ export const FlowGenerateModal: React.FC<FlowGenerateModalProps> = ({
 
             {screen === 'failed' && (
               <Stack gap="xs">
-                <Alert color="var(--mantine-color-error)" icon={<TriangleAlert size={14} />} p="xs">
+                <Alert color="var(--mantine-color-error)" icon={<TriangleExclamationPoint size={14} />} p="xs">
                   <Stack gap={2}>
                     <Text fz="xs" fw={600}>
                       {fillTemplate(t('flow.build.failed.title'), { phase: t(`flow.build.phase.${state.error?.phase ?? 'build'}`) })}

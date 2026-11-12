@@ -1,7 +1,7 @@
 import type { AgentTraceEvent, SkillType } from '../../../shared/types';
 import type { ResearchProgress } from '../../../shared/researchProgress';
 import type { FlowExecutorDeps } from '../types';
-import { executeSkill } from '../skills';
+import { executeSkill, execTrustedCalls } from '../skills';
 import { unwrapStepOutput } from '../executor';
 import { FlowAbortError, resolveStepTimeoutMs, withStepTimeout } from '../runtime';
 import { sendLog } from '../../helpers';
@@ -13,6 +13,7 @@ import { sensitiveCommandReason } from './sensitivePaths';
 import { isElevated } from './elevation';
 import { maskSecrets } from './secretMask';
 import { isBuiltinTool, runBuiltinTool } from './agentBuiltins';
+import { skillDirForShell } from './agentSkillTool';
 import type { AgentBuiltinTool, BuiltinDeps, FlowSaveRequest, FlowWriteConfirmRequest } from './agentBuiltins';
 import { executeMcpProposal } from './mcpAction';
 import type { McpConfirmRequest } from './mcpAction';
@@ -22,6 +23,9 @@ import type { EvidenceLedger } from './evidenceLedger';
 import type { GoalIntent } from './actionGate';
 import { chatQuestionRefusal, shellTextDenyReason } from './shellApproval';
 import type { ShellApprovalText } from './shellApproval';
+import { isTrustedBy, plainCommandFacts, shellTrustFor, splitPlainCommand } from './shellTrust';
+import type { PlainCommandFacts, ShellTrust, TrustKey } from './shellTrust';
+import { trustedCommandLabel } from '../../../shared/trustedCommands';
 import { sourcesLine } from './agentCitations';
 import type { CitationPool, ResearchSource } from './agentCitations';
 
@@ -31,13 +35,22 @@ export interface ShellConfirmRequest {
   /** The interpreter the command will be handed to, resolved the way `execShell` resolves it. */
   interpreter: string;
   cwd: string;
+  /** The installed skill whose folder the command gets as SKILL_DIR; shown on the confirmation. */
+  skill?: string;
+  /** The model's title for this step (`doing`), in the user's language: what the dialog leads with. */
+  summary?: string;
+  /** What the program read off a plain command, so a sentence that does not match it shows. */
+  facts?: PlainCommandFacts;
+  /** What "always allow" would record; absent when the command cannot be trusted (see shellTrust.ts). */
+  trust?: TrustKey[];
 }
 
 export type AgentConfirmRequest = McpConfirmRequest | FlowWriteConfirmRequest | ShellConfirmRequest;
 
 /**
  * Tools confirmed on every call. Only `shell`: the workspace sandbox does not bound it, whereas
- * `file_write` is confined by `denyReasonForFileTool`.
+ * `file_write` is confined by `denyReasonForFileTool`. The one exception is a desktop run's command
+ * whose every program and action the user marked "always allow" (shellTrust.ts).
  */
 const CONFIRM_REQUIRED_TOOLS = new Set<SkillType>(['shell']);
 
@@ -101,8 +114,20 @@ async function runTool(
   deps: FlowExecutorDeps,
   budgetRemainingMs: number,
   signal?: AbortSignal,
+  trust?: ShellTrust,
 ): Promise<string> {
   const timeoutMs = Math.max(10_000, Math.min(resolveStepTimeoutMs(tool, deps, config), budgetRemainingMs));
+  // A command that can be trusted runs as the programs the check resolved, not through the shell:
+  // cmd would look in the working directory first, where file_write may have put a same-named .bat.
+  if (tool === 'shell' && trust) {
+    return execTrustedCalls(trust.calls, {
+      command: config.command ?? '',
+      cwd: config.cwd ?? '',
+      ...(config.skillDir ? { skillDir: config.skillDir } : {}),
+      timeoutMs,
+      ...(signal ? { signal } : {}),
+    });
+  }
   // `withStepTimeout` does not cancel abandoned work, so skills that honour an AbortSignal get it
   // directly. For `shell` this kills only the direct child; detached processes (`start /b`,
   // `Start-Process`) survive.
@@ -144,6 +169,11 @@ export interface CallContext {
    * question in the chat and runs the stored command when the answer approves it (a bot run).
    */
   deferShell?: (request: ShellConfirmRequest) => ShellApprovalText;
+  /**
+   * The programs and actions the user let run without asking. Only a desktop run passes it: a bot
+   * run asks in its chat, and the person there is not the one who granted it.
+   */
+  trustedShell?: () => readonly TrustKey[];
   /** Likewise for a connector change that needs confirming (the owner's own bot chat). */
   deferChanges?: boolean;
   /** Shared by every call of the run: `build_flow` reads the assessment `assess_flow` left there. */
@@ -280,6 +310,11 @@ export async function runCall(
     const result = await runBuiltinTool(toolName as AgentBuiltinTool, recordConfig, ctx.builtins, step);
     if (result.deferred) return { ...outcome('', 'ok'), deferred: result.deferred };
     if (result.status === 'error') sendLog(`⚠️ [Agent] ${toolName}: ${result.observation.slice(0, 160)}`);
+    if (result.sources?.length && ctx.citations) {
+      // Its linked markers join the run's numbering, as research's do, so the answer cites them.
+      const { text, cited } = ctx.citations.absorb(result.observation, result.sources);
+      return outcome([text, sourcesLine(cited)].filter(Boolean).join('\n'), result.status);
+    }
     return outcome(result.observation, result.status);
   }
 
@@ -295,12 +330,18 @@ export async function runCall(
     sendLog(`🔒 [Agent] blocked ${tool}: ${denyReason}`);
     return outcome(`ERROR: ${denyReason}`, 'error', isWrite);
   }
+  // Resolved before the user is asked: a skill that does not exist is the model's mistake to fix,
+  // not a question for them, and what the dialog names is what the command will get.
+  const skill = tool === 'shell' ? await skillDirForShell(ctx.builtins.skills, recordConfig.skill) : null;
+  if (skill && 'error' in skill) return outcome(`ERROR: ${skill.error}`, 'error', isWrite);
+  let trust: ShellTrust | null = null;
   if (CONFIRM_REQUIRED_TOOLS.has(tool)) {
     const request: ShellConfirmRequest = {
       kind: 'shell',
       command: recordConfig.command ?? '',
       interpreter: shellInterpreter(recordConfig),
       cwd: ctx.workspaceDir,
+      ...(skill ? { skill: skill.name } : {}),
     };
     if (ctx.deferShell) {
       // Refused here, not after the user said yes: a command that is never going to run must not
@@ -312,17 +353,42 @@ export async function runCall(
       }
       return { ...outcome('', 'ok'), deferred: request };
     }
-    const approved = await ctx.askUser(request);
-    if (!approved) {
-      sendLog(`🔒 [Agent] the user declined a ${tool} call`);
-      return outcome('ERROR: The user declined to run this command. Do not retry it or a variation of it — take a different approach, or finish and tell them what you needed to run.', 'error', isWrite);
+    // Only where a grant can exist: a run without the list (bot, unattended, helper) is asked, and
+    // runs through the shell, exactly as before.
+    trust = ctx.trustedShell && !ctx.unattended
+      ? await shellTrustFor(request.command, request.interpreter, {
+        cwd: ctx.workspaceDir,
+        readRoots: ctx.fileRoots,
+        writeRoots: [ctx.workspaceDir],
+      })
+      : null;
+    if (trust && ctx.trustedShell && isTrustedBy(trust, ctx.trustedShell())) {
+      sendLog(`🔓 [Agent] shell: ${trust.keys.map(trustedCommandLabel).join(', ')} is on the user's always-allow list — running without asking`);
+    } else {
+      const segments = splitPlainCommand(request.command, process.platform);
+      const approved = await ctx.askUser({
+        ...request,
+        ...(action.doing ? { summary: action.doing } : {}),
+        ...(segments ? { facts: plainCommandFacts(segments) } : {}),
+        ...(trust ? { trust: trust.keys } : {}),
+      });
+      if (!approved) {
+        sendLog(`🔒 [Agent] the user declined a ${tool} call`);
+        return outcome('ERROR: The user declined to run this command. Do not retry it or a variation of it — take a different approach, or finish and tell them what you needed to run.', 'error', isWrite);
+      }
     }
   }
   // Injected after validation so the model cannot set them: shell runs in the workspace, and
   // `noClobber` keeps an unconfirmed file_write from replacing an existing user file.
   // On macOS/Linux the shell is the interpreter the confirmation showed, resolved once, not re-read.
+  // `skillDir` likewise: SKILL_DIR is the folder resolved above, never a path the model wrote.
   const execConfig = tool === 'shell'
-    ? { ...recordConfig, ...(process.platform === 'win32' ? {} : { shell: shellInterpreter(recordConfig) }), cwd: ctx.workspaceDir }
+    ? {
+        ...recordConfig,
+        ...(process.platform === 'win32' ? {} : { shell: shellInterpreter(recordConfig) }),
+        cwd: ctx.workspaceDir,
+        ...(skill ? { skillDir: skill.dir } : {}),
+      }
     : tool === 'file_write'
       ? { ...recordConfig, noClobber: 'true' }
       // The agent already read the goal and wrote this question: a quick research skips its own
@@ -342,7 +408,7 @@ export async function runCall(
   };
   const withResearch = (result: CallOutcome): CallOutcome => (research ? { ...result, research } : result);
   try {
-    const raw = await runTool(tool, execConfig, progressDeps, ctx.remainingMs(), ctx.signal);
+    const raw = await runTool(tool, execConfig, progressDeps, ctx.remainingMs(), ctx.signal, trust ?? undefined);
     const unwrapped = unwrapStepOutput(tool, raw);
     if (tool === 'research' && ctx.citations) {
       const researched = researchOutcome(unwrapped.output, unwrapped.subVars, ctx.citations);

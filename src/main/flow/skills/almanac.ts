@@ -8,6 +8,9 @@ import { almanacActivityNames, almanacDays, almanacHour, solarFromLunar, solarSp
 import type { AlmanacDay, AlmanacHour, AlmanacScript, YmdDate } from '../../almanac/almanac';
 import { toHant } from '../../almanac/almanacHant';
 import { MAX_ALMANAC_DAYS, MAX_ALMANAC_FILTER_DAYS } from '../../../shared/almanac';
+import {
+  ALMANAC_BARE_YEAR, ALMANAC_DAY_COUNT, almanacSpanShape, gregorianSpan, parseYmdParts, ymdDayNumber,
+} from '../../../shared/almanacSpan';
 
 export interface AlmanacStepDeps {
   now: () => Date;
@@ -25,17 +28,11 @@ function localYmd(d: Date): YmdDate {
   return { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() };
 }
 
-function parseYmd(raw: string): YmdDate | null {
-  const m = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/.exec(raw);
-  if (!m) return null;
-  return { year: Number(m[1]), month: Number(m[2]), day: Number(m[3]) };
-}
+const parseYmd: (raw: string) => YmdDate | null = parseYmdParts;
 
 function badDate(value: string): FlowUserError {
   return new FlowUserError('flow.error.almanacDate', { value }, `Not a date the almanac can read: "${value}"`);
 }
-
-const DAY_MS = 86_400_000;
 
 interface Span {
   start: YmdDate;
@@ -45,11 +42,9 @@ interface Span {
 /** How a lunar request reads its dates; null = Gregorian. */
 type LunarReading = { leap: boolean } | null;
 
-const dayNumber = (d: YmdDate): number => Date.UTC(d.year, d.month - 1, d.day) / DAY_MS;
-
-/** A day count in "days" — "30", "30天", "30 days", capped later. A bare year is a span instead. */
-const DAY_COUNT = /^(\d+)(?:\.\d+)?\s*(?:天|日|days?)?$/i;
-const BARE_YEAR = /^(19\d\d|20\d\d|2100)$/;
+const dayNumber: (d: YmdDate) => number = ymdDayNumber;
+const DAY_COUNT = ALMANAC_DAY_COUNT;
+const BARE_YEAR = ALMANAC_BARE_YEAR;
 
 /**
  * A lunar range's ends as Gregorian days. With `leap`, an end in that year's leap month reads as
@@ -70,32 +65,19 @@ async function solarRangeFromLunar(from: YmdDate, to: YmdDate, leap: boolean): P
  * with `lunar` the same spellings name the lunar month (閏 when leap), lunar year or lunar dates.
  */
 async function parseSpan(raw: string, lunar: LunarReading): Promise<Span | null> {
-  const month = /^(\d{4})[-/.](\d{1,2})$/.exec(raw);
-  if (month) {
-    const [year, m] = [Number(month[1]), Number(month[2])];
-    if (m < 1 || m > 12) return null;
-    if (!lunar) return { start: { year, month: m, day: 1 }, days: new Date(year, m, 0).getDate() };
-    return solarSpanOfLunar(year, m, lunar.leap).catch(() => { throw badDate(raw); });
+  const shape = almanacSpanShape(raw);
+  if (!shape) return null;
+  if (!lunar) return gregorianSpan(shape);
+  if (shape.kind === 'month') return solarSpanOfLunar(shape.year, shape.month, lunar.leap).catch(() => { throw badDate(raw); });
+  if (shape.kind === 'year') return solarSpanOfLunar(shape.year, null, false).catch(() => { throw badDate(raw); });
+  let from: YmdDate;
+  let to: YmdDate;
+  try {
+    [from, to] = await solarRangeFromLunar(shape.from, shape.to, lunar.leap);
+  } catch {
+    throw badDate(raw);
   }
-  const year = BARE_YEAR.exec(raw);
-  if (year) {
-    const y = Number(year[1]);
-    if (lunar) return solarSpanOfLunar(y, null, false).catch(() => { throw badDate(raw); });
-    return { start: { year: y, month: 1, day: 1 }, days: dayNumber({ year: y + 1, month: 1, day: 1 }) - dayNumber({ year: y, month: 1, day: 1 }) };
-  }
-  const range = /^(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})\s*(?:to|~|～|\.\.|至|到|–|—|\s-\s)\s*(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})$/i.exec(raw);
-  let from = range ? parseYmd(range[1]) : null;
-  let to = range ? parseYmd(range[2]) : null;
-  if (!from || !to) return null;
-  if (lunar) {
-    try {
-      [from, to] = await solarRangeFromLunar(from, to, lunar.leap);
-    } catch {
-      throw badDate(raw);
-    }
-  }
-  const days = dayNumber(to) - dayNumber(from) + 1;
-  return days >= 1 ? { start: from, days } : null;
+  return gregorianSpan({ kind: 'range', from, to });
 }
 
 /**

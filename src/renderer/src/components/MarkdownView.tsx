@@ -1,6 +1,6 @@
 import React, { useDeferredValue, useMemo } from 'react';
 import { Box } from '@mantine/core';
-import { stripConversationMarkers } from '../../../shared/conversationDoc';
+import { markdownBodyWithoutTitle } from '../utils/parseMarkdownBlocks';
 import type { MarkdownBlocks } from '../utils/parseMarkdownBlocks';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
@@ -17,13 +17,14 @@ interface MarkdownViewProps {
 }
 
 function MarkdownViewInner({ content, blocks }: MarkdownViewProps) {
-  const { t } = useI18nStore();
+  const t = useI18nStore((s) => s.t);
   const layoutMode = useAppStore((state) => state.layoutMode);
   const markdownZoom = useAppStore((state) => state.markdownZoom);
   const deferredBlocks = useDeferredValue(blocks);
   const deferredContent = useDeferredValue(content);
   const isStale = deferredBlocks !== blocks;
-  const plainContent = useMemo(() => stripConversationMarkers(deferredContent), [deferredContent]);
+  // The title is drawn above as the page's H1; the body under it leaves that line out.
+  const plainContent = useMemo(() => markdownBodyWithoutTitle(deferredContent), [deferredContent]);
   const isSideBySide = layoutMode === 'side-by-side';
   const fullWidth = useReadingStore((state) => state.prefs.fullWidth);
   const zoomStyle = markdownZoom === 100 ? undefined : { zoom: markdownZoom / 100 };

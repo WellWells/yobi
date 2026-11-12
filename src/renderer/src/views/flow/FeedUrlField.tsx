@@ -14,6 +14,7 @@ type DiscoverStatus = 'idle' | 'found' | 'notfound' | 'error';
 export interface FeedUrlFieldProps {
   value: string;
   onChange: (value: string) => void;
+  onBlur?: () => void;
   label: string;
   placeholder?: string;
   hint?: string;
@@ -22,7 +23,7 @@ export interface FeedUrlFieldProps {
 }
 
 export const FeedUrlField: React.FC<FeedUrlFieldProps> = ({
-  value, onChange, label, placeholder, hint, error, t,
+  value, onChange, onBlur, label, placeholder, hint, error, t,
 }) => {
   const urlError = !isValidUrlOrVar(value);
   const [discovering, setDiscovering] = useState(false);
@@ -72,6 +73,7 @@ export const FeedUrlField: React.FC<FeedUrlFieldProps> = ({
         placeholder={placeholder ?? t('flow.skill.rss.url.placeholder')}
         value={value}
         onChange={(e) => setUrl(e.currentTarget.value)}
+        onBlur={onBlur}
         size="sm"
         error={error ?? (urlError ? t('flow.skill.rss.url.error') : undefined)}
       />

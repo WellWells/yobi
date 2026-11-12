@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Button, Container, Divider, Flex, Group, Stack, Text } from '@mantine/core';
+import { useShallow } from 'zustand/react/shallow';
 import { useI18nStore } from '../store/i18nStore';
 import { updateStatus, useUpdateStore } from '../store/useUpdateStore';
 import { Bug, Download, Info, Newspaper, RefreshCw, Scale, Store } from 'lucide-react';
@@ -12,8 +13,9 @@ import { fillTemplate } from '../../../shared/fillTemplate';
 
 const MICROSOFT_STORE_URL = 'https://apps.microsoft.com/detail/9nnx8prfstc9';
 
-export const AboutView: React.FC = () => {
-  const { t, locale } = useI18nStore();
+/** A page of Settings: it takes no props, so the redraws of Settings around it never reach it. */
+export const AboutView = React.memo(() => {
+  const { t, locale } = useI18nStore(useShallow((s) => ({ t: s.t, locale: s.locale })));
   const [appVersion, setAppVersion] = useState('');
   const [appIconDataUrl, setAppIconDataUrl] = useState('');
 
@@ -22,6 +24,7 @@ export const AboutView: React.FC = () => {
   const newVersion = useUpdateStore((s) => s.newVersion);
   const releaseUrl = useUpdateStore((s) => s.releaseUrl);
   const checkForUpdates = useUpdateStore((s) => s.checkForUpdates);
+  const installUpdate = useUpdateStore((s) => s.installUpdate);
   const openReleaseUrl = useUpdateStore((s) => s.openReleaseUrl);
 
   useEffect(() => {
@@ -33,6 +36,8 @@ export const AboutView: React.FC = () => {
   const blogUrl = isChinese ? 'https://wellstsai.com/' : 'https://wellstsai.com/en/';
 
   const statusTitle = {
+    ready: fillTemplate(t('settings.update.ready'), { version: newVersion ?? '' }),
+    downloading: fillTemplate(t('settings.update.downloading'), { version: newVersion ?? '' }),
     available: fillTemplate(t('settings.update.available'), { version: newVersion ?? '' }),
     checking: t('settings.update.checking'),
     failed: t('settings.update.checkFailed'),
@@ -40,10 +45,14 @@ export const AboutView: React.FC = () => {
     unchecked: t('settings.update.notChecked'),
   }[status];
 
+  const isBusy = status === 'checking' || status === 'downloading';
+  const hasNews = status === 'available' || status === 'ready';
+
+  // A page of Settings: its pane, beside the settings nav in the Settings dialog, is all it draws.
   return (
-    <Flex flex={1} bg="var(--mantine-color-body)" style={{ overflow: 'hidden' }}>
-      <Box flex={1} style={{ overflowY: 'auto' }}>
-        <Container size={680} py={28} pb={40}>
+    <Flex flex={1} direction="column" bg="var(--mantine-color-body)" style={{ overflow: 'hidden' }}>
+      <Box flex={1} style={{ overflowY: 'auto', scrollbarGutter: 'stable' }}>
+        <Container size={680} pt={8} pb={40}>
 
         <Box className={styles.hero}>
           {appIconDataUrl && (
@@ -139,10 +148,10 @@ export const AboutView: React.FC = () => {
               <Group justify="space-between" align="center" wrap="nowrap">
                 <Stack gap={2} style={{ minWidth: 0 }}>
                   <Group gap="xs" wrap="nowrap">
-                    <Box c={status === 'failed' ? 'var(--mantine-color-error)' : status === 'available' ? 'var(--mantine-color-accent)' : 'dimmed'}>
+                    <Box c={status === 'failed' ? 'var(--mantine-color-error)' : hasNews ? 'var(--mantine-color-accent)' : 'dimmed'}>
                       <RefreshCw
                         size={13}
-                        className={status === 'checking' ? styles.spinning : undefined}
+                        className={isBusy ? styles.spinning : undefined}
                       />
                     </Box>
                     <Text fz="var(--font-size-sm)" fw={600} c={status === 'failed' ? 'var(--mantine-color-error)' : undefined}>
@@ -156,7 +165,17 @@ export const AboutView: React.FC = () => {
                   )}
                 </Stack>
 
-                {status === 'available' ? (
+                {status === 'ready' ? (
+                  <Button
+                    size="xs"
+                    variant="filled"
+                    leftSection={<RefreshCw size={13} />}
+                    onClick={() => { void installUpdate(); }}
+                    style={{ flexShrink: 0 }}
+                  >
+                    {t('settings.update.restart')}
+                  </Button>
+                ) : status === 'available' ? (
                   <Button
                     size="xs"
                     variant="filled"
@@ -173,7 +192,7 @@ export const AboutView: React.FC = () => {
                     variant="light"
                     leftSection={<RefreshCw size={13} />}
                     onClick={() => { void checkForUpdates(); }}
-                    disabled={status === 'checking'}
+                    disabled={isBusy}
                     style={{ flexShrink: 0 }}
                   >
                     {t('settings.update.check')}
@@ -206,4 +225,6 @@ export const AboutView: React.FC = () => {
       </Box>
     </Flex>
   );
-};
+});
+
+AboutView.displayName = 'AboutView';

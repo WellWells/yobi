@@ -1,31 +1,21 @@
-import { Box, Loader, Text } from '@mantine/core';
-import { Check, Circle, CircleSlash, X } from 'lucide-react';
+import { Box, Loader } from '@mantine/core';
+import { Check, Circle, CircleSlash, CircleX, X } from 'lucide-react';
 
-export type ProgressState = 'done' | 'failed' | 'active' | 'skipped' | 'pending';
+/** `softFailed`: the step failed and the flow went on (its "continue on failure" switch). */
+export type ProgressState = 'done' | 'failed' | 'softFailed' | 'active' | 'skipped' | 'pending';
 
 export const ROW_GAP = 6;
 export const MARK_SLOT = 12;
-export const NUMBER_WIDTH = 14;
 export const LABEL_OFFSET = MARK_SLOT + ROW_GAP;
-export const NUMBERED_MARK_OFFSET = NUMBER_WIDTH + ROW_GAP;
-export const NUMBERED_LABEL_OFFSET = NUMBERED_MARK_OFFSET + LABEL_OFFSET;
 
 export const PROGRESS_ROW_STYLE = { display: 'flex', alignItems: 'center', gap: ROW_GAP, minWidth: 0 } as const;
 
 const SLOT_STYLE = { flexShrink: 0, display: 'inline-flex', width: MARK_SLOT, justifyContent: 'center' } as const;
 
-const NUMBER_STYLE = {
-  fontSize: 'var(--font-size-xs)',
-  color: 'var(--mantine-color-dimmed)',
-  width: NUMBER_WIDTH,
-  textAlign: 'right',
-  flexShrink: 0,
-  fontVariantNumeric: 'tabular-nums',
-} as const;
-
 function MarkIcon({ state }: { state: ProgressState }) {
   if (state === 'done') return <Check size={11} color="var(--mantine-color-success)" />;
   if (state === 'failed') return <X size={11} color="var(--mantine-color-error)" />;
+  if (state === 'softFailed') return <CircleX size={11} color="var(--mantine-color-warning)" />;
   if (state === 'active') return <Loader size={10} />;
   if (state === 'skipped') return <CircleSlash size={10} color="var(--mantine-color-dimmed)" />;
   return <Circle size={9} color="var(--mantine-color-dimmed)" />;
@@ -38,8 +28,4 @@ export function ProgressMark({ state }: { state: ProgressState }) {
       <MarkIcon state={state} />
     </Box>
   );
-}
-
-export function StepNumber({ value }: { value: number }) {
-  return <Text component="span" style={NUMBER_STYLE}>{value}</Text>;
 }

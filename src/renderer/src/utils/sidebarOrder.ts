@@ -44,7 +44,3 @@ export function sortConversations(files: readonly OutputFile[], sort: Conversati
 export function folderRowKey(name: string): string {
   return `folder:${folderKey(name)}`;
 }
-
-export function isFolderRowKey(key: string): boolean {
-  return key.startsWith('folder:');
-}

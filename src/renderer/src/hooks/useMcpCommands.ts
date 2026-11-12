@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { assignMcpCommandNames, mcpCommandFlowId, reservedCommandOwners } from '../../../shared/mcpCommand';
 import type { McpCommandAssignment, McpCommandOwner } from '../../../shared/mcpCommand';
 import { reachableOnSend } from '../../../shared/mcpConnectOnUse';
-import { useFlowStore } from '../store/useFlowStore';
+import { useSavedFlows } from '../store/useSavedFlows';
 import { useMcpStore } from '../store/useMcpStore';
 import { useChatCommands } from './useChatCommands';
 import type { ChatCommand } from './useChatCommands';
@@ -15,7 +15,7 @@ import type { McpServerView } from '../../../shared/types';
  */
 export function useReservedCommandOwners(): ReadonlyMap<string, McpCommandOwner> {
   const flowCommands = useChatCommands();
-  const flows = useFlowStore((s) => s.flows);
+  const flows = useSavedFlows();
   return useMemo(() => {
     const names = new Map(flows.map((flow) => [flow.id, flow.name]));
     return reservedCommandOwners(flowCommands, (id) => names.get(id) ?? '');

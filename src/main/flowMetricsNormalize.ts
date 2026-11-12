@@ -1,12 +1,13 @@
-import type { MetricCounts, SkillType } from '../shared/types';
+import type { MetricCounts, MetricOutcome, SkillType } from '../shared/types';
 import type {
   FlowErrorReason,
   FlowErrorSample,
+  FlowLastRun,
   FlowMetricsSnapshot,
   FlowRunMetrics,
   FlowStepMetrics,
 } from '../shared/flowMetrics';
-import { FLOW_ERROR_REASONS, MAX_ERROR_SAMPLES, zeroFlowRun } from '../shared/flowMetrics';
+import { FLOW_ERROR_REASONS, MAX_ERROR_SAMPLES, MAX_SAMPLE_CHARS, zeroFlowRun } from '../shared/flowMetrics';
 import { toCount } from './metricsNormalize';
 
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
@@ -62,11 +63,24 @@ function normalizeStep(raw: unknown): FlowStepMetrics | null {
   };
 }
 
+const OUTCOMES = new Set<string>(['success', 'failure', 'timeout']);
+
+function normalizeLastRun(raw: unknown): FlowLastRun | undefined {
+  const obj = asObject(raw);
+  if (typeof obj.at !== 'string' || !obj.at || typeof obj.outcome !== 'string' || !OUTCOMES.has(obj.outcome)) return undefined;
+  const last: FlowLastRun = { at: obj.at, outcome: obj.outcome as MetricOutcome };
+  if (obj.degraded === true) last.degraded = true;
+  if (typeof obj.message === 'string' && obj.message) last.message = obj.message.slice(0, MAX_SAMPLE_CHARS);
+  return last;
+}
+
 function normalizeFlow(raw: unknown): FlowRunMetrics {
   const obj = asObject(raw);
   const flow = zeroFlowRun();
   flow.runs = normalizeCounts(obj.runs);
   flow.degraded = toCount(obj.degraded);
+  const last = normalizeLastRun(obj.last);
+  if (last) flow.last = last;
   for (const [stepId, entry] of Object.entries(asObject(obj.steps))) {
     if (!stepId) continue;
     const step = normalizeStep(entry);

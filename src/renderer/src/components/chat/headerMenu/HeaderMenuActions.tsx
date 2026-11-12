@@ -1,7 +1,7 @@
 import React from 'react';
 import { Menu as MMenu, Stack, Text } from '@mantine/core';
 import {
-  Copy, FileCode, FileImage, FolderOpen, Globe, History, Link2, RefreshCw, Share2, Upload,
+  Copy, FileCode, FileImage, FolderOpen, Globe, Link2, Puzzle, RefreshCw, RotateCcwClock, Share2, Upload,
   type LucideIcon,
 } from 'lucide-react';
 import type { ConversationDoc } from '../../../../../shared/conversationDoc';
@@ -38,6 +38,8 @@ export interface HeaderMenuActionsProps {
    * thread marker cannot be given an id, so its row is disabled with the reason.
    */
   onOpenHistory?: () => void;
+  /** "Save as skill…": drafts a skill from this conversation; the row is left out without a handler. */
+  onSaveAsSkill?: () => void;
   /** Slot for "translate the whole conversation ▸", a top-level row; nothing is drawn without it. */
   translateMenu?: React.ReactNode;
   /** The slot's own label, which the search box matches it by. */
@@ -70,7 +72,7 @@ const DisabledReasonItem: React.FC<{ icon: LucideIcon; label: string; reason: st
 /** The ⋮ menu's actions on this conversation, above the divider. */
 export const HeaderMenuActions: React.FC<HeaderMenuActionsProps> = ({
   t, filePath, fileContent, conversation, captureBusy,
-  onOpenCaptureDialog, onOpenShareDialog, onStartRewrite, leadingAction, onOpenHistory, translateMenu, searching, show, onClose,
+  onOpenCaptureDialog, onOpenShareDialog, onStartRewrite, leadingAction, onOpenHistory, onSaveAsSkill, translateMenu, searching, show, onClose,
 }) => {
   const hasContent = Boolean(fileContent);
   const link = threadLink(conversation);
@@ -170,9 +172,21 @@ export const HeaderMenuActions: React.FC<HeaderMenuActionsProps> = ({
 
       {renderExport()}
 
+      {onSaveAsSkill && show('saveAsSkill') && (
+        <MMenu.Item
+          leftSection={<Puzzle size={14} />}
+          onClick={() => {
+            onSaveAsSkill();
+            onClose();
+          }}
+        >
+          {t('header.menu.saveAsSkill')}
+        </MMenu.Item>
+      )}
+
       {onOpenHistory && show('history') && (canVersionConversation(fileContent ?? '') ? (
         <MMenu.Item
-          leftSection={<History size={14} />}
+          leftSection={<RotateCcwClock size={14} />}
           onClick={() => {
             onOpenHistory();
             onClose();
@@ -182,7 +196,7 @@ export const HeaderMenuActions: React.FC<HeaderMenuActionsProps> = ({
         </MMenu.Item>
       ) : (
         <DisabledReasonItem
-          icon={History}
+          icon={RotateCcwClock}
           label={t('header.menu.history')}
           reason={t('header.menu.history.noneReason')}
         />

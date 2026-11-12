@@ -8,7 +8,7 @@ import { defaultStored } from './configTypes';
 import type {
   Config, LineConfig, StoredByokInstance, StoredConfig, StoredLineConfig, StoredMailAccount, StoredTelegramConfig, TelegramConfig,
 } from './configTypes';
-import { encryptToken, decryptToken, decryptTokenChecked } from './configEncryption';
+import { decryptToken, decryptTokenChecked, encryptSecret, openSecrets, sealedToken, trackSecretWrite } from './configEncryption';
 import { getConfigDir, getConfigPath } from './configPaths';
 import { clearAllSecretFailures, clearSecretFailures, getSecretHealth, recordSecretFailure } from './secretHealth';
 import {
@@ -59,8 +59,9 @@ migrateProviderCommandsIfNeeded(configDir);
 
 // electron-store writes its defaults into config.json as it opens it, which would hide that a
 // config from before the region hotkey lacks the field; normalizeConfig fills it in instead,
-// after checking the combo against the user's other hotkeys.
-const { regionHotkey: _regionDefault, ...storeDefaults } = defaultStored;
+// after checking the combo against the user's other hotkeys. The chat model is left out for the
+// same reason: a config.json without one is a new install, whose default depends on the system language.
+const { regionHotkey: _regionDefault, targetUrl: _targetDefault, ...storeDefaults } = defaultStored;
 const store = openStoreWithRecovery<StoredConfig>('config', configDir, storeDefaults as StoredConfig);
 
 function repairStoredShapeIfNeeded(): void {
@@ -101,6 +102,8 @@ function buildConfigFromStore(): Config {
 
 // Read before anything saves: whether config.json lacked the region hotkey when the app started.
 let regionHotkeyFilled = typeof (store.store as Partial<StoredConfig>).regionHotkey !== 'string';
+// Read before anything saves: whether config.json had no chat model when the app started.
+let chatTargetFilled = typeof (store.store as Partial<StoredConfig>).targetUrl !== 'string';
 
 const config: Config = buildConfigFromStore();
 
@@ -116,6 +119,23 @@ function regionHotkeyFilledIn(): boolean {
 function settleRegionHotkey(regionHotkey: string): void {
   regionHotkeyFilled = false;
   saveConfig({ regionHotkey });
+}
+
+/** Whether the chat model is the built-in default of a new install (or a factory reset), not yet decided. */
+function chatTargetFilledIn(): boolean {
+  return chatTargetFilled;
+}
+
+/** The decided chat model is saved, so the decision is made once. */
+function settleChatTarget(targetUrl: string): void {
+  chatTargetFilled = false;
+  config.targetUrl = targetUrl;
+  saveConfig({ targetUrl });
+}
+
+/** A factory reset is a new install again: the next start decides the chat model afresh. */
+function unsettleChatTarget(): void {
+  chatTargetFilled = true;
 }
 
 let telegramTokenUnavailable = false;
@@ -185,7 +205,8 @@ function storedSocketConfig<P extends SocketBotPlatform>(platform: P, merged: Co
   return plain as unknown as StoredConfig[P];
 }
 
-function initSensitiveConfig(): void {
+async function initSensitiveConfig(): Promise<void> {
+  await openSecrets(store.store);
   const stored = store.store as StoredConfig;
   initSocketSecrets(stored);
   const telegramToken = readSecretChecked(
@@ -290,41 +311,70 @@ function clearStoredSecret(scope: SecretScope, id: string, field: string): void 
  * `shouldReEncrypt`, so it runs only when Electron says the old key provider is on its way
  * out — never on an ordinary boot, which would churn config.json for nothing.
  */
-function reEncryptSensitiveConfig(): void {
+async function reEncryptSensitiveConfig(): Promise<void> {
+  const plaintexts = [
+    config.telegram.botToken,
+    config.telegram.apiHash,
+    config.line.channelAccessToken,
+    config.line.channelSecret,
+    ...config.mailAccounts.map((account) => account.password),
+    ...config.byokInstances.map((instance) => instance.apiKey),
+    ...SOCKET_BOT_PLATFORMS.flatMap((platform) => socketSecrets(platform).map((field) => liveSocketSection(config, platform)[field] ?? '')),
+  ];
+  await Promise.all([...new Set(plaintexts.filter(Boolean))].map((plaintext) => encryptSecret(plaintext, { fresh: true })));
+  // Only the secret fields are rewritten, each with the ciphertext just made for its plaintext.
+  const fresh = (plaintext: string | undefined, stored: string): string => (plaintext ? sealedToken(plaintext) ?? stored : stored);
   const current = store.store;
   store.store = {
     ...current,
     telegram: {
       ...current.telegram,
-      botTokenEncrypted: config.telegram.botToken ? encryptToken(config.telegram.botToken) : current.telegram.botTokenEncrypted,
-      apiHashEncrypted: config.telegram.apiHash ? encryptToken(config.telegram.apiHash) : current.telegram.apiHashEncrypted,
+      botTokenEncrypted: fresh(config.telegram.botToken, current.telegram.botTokenEncrypted),
+      apiHashEncrypted: fresh(config.telegram.apiHash, current.telegram.apiHashEncrypted),
     },
     line: {
       ...current.line,
-      channelAccessTokenEncrypted: config.line.channelAccessToken
-        ? encryptToken(config.line.channelAccessToken)
-        : current.line.channelAccessTokenEncrypted,
-      channelSecretEncrypted: config.line.channelSecret
-        ? encryptToken(config.line.channelSecret)
-        : current.line.channelSecretEncrypted,
+      channelAccessTokenEncrypted: fresh(config.line.channelAccessToken, current.line.channelAccessTokenEncrypted),
+      channelSecretEncrypted: fresh(config.line.channelSecret, current.line.channelSecretEncrypted),
     },
-    mailAccounts: (current.mailAccounts ?? []).map((entry) => {
-      const plaintext = config.mailAccounts.find((account) => account.id === entry.id)?.password ?? '';
-      return plaintext ? { ...entry, passwordEncrypted: encryptToken(plaintext) } : entry;
-    }),
-    byokInstances: (current.byokInstances ?? []).map((entry) => {
-      const plaintext = config.byokInstances.find((instance) => instance.id === entry.id)?.apiKey ?? '';
-      return plaintext ? { ...entry, apiKeyEncrypted: encryptToken(plaintext) } : entry;
-    }),
-    ...Object.fromEntries(SOCKET_BOT_PLATFORMS.map((platform) => {
+    mailAccounts: (current.mailAccounts ?? []).map((entry) => ({
+      ...entry,
+      passwordEncrypted: fresh(config.mailAccounts.find((account) => account.id === entry.id)?.password, entry.passwordEncrypted),
+    })),
+    byokInstances: (current.byokInstances ?? []).map((entry) => ({
+      ...entry,
+      apiKeyEncrypted: fresh(config.byokInstances.find((instance) => instance.id === entry.id)?.apiKey, entry.apiKeyEncrypted),
+    })),
+    // A platform the file has no section for has no secret to re-encrypt either.
+    ...Object.fromEntries(SOCKET_BOT_PLATFORMS.filter((platform) => current[platform] !== undefined).map((platform) => {
       const section = { ...storedSocketSection(current, platform) };
       for (const field of socketSecrets(platform)) {
         const plaintext = liveSocketSection(config, platform)[field];
-        if (plaintext) section[`${field}Encrypted`] = encryptToken(plaintext);
+        if (plaintext) section[`${field}Encrypted`] = fresh(plaintext, section[`${field}Encrypted`] ?? '');
       }
       return [platform, section];
     })),
   } as StoredConfig;
+}
+
+const sealingForSave = new Set<string>();
+
+/**
+ * The ciphertext a save stores for `plaintext`. One not encrypted yet keeps `keep` (what the
+ * field holds now) while it is encrypted, and the config is saved again once it is; the live
+ * config holds the plaintext meanwhile, so only a crash in those few milliseconds loses it.
+ */
+function sealOrKeep(plaintext: string, keep: string): string {
+  const stored = sealedToken(plaintext);
+  if (stored !== null) return stored;
+  if (!sealingForSave.has(plaintext)) {
+    sealingForSave.add(plaintext);
+    void trackSecretWrite(encryptSecret(plaintext)
+      .then(() => saveConfig({}))
+      .catch((err: unknown) => console.warn(`[config] could not save an encrypted secret: ${err instanceof Error ? err.message : String(err)}`))
+      .finally(() => sealingForSave.delete(plaintext)));
+  }
+  return keep;
 }
 
 /**
@@ -334,7 +384,7 @@ function reEncryptSensitiveConfig(): void {
 function writeSecret(plaintext: string, previousEncrypted: string, at: SecretFailure): string {
   if (!plaintext) return previousEncrypted;
   clearSecretFailures(at.scope, at.id, at.field);
-  return encryptToken(plaintext);
+  return sealOrKeep(plaintext, previousEncrypted);
 }
 
 function saveConfig(cfg: Partial<Config>): void {
@@ -371,11 +421,11 @@ function saveConfig(cfg: Partial<Config>): void {
   const { botToken, apiHash, ...telegramWithoutToken } = mergedTelegram;
   const previousStoredTelegram = store.store.telegram;
   const telegramTokenEncrypted = botToken
-    ? encryptToken(botToken)
+    ? sealOrKeep(botToken, previousStoredTelegram?.botTokenEncrypted ?? '')
     : (telegramTokenUnavailable ? (previousStoredTelegram?.botTokenEncrypted ?? '') : '');
   if (botToken) clearSecretFailures('telegram', '', 'botToken');
   const telegramApiHashEncrypted = apiHash
-    ? encryptToken(apiHash)
+    ? sealOrKeep(apiHash, previousStoredTelegram?.apiHashEncrypted ?? '')
     : (telegramApiHashUnavailable ? (previousStoredTelegram?.apiHashEncrypted ?? '') : '');
   if (apiHash) clearSecretFailures('telegram', '', 'apiHash');
 
@@ -491,7 +541,7 @@ function getDefaultConfig(): Config {
   return normalizeConfig({ ...rest, telegram: { ...telegramRest, botToken: '', apiHash: '' } });
 }
 
-function importConfigFromJson(raw: unknown): Config | null {
+async function importConfigFromJson(raw: unknown): Promise<Config | null> {
   if (!raw || typeof raw !== 'object') return null;
   const rawConfig = raw as Record<string, unknown>;
   const hasKnownField = [
@@ -504,6 +554,8 @@ function importConfigFromJson(raw: unknown): Config | null {
     'responseTimeout',
   ].some((key) => key in rawConfig);
   if (!hasKnownField) return null;
+  // Another machine's ciphertext fails here and reads as empty below, keeping the current secret.
+  await openSecrets(rawConfig);
 
   const patched: Record<string, unknown> = { ...rawConfig };
 
@@ -655,12 +707,28 @@ function importConfigFromJson(raw: unknown): Config | null {
   if (!('downloadsKeep' in rawConfig)) {
     normalized.downloadsKeep = config.downloadsKeep;
   }
+  if (!('linkAnalysis' in rawConfig)) {
+    normalized.linkAnalysis = { ...config.linkAnalysis };
+  }
+  // Never from the backup, present or not: its paths are another computer's (or another install's),
+  // and a file someone hands over must not decide what runs without asking.
+  normalized.agentTrustedCommands = config.agentTrustedCommands;
   const importedByokId = byokIdFromUrl(normalized.targetUrl);
   const importedGroupId = byokGroupIdFromUrl(normalized.targetUrl);
   if (importedByokId && !normalized.byokInstances.some((instance) => instance.id === importedByokId)) {
     normalized.targetUrl = PROVIDER_URLS.gemini;
   } else if (importedGroupId && !normalized.byokGroups.some((group) => group.id === importedGroupId)) {
     normalized.targetUrl = PROVIDER_URLS.gemini;
+  }
+  for (const key of ['mapsTargetUrl', 'articleTargetUrl'] as const) {
+    const target = normalized.linkAnalysis[key];
+    const instanceId = byokIdFromUrl(target);
+    const groupId = byokGroupIdFromUrl(target);
+    if ((instanceId && !normalized.byokInstances.some((instance) => instance.id === instanceId))
+      || (groupId && !normalized.byokGroups.some((group) => group.id === groupId
+        && group.memberIds.some((id) => normalized.byokInstances.some((instance) => instance.id === id))))) {
+      normalized.linkAnalysis[key] = '';
+    }
   }
   for (const direct of [normalized.telegram.llmDirect, normalized.line.llmDirect]) {
     const directByokId = byokIdFromUrl(direct.targetUrl);
@@ -689,6 +757,9 @@ export {
   saveConfig,
   regionHotkeyFilledIn,
   settleRegionHotkey,
+  chatTargetFilledIn,
+  settleChatTarget,
+  unsettleChatTarget,
   getHiddenSources,
   wipeSensitiveConfig,
   markTelegramTokenResolved,

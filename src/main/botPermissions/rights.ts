@@ -6,6 +6,7 @@ import type { UserMemoryState } from '../memory/memoryState';
 import {
   NO_BOT_RIGHTS,
   botGroupGrantsOf,
+  isGrantAvailableOn,
   normalizeGrantList,
   resolveBotRights,
   resolveGroupRights,
@@ -58,11 +59,24 @@ function getGroupGrants(platform: BotPlatform, chatId: string): BotGroupGrant[] 
  * (the user's own, or what the user granted someone they let in); the unpaired get the group's
  * grants only.
  * Personal memory is not decided here: it stays in the private chat (`botMemoryContext`), since it
- * reaches every answer unasked and the others in a group read them.
+ * reaches every answer unasked and the others in a group read them. Nor is being an admin
+ * (`isAdminChat`): on LINE PC another admin is one in their own 1:1 chat only.
  */
 function isOwnChat(platform: BotPlatform, userId: string, chatId: string): boolean {
   if (!chatId) return false;
   return chatId === userId || platform === 'lineSelf';
+}
+
+/**
+ * Where an account counts as an admin of the bot (flow admin, connector changes, the admin grant):
+ * its own private chat. On LINE PC the owner keeps every chat — every line the bot sends is the
+ * owner's own message — while an admin who is not the owner is one only in their own 1:1 chat with
+ * the owner (its chat id is their id): in a group the others would read what admins get, the
+ * owner's data included.
+ */
+function isAdminChat(platform: BotPlatform, userId: string, chatId: string, owner: boolean): boolean {
+  if (!chatId) return false;
+  return chatId === userId || (platform === 'lineSelf' && owner);
 }
 
 /**
@@ -97,14 +111,17 @@ export function computeBotRights(
   const groupGrants = isPrivate || !chat ? [] : getGroupGrants(platform, chat);
   if (groupGrants === null) return { ...NO_BOT_RIGHTS };
   const paired = isBotUserPaired(platform, id);
-  const own = paired
+  const isOwner = paired && state !== null && isBotSelfAccount(state, platform, id);
+  const resolved = paired
     ? resolveBotRights({
       platform,
-      isOwner: state ? isBotSelfAccount(state, platform, id) : false,
+      isOwner,
       isPrivate: isPrivate || isOwnChat(platform, id, chat),
       grants: getBotGrants(platform, id),
     })
     : { ...NO_BOT_RIGHTS };
+  // Rights follow the person on LINE PC; the admin grant stays where only admins read the answer.
+  const own = resolved.admin && !isAdminChat(platform, id, chat, isOwner) ? { ...resolved, admin: false } : resolved;
   if (isPrivate || !chat) return own;
   return unionBotRights(own, resolveGroupRights(groupGrants));
 }
@@ -122,10 +139,29 @@ export function isTelegramAdminGrant(userId: number): boolean {
 }
 
 /**
- * Whether this account may run a flow command limited to admins, in this chat: the owner ("me")
- * or a Telegram admin-grant holder, still paired, in their own private chat. LINE has no admin
- * grant, so there it is the owner alone. Never in a group: the command reads the owner's data.
- * `state` is the memory file; null (unreadable) means not the owner.
+ * Whether this account is an admin of the bot, in whatever chat: the owner ("me") or an admin-grant
+ * holder on a platform with admins (Telegram, LINE, LINE PC), still paired. On Discord and Slack it
+ * is the owner alone. `state` is the memory file; null (unreadable) means not the owner.
+ */
+export function computeBotAdmin(state: UserMemoryState | null, platform: BotPlatform, userId: string): boolean {
+  const id = String(userId ?? '').trim();
+  if (!id || !isBotUserPaired(platform, id)) return false;
+  if (state && isBotSelfAccount(state, platform, id)) return true;
+  return isGrantAvailableOn('admin', platform) && getBotGrants(platform, id).includes('admin');
+}
+
+/** Whether this paired account is the owner's ("me"), read now; an unreadable memory file is not. */
+export async function botOwnerAllowed(platform: BotPlatform, userId: string): Promise<boolean> {
+  const id = String(userId ?? '').trim();
+  if (!id || !isBotUserPaired(platform, id)) return false;
+  const state = await loadUserMemory().catch(() => null);
+  return state !== null && isBotSelfAccount(state, platform, id);
+}
+
+/**
+ * Whether this account may run a flow command limited to admins, in this chat: an admin
+ * (`computeBotAdmin`) where it counts as one (`isAdminChat`: their own private chat; the LINE PC
+ * owner anywhere). Never another admin in a group: the command reads the owner's data.
  */
 export function computeBotFlowAdmin(
   state: UserMemoryState | null,
@@ -134,9 +170,9 @@ export function computeBotFlowAdmin(
   chatId: string,
 ): boolean {
   const id = String(userId ?? '').trim();
-  if (!id || !isOwnChat(platform, id, String(chatId ?? '').trim()) || !isBotUserPaired(platform, id)) return false;
-  if (state && isBotSelfAccount(state, platform, id)) return true;
-  return platform === 'telegram' && getBotGrants(platform, id).includes('admin');
+  if (!id) return false;
+  const owner = state !== null && isBotUserPaired(platform, id) && isBotSelfAccount(state, platform, id);
+  return isAdminChat(platform, id, String(chatId ?? '').trim(), owner) && computeBotAdmin(state, platform, id);
 }
 
 /**
@@ -152,8 +188,8 @@ export function computeBotConnectorChanges(
   chatId: string,
 ): boolean {
   const id = String(userId ?? '').trim();
-  if (!id || !isOwnChat(platform, id, String(chatId ?? '').trim()) || !isBotUserPaired(platform, id)) return false;
-  return state !== null && isBotSelfAccount(state, platform, id);
+  if (!id || !isBotUserPaired(platform, id) || state === null || !isBotSelfAccount(state, platform, id)) return false;
+  return isAdminChat(platform, id, String(chatId ?? '').trim(), true);
 }
 
 /** `computeBotFlowAdmin` with a fresh read of the memory file; unreadable leaves only the admin grant. */

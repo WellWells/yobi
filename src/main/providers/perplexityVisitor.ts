@@ -18,7 +18,7 @@ const WORKER_PARTITION = 'persist:gemini';
  */
 export const PERPLEXITY_ORIGINS = ['https://www.perplexity.ai', 'https://perplexity.ai'] as const;
 
-export const PERPLEXITY_VISITOR_DATA = [
+const PERPLEXITY_VISITOR_DATA = [
   'cookies',
   'localStorage',
   'indexedDB',

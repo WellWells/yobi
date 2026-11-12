@@ -1,14 +1,13 @@
 import { t } from '../i18n';
 import { BotChatRouter } from '../botChat/router';
-import type { BotChatOutput, BotChatRouterDeps, BotFlowCommandDef } from '../botChat/types';
+import type { BotChatOutput, BotChatRouterDeps } from '../botChat/types';
 import type { BotBuiltinRunResult } from '../botBuiltinCommands';
 import { formatLineReply, verbatimLineText } from './format';
 import type { LineClient } from './client';
 import { LINE_GROUPS_COMMAND, LINE_INVITE_COMMAND, LINE_USERS_COMMAND } from './commands';
 import type { LineChatEvent, LinePostbackEvent, LineTextEvent } from './events';
 import { respond, safePush } from './messaging';
-
-export type LineFlowCommandDef = BotFlowCommandDef;
+import { pushPageForward } from './pageForward';
 
 type RouterOwnedDeps = 'platform' | 'output' | 'ownerCommands';
 
@@ -33,6 +32,10 @@ function lineOutput(deps: Pick<LineDispatcherDeps, 'getClient' | 'getStrings' | 
     push: (event, text) => push(event.chatId, text),
     pushResult: async (event, result: BotBuiltinRunResult) => {
       const s = deps.getStrings();
+      if (result.ok && result.pageForward) {
+        await pushPageForward(deps.getClient(), event.chatId, result.pageForward, s, deps.onLog);
+        return true;
+      }
       if (result.ok && result.verbatim) {
         const verbatim = verbatimLineText(result.text);
         if (verbatim === null) return false;

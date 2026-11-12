@@ -3,6 +3,7 @@ import { Stack, Text } from '@mantine/core';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { AppNumberInput } from '../../../components/AppNumberInput';
 import { SelectDropdown } from '../../../components/SelectDropdown';
+import { isValidUrlOrVar } from './validation';
 import type { SkillConfigProps } from './types';
 import { fillTemplate } from '../../../../../shared/fillTemplate';
 
@@ -12,6 +13,8 @@ export const GmapReviewsConfig: React.FC<SkillConfigProps> = ({ step, onChange, 
   const url = step.config.url ?? '';
   const sort = step.config.sort ?? 'mixed';
   const count = step.config.count ?? '100';
+  const urlError = !isValidUrlOrVar(url);
+  const key = step.outputKey;
 
   return (
     <Stack gap="xs">
@@ -21,6 +24,8 @@ export const GmapReviewsConfig: React.FC<SkillConfigProps> = ({ step, onChange, 
         value={url}
         onChange={(e) => onChange({ ...step.config, url: e.currentTarget.value })}
         size="sm"
+        mono
+        error={urlError ? t('flow.skill.gmap_reviews.url.error') : undefined}
       />
 
       <SelectDropdown
@@ -39,12 +44,18 @@ export const GmapReviewsConfig: React.FC<SkillConfigProps> = ({ step, onChange, 
         min={10}
         max={300}
         step={10}
+        suffix={` ${t('flow.skill.gmap_reviews.count.unit')}`}
         allowDecimal={false}
         allowNegative={false}
       />
 
-      <Text fz="xs" c="dimmed">
-        {fillTemplate(t('flow.skill.gmap_reviews.outputHint'), { outputKey: `{{${step.outputKey}}}` })}
+      <Text fz="xs" c="var(--text-muted)">
+        {fillTemplate(t('flow.skill.gmap_reviews.outputHint'), {
+          outputKey: `{{${key}}}`,
+          place: `{{${key}.place}}`,
+          rating: `{{${key}.rating}}`,
+          total: `{{${key}.total}}`,
+        })}
       </Text>
     </Stack>
   );

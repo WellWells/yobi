@@ -19,6 +19,7 @@ export function wantsComposerClear(
  * Deletes through the browser's editing pipeline instead of setting state, so the deletion lands
  * on the field's undo stack and Ctrl+Z brings the draft back; the resulting `input` event reaches
  * React's onChange. Returns false when the browser refused, so the caller clears the state itself.
+ * `execCommand` is marked deprecated, but no other API edits a field through its undo stack.
  */
 export function deleteAllText(field: HTMLTextAreaElement): boolean {
   if (!field.value) return true;

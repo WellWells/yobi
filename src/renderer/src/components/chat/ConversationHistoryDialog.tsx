@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Group, ScrollArea, Stack, Text } from '@mantine/core';
-import { RotateCcw, Trash2 } from 'lucide-react';
+import { RotateCcw, Trash } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import type { ConversationDoc } from '../../../../shared/conversationDoc';
 import { stripConversationMarkers } from '../../../../shared/conversationDoc';
@@ -169,7 +169,7 @@ export const ConversationHistoryDialog: React.FC<ConversationHistoryDialogProps>
         </ScrollArea>
         {block && <Text fz="var(--font-size-sm)" c="var(--text-secondary)">{t(`history.blocked.${block}`)}</Text>}
         <Group justify="flex-end" gap={8}>
-          <AppButton variant="subtle" color="red" leftSection={<Trash2 size={14} />} onClick={() => { void deleteOne(); }} disabled={!selected}>
+          <AppButton variant="subtle" color="red" leftSection={<Trash size={14} />} onClick={() => { void deleteOne(); }} disabled={!selected}>
             {t('history.deleteOne')}
           </AppButton>
           <AppButton

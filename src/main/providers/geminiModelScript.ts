@@ -14,6 +14,36 @@ export type GeminiPickerResult =
   | { ok: false; reason: 'no-picker' | 'menu-did-not-open' };
 
 /**
+ * A row for a model the account's plan does not include ("4 Carbon" on a Pro account,
+ * `data-mode-id="upsell_MODE_CATEGORY_ULTRA"`, not marked disabled). It cannot be chosen — clicking
+ * it only advertises the upgrade — so it is neither listed nor clicked.
+ */
+const UPSELL_MODE_PREFIX = 'upsell_';
+
+export function isGeminiUpsellModeId(id: string): boolean {
+  return id.startsWith(UPSELL_MODE_PREFIX);
+}
+
+const VERSION_LED = /^\d+(?:\.\d+)*\s/;
+
+/**
+ * Puts the model name in `label`. Which of a row's two lines holds it is not fixed: the localized
+ * purpose ("quick answers") can be the first line and "3.5 Flash-Lite" the second. The name is the line that starts with a version number; the other is localized text.
+ * When that does not single one out, the page's order stands. Applied to fresh reads and to the
+ * cached list alike.
+ */
+export function withModelNameFirst<T extends { label: string; sublabel: string }>(row: T): T {
+  if (VERSION_LED.test(row.label) || !VERSION_LED.test(row.sublabel)) return row;
+  return { ...row, label: row.sublabel, sublabel: row.label };
+}
+
+/** The script reports the page's lines as they are; this is what the rest of the app reads. */
+export function namedGeminiPickerResult(result: GeminiPickerResult): GeminiPickerResult {
+  if (!result.ok) return result;
+  return { ...result, snapshot: { ...result.snapshot, models: result.snapshot.models.map(withModelNameFirst) } };
+}
+
+/**
  * Opens the picker, reads it, switches it to `target` when asked, and closes it again.
  * With `target` null (or all-null) it only reads.
  */
@@ -23,6 +53,7 @@ export function buildGeminiModelPickerScript(target: GeminiPickerTarget | null):
   var BUTTON_SEL = ${JSON.stringify(GEMINI_MODE_BUTTON_SELECTOR)};
   var MENU_SEL = ${JSON.stringify(GEMINI_MODE_MENU_SELECTOR)};
   var SIGN_IN_SEL = ${JSON.stringify(GEMINI_SIGN_IN_ROW_SELECTOR)};
+  var UPSELL_PREFIX = ${JSON.stringify(UPSELL_MODE_PREFIX)};
   var TARGET = ${JSON.stringify(target)};
 
   function sleep(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
@@ -58,7 +89,11 @@ export function buildGeminiModelPickerScript(target: GeminiPickerTarget | null):
     return open ? Array.prototype.slice.call(open.querySelectorAll('gem-menu-item')) : [];
   }
   function modelRows() {
-    return rows().filter(function(row) { return row.hasAttribute('data-mode-id'); });
+    // An upsell row has a mode id too, but the plan does not include it.
+    return rows().filter(function(row) {
+      var id = row.getAttribute('data-mode-id');
+      return id !== null && id.indexOf(UPSELL_PREFIX) !== 0;
+    });
   }
   function locked(row) { return row.getAttribute('aria-disabled') === 'true'; }
   function thinkingRow() {

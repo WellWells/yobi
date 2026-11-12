@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ActionIcon, Box, Group, Stack, Text, Tooltip, Button as MButton } from '@mantine/core';
-import { Trash2, UserPlus } from 'lucide-react';
+import { Trash, UserPlus } from 'lucide-react';
 import { CopyIconButton } from '../../../components/CopyIconButton';
 import type { PendingPairingCode } from '../../../../../shared/types';
 import { formatRemaining } from './LinePairingPanel';
@@ -60,7 +60,7 @@ export const SocketBotPairingPanel: React.FC<Props> = ({ pendingCodes, connected
                     <CopyIconButton value={line} copyLabel={t('common.copy')} copiedLabel={t('common.copied')} />
                     <Tooltip label={t('settings.socketBot.pairing.revoke')} position="top">
                       <ActionIcon variant="subtle" size={26} onClick={() => onRevoke(pending.code)} aria-label={t('settings.socketBot.pairing.revoke')}>
-                        <Trash2 size={13} />
+                        <Trash size={13} />
                       </ActionIcon>
                     </Tooltip>
                   </Group>

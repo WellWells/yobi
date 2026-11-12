@@ -11,7 +11,7 @@ import {
   isModelUrlHidden,
 } from '../../../shared/types';
 import type { ByokGroupSnapshot, ByokInstanceSnapshot, ByokProviderType, HiddenSources } from '../../../shared/types';
-import { ClaudeIcon, GeminiIcon, GrokIcon, KimiIcon, OpenAiIcon, OpenRouterIcon, PerplexityIcon } from './brandIcons';
+import { ClaudeIcon, DeepSeekIcon, GeminiIcon, GrokIcon, KimiIcon, OpenAiIcon, OpenRouterIcon, PerplexityIcon } from './brandIcons';
 
 interface ModelIconProps {
   size?: number;
@@ -33,6 +33,7 @@ export const MODELS: ModelOption[] = [
   { label: PROVIDER_LABELS.claude, url: PROVIDER_URLS.claude, icon: ClaudeIcon },
   { label: PROVIDER_LABELS.chatgpt, url: PROVIDER_URLS.chatgpt, icon: OpenAiIcon },
   { label: PROVIDER_LABELS.perplexity, url: PROVIDER_URLS.perplexity, icon: PerplexityIcon },
+  { label: PROVIDER_LABELS.deepseek, url: PROVIDER_URLS.deepseek, icon: DeepSeekIcon },
 ];
 
 export const DEFAULT_MODEL_URL = MODELS[0].url;
@@ -42,6 +43,7 @@ const MODEL_ICON_BY_URL: Record<string, ModelIcon> = {
   [PROVIDER_URLS.perplexity]: PerplexityIcon,
   [PROVIDER_URLS.chatgpt]: OpenAiIcon,
   [PROVIDER_URLS.claude]: ClaudeIcon,
+  [PROVIDER_URLS.deepseek]: DeepSeekIcon,
 } as const;
 
 const BYOK_TYPE_ICONS: Partial<Record<ByokProviderType, ModelIcon>> = {
@@ -49,6 +51,7 @@ const BYOK_TYPE_ICONS: Partial<Record<ByokProviderType, ModelIcon>> = {
   anthropic: ClaudeIcon,
   gemini: GeminiIcon,
   openrouter: OpenRouterIcon,
+  deepseek: DeepSeekIcon,
   xai: GrokIcon,
   moonshot: KimiIcon,
   perplexity: PerplexityIcon,

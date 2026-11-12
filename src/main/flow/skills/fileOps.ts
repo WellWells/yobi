@@ -106,8 +106,9 @@ async function freeSiblingPath(resolved: string): Promise<string> {
 
 export async function execFileWrite(config: Record<string, string>): Promise<string> {
   const content = config.content ?? '';
+  let resolved = '';
   try {
-    let resolved = await resolveWritePath((config.folder ?? '').trim(), (config.filename ?? '').trim());
+    resolved = await resolveWritePath((config.folder ?? '').trim(), (config.filename ?? '').trim());
     await fs.mkdir(path.dirname(resolved), { recursive: true });
     // `noClobber` is set by `/agent`, never by a flow: a flow author who names a file means that
     // file, but the agent picks names from a model and must not silently truncate one that
@@ -124,15 +125,48 @@ export async function execFileWrite(config: Record<string, string>): Promise<str
     sendLog(`📝 [Flow] File written: ${resolved}`);
     return resolved;
   } catch (err) {
-    throw new Error(`file_write: ${err instanceof Error ? err.message : String(err)}`);
+    throw fileStepError('file_write', 'write', err, resolved || (config.filename ?? '').trim());
   }
+}
+
+type FileAction = 'read' | 'list' | 'delete' | 'write';
+
+/** The error key for what the user can fix (a missing file, no permission, a folder given), by errno. */
+const FILE_ERROR_KEYS: Record<FileAction, Partial<Record<string, string>>> = {
+  read: { ENOENT: 'flow.error.fileReadMissing', EACCES: 'flow.error.fileReadDenied', EPERM: 'flow.error.fileReadDenied', EISDIR: 'flow.error.fileReadFolder' },
+  list: { ENOENT: 'flow.error.folderMissing', ENOTDIR: 'flow.error.folderMissing', EACCES: 'flow.error.folderDenied', EPERM: 'flow.error.folderDenied' },
+  delete: {
+    EISDIR: 'flow.error.fileDeleteFolder', ERR_FS_EISDIR: 'flow.error.fileDeleteFolder',
+    EACCES: 'flow.error.fileDeleteDenied', EPERM: 'flow.error.fileDeleteDenied', EBUSY: 'flow.error.fileDeleteDenied',
+  },
+  write: {
+    EACCES: 'flow.error.fileWriteFailed', EPERM: 'flow.error.fileWriteFailed', EBUSY: 'flow.error.fileWriteFailed',
+    ENOSPC: 'flow.error.fileWriteFailed', EROFS: 'flow.error.fileWriteFailed', EISDIR: 'flow.error.fileWriteFailed',
+  },
+};
+
+/**
+ * A file step's failure: worded by Yobi (with the path) when the system said why in a way the
+ * user can act on, the system's own English otherwise. The English stays `<skill>: <message>`.
+ */
+function fileStepError(skill: string, action: FileAction, err: unknown, target: string): Error {
+  const message = `${skill}: ${err instanceof Error ? err.message : String(err)}`;
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  const key = code ? FILE_ERROR_KEYS[action][code] : undefined;
+  return key ? new FlowUserError(key, { path: target }, message) : new Error(message);
+}
+
+/** An empty path after interpolation: nothing to read or delete, which must not pass as done. */
+function requiredFilePath(skill: 'file_read' | 'file_delete'): FlowUserError {
+  return new FlowUserError('flow.error.requiredFilePath', {}, `${skill}: no file path`);
 }
 
 export async function execFileRead(config: Record<string, string>): Promise<string> {
   const filePath = (config.path ?? '').trim();
-  if (!filePath) return '';
+  if (!filePath) throw requiredFilePath('file_read');
+  let resolved = filePath;
   try {
-    const resolved = await resolveUserPath(filePath);
+    resolved = await resolveUserPath(filePath);
     const bytes = await fs.readFile(resolved);
     const pdf = isPdfFile(resolved, bytes);
     const content = pdf ? await readPdfText(bytes, path.basename(resolved)) : bytes.toString('utf-8');
@@ -140,15 +174,16 @@ export async function execFileRead(config: Record<string, string>): Promise<stri
     return content;
   } catch (err) {
     if (err instanceof FlowUserError) throw err;
-    throw new Error(`file_read: ${err instanceof Error ? err.message : String(err)}`);
+    throw fileStepError('file_read', 'read', err, resolved);
   }
 }
 
 export async function execFileList(config: Record<string, string>): Promise<string> {
   const dir = (config.directory ?? '').trim();
-  if (!dir) return '[]';
+  if (!dir) throw new FlowUserError('flow.error.requiredFolder', {}, 'file_list: no folder to list');
+  let resolved = dir;
   try {
-    const resolved = await resolveUserPath(dir);
+    resolved = await resolveUserPath(dir);
     const entries = await fs.readdir(resolved, { withFileTypes: true });
     const items = entries
       .filter((entry) => entry.isFile())
@@ -156,20 +191,21 @@ export async function execFileList(config: Record<string, string>): Promise<stri
     sendLog(`📁 [Flow] Listed ${items.length} files in: ${resolved}`);
     return JSON.stringify(items);
   } catch (err) {
-    throw new Error(`file_list: ${err instanceof Error ? err.message : String(err)}`);
+    throw fileStepError('file_list', 'list', err, resolved);
   }
 }
 
 export async function execFileDelete(config: Record<string, string>): Promise<string> {
   const target = (config.path ?? '').trim();
-  if (!target) return '';
+  if (!target) throw requiredFilePath('file_delete');
+  let resolved = target;
   try {
-    const resolved = await resolveUserPath(target);
+    resolved = await resolveUserPath(target);
     await fs.rm(resolved, { force: true });
     sendLog(`🗑️ [Flow] File deleted: ${resolved}`);
     return '';
   } catch (err) {
-    throw new Error(`file_delete: ${err instanceof Error ? err.message : String(err)}`);
+    throw fileStepError('file_delete', 'delete', err, resolved);
   }
 }
 
@@ -228,14 +264,18 @@ function maxDownloadBytes(maxSizeMb: number): number {
   return Math.max(1, Math.floor(maxSizeMb * 1024 * 1024));
 }
 
+function downloadTooLarge(maxSizeMb: number): FlowUserError {
+  return new FlowUserError('flow.error.downloadTooLarge', { max: String(maxSizeMb) }, `file_download: file exceeds max size ${maxSizeMb} MB`);
+}
+
 function autoDownloadName(ext: string): string {
   const d = new Date();
   return `file-${dateToken(d)}-${timeToken(d)}-${randToken()}${ext}`;
 }
 
 export async function execFileDownload(config: Record<string, string>, timeoutMs: number): Promise<string> {
-  const url = ensureHttpScheme(config.url ?? '');
-  if (!url) return '';
+  const url = ensureHttpScheme((config.url ?? '').trim());
+  if (!url) throw new FlowUserError('flow.error.requiredDownloadUrl', {}, 'file_download: no URL to download');
   if (!/^https:\/\//i.test(url)) {
     throw new FlowUserError(
       'flow.error.httpsUrlOnly',
@@ -257,9 +297,7 @@ export async function execFileDownload(config: Record<string, string>, timeoutMs
     if (!res.body) throw new Error('empty response body');
     const contentType = res.headers.get('content-type') ?? '';
     const declaredLen = Number(res.headers.get('content-length') ?? '');
-    if (!unlimited && Number.isFinite(declaredLen) && declaredLen > maxBytes) {
-      throw new Error(`file exceeds max size ${maxSizeMb} MB`);
-    }
+    if (!unlimited && Number.isFinite(declaredLen) && declaredLen > maxBytes) throw downloadTooLarge(maxSizeMb);
     const finalUrl = res.url || url;
 
     const requested = (config.filename ?? '').trim();
@@ -288,7 +326,7 @@ export async function execFileDownload(config: Record<string, string>, timeoutMs
     try {
       for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
         bytes += chunk.length;
-        if (!unlimited && bytes > maxBytes) throw new Error(`file exceeds max size ${maxSizeMb} MB`);
+        if (!unlimited && bytes > maxBytes) throw downloadTooLarge(maxSizeMb);
         if (!sniffed) {
           head.push(chunk);
           if (bytes >= PROGRAM_SNIFF_BYTES) sniff();
@@ -311,7 +349,8 @@ export async function execFileDownload(config: Record<string, string>, timeoutMs
     if (partPath) await fs.rm(partPath, { force: true }).catch(() => { });
     if (err instanceof FlowUserError) throw err;
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error(`file_download: timed out after ${Math.ceil(timeoutMs / 1_000)}s`);
+      const seconds = String(Math.ceil(timeoutMs / 1_000));
+      throw new FlowUserError('flow.error.downloadTimedOut', { seconds }, `file_download: timed out after ${seconds}s`);
     }
     throw new Error(`file_download: ${err instanceof Error ? err.message : String(err)}`);
   } finally {

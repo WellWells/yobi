@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo } from 'react';
 import { ActionIcon, Box, Group, Stack, Text, Tooltip } from '@mantine/core';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useFlowStore } from '../../store/useFlowStore';
 import { normalizeCronTrigger } from '../../../../shared/flowSchedule';
@@ -137,7 +137,7 @@ export const TriggerEditor: React.FC<TriggerEditorProps> = ({ flow, t }) => {
   const extraTriggers = flow.extraTriggers ?? [];
   const hasNonBotTrigger = [flow.trigger, ...extraTriggers].some((tr) => tr.type !== 'bot');
   // Edits land in the store before they are saved, so this tracks the field live.
-  const issues = useFlowIssues().get(flow.id) ?? [];
+  const issues = useFlowIssues('draft').get(flow.id) ?? [];
   const ownerData = readsOwnerData(flow.steps);
   const folderMissing = issues.some((issue) => issue.kind === 'watchFolderMissing');
 
@@ -169,7 +169,7 @@ export const TriggerEditor: React.FC<TriggerEditorProps> = ({ flow, t }) => {
                     aria-label={t('flow.trigger.removeTrigger')}
                     onClick={() => removeExtraTrigger(flow.id, i)}
                   >
-                    <Trash2 size={14} />
+                    <Trash size={14} />
                   </ActionIcon>
                 </Tooltip>
               </Group>

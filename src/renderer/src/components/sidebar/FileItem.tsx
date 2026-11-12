@@ -1,9 +1,9 @@
 import React, { useMemo, useRef } from 'react';
-import { Box, Checkbox, Flex, Stack, Text } from '@mantine/core';
+import { Box, Checkbox, Flex, Stack, Text, Tooltip } from '@mantine/core';
 import { Circle } from 'lucide-react';
 import type { OutputFile } from '../../../../shared/types';
-import { AppTextInput } from '../AppTextInput';
-import { ProviderTag } from '../ProviderTag';
+import type { ModelIcon } from '../../config/models';
+import { RenameInput } from '../RenameInput';
 import { RowMoreButton } from '../RowMoreButton';
 import type { MenuAnchor } from '../RowMoreButton';
 import { SwipeRow } from '../SwipeRow';
@@ -11,7 +11,6 @@ import { menuAnchorUnderRow, swipeAnchorElement } from '../../utils/rowSwipe';
 import { conversationLeadingActions, conversationTrailingActions } from '../../utils/rowSwipeActions';
 import type { ConversationSwipeLabels } from '../../utils/rowSwipeActions';
 import styles from '../Sidebar.module.css';
-import { fillTemplate } from '../../../../shared/fillTemplate';
 
 interface FileItemProps {
   file: OutputFile;
@@ -41,16 +40,24 @@ interface FileItemProps {
   swipeLabels: ConversationSwipeLabels;
   onCommitEdit: () => Promise<void>;
   onCancelEdit: () => void;
-  timeLabel: string;
-  turnsLabel: string;
+  /** Whose answer it holds (`providerIconFor`). */
+  providerIcon: ModelIcon;
+  /** The hover card's second line: provider · time · turns, whichever are known. */
+  detail: string;
   registerItemRef: (path: string, node: HTMLDivElement | null) => void;
 }
 
+/**
+ * A saved conversation in the sidebar, one line as in ChatGPT's, Claude's and Perplexity's
+ * sidebars: the provider's mark and the title. The provider's name, the time and the number of
+ * turns are in the card that opens on hover (and in the conversation itself, ⋮ › info, and the
+ * search palette); the row never grows to show them.
+ */
 export const FileItem: React.FC<FileItemProps> = React.memo(({
   file, selected, unread, unreadLabel, isEditing, editingText, setEditingText,
   selectMode, checked, onToggleSelect,
   onRowClick, onOpenMenu, onOpenMenuAt, menuOpen, moreLabel, onDragOut, onDelete, onTogglePin, swipeLabels,
-  onCommitEdit, onCancelEdit, timeLabel, turnsLabel, registerItemRef,
+  onCommitEdit, onCancelEdit, providerIcon: ProviderIcon, detail, registerItemRef,
 }) => {
   const highlighted = selectMode ? checked : selected;
   const rowRef = useRef<HTMLDivElement | null>(null);
@@ -67,68 +74,57 @@ export const FileItem: React.FC<FileItemProps> = React.memo(({
     onTogglePin: () => onTogglePin(file),
     pinned: Boolean(file.pinned),
   }), [swipeLabels, onTogglePin, file]);
+  const title = file.preview || '...';
   const body = (
-    <>
-      <Flex align="center" gap={6}>
-        {file.provider && <ProviderTag provider={file.provider} selected={highlighted} />}
-        {timeLabel && (
-          <Text
-            component="span"
-            fz="var(--font-size-xs)"
-            data-selected={String(highlighted)}
-            className={styles.timestamp}
-          >
-            {timeLabel}
-          </Text>
-        )}
-        {(file.turns ?? 1) > 1 && (
-          <Text
-            component="span"
-            fz="var(--font-size-xs)"
-            data-selected={String(highlighted)}
-            className={styles.timestamp}
-          >
-            {fillTemplate(turnsLabel, { count: String(file.turns) })}
-          </Text>
-        )}
-        {unread && (
-          <Box ml="auto" className={styles.unreadDot}>
-            <Circle size={9} fill="var(--mantine-color-accent)" stroke="var(--mantine-color-accent)" strokeWidth={1.5} aria-label={unreadLabel} />
-          </Box>
-        )}
-      </Flex>
-
+    <Flex align="center" gap={8} wrap="nowrap" miw={0} flex={1}>
+      <Box className={styles.providerMark} data-selected={String(highlighted)} role="img" aria-label={file.provider}>
+        <ProviderIcon size={15} />
+      </Box>
       {isEditing ? (
-        <AppTextInput
+        <RenameInput
           autoFocus
           value={editingText}
-          onChange={(e) => setEditingText(e.target.value)}
+          onChange={setEditingText}
+          ai={{ kind: 'conversation', path: file.path }}
           onClick={(e) => e.stopPropagation()}
-          onBlur={() => { void onCommitEdit(); }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') { e.preventDefault(); void onCommitEdit(); }
-            else if (e.key === 'Escape') { e.preventDefault(); onCancelEdit(); }
-          }}
+          commitOnBlur
+          onCommit={() => { void onCommitEdit(); }}
+          onCancel={onCancelEdit}
           tone="accent"
           size="xs"
+          style={{ flex: 1, minWidth: 0 }}
         />
       ) : (
-        <Text
-          fz="var(--font-size-sm)"
-          fw={500}
-          title={file.name}
-          className={styles.preview}
-        >
-          {file.preview || '...'}
+        <Text fz="var(--font-size-base)" className={styles.preview}>
+          {title}
         </Text>
       )}
-    </>
+      {unread && (
+        <Box className={styles.unreadDot}>
+          <Circle size={9} fill="var(--mantine-color-accent)" stroke="var(--mantine-color-accent)" strokeWidth={1.5} aria-label={unreadLabel} />
+        </Box>
+      )}
+    </Flex>
+  );
+
+  const card = (
+    <Stack gap={2}>
+      <Text fz="var(--font-size-sm)" fw={500}>{title}</Text>
+      {detail && <Text fz="var(--font-size-xs)" className={styles.timestamp}>{detail}</Text>}
+    </Stack>
   );
 
   return (
     <SwipeRow leading={leading} trailing={trailing} disabled={selectMode || isEditing}>
+    <Tooltip
+      label={card}
+      position="right"
+      multiline
+      maw={300}
+      disabled={selectMode || isEditing || menuOpen}
+    >
     <Stack
-      gap={3}
+      gap={0}
       ref={(node) => {
         rowRef.current = node as HTMLDivElement | null;
         registerItemRef(file.path, node as HTMLDivElement | null);
@@ -149,6 +145,8 @@ export const FileItem: React.FC<FileItemProps> = React.memo(({
       data-selected={String(highlighted)}
       data-editing={String(isEditing)}
       data-menu-open={menuOpen || undefined}
+      // Which file the row is, for finding it from outside the list.
+      data-file={file.name}
       className={styles.fileItem}
     >
       {!selectMode && !isEditing && (
@@ -160,7 +158,7 @@ export const FileItem: React.FC<FileItemProps> = React.memo(({
         />
       )}
       {selectMode ? (
-        <Flex align="center" gap={8}>
+        <Flex align="center" gap={8} wrap="nowrap">
           <Checkbox
             size="xs"
             checked={checked}
@@ -169,10 +167,11 @@ export const FileItem: React.FC<FileItemProps> = React.memo(({
             aria-label={file.name}
             style={{ flexShrink: 0 }}
           />
-          <Stack gap={3} style={{ flex: 1, minWidth: 0 }}>{body}</Stack>
+          {body}
         </Flex>
       ) : body}
     </Stack>
+    </Tooltip>
     </SwipeRow>
   );
 });

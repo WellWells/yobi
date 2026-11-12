@@ -12,7 +12,7 @@ import { usePressOutside } from '../../hooks/usePressOutside';
 import { matchesShortcut } from '../../store/shortcutStore';
 import { useWritingToolsStore } from '../../store/writingToolsStore';
 import {
-  blockIndexAt, splitMarkdownBlocks, type MarkdownBlock,
+  blockIndexAt, definitionsSource, splitMarkdownBlocks, type MarkdownBlock,
 } from '../../utils/markdownBlocks';
 import { notionEditorBlocks, selectionLocator, type SelectionLocator } from '../../utils/notionEditorBlocks';
 import styles from './BlockEditor.module.css';
@@ -101,10 +101,7 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({ path, turnIndex, text,
   const live = useMemo(() => (active ? null : measure(text, notion)), [active, text, notion]);
   const layout = active?.layout ?? live ?? EMPTY_LAYOUT;
   const blocks = placeBlocks(layout, active, text.length);
-  const definitions = blocks
-    .filter((block) => block.kind === 'definition')
-    .map((block) => text.slice(block.start, block.end))
-    .join('\n\n');
+  const definitions = definitionsSource(text, blocks);
 
   /**
    * Opens the block holding `offset`, measured afresh: the block closed a moment ago may have been

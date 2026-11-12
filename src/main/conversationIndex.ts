@@ -140,12 +140,6 @@ export async function resolveConversationPath(ref: { path: string; id?: string |
   return fresh;
 }
 
-/** The path and id to keep for a conversation file someone will come back to. */
-export async function conversationRefAt(filePath: string): Promise<{ path: string; id?: string }> {
-  const id = await conversationIdAt(filePath);
-  return id ? { path: filePath, id } : { path: filePath };
-}
-
 export function __resetConversationIndex(): void {
   invalidateConversationIndex();
   knownIds.clear();

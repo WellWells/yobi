@@ -1,4 +1,5 @@
 import { parseJsonLenient } from './llmJsonExtract';
+import type { McpServerView } from './types';
 
 /**
  * What the tool of an `mcp` flow step does, in the words the editor shows: `read` only reads,
@@ -242,4 +243,43 @@ export function parseMcpArguments(text: string): McpArgumentsResult {
 /** Required fields the arguments leave out. */
 export function missingRequiredArguments(args: Record<string, unknown>, fields: readonly McpFlowToolField[]): string[] {
   return fields.filter((field) => field.required && !Object.hasOwn(args, field.name)).map((field) => field.name);
+}
+
+/** Fields given as an empty string that the tool requires: some tools accept it, most mean "missing". */
+export function blankRequiredArguments(args: Record<string, unknown>, fields: readonly McpFlowToolField[]): string[] {
+  return fields.filter((field) => field.required && args[field.name] === '').map((field) => field.name);
+}
+
+/** Argument names the tool's schema does not list (left over from another tool, or a typo). */
+export function unknownArguments(args: Record<string, unknown>, fields: readonly McpFlowToolField[]): string[] {
+  if (fields.length === 0) return [];
+  const known = new Set(fields.map((field) => field.name));
+  return Object.keys(args).filter((name) => !known.has(name));
+}
+
+/** Arguments that hold nothing yet, so picking a tool may fill in its skeleton. */
+export function argumentsAreEmpty(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return true;
+  const parsed = parseMcpArguments(trimmed);
+  return parsed.ok && Object.keys(parsed.value).length === 0;
+}
+
+function foldServerName(text: string): string {
+  return text.normalize('NFKC').trim().toLowerCase();
+}
+
+/**
+ * The server a step names: its id (what the editor stores), else its name or slash command
+ * (what an AI-built step writes), folded and only when exactly one matches. One copy for the run
+ * and the step editor, so the editor never lists one connector's tools while the run refuses.
+ */
+export function findStepServer<T extends Pick<McpServerView, 'id' | 'name' | 'commandName'>>(servers: readonly T[], ref: string): T | undefined {
+  const wanted = ref.trim();
+  if (!wanted) return undefined;
+  const byId = servers.find((server) => server.id === wanted);
+  if (byId) return byId;
+  const folded = foldServerName(wanted.replace(/^\//, ''));
+  const matches = servers.filter((server) => foldServerName(server.name) === folded || foldServerName(server.commandName ?? '') === folded);
+  return matches.length === 1 ? matches[0] : undefined;
 }

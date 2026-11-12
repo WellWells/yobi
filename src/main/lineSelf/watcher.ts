@@ -1,8 +1,9 @@
 /**
  * Watches LINE PC's database for what is written in groups: each time LINE writes (the database or
  * its WAL changes), a fresh read-only handle takes the group messages stored since the last look —
- * and the user's own in any chat (their "Yobi" in a 1:1 chat, a pairing code typed outside a
- * group). Everything already stored when it starts is history and never answered.
+ * the user's own in any chat (their "Yobi" in a 1:1 chat), and the other side's "Yobi" lines in a
+ * 1:1 chat, nothing else of theirs (`watchedMessagesAfter`). Everything already stored when it
+ * starts is history and never answered.
  */
 import { statSync } from 'node:fs';
 import { latestMessageMark, watchedMessagesAfter, type MessageMark, type WatchedMessage } from '../line/ownMessages';

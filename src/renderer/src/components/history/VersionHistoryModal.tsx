@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Box, Group, Loader, NavLink, ScrollArea, Stack, Text } from '@mantine/core';
-import { History, Trash2 } from 'lucide-react';
+import { RotateCcwClock, Trash } from 'lucide-react';
 import { AppButton } from '../AppButton';
 import { AppModal } from '../AppModal';
 import { WebDialog } from '../WebDialog';
@@ -56,7 +56,7 @@ export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
     if (items.length === 0) {
       return (
         <Stack align="center" gap={10} py={40} px={24} ta="center">
-          <History size={32} strokeWidth={1.5} color="var(--text-muted)" />
+          <RotateCcwClock size={32} strokeWidth={1.5} color="var(--text-muted)" />
           <Text fz="var(--font-size-sm)" c="var(--text-secondary)" maw={420} style={{ lineHeight: 1.6 }}>{emptyText}</Text>
         </Stack>
       );
@@ -82,7 +82,7 @@ export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
             variant="subtle"
             color="red"
             size="xs"
-            leftSection={<Trash2 size={14} />}
+            leftSection={<Trash size={14} />}
             onClick={() => setConfirmAll(true)}
           >
             {t('history.deleteAll')}
@@ -97,7 +97,7 @@ export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
 
   return (
     <>
-      <AppModal opened={opened} onClose={onClose} title={t('history.title')} icon={<History size={18} />} size="72rem">
+      <AppModal opened={opened} onClose={onClose} title={t('history.title')} icon={<RotateCcwClock size={18} />} size="72rem">
         {subject && (
           <Text fz="var(--font-size-sm)" c="var(--text-secondary)" mb="sm" truncate>{subject}</Text>
         )}

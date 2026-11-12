@@ -20,6 +20,8 @@ import { buildSettingsSnapshot, showSaveDialogForWin } from './context';
 import { applyImportedConfigLiveEffects } from './settings';
 import { settleFilledInRegionHotkey } from '../regionHotkeyDefault';
 import { loadFlowsFromDisk } from '../flow/flowPersistence';
+import { getFlowFolderStore } from '../flow/flowFolders';
+import { listSkills } from '../agentSkills/skillStore';
 import type { IpcContext } from './context';
 
 function errMsg(err: unknown): string {
@@ -77,6 +79,8 @@ export function registerBackupHandlers(ctx: IpcContext): void {
 
         // A config from before the region hotkey: its filled-in default yields to a flow using it.
         if (importedConfig) await settleFilledInRegionHotkey(loadFlowsFromDisk);
+        // The skills page lists what is on disk now; runs read the folder each time anyway.
+        if (restored.includes('skills')) sendToRenderer(IPC.SKILLS_CHANGED, await listSkills());
         if (flowsRestored) ctx.flowManager?.releaseTriggers();
         let snapshot: SettingsSnapshot | undefined;
         if (importedConfig) {
@@ -86,6 +90,12 @@ export function registerBackupHandlers(ctx: IpcContext): void {
         if (flowsRestored && ctx.flowManager) {
           await ctx.flowManager.reload().catch((err: unknown) => {
             sendLog(`⚠️ Reloading the restored flows failed: ${errMsg(err)}`);
+          });
+        }
+        // After the flows: the folders list only flows that exist.
+        if (flowsRestored) {
+          await getFlowFolderStore()?.reload().catch((err: unknown) => {
+            sendLog(`⚠️ Reloading the restored flow folders failed: ${errMsg(err)}`);
           });
         }
         if (restored.includes('outputs')) {

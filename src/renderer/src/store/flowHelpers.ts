@@ -1,6 +1,6 @@
 import type { FlowDefinition, SkillInstance, SkillType } from '../../../shared/types';
 import { DEFAULT_SKILL_CONFIG, SKILLS_WITHOUT_OUTPUT_KEY } from '../../../shared/flowSkillSchema';
-import { findMatchingMarker } from '../../../shared/flowBlockStructure';
+import { findMatchingMarker, loopVarName } from '../../../shared/flowBlockStructure';
 
 export const DEFAULT_OUTPUT_BASE: Partial<Record<SkillType, string>> = {
   browser_open: 'tab',
@@ -68,6 +68,7 @@ export function createDefaultStep(type: SkillType = 'shell', outputKey?: string,
     file_download: t('flow.skill.file_download'),
     email_send: t('flow.skill.email_send'),
     text: t('flow.skill.text'),
+    translate: t('flow.skill.translate'),
     stock: t('flow.skill.stock'),
     forex: t('flow.skill.forex'),
     weather: t('flow.skill.weather'),
@@ -115,7 +116,62 @@ export function nextFreeOutputKey(base: string, steps: SkillInstance[], start: n
   return `${base}_${n}`;
 }
 
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** `{{old}}` and `{{old.sub}}` become `{{new}}` / `{{new.sub}}`; other keys are left alone. */
+export function renameReferences(text: string, renames: ReadonlyMap<string, string>): string {
+  let out = text;
+  for (const [from, to] of renames) {
+    out = out.replace(new RegExp(`\\{\\{(\\s*)${escapeRegExp(from)}(?=[\\s.}])`, 'g'), `{{$1${to}`);
+  }
+  return out;
+}
+
+/**
+ * A copy of the step at `index` to put right after it, with new ids and outputKeys no step uses.
+ * A loop or condition copies its whole block (up to its end marker), and references inside the
+ * copy to the block's own outputs follow the copy. Null for an end marker alone or a bad index.
+ */
+export function copyStepBlock(steps: SkillInstance[], index: number): { insertAt: number; copies: SkillInstance[] } | null {
+  const source = steps[index];
+  if (!source || source.type === 'end_loop' || source.type === 'end_if') return null;
+  const match = source.type === 'loop' || source.type === 'if' ? findMatchingMarker(steps, index) : -1;
+  const end = match > index ? match : index;
+  const block = steps.slice(index, end + 1);
+  const taken = [...steps];
+  const renames = new Map<string, string>();
+  const copies = block.map((original) => {
+    const copy = JSON.parse(JSON.stringify(original)) as SkillInstance;
+    copy.id = createId();
+    const key = original.outputKey?.trim();
+    if (key && !SKILLS_WITHOUT_OUTPUT_KEY.includes(original.type)) {
+      const numbered = /^(.*)_(\d+)$/.exec(key);
+      const next = numbered
+        ? nextFreeOutputKey(numbered[1], taken, Number(numbered[2]) + 1)
+        : nextFreeOutputKey(key, taken, 2);
+      copy.outputKey = next;
+      renames.set(key, next);
+      taken.push(copy);
+    }
+    return copy;
+  });
+  for (const copy of copies) {
+    copy.config = Object.fromEntries(
+      Object.entries(copy.config).map(([field, value]) => [field, typeof value === 'string' ? renameReferences(value, renames) : value]),
+    );
+  }
+  return { insertAt: end + 1, copies };
+}
+
 /** Where a new step goes: before a trailing end_loop/end_if (inside that block), else at the end. */
+/** What a step is set to do, comparable across edits: a run's result is stale for it when this changed. */
+export function stepRunKey(step: SkillInstance): string {
+  const config = Object.fromEntries(Object.entries(step.config).filter(([, value]) => value !== undefined).sort(([a], [b]) => a.localeCompare(b)));
+  return JSON.stringify([step.type, step.label, step.outputKey ?? '', config]);
+}
+
 export function stepInsertIndex(steps: SkillInstance[]): number {
   const last = steps[steps.length - 1];
   return last && (last.type === 'end_loop' || last.type === 'end_if') ? steps.length - 1 : steps.length;
@@ -125,7 +181,24 @@ export function stepInsertIndex(steps: SkillInstance[]): number {
 const NON_LOOP_SOURCES: ReadonlySet<SkillType> = new Set<SkillType>(['clipboard', 'bot', 'loop', ...SKILLS_WITHOUT_OUTPUT_KEY]);
 
 /**
- * The step a new loop should read: the nearest step before `before` that has a real outputKey.
+ * The variable name for a new loop put at `at`: `item`, unless a loop it lands in already binds
+ * that name (the inner one would hide the outer item for its whole body), then `item2`, `item3`…
+ */
+export function freeLoopVarName(steps: SkillInstance[], at: number): string {
+  const open: string[] = [];
+  for (let i = 0; i < Math.min(at, steps.length); i++) {
+    const step = steps[i];
+    if (step.type === 'loop') open.push(loopVarName(step));
+    else if (step.type === 'end_loop') open.pop();
+  }
+  if (!open.includes('item')) return 'item';
+  let n = 2;
+  while (open.includes(`item${n}`)) n++;
+  return `item${n}`;
+}
+
+/**
+ * The step a new loop should read:the nearest step before `before` that has a real outputKey.
  * A closed loop's body is jumped over — its keys no longer exist after its end_loop.
  */
 export function findLoopSource(steps: SkillInstance[], before: number): SkillInstance | undefined {

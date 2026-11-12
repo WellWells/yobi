@@ -246,5 +246,3 @@ export function createMicrosoftTokenSource(deps: TokenSourceDeps) {
     },
   };
 }
-
-export type MicrosoftTokenSource = ReturnType<typeof createMicrosoftTokenSource>;

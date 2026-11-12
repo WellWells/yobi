@@ -1,10 +1,10 @@
 import { ipcMain } from 'electron';
 import { IPC } from '../../shared/types';
-import type { LineChatListResult, LineCredentialsUpdate } from '../../shared/types';
+import type { LineChatListResult, LineCredentialsUpdate, LineSelfTargetListResult } from '../../shared/types';
 import { config, saveConfig } from '../config';
 import { normalizeLlmDirect } from '../configNormalizers';
 import { sendLog } from '../helpers';
-import { getLangCache, t } from '../i18n';
+import { getLangCache, localizeUserFacingError, t } from '../i18n';
 import { namedChats } from '../line/reader';
 import { MAX_LIMIT } from '../line/schema';
 import { buildLineSettingsSnapshot } from '../lineBridge';
@@ -105,7 +105,29 @@ export function registerLineHandlers(ctx: IpcContext): void {
     } catch (err: unknown) {
       const message = (err as Error).message;
       sendLog(`⚠️ Failed to list LINE chats: ${message}`);
-      return { ok: false, reason: 'error', message };
+      return { ok: false, reason: 'error', message: localizeUserFacingError(message, getLangCache()) };
+    }
+  });
+
+  /**
+   * Backs the LINE PC bot step's recipient picker: every group and friend LINE PC knows, with the
+   * same disabled/error contract as the chat list above. A new handle each time, so a group made a
+   * moment ago is in the list.
+   */
+  ipcMain.handle(IPC.LIST_LINE_SELF_TARGETS, async (): Promise<LineSelfTargetListResult> => {
+    const strings = getLangCache();
+    if (!config.lineReaderEnabled) return { ok: false, reason: 'disabled', message: t(strings, 'lineRead.picker.disabled') };
+    if (process.platform !== 'win32') return { ok: false, reason: 'error', message: t(strings, 'bot.lineSelf.windowsOnly') };
+    try {
+      const [{ getSharedLineService }, { listLineSelfTargets }] = await Promise.all([
+        import('../line/sharedService'),
+        import('../lineSelf/targets'),
+      ]);
+      return { ok: true, ...(await listLineSelfTargets(getSharedLineService())) };
+    } catch (err: unknown) {
+      const message = (err as Error).message;
+      sendLog(`⚠️ Failed to list LINE PC recipients: ${message}`);
+      return { ok: false, reason: 'error', message: localizeUserFacingError(message, strings) };
     }
   });
 

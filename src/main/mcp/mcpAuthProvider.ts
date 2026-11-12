@@ -45,16 +45,16 @@ export class McpAuthProvider implements OAuthClientProvider {
     return getAuthRecord(this.serverId)?.client;
   }
 
-  saveClientInformation(clientInformation: OAuthClientInformationFull): void {
-    setAuthRecord(this.serverId, { ...(getAuthRecord(this.serverId) ?? {}), client: clientInformation });
+  saveClientInformation(clientInformation: OAuthClientInformationFull): Promise<void> {
+    return setAuthRecord(this.serverId, { ...(getAuthRecord(this.serverId) ?? {}), client: clientInformation });
   }
 
   tokens(): OAuthTokens | undefined {
     return getAuthRecord(this.serverId)?.tokens;
   }
 
-  saveTokens(tokens: OAuthTokens): void {
-    setAuthRecord(this.serverId, { ...(getAuthRecord(this.serverId) ?? {}), tokens });
+  saveTokens(tokens: OAuthTokens): Promise<void> {
+    return setAuthRecord(this.serverId, { ...(getAuthRecord(this.serverId) ?? {}), tokens });
   }
 
   saveCodeVerifier(codeVerifier: string): void {
@@ -74,7 +74,7 @@ export class McpAuthProvider implements OAuthClientProvider {
     await this.deps.openBrowser(authorizationUrl.toString());
   }
 
-  invalidateCredentials(scope: 'all' | 'client' | 'tokens' | 'verifier' | 'discovery'): void {
+  async invalidateCredentials(scope: 'all' | 'client' | 'tokens' | 'verifier' | 'discovery'): Promise<void> {
     if (scope === 'verifier' || scope === 'all') this.codeVerifierValue = undefined;
     if (scope === 'all') {
       clearAuthRecord(this.serverId);
@@ -82,7 +82,7 @@ export class McpAuthProvider implements OAuthClientProvider {
     }
     const record = getAuthRecord(this.serverId);
     if (!record) return;
-    if (scope === 'client') setAuthRecord(this.serverId, { ...record, client: undefined });
-    if (scope === 'tokens') setAuthRecord(this.serverId, { ...record, tokens: undefined });
+    if (scope === 'client') await setAuthRecord(this.serverId, { ...record, client: undefined });
+    if (scope === 'tokens') await setAuthRecord(this.serverId, { ...record, tokens: undefined });
   }
 }

@@ -144,6 +144,14 @@ async function resolveReal(target: string): Promise<string> {
   }
 }
 
+/** Containment as the file tools check it: realpaths on both sides, never a network path. */
+export async function isWithinRootsReal(target: string, roots: readonly string[]): Promise<boolean> {
+  if (isNonLocal(target)) return false;
+  const realTarget = await resolveReal(target);
+  const realRoots = await Promise.all(roots.map((root) => resolveReal(root)));
+  return isWithinRoots(realTarget, realRoots);
+}
+
 /**
  * Where the agent's own path resolution starts, and the cwd every `shell` command is pinned to.
  * A relative path in a command therefore lands in the same folder `file_write` would use.

@@ -50,6 +50,7 @@ const DEFAULT_FAILURE_KEYS: Record<BotSetDefaultGrantsFailure, string> = {
   invalidRequest: 'settings.bot.perm.error.invalidRequest',
   invalidGrant: 'settings.bot.perm.error.invalidGrant',
   explicitGrant: 'settings.bot.perm.error.explicitGrant',
+  ownerOnlyGrant: 'settings.bot.perm.error.ownerOnlyGrant',
 };
 
 const EMPTY: BotGrant[] = [];

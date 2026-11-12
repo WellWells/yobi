@@ -2,6 +2,7 @@ import { app, shell } from 'electron';
 import { IPC } from '../../shared/types';
 import type { McpServerView } from '../../shared/types';
 import { config, saveConfig } from '../config';
+import { getAppVersion } from '../appVersion';
 import { sendLog, sendToRenderer } from '../helpers';
 import { getLangCache, t } from '../i18n';
 import { initMcpRegistry } from '../mcp';
@@ -26,7 +27,7 @@ function applyLocaleConnectorDefaults(): void {
 export function initMcp(): void {
   applyLocaleConnectorDefaults();
   const registry = initMcpRegistry({
-    clientVersion: app.getVersion(),
+    clientVersion: getAppVersion(),
     broadcast: (servers: McpServerView[]) => sendToRenderer(IPC.MCP_SERVER_STATUS, localizeServerViews(servers)),
     openExternal: (url: string) => shell.openExternal(url),
     log: sendLog,

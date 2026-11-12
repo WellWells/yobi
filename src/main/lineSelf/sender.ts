@@ -54,6 +54,8 @@ export interface LineSelfSender {
   sendFiles: (chatId: string, paths: readonly string[], options?: LineSelfFileOptions) => Promise<number>;
   /** Whether this message id is one the bot sent. */
   sentByBot: (messageId: string) => boolean;
+  /** The access-token candidates the sends use, read once and kept (a download of a request's photo uses them too). */
+  tokens: () => Promise<string[]>;
   /** Forgets the kept token (the bot stopped, or LINE was signed out). */
   reset: () => void;
 }
@@ -222,6 +224,7 @@ export function createLineSelfSender(deps: LineSelfSenderDeps): LineSelfSender {
       return delivered;
     }),
     sentByBot: (messageId) => sent.has(messageId),
+    tokens: keptTokens,
     reset: () => {
       tokens = null;
     },
