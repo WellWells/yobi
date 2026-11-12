@@ -22,8 +22,9 @@
     "prepare:icons": "tsx scripts/generate-icons.ts",
     "prepare:line-core": "tsx scripts/prepareLineCore.ts",
     "licenses:generate": "tsx scripts/generate-licenses.ts",
-    "build:win": "npm run prepare:line-core -- --release && npm run prepare:icons && npm run build:compile && npm run licenses:generate && electron-builder --win",
-    "build:mac": "npm run prepare:icons && npm run build:compile && npm run licenses:generate && electron-builder --mac",
+    "check:bundle": "tsx scripts/checkBundleExternals.ts",
+    "build:win": "npm run prepare:line-core -- --release && npm run prepare:icons && npm run build:compile && npm run check:bundle && npm run licenses:generate && electron-builder --win",
+    "build:mac": "npm run prepare:icons && npm run build:compile && npm run check:bundle && npm run licenses:generate && electron-builder --mac",
     "build": "npm run build:win",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "i18n:check": "tsx scripts/i18n-check.ts"

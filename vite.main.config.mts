@@ -52,13 +52,23 @@ const CHEERIO_LOAD_ONLY = join(
   'dist/esm/load-parse.js',
 );
 
+/**
+ * Built-in names that an installed dependency also asks for as an npm package. Externalizing the
+ * name externalizes every path under it too, so tr46's `require("punycode/")` (the userland
+ * package, resolved to `punycode/punycode.es6.js`) stayed a runtime require — and the packaged app
+ * ships no node_modules, so it could not start. These are bundled instead.
+ */
+export const BUNDLED_BUILTIN_NAMES = ['punycode'];
+
+const EXTERNAL_BUILTINS = builtinModules.filter((m) => !BUNDLED_BUILTIN_NAMES.includes(m));
+
 const EXTERNALIZED = [
   'electron',
   // Native module (LINE wxSQLite3 driver): keep as a runtime require, never bundle its .node.
   'better-sqlite3-multiple-ciphers',
   // Native FFI loader for the LINE send core; lazy-imported on win32 only.
   'koffi',
-  ...builtinModules,
+  ...EXTERNAL_BUILTINS,
   ...builtinModules.map((m) => `node:${m}`),
 ];
 
