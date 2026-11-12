@@ -11,16 +11,14 @@ on:
 permissions:
   contents: write
 
-# Force GitHub Actions to use Node.js 24
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   # ─────────────────────────────────────────────────────────────
   # 1. Cross-platform Build
   # ─────────────────────────────────────────────────────────────
   build:
     name: Build (${{ matrix.os }})
+    # Only this repository publishes releases; forks and mirrors skip the build.
+    if: github.repository == 'WellWells/yobi'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -44,13 +42,18 @@ jobs:
               dist/install.ps1
 
     steps:
+      # ── Windows Defender scans every file npm and electron-builder write ──
+      - name: Turn off real-time scanning
+        if: runner.os == 'Windows'
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
+
       # ── Checkout ──────────────────────────────────────────────
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # ── Node.js 24 + npm cache ──────────────────────────────────
       - name: Setup Node.js 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
           cache: 'npm'
@@ -58,7 +61,7 @@ jobs:
       # ── Electron binaries cache (macOS) ────────────────────────────
       - name: Cache Electron binaries (macOS)
         if: runner.os == 'macOS'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/Library/Caches/electron
@@ -69,7 +72,7 @@ jobs:
       # ── Electron binaries cache (Windows) ──────────────────────────
       - name: Cache Electron binaries (Windows)
         if: runner.os == 'Windows'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ env.LOCALAPPDATA }}\electron\Cache
@@ -110,7 +113,7 @@ jobs:
 
       # ── Upload artifacts for the Release Job ──────────────────────
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_path }}
@@ -128,7 +131,7 @@ jobs:
     steps:
       # ── Get version from package.json ───────────────────────────────
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Read version from package.json
         id: pkg
@@ -148,7 +151,7 @@ jobs:
 
       # ── Download artifacts from all platforms ───────────────────────
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
@@ -178,7 +181,7 @@ jobs:
 
       # ── Create Draft Release ─────────────────────────────────────────
       - name: Create Draft Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           draft: true
           tag_name: ${{ steps.meta.outputs.tag }}

@@ -336,7 +336,9 @@ export async function execFileDownload(config: Record<string, string>, timeoutMs
       if (!sniffed) sniff();
       await new Promise<void>((resolve, reject) => out.end((err?: Error | null) => (err ? reject(err) : resolve())));
     } catch (streamErr) {
-      out.destroy();
+      // destroy() closes the file later: the part file is removed below only once it is shut, or
+      // a stream still opening it would create it again after the removal (seen under load).
+      if (!out.closed) await new Promise<void>((resolve) => { out.once('close', () => resolve()); out.destroy(); });
       throw streamErr;
     }
 
